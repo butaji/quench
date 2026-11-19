@@ -370,6 +370,10 @@ impl Traits {
     /// A suspension (`Await`, `Yield`, `YieldStar`), which the general step runs as its suspension row
     /// (`Vm::staged_suspend`).
     pub(crate) const SUSPENDS: Self = Self(1 << 47);
+    /// An op whose staged row is a register move, a local slot access or a jump, which decodes over the
+    /// register file alone (`Operation::decode_flow`, `decode_local`). Tagged: `Move`, `LoadLocalPlain`,
+    /// `StoreLocalPlain`, `Jump`, `JumpFalse`, `JumpTrue`.
+    pub(crate) const REGISTER_ROW: Self = Self(1 << 48);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }

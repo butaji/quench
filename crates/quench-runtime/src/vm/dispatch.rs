@@ -1,29 +1,28 @@
-// Hand arms left: the arms of `Vm::step` that still name an opcode, and why `step_unlisted` does not take them.
-// `step` carries `#[quench_macros::operation_semantics]`, which rejects match guards ("semantic dispatch
-// guards must live inside the operation"), so no family arm can be written here. `step_unlisted` takes the
-// rest by catalog attribute: `NO_STEP` (Nop; the wide marker is never dispatched), `SUSPENDS` (Await, Yield,
-// YieldStar: `staged_suspend`), `ROW_ONLY` (a staged row that decides its opcode: IteratorCleanupPush,
-// IteratorCleanupPop, ForInNext, GetAsyncIterator, StringCaseIndex, CacheTemplateObject,
-// LoadCachedTemplateObject, ToNumeric, IncDec, Return, Throw, SetThisField, SetThisFieldStrict), `OWNER_ONLY`
-// (LoadEnvLocal, StoreEnvLocal, StoreName: `owner_step` alone), an owned step (`Op::owned_step`: its row first where the catalog marks one,
-// then `owner_step`), `Decoder::Literal` (`decode_literal` run completed on the frame, whose
-// `allocate_value` and element definer answer it), and the Names, Generic, Property and Value call-outs
-// (`staged_value_step`).
-// What is left, and why:
-// - Row, then a per-opcode miss: InitializeTdz. The row leaves for a slot it does not hold plainly, and the miss
-//   writes the TDZ marker there. (Binary, NumericAdd, NumericMultiply, Unary and JumpBinaryFalse run only their
-//   rows: the interpreter frame answers each through `CallOut::Binary`, `Unary`, `Decide`/`DecideOperand` and
-//   `Equality`. Their one leave is the Number relation of `==` or `===`, which `Binary` answers as the general row.)
-// - Run-only (`Declined` is unreachable): GetField, GetIndex, SetField, SetFieldStrict, SetIndex. A read or store its
-//   plan leaves is `CallOut::LoadField`, `LoadElement`, `StoreField` or `StoreElement`, which the interpreter frame
-//   answers; a read that writes `this` stores its value through `store_field_sink`. SetThisField and
-//   SetThisFieldStrict have no arm: `ROW_ONLY` runs them through `step_unlisted`, and their store to `this` is the
-//   `CallOut::StoreField` with no object register, which takes `this` from the frame's `this_value`.
-// - WasmBranchTable: its row's edge is a branch-table entry (`Edge::Entry`), which the interpreter frame's
-//   `step_row` refuses, so its case stays the hand body.
-// Call-family records (`staged::invoke::general_call_form`: Call, CallArray, CallSpread, CallForwardingArguments,
-// CallKnown, CallMethod, CallThisMethod, Construct, CallFirstChunk) are no arms: `step_unlisted` runs their staged
-// row, then the form's general body (`call_forms.rs`) on the interpreter frame (`InterpreterFrame::call_row`).
+// What `Vm::step` runs an opcode as: its one arm is the wildcard, `step_unlisted`, which runs each opcode as its
+// catalog runner (`RUNNERS`, decided once per opcode by `runner_of`). `step` keeps
+// `#[quench_macros::operation_semantics]`: `resolve_step_operation` (compiled.rs) selects each opcode's semantic
+// from it, and the attribute takes only a `match` on the opcode, so that match holds the wildcard alone. (The
+// attribute rejects match guards.) The runners, in `runner_of`'s priority order:
+// - `NO_STEP` (Nop; the wide marker is never dispatched).
+// - `REGISTER_ROW` (Move, LoadLocalPlain, StoreLocalPlain, Jump, JumpFalse, JumpTrue): `register_row_step`.
+// - A call-family record (`staged::invoke::general_call_form`: Call, CallArray, CallSpread, CallForwardingArguments,
+//   CallKnown, CallMethod, CallThisMethod, Construct, CallFirstChunk): its staged row, then the call's general form
+//   on the frame (`call_forms.rs`, `InterpreterFrame::call_row`).
+// - `SUSPENDS` (Await, Yield, YieldStar): `staged_suspend`.
+// - `ROW_ONLY`: a staged row that decides its opcode on the frame alone, which never declines: GetField, GetIndex,
+//   SetField, SetFieldStrict, SetIndex, Unary, JumpBinaryFalse, WasmBranchTable, IteratorCleanupPush,
+//   IteratorCleanupPop, ForInNext, GetAsyncIterator, StringCaseIndex, CacheTemplateObject, LoadCachedTemplateObject,
+//   ToNumeric, IncDec, Return, Throw, SetThisField, SetThisFieldStrict. A read or store its plan leaves is answered by
+//   the frame's `CallOut::LoadField`, `LoadElement`, `StoreField` or `StoreElement`; a read that writes `this` stores
+//   its value through `store_field_sink`. A branch table's edge is an entry (`Edge::Entry`), which `run_row` takes.
+// - `ARITHMETIC_BINARY` (Binary, NumericAdd, NumericMultiply): the staged row, then the record's general `Binary` on
+//   a miss (`run_row_completed`). The Number relation of `==` or `===` is that miss, which `Binary` answers.
+// - `OWNER_ONLY` (LoadEnvLocal, StoreEnvLocal, StoreName): `owner_step` alone.
+// - An owned step (`Op::owned_step`) whose catalog marks a row (InitializeTdz): its row first, then `owner_step` on a
+//   miss; an owned step with no row: `owner_step` alone.
+// - `Decoder::Literal` (`decode_literal`, run completed on the frame), the Names, Generic, Property and Value
+//   call-outs (`staged_value_step`), `Decoder::Flow` (`LoadConst`, over the active program's constants), and any
+//   other opcode: a Wasm step (`step_wasm`).
 
 use super::*;
 use super::dispatch_fast::operand_feedback::OperandKinds;
@@ -588,329 +587,8 @@ impl<H: Host> Vm<H> {
         allow_inline_calls: bool,
     ) -> Result<StepResult, JsError> {
         match i.op() {
-            Op::Nop => {}
-            Op::CloneEnv => {
-                let clones = &p.function(self.frames[f].function as usize).environment_clones;
-                let plan = &clones[i.environment_clone_index()];
-                self.clone_frame_environment(f, &plan.fresh, clones.resets(plan))?;
-            }
-            Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
-            Op::LoadConst => {
-                debug_assert_eq!(self.frames[f].program, self.active_program);
-                let value = self.active_constant(i.constant_index()).ok_or_else(|| {
-                    JsError::validation("constant index is outside program".into())
-                })?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::CreateRegExpLiteral => {
-                let site = i.regexp_literal_site_index();
-                let value = match i.optional_register_b() {
-                    // A callee-argument site: field B names the call's callee.
-                    Some(callee) => {
-                        let callee = self.read(f, callee);
-                        let program = self.frames[f].program;
-                        self.regexp_literal_argument_of(p, program, f, site, callee)?
-                    }
-                    None => self.regexp_literal(p, f, site)?,
-                };
-                self.write(f, i.result_register(), value);
-            }
-            Op::LoadLocalPlain => {
-                // SAFETY: validated bytecode bounds the slot by Function.locals,
-                // and frame setup sizes locals to that count.
-                let value = unsafe { self.read_validated_local(f, i.local_slot()) };
-                self.write(f, i.result_register(), value);
-            }
-            Op::LoadLocal | Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreLocal | Op::StoreEnvLocal
-            | Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-            | Op::StoreName | Op::LoadGlobalLexical | Op::StoreGlobalLexical => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
-            Op::StoreLocalPlain => {
-                let value = self.read(f, i.register_a());
-                // SAFETY: validated bytecode bounds the slot by Function.locals,
-                // and frame setup sizes locals to that count.
-                unsafe { self.write_validated_local(f, i.local_slot(), value) };
-                if let Some(register) = i.optional_register_b() {
-                    self.write(f, register, value);
-                }
-            }
-            Op::LoadThis => {
-                let this = self.checked_this_binding(p, f)?;
-                self.write(f, i.result_register(), this);
-            }
-            Op::LoadCallee => {
-                // The function the frame runs, as its activation filled its self binding.
-                let callee = self.frames[f].context.callee().unwrap_or(Value::UNDEFINED);
-                self.write(f, i.result_register(), callee);
-            }
-            Op::CallFirstChunk => self.call_first_chunk(p, f, i, *pc)?,
-            Op::LoadImportMeta => {
-                let program = self.frames[f].program;
-                let import_meta = if let Some(value) = self.programs.import_meta(program) {
-                    value
-                } else {
-                    let value = self
-                        .heap
-                        .alloc_object(Self::empty_object(Value::NULL));
-                    if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
-                    {
-                        let url = self.host.import_meta_url(&source_name);
-                        let url = self.heap.alloc_string(url.into());
-                        let url_atom = self.intern_atom("url");
-                        self.set_property(value, url_atom, url)?;
-                        if let Some(filename) = self.host.import_meta_filename(&source_name) {
-                            let filename_value = self.heap.alloc_string(filename.as_str().into());
-                            let filename_atom = self.intern_atom("filename");
-                            self.set_property(value, filename_atom, filename_value)?;
-                            let dirname = std::path::Path::new(&filename)
-                                .parent()
-                                .and_then(|path| path.to_str());
-                            if let Some(dirname) = dirname {
-                                let dirname_value = self.heap.alloc_string(dirname.into());
-                                let dirname_atom = self.intern_atom("dirname");
-                                self.set_property(value, dirname_atom, dirname_value)?;
-                            }
-                        }
-                        if self.host.initializes_import_meta() {
-                            let mut context = crate::NativeContext::new(self);
-                            let import_meta = context.scoped_value(value);
-                            H::initialize_import_meta(&mut context, &source_name, import_meta)
-                                .map_err(|error| context.finish_error(error))?;
-                        }
-                    }
-                    self.programs.set_import_meta(program, value);
-                    value
-                };
-                self.write(f, i.result_register(), import_meta);
-            }
-            Op::InitializeThis => {
-                let value = self.read(f, i.register_a());
-                self.initialize_this_binding(p, f, value)?;
-            }
-            Op::CacheTemplateObject => {
-                let key = (
-                    self.frames[f].program,
-                    self.frames[f].function,
-                    i.template_site_index(),
-                );
-                let value = if let Some(value) = self.realm.template_objects.get(&key).copied() {
-                    value
-                } else {
-                    let value = self.read(f, i.register_a());
-                    self.realm.template_objects.insert(key, value);
-                    value
-                };
-                self.write(f, i.register_a(), value);
-            }
-            Op::LoadCachedTemplateObject => {
-                let key = (
-                    self.frames[f].program,
-                    self.frames[f].function,
-                    i.template_site_index(),
-                );
-                let value = self
-                    .realm
-                    .template_objects
-                    .get(&key)
-                    .copied()
-                    .unwrap_or(Value::UNDEFINED);
-                self.write(f, i.result_register(), value);
-            }
-            Op::MakeClosure if self.is_module_root_hoisted(p, f, i.closure_function_index()) => {
-                // A module's hoisted declaration is the closure its instance made at instantiation,
-                // which the body's declaration of it returns.
-                let id = i.closure_function_index();
-                let program = self.frames[f].program;
-                let v = match self.module_function(program, id) {
-                    Some(function) => function,
-                    None => {
-                        let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
-                        let function = self.closure(p, id, env)?;
-                        self.record_module_function(program, id, function);
-                        function
-                    }
-                };
-                self.write(f, i.result_register(), v);
-            }
-            Op::MakeClosure if p.closure_takes_no_environment(i.closure_function_index()) => {
-                // Nothing the closure runs reads its environment: it takes none, and the frame
-                // keeps its locals unpromoted (`ResidualProgram::closure_takes_no_environment`).
-                let v = self.closure(p, i.closure_function_index(), Value::NULL)?;
-                self.write(f, i.result_register(), v);
-            }
-            Op::MakeClosure => {
-                // A closure made fresh each evaluation: a module root's expression or arrow too,
-                // even one in a loop whose iterations share the module environment.
-                let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
-                let v = self.closure(p, i.closure_function_index(), env)?;
-                self.write(f, i.result_register(), v);
-            }
-            Op::MakeObject => {
-                let v = self.object();
-                self.write(f, i.result_register(), v);
-            }
-            Op::MakeObject2 => {
-                let v = self.object_pair(
-                    p,
-                    i.object_site_index(),
-                    self.read(f, i.register_b()),
-                    self.read(f, i.register_c()),
-                );
-                if i.returns_from_frame() {
-                    return Ok(StepResult::Return(v));
-                }
-                self.write(f, i.result_register(), v);
-            }
-            Op::MakeObjectLiteral => {
-                let site = i.object_site_index();
-                let shape = self.object_site_shape(p, site);
-                let window = i.register_window();
-                let start = usize::from(window.base);
-                let end = start + usize::from(window.count);
-                let prototype = self.object_proto;
-                let properties = &self.frames[f].registers[start..end];
-                let object = self
-                    .heap
-                    .alloc_object_with_properties(prototype, shape, properties);
-                if i.returns_from_frame() {
-                    return Ok(StepResult::Return(object));
-                }
-                self.write(f, i.result_register(), object);
-            }
-            Op::SuperConstArrayObject2 => {
-                if let Some(value) = self.execute_const_array_object2(p, f, i)? {
-                    return Ok(StepResult::Return(value));
-                }
-            }
-            Op::MakeArray => {
-                let v = self.hole_array(i.array_length());
-                self.write(f, i.result_register(), v);
-            }
-            Op::MakeConstArray => {
-                let v = self
-                    .const_array_value(self.frames[f].program, i.constant_index(), usize::from(i.element_count()))
-                    .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
-                self.write(f, i.result_register(), v);
-            }
-            Op::StringCaseIndex => self.select_string_case(f, i)?,
-            Op::MakeLiteralTemplate => {
-                let v = self.literal_template(p, f, i.literal_template_index())?;
-                self.write(f, i.result_register(), v);
-            }
-            Op::GetField => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every named read"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::GetIndex => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every indexed read"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::SetField | Op::SetFieldStrict => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every named store"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::SetIndex => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every keyed store"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::DefinePrivateField => {
-                self.initialize_private_field(
-                    p,
-                    self.read(f, i.register_b()),
-                    self.read(f, i.register_c()),
-                    i.atom_index(),
-                    self.read(f, i.register_a()),
-                )?;
-            }
-            Op::DefineField => {
-                let object = self.read(f, i.register_b());
-                let value = self.read(f, i.register_a());
-                self.define_field_cached(p, object, i.atom_index(), value, i.cache_site_index(), self.frames[f].function)?;
-            }
-            Op::DefineComputedField => {
-                let object = self.read(f, i.register_b());
-                let key = self.read(f, i.register_c());
-                let key = self.to_property_key(p, key)?;
-                let key = match self.heap.get(key).cloned() {
-                    _ if let Some(atom) = self.string_key_atom(key) => PropertyKey::string(atom),
-                    _ if self.heap.is_symbol(key) => PropertyKey::symbol(key),
-                    _ => return Err(JsError::validation("invalid class field key".into())),
-                };
-                self.define_class_field(p, object, key, self.read(f, i.register_a()))?;
-            }
-            Op::SetThisField | Op::SetThisFieldStrict => {
-                let this = self.checked_this_binding(p, f)?;
-                self.set_field_cached(
-                    p,
-                    this,
-                    i.atom_index(),
-                    self.read(f, i.register_a()),
-                    i.cache_site_index(),
-                    i.op().field_store().is_some_and(|store| store.strict),
-                )?;
-            }
-            Op::SetIndex => self.step_index_set(p, f, i, *pc)?,
-            Op::DefineArrayElement => {
-                let (array, value) = (self.read(f, i.register_b()), self.read(f, i.register_a()));
-                self.define_array_literal_element(p, array, i.array_index() as usize, value)?;
-            }
-            Op::Move => self.write(f, i.result_register(), self.read(f, i.register_b())),
-            Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    // The Number relation of `==` or `===` leaves a pair that is no Number. That relation names
-                    // both operators, so the general `Binary` of the record (`CallOut::Binary`) answers it.
-                    RowRun::Declined => {
-                        let operation = crate::staged::Operation::<u64, ()>::Binary {
-                            destination: i.result_register(), left: i.operand_b(), right: i.operand_c(), operator: i.binary_operator(),
-                        };
-                        let completes = i.result_flags() & crate::bytecode::RETURN_REGISTER;
-                        match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
-                            RowRun::Done(_) => {}
-                            RowRun::Stop(stop) => return stop,
-                            RowRun::Declined => unreachable!("the interpreter frame answers the general binary row"),
-                        }
-                    }
-                }
-                let v = match self.number_binary(operator, left, right) {
-                    Some(value) => value,
-                    None => self.binary(p, operator, left, right)?,
-                };
-                if i.returns_from_frame() {
-                    return Ok(StepResult::Return(v));
-                }
-                self.write_binary_result(f, i, v);
-            }
-            // merge: HEAD's inline Unary, Jump, JumpFalse/JumpTrue arms are dropped; the derivation runs them as staged rows (step_row_of).
-            Op::Unary => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every unary row"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::JumpBinaryFalse => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every comparison jump"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
             _ => return self.step_unlisted(p, f, i, pc, allow_inline_calls),
         }
-        Ok(StepResult::Continue)
     }
 
     /// Runs `operation`, decoded from `i` at resume PC `pc`, as its staged row on the running frame
@@ -923,10 +601,18 @@ impl<H: Host> Vm<H> {
         if !self.row_admitted(p, f, operation) {
             return RowRun::Declined;
         }
-        let v = match self.element_read_kind(base, key) {
-            Some((value, kind)) => {
-                self.note_element_kind(f, pc - 1, kind);
-                value
+        let run = InterpreterFrame::step_row(self as *mut Self, p, f, *pc, allow_inline_calls, i, operation);
+        // A branch table's entry: `pc` names the table's first entry, and the entry its selector picks lies that far on
+        // (`branch_table_case`).
+        if let RowRun::Done(Edge::Entry(entry)) = run {
+            *pc += entry as usize;
+        }
+        if matches!(run, RowRun::Done(Edge::Target)) {
+            *pc = i.jump_target() as usize;
+            if matches!(operation, Operation::Jump) {
+                self.frames[f].pc = *pc;
+                self.frames[f].pc_is_resume = true;
+                self.maybe_collect(p);
             }
             None => self.get_index(p, base, key)?,
         };
@@ -974,7 +660,7 @@ impl<H: Host> Vm<H> {
             return RowRun::Declined;
         }
         // A record that writes `this` other than a read is the miss path's; a read's store into `this` is `run_row_completed`'s.
-        if i.writes_current_this() && i.op() != Op::GetField {
+        if i.writes_current_this() && !i.op().traits().has(crate::bytecode::Traits::FIELD_LEAF) {
             return RowRun::Declined;
         }
         match Self::decode_row_completed(i, context) {
@@ -1053,6 +739,24 @@ impl<H: Host> Vm<H> {
                 RowRun::Done(_) => Ok(StepResult::Continue),
                 RowRun::Stop(stop) => stop,
                 RowRun::Declined => unreachable!("a row-only opcode's staged row decides it"),
+            },
+            // An arithmetic binary: its staged row first, then the record's general `Binary` on a miss. The Number
+            // relation of `==` or `===` leaves a pair that is no Number, and that relation names both operators, so
+            // the general `Binary` of the record (`CallOut::Binary`) answers it.
+            Runner::RowThenGeneralBinary => match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
+                RowRun::Done(_) => Ok(StepResult::Continue),
+                RowRun::Stop(stop) => stop,
+                RowRun::Declined => {
+                    let operation = crate::staged::Operation::<u64, ()>::Binary {
+                        destination: i.result_register(), left: i.operand_b(), right: i.operand_c(), operator: i.binary_operator(),
+                    };
+                    let completes = i.result_flags() & crate::bytecode::RETURN_REGISTER;
+                    match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
+                        RowRun::Done(_) => Ok(StepResult::Continue),
+                        RowRun::Stop(stop) => stop,
+                        RowRun::Declined => unreachable!("the interpreter frame answers the general binary row"),
+                    }
+                }
             },
             // A call-family record: its staged row first, then the call's general form on the running frame (`call_forms`).
             Runner::Call => {
@@ -1233,6 +937,8 @@ enum Runner {
     Suspend,
     /// A row that decides its opcode alone (`ROW_ONLY`): its staged row on the frame, which never declines.
     RowOnly,
+    /// An arithmetic binary (`ARITHMETIC_BINARY`): its staged row, then the record's general `Binary` on a miss.
+    RowThenGeneralBinary,
     /// A call-family record (`invoke::general_call_form`): its staged row, then the call's general form on the frame.
     Call,
     /// An owner's own step with no row first (`OWNER_ONLY`, or an owned step whose catalog marks no row): `owner_step`.
@@ -1260,11 +966,7 @@ const fn runner_of(op: Op) -> Runner {
             Runner::Nop
         };
     }
-    // Only these opcodes decode to a register row (`Operation::decode_flow`, `decode_local`).
-    if matches!(
-        op,
-        Op::Move | Op::LoadLocalPlain | Op::StoreLocalPlain | Op::Jump | Op::JumpFalse | Op::JumpTrue
-    ) {
+    if traits.has(crate::bytecode::Traits::REGISTER_ROW) {
         return Runner::RegisterRow;
     }
     if crate::staged::invoke::general_call_form(op).is_some() {
@@ -1275,6 +977,9 @@ const fn runner_of(op: Op) -> Runner {
     }
     if traits.has(crate::bytecode::Traits::ROW_ONLY) {
         return Runner::RowOnly;
+    }
+    if traits.has(crate::bytecode::Traits::ARITHMETIC_BINARY) {
+        return Runner::RowThenGeneralBinary;
     }
     if traits.has(crate::bytecode::Traits::OWNER_ONLY) {
         return Runner::Owner;

@@ -1848,9 +1848,14 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         prototype(context, Value::from_bits(self.read(stage, constructor))).map(u64::from)
     }
 
-    /// ToInt32 of a Number operand, as the bitwise operators read it.
+    /// ToInt32 of a Number operand, as the bitwise operators read it: an int32 is its own ToInt32, so it
+    /// is read as an int and never converted to binary64.
     fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
-        let number = Value::from_bits(self.operand_word(stage, operand)?).as_number()?;
+        let value = Value::from_bits(self.operand_word(stage, operand)?);
+        if let Some(int) = value.as_int() {
+            return Some(u64::from(int as u32));
+        }
+        let number = value.as_number()?;
         Some(u64::from(crate::value::number_to_u32(number)))
     }
 
@@ -1868,6 +1873,9 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     fn miss(&self) {}
     #[inline(always)]
     fn int_fact(&self) -> Boxing { Boxing::Value }
+    /// The lane's registers hold tagged words, so a Number is defined as its boxed word.
+    #[inline(always)]
+    fn tagged_number_fact(&self) -> Option<Boxing> { Some(Boxing::Value) }
     #[inline(always)]
     fn number_fact(&self) -> Boxing { Boxing::Double }
 }

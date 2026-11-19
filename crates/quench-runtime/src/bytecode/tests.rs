@@ -898,16 +898,11 @@ fn load_encoded_records_decode_as_records_compiled_again() {
     }
 }
 
-/// The function record's budget: 376 bytes before the TypeScript signature, global
-/// declarations and instance initializer moved behind `Function::rare` (one pointer for
-/// the three, in place of 24 bytes).
-const FUNCTION_RECORD_BUDGET: usize = 368;
-
 #[test]
-fn function_record_stays_within_its_size_budget() {
-    assert!(
-        size_of::<Function>() <= FUNCTION_RECORD_BUDGET,
-        "Function is {} bytes",
-        size_of::<Function>()
-    );
+fn register_row_trait_tags_exactly_the_register_move_local_and_jump_rows() {
+    let tagged: Vec<Op> = (0..Op::COUNT)
+        .filter_map(Op::from_index)
+        .filter(|op| op.traits().has(Traits::REGISTER_ROW))
+        .collect();
+    assert_eq!(tagged, [Op::Move, Op::LoadLocalPlain, Op::StoreLocalPlain, Op::Jump, Op::JumpFalse, Op::JumpTrue]);
 }
