@@ -1,6 +1,7 @@
 //! The native-root rows of a stitched frame: `ROOT_PUSH` holds the frame's reference registers in
 //! the context's native roots (`NativeRoots`, `vm/compiled/instance_context.rs`) before a call that
-//! can reach the VM, and `ROOT_POP` releases them after the call returns. The layout is the u-jit's
+//! can reach the VM, and `ROOT_POP` releases them after the call returns. The layout and the rules
+//! are the staged ones (`staged::wasm_roots`: `push`, `pop`), which the u-jit runs too
 //! (`vm/compiled/wasm_roots.rs`): the roots are a buffer of Value words of which `depth` are live,
 //! and a push past `capacity` traps `CallStackExhausted`, as the native stack's budget would.
 //!
@@ -19,25 +20,14 @@
 //! The frame's registers are `8 * (FRAME_HEADER_WORDS + register)` bytes past the frame, as the
 //! stitcher places them (`wasm_stitch.rs`, `slot`).
 
-use super::{FRAME_HEADER_WORDS, trap};
-use crate::wasm::WasmTrap;
+use super::wasm_call_stage::{RootsStage, leave_with};
+use super::wasm_frame::{high, low, native_roots};
+use crate::staged::wasm_roots::{pop, push};
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole64};
+use crate::wasm_codes::FRAME_HEADER_WORDS;
 
-#[inline(always)]
-fn low(word: u64) -> usize {
-    word as u32 as usize
-}
-
-#[inline(always)]
-fn high(word: u64) -> usize {
-    (word >> 32) as usize
-}
-
-/// The `NativeRoots` the context names at byte offset `at` (`native_roots`).
-#[inline(always)]
-unsafe fn roots(s: &S, at: usize) -> *mut u8 {
-    unsafe { *(s.ctx.wrapping_add(at) as *const usize) as *mut u8 }
-}
+/// The most registers one push holds (the hole 0 packs four 16-bit register numbers).
+const PUSH_REGISTERS: usize = 4;
 
 /// Holds the registers named by hole 0 (`count` of them) in the native roots, in order after the
 /// live ones. A push with no room for them traps `CallStackExhausted`, writing nothing.
@@ -45,27 +35,22 @@ unsafe fn roots(s: &S, at: usize) -> *mut u8 {
 pub(crate) unsafe fn root_push(s: S) -> Out {
     unsafe {
         let (registers, count_and_context) = (hole64::<0>(), hole64::<HOLE_A>());
-        let (depth_and_capacity, slots_at) = (hole64::<HOLE_B>(), low(hole64::<HOLE_FOURTH>()));
-        let count = low(count_and_context);
-        let header = roots(&s, high(count_and_context));
-        let (depth_at, capacity_at) = (low(depth_and_capacity), high(depth_and_capacity));
-        let depth = *(header.wrapping_add(depth_at) as *const usize);
-        let capacity = *(header.wrapping_add(capacity_at) as *const usize);
-        let needed = depth.wrapping_add(count);
-        if capacity < needed {
-            return trap(s, WasmTrap::CallStackExhausted);
-        }
-        let slots = *(header.wrapping_add(slots_at) as *const *mut u64);
-        let mut index = 0;
-        while index < count {
+        let (depth_and_capacity, slots_at) = (hole64::<HOLE_B>(), low(hole64::<HOLE_FOURTH>()) as usize);
+        let count = low(count_and_context) as usize;
+        let mut words = [0u64; PUSH_REGISTERS];
+        for (index, word) in words.iter_mut().enumerate().take(count) {
             let register = ((registers >> (16 * index)) & 0xffff) as usize;
-            let word = *((s.frame + 8 * (FRAME_HEADER_WORDS as usize + register)) as *const u64);
-            *slots.add(depth.wrapping_add(index)) = word;
-            index += 1;
+            *word = *((s.frame + 8 * (FRAME_HEADER_WORDS as usize + register)) as *const u64);
         }
-        *(header.wrapping_add(depth_at) as *mut usize) = needed;
+        let held = words.get(..count).unwrap_or(&words[..]);
+        let mut stage = RootsStage {
+            header: native_roots(s.ctx, high(count_and_context) as usize),
+            depth_at: low(depth_and_capacity) as usize,
+            capacity_at: high(depth_and_capacity) as usize,
+            slots_at,
+        };
+        leave_with(s, push(&mut stage, held).map(|_depth| ()))
     }
-    Out::Next(s)
 }
 
 /// Releases the count of roots hole `HOLE_A` names: the depth goes back down by it.
@@ -73,10 +58,13 @@ pub(crate) unsafe fn root_push(s: S) -> Out {
 pub(crate) unsafe fn root_pop(s: S) -> Out {
     unsafe {
         let count_and_context = hole64::<HOLE_A>();
-        let header = roots(&s, high(count_and_context));
-        let depth_at = low(hole64::<HOLE_B>());
-        let depth = *(header.wrapping_add(depth_at) as *const usize);
-        *(header.wrapping_add(depth_at) as *mut usize) = depth.wrapping_sub(low(count_and_context));
+        let mut stage = RootsStage {
+            header: native_roots(s.ctx, high(count_and_context) as usize),
+            depth_at: low(hole64::<HOLE_B>()) as usize,
+            capacity_at: 0,
+            slots_at: 0,
+        };
+        pop(&mut stage, low(count_and_context) as usize);
     }
     Out::Next(s)
 }

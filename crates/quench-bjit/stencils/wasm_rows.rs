@@ -8,8 +8,9 @@
 //! status in the first pinned register: a trap's (`WasmTrap::compiled_status`, as the u-jit
 //! leaves), which the exit stub returns. Wasm rows pin nothing else.
 //!
-//! The rows hold only the staged rules' calls: the operator decoders are `staged::wasm*`, the frame
-//! accessors `wasm_frame.rs`, the stage primitives `wasm_stage.rs`.
+//! The rows call the staged rules: the operator decoders are `staged::wasm*`, the frame accessors
+//! `wasm_frame.rs`, the stage primitives `wasm_stage.rs`. The one row with no staged rule is
+//! `call_wasm`: a call enters compiled code, which no staged rule describes.
 
 use crate::staged::machine::MachineStage;
 use crate::staged::wasm::{binary_operator, integer_binary, unary_operator};
@@ -23,11 +24,13 @@ pub(crate) use crate::wasm_codes::*;
 
 #[path = "wasm_frame.rs"]
 pub(crate) mod wasm_frame;
-use wasm_frame::{access, float_of, memory_of, read, reload_memory, right, trap, width_of, write};
+use wasm_frame::{access, float_of, read, reload_memory, right, trap, width_of, write};
 #[path = "wasm_stage.rs"]
 mod wasm_stage;
 pub(crate) use wasm_stage::StencilMemory;
 use wasm_stage::call_entry;
+#[path = "wasm_call_stage.rs"]
+mod wasm_call_stage;
 #[path = "wasm_rows_memory.rs"]
 mod wasm_rows_memory;
 use wasm_rows_memory::{memory_copy, memory_fill, memory_size};
@@ -45,7 +48,7 @@ mod wasm_rows_convert;
 use wasm_rows_convert::{COPYSIGN_TAG, convert_row, copysign_row};
 #[path = "wasm_rows_instance.rs"]
 mod wasm_rows_instance;
-use wasm_rows_instance::memory_grow;
+use wasm_rows_instance::call_memory_grow;
 #[path = "wasm_rows_call_vm.rs"]
 mod wasm_rows_call_vm;
 use wasm_rows_call_vm::call_vm;
@@ -103,7 +106,7 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
             MEMORY_SIZE => memory_size(s),
             MEMORY_FILL => memory_fill(s),
             MEMORY_COPY => memory_copy(s),
-            MEMORY_GROW => memory_grow(s),
+            MEMORY_GROW => call_memory_grow(s),
             CALLOUT => callout::<OP>(s),
             GC_ALLOCATE => gc_allocate(s),
             ROOT_PUSH => root_push(s),
@@ -176,7 +179,7 @@ pub(crate) unsafe fn jump<const OP: u32, const W: u8, const SHAPE: u8>(s: S) -> 
 #[inline(always)]
 unsafe fn memory_load<const OP: u32>(s: S) -> Out {
     let access = const { access(OP) };
-    let mut memory = memory_of(&s);
+    let mut memory = StencilMemory::of(&s);
     unsafe {
         match load(&mut memory, access, read::<HOLE_A>(&s), hole::<HOLE_B>() as u32, false) {
             Ok(word) => {
@@ -192,7 +195,7 @@ unsafe fn memory_load<const OP: u32>(s: S) -> Out {
 #[inline(always)]
 unsafe fn memory_store<const OP: u32>(s: S) -> Out {
     let access = const { access(OP) };
-    let mut memory = memory_of(&s);
+    let mut memory = StencilMemory::of(&s);
     unsafe {
         match store(&mut memory, access, read::<HOLE_A>(&s), hole::<HOLE_B>() as u32, read::<0>(&s), false) {
             Ok(()) => Out::Next(s),

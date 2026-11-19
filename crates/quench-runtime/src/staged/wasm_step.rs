@@ -11,7 +11,7 @@ use super::wasm_memory::Memory;
 use super::wasm_operation::WasmOperation;
 use super::wasm_simd::Simd;
 use super::wasm_table_ops::TableOp;
-use crate::bytecode::{InstructionField, Op, WideInstruction};
+use crate::bytecode::{Class, InstructionField, Op, WideInstruction};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Step {
@@ -116,4 +116,56 @@ impl Step {
             || matches!(self, Self::Table(TableOp::MemoryInit))
             || matches!(self, Self::Simd(simd) if simd.reads_memory())
     }
+}
+
+/// The families whose lane handler an opcode selects by the operation alone, not by its
+/// selector: a memory access, scalar or vector, and a float operator by its width and whether
+/// it runs over raw registers. The handler bodies still read the tag at run time.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Family {
+    /// A linear-memory load, scalar or vector.
+    MemoryLoad,
+    /// A linear-memory store, scalar or vector.
+    MemoryStore,
+    /// An f64 binary operator, over boxed registers or raw words.
+    FloatBinary64 { raw: bool },
+    /// An f32 binary operator.
+    FloatBinary32,
+    /// An f64 unary operator, over boxed registers or raw words.
+    FloatUnary64 { raw: bool },
+}
+
+impl Family {
+    /// The family `op` is, if it is one of these.
+    pub(crate) const fn of(op: Op) -> Option<Self> {
+        match op.class() {
+            Class::WasmMemoryLoad => Some(Self::MemoryLoad),
+            Class::WasmMemoryStore => Some(Self::MemoryStore),
+            Class::WasmFloatBinary64 => Some(Self::FloatBinary64 { raw: false }),
+            Class::WasmFloatBinary64Raw => Some(Self::FloatBinary64 { raw: true }),
+            Class::WasmFloatBinary32 => Some(Self::FloatBinary32),
+            Class::WasmFloatUnary64 => Some(Self::FloatUnary64 { raw: false }),
+            Class::WasmFloatUnary64Raw => Some(Self::FloatUnary64 { raw: true }),
+            _ => None,
+        }
+    }
+}
+
+/// The opcodes the lane fusions match by name, where no operator or predicate already gives
+/// them (`I32BinaryOperator`, `Op::is_wasm_*`).
+pub(crate) mod opcodes {
+    use crate::bytecode::Op;
+
+    pub(crate) const I32_ADD: Op = Op::WasmI32Add;
+    pub(crate) const I32_ADD_IMMEDIATE: Op = Op::WasmI32AddImmediate;
+    pub(crate) const I32_ADD_IMMEDIATE_JUMP_NON_ZERO: Op = Op::WasmI32AddImmediateJumpNonZero;
+    pub(crate) const I32_AND_IMMEDIATE: Op = Op::WasmI32AndImmediate;
+    pub(crate) const I32_LOAD: Op = Op::WasmI32Load;
+    pub(crate) const I32_STORE: Op = Op::WasmI32Store;
+    pub(crate) const F64_LOAD: Op = Op::WasmF64Load;
+    pub(crate) const F64_STORE: Op = Op::WasmF64Store;
+    pub(crate) const SELECT: Op = Op::WasmSelect;
+    pub(crate) const BRANCH_TABLE: Op = Op::WasmBranchTable;
+    pub(crate) const SHIFT_LEFT_IMMEDIATE: Op = Op::WasmI32ShiftLeftImmediate;
+    pub(crate) const SHIFT_RIGHT_UNSIGNED_AND_IMMEDIATE: Op = Op::WasmI32ShiftRightUnsignedAndImmediate;
 }

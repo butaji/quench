@@ -1,8 +1,9 @@
-//! Emit functions for the Wasm lowering's reference, table and constant operations. Each one
-//! names the meaning of an instruction (a type test, a table store, a constant load) and returns
-//! the instruction it lowers to as an `Emission`: the same opcode and operands the lowering
-//! built before, so the bytecode is unchanged. The lowering (`wasm/reference.rs`,
-//! `wasm/table.rs`) calls these and names no opcode itself.
+//! Emit functions for the Wasm lowering's reference, table, constant, memory and atomic
+//! operations, and register copies. Each one names the meaning of an instruction (a type test,
+//! a table store, a constant load) and returns the instruction it lowers to as an `Emission`:
+//! the same opcode and operands the lowering built before, so the bytecode is unchanged. The
+//! lowering (`wasm/reference.rs`, `wasm/table.rs`, `wasm/memory.rs`, `wasm/atomic.rs`) calls
+//! these and names no opcode itself.
 
 use crate::bytecode::{ImmediateLayout, Op, Register};
 
@@ -145,4 +146,95 @@ pub(crate) fn table_copy(
         length,
         ImmediateLayout::register_pair_immediate(output, input),
     )
+}
+
+/// `destination = the instance binding of slot`, the register a memory or data segment is read
+/// through.
+pub(crate) fn instance_binding(destination: Register, slot: u32) -> Emission {
+    Emission::new(Op::WasmInstanceBinding, destination, 0, 0, slot)
+}
+
+/// `effective = address + offset`, a memory32 effective address on `memory`, `offset` the
+/// constant the lowering appended to the constant pool.
+pub(crate) fn memory_address(effective: Register, address: Register, memory: Register, offset: u32) -> Emission {
+    Emission::new(Op::WasmMemoryAddress, effective, address, memory, offset)
+}
+
+/// `result = memory[selector] at effective`, a scalar or vector load from `memory`.
+pub(crate) fn memory_load(result: Register, memory: Register, effective: Register, selector: u32) -> Emission {
+    Emission::new(Op::WasmMemoryLoad, result, memory, effective, selector)
+}
+
+/// `memory[selector] at effective = value`, a scalar or vector store to `memory`.
+pub(crate) fn memory_store(value: Register, memory: Register, effective: Register, selector: u32) -> Emission {
+    Emission::new(Op::WasmMemoryStore, value, memory, effective, selector)
+}
+
+/// `result = vector` with lane `selector` replaced by `scalar`.
+pub(crate) fn lane_replace(result: Register, vector: Register, scalar: Register, selector: u32) -> Emission {
+    Emission::new(Op::WasmSimd, result, vector, scalar, selector)
+}
+
+/// `scalar = the lane selector of vector`.
+pub(crate) fn lane_extract(scalar: Register, vector: Register, selector: u32) -> Emission {
+    Emission::new(Op::WasmSimd, scalar, vector, 0, selector)
+}
+
+/// `result = memory.grow(delta)`.
+pub(crate) fn memory_grow(result: Register, memory: Register, delta: Register) -> Emission {
+    Emission::new(Op::WasmMemoryGrow, result, memory, delta, 0)
+}
+
+/// `result = the size of memory`.
+pub(crate) fn memory_size(result: Register, memory: Register) -> Emission {
+    Emission::new(Op::WasmMemorySize, result, memory, 0, 0)
+}
+
+/// `memory[output ..] = source[input ..]` over `length` bytes, the source a data segment's
+/// instance binding.
+pub(crate) fn memory_init(memory: Register, source: Register, length: Register, output: Register, input: Register) -> Emission {
+    Emission::new(
+        Op::WasmMemoryInit,
+        memory,
+        source,
+        length,
+        ImmediateLayout::register_pair_immediate(output, input),
+    )
+}
+
+/// `memory[output ..] = source[input ..]` over `length` bytes, a copy between memories.
+pub(crate) fn memory_copy(memory: Register, source: Register, length: Register, output: Register, input: Register) -> Emission {
+    Emission::new(
+        Op::WasmMemoryCopy,
+        memory,
+        source,
+        length,
+        ImmediateLayout::register_pair_immediate(output, input),
+    )
+}
+
+/// `memory[output .. output + length] = value`, a fill of `memory`.
+pub(crate) fn memory_fill(memory: Register, value: Register, length: Register, output: Register) -> Emission {
+    Emission::new(
+        Op::WasmMemoryFill,
+        memory,
+        value,
+        length,
+        ImmediateLayout::register_pair_immediate(output, output),
+    )
+}
+
+/// A sequentially consistent fence.
+pub(crate) fn atomic_fence() -> Emission {
+    Emission::new(Op::WasmAtomicFence, 0, 0, 0, 0)
+}
+
+/// `result = the atomic operator (operator) on memory`, its window `inputs` registers wide.
+pub(crate) fn atomic_access(result: Register, memory: Register, inputs: Register, operator: u32) -> Emission {
+    Emission::new(Op::WasmAtomicAccess, result, memory, inputs, operator)
+}
+
+/// `destination = source`, a register copy.
+pub(crate) fn register_copy(destination: Register, source: Register) -> Emission {
+    Emission::new(Op::Move, destination, source, 0, 0)
 }

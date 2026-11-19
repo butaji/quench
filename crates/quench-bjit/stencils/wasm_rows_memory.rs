@@ -16,7 +16,8 @@
 //! The rows are built with the rest of the library (`wasm_library.rs`), so each has its symbol
 //! `w_<kind>_<op>_<width>_<shape>` and is dispatched from `wasm_rows::run`.
 
-use super::wasm_frame::{memory_of, read, trap, write};
+use super::wasm_frame::{read, trap, write};
+use super::StencilMemory;
 use super::WASM_PAGE_BITS;
 use crate::staged::wasm_memory::{copy, fill, size};
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S};
@@ -24,7 +25,7 @@ use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S};
 /// `D = memory.size`: the staged `size` rule, the length in pages as an i32 word.
 #[inline(always)]
 pub(crate) unsafe fn memory_size(s: S) -> Out {
-    let mut memory = memory_of(&s);
+    let mut memory = StencilMemory::of(&s);
     let pages = size(&mut memory, WASM_PAGE_BITS);
     unsafe { write::<0>(&s, pages) };
     Out::Next(s)
@@ -34,7 +35,7 @@ pub(crate) unsafe fn memory_size(s: S) -> Out {
 #[inline(always)]
 pub(crate) unsafe fn memory_fill(s: S) -> Out {
     unsafe {
-        let mut memory = memory_of(&s);
+        let mut memory = StencilMemory::of(&s);
         match fill(&mut memory, read::<HOLE_A>(&s), read::<HOLE_B>(&s), read::<HOLE_FOURTH>(&s)) {
             Ok(()) => Out::Next(s),
             Err(error) => trap(s, error),
@@ -47,7 +48,7 @@ pub(crate) unsafe fn memory_fill(s: S) -> Out {
 #[inline(always)]
 pub(crate) unsafe fn memory_copy(s: S) -> Out {
     unsafe {
-        let mut memory = memory_of(&s);
+        let mut memory = StencilMemory::of(&s);
         match copy(&mut memory, read::<HOLE_A>(&s), read::<HOLE_B>(&s), read::<HOLE_FOURTH>(&s)) {
             Ok(()) => Out::Next(s),
             Err(error) => trap(s, error),

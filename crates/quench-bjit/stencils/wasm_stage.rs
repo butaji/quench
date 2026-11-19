@@ -29,6 +29,13 @@ pub(crate) struct StencilMemory {
 scalar_stage!(StencilMemory);
 
 impl StencilMemory {
+    /// The frame's memory over the base and length pins (`s.p[1]`, `s.p[2]`), as the load, store and
+    /// bulk rows read them: the entry loads them and `reload_memory` keeps them current after a call.
+    #[inline(always)]
+    pub(crate) fn of(s: &S) -> Self {
+        Self { base: s.p[1] as *mut u8, length: s.p[2] as u64 }
+    }
+
     #[inline(always)]
     fn at(&self, index: u64, offset: u32) -> *mut u8 {
         self.base.wrapping_add((index + u64::from(offset)) as usize)

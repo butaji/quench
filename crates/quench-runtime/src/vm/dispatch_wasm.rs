@@ -6,7 +6,6 @@
 //! atomics, which have no step group, still match opcodes.
 
 use super::*;
-use crate::bytecode::Class;
 use crate::staged::ConcreteWasm;
 use crate::staged::machine::MachineStage as _;
 use crate::staged::wasm::{Width, integer_binary};
@@ -21,7 +20,7 @@ use crate::staged::wasm_memory::{Memory, fill as memory_fill_rule, pages as memo
 use crate::staged::wasm_operation::{Operand, WasmOperation};
 use crate::staged::wasm_simd::{Simd, WasmSimd as _};
 use crate::staged::wasm_simd_concrete::{ConcreteSimd, execute};
-use crate::staged::wasm_step::Step;
+use crate::staged::wasm_step::{Family, Step};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 
 mod gc;
@@ -290,9 +289,9 @@ impl<H: Host> Vm<H> {
     /// The steps no group names: a scalar lane's memory access, whose tag selects the width (a
     /// vector access is `Step::Simd`).
     fn wasm_unlisted_step(&mut self, f: usize, i: WideInstruction) -> Result<(), JsError> {
-        match i.op().class() {
-            Class::WasmMemoryLoad => self.wasm_tagged_memory_load(f, i),
-            Class::WasmMemoryStore => self.wasm_tagged_memory_store(f, i),
+        match Family::of(i.op()) {
+            Some(Family::MemoryLoad) => self.wasm_tagged_memory_load(f, i),
+            Some(Family::MemoryStore) => self.wasm_tagged_memory_store(f, i),
             _ => unreachable!("{:?} is not a Wasm opcode", i.op()),
         }
     }

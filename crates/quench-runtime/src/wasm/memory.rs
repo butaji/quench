@@ -1,6 +1,8 @@
 //! Memory layout and scalar access rules. Heap ownership stays in the VM.
 
 use super::{WasmTrap, WasmType, WasmValue};
+use crate::bytecode::Register;
+use crate::staged::wasm_emit_data;
 use std::ops::Range;
 
 /// One linear memory's backing store. The memory type decides the variant:
@@ -465,49 +467,6 @@ stores! {
     vector { V128Store, u128; }
 }
 
-// Scalar memory32 accesses with a static offset have one opcode each. The
-// access semantics remain the MemoryLoad/MemoryStore rules above; the opcode
-// only names the operator so dispatch needs no selector decode.
-macro_rules! direct_accesses {
-    ($kind:ident; $($name:ident => $op:ident;)+) => {
-        impl $kind {
-            pub(crate) const fn direct_op(self) -> Option<crate::bytecode::Op> {
-                match self { $(Self::$name => Some(crate::bytecode::Op::$op),)+ #[allow(unreachable_patterns)] _ => None }
-            }
-            pub(crate) const fn from_direct_op(op: crate::bytecode::Op) -> Option<Self> {
-                match op { $(crate::bytecode::Op::$op => Some(Self::$name),)+ _ => None }
-            }
-        }
-    }
-}
-direct_accesses! { MemoryLoad;
-    I32Load => WasmI32Load;
-    I64Load => WasmI64Load;
-    F32Load => WasmF32Load;
-    F64Load => WasmF64Load;
-    I32Load8S => WasmI32Load8S;
-    I32Load8U => WasmI32Load8U;
-    I32Load16S => WasmI32Load16S;
-    I32Load16U => WasmI32Load16U;
-    I64Load8S => WasmI64Load8S;
-    I64Load8U => WasmI64Load8U;
-    I64Load16S => WasmI64Load16S;
-    I64Load16U => WasmI64Load16U;
-    I64Load32S => WasmI64Load32S;
-    I64Load32U => WasmI64Load32U;
-}
-direct_accesses! { MemoryStore;
-    I32Store => WasmI32Store;
-    I64Store => WasmI64Store;
-    F32Store => WasmF32Store;
-    F64Store => WasmF64Store;
-    I32Store8 => WasmI32Store8;
-    I32Store16 => WasmI32Store16;
-    I64Store8 => WasmI64Store8;
-    I64Store16 => WasmI64Store16;
-    I64Store32 => WasmI64Store32;
-}
-
 /// The direct opcode for a scalar access, when the memory has a prologue
 /// binding register and the access can use the direct memory32 form.
 pub(super) fn direct_access(
@@ -521,27 +480,51 @@ pub(super) fn direct_access(
         })
 }
 
+/// Whether a memory access reads or writes; the emit functions name the opcode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Direction {
+    Load,
+    Store,
+}
+
 // Lane accesses compose existing scalar memory access with SIMD lane rules.
 macro_rules! lane_accesses {
-    ($($wasm:ident, $op:ident, $access:path, $lane_op:ident;)+) => {
-        fn lane_access(op: &wasmparser::Operator<'_>) -> Option<(crate::bytecode::Op, u32, wasmparser::MemArg, super::simd::SimdOperator, u8)> {
-            use crate::bytecode::Op;
+    ($($wasm:ident, $direction:ident, $access:path, $lane_op:ident;)+) => {
+        fn lane_access(op: &wasmparser::Operator<'_>) -> Option<(Direction, u32, wasmparser::MemArg, super::simd::SimdOperator, u8)> {
             match op {
-                $(wasmparser::Operator::$wasm { memarg, lane } => Some((Op::$op, $access as u32, *memarg, super::simd::SimdOperator::$lane_op, *lane)),)+
+                $(wasmparser::Operator::$wasm { memarg, lane } => Some((Direction::$direction, $access as u32, *memarg, super::simd::SimdOperator::$lane_op, *lane)),)+
                 _ => None,
             }
         }
     }
 }
 lane_accesses! {
-    V128Load8Lane, WasmMemoryLoad, MemoryLoad::I32Load8U, I8x16ReplaceLane;
-    V128Store8Lane, WasmMemoryStore, MemoryStore::I32Store8, I8x16ExtractLaneU;
-    V128Load16Lane, WasmMemoryLoad, MemoryLoad::I32Load16U, I16x8ReplaceLane;
-    V128Store16Lane, WasmMemoryStore, MemoryStore::I32Store16, I16x8ExtractLaneU;
-    V128Load32Lane, WasmMemoryLoad, MemoryLoad::I32Load, I32x4ReplaceLane;
-    V128Store32Lane, WasmMemoryStore, MemoryStore::I32Store, I32x4ExtractLane;
-    V128Load64Lane, WasmMemoryLoad, MemoryLoad::I64Load, I64x2ReplaceLane;
-    V128Store64Lane, WasmMemoryStore, MemoryStore::I64Store, I64x2ExtractLane;
+    V128Load8Lane, Load, MemoryLoad::I32Load8U, I8x16ReplaceLane;
+    V128Store8Lane, Store, MemoryStore::I32Store8, I8x16ExtractLaneU;
+    V128Load16Lane, Load, MemoryLoad::I32Load16U, I16x8ReplaceLane;
+    V128Store16Lane, Store, MemoryStore::I32Store16, I16x8ExtractLaneU;
+    V128Load32Lane, Load, MemoryLoad::I32Load, I32x4ReplaceLane;
+    V128Store32Lane, Store, MemoryStore::I32Store, I32x4ExtractLane;
+    V128Load64Lane, Load, MemoryLoad::I64Load, I64x2ReplaceLane;
+    V128Store64Lane, Store, MemoryStore::I64Store, I64x2ExtractLane;
+}
+
+/// The access an operator names: its direction, its selector, its memarg and, for a lane access,
+/// the SIMD lane rule and the lane.
+fn access_operator(
+    operator: &wasmparser::Operator<'_>,
+) -> Option<(Direction, u32, wasmparser::MemArg, Option<(super::simd::SimdOperator, u8)>)> {
+    MemoryLoad::from_wasm(operator)
+        .map(|(load, arg)| (Direction::Load, load as u32, arg, None))
+        .or_else(|| {
+            MemoryStore::from_wasm(operator)
+                .map(|(store, arg)| (Direction::Store, store as u32, arg, None))
+        })
+        .or_else(|| {
+            lane_access(operator).map(|(direction, selector, arg, lane_op, lane)| {
+                (direction, selector, arg, Some((lane_op, lane)))
+            })
+        })
 }
 
 /// The Memory32 binding `operator` shares with the body's other loads and stores,
@@ -587,13 +570,7 @@ impl super::Lowering<'_> {
         slot: usize,
     ) -> Result<crate::bytecode::Register, crate::Diagnostic> {
         let register = self.push()?;
-        self.emit(
-            crate::bytecode::Op::WasmInstanceBinding,
-            register,
-            0,
-            0,
-            slot as u32,
-        )?;
+        self.emit_emission(wasm_emit_data::instance_binding(register, slot as u32))?;
         Ok(register)
     }
 
@@ -601,88 +578,128 @@ impl super::Lowering<'_> {
         &mut self,
         operator: &wasmparser::Operator<'_>,
     ) -> Result<bool, crate::Diagnostic> {
-        use crate::bytecode::Op;
         if self.atomic_operator(operator)? || self.bulk_memory_operator(operator)? {
             return Ok(true);
         }
-        if let Some((op, memarg)) = direct_access(operator)
-            && let Some(&Some(memory)) = self.memory_registers.get(memarg.memory as usize)
-        {
-            if self.path == super::Reachability::Dead {
-                return Ok(true);
-            }
-            let offset = u32::try_from(memarg.offset).map_err(|_| {
-                crate::Diagnostic::unsupported(self.name, "Wasm memory32 offset out of range")
-            })?;
-            if MemoryStore::from_direct_op(op).is_some() {
-                let value = self.pop()?;
-                let address = self.pop()?;
-                self.emit(op, value, memory, address, offset)?;
-            } else {
-                let address = self.pop()?;
-                let result = self.push()?;
-                self.emit(op, result, memory, address, offset)?;
-                self.produced(result);
-            }
+        if self.direct_memory_operator(operator)? || self.addressed_memory_operator(operator)? {
             return Ok(true);
         }
-        let access = MemoryLoad::from_wasm(operator)
-            .map(|(op, arg)| (Op::WasmMemoryLoad, op as u32, arg, None))
-            .or_else(|| {
-                MemoryStore::from_wasm(operator)
-                    .map(|(op, arg)| (Op::WasmMemoryStore, op as u32, arg, None))
-            })
-            .or_else(|| {
-                lane_access(operator).map(|(op, selector, arg, lane_op, lane)| {
-                    (op, selector, arg, Some((lane_op, lane)))
-                })
-            });
-        if let Some((op, selector, arg, lane_op)) = access {
-            self.memories.get(arg.memory as usize).ok_or_else(|| {
-                crate::Diagnostic::unsupported(self.name, "Wasm memory out of bounds")
-            })?;
-            if self.path == super::Reachability::Dead {
-                return Ok(true);
-            }
-            let value = if op == Op::WasmMemoryStore || lane_op.is_some() {
-                Some(self.pop()?)
-            } else {
-                None
-            };
+        self.memory_size_operator(operator)
+    }
+
+    /// A scalar access the direct opcode addresses through the memory's binding register.
+    fn direct_memory_operator(
+        &mut self,
+        operator: &wasmparser::Operator<'_>,
+    ) -> Result<bool, crate::Diagnostic> {
+        let Some((op, memarg)) = direct_access(operator) else {
+            return Ok(false);
+        };
+        let Some(&Some(memory)) = self.memory_registers.get(memarg.memory as usize) else {
+            return Ok(false);
+        };
+        if self.path == super::Reachability::Dead {
+            return Ok(true);
+        }
+        let offset = u32::try_from(memarg.offset).map_err(|_| {
+            crate::Diagnostic::unsupported(self.name, "Wasm memory32 offset out of range")
+        })?;
+        if MemoryStore::from_direct_op(op).is_some() {
+            let value = self.pop()?;
             let address = self.pop()?;
-            let depth = self.depth;
-            // Reserve the consumed registers until both operands have been read.
-            self.depth = address + if value.is_some() { 2 } else { 1 };
-            let memory = self.memory_binding(arg.memory)?;
-            let effective = self.push()?;
-            let offset = self.scalar_constant(WasmValue::I64(arg.offset as i64))?;
-            self.emit(Op::WasmMemoryAddress, effective, address, memory, offset)?;
-            if let Some((lane_op, lane)) = lane_op {
-                let lane_selector = lane_op.selector(lane);
-                if super::simd::SimdOperator::from_selector(lane_selector).is_none() {
-                    return Err(crate::Diagnostic::unsupported(
-                        self.name,
-                        "invalid SIMD memory lane",
-                    ));
-                }
-                let scalar = self.push()?;
-                let vector = value.expect("lane access vector operand");
-                if op == Op::WasmMemoryLoad {
-                    self.emit(op, scalar, memory, effective, selector)?;
-                    self.emit(Op::WasmSimd, address, vector, scalar, lane_selector)?;
-                } else {
-                    self.emit(Op::WasmSimd, scalar, vector, 0, lane_selector)?;
-                    self.emit(op, scalar, memory, effective, selector)?;
-                }
-            } else {
-                self.emit(op, value.unwrap_or(address), memory, effective, selector)?;
-            }
-            self.depth = depth;
-            if op == Op::WasmMemoryLoad {
-                self.push()?;
-            }
+            self.emit(op, value, memory, address, offset)?;
+        } else {
+            let address = self.pop()?;
+            let result = self.push()?;
+            self.emit(op, result, memory, address, offset)?;
+            self.produced(result);
+        }
+        Ok(true)
+    }
+
+    /// A scalar or lane access through an effective address, loaded from the memory's binding.
+    fn addressed_memory_operator(
+        &mut self,
+        operator: &wasmparser::Operator<'_>,
+    ) -> Result<bool, crate::Diagnostic> {
+        let Some((direction, selector, arg, lane)) = access_operator(operator) else {
+            return Ok(false);
+        };
+        self.memories.get(arg.memory as usize).ok_or_else(|| {
+            crate::Diagnostic::unsupported(self.name, "Wasm memory out of bounds")
+        })?;
+        if self.path == super::Reachability::Dead {
             return Ok(true);
         }
+        let value = if direction == Direction::Store || lane.is_some() {
+            Some(self.pop()?)
+        } else {
+            None
+        };
+        let address = self.pop()?;
+        let depth = self.depth;
+        // Reserve the consumed registers until both operands have been read.
+        self.depth = address + if value.is_some() { 2 } else { 1 };
+        let memory = self.memory_binding(arg.memory)?;
+        let effective = self.push()?;
+        let offset = self.scalar_constant(WasmValue::I64(arg.offset as i64))?;
+        self.emit_emission(wasm_emit_data::memory_address(effective, address, memory, offset))?;
+        let operands = AddressedAccess { direction, selector, value, address, memory, effective };
+        self.emit_addressed_access(operands, lane)?;
+        self.depth = depth;
+        if direction == Direction::Load {
+            self.push()?;
+        }
+        Ok(true)
+    }
+
+    /// The access of an addressed operand: a scalar access, or a lane access when `lane` names one.
+    fn emit_addressed_access(
+        &mut self,
+        operands: AddressedAccess,
+        lane: Option<(super::simd::SimdOperator, u8)>,
+    ) -> Result<(), crate::Diagnostic> {
+        let AddressedAccess { direction, selector, value, address, memory, effective } = operands;
+        let Some((lane_op, lane)) = lane else {
+            let target = value.unwrap_or(address);
+            let emission = match direction {
+                Direction::Load => wasm_emit_data::memory_load(target, memory, effective, selector),
+                Direction::Store => wasm_emit_data::memory_store(target, memory, effective, selector),
+            };
+            return self.emit_emission(emission);
+        };
+        let vector = value.expect("lane access vector operand");
+        let access = LaneAccess { direction, lane_op, lane, selector, address, vector, memory, effective };
+        self.lane_memory_access(access)
+    }
+
+    /// A lane access: a scalar access of the lane's word composed with the SIMD lane rule.
+    fn lane_memory_access(&mut self, lane: LaneAccess) -> Result<(), crate::Diagnostic> {
+        let lane_selector = lane.lane_op.selector(lane.lane);
+        if super::simd::SimdOperator::from_selector(lane_selector).is_none() {
+            return Err(crate::Diagnostic::unsupported(self.name, "invalid SIMD memory lane"));
+        }
+        let scalar = self.push()?;
+        let emissions = match lane.direction {
+            Direction::Load => [
+                wasm_emit_data::memory_load(scalar, lane.memory, lane.effective, lane.selector),
+                wasm_emit_data::lane_replace(lane.address, lane.vector, scalar, lane_selector),
+            ],
+            Direction::Store => [
+                wasm_emit_data::lane_extract(scalar, lane.vector, lane_selector),
+                wasm_emit_data::memory_store(scalar, lane.memory, lane.effective, lane.selector),
+            ],
+        };
+        for emission in emissions {
+            self.emit_emission(emission)?;
+        }
+        Ok(())
+    }
+
+    fn memory_size_operator(
+        &mut self,
+        operator: &wasmparser::Operator<'_>,
+    ) -> Result<bool, crate::Diagnostic> {
         let (index, grow) = match operator {
             wasmparser::Operator::MemorySize { mem } => (*mem, false),
             wasmparser::Operator::MemoryGrow { mem } => (*mem, true),
@@ -698,20 +715,38 @@ impl super::Lowering<'_> {
         let result = self.push()?;
         let depth = self.depth;
         let memory = self.memory_binding(index)?;
-        self.emit(
-            if grow {
-                Op::WasmMemoryGrow
-            } else {
-                Op::WasmMemorySize
-            },
-            result,
-            memory,
-            delta.unwrap_or(0),
-            0,
-        )?;
+        let emission = match delta {
+            Some(delta) => wasm_emit_data::memory_grow(result, memory, delta),
+            None => wasm_emit_data::memory_size(result, memory),
+        };
+        self.emit_emission(emission)?;
         self.depth = depth;
         Ok(true)
     }
+}
+
+/// The operands of one addressed access: its direction, its selector, the stored value when it
+/// has one, the address, the memory and the effective address.
+struct AddressedAccess {
+    direction: Direction,
+    selector: u32,
+    value: Option<Register>,
+    address: Register,
+    memory: Register,
+    effective: Register,
+}
+
+/// The operands of one lane access: its direction and the SIMD lane rule with its lane, the
+/// memory access's selector, the address, the vector, the memory and the effective address.
+struct LaneAccess {
+    direction: Direction,
+    lane_op: super::simd::SimdOperator,
+    lane: u8,
+    selector: u32,
+    address: Register,
+    vector: Register,
+    memory: Register,
+    effective: Register,
 }
 
 impl super::Lowering<'_> {
@@ -726,25 +761,13 @@ impl super::Lowering<'_> {
         &mut self,
         operator: &wasmparser::Operator<'_>,
     ) -> Result<bool, crate::Diagnostic> {
-        use crate::bytecode::{ImmediateLayout, Op};
-        let (op, destination, source) = match *operator {
-            wasmparser::Operator::DataDrop { data_index } => {
-                let slot = self.data_slot(data_index)?;
-                self.drop_instance_binding(slot)?;
-                return Ok(true);
-            }
-            wasmparser::Operator::MemoryInit { data_index, mem } => {
-                self.data_slot(data_index)?;
-                (Op::WasmMemoryInit, mem, Some(data_index))
-            }
-            wasmparser::Operator::MemoryCopy { dst_mem, src_mem } => {
-                self.memories.get(src_mem as usize).ok_or_else(|| {
-                    crate::Diagnostic::unsupported(self.name, "Wasm memory out of bounds")
-                })?;
-                (Op::WasmMemoryCopy, dst_mem, Some(src_mem))
-            }
-            wasmparser::Operator::MemoryFill { mem } => (Op::WasmMemoryFill, mem, None),
-            _ => return Ok(false),
+        if let wasmparser::Operator::DataDrop { data_index } = *operator {
+            let slot = self.data_slot(data_index)?;
+            self.drop_instance_binding(slot)?;
+            return Ok(true);
+        }
+        let Some((bulk, destination, source)) = self.bulk_operands(operator)? else {
+            return Ok(false);
         };
         self.memories.get(destination as usize).ok_or_else(|| {
             crate::Diagnostic::unsupported(self.name, "Wasm memory out of bounds")
@@ -759,25 +782,65 @@ impl super::Lowering<'_> {
         // Keep the consumed three operands intact while loading heap bindings.
         self.depth = length + 1;
         let memory = self.memory_binding(destination)?;
-        let source = match source {
-            Some(index) if op == Op::WasmMemoryInit => {
-                self.instance_binding(usize::from(self.data_slot(index)?))?
+        let source = self.bulk_source(bulk, source, input)?;
+        let emission = match bulk {
+            BulkOperator::Init => wasm_emit_data::memory_init(memory, source, length, output, input),
+            BulkOperator::Transfer => {
+                wasm_emit_data::memory_copy(memory, source, length, output, input)
             }
-            Some(index) => self.memory_binding(index)?,
-            None => input,
+            BulkOperator::Fill => wasm_emit_data::memory_fill(memory, input, length, output),
         };
-        let addresses = ImmediateLayout::register_pair_immediate(
-            output,
-            if op == Op::WasmMemoryFill {
-                output
-            } else {
-                input
-            },
-        );
-        self.emit(op, memory, source, length, addresses)?;
+        self.emit_emission(emission)?;
         self.depth = depth;
         Ok(true)
     }
+
+    /// The bulk operator, its destination memory and its source (a data segment or a memory),
+    /// when `operator` is one of the bulk operators that move or fill bytes.
+    fn bulk_operands(
+        &self,
+        operator: &wasmparser::Operator<'_>,
+    ) -> Result<Option<(BulkOperator, u32, Option<u32>)>, crate::Diagnostic> {
+        Ok(match *operator {
+            wasmparser::Operator::MemoryInit { data_index, mem } => {
+                self.data_slot(data_index)?;
+                Some((BulkOperator::Init, mem, Some(data_index)))
+            }
+            wasmparser::Operator::MemoryCopy { dst_mem, src_mem } => {
+                self.memories.get(src_mem as usize).ok_or_else(|| {
+                    crate::Diagnostic::unsupported(self.name, "Wasm memory out of bounds")
+                })?;
+                Some((BulkOperator::Transfer, dst_mem, Some(src_mem)))
+            }
+            wasmparser::Operator::MemoryFill { mem } => Some((BulkOperator::Fill, mem, None)),
+            _ => None,
+        })
+    }
+
+    /// The register a bulk operation reads: a data segment's instance binding, another memory's
+    /// binding, or the fill value.
+    fn bulk_source(
+        &mut self,
+        bulk: BulkOperator,
+        source: Option<u32>,
+        input: Register,
+    ) -> Result<Register, crate::Diagnostic> {
+        match (bulk, source) {
+            (BulkOperator::Init, Some(index)) => {
+                self.instance_binding(usize::from(self.data_slot(index)?))
+            }
+            (_, Some(index)) => self.memory_binding(index),
+            (_, None) => Ok(input),
+        }
+    }
+}
+
+/// The bulk memory operators that share one operand shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BulkOperator {
+    Init,
+    Transfer,
+    Fill,
 }
 
 mod direct;

@@ -3,6 +3,7 @@
 use super::memory::{MemoryLoad, MemoryStorage, MemoryStore};
 use super::{WasmTrap, WasmType, WasmValue};
 use crate::shared_backing::memory_order;
+use crate::staged::wasm_emit_data;
 
 pub(crate) fn fence() {
     let _order = memory_order();
@@ -217,11 +218,8 @@ impl super::Lowering<'_> {
         &mut self,
         operator: &wasmparser::Operator<'_>,
     ) -> Result<bool, crate::Diagnostic> {
-        use crate::bytecode::Op;
         if matches!(operator, wasmparser::Operator::AtomicFence) {
-            if self.path != super::Reachability::Dead {
-                self.emit(Op::WasmAtomicFence, 0, 0, 0, 0)?;
-            }
+            if self.path != super::Reachability::Dead { self.emit_emission(wasm_emit_data::atomic_fence())?; }
             return Ok(true);
         }
         let Some((operator, arg)) = AtomicOperator::from_wasm(operator) else {
@@ -243,18 +241,12 @@ impl super::Lowering<'_> {
         let memory = self.atomic_window_memory(arg.memory, result + guest_count)?;
         let address = self.push()?;
         let offset = self.scalar_constant(WasmValue::I64(arg.offset as i64))?;
-        self.emit(Op::WasmMemoryAddress, address, result, memory, offset)?;
+        self.emit_emission(wasm_emit_data::memory_address(address, result, memory, offset))?;
         for index in 1..guest_count {
             let target = self.push()?;
-            self.emit(Op::Move, target, result + index, 0, 0)?;
+            self.emit_emission(wasm_emit_data::register_copy(target, result + index))?;
         }
-        self.emit(
-            Op::WasmAtomicAccess,
-            result,
-            memory,
-            operator.input_count(),
-            operator as u32,
-        )?;
+        self.emit_emission(wasm_emit_data::atomic_access(result, memory, operator.input_count(), operator as u32))?;
         self.depth = result;
         if operator.returns_value() {
             self.push()?;
@@ -275,7 +267,7 @@ impl super::Lowering<'_> {
         }
         let moved = self.push()?;
         debug_assert_eq!(moved, window, "the window's first input follows its guest inputs");
-        self.emit(crate::bytecode::Op::Move, moved, memory, 0, 0)?;
+        self.emit_emission(wasm_emit_data::register_copy(moved, memory))?;
         Ok(moved)
     }
 }

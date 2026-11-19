@@ -50,7 +50,7 @@ use crate::staged::wasm_flow::Flow as WasmFlow;
 use crate::staged::wasm_instance::Instance;
 use crate::staged::wasm_operation::{Form, WasmOperation};
 use crate::staged::wasm_simd::Simd;
-use crate::staged::wasm_step::Step;
+use crate::staged::wasm_step::{Family, Step, opcodes};
 use crate::staged::wasm::Width;
 
 /// The arithmetic operators the lane decides per operator (`lane_operator`,
@@ -11238,8 +11238,8 @@ lane_handler! {
     fn lane_float_binary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let left = read::<ACC, ACC_B>(r, i.b, view);
         let right = read::<ACC, ACC_C>(r, i.c, view);
-        let raw = const { opcode(OP).class().eq(Class::WasmFloatBinary64Raw) };
-        let value = if const { opcode(OP).class().eq(Class::WasmFloatBinary64) || opcode(OP).class().eq(Class::WasmFloatBinary64Raw) } {
+        let raw = const { matches!(Family::of(opcode(OP)), Some(Family::FloatBinary64 { raw: true })) };
+        let value = if const { matches!(Family::of(opcode(OP)), Some(Family::FloatBinary64 { .. })) } {
             let (Some(left), Some(right), Some(operator)) = (
                 if raw { Some(left.to_bits()) } else { left.bits64() },
                 if raw { Some(right.to_bits()) } else { right.bits64() },
@@ -11283,8 +11283,8 @@ const FLOAT_ARITHMETIC: usize = 10;
 
 /// The arithmetic index of a float binary selector, when it has one.
 fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
-    Some(match op.class() {
-        Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => match F64BinaryOperator::from_tag(selector)? {
+    Some(match Family::of(op) {
+        Some(Family::FloatBinary64 { .. }) => match F64BinaryOperator::from_tag(selector)? {
             F64BinaryOperator::Add => FLOAT_ADD,
             F64BinaryOperator::Subtract => FLOAT_SUBTRACT,
             F64BinaryOperator::Multiply => FLOAT_MULTIPLY,
@@ -11297,7 +11297,7 @@ fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
             F64BinaryOperator::GreaterEqual => FLOAT_GREATER_EQUAL,
             _ => return None,
         },
-        Class::WasmFloatBinary32 => match F32BinaryOperator::from_tag(selector)? {
+        Some(Family::FloatBinary32) => match F32BinaryOperator::from_tag(selector)? {
             F32BinaryOperator::Add => FLOAT_ADD,
             F32BinaryOperator::Subtract => FLOAT_SUBTRACT,
             F32BinaryOperator::Multiply => FLOAT_MULTIPLY,
@@ -11386,9 +11386,9 @@ fn f64_operation(arith: u8, left: f64, right: f64) -> Result<f64, bool> {
 
 /// The width index of float binary `op` in `FloatArithmetic::HANDLERS`.
 fn float_width_index(op: Op) -> usize {
-    match op.class() {
-        Class::WasmFloatBinary64Raw => 2,
-        Class::WasmFloatBinary64 => 1,
+    match Family::of(op) {
+        Some(Family::FloatBinary64 { raw: true }) => 2,
+        Some(Family::FloatBinary64 { raw: false }) => 1,
         _ => 0,
     }
 }
@@ -11622,7 +11622,7 @@ impl<H: Host> FloatPairs<H> {
     /// second's left operand, and the first's accumulator field.
     const HANDLERS: [[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
         FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H, false);
-    /// The same over raw registers (`Class::WasmFloatBinary64Raw`).
+    /// The same over raw registers (`Family::FloatBinary64 { raw: true }`).
     const RAW_HANDLERS: [[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
         FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H, true);
     /// An f64 load fused with the operator taking its value, by second
@@ -11710,8 +11710,8 @@ lane_handler! {
 lane_handler! {
     fn lane_float_unary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let input = read::<ACC, ACC_B>(r, i.b, view);
-        let raw = const { opcode(OP).class().eq(Class::WasmFloatUnary64Raw) };
-        let value = if const { opcode(OP).is_wasm_f64_unary() || opcode(OP).class().eq(Class::WasmFloatUnary64Raw) } {
+        let raw = const { matches!(Family::of(opcode(OP)), Some(Family::FloatUnary64 { raw: true })) };
+        let value = if const { opcode(OP).is_wasm_f64_unary() || matches!(Family::of(opcode(OP)), Some(Family::FloatUnary64 { raw: true })) } {
             let (Some(input), Some(operator)) =
                 (if raw { Some(input.to_bits()) } else { input.bits64() }, F64UnaryOperator::from_tag(i.imm()))
             else {
@@ -12618,7 +12618,7 @@ lane_handler! {
     fn lane_bit_field_then<SECOND: u16, ACC: u8>(cx, r, ip, i, view) {
         let (operator, immediate) = const {
             let second = opcode(SECOND);
-            if second.class().eq(Class::WasmI32ShiftRightUnsignedAnd) { (None, true) }
+            if second.is_wasm_i32_shift_right_unsigned_and_immediate() { (None, true) }
             else if let Some(operator) = I32BinaryOperator::from_register_op(second) { (Some(operator), false) }
             else if let Some(operator) = I32BinaryOperator::from_immediate_op(second) { (Some(operator), true) }
             else { panic!("not an i32 operator") }
@@ -12715,16 +12715,16 @@ fn compare_jump_load_handler<H: Host>(jump: Op, load: Op, backward: bool, acc: u
     }
     macro_rules! loads {
         ($jump:ident) => {
-            match load.class() {
-                Class::WasmI32Load => accs!($jump, WasmI32Load),
-                Class::WasmI32Load8U => accs!($jump, WasmI32Load8U),
+            match MemoryLoad::from_direct_op(load) {
+                Some(MemoryLoad::I32Load) => accs!($jump, WasmI32Load),
+                Some(MemoryLoad::I32Load8U) => accs!($jump, WasmI32Load8U),
                 _ => None,
             }
         };
     }
-    match jump.class() {
-        Class::WasmJumpI32EqualImmediate => loads!(WasmJumpI32EqualImmediate),
-        Class::WasmJumpI32NotEqualImmediate => loads!(WasmJumpI32NotEqualImmediate),
+    match I32BinaryOperator::from_immediate_jump_op(jump) {
+        Some(I32BinaryOperator::Equal) => loads!(WasmJumpI32EqualImmediate),
+        Some(I32BinaryOperator::NotEqual) => loads!(WasmJumpI32NotEqualImmediate),
         _ => None,
     }
 }
@@ -12736,10 +12736,13 @@ lane_handler! {
     /// first result is written before the second reads its operands, as two records do.
     fn lane_add_pair<FIRST: u16, SECOND: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
         let first_immediate = const {
-            match opcode(FIRST).class() {
-                Class::WasmI32AddRegister => false,
-                Class::WasmI32AddImmediate => true,
-                _ => panic!("not an i32 add"),
+            let first = opcode(FIRST);
+            if first.is_wasm_i32_add_immediate() {
+                true
+            } else if first.is_wasm_i32_add() {
+                false
+            } else {
+                panic!("not an i32 add")
             }
         };
         let right = if first_immediate { i.imm() as i32 } else { read_i32::<ACC, ACC_C>(r, i.c, view) };
@@ -12749,8 +12752,8 @@ lane_handler! {
         // SAFETY: the view fuses an add only with a following add or loop step.
         let second = unsafe { &*second_ip };
         let view = Carried { acc: Slot::of(first), ..view };
-        match const { opcode(SECOND).class() } {
-            Class::WasmI32AddJump => {
+        match const { opcode(SECOND) } {
+            opcodes::I32_ADD_IMMEDIATE_JUMP_NON_ZERO => {
                 let sum = r.i32(second.b).wrapping_add(i32::from(second.c as i16));
                 let encoded = view.integers.encode(sum);
                 if sum != 0 {
@@ -12758,7 +12761,7 @@ lane_handler! {
                 }
                 produce!(cx, r, second_ip, second.a, encoded, view)
             }
-            Class::WasmI32AddImmediate => {
+            opcodes::I32_ADD_IMMEDIATE => {
                 let sum = r.i32(second.b).wrapping_add(second.imm() as i32);
                 produce!(cx, r, second_ip, second.a, view.integers.encode(sum), view)
             }
@@ -12784,18 +12787,18 @@ fn add_pair_handler<H: Host>(first: Op, second: Op, backward: bool, acc: u8) -> 
     }
     macro_rules! seconds {
         ($first:ident) => {
-            match (second.class(), backward) {
-                (Class::WasmI32AddRegister, _) => accs!($first, WasmI32Add, false),
-                (Class::WasmI32AddImmediate, _) => accs!($first, WasmI32AddImmediate, false),
-                (Class::WasmI32AddJump, false) => accs!($first, WasmI32AddImmediateJumpNonZero, false),
-                (Class::WasmI32AddJump, true) => accs!($first, WasmI32AddImmediateJumpNonZero, true),
+            match (second, backward) {
+                (opcodes::I32_ADD, _) => accs!($first, WasmI32Add, false),
+                (opcodes::I32_ADD_IMMEDIATE, _) => accs!($first, WasmI32AddImmediate, false),
+                (opcodes::I32_ADD_IMMEDIATE_JUMP_NON_ZERO, false) => accs!($first, WasmI32AddImmediateJumpNonZero, false),
+                (opcodes::I32_ADD_IMMEDIATE_JUMP_NON_ZERO, true) => accs!($first, WasmI32AddImmediateJumpNonZero, true),
                 _ => None,
             }
         };
     }
-    match first.class() {
-        Class::WasmI32AddRegister => seconds!(WasmI32Add),
-        Class::WasmI32AddImmediate => seconds!(WasmI32AddImmediate),
+    match first {
+        opcodes::I32_ADD => seconds!(WasmI32Add),
+        opcodes::I32_ADD_IMMEDIATE => seconds!(WasmI32AddImmediate),
         _ => None,
     }
 }
@@ -12857,8 +12860,8 @@ fn immediate_compare_jump_handler<H: Host>(first: Op, jump: Op, backward: bool) 
         };
     }
     // Masked tag tests; each further pairing is another family of handler copies.
-    match first as u16 {
-        opc::WasmI32AndImmediate => tested!(WasmI32AndImmediate),
+    match first {
+        opcodes::I32_AND_IMMEDIATE => tested!(WasmI32AndImmediate),
         _ => None,
     }
 }
@@ -21414,9 +21417,9 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         _ if matches!(Instance::of(opcode), Some(Instance::Binding)) => Some(lane_instance_binding::<H, false>),
         _ if matches!(Instance::of(opcode), Some(Instance::GlobalGet)) => Some(lane_global_get::<H>),
         _ if matches!(Step::of(opcode, 0), Some(Step::Simd(Simd::Operator { .. }))) => Some(lane_wasm_simd::<H>),
-        Class::WasmMemoryLoad => Some(lane_wasm_memory_load::<H>),
+        _ if matches!(Family::of(opcode), Some(Family::MemoryLoad)) => Some(lane_wasm_memory_load::<H>),
         _ if matches!(Step::of(opcode, 0), Some(Step::Simd(Simd::Address))) => Some(lane_wasm_memory_address::<H>),
-        Class::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
+        _ if matches!(Family::of(opcode), Some(Family::MemoryStore)) => Some(lane_wasm_memory_store::<H>),
         _ if matches!(Step::of(opcode, 0), Some(Step::Simd(Simd::Shuffle))) => Some(lane_wasm_simd_shuffle::<H>),
         _ if matches!(Instance::of(opcode), Some(Instance::GlobalSet)) => Some(lane_global_set::<H>),
         _ if matches!(Instance::of(opcode), Some(Instance::Fill)) => Some(lane_fill_registers::<H>),
@@ -22159,7 +22162,7 @@ fn derive_lane_view<'live, H: Host>(
         for pc in 0..records.len().saturating_sub(1) {
             let instruction = decoded[pc];
             let next = decoded[pc + 1];
-            let plain_add = serves(records[pc].handler, opc::WasmI32AddImmediate, ACC_NONE);
+            let plain_add = serves(records[pc].handler, opcodes::I32_ADD_IMMEDIATE as u16, ACC_NONE);
             let carried_load = serves(records[pc + 1].handler, next.op() as u16, ACC_C);
             if instruction.op().is_wasm_i32_add_immediate()
                 && plain_add
@@ -22192,7 +22195,7 @@ fn derive_lane_view<'live, H: Host>(
                 .find(|acc| serves(records[pc].handler, instruction.op() as u16, *acc));
             if let Some(field) = field
                 && next.a() == instruction.a()
-                && serves(records[pc + 1].handler, opc::WasmBranchTable, ACC_NONE)
+                && serves(records[pc + 1].handler, opcodes::BRANCH_TABLE as u16, ACC_NONE)
                 && let Some(fused) = load_table_handler::<H>(instruction.op(), field, false)
             {
                 records[pc].handler = fused as *const ();
@@ -22200,7 +22203,7 @@ fn derive_lane_view<'live, H: Host>(
                 // field joins as well.
                 if pc > 0
                     && field == ACC_NONE
-                    && serves(records[pc - 1].handler, opc::WasmI32AddImmediate, ACC_NONE)
+                    && serves(records[pc - 1].handler, opcodes::I32_ADD_IMMEDIATE as u16, ACC_NONE)
                     && let Some(fused) = load_table_handler::<H>(instruction.op(), ACC_NONE, true)
                 {
                     records[pc - 1].handler = fused as *const ();
@@ -22213,10 +22216,10 @@ fn derive_lane_view<'live, H: Host>(
             let variant = |op: u16, acc: u8, at: usize| serves(records[at].handler, op, acc);
             let field = [ACC_NONE, ACC_B]
                 .into_iter()
-                .position(|acc| variant(opc::WasmI32ShiftLeftImmediate, acc, pc));
+                .position(|acc| variant(opcodes::SHIFT_LEFT_IMMEDIATE as u16, acc, pc));
             let left = [ACC_C, ACC_B]
                 .into_iter()
-                .position(|acc| variant(opc::WasmI32Add, acc, pc + 1));
+                .position(|acc| variant(opcodes::I32_ADD as u16, acc, pc + 1));
             if let (Some(field), Some(left)) = (field, left) {
                 records[pc].handler = ScaledIndex::<H>::HANDLERS[field][left] as *const ();
             }
@@ -22232,13 +22235,13 @@ fn derive_lane_view<'live, H: Host>(
             }
             let field = [ACC_NONE, ACC_C]
                 .into_iter()
-                .find(|&acc| serves(records[pc].handler, opc::WasmI32Load, acc));
+                .find(|&acc| serves(records[pc].handler, opcodes::I32_LOAD as u16, acc));
             let left = [ACC_C, ACC_B]
                 .into_iter()
                 .position(|acc| serves(records[pc + 1].handler, combine.op() as u16, acc));
             if let (Some(field), Some(left)) = (field, left)
                 && store.a() == combine.a()
-                && serves(records[pc + 2].handler, opc::WasmI32Store, ACC_A)
+                && serves(records[pc + 2].handler, opcodes::I32_STORE as u16, ACC_A)
                 && let Some(fused) = i32_update_handler::<H>(combine.op(), left == 1, field)
             {
                 records[pc].handler = fused as *const ();
@@ -22287,8 +22290,8 @@ fn derive_lane_view<'live, H: Host>(
         let op = decoded[pc].op();
         [ACC_NONE, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op as u16, acc)).filter(|_| {
             matches!(
-                op.class(),
-                Class::WasmI32Load | Class::WasmI32Load8S | Class::WasmI32Load8U | Class::WasmI32Load16S | Class::WasmI32Load16U
+                MemoryLoad::from_direct_op(op),
+                Some(MemoryLoad::I32Load | MemoryLoad::I32Load8S | MemoryLoad::I32Load8U | MemoryLoad::I32Load16S | MemoryLoad::I32Load16U)
             )
         })
     };
@@ -22301,11 +22304,11 @@ fn derive_lane_view<'live, H: Host>(
             else {
                 continue;
             };
-            if !matches!(first.op().class(), Class::WasmI32AddImmediate | Class::WasmI32SubtractImmediate)
+            if !(first.op().is_wasm_i32_add_immediate() || first.op().is_wasm_i32_subtract_immediate())
                 || !mask.op().is_wasm_i32_and_immediate()
                 || mask.b() != first.a()
                 || jump.a() != mask.a()
-                || ![ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, opc::WasmI32AndImmediate, acc))
+                || ![ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, opcodes::I32_AND_IMMEDIATE as u16, acc))
             {
                 continue;
             }
@@ -22392,7 +22395,7 @@ fn derive_lane_view<'live, H: Host>(
             if !serves(records[pc + 1].handler, opc::LoadConst, ACC_NONE)
                 || ![ACC_NONE, ACC_B, ACC_C, ACC_PAIR]
                     .into_iter()
-                    .any(|acc| serves(records[pc + 2].handler, opc::WasmSelect, acc))
+                    .any(|acc| serves(records[pc + 2].handler, opcodes::SELECT as u16, acc))
                 || !constant.op().is_load_const()
             {
                 continue;
@@ -22459,7 +22462,7 @@ fn derive_lane_view<'live, H: Host>(
         }
         let (handler, c) = if plain(opc::Move) {
             (JumpFusions::<H>::THROUGH[0][usize::from(backward)], 0)
-        } else if plain(opc::WasmI32AddImmediate)
+        } else if plain(opcodes::I32_ADD_IMMEDIATE as u16)
             && let Ok(step) = i16::try_from(absorbed.imm() as i32)
         {
             (
@@ -22507,7 +22510,7 @@ fn derive_lane_view<'live, H: Host>(
         let plain = |op: u16| serves(records[pc].handler, op, ACC_NONE);
         let add = if plain(opc::Move) {
             false
-        } else if plain(opc::WasmI32AddImmediate) {
+        } else if plain(opcodes::I32_ADD_IMMEDIATE as u16) {
             true
         } else {
             continue;
@@ -22561,7 +22564,7 @@ fn derive_lane_view<'live, H: Host>(
                         .map(|acc| acc == ACC_B)
                 };
                 if instruction.op().is_wasm_f64_load() {
-                    let plain = tables[0][usize::from(ACC_NONE)][opc::WasmF64Load as usize]?;
+                    let plain = tables[0][usize::from(ACC_NONE)][opcodes::F64_LOAD as usize]?;
                     if records[pc].handler != plain.handler as *const () {
                         return None;
                     }
@@ -22575,7 +22578,7 @@ fn derive_lane_view<'live, H: Host>(
                                 && store.a() == next.a()
                                 && [ACC_NONE, ACC_A]
                                     .into_iter()
-                                    .any(|acc| serves(records[pc + 2].handler, opc::WasmF64Store, acc))
+                                    .any(|acc| serves(records[pc + 2].handler, opcodes::F64_STORE as u16, acc))
                         };
                     if updates {
                         return Some((
@@ -22616,7 +22619,7 @@ fn derive_lane_view<'live, H: Host>(
                 // store may read it plainly or through the accumulator.
                 let store_runs = [ACC_NONE, ACC_A]
                     .into_iter()
-                    .any(|acc| serves(records[pc + 1].handler, opc::WasmF64Store, acc));
+                    .any(|acc| serves(records[pc + 1].handler, opcodes::F64_STORE as u16, acc));
                 if !instruction.op().is_wasm_f64_binary()
                     || usize::from(first) >= FLOAT_PAIR_FIRSTS
                     || !next.op().is_wasm_f64_store()
@@ -22843,7 +22846,7 @@ fn derive_lane_view<'live, H: Host>(
             let second = decoded[pc + 1];
             let Some(acc) = [ACC_NONE, ACC_B]
                 .into_iter()
-                .find(|&acc| serves(records[pc].handler, opc::WasmI32ShiftRightUnsignedAndImmediate, acc))
+                .find(|&acc| serves(records[pc].handler, opcodes::SHIFT_RIGHT_UNSIGNED_AND_IMMEDIATE as u16, acc))
             else {
                 continue;
             };
@@ -22861,7 +22864,7 @@ fn derive_lane_view<'live, H: Host>(
         // accumulator also holds it).
         for pc in 0..records.len().saturating_sub(1) {
             let jump = decoded[pc];
-            if !matches!(jump.op().class(), Class::WasmJumpI32EqualImmediate | Class::WasmJumpI32NotEqualImmediate)
+            if !matches!(I32BinaryOperator::from_immediate_jump_op(jump.op()), Some(I32BinaryOperator::Equal | I32BinaryOperator::NotEqual))
                 || i32_load(&records, pc + 1).is_none()
             {
                 continue;
@@ -22881,7 +22884,7 @@ fn derive_lane_view<'live, H: Host>(
             else {
                 continue;
             };
-            if !matches!(first.op().class(), Class::WasmI32AddRegister | Class::WasmI32AddImmediate) {
+            if !(first.op().is_wasm_i32_add() || first.op().is_wasm_i32_add_immediate()) {
                 continue;
             }
             let Some((backward, _)) = plain_served(records[pc + 1].handler, second.op() as u16, &[ACC_NONE, ACC_B, ACC_C])

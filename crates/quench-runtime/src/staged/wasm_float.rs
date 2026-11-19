@@ -99,8 +99,6 @@ pub(crate) fn convert<S: WasmStage>(
     Ok(stage.convert(operator, value))
 }
 
-use crate::wasm::float::F64UnaryOperator as FloatUnary;
-
 /// The float operator a tag names, as `binary_operator` (`wasm::integer`): a tag outside the family
 /// names no row.
 #[cfg(stencil_build)]
@@ -113,7 +111,8 @@ pub(crate) const fn float_binary_operator(tag: u32) -> FloatBinary {
 
 /// The float unary operator a tag names, as `float_binary_operator`.
 #[cfg(stencil_build)]
-pub(crate) const fn float_unary_operator(tag: u32) -> FloatUnary {
+pub(crate) const fn float_unary_operator(tag: u32) -> crate::wasm::float::F64UnaryOperator {
+    use crate::wasm::float::F64UnaryOperator as FloatUnary;
     match FloatUnary::from_tag(tag) {
         Some(operator) => operator,
         None => FloatUnary::Absolute,
@@ -131,19 +130,16 @@ pub(crate) const fn conversion_operator(tag: u32) -> ScalarConversionOperator {
 }
 
 /// The sign bit of an f32 word, zero-extended, and of an f64 word.
-#[cfg(stencil_build)]
 const SIGN32: u64 = 0x8000_0000;
-#[cfg(stencil_build)]
 const SIGN64: u64 = 1 << 63;
+/// The mask of an i32 or u32 word, zero-extended: the bits a 32-bit result keeps.
+const WORD32: u64 = u32::MAX as u64;
 /// The exponent bias and the stored mantissa bits of an f64: `2^e` has the biased exponent `e +
 /// BIAS` in its field and no mantissa.
-#[cfg(stencil_build)]
 const EXPONENT_BIAS: u64 = (f64::MAX_EXP - 1) as u64;
-#[cfg(stencil_build)]
 const MANTISSA_BITS: u32 = f64::MANTISSA_DIGITS - 1;
 
 /// `2^exponent` as f64 bits.
-#[cfg(stencil_build)]
 pub(crate) const fn pow2_bits(exponent: u32) -> u64 {
     (EXPONENT_BIAS + exponent as u64) << MANTISSA_BITS
 }
@@ -151,14 +147,13 @@ pub(crate) const fn pow2_bits(exponent: u32) -> u64 {
 /// The f64 with IEEE bits `bits`. The black box keeps LLVM from folding the bits back into a float
 /// constant, so the value is an integer immediate in a register (`movabs`, `movq`), not a
 /// constant-pool load.
-#[cfg(stencil_build)]
 #[inline(always)]
 pub(crate) fn float_of_bits(bits: u64) -> f64 {
     f64::from_bits(core::hint::black_box(bits))
 }
 
-/// `truncation_bounds` (`wasm::conversion`) from integer bits: `lower <= value < limit`.
-#[cfg(stencil_build)]
+/// The bounds of a `bits`-wide integer as f64: a truncated value is kept when `lower <= value <
+/// limit`.
 #[inline(always)]
 pub(crate) fn truncation_limits(bits: u32, signed: bool) -> (f64, f64) {
     if signed {
@@ -170,7 +165,6 @@ pub(crate) fn truncation_limits(bits: u32, signed: bool) -> (f64, f64) {
 }
 
 /// A float operand widened to f64, exactly.
-#[cfg(stencil_build)]
 #[inline(always)]
 pub(crate) fn widen(float: Float, word: u64) -> f64 {
     match float {
@@ -182,7 +176,6 @@ pub(crate) fn widen(float: Float, word: u64) -> f64 {
 /// `value` truncated toward zero and clamped to the `bits`-wide integer, as the word a conversion
 /// leaves: a NaN is 0, and a 32-bit result is its low word, zero-extended. The trapping
 /// truncations clamp too, once their range check has passed, where it is the same truncation.
-#[cfg(stencil_build)]
 #[inline(always)]
 pub(crate) fn saturated(value: f64, bits: u32, signed: bool) -> u64 {
     if value.is_nan() {
@@ -190,8 +183,8 @@ pub(crate) fn saturated(value: f64, bits: u32, signed: bool) -> u64 {
     }
     let (lower, limit) = truncation_limits(bits, signed);
     let (min, max, mask) = match (bits, signed) {
-        (32, true) => (SIGN32, 0x7fff_ffff, 0xffff_ffff),
-        (32, false) => (0, 0xffff_ffff, 0xffff_ffff),
+        (32, true) => (SIGN32, i32::MAX as u64, WORD32),
+        (32, false) => (0, WORD32, WORD32),
         (_, true) => (SIGN64, i64::MAX as u64, u64::MAX),
         (_, false) => (0, u64::MAX, u64::MAX),
     };
@@ -216,7 +209,6 @@ pub(crate) fn saturated(value: f64, bits: u32, signed: bool) -> u64 {
 /// uses for an unsigned conversion (which loads a constant). A value under 2^63 converts as
 /// signed. A larger one halves with its low bit kept as a sticky bit, converts as signed, and adds
 /// to itself: the same rounding, exact.
-#[cfg(stencil_build)]
 #[inline(always)]
 pub(crate) fn unsigned_to_f64(value: u64) -> f64 {
     if (value as i64) >= 0 {
@@ -228,7 +220,6 @@ pub(crate) fn unsigned_to_f64(value: u64) -> f64 {
 }
 
 /// `value as f32` for an unsigned 64-bit `value`: `unsigned_to_f64`'s halving, at f32.
-#[cfg(stencil_build)]
 #[inline(always)]
 pub(crate) fn unsigned_to_f32(value: u64) -> f32 {
     if (value as i64) >= 0 {
@@ -240,11 +231,10 @@ pub(crate) fn unsigned_to_f32(value: u64) -> f32 {
 }
 
 /// CopySign at `float`: A's bits below the sign, B's sign bit. An f32 word is zero-extended.
-#[cfg(stencil_build)]
 #[inline(always)]
 pub(crate) fn copysign_bits(float: Float, left: u64, right: u64) -> u64 {
     match float {
-        Float::F32 => u64::from(((left as u32) & !(SIGN32 as u32)) | ((right as u32) & (SIGN32 as u32))),
+        Float::F32 => (left & !SIGN32 & WORD32) | (right & SIGN32),
         Float::F64 => (left & !SIGN64) | (right & SIGN64),
     }
 }

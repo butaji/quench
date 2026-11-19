@@ -480,3 +480,46 @@ impl MemoryStore {
         ConcreteMemory { memory }.memory_store(access, 0, 0, value.word());
     }
 }
+
+// Scalar memory32 accesses with a static offset have one opcode each. The access semantics
+// remain the MemoryLoad/MemoryStore rules above; the opcode only names the operator so dispatch
+// needs no selector decode.
+macro_rules! direct_accesses {
+    ($kind:ty; $($name:ident => $op:ident;)+) => {
+        impl $kind {
+            pub(crate) const fn direct_op(self) -> Option<crate::bytecode::Op> {
+                match self { $(Self::$name => Some(crate::bytecode::Op::$op),)+ #[allow(unreachable_patterns)] _ => None }
+            }
+            pub(crate) const fn from_direct_op(op: crate::bytecode::Op) -> Option<Self> {
+                match op { $(crate::bytecode::Op::$op => Some(Self::$name),)+ _ => None }
+            }
+        }
+    }
+}
+direct_accesses! { crate::wasm::memory::MemoryLoad;
+    I32Load => WasmI32Load;
+    I64Load => WasmI64Load;
+    F32Load => WasmF32Load;
+    F64Load => WasmF64Load;
+    I32Load8S => WasmI32Load8S;
+    I32Load8U => WasmI32Load8U;
+    I32Load16S => WasmI32Load16S;
+    I32Load16U => WasmI32Load16U;
+    I64Load8S => WasmI64Load8S;
+    I64Load8U => WasmI64Load8U;
+    I64Load16S => WasmI64Load16S;
+    I64Load16U => WasmI64Load16U;
+    I64Load32S => WasmI64Load32S;
+    I64Load32U => WasmI64Load32U;
+}
+direct_accesses! { crate::wasm::memory::MemoryStore;
+    I32Store => WasmI32Store;
+    I64Store => WasmI64Store;
+    F32Store => WasmF32Store;
+    F64Store => WasmF64Store;
+    I32Store8 => WasmI32Store8;
+    I32Store16 => WasmI32Store16;
+    I64Store8 => WasmI64Store8;
+    I64Store16 => WasmI64Store16;
+    I64Store32 => WasmI64Store32;
+}

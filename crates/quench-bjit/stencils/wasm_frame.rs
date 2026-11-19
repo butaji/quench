@@ -119,3 +119,35 @@ pub(crate) unsafe fn reload_memory(s: &mut S, length_at: usize) {
     s.p[3] = 0;
     s.f = [0.0; 8];
 }
+
+/// The vector in the two frame words at hole `H`'s offset, low word first (a v128 register's
+/// layout). Two word reads, never a 16-byte copy.
+#[inline(always)]
+pub(crate) unsafe fn vector_read<const H: u8>(s: &S) -> u128 {
+    unsafe {
+        let at = slot::<H>(s) as *const u64;
+        u128::from(*at) | (u128::from(*at.add(1)) << u64::BITS)
+    }
+}
+
+/// Writes `bits` to the two frame words at hole `H`'s offset, low word first.
+#[inline(always)]
+pub(crate) unsafe fn vector_write<const H: u8>(s: &S, bits: u128) {
+    unsafe {
+        let at = slot::<H>(s) as *mut u64;
+        *at = bits as u64;
+        *at.add(1) = (bits >> u64::BITS) as u64;
+    }
+}
+
+/// The word at frame offset `offset`, or 0 where the operand is absent (`CALLOUT_ABSENT`).
+#[inline(always)]
+pub(crate) unsafe fn operand(frame: usize, offset: u32) -> u64 {
+    if offset == crate::wasm_codes::CALLOUT_ABSENT { 0 } else { unsafe { *((frame + offset as usize) as *const u64) } }
+}
+
+/// The `NativeRoots` the context names at byte offset `at` of `CallContext` (`native_roots`).
+#[inline(always)]
+pub(crate) unsafe fn native_roots(context: usize, at: usize) -> *mut u8 {
+    unsafe { *(context.wrapping_add(at) as *const usize) as *mut u8 }
+}

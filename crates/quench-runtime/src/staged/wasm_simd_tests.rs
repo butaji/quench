@@ -11,7 +11,7 @@ use super::wasm_tests::Probe;
 use crate::bytecode::{InstructionField, Op, WideInstruction};
 use crate::wasm::V128_BYTES;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
-use crate::wasm::simd::{SimdKernel, SimdOperator, shuffle, value_of};
+use crate::wasm::simd::{SimdKernel, SimdOperator, bits_of, shuffle, value_of};
 
 const VECTORS: [u128; 7] = [
     0,
@@ -197,7 +197,7 @@ fn an_executed_operator_is_its_kernel_typed_by_its_table_entry() {
             let right = kernel.right.map(|ty| value_of(ty, *right));
             assert_eq!(
                 execute(selector, left, right),
-                (kernel.apply)(left, right, lane),
+                value_of(kernel.result_type(lane), kernel.apply_bits(bits_of(left), right.map_or(0, bits_of), lane)),
                 "{operator:?} {left:?} {right:?}"
             );
         }
