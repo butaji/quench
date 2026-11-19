@@ -91,9 +91,10 @@ impl Ending {
     }
 }
 
-/// A routine of the stencil build (`quench-bjit/stencils/entry.rs`) by name.
-pub(super) fn routine(name: &str) -> Result<Stencil, String> {
-    quench_bjit::rustc::stencil(name).ok_or_else(|| format!("no stencil routine {name}"))
+/// A routine of the stencil build (`quench-bjit/stencils/entry.rs`) by name, memoized as the rows are.
+pub(super) fn routine(name: &'static str) -> Result<&'static Stencil, String> {
+    static ROUTINES: quench_bjit::rustc::Memo<&'static str> = std::sync::OnceLock::new();
+    quench_bjit::rustc::memoized(&ROUTINES, name, || quench_bjit::rustc::stencil(name).ok_or_else(|| format!("no stencil routine {name}")))
 }
 
 /// The entry thunk, its calls to the first row (at `rows_at`) patched. A body's is followed by its row entry
@@ -101,7 +102,7 @@ pub(super) fn routine(name: &str) -> Result<Stencil, String> {
 /// `entry_rows`, at `proven_entry_offset`), which calls the row at `proven_at`: the first row past the Number guards.
 pub(super) fn thunk(ending: Ending, rows_at: usize, proven_at: usize) -> Result<Vec<u8>, String> {
     let mut code = Vec::new();
-    let names: Vec<(&str, usize)> = match ending {
+    let names: Vec<(&'static str, usize)> = match ending {
         Ending::Region => vec![("entry_thunk", rows_at)],
         Ending::Body => vec![("entry_body", rows_at), ("entry_rows", rows_at), ("entry_rows", proven_at)],
     };
@@ -136,19 +137,18 @@ pub(in crate::vm::compiled) fn row_entries(base: usize, numbers: u64, uses_this:
 /// word, a pinned int32 tagged), then copies each of `copies` (destination register, source
 /// register) between their frame slots, and ends in the leave routine `tail`, given `leave` as its
 /// holes.
-pub(super) fn leave_chain(spills: &[(Place, Register)], copies: &[(Register, Register)], tail: &str, leave: [u64; HOLES]) -> Result<Vec<u8>, String> {
-    let mut chain = Vec::new();
+pub(super) fn leave_chain(spills: &[(Place, Register)], copies: &[(Register, Register)], tail: &'static str, leave: [u64; HOLES]) -> Result<Vec<u8>, String> {
+    let mut chain: Vec<(&'static Stencil, [u64; HOLES])> = Vec::new();
     for (place, register) in spills {
         let row = numeric::Row { kind: Kind::Spill, dst: Place::Mem, a: *place, b: Place::Mem, speculate: false };
-        chain.push((numeric::stencil(row)?.clone(), padded_holes([u64::from(*register) * SLOT])));
+        chain.push((numeric::stencil(row)?, padded_holes([u64::from(*register) * SLOT])));
     }
     for (dst, src) in copies {
         let row = numeric::Row { kind: Kind::Move, dst: Place::Mem, a: Place::Mem, b: Place::Mem, speculate: false };
-        chain.push((numeric::stencil(row)?.clone(), padded_holes([u64::from(*dst) * SLOT, u64::from(*src) * SLOT])));
+        chain.push((numeric::stencil(row)?, padded_holes([u64::from(*dst) * SLOT, u64::from(*src) * SLOT])));
     }
     chain.push((routine(tail)?, leave));
-    let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> = chain.iter().map(|(_, h)| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
-    let rows: Vec<Placed> = chain.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil, hole: &*hole_fns[k], taken: None, cold: false }).collect();
+    let rows: Vec<Placed> = chain.iter().map(|(stencil, hole)| Placed { stencil: *stencil, hole, taken: None, cold: false }).collect();
     let mut code = vec![0u8; rows.iter().map(|row| row.stencil.code.len()).sum()];
     // SAFETY: `code` has room for every stencil's full length, which bounds the chain.
     let (len, _) = unsafe { quench_bjit::copy_patch(&rows, code.as_mut_ptr(), |_, _| 0) };
@@ -256,31 +256,34 @@ impl Layout<'_> {
         }
     }
 
-    /// The pinned registers live at `pc`: the ones a stub there writes back.
-    pub(super) fn live_pins(&self, pc: u32) -> Vec<Pin> {
-        self.live_homes(&self.homes.pins, pc)
-    }
-
-    pub(super) fn live_floats(&self, pc: u32) -> Vec<Pin> {
-        self.live_homes(&self.homes.floats, pc)
-    }
-
-    /// The pins of `homes` whose web is live at `pc`, each with the register it writes back to.
-    fn live_homes(&self, homes: &[Pin], pc: u32) -> Vec<Pin> {
+    /// The pinned ints and doubles live at `pc` (the ones a stub there writes back), each with the register it writes
+    /// back to; one liveness query serves both.
+    pub(super) fn live_pinned(&self, pc: u32) -> (Vec<Pin>, Vec<Pin>) {
         let live = self.webs.live_at(&self.span, pc);
+        (self.live_homes(&self.homes.pins, &live), self.live_homes(&self.homes.floats, &live))
+    }
+
+    /// The pins of `homes` whose web is among `live`, each with the register it writes back to.
+    fn live_homes(&self, homes: &[Pin], live: &[usize]) -> Vec<Pin> {
         homes.iter().filter(|(_, web)| live.contains(&usize::from(*web))).map(|(pin, web)| (*pin, self.homes.orig[usize::from(*web)])).collect()
     }
 
     /// The registers a leave at `pc` writes back: the live pinned doubles, then the ints.
     pub(super) fn spills(&self, pc: u32) -> Vec<(Place, Register)> {
-        let doubles = self.live_floats(pc).into_iter().map(|(pin, register)| (Place::PinF(pin as u8), register));
-        doubles.chain(self.live_pins(pc).into_iter().map(|(pin, register)| (Place::Pin(pin as u8), register))).collect()
+        let (ints, floats) = self.live_pinned(pc);
+        spill_list(&ints, &floats)
     }
 
-    /// The routine a row's exit stub jumps to: it writes the live pinned registers back and returns the PC the stub pushed.
-    pub(super) fn routine(&self, pc: u32) -> Result<Vec<u8>, String> {
-        leave_chain(&self.spills(pc), &[], self.ending.tails().1, self.ending.holes(0))
+    /// The routine a row's exit stub jumps to: it writes the registers `spills` names back and returns the PC the stub pushed.
+    pub(super) fn routine(&self, spills: &[(Place, Register)]) -> Result<Vec<u8>, String> {
+        leave_chain(spills, &[], self.ending.tails().1, self.ending.holes(0))
     }
+}
+
+/// The registers a leave writes back, given the live pinned ints and doubles (`Layout::live_pinned`): the doubles, then the ints.
+pub(super) fn spill_list(ints: &[Pin], floats: &[Pin]) -> Vec<(Place, Register)> {
+    let doubles = floats.iter().map(|&(pin, register)| (Place::PinF(pin as u8), register));
+    doubles.chain(ints.iter().map(|&(pin, register)| (Place::Pin(pin as u8), register))).collect()
 }
 
 
@@ -348,17 +351,15 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, Res
     holes.extend(stubs.iter().flat_map(Stub::holes));
     let proven_at = holes.len();
     holes.extend(proven.iter().flat_map(Proven::holes));
-    let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> =
-        holes.iter().map(|h| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
     let failed_row = g + n + failed;
     let mut rows: Vec<Placed> = Vec::with_capacity(g + n + leaves.0.len());
-    rows.extend(entry.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[k], taken: row.taken(failed_row), cold: false }));
-    rows.extend(body.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[g + k], taken: targets[k], cold: row.cold }));
-    rows.extend(leaves.0.iter().enumerate().map(|(k, (_, stencil))| Placed { stencil, hole: &*hole_fns[g + n + k], taken: None, cold: false }));
-    let jumps = place_stubs(&mut rows, &stubs, &jump, &hole_fns, failed_row);
+    rows.extend(entry.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &holes[k], taken: row.taken(failed_row), cold: false }));
+    rows.extend(body.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &holes[g + k], taken: targets[k], cold: row.cold }));
+    rows.extend(leaves.0.iter().enumerate().map(|(k, (_, stencil))| Placed { stencil, hole: &holes[g + n + k], taken: None, cold: false }));
+    let jumps = place_stubs(&mut rows, &stubs, &jump, &holes, failed_row);
     let proven_row = rows.len();
     if let Some(proven) = &proven {
-        proven.place(&mut rows, &hole_fns, proven_at)?;
+        proven.place(&mut rows, &holes, proven_at)?;
     }
     // Behind the body: the leave rows, then each stub's rows and jump (`place_stubs`), then the proven entry's.
     let exits: Vec<Vec<Target>> = entry.iter().map(|row| row.exits(failed_row)).chain(body_exits)
@@ -380,7 +381,7 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, Res
 /// each resume stub's `jumps` is patched to its row.
 pub(super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], proven_row: usize) -> Result<(Vec<u8>, Vec<usize>, usize), String> {
     let head = thunk(ending, 0, 0)?.len();
-    let resume = if ending == Ending::Region { routine("entry_resume")?.code } else { Vec::new() };
+    let resume: &[u8] = if ending == Ending::Region { &routine("entry_resume")?.code } else { &[] };
     let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();
     let stubs = exits.iter().flatten().filter(|target| matches!(target, Target::Stub { .. })).count();
     let tail: usize = routines.iter().map(Vec::len).sum::<usize>() + stubs * EXIT_STUB_LEN + resume.len();
@@ -398,7 +399,7 @@ pub(super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[
     let proven_at = head + starts.get(proven_row).copied().unwrap_or(0);
     let thunk_bytes = thunk(ending, head, proven_at)?;
     code[..head].copy_from_slice(&thunk_bytes);
-    code[at..at + resume.len()].copy_from_slice(&resume);
+    code[at..at + resume.len()].copy_from_slice(resume);
     let resume_at = at;
     at += resume.len();
     code.truncate(at);

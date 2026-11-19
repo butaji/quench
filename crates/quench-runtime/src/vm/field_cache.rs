@@ -115,26 +115,27 @@ impl<H: Host> Vm<H> {
 
     // Shapes prove ordinary data storage only when no exotic or virtual lookup intervenes.
     pub(super) fn shape_property_lookup(&self, value: Value, atom: Atom) -> Option<&Object> {
+        let class = self.atom_class(atom);
         if let Some(object) = self.heap.object_record(value) {
-            return self.shape_answers(object, atom, ReceiverKind::Ordinary);
+            return self.shape_answers(object, class, ReceiverKind::Ordinary);
         }
         if let Some(object) = self.heap.array(value) {
-            if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) {
+            if class.contains(AtomClass::ARRAY_INDEX) {
                 return None;
             }
-            return self.shape_answers(object, atom, ReceiverKind::Exotic);
+            return self.shape_answers(object, class, ReceiverKind::Exotic);
         }
         if let Some(function) = self.heap.function(value) {
-            return self.shape_property_lookup_function(function, atom);
+            return self.shape_property_lookup_function(function, atom, class);
         }
         if let Some(iterator) = self.heap.iterator(value) {
-            return self.shape_answers(&iterator.object, atom, ReceiverKind::Exotic);
+            return self.shape_answers(&iterator.object, class, ReceiverKind::Exotic);
         }
         // A promise's internal slots change no object operation, as for its cell form below.
         if let Some(promise) = self.heap.promise(value) {
-            return self.shape_answers(&promise.object, atom, ReceiverKind::Ordinary);
+            return self.shape_answers(&promise.object, class, ReceiverKind::Ordinary);
         }
-        self.shape_property_lookup_cell(self.heap.get(value)?, atom)
+        self.shape_property_lookup_cell(self.heap.get(value)?, class)
     }
 
     /// A function's shape answers what it stores, but not its restricted `caller` and
@@ -147,11 +148,12 @@ impl<H: Host> Vm<H> {
         &self,
         function: &'a FunctionRecord,
         atom: Atom,
+        class: AtomClass,
     ) -> Option<&'a Object> {
-        if atom == self.length_atom || self.atom_class(atom).contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY) {
+        if atom == self.length_atom || class.contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY) {
             return None;
         }
-        self.shape_answers(&function.object, atom, ReceiverKind::Ordinary)
+        self.shape_answers(&function.object, class, ReceiverKind::Ordinary)
     }
 
     /// Whether `atom` names an element of `object` as a typed array's numeric key, which no
@@ -163,9 +165,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn shape_property_lookup_cell<'a>(
         &self,
         cell: &'a Cell,
-        atom: Atom,
+        class: AtomClass,
     ) -> Option<&'a Object> {
-        let class = self.atom_class(atom);
         let kind = match cell {
             Cell::Promise(_) => ReceiverKind::Ordinary,
             Cell::Proxy { .. } => return None,
@@ -174,7 +175,7 @@ impl<H: Host> Vm<H> {
             }
             _ => ReceiverKind::Exotic,
         };
-        self.shape_answers(cell.object()?, atom, kind)
+        self.shape_answers(cell.object()?, class, kind)
     }
 
     /// `object`'s shape answers `atom` unless a private name, a module namespace, a dictionary
@@ -184,14 +185,14 @@ impl<H: Host> Vm<H> {
     fn shape_answers<'a>(
         &self,
         object: &'a Object,
-        atom: Atom,
+        class: AtomClass,
         kind: ReceiverKind,
     ) -> Option<&'a Object> {
         let excluded = match kind {
             ReceiverKind::Ordinary => AtomClass::PRIVATE,
             ReceiverKind::Exotic => AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD,
         };
-        if self.atom_class(atom).intersects(excluded)
+        if class.intersects(excluded)
             || object.is_module_namespace()
             || self.shape_is_dictionary(object.shape())
         {

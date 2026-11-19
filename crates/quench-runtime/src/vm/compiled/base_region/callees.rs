@@ -157,20 +157,11 @@ impl Callees {
         code.iter().zip(&self.at).all(|(instruction, callee)| !instruction.op().is_call() || (callee.is_some() && !is_method_call(*instruction)))
     }
 
-    /// What each call site recorded of its callee, by PC.
+    /// What each call site recorded of every callee it reached, latest first, by PC: the targets of its
+    /// chain's direct rows. The first of each is the callee a stitch may inline.
     ///
     /// # Safety
     /// Each owned callee's `cell` is the address of its function's live entry cell.
-    pub(super) unsafe fn facts(&self) -> Vec<Option<DirectFacts>> {
-        // SAFETY: the caller's contract.
-        self.at.iter().enumerate().map(|(pc, callees)| callees.as_ref().map(|at| unsafe { DirectFacts::of(&self.owned[at.start], self.held(pc, at.start)) })).collect()
-    }
-
-    /// What each call site recorded of every callee it reached, latest first, by PC: the targets of its
-    /// chain's direct rows.
-    ///
-    /// # Safety
-    /// As `facts`.
     pub(super) unsafe fn targets(&self) -> Vec<Vec<DirectFacts>> {
         // SAFETY: the caller's contract.
         self.at.iter().enumerate().map(|(pc, callees)| callees.clone().into_iter().flatten().map(|at| unsafe { DirectFacts::of(&self.owned[at], self.held(pc, at)) }).collect()).collect()
@@ -196,9 +187,9 @@ impl Callees {
         })
     }
 
-    /// The call `shape` planned as its callee's rows (`facts`: what each site recorded), in
+    /// The call `shape` planned as its callee's rows (`targets`: what each site recorded), in
     /// `context`, which it spends from; none where the callee stays a call.
-    pub(super) fn inlined_call(&self, facts: &[Option<DirectFacts>], region: &LoopRegion, context: &mut Context, shape: &CallShape) -> Option<InlineSite> {
+    pub(super) fn inlined_call(&self, targets: &[Vec<DirectFacts>], region: &LoopRegion, context: &mut Context, shape: &CallShape) -> Option<InlineSite> {
         // A method call's callee is read into a scratch register, not the callee register an inlined site proves.
         if shape.method.is_some() {
             return None;
@@ -208,7 +199,7 @@ impl Callees {
         let numbers = |index: usize| body.numbers.get(&index).copied().or_else(|| region.number_constant(index));
         let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize].and_then(Held::global), captures: (callee.capture_values.addr(), callee.capture_len) };
         let mut trial = context.clone();
-        let site = InlineSite::plan(shape, facts[shape.call_pc as usize].as_ref()?, &inlinable, &mut trial)
+        let site = InlineSite::plan(shape, targets[shape.call_pc as usize].first()?, &inlinable, &mut trial)
             .inspect_err(|why| super::note(|_, rejects| *rejects.entry(format!("inline refused: {why:?}")).or_default() += 1))
             .ok()?;
         *context = trial;

@@ -780,6 +780,14 @@ pub(crate) struct Inlining {
     pub(crate) latch: u32,
 }
 
+impl Inlining {
+    /// The registers past the caller's that the inlined frames occupy: the scratch window a leave
+    /// inside one writes and reads (`LoopEntry::scratch_address`, `LoopEntry::scratch_value`).
+    pub(crate) fn window(&self) -> usize {
+        super::frames_window(self.frames.iter().map(|frame| (frame.base, frame.registers)), self.caller_registers)
+    }
+}
+
 /// The capture slot bit an inlined callee's capture read carries (`Inlining::callee_captures`):
 /// no function's own depth-0 slot reaches it, which `inline_region` checks.
 pub(crate) const CALLEE_CAPTURE: u16 = 1 << 15;
@@ -1323,13 +1331,12 @@ impl LoopEntry {
     }
 
     /// The first `count` capture values, as pushed.
-    pub(crate) fn captures(&self, count: usize) -> Vec<Value> {
+    pub(crate) fn captures(&self, count: usize) -> impl Iterator<Item = Value> + '_ {
         debug_assert!(ENTRY_CAPTURES + count <= self.length);
         self.words[ENTRY_CAPTURES..ENTRY_CAPTURES + count]
             .iter()
             // SAFETY: the first `count` words after the leading ones are the pushed captures.
             .map(|word| Value::from_bits(unsafe { word.assume_init() }))
-            .collect()
     }
 
     /// Arrays follow the fields, in the region's order. An array longer than
@@ -1380,11 +1387,11 @@ impl LoopEntry {
     /// The scratch window an inlining region's leave inside an inlined callee writes the
     /// callee's live registers to, at each register's offset past the caller's
     /// (`JsStepDispatch::inlined`).
-    /// Every word starts `undefined`, so a register the leave did not write reads as a value
-    /// even if the callee's and the unit's liveness ever disagreed; only inlining regions
-    /// ask for the window.
-    pub(super) fn scratch_address(&mut self) -> usize {
-        self.scratch.fill(std::mem::MaybeUninit::new(Value::UNDEFINED.to_bits()));
+    /// The window's first `width` words start `undefined`, so a register the leave did not write
+    /// reads as a value even if the callee's and the unit's liveness ever disagreed; only inlining
+    /// regions ask for the window, and `scratch_value` reads no word past `Inlining::window`.
+    pub(super) fn scratch_address(&mut self, width: usize) -> usize {
+        self.scratch[..width.min(self.scratch.len())].fill(std::mem::MaybeUninit::new(Value::UNDEFINED.to_bits()));
         self.scratch.as_mut_ptr().addr()
     }
 

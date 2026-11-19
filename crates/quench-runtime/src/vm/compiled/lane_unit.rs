@@ -452,7 +452,7 @@ impl Planner<'_, '_> {
         if !self.within_budget(target, instruction, callee, &code) || !lowerable(&code) || !self.eligible_callee(target, callee) {
             return None;
         }
-        let recovery = if super::lane_region::restartable_numeric_function(self.program, callee, &code)
+        let recovery = if super::lane_region::restartable_numeric_function(self.program, callee, code.iter().copied())
             || (target.callee == CalleeBinding::Function && restartable(self.program, callee, &code)) {
             CallRecovery::RestartCall
         } else { CallRecovery::Materialize };

@@ -26,7 +26,7 @@ pub(super) unsafe fn bind_loop<H: Host>(
     // `LoopEntry` is not `repr(C)`.
     dispatch.loop_entry = entry.words_mut() as usize;
     // A leave inside an inlined callee writes the callee's live registers here.
-    if region.inlining.is_some() { dispatch.inlined = entry.scratch_address(); }
+    if let Some(inlining) = &region.inlining { dispatch.inlined = entry.scratch_address(inlining.window()); }
 }
 
 /// Fills `captures` with the loop entry's captures as the dense slot view the lane capture
@@ -132,7 +132,6 @@ pub(super) unsafe fn enter<H: Host>(
     dispatch: &mut JsStepDispatch, vm: &mut Vm<H>, program: ProgramId,
     (code, resume): (BodyEntry, u64), registers: *mut crate::value::Value,
     interrupt: *const crate::execution_interrupt::ExecutionInterrupt, (lane_context, lend): (usize, Option<bool>),
-    header_pc: u32,
 ) -> RegionRun {
     let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
     context.vm = std::ptr::from_mut(vm).cast();
@@ -146,7 +145,7 @@ pub(super) unsafe fn enter<H: Host>(
     // The region's entry takes no receiver (its `this` is the dispatch's), its resume stub's address
     // as the capture word, and the register file.
     let descriptor = super::entry_protocol::EntryDescriptor {
-        kind: super::entry_protocol::EntryKind::Region { header_pc }, receiver: 0, captures: resume,
+        kind: super::entry_protocol::EntryKind::Region, receiver: 0, captures: resume,
         registers: registers.cast::<u64>().cast_const(), entry: code,
     };
     // SAFETY: as the caller promises; the code reads the register file and returns

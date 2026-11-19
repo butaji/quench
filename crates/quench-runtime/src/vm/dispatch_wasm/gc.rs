@@ -6,7 +6,7 @@ use super::super::*;
 use super::super::wasm_gc::{ArrayInitialization, GcFieldIndex};
 use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind, GcField, GcFieldAccess};
 use crate::wasm::reference::ReferenceTarget;
-use crate::staged::wasm_gc::{Aggregate, ArrayConstruction, GcStep, WasmGc, array_copy, array_fill, array_length, field_read, field_write, non_null, reference_cast};
+use crate::staged::wasm_gc::{Aggregate, ArrayConstruction, GcStep, WasmGc, array_copy, array_fill, array_length, field_read, field_write, non_null};
 use crate::staged::wasm_call::Call;
 use super::super::wasm_gc::stage::HeapStage;
 
@@ -140,7 +140,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The declarations of `program`, a Wasm module's.
-    fn wasm_module_declarations(&self, program: ProgramId) -> Result<crate::WasmTypes, JsError> {
+    pub(in crate::vm) fn wasm_module_declarations(&self, program: ProgramId) -> Result<crate::WasmTypes, JsError> {
         self.programs.wasm_signatures(program)
             .map(|pool| pool.declarations.clone())
             .ok_or_else(|| JsError::validation("Wasm GC operation requires module declarations".into()))
@@ -335,13 +335,8 @@ impl<H: Host> Vm<H> {
         if descriptor {
             return self.wasm_descriptor_cast_step(program, cast, i, target, reference, read);
         }
-        let declarations = self.wasm_module_declarations(program)?;
-        let reference = reference.to_bits();
-        let stage = &mut HeapStage { vm: self };
-        if !cast {
-            return Ok(Some(Value::integer(stage.admits(reference, target, &declarations) as i32)));
-        }
-        Ok(Some(Value::from_bits(reference_cast(stage, reference, target, &declarations)?)))
+        let bits = self.wasm_ref_test_or_cast(program, target, reference.to_bits(), cast)?;
+        Ok(Some(if cast { Value::from_bits(bits) } else { Value::integer(bits as i32) }))
     }
 
     /// A descriptor test or cast: the reference's descriptor is the operand's, which its
