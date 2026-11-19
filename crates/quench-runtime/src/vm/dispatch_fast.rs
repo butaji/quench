@@ -12350,7 +12350,7 @@ script_handler! {
         // callee back.
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) {
             let native = *native;
-            let handler = native_call_handler::<H>(native, i, || call_result_dead_in_lane(cx, ip, i));
+            let handler = native_call_handler::<H>(native, i, || call_result_dead_in_lane(cx, ip, i), || regexp_calls::length_read(cx, ip, i));
             requicken::<H>(ip, handler);
             if handler as *const () != call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() as *const () {
                 native_calls::install_math_field_call::<H>(cx, ip, native);
@@ -13418,7 +13418,7 @@ use named_keys::named_key_element;
 mod in_place_natives;
 mod root_bindings;
 use root_bindings::frame_capture_at_root;
-mod native_calls; mod getters; mod generator_yields;
+mod native_calls; mod regexp_calls; mod getters; mod generator_yields;
 mod lane_roots;
 mod lane_trace;
 mod with_scopes;
