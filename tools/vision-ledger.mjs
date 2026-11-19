@@ -182,7 +182,8 @@ function scan(tree, branch, wantOwners) {
   const wants = o => !wantOwners.length || wantOwners.includes(o);
   const add = (cat, rel, line, symbol, detail, extra = {}) => {
     const owner = extra.owner || ownerOfSymbol(rel, symbol);
-    if (wants(owner)) items.push({ cat, owner, file: rel, line, symbol, detail, branch, key: `${cat}|${rel}|${symbol}` });
+    // extra.readFrom: the owner whose branch holds this item's fix (JIT frames land on the calls branch).
+    if (wants(extra.readFrom || owner)) items.push({ cat, owner, file: rel, line, symbol, detail, branch, key: `${cat}|${rel}|${symbol}` });
   };
 
   // Opcode predicates: `fn is_x(&self)` on the instruction types.
@@ -326,7 +327,7 @@ function scan(tree, branch, wantOwners) {
       if (!inRanges(tests, m.index)) add("exclusion-table", rel, lineOf(starts, m.index), m[1], `${m[1]}: an exclusion table in tier code (principle 3: every op has a row, no exclusion tables)`);
     // P3: one frame model.
     if (inRuntime && !/staged\/frame\.rs$/.test(rel)) for (const m of s.matchAll(/\bstruct\s+([A-Za-z0-9_]*(?:Frame|Activation|Window)[A-Za-z0-9_]*)\b/g))
-      if (!inRanges(tests, m.index) && !/(Frames|Words|Plan|Kind|Stats|Builder|Ref|Id|Key|Info)$/.test(m[1])) add("frame-model", rel, lineOf(starts, m.index), m[1], `frame type ${m[1]} (principle 3: one frame model; staged/frame.rs is the layout source)`, { owner: frameOwner(rel, m[1]) });
+      if (!inRanges(tests, m.index) && !/(Frames|Words|Plan|Kind|Stats|Builder|Ref|Id|Key|Info)$/.test(m[1])) add("frame-model", rel, lineOf(starts, m.index), m[1], `frame type ${m[1]} (principle 3: one frame model; staged/frame.rs is the layout source)`, { owner: frameOwner(rel, m[1]), readFrom: "Calls and frames" });
     // P2/P3: one entry mechanism (a fn-pointer transmute is a hand-made way into compiled code).
     if (inRuntime && /vm\//.test(rel)) for (const m of s.matchAll(/transmute::<[^>]*extern\s+"C"|transmute\s*\([^)]*\)\s*as\s*(?:unsafe\s+)?extern|as\s+(?:unsafe\s+)?extern\s+"C"\s+fn/g))
       if (!inRanges(tests, m.index)) add("entry-mechanism", rel, lineOf(starts, m.index), `entry@${lineOf(starts, m.index)}`, `a hand-made entry into compiled code (fn-pointer cast); principle 3: one trampoline, one EntryDescriptor`, { owner: /wasm/.test(rel) ? "Wasm" : "u-jit" });
