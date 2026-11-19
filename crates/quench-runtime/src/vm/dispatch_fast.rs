@@ -14286,6 +14286,9 @@ script_handler! {
     /// keep their code.
     #[inline(never)]
     fn script_construct_keeping_miss<>(cx, r, ip, i, view) {
+        // As `script_construct_miss`: a leaf's construction materializes the leaf's activation
+        // before anything completes, which a site reaches directly once it is keeping.
+        materialize_running_leaf_in_lane(cx);
         let finished = match construct_planned_fields_in_lane(cx, r, i) {
             Some(this) => Ok(KeepingConstruction::Finished(this)),
             None => construct_keeping_activation_in_lane(cx, r, ip, i),
