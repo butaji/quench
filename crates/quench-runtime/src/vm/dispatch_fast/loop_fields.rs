@@ -18,7 +18,7 @@ pub(super) fn loop_field_stores<H: Host>(
     // rejects receiver rewrites and ambiguous same-name aliases. A Number cell's
     // stores remain Numbers; a store-only field may also receive a rooted entry value.
     let receiver = |receiver: super::compiled::FieldReceiver| match receiver {
-        super::compiled::FieldReceiver::This => Some(unsafe { lane_held_this(cx, r) }),
+        super::compiled::FieldReceiver::This => Some(unsafe { held_this_in_lane(cx, r) }),
         super::compiled::FieldReceiver::Register(register) => Some(r.get(register)),
         super::compiled::FieldReceiver::Field(_) | super::compiled::FieldReceiver::Capture(_) => None,
     };

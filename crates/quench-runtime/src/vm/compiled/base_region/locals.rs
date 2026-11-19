@@ -19,7 +19,7 @@
 //! * `LoadLocal` is the read that leaves for the same marker (`staged::read_initialized_local`).
 //!
 //! A body also runs as the lane activation of a function with an environment window
-//! (`dispatch_fast::lane_activate_environment`), which keeps the locals its closures capture in the storage its
+//! (`dispatch_fast::activate_environment_in_lane`), which keeps the locals its closures capture in the storage its
 //! slots word names, in place among the locals or in the environment a closure made. Its body reads that
 //! storage through the payload (`JsStepDispatch::environment_storage`, set at each entry), by the rows of
 //! `staged::environment::environment_slot`, `environment_slot_store` and `environment_slot_define` (`ENV_ROW`,

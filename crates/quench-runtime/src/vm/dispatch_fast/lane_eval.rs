@@ -55,7 +55,7 @@ fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parame
     } else {
         scope.record
     };
-    // SAFETY: the window's entries follow the function's registers (`lane_activate_environment`).
+    // SAFETY: the window's entries follow the function's registers (`activate_environment_in_lane`).
     let entries = unsafe { r.0.add(usize::from(body.registers)) };
     // SAFETY: the record is the activation's own, which nothing else accesses during the call;
     // its held bindings pass to the environment, as a closure's creation passes them.

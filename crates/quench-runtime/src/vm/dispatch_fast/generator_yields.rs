@@ -289,7 +289,7 @@ fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &
 }
 
 /// The `argc` values passed to the environment `activation` of a function of `count`
-/// registers: kept after its environment and locals (`lane_activate_environment`).
+/// registers: kept after its environment and locals (`activate_environment_in_lane`).
 ///
 /// # Safety
 /// `activation` is a live environment activation, whose window nothing writes meanwhile.
@@ -299,7 +299,7 @@ unsafe fn environment_passed<'a>(code: &ResidualProgram, activation: &'a Activat
     &(unsafe { activation.window(kept + argc) })[kept..]
 }
 
-/// The environment activation (`lane_activate_environment`) of settling `target`, called at
+/// The environment activation (`activate_environment_in_lane`) of settling `target`, called at
 /// `ip` with registers `r`, passing `passed` with receiver `this`: its return settles the call's
 /// promise, whose root `LaneStack::settling` holds last (`Completion::SettlesPromise`); an
 /// activation refused releases it, before any effect.
@@ -311,7 +311,7 @@ pub(super) fn activate_settling_environment<H: Host>(
     passed: &[Value],
     this: Value,
 ) -> Result<(Registers, Ip), Ip> {
-    let entered = lane_activate_environment(cx, r, ip, target, passed, (this, false));
+    let entered = activate_environment_in_lane(cx, r, ip, target, passed, (this, false));
     let vm = unsafe { vm(cx) };
     if entered.is_ok() {
         let activation = vm.lane_stack.activations_mut().last_mut().expect("the activation was pushed");

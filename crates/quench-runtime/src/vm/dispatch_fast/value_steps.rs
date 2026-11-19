@@ -20,7 +20,7 @@ fn operand_values<H: Host>(cx: *mut LaneContext<H>, r: Registers, step: ValueSte
     match step {
         ValueStep::Unary => Some([r.get(instruction.register_b()); OPERANDS]),
         ValueStep::Binary | ValueStep::CompareJump => {
-            Some([lane_operand_value(cx, r, instruction.operand_b().0)?, lane_operand_value(cx, r, instruction.operand_c().0)?])
+            Some([operand_value_in_lane(cx, r, instruction.operand_b().0)?, operand_value_in_lane(cx, r, instruction.operand_c().0)?])
         }
     }
 }

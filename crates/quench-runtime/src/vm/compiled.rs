@@ -4257,7 +4257,7 @@ impl<H: Host> Vm<H> {
 
     /// `run_lane_method` from inside a running body (`dispatch_fast::lane_body_call`): the
     /// caller's body continues with the per-entry words it entered with. Its callee runs in
-    /// the same program (`lane_crosses`) and allocates nothing, so the program's bases stand.
+    /// the same program (`crosses_in_lane`) and allocates nothing, so the program's bases stand.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn run_nested_lane_method(
         &mut self,
@@ -5922,7 +5922,7 @@ fn admitted(
     step: Step,
     memory_register: Option<u16>,
 ) -> Option<()> {
-    let fits = super::dispatch_fast::lane_fields_fit(instruction, function);
+    let fits = super::dispatch_fast::fields_fit_in_lane(instruction, function);
     let leaves = instruction.returns_from_frame() && !step.returns();
     let reads = memory_register
         .is_some_and(|register| !step.reads_memory() && reads_register(instruction, register, step));
@@ -8150,7 +8150,7 @@ impl<H: Host> Vm<H> {
         let compiled_entry = entry.as_ref().and_then(|entry| self.js_jit_at_entry(program, entry));
         if let Some((return_pc, return_register, value)) = compiled_entry {
             // The frame's own register file: a lane frame call reaches here before
-            // `active_registers` names the frame (`lane_enter_script_frame`).
+            // `active_registers` names the frame (`enter_script_frame_in_lane`).
             self.frames[frame].registers[usize::from(return_register)] = value;
             return Some(return_pc);
         }

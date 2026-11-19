@@ -104,7 +104,7 @@ pub(crate) struct RecoveredCalls {
     pub(super) failure: Option<(u32, JsError)>,
 }
 
-/// Where a lane run that no general loop started left its frames (`Vm::lane_native_callback`):
+/// Where a lane run that no general loop started left its frames (`Vm::native_callback_in_lane`):
 /// the program the innermost executes and the error a call the lane made raised there, which
 /// the general loop resumes with as it does after its own lane run.
 pub(super) struct LaneExit {
@@ -495,7 +495,7 @@ impl<H: Host> Vm<H> {
             crate::stack::GuestCallGuard::enter().map_err(|crate::stack::StackExhausted| self.guest_exhaustion_error(p.kind))?;
         let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
         let view = if capture_constructor_this { std::ptr::null() } else { self.entered_lane_view(p, id) };
-        let result = if Self::lane_runs_call(view) {
+        let result = if Self::runs_call_in_lane(view) {
             let cursor = self.entry_cursor(p, id, view);
             self.run_frame_from_lane(p, frame_index, &cursor, 0)
         } else {
@@ -529,11 +529,11 @@ impl<H: Host> Vm<H> {
     /// (`ProgramStore::lane_call_may_derive`); null where the general loop runs it.
     pub(super) fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const super::dispatch_fast::LaneView {
         let program = self.active_program;
-        let lane_runs = Self::FRAME_ENTRY_LANE_RUNS
+        let runs_in_lane = Self::FRAME_ENTRY_LANE_RUNS
             && !self.tier_may_run(crate::jit_mode::Tier::ANY);
         #[cfg(feature = "native-execution")]
-        let lane_runs = lane_runs && self.programs.native_js_code(program).is_none();
-        if !lane_runs
+        let runs_in_lane = runs_in_lane && self.programs.native_js_code(program).is_none();
+        if !runs_in_lane
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || !self.lane_admits(p)
             || !self.programs.lane_call_may_derive(program, id, false, false)
@@ -1540,7 +1540,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether the general loop enters `view` at `pc`: where a lane run pays, or at the first instruction of
     /// the callee a due collection's lane stop left to it (`after_lane_exit`), as a native's call would.
-    fn lane_enters(view: *const dispatch_fast::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::lane_runs(view, pc) || after_lane_exit && pc == 0 && Self::lane_runs_call(view) }
+    fn lane_enters(view: *const dispatch_fast::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::runs_in_lane(view, pc) || after_lane_exit && pc == 0 && Self::runs_call_in_lane(view) }
 
     /// Whether a frame entry may run the lane: execution-only support never
     /// interprets, and instruction profiling must observe every PC.
@@ -1902,7 +1902,7 @@ impl<H: Host> Vm<H> {
                             }
                             None => "not a function".into(),
                         };
-                        let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
+                        let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::runs_in_lane(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
                     // merge: is_binary and is_private_in are not Operation constructors on the derivation side; use the Op-level predicates.
@@ -1922,7 +1922,7 @@ impl<H: Host> Vm<H> {
                                     .then(|| format!(" name={}", &p.atoms[instruction.imm() as usize]))
                             })
                             .unwrap_or_default();
-                        super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}{store}", instruction.op(), Self::lane_runs(cursor.lane, pc)));
+                        super::lane_exits::record_detail(format!("{:?} in {name} {span} pc={pc} lane={}{store}", instruction.op(), Self::runs_in_lane(cursor.lane, pc)));
                     }
                     // A `Return` exit of the loop's own entry frame: which native's call into
                     // JavaScript started this nested run.

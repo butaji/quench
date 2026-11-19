@@ -367,7 +367,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     }
     let this = lane_call_this(vm, &target, Value::UNDEFINED)?;
     let instance = unsafe { (*cx).instance };
-    let (registers, start) = lane_push_passed::<H, true, false>(cx, r, ip, &target, args.as_ptr(), argc16.min(target.params), this, false);
+    let (registers, start) = push_passed_in_lane::<H, true, false>(cx, r, ip, &target, args.as_ptr(), argc16.min(target.params), this, false);
     if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
         script.completion = Completion::ToWasm;
     }

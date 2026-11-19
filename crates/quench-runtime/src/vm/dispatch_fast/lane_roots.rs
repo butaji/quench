@@ -201,7 +201,7 @@ impl<H: Host> Vm<H> {
             script_constructs,
             instance: Value::DELETED,
             instance_slots: (Value::DELETED, std::ptr::null()),
-            backedges_left: self.lane_credits_backedges(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
+            backedges_left: self.credits_backedges_in_lane(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
             floor,
             // SAFETY: the VM holds its interrupt state for the whole run.
             fuel: if unsafe { &*floor }.load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR { 0 } else { LANE_FUEL_BATCH },
@@ -245,7 +245,7 @@ impl<H: Host> Vm<H> {
         let outer_fuel = LANE_FUEL.with(|current| current.replace(unsafe { &raw mut (*cx).fuel }));
         let _proofs = crate::heap::LaneProofScope::enter();
         let (first, left) = exited(start(cx));
-        let ip = if left { first } else { lane_dispatch(cx, first) };
+        let ip = if left { first } else { dispatch_in_lane(cx, first) };
         #[cfg(feature = "profile-lane-exits")]
         self.record_lane_exit(cx, ip);
         self.materialize_lane_exit(cx);
@@ -455,7 +455,7 @@ impl JobWindow {
             stack.restore_iterators(0, &mut (*self.frame).active_iterators);
             stack.restore_with_objects(0, &mut (*self.frame).with_objects);
             vm(cx).record_window_owner(&*(*cx).code, 0);
-            lane_enter_suspended(cx, &self.entry, self.registers, self.pc)
+            enter_suspended_in_lane(cx, &self.entry, self.registers, self.pc)
         }
     }
 

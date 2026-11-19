@@ -242,7 +242,7 @@ pub(super) fn resume_generator_in_lane<H: Host>(
     let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
     // SAFETY: the window holds the suspended registers, which nothing else writes while it runs,
     // and `pc` is where the frame resumes in its function's view.
-    let start = unsafe { lane_enter_suspended(cx, &entry, window, pc) };
+    let start = unsafe { enter_suspended_in_lane(cx, &entry, window, pc) };
     Some((Registers(window), start))
 }
 
@@ -374,7 +374,7 @@ pub(super) fn generator_returned_in_lane<H: Host>(
 fn resume_generated_in_lane<H: Host>(vm: &mut Vm<H>, activation: &Activation, memory: MemoryView, (value, done): (Value, bool), passed_on: Option<Value>) -> Resumed {
     let completion = activation.script().map(|script| script.completion);
     if let (Some(Completion::StepReads(form)), None) = (completion, passed_on) {
-        // SAFETY: the step's records follow its call in the caller's live view (`lane_for_of_step`).
+        // SAFETY: the step's records follow its call in the caller's live view (`for_of_step_in_lane`).
         let (done_read, value_read) = unsafe { (&*activation.call.add(FOR_OF_DONE_READ), &*activation.call.add(form.value_read())) };
         activation.caller_registers.set(done_read.a, if done { Value::TRUE } else { Value::FALSE });
         if done {

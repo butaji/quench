@@ -40,7 +40,7 @@ pub(super) fn keyed_trap_atom<H: Host>(vm: &mut Vm<H>, key: Value) -> Option<cra
     vm.string_key_atom(key)
 }
 
-/// Records that the trap activation `lane_activate_keeping` just pushed completes as
+/// Records that the trap activation `activate_keeping_in_lane` just pushed completes as
 /// `completion` says and owes `target` its invariants for `atom` (`TrapCheck`).
 pub(super) fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value, atom: crate::bytecode::Atom, access: TrapAccess) {
     // An array's `length` and elements are answered by its element facts too, which its

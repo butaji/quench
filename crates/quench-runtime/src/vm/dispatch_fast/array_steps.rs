@@ -127,9 +127,9 @@ pub(super) fn lane_call_for_each_once<H: Host>(
     let element = lane_dense_element(vm, receiver, 0)?;
     let (callback, this_arg) = array_callback_arguments(Native::ArrayForEach, args)?;
     let (shape, entry) = lane_array_callback_activation(cx, ip, Native::ArrayForEach, callback, this_arg, Completion::Plain)?;
-    let window = lane_admit_prepared(cx, &shape.activation, shape.room)?;
+    let window = admit_prepared_in_lane(cx, &shape.activation, shape.room)?;
     // SAFETY: the admission pushed the activation over the window.
-    let start = unsafe { lane_enter_prepared_values(cx, &entry, [element, Value::length(0), receiver], window) };
+    let start = unsafe { enter_prepared_values_in_lane(cx, &entry, [element, Value::length(0), receiver], window) };
     // SAFETY: the entry made the callback's registers the context's.
     Some((unsafe { (*cx).registers }, start))
 }
@@ -156,7 +156,7 @@ pub(super) fn lane_begin_array_iteration<H: Host>(
         return Some(lane_native_complete(cx, ip, unsafe { &*ip }, Some(iteration.completion())));
     };
     if let Some(element) = lane_dense_element(vm, receiver, index)
-        && let Some(window) = lane_admit_prepared(cx, &shape.activation, shape.room)
+        && let Some(window) = admit_prepared_in_lane(cx, &shape.activation, shape.room)
     {
         // SAFETY: the admission pushed the activation over the window.
         let start = unsafe { lane_enter_array_step::<H, false>(cx, &entry, &iteration, element, index, window) };
@@ -292,7 +292,7 @@ pub(super) fn lane_body_array_iteration<H: Host>(
     let vm = unsafe { vm(cx) };
     let index = iteration.advance()?;
     let element = lane_dense_element(vm, receiver, index)?;
-    let window = lane_admit_prepared(cx, &shape.activation, shape.room)?;
+    let window = admit_prepared_in_lane(cx, &shape.activation, shape.room)?;
     // SAFETY: the admission pushed the activation over the window.
     let start = unsafe { lane_enter_array_step::<H, false>(cx, &entry, &iteration, element, index, window) };
     vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry, to_body: true });
@@ -329,7 +329,7 @@ fn lane_apply_step_value<H: Host>(vm: &mut Vm<H>, step: &mut LaneArrayStep, mapp
 /// `lane_step_array_iteration` of the innermost activation, a callback that returned
 /// `mapped`: where the step goes on to a present dense element and no collection is due,
 /// the activation is entered again for it in place, as the lane's own loop of calls would
-/// make its next one (`lane_enter_prepared`); otherwise the activation retires to its
+/// make its next one (`enter_prepared_in_lane`); otherwise the activation retires to its
 /// caller first.
 ///
 /// The step runs inside the returning handler: a `forEach` applies nothing, and the next
@@ -394,8 +394,8 @@ fn lane_finish_array_step<H: Host>(cx: *mut LaneContext<H>, activation: &Activat
 }
 
 /// The callback activation of `iteration`'s step passed `element` at `index`: entered
-/// (`lane_enter_prepared_values`), or, `AGAIN`, entered again in the window its return left
-/// (`lane_reenter_prepared_values`). The callback is passed the element, its index and the
+/// (`enter_prepared_values_in_lane`), or, `AGAIN`, entered again in the window its return left
+/// (`reenter_prepared_values_in_lane`). The callback is passed the element, its index and the
 /// array, after a reducer's accumulator.
 ///
 /// # Safety
@@ -413,10 +413,10 @@ unsafe fn lane_enter_array_step<H: Host, const AGAIN: bool>(
     unsafe {
         if iteration.native.is_array_reducer() {
             let values = [iteration.result, element, index, receiver];
-            if AGAIN { lane_reenter_prepared_values(cx, entry, values, window) } else { lane_enter_prepared_values(cx, entry, values, window) }
+            if AGAIN { reenter_prepared_values_in_lane(cx, entry, values, window) } else { enter_prepared_values_in_lane(cx, entry, values, window) }
         } else {
             let values = [element, index, receiver];
-            if AGAIN { lane_reenter_prepared_values(cx, entry, values, window) } else { lane_enter_prepared_values(cx, entry, values, window) }
+            if AGAIN { reenter_prepared_values_in_lane(cx, entry, values, window) } else { enter_prepared_values_in_lane(cx, entry, values, window) }
         }
     }
 }

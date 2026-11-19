@@ -82,7 +82,7 @@ pub(in super::super) fn specialize<H: Host>(
         if !instruction.op().is_string_case_index() {
             continue;
         }
-        // The range `lane_operand` validated before installing the selector.
+        // The range `operand_in_lane` validated before installing the selector.
         let start = instruction.imm() as usize;
         let Some(filter) = start.checked_add(usize::from(instruction.b())).and_then(|end| constants.get(start..end))
             .and_then(|cases| StringCaseFilter::new(heap, cases)) else {

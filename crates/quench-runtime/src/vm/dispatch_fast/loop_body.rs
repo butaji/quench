@@ -248,7 +248,7 @@ fn run_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &
     if !lane_body_admits(cx, &method, NO_PENDING_ACTIVATIONS) { return None; }
     // SAFETY: the context's program outlives the lane run; the activation owns its receiver
     // and captures, as at its body's prologue.
-    let (program, code, receiver) = unsafe { ((*cx).program, &*(*cx).code, lane_this(cx, r).unwrap_or(Value::DELETED)) };
+    let (program, code, receiver) = unsafe { ((*cx).program, &*(*cx).code, this_in_lane(cx, r).unwrap_or(Value::DELETED)) };
     let captures = capture_reads(unsafe { (*cx).registers }.capture());
     let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
     unsafe { (*cx).callee_warming = false };
@@ -271,7 +271,7 @@ pub(super) fn loop_attempt<H: Host>(cx: *mut LaneContext<H>, ip: Ip, resumed: La
         LaneBodyLeft::Resume(_, next, _) if body_calls::left_lane(next) => LoopAttempt::Leave(next),
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
         LaneBodyLeft::Raised(record) => LoopAttempt::Leave(lane_raised_exit(cx, record)),
-        LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(lane_return_value_general::<H>(cx, record, value)),
+        LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(return_value_general_in_lane::<H>(cx, record, value)),
     }
 }
 

@@ -1979,7 +1979,7 @@ pub(crate) struct Vm<H> {
     /// (9 MB) imported from an ES module was read and wrapped again at the run's peak.
     resolved_module_names: rustc_hash::FxHashMap<(String, String), String>,
     /// The native a lane call is running from its caller's frame (`dispatch_fast::lane_call_native`),
-    /// whose calls of JavaScript run frameless in that lane (`Vm::lane_native_callback`).
+    /// whose calls of JavaScript run frameless in that lane (`Vm::native_callback_in_lane`).
     lane_native: Option<dispatch_fast::LaneNativeCall>,
     /// The active program's context (`program_contexts`), kept by `set_active_program`: its
     /// cache layout and constants are one load from it.
@@ -3678,7 +3678,7 @@ impl<H: Host> Vm<H> {
             let start = self.active_call_roots.len();
             self.active_call_roots.extend_from_slice(&[prepared.callee, prepared.this]);
             self.active_call_roots.extend_from_slice(args);
-            let result = self.lane_native_callback(prepared.callee, prepared.this, args);
+            let result = self.native_callback_in_lane(prepared.callee, prepared.this, args);
             self.active_call_roots.truncate(start);
             if let Some(result) = result {
                 return result;
@@ -3725,7 +3725,7 @@ impl<H: Host> Vm<H> {
         // A script callee of such a native runs as an activation above them where it can.
         if self.lane_deferred.is_some() && !self.callee_runs_beside_activations(callee) {
             if matches!(self.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::User(..), .. }))
-                && let Some(result) = self.lane_deferred_callback(callee, this, args)
+                && let Some(result) = self.deferred_callback_in_lane(callee, this, args)
             {
                 return result;
             }
@@ -3749,7 +3749,7 @@ impl<H: Host> Vm<H> {
                 // A native a lane called runs its callee in that lane where the lane's own call
                 // of it would.
                 if self.lane_native.is_some()
-                    && let Some(result) = self.lane_native_callback(callee, this, args)
+                    && let Some(result) = self.native_callback_in_lane(callee, this, args)
                 {
                     return result;
                 }

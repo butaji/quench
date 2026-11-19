@@ -3332,7 +3332,7 @@ impl Lowering<'_, '_> {
     /// a plain call binds as `this`; a callee other than this frame's goes to the next
     /// alternative, and anything else leaves at the call, before its effects. The callee's
     /// parameters take the call's arguments and its other registers `undefined`, as its
-    /// activation would (`lane_push_passed`).
+    /// activation would (`push_passed_in_lane`).
     fn inline_call(&mut self, state: &mut State, pc: usize, frame: usize) -> bool {
         let inlined = self.unit.frames[frame];
         let exit = self.guard_exit(state, pc as u32);

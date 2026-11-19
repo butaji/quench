@@ -110,7 +110,7 @@ pub(super) fn lane_list_activation<H: Host>(
 
 /// `lane_call_spread` of a native other than a forwarding one or `eval`: the native's call
 /// in place with the array's elements, copied out first, as a forwarded call passes its
-/// values (`lane_native_value`). A lane call record carries no eval flag (`lane_call_fits`),
+/// values (`lane_native_value`). A lane call record carries no eval flag (`call_fits_in_lane`),
 /// so one whose result is unused (`ImmediateLayout::lane_call_result_used`) is made too: the
 /// value goes to its dead register. `None` for any other callee.
 #[inline(never)]

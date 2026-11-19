@@ -503,7 +503,7 @@ mod tests {
         for symbol in [
             "<quench_runtime::vm::Vm<Host>>::run_general_loop::<false>",
             "<quench_runtime::vm::Vm<Host>>::step_operation_74",
-            "quench_runtime::vm::dispatch_fast::lane_fields_fit",
+            "quench_runtime::vm::dispatch_fast::fields_fit_in_lane",
         ] {
             assert!(!is_interpreter_symbol(symbol), "{symbol}");
         }

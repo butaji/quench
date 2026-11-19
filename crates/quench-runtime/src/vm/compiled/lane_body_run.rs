@@ -7,7 +7,7 @@ use crate::vm::tier_events::Event;
 /// The activations a run's window has no pending push for: its caller pushed the body's own.
 pub(in crate::vm) const NO_PENDING_ACTIVATIONS: usize = 0;
 /// A body entered through its entry cell runs before the activation of its call exists
-/// (`dispatch_fast::lane_enter_cell_body`): one, which a leave pushes in the room reserved past
+/// (`dispatch_fast::enter_cell_body_in_lane`): one, which a leave pushes in the room reserved past
 /// the activations the run's frames start from.
 pub(in crate::vm) const CALLEE_ACTIVATION_PENDING: usize = 1;
 

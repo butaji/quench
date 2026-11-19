@@ -8,7 +8,7 @@ use super::*;
 /// activation completes a run of returning calls (`return f(...)`,
 /// `lane_complete_plain_chain`), another program's activation enters its caller's program
 /// (`lane_complete_cross_activation`), and any other completion, or any of these past its
-/// common form, completes as `lane_complete_activation` completes it. `None` when no
+/// common form, completes as `complete_activation_in_lane` completes it. `None` when no
 /// activation runs: the running function is a VM frame.
 #[inline(always)]
 pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
@@ -23,25 +23,25 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
     }
     let common = match completion {
         Some(Completion::ReturnsToNative) => lane_complete_native_callback(cx, value),
-        // `lane_complete_activation` begins with the same chain.
+        // `complete_activation_in_lane` begins with the same chain.
         Some(Completion::Plain) => None,
         Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
-        Some(Completion::SettlesPromise) => lane_return_from::<H, false, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
-        Some(Completion::Constructs) => lane_return_from::<H, false, false, true, false>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
+        Some(Completion::SettlesPromise) => return_from_in_lane::<H, false, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
+        Some(Completion::Constructs) => return_from_in_lane::<H, false, false, true, false>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
         Some(Completion::ReadsTrapped) => lane_complete_trapped_read(cx, ip, value),
         _ => None,
     };
     if common.is_some() {
         return common;
     }
-    lane_complete_activation(cx, ip, value)
+    complete_activation_in_lane(cx, ip, value)
 }
 
 /// `lane_complete_returning` of a proxy `get` trap's activation (`Completion::ReadsTrapped`)
 /// whose read keeps its result: the read's register takes the trap's result, in the
 /// caller's program, which a trap of another program's library leaves for. A result the
 /// target's invariants may refuse returns from the trap's frame, whose pending call checks
-/// it; a read that returns its value (`RETURN_REGISTER`) takes `lane_complete_activation`.
+/// it; a read that returns its value (`RETURN_REGISTER`) takes `complete_activation_in_lane`.
 #[inline(always)]
 fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
@@ -61,7 +61,7 @@ fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: V
     Some(lane_resume_after_call(&activation, caller_memory, value))
 }
 
-/// `lane_complete_activation`'s commonest completion: a JavaScript activation of the
+/// `complete_activation_in_lane`'s commonest completion: a JavaScript activation of the
 /// running program whose call keeps its result (`Completion::Plain`, a result register). It
 /// restores what that completion restores, without moving the activation out of the stack:
 /// the caller's registers, records, receiver and environments, and the call's result. `None`
@@ -69,7 +69,7 @@ fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: V
 /// activation the same way (`lane_complete_cross_activation`).
 #[inline(always)]
 pub(super) fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
-    lane_return_from::<H, false, false, false, false>(cx, value)
+    return_from_in_lane::<H, false, false, false, false>(cx, value)
 }
 
 /// `lane_return_plain` into a running lane body's call (`lane_body_call`): a returning
@@ -77,16 +77,16 @@ pub(super) fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) 
 /// it next (`LaneExit::Returned`).
 #[inline(always)]
 pub(super) fn lane_return_to_body<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
-    lane_return_from::<H, false, true, false, false>(cx, value)
+    return_from_in_lane::<H, false, true, false, false>(cx, value)
 }
 
 /// `lane_complete_plain_activation` of an activation of another program than its caller's
 /// (`Completion::Cross`), which enters the caller's program first, for the returns past the
-/// common one (`lane_return_general`, `lane_return_value_general`), so the common return
+/// common one (`lane_return_general`, `return_value_general_in_lane`), so the common return
 /// carries none of the program switch.
 #[inline(always)]
 pub(super) fn lane_complete_cross_activation<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
-    let (registers, next) = lane_return_from::<H, true, false, false, false>(cx, value)?;
+    let (registers, next) = return_from_in_lane::<H, true, false, false, false>(cx, value)?;
     Some(Resumed::At(registers, next, Carried::script(cx)))
 }
 
@@ -116,7 +116,7 @@ pub(super) fn lane_frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value)
 /// (`lane_return_plain`): a JavaScript activation of the running program's caller yielding
 /// `value` to its call's result register. Each step loads or stores, so a handler returning
 /// through it saves no registers. `None`, which changes nothing, leaves every other completion
-/// to `lane_complete_activation`. A return record of a leaf's records (`LEAF`,
+/// to `complete_activation_in_lane`. A return record of a leaf's records (`LEAF`,
 /// `LaneView::specialize_leaf_returns`) completes the running leaf call first
 /// (`lane_complete_leaf`); no other record runs while one does.
 #[inline(always)]
@@ -137,7 +137,7 @@ pub(super) fn lane_complete_plain_activation<H: Host, const LEAF: u8>(cx: *mut L
     Some(Resumed::At(registers, next, view))
 }
 
-/// `lane_complete_activation` of a run of JavaScript activations, of one program or several,
+/// `complete_activation_in_lane` of a run of JavaScript activations, of one program or several,
 /// each returning the completion of the call above it (`return f(...)`), down to one whose call
 /// takes `value` in its result register. Only that outermost activation's caller state is
 /// restored: an inner one's would be overwritten by it. `None`, which changes nothing, leaves
@@ -201,7 +201,7 @@ fn returning_chain_outermost(activations: &[Activation]) -> Option<(usize, bool)
 }
 
 /// `lane_complete_plain_chain` out of line, for the returns past the common one
-/// (`lane_return_general`, `lane_return_value_general`), whose frames stay small.
+/// (`lane_return_general`, `return_value_general_in_lane`), whose frames stay small.
 #[inline(never)]
 pub(super) fn lane_complete_returning_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     lane_complete_plain_chain(cx, value)
@@ -218,7 +218,7 @@ pub(super) fn lane_end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Valu
     body_calls::ends_run(cx, &activation, Completion::ReturnsToBody, this, value)
 }
 
-/// `lane_complete_activation` of a native's callback (`Completion::ReturnsToNative`): the
+/// `complete_activation_in_lane` of a native's callback (`Completion::ReturnsToNative`): the
 /// native's caller state restored, the run ends with `value`, which the native receives.
 #[inline(always)]
 pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
@@ -231,7 +231,7 @@ pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, va
     }
     // SAFETY: a script activation holds no drop glue and no Wasm storage
     // (`Activation::frame_storage_bytes`); its slot stays as it is, unread by the stack, until
-    // the next push, so it is read in place, as `lane_return_from` reads a plain one.
+    // the next push, so it is read in place, as `return_from_in_lane` reads a plain one.
     unsafe { vm.lane_stack.activations_mut().set_len(depth) };
     vm.lane_stack.drop_owned_from(depth);
     let activation = unsafe { &*top };

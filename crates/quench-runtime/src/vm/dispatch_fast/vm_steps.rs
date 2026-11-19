@@ -1,7 +1,7 @@
 //! A lane body's call-outs (`staged::CallOut`: the value steps, `ForInNext`, a `Binary`, the
 //! environment, arguments and global-name steps), the one helper a row's slow
 //! case calls: it makes the step by the interpreter's own definition (`Vm::call_out`), as
-//! `lane_step_beside_activations` does for a frameless activation, and continues, so no such
+//! `step_beside_activations_in_lane` does for a frameless activation, and continues, so no such
 //! record hands its body back.
 use super::*;
 
@@ -39,7 +39,7 @@ unsafe fn vm_operation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -
     let instruction = body.widened(body.code[call_pc as usize]);
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
         .and_then(|row| row.call_out()).expect("a call-out record decodes");
-    let operands = operation.operands().read(&code.method_arguments, |operand| lane_call_operand(cx, r, operand));
+    let operands = operation.operands().read(&code.method_arguments, |operand| call_operand_in_lane(cx, r, operand));
     let Some(value) = lane_in_place(cx, ip, |vm, code| {
         let site = super::super::call_out::CallSite { owner: vm.call_out_owner(operation), function, resume: call_pc as usize + 1 };
         vm.call_out(code, site, operation, operands)

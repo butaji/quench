@@ -13,7 +13,7 @@ pub(super) fn store_to_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slo
     // them.
     if depth == 0
         && env.is_deleted()
-        && let Some(capture) = lane_frame_capture(cx)
+        && let Some(capture) = frame_capture_in_lane(cx)
     {
         unsafe { (*cx).registers.set_capture(capture) };
         if let Some(slots) = capture_stores(capture)
