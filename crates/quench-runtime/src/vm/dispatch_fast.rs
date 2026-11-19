@@ -342,6 +342,22 @@ impl LoopSite {
 
 type Ip = *const LaneInstruction;
 
+/// The row of the last indirect target the lane made: the record after the target, the register
+/// and reference it wrote, and the row's entry and instance (`TableTarget`). A reference call
+/// that is that record, reading that register and reference, takes its callee from the row.
+#[derive(Clone, Copy)]
+struct IndirectSlot {
+    next: Ip,
+    register: u16,
+    reference: u64,
+    entry: u32,
+    instance: u64,
+}
+
+impl IndirectSlot {
+    const NONE: Self = Self { next: std::ptr::null(), register: 0, reference: 0, entry: 0, instance: 0 };
+}
+
 /// A function's lane view: one record per instruction, and the one register
 /// its direct memory accesses go through. Accesses through any other
 /// register, and lane instructions other than the binding load that would
@@ -2609,6 +2625,15 @@ struct LaneContext<H: Host> {
     /// The instance environment the run's Wasm bindings last read and its dense slot storage
     /// (`lane_instance_binding`), found this run as `frame_storage` is.
     instance_slots: (Value, *const usize),
+    /// The row of the last indirect target the lane made (`IndirectSlot`), which the reference
+    /// call right after it reads its callee from.
+    indirect: IndirectSlot,
+    /// The running instance's record address, cached for the environment (its bits) and program
+    /// it was found for (`lane_instance_address`); 0 where the environment has no record.
+    instance_address: (u64, ProgramId, usize),
+    /// The running program's Wasm signature pool, shared with the program, for the program it is
+    /// held for (`lane_signatures`): an indirect target reads its expected canonical from it.
+    signatures: (ProgramId, Option<std::rc::Rc<crate::wasm::WasmSignatures>>),
     /// Backward jumps left before the running Wasm function is credited with an
     /// interpreter entry's worth of loop work (`TIERS.wasm.backedges_per_entry`), or `None`
     /// when this run's code earns none (`Vm::lane_credits_backedges`). A crediting run keeps

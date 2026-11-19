@@ -6,6 +6,53 @@ use super::super::wasm_gc::GcFieldIndex;
 use super::super::wasm_gc::stage::HeapStage;
 use crate::staged::wasm_gc::{Aggregate, GcStep, array_copy, array_fill, array_length, field_read, field_write, non_null};
 use crate::wasm::gc::{GcField, GcFieldAccess};
+use crate::staged::wasm_call::Call;
+
+/// The running program's signature pool, cached on the lane for the program it was found for
+/// (`LaneContext::signatures`). `None` where the program has none; the general path raises that.
+#[inline(always)]
+fn lane_signatures<H: Host>(cx: *mut LaneContext<H>) -> Option<*const crate::wasm::WasmSignatures> {
+    // SAFETY: the context outlives the lane run; the cache's pool is kept by the context until
+    // the program changes, and no step in a lane target's check changes the program.
+    unsafe {
+        let program = (*cx).program;
+        if let (cached, Some(pool)) = &(*cx).signatures {
+            if *cached == program {
+                return Some(std::rc::Rc::as_ptr(pool));
+            }
+        }
+        let pool = vm(cx).programs.wasm_signatures_shared(program)?;
+        let pointer = std::rc::Rc::as_ptr(&pool);
+        (*cx).signatures = (program, Some(pool));
+        Some(pointer)
+    }
+}
+
+/// The lane's indirect target step (`Vm::wasm_indirect_row_with`, the interpreter's own check):
+/// the reference it writes to its result register, and the row it matched, which the reference
+/// call right after the target reads its callee from (`IndirectSlot`).
+#[inline(always)]
+fn lane_indirect_target<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>, i: WideInstruction, ip: Ip, r: Registers) -> Option<Value> {
+    // SAFETY: `lane_signatures` returned a pool the context holds for this step.
+    let pool = unsafe { lane_signatures(cx)?.as_ref() };
+    let (value, row) = vm.wasm_indirect_row_with(pool, r.get(i.register_b()), r.get(i.register_c()), i.imm()).ok()?;
+    // SAFETY: the context outlives the lane run.
+    unsafe {
+        (*cx).indirect = IndirectSlot {
+            // Lowering invariant: IndirectTarget is emitted only on the call_indirect path, and
+            // `emit_wasm_call` then emits exactly one load_constant (the void receiver, in a register
+            // above the target, so it never clobbers register a) followed by the call_through. So the
+            // call is two records on. A mismatch (e.g. a fused record) is a safe miss: the reference
+            // call's record, register and reference checks decide.
+            next: following(following(ip)),
+            register: i.result_register(),
+            reference: value.to_bits(),
+            entry: row.entry,
+            instance: row.instance,
+        };
+    }
+    Some(value)
+}
 
 /// The `wasm_gc_value_op` numbered `OP`.
 const fn gc_op<const OP: u16>() -> Op {
@@ -116,9 +163,14 @@ lane_handler! {
             Some(step) => lane_gc_rule(vm, step, instruction, |_, register| r.get(register)),
             None => None,
         };
+        let indirect = const { matches!(Call::of(op), Some(Call::IndirectTarget)) };
         let value = match rule {
             Some(Ok(value)) => value,
             Some(Err(_)) => return exit(ip),
+            None if indirect => match lane_indirect_target(cx, vm, instruction, ip, r) {
+                Some(value) => Some(value),
+                None => return exit(ip),
+            },
             None => {
                 let Ok(value) = vm.wasm_gc_value_step(program, env, instruction, |_, register| r.get(register)) else {
                     return exit(ip);

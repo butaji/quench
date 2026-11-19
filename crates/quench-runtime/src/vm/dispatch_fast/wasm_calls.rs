@@ -27,6 +27,28 @@ struct LaneCall<'a, H: Host> {
     memory: MemoryView,
 }
 
+impl<H: Host> LaneCall<'_, H> {
+    /// The callee's function index from the row of the indirect target the lane made just before
+    /// this call (`IndirectSlot`), where this call is that target's next record and reads its
+    /// register and reference unchanged, and the row names a function of the running instance (one
+    /// instance record per environment and program, so its address decides). Otherwise `None`, and
+    /// the reference is resolved from the heap. The slot is consumed either way.
+    #[inline(always)]
+    fn indirect_callee(&mut self) -> Option<u32> {
+        // SAFETY: the context outlives the lane run.
+        let slot = unsafe { (*self.cx).indirect };
+        unsafe { (*self.cx).indirect.next = std::ptr::null() };
+        if slot.next != self.ip || slot.register != self.i.b || slot.reference != self.r.get(self.i.b).to_bits() {
+            return None;
+        }
+        let running = lane_instance_address(self.cx);
+        if running == 0 || slot.instance != running as u64 {
+            return None;
+        }
+        u16::try_from(slot.entry).ok().map(u32::from)
+    }
+}
+
 impl<H: Host> Machine for LaneCall<'_, H> {
     type Word = u64;
 }
@@ -49,6 +71,9 @@ impl<H: Host> WasmActivation for LaneCall<'_, H> {
 
     #[inline(always)]
     fn reference(&mut self) -> CallTarget {
+        if let Some(function) = self.indirect_callee() {
+            return CallTarget::Function(function);
+        }
         let vm = unsafe { vm(self.cx) };
         let running = (unsafe { (*self.cx).program }, Some(lane_instance_env(self.cx)));
         match vm.heap.function(self.r.get(self.i.b)) {
@@ -334,6 +359,23 @@ lane_handler! {
             None => return exit(ip),
         }
     }
+}
+
+/// The address of the running instance's record (`Vm::wasm_instance_address`), cached on the lane
+/// for the environment (its bits) and program it was found for. A record is one per environment
+/// and program, so the address names the running instance.
+#[inline(always)]
+fn lane_instance_address<H: Host>(cx: *mut LaneContext<H>) -> usize {
+    let env = lane_instance_env(cx);
+    // SAFETY: the context outlives the lane run.
+    let program = unsafe { (*cx).program };
+    let (bits, cached, address) = unsafe { (*cx).instance_address };
+    if bits == env.to_bits() && cached == program {
+        return address;
+    }
+    let address = unsafe { vm(cx) }.wasm_instance_address(env, program).unwrap_or(0);
+    unsafe { (*cx).instance_address = (env.to_bits(), program, address) };
+    address
 }
 
 /// The callee's frame at the top of the value stack: its registers filled with the shape's
