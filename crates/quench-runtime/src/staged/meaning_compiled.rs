@@ -163,23 +163,7 @@ pub(crate) fn is_to_numeric(instruction: WideInstruction) -> bool {
     }
 }
 
-/// An indexed read of an array (`GetIndex`), of a register or of a local operand.
-pub(crate) fn is_get_index(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
-        Some(Operation::ElementRead { .. } | Operation::ElementReadOperand { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_get_index(),
-    }
-}
 
-/// An indexed store into an array (`SetIndex`).
-pub(crate) fn is_set_index(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
-        Some(Operation::ElementWrite { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_set_index(),
-    }
-}
 
 /// A named property read (`GetField`).
 #[inline(always)]
@@ -209,14 +193,6 @@ pub(crate) fn is_load_capture(instruction: WideInstruction) -> bool {
     }
 }
 
-/// A write of a capture (`StoreCapture`).
-pub(crate) fn is_store_capture(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
-        Some(Operation::StoreCapture { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_store_capture(),
-    }
-}
 
 /// A read of an environment-resident local (`LoadEnvLocal`).
 pub(crate) fn is_load_env_local(instruction: WideInstruction) -> bool {
@@ -227,23 +203,7 @@ pub(crate) fn is_load_env_local(instruction: WideInstruction) -> bool {
     }
 }
 
-/// A read of `this` (`LoadThis`).
-pub(crate) fn is_load_this(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
-        Some(Operation::LoadThis { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_load_this(),
-    }
-}
 
-/// A `RequireObjectCoercible` check of a register.
-pub(crate) fn is_require_object_coercible(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
-        Some(Operation::RequireObjectCoercible { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_require_object_coercible(),
-    }
-}
 
 /// An unconditional jump (`Jump`).
 pub(crate) fn is_jump(instruction: WideInstruction) -> bool {
@@ -272,14 +232,6 @@ pub(crate) fn is_jump_false(instruction: WideInstruction) -> bool {
     }
 }
 
-/// A record that does nothing (`Nop`).
-pub(crate) fn is_nop(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
-        Some(Operation::Nop) => true,
-        Some(_) => false,
-        None => instruction.op().is_nop(),
-    }
-}
 
 /// A return of a register (`Return`).
 pub(crate) fn is_return(instruction: WideInstruction) -> bool {
@@ -290,14 +242,6 @@ pub(crate) fn is_return(instruction: WideInstruction) -> bool {
     }
 }
 
-/// A raise of its operand (`Throw`): the owned step that throws the register.
-pub(crate) fn is_throw(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
-        Some(Operation::Protocol { step: Protocol::Owned(crate::staged::protocol_owned::OwnedVarStep::ThrowValue), .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_throw(),
-    }
-}
 
 /// A read of a frame-resident local (`LoadLocal`, `LoadLocalPlain`), the catalog's `loads_frame_local`.
 pub(crate) fn loads_frame_local(instruction: WideInstruction) -> bool {
@@ -319,14 +263,6 @@ pub(crate) fn stitchable(instruction: WideInstruction) -> bool {
         || crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
 }
 
-/// A store of a binding by name (`StoreName`), which the global store row decodes.
-pub(crate) fn stores_name(instruction: WideInstruction) -> bool {
-    match decoded(instruction) {
-        Some(Operation::GlobalWrite { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().stores_name(),
-    }
-}
 
 /// A binary operation of the numeric lowering (`JsDenotation::NumericBinary`): the catalog's property
 /// of the opcode, which `numeric_binary` rows and the stage admit by their operator.
@@ -420,6 +356,7 @@ pub(crate) fn is_super_construct(instruction: WideInstruction) -> bool {
 }
 
 /// Whether the record's `a` operand names a register it writes (the catalog's field layout).
+#[cfg(all(test, feature = "aot"))]
 #[inline(always)]
 pub(crate) fn writes_register_a(instruction: WideInstruction) -> bool {
     instruction.op().field_layout(crate::bytecode::InstructionField::A).is_register_field()
@@ -431,9 +368,6 @@ pub(crate) fn is_unit_rewritten(op: Op) -> bool {
     op.is_unit_rewritten()
 }
 
-/// The number of catalog opcodes: one past the last opcode index, the index a table keeps for a
-/// dynamic (non-catalog) operation.
-pub(crate) const OPCODE_COUNT: usize = Op::COUNT;
 
 const WASM_WORD: usize = u64::BITS as usize;
 
@@ -463,3 +397,21 @@ pub(crate) fn is_wasm(instruction: WideInstruction) -> bool {
     let index = instruction.op() as usize;
     WASM_OPCODES[index / WASM_WORD] >> (index % WASM_WORD) & 1 != 0
 }
+
+/// Where a call site goes on a status its call helper returns (`LaneHelper::Call`,
+/// `LaneHelper::ConstructCall`): completed with its result written, missed before any effect,
+/// or raised with the exception stashed. Any other status leaves the region with it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum HelperOutcome {
+    Completed,
+    Missed,
+    Raised,
+}
+
+/// The helper statuses a call site tests, in the order it tests them (the common one first),
+/// paired with where each goes: the one table both the helper and its call sites share.
+pub(crate) const HELPER_OUTCOMES: [(u64, HelperOutcome); 3] = [
+    (quench_bjit::call_record::LANE_CALL_COMPLETED, HelperOutcome::Completed),
+    (quench_bjit::call_record::LANE_CALL_MISSED, HelperOutcome::Missed),
+    (quench_bjit::call_record::LANE_CALL_RAISED, HelperOutcome::Raised),
+];

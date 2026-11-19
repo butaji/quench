@@ -9,6 +9,8 @@
 // cell of `staged/call.rs`, which both builds compile.
 #![allow(dead_code)]
 
+// Re-exported for the stencils, which mount this file; the runtime reads them from `staged::frame`.
+#[allow(unused_imports)]
 pub(crate) use crate::staged::frame::{ACTIVATION_BYTES, ACTIVATION_KIND_OFFSET, CONTEXT_WORDS as FRAME_CONTEXT_WORDS};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

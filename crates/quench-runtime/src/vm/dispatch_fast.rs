@@ -25497,9 +25497,6 @@ impl<H: Host> Vm<H> {
             script_calls: inline_calls
                 && code.kind != crate::bytecode::ProgramKind::Wasm
                 && *frame + 1 == self.frames.len(),
-            tiers_run: self.tier_may_run(crate::jit_mode::Tier::ANY),
-            // `script_calls` starts on only where `inline_calls` is.
-            returns_script_frame: false,
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {

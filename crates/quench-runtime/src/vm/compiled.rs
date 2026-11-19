@@ -26,7 +26,7 @@
 use tier_policy::Tiers;
 use super::dispatch_fast::Activation;
 use super::*;
-use crate::bytecode::{Class, Traits,
+use crate::bytecode::{Traits,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
     WideInstruction,
 };
@@ -4693,7 +4693,7 @@ enum JsCalloutStep {
 
 /// Dynamic dispatch selects its opcode from the instruction, not a specialization.
 #[cfg(feature = "native-execution")]
-const DYNAMIC_JS_OPCODE: usize = meaning_compiled::OPCODE_COUNT;
+const DYNAMIC_JS_OPCODE: usize = crate::bytecode::OPCODE_COUNT;
 
 #[cfg(feature = "native-execution")]
 unsafe extern "C" fn js_step_callout<H: Host>(
@@ -7502,8 +7502,8 @@ fn guard_support() -> Option<&'static GuardSupport> {
                 std::sync::atomic::Ordering::Release);
             // SAFETY: the assembled trampoline implements `Trampoline` for this ABI.
             let trampoline = unsafe { std::mem::transmute::<unsafe extern "C" fn(), Trampoline>(quench_guard_trampoline) };
-            let landing = quench_guard_landing as usize;
-            let termination = quench_guard_termination as usize;
+            let landing = quench_guard_landing as *const () as usize;
+            let termination = quench_guard_termination as *const () as usize;
             install_guard_signals(&[(libc::SIGSEGV, &PREVIOUS_SEGV)],
                 guard_fault as *const () as usize, libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_NODEFER)?;
             Some(GuardSupport {

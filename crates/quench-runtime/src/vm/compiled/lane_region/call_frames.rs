@@ -304,14 +304,14 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let status = emit_lane_helper_call(stage.builder, self.payload, address, &[context, record]);
         // The status dispatch, generated from the shared outcome table: each test but the first
         // is cold where a direct entry was emitted; the last miss leaves with the status.
-        let outcomes = crate::staged::protocol::HELPER_OUTCOMES;
+        let outcomes = crate::vm::compiled::meaning_compiled::HELPER_OUTCOMES;
         for (index, (code, outcome)) in outcomes.into_iter().enumerate() {
             let target = match outcome {
-                crate::staged::protocol::HelperOutcome::Completed => call.completed,
-                crate::staged::protocol::HelperOutcome::Missed => call.missed,
-                crate::staged::protocol::HelperOutcome::Raised => call.raised,
+                crate::vm::compiled::meaning_compiled::HelperOutcome::Completed => call.completed,
+                crate::vm::compiled::meaning_compiled::HelperOutcome::Missed => call.missed,
+                crate::vm::compiled::meaning_compiled::HelperOutcome::Raised => call.raised,
             };
-            let hit = stage.raw_compare_imm(Relation::Equal, status, i64::from(code));
+            let hit = stage.raw_compare_imm(Relation::Equal, status, code as i64);
             if index + 1 == outcomes.len() {
                 stage.branch(hit, (target, &[]), (call.stop, &[status]));
             } else {

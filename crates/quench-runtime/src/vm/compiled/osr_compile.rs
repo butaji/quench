@@ -13,7 +13,7 @@ use super::lane_region::StableFacts;
 use crate::code_dependencies::Invalidation;
 mod calls;
 pub(in crate::vm) use calls::{CallCode, RegionCalls};
-use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
+use crate::bytecode::{FieldLookup, Function, ResidualProgram, WideInstruction};
 use crate::vm::global_facts::GlobalTable;
 use super::super::specializer::Specializer;
 use super::{DirectCallee, DirectCandidates};

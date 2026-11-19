@@ -20,7 +20,7 @@ use std::sync::Mutex;
 /// The stencils are x86-64 only, so the checks are too.
 #[cfg(target_arch = "x86_64")]
 mod layout_checks {
-    use super::{CallContext, JsStepDispatch};
+    use super::super::{CallContext, JsStepDispatch};
     use crate::staged::layout_offsets as L;
     use std::mem::offset_of;
 

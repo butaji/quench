@@ -4552,13 +4552,6 @@ impl Lowering<'_, '_> {
     }
 }
 
-/// Continue only when `condition` is false; `fallback` otherwise.
-fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fallback: ir::Block) {
-    let passed = builder.create_block();
-    emit(builder).branch_if(condition, (fallback, &[]), (passed, &[]));
-    builder.switch_to_block(passed);
-}
-
 #[cfg(test)]
 #[path = "lane_region/tests.rs"]
 mod tests;

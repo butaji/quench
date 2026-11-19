@@ -198,6 +198,8 @@ impl<H: Host> Vm<H> {
             constants: self.programs.constants(program) as *const _,
             inline_calls: inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm,
             script_calls,
+            tiers_run: self.tier_may_run(crate::jit_mode::Tier::ANY),
+            returns_script_frame: script_calls && !(inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm),
             script_constructs,
             instance: Value::DELETED,
             instance_slots: (Value::DELETED, std::ptr::null()),

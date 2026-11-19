@@ -3,7 +3,7 @@
 //! Instructions keep their original unit PCs, origins and recovery homes.
 
 use super::{facts, lane_unit::Unit};
-use crate::{Value, bytecode::{ControlFlowLayout, Op, Operand, OperandKind, ResidualProgram, WideInstruction}};
+use crate::{Value, bytecode::{ControlFlowLayout, Operand, OperandKind, ResidualProgram, WideInstruction}};
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberRelation, PartialOrderStage};
 use cranelift_codegen::bitset::CompoundBitSet;
 

@@ -10,7 +10,7 @@
 //! outermost first, through the lane's own call path, and continues at the innermost one's
 //! record (`Vm::lane_body_inlined_activation`).
 
-use crate::bytecode::{FieldLookup, ImmediateLayout, Op, Register, WideInstruction};
+use crate::bytecode::{FieldLookup, ImmediateLayout, Register, WideInstruction};
 use crate::bytecode::Function;
 use crate::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Resolved};
 use crate::typed_ir::BindingTime;
