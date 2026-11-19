@@ -164,17 +164,17 @@ impl<H: Host> Vm<H> {
     /// (`lane_region::native_calls`), where the realm's prototype holds that native as an own
     /// data property now. The receiver is not known: the call guards the callee it reads.
     fn method_native(&mut self, instruction: &crate::bytecode::WideInstruction) -> Option<GlobalRead> {
-        /// The methods a call runs inline, by name.
-        const METHODS: [(&str, crate::vm::Native); 4] = [("charCodeAt", crate::vm::Native::StringCharCodeAt), ("charAt", crate::vm::Native::StringCharAt),
-            ("push", crate::vm::Native::ArrayPush), ("pop", crate::vm::Native::ArrayPop)];
         if !instruction.op().is_get_field() { return None; }
         let Some(crate::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup() else { return None };
         let name = self.atom_name(atom);
-        let (_, native) = METHODS.iter().find(|(method, _)| *method == name)?;
-        let holder = if matches!(native, crate::vm::Native::ArrayPush | crate::vm::Native::ArrayPop) { self.array_proto } else { self.string_proto };
+        let row = crate::vm::native_rows::lane_method(name)?;
+        let native = row.native;
+        let holder = match row.holder {
+            crate::vm::native_rows::Holder::ArrayPrototype => self.array_proto,
+            _ => self.string_proto,
+        };
         let value = self.own_plain_data(holder, atom)??;
         let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
-        let native = *native;
         (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder })
     }
 

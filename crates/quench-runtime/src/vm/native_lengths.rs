@@ -1,23 +1,22 @@
-//! The `length` of each builtin function that no installation table states, by length.
-//! The natives `native_rows` lists (the `Array`, `String.prototype`, `Math`, `Number`, global
-//! parse, `Map`, `Set`, `WeakMap`, `WeakSet` and `DataView` method functions) take their lengths
-//! from their rows there, and are not repeated here.
+//! The `length` of each builtin function that no installation row holds: a constructor, an
+//! accessor, a symbol-keyed method or a function nothing installs by name. Every native a row
+//! holds takes its length from that row (`native_rows`), and is not repeated here.
 
 use crate::heap::Native;
-use crate::vm::native_rows::NATIVE_ROWS;
+use crate::vm::native_rows::{NATIVE_ROWS, resolved_length};
 
 /// Rows of (length, functions): each function's `length` as the specification gives it.
 const ROWS: &[(u8, &[Native])] = &[
+    (crate::vm::date::DATE_COMPONENT_COUNT as u8, &[Native::Date]),
     (0, &[
-        Native::FunctionPrototype, Native::IsHTMLDDA, Native::CollectGarbage, Native::FunctionToString,
-        Native::FunctionCaller, Native::TypedArray, Native::TypedArrayOf, Native::Uint8ArrayReverse,
-        Native::Uint8ArrayToString, Native::Uint8ArrayKeys, Native::Uint8ArrayValues,
-        Native::Uint8ArrayEntries, Native::Uint8ArrayToHex, Native::Uint8ArrayToBase64,
+        Native::FunctionPrototype, Native::IsHTMLDDA, Native::CollectGarbage,
+        Native::FunctionCaller, Native::TypedArray,
+        Native::Uint8ArrayToString,
         Native::TypedArrayToStringTag, Native::TypedArrayBufferGetter, Native::TypedArrayByteLengthGetter,
-        Native::TypedArrayByteOffsetGetter, Native::TypedArrayLengthGetter, Native::TypedArrayToReversed,
-        Native::TypedArrayToLocaleString, Native::ThrowTypeError, Native::ProxyRevoke,
-        Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::BooleanToString,
-        Native::BooleanValueOf, Native::DataViewBufferGetter, Native::DataViewByteLengthGetter,
+        Native::TypedArrayByteOffsetGetter, Native::TypedArrayLengthGetter,
+        Native::ThrowTypeError, Native::ProxyRevoke,
+        Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag,
+        Native::DataViewBufferGetter, Native::DataViewByteLengthGetter,
         Native::DataViewByteOffsetGetter, Native::BigIntValueOf, Native::BigIntToString,
         Native::BigIntToLocaleString, Native::IntlNumberFormat, Native::IntlNumberFormatFormatGetter,
         Native::IntlNumberFormatResolvedOptions, Native::IntlRelativeTimeFormat,
@@ -40,7 +39,7 @@ const ROWS: &[(u8, &[Native])] = &[
         Native::IntlDurationFormatFormatGetter, Native::IntlDurationFormatResolvedOptions,
         Native::IntlListFormat, Native::IntlListFormatFormatGetter, Native::IntlListFormatResolvedOptions,
         Native::PromiseSpeciesGetter,
-        Native::PromiseFinallyContinuationHandler, Native::PromiseWithResolvers, Native::TemporalDuration,
+        Native::PromiseFinallyContinuationHandler, Native::TemporalDuration,
         Native::TemporalDurationAbs, Native::TemporalDurationNegated, Native::TemporalToLocaleString,
         Native::TemporalDurationToString, Native::TemporalDurationToJSON, Native::TemporalDurationValueOf,
         Native::TemporalDurationYearsGetter, Native::TemporalDurationMonthsGetter,
@@ -116,9 +115,8 @@ const ROWS: &[(u8, &[Native])] = &[
         Native::TemporalZonedDateTimeToJSON, Native::TemporalZonedDateTimeToLocaleString,
         Native::TemporalInstantEpochNanosecondsGetter, Native::TemporalInstantEpochMillisecondsGetter,
         Native::TemporalInstantToString, Native::TemporalInstantToJSON, Native::TemporalInstantValueOf,
-        Native::Symbol, Native::SymbolToString, Native::SymbolValueOf, Native::SymbolDescriptionGetter,
-        Native::StringValues, Native::RegExpLegacyGetter, Native::ObjectPrototypeToLocaleString,
-        Native::ObjectPrototypeValueOf, Native::ObjectPrototypeToString,
+        Native::Symbol, Native::SymbolDescriptionGetter,
+        Native::StringValues, Native::RegExpLegacyGetter,
         Native::ObjectPrototypeProtoGetter, Native::Map, Native::Set, Native::WeakMap, Native::WeakSet,
         Native::WeakRefDeref, Native::MapSizeGetter, Native::SetSizeGetter,
         Native::SetSpeciesGetter,
@@ -142,12 +140,9 @@ const ROWS: &[(u8, &[Native])] = &[
         Native::RegExpSticky, Native::RegExpHasIndices, Native::RegExpSource, Native::RegExpSpecies,
     ]),
     (1, &[
-        Native::TypedArrayAt, Native::TypedArrayToSorted, Native::TypedArrayLastIndexOf,
-        Native::TypedArraySort, Native::Uint8ArrayFill, Native::Uint8ArrayIncludes,
-        Native::Uint8ArrayIndexOf, Native::Uint8ArrayJoin, Native::Uint8ArraySet,
-        Native::Uint8ArrayFromBase64, Native::Uint8ArrayFromHex, Native::Uint8ArraySetFromBase64,
-        Native::Uint8ArraySetFromHex, Native::FunctionPrototypeHasInstance, Native::FunctionCall,
-        Native::FunctionBind, Native::BigInt, Native::Boolean, Native::DataView, Native::EncodeUri,
+        Native::DateToPrimitive,
+        Native::FunctionPrototypeHasInstance,
+        Native::BigInt, Native::Boolean, Native::DataView, Native::EncodeUri,
         Native::EncodeUriComponent, Native::DecodeUri, Native::DecodeUriComponent, Native::GlobalEscape,
         Native::GlobalUnescape, Native::Eval,
         Native::IntlNumberFormatSupportedLocalesOf, Native::IntlNumberFormatFormat,
@@ -164,9 +159,6 @@ const ROWS: &[(u8, &[Native])] = &[
         Native::IntlListFormatSupportedLocalesOf, Native::Number,
         Native::Error, Native::EvalError, Native::RangeError,
         Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::Promise,
-        Native::PromiseResolve, Native::PromiseReject, Native::PromiseTry, Native::PromiseCatch,
-        Native::PromiseFinally, Native::PromiseAll, Native::PromiseAllKeyed, Native::PromiseRace,
-        Native::PromiseAllSettled, Native::PromiseAllSettledKeyed, Native::PromiseAny,
         Native::PromiseFinallyHandler, Native::PromiseAggregateJob, Native::Object,
         Native::ShadowRealmImportValueFulfilled, Native::String, Native::TemporalDurationFrom,
         Native::TemporalDurationAdd, Native::TemporalDurationSubtract, Native::TemporalDurationWith,
@@ -198,14 +190,11 @@ const ROWS: &[(u8, &[Native])] = &[
         Native::TemporalInstantFromEpochMilliseconds, Native::TemporalInstantFromEpochNanoseconds,
         Native::TemporalInstantEquals, Native::TemporalInstantAdd, Native::TemporalInstantSubtract,
         Native::TemporalInstantRound, Native::TemporalInstantSince, Native::TemporalInstantUntil,
-        Native::TemporalInstantToZonedDateTimeISO, Native::SymbolFor, Native::SymbolKeyFor,
-        Native::SymbolToPrimitive, Native::StringFromCharCode, Native::StringFromCodePoint,
-        Native::StringRaw, Native::RegExpEscape, Native::RegExpLegacySetter,
-        Native::ObjectPrototypeProtoSetter, Native::ObjectPrototypeLookupGetter,
-        Native::ObjectPrototypeLookupSetter, Native::ObjectPrototypeHasOwnProperty,
-        Native::ObjectPrototypePropertyIsEnumerable, Native::ObjectPrototypeIsPrototypeOf,
+        Native::TemporalInstantToZonedDateTimeISO,
+        Native::SymbolToPrimitive,
+        Native::RegExpEscape, Native::RegExpLegacySetter,
+        Native::ObjectPrototypeProtoSetter,
         Native::WeakRef,
-        Native::TypedArrayFrom,
         Native::ArrayBuffer, Native::SharedArrayBuffer, Native::ArrayBufferIsView,
         Native::DetachArrayBuffer, Native::IteratorFrom, Native::IteratorZip, Native::IteratorZipKeyed,
         Native::IteratorMap, Native::IteratorFilter, Native::IteratorTake, Native::IteratorDrop,
@@ -216,41 +205,28 @@ const ROWS: &[(u8, &[Native])] = &[
         Native::AsyncGeneratorThrow, Native::AtomicsIsLockFree, Native::AsyncDisposableStackUse,
         Native::AsyncDisposableStackDefer, Native::AsyncFunction, Native::GeneratorFunction,
         Native::AsyncGeneratorFunction, Native::SharedArrayBufferGrow, Native::ArrayBufferResize,
-        Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries,
-        Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols,
-        Native::ObjectGetOwnPropertyDescriptors, Native::ObjectFreeze, Native::ObjectSeal,
-        Native::ObjectPreventExtensions, Native::ObjectIsFrozen, Native::ObjectIsSealed,
-        Native::ObjectIsExtensible, Native::ObjectGetPrototypeOf, Native::ObjectFromEntries,
-        Native::JsonRawJson, Native::JsonIsRawJson, Native::RegExpSymbolMatch, Native::RegExpSymbolSearch,
+        Native::RegExpSymbolMatch, Native::RegExpSymbolSearch,
         Native::RegExpSymbolMatchAll, Native::RegExpExec, Native::RegExpTest,
-        Native::ReflectGetPrototypeOf, Native::ReflectIsExtensible, Native::ReflectOwnKeys,
-        Native::ReflectPreventExtensions,
     ]),
     (2, &[
-        Native::TypedArrayWith, Native::Uint8ArrayCopyWithin, Native::Uint8ArraySubarray,
-        Native::Uint8ArraySlice, Native::FunctionApply, Native::Proxy, Native::ProxyRevocable,
+        Native::Proxy,
         Native::AggregateError,
         Native::BigIntAsIntN, Native::BigIntAsUintN, Native::IntlNumberFormatFormatRange,
         Native::IntlNumberFormatFormatRangeToParts, Native::IntlRelativeTimeFormatFormat,
         Native::IntlRelativeTimeFormatFormatToParts, Native::IntlPluralRulesSelectRange,
         Native::IntlCollatorCompare, Native::IntlDateTimeFormatFormatRange,
         Native::IntlDateTimeFormatFormatRangeToParts, Native::IntlDisplayNames,
-        Native::PromiseThen, Native::PromiseCapabilityExecutor, Native::TemporalDurationCompare,
+        Native::PromiseCapabilityExecutor, Native::TemporalDurationCompare,
         Native::TemporalPlainDateCompare, Native::TemporalPlainDateTimeCompare,
         Native::TemporalPlainTimeCompare, Native::TemporalPlainMonthDay, Native::TemporalPlainYearMonth,
         Native::TemporalPlainMonthDayCompare, Native::TemporalPlainYearMonthCompare,
         Native::TemporalZonedDateTime, Native::TemporalZonedDateTimeCompare,
         Native::TemporalInstantCompare, Native::RegExp, Native::RegExpCompile,
-        Native::ObjectPrototypeDefineGetter, Native::ObjectPrototypeDefineSetter,
         Native::MapGroupBy,
         Native::AtomicsLoad,
         Native::AsyncDisposableStackAdopt, Native::ArrayBufferSlice, Native::SharedArrayBufferSlice,
-        Native::ArrayBufferSliceToImmutable, Native::ObjectHasOwn, Native::ObjectGetOwnPropertyDescriptor,
-        Native::ObjectIs, Native::ObjectCreate, Native::ObjectDefineProperties, Native::ObjectAssign,
-        Native::ObjectGroupBy, Native::ObjectSetPrototypeOf, Native::JsonParse,
-        Native::RegExpSymbolReplace, Native::RegExpSymbolSplit, Native::ReflectHas,
-        Native::ReflectDeleteProperty, Native::ReflectSetPrototypeOf, Native::ReflectConstruct,
-        Native::ReflectGet, Native::ReflectGetOwnPropertyDescriptor,
+        Native::ArrayBufferSliceToImmutable,
+        Native::RegExpSymbolReplace, Native::RegExpSymbolSplit,
     ]),
     (3, &[
         Native::SuppressedError, Native::TemporalPlainDate, Native::TemporalPlainDateTime,
@@ -259,8 +235,6 @@ const ROWS: &[(u8, &[Native])] = &[
         Native::BigUint64Array, Native::Float16Array, Native::Float32Array, Native::Float64Array,
         Native::AtomicsAdd, Native::AtomicsAnd, Native::AtomicsOr, Native::AtomicsSub, Native::AtomicsXor,
         Native::AtomicsExchange, Native::AtomicsNotify, Native::AtomicsStore,
-        Native::ObjectDefineProperty, Native::JsonStringify, Native::ReflectApply,
-        Native::ReflectDefineProperty, Native::ReflectSet,
     ]),
     (4, &[
         Native::AtomicsCompareExchange, Native::AtomicsWait, Native::AtomicsWaitAsync,
@@ -276,8 +250,8 @@ pub(super) const ROW_LENGTHS: [Option<u8>; Native::COUNT as usize] = {
     while index < NATIVE_ROWS.len() {
         let row = NATIVE_ROWS[index];
         match lengths[row.native as usize] {
-            Some(length) => assert!(length == row.length, "a native's rows disagree on length"),
-            None => lengths[row.native as usize] = Some(row.length),
+            Some(length) => assert!(length == resolved_length(row), "a native's rows disagree on length"),
+            None => lengths[row.native as usize] = Some(resolved_length(row)),
         }
         index += 1;
     }

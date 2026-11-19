@@ -206,6 +206,13 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
+        // An ordinary object's prototype is its own link; proxies and primitives decline to the
+        // spec path below, unless the fast call already declined.
+        if self.declined_fast.take() != Some(Native::ObjectGetPrototypeOf)
+            && let Some(proto) = self.plain_object_get_prototype_of(std::slice::from_ref(&value))
+        {
+            return Ok(proto);
+        }
         let _stack = self.enter_stack()?;
         if let Some((target, handler)) = self.proxy_parts(value) {
             if handler.is_null() {

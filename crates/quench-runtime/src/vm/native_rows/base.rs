@@ -5,8 +5,8 @@ use super::*;
 
 natives! {
     // `Array.prototype`, in installation order.
-    (ArrayPrototype, "push", ArrayPush, 1),
-    (ArrayPrototype, "pop", ArrayPop, 0),
+    (ArrayPrototype, "push", ArrayPush, 1, LANE_METHOD),
+    (ArrayPrototype, "pop", ArrayPop, 0, LANE_METHOD),
     (ArrayPrototype, "slice", ArraySlice, 2),
     (ArrayPrototype, "includes", ArrayIncludes, 1),
     (ArrayPrototype, "join", ArrayJoin, 1),
@@ -50,8 +50,8 @@ natives! {
     (ArrayConstructor, "isArray", ArrayIsArray, 1),
     // `String.prototype`, in installation order (the HTML methods and aliases follow, from `string.rs`).
     (StringPrototype, "at", StringAt, 1, PURE_STRING),
-    (StringPrototype, "charAt", StringCharAt, 1, PURE_STRING),
-    (StringPrototype, "charCodeAt", StringCharCodeAt, 1, PURE_STRING),
+    (StringPrototype, "charAt", StringCharAt, 1, PURE_STRING, LANE_METHOD),
+    (StringPrototype, "charCodeAt", StringCharCodeAt, 1, PURE_STRING, LANE_METHOD),
     (StringPrototype, "codePointAt", StringCodePointAt, 1, PURE_STRING),
     (StringPrototype, "concat", StringConcat, 1, PURE_STRING),
     (StringPrototype, "endsWith", StringEndsWith, 1, PURE_STRING),

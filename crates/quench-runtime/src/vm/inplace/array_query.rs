@@ -49,11 +49,12 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `Array.prototype.reverse()` in place: an extensible, unfrozen dense array of this realm's
-    /// `Array.prototype` with no hole and no indexed descriptor. Every Set reads or writes an own
-    /// data element, so the backing is reversed and the receiver returned.
+    /// `Array.prototype.reverse()` in place: an array whose elements are ordinary and all present
+    /// (`holds_ordinary_elements`, no hole). Every HasProperty, Get and Set reads or writes an own
+    /// data element and observes nothing, so the backing is reversed and the receiver returned.
+    /// Moving values within one array stores no new reference.
     pub(in crate::vm) fn plain_array_reverse(&mut self, receiver: Value, _args: &[Value]) -> Option<Value> {
-        if !self.is_plain_extensible_array(receiver) || self.dense_array_length(receiver).is_none() {
+        if !self.heap.array(receiver)?.holds_ordinary_elements() {
             return None;
         }
         if self.array_search_elements(receiver)?.iter().any(|value| value.is_deleted()) {
@@ -62,18 +63,6 @@ impl<H: Host> Vm<H> {
         let array = self.heap.array_store_mut(receiver, Value::UNDEFINED)?;
         super::super::index::mutable_array_elements(array.elements_mut()).reverse();
         Some(receiver)
-    }
-
-    /// Whether `receiver` is an array of this realm's `Array.prototype` that is extensible and
-    /// unfrozen, with no indexed descriptors and no arguments mapping, so its Sets are plain stores.
-    fn is_plain_extensible_array(&self, receiver: Value) -> bool {
-        self.heap.array(receiver).is_some_and(|object| {
-            object.proto() == self.array_proto
-                && object.is_extensible()
-                && !object.is_frozen()
-                && !object.has_indexed_descriptors()
-                && !object.is_arguments_object()
-        })
     }
 
     /// `Array.prototype.toReversed()` of a dense array with no hole: a new array of its elements in

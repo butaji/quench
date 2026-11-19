@@ -13,6 +13,8 @@ enum FuseKey {
     /// `next`, of an iterator prototype.
     Next,
     Named(&'static str),
+    /// The method a row names: its key is the row's name (`native_rows::row_name`).
+    Method,
     /// `@@species`, a getter-only accessor whose slot holds the getter.
     SpeciesSymbol,
 }
@@ -27,8 +29,8 @@ const FUSES: [(FuseKey, Native); IntactFuse::COUNT] = [
     (FuseKey::Next, Native::IteratorNext),
     (FuseKey::IteratorSymbol, Native::StringValues),
     (FuseKey::Next, Native::StringIteratorNext),
-    (FuseKey::Named("charCodeAt"), Native::StringCharCodeAt),
-    (FuseKey::Named("includes"), Native::StringIncludes),
+    (FuseKey::Method, Native::StringCharCodeAt),
+    (FuseKey::Method, Native::StringIncludes),
     (FuseKey::Named("test"), Native::RegExpTest),
     (FuseKey::Named("exec"), Native::RegExpExec),
     (FuseKey::Named("constructor"), Native::Array),
@@ -85,6 +87,7 @@ impl<H: Host> Vm<H> {
             FuseKey::IteratorSymbol => self.iterator_symbol_key()?,
             FuseKey::Next => PropertyKey::string(self.runtime_atoms.next),
             FuseKey::Named(name) => PropertyKey::string(self.lookup_atom(name)?),
+            FuseKey::Method => PropertyKey::string(self.lookup_atom(super::native_rows::row_name(native)?)?),
             FuseKey::SpeciesSymbol => PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Species)?),
         };
         Some((key, native))

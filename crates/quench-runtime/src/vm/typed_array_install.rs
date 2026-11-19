@@ -1,62 +1,5 @@
 use super::*;
 
-pub(super) const TYPED_ARRAY_BASE_METHODS: &[(&str, Native)] = &[
-    ("set", Native::Uint8ArraySet),
-    ("reverse", Native::Uint8ArrayReverse),
-    ("fill", Native::Uint8ArrayFill),
-    ("copyWithin", Native::Uint8ArrayCopyWithin),
-    ("subarray", Native::Uint8ArraySubarray),
-    ("slice", Native::Uint8ArraySlice),
-    ("includes", Native::Uint8ArrayIncludes),
-    ("indexOf", Native::Uint8ArrayIndexOf),
-    ("join", Native::Uint8ArrayJoin),
-    ("keys", Native::Uint8ArrayKeys),
-    ("values", Native::Uint8ArrayValues),
-    ("entries", Native::Uint8ArrayEntries),
-];
-
-/// Uint8Array's own base64 and hex methods, installed in every realm.
-pub(super) const UINT8_ARRAY_PROTOTYPE_METHODS: &[(&str, Native)] = &[
-    ("setFromBase64", Native::Uint8ArraySetFromBase64),
-    ("setFromHex", Native::Uint8ArraySetFromHex),
-    ("toBase64", Native::Uint8ArrayToBase64),
-    ("toHex", Native::Uint8ArrayToHex),
-];
-pub(super) const UINT8_ARRAY_STATIC_METHODS: &[(&str, Native)] = &[
-    ("fromBase64", Native::Uint8ArrayFromBase64),
-    ("fromHex", Native::Uint8ArrayFromHex),
-];
-
-pub(super) const TYPED_ARRAY_CALLBACK_METHODS: &[(&str, Native, Native)] = &[
-    ("forEach", Native::TypedArrayForEach, Native::ArrayForEach),
-    ("map", Native::TypedArrayMap, Native::ArrayMap),
-    ("filter", Native::TypedArrayFilter, Native::ArrayFilter),
-    ("some", Native::TypedArraySome, Native::ArraySome),
-    ("every", Native::TypedArrayEvery, Native::ArrayEvery),
-    ("find", Native::TypedArrayFind, Native::ArrayFind),
-    (
-        "findIndex",
-        Native::TypedArrayFindIndex,
-        Native::ArrayFindIndex,
-    ),
-    (
-        "findLast",
-        Native::TypedArrayFindLast,
-        Native::ArrayFindLast,
-    ),
-    (
-        "findLastIndex",
-        Native::TypedArrayFindLastIndex,
-        Native::ArrayFindLastIndex,
-    ),
-    ("reduce", Native::TypedArrayReduce, Native::ArrayReduce),
-    (
-        "reduceRight",
-        Native::TypedArrayReduceRight,
-        Native::ArrayReduceRight,
-    ),
-];
-
 impl<H: Host> Vm<H> {
     pub(super) fn install_typed_array_constructors_for_realm(
         &mut self,
@@ -101,12 +44,8 @@ impl<H: Host> Vm<H> {
             );
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
             if kind == TypedArrayKind::Uint8 {
-                for &(name, native) in UINT8_ARRAY_PROTOTYPE_METHODS {
-                    self.set_realm_builtin_named(program, prototype, name, native, Some(global))?;
-                }
-                for &(name, native) in UINT8_ARRAY_STATIC_METHODS {
-                    self.set_realm_builtin_named(program, constructor, name, native, Some(global))?;
-                }
+                self.install_realm_native_rows(prototype, super::native_rows::Holder::Uint8ArrayPrototype, global)?;
+                self.install_realm_native_rows(constructor, super::native_rows::Holder::Uint8ArrayConstructor, global)?;
             }
             let width = Value::number(kind.width() as f64);
             self.set_named_constant(program, constructor, "BYTES_PER_ELEMENT", width)?;

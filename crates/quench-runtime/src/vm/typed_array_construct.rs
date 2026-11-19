@@ -315,14 +315,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.install_species(constructor, |vm| vm.native_with_realm(Native::ArraySpecies, realm, realm))?;
-        for (name, native) in [
-            ("from", Native::TypedArrayFrom),
-            ("of", Native::TypedArrayOf),
-        ] {
-            let method = self.native_with_realm(native, Value::NULL, realm);
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(constructor, name, method)?;
-        }
+        self.install_realm_native_rows(constructor, super::native_rows::Holder::TypedArrayConstructor, realm)?;
         Ok(())
     }
 

@@ -53,16 +53,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
-        // A direct array whose elements are ordinary and all present: every HasProperty, Get
-        // and Set below reads or writes an own data element and observes nothing, so the
-        // steps reduce to reversing the backing. Moving values within one array stores no
-        // new reference, which the write barrier passes.
-        if self.heap.record_array(this).is_some_and(|array| {
-            array.holds_ordinary_elements() && !array.elements().iter().any(|value| value.is_deleted())
-        }) && let Some(array) = self.heap.record_array_store_mut(this, Value::UNDEFINED)
-        {
-            super::index::mutable_array_elements(array.elements_mut()).reverse();
-            return Ok(this);
+        // The plain body (`plain_array_reverse`) first: where every element is present and
+        // ordinary, the steps below reduce to reversing the backing.
+        if let Some(reversed) = self.plain_array_reverse(this, &[]) {
+            return Ok(reversed);
         }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
@@ -456,6 +450,10 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The plain body (`plain_array_fill`) first: int32 or absent bounds need no guest code.
+        if let Some(filled) = self.plain_array_fill(this, args) {
+            return Ok(filled);
+        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
