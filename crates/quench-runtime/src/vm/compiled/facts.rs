@@ -43,6 +43,8 @@ pub(super) struct Facts {
     length_of: Vec<Option<Register>>,
     below: Vec<Option<Register>>,
     under: Vec<Option<Register>>,
+    atmost: Vec<Option<Register>>,
+    twice: Vec<Option<Register>>,
 }
 
 impl Facts {
@@ -66,6 +68,8 @@ impl Facts {
             self.length_of.reserve(words);
             self.below.reserve(words);
             self.under.reserve(words);
+            self.atmost.reserve(words);
+            self.twice.reserve(words);
         }
     }
 
@@ -74,7 +78,8 @@ impl Facts {
         let start = self.offsets[pc].expect("a pending leader has facts").get() - 1;
         let relations = |rows: &[Option<Register>]| rows.get(start..start + self.registers).map_or_else(Vec::new, <[_]>::to_vec);
         run::Point { types: smallvec::SmallVec::from_slice(&self.types[start..start + self.registers]),
-            relations: Relations::of_rows(relations(&self.length_of), relations(&self.below), relations(&self.under)) }
+            relations: Relations::of_rows(relations(&self.length_of), relations(&self.below), relations(&self.under),
+                relations(&self.atmost), relations(&self.twice)) }
     }
 
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
@@ -141,7 +146,7 @@ impl Facts {
     fn merge(&mut self, pc: usize, incoming: &[Type]) -> bool {
         let Some(slot) = self.offsets.get(pc) else { return false };
         let Some(offset) = *slot else {
-            self.store_row(pc, incoming, &[], &[], &[]);
+            self.store_row(pc, incoming, [&[], &[], &[], &[], &[]]);
             let start = self.types.len() - incoming.len();
             hold_contracts(&self.contracts, pc, &mut self.types[start..]);
             return true;
@@ -154,12 +159,14 @@ impl Facts {
 
     /// Stores the row of the block led by `pc`, which has none: its types and the relations the
     /// run keeps (empty where it tracks none).
-    fn store_row(&mut self, pc: usize, types: &[Type], length_of: &[Option<Register>], below: &[Option<Register>], under: &[Option<Register>]) {
+    fn store_row(&mut self, pc: usize, types: &[Type], [length_of, below, under, atmost, twice]: [&[Option<Register>]; 5]) {
         self.offsets[pc] = NonZeroUsize::new(self.types.len() + 1);
         self.types.extend_from_slice(types);
         self.length_of.extend_from_slice(length_of);
         self.below.extend_from_slice(below);
         self.under.extend_from_slice(under);
+        self.atmost.extend_from_slice(atmost);
+        self.twice.extend_from_slice(twice);
     }
 }
 
@@ -179,7 +186,7 @@ fn join_types(known: &mut [Type], incoming: &[Type], widening: bool) -> bool {
 
 /// Meets the relation rows `known` with `theirs`, those of an incoming state, where both hold
 /// rows: a relation the incoming state does not keep is lost; whether one was.
-fn meet_relations(known: [&mut Vec<Option<Register>>; 3], theirs: [&[Option<Register>]; 3]) -> bool {
+fn meet_relations(known: [&mut Vec<Option<Register>>; 5], theirs: [&[Option<Register>]; 5]) -> bool {
     let mut changed = false;
     for (rows, theirs) in known.into_iter().zip(theirs) {
         let Some(known) = rows.get_mut(..theirs.len()) else { continue };

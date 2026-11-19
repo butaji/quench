@@ -141,7 +141,8 @@ fn step(point: &mut Point, text: &Text<'_>, seeds: Seeds<'_>, pc: usize) -> Flow
     let instruction = text.instructions[pc];
     if let Some(model) = seeds.model {
         model.enter_frame(pc, point);
-        point.relations.step(&model, pc, instruction, text.written);
+        let lookup = ranges::lookup(&point.types, text.constants);
+        point.relations.step(&model, pc, instruction, text.written, &lookup);
     }
     // A direct own read proves its receiver before defining its result.
     // If result and receiver alias, transfer kills that refinement.
@@ -194,18 +195,20 @@ struct Row {
     length_of: Vec<Option<Register>>,
     below: Vec<Option<Register>>,
     under: Vec<Option<Register>>,
+    atmost: Vec<Option<Register>>,
+    twice: Vec<Option<Register>>,
 }
 
 impl Row {
     fn of(block: usize, point: Point) -> Self {
-        let Relations { length_of, below, under, .. } = point.relations;
-        Self { block, types: point.types, length_of, below, under }
+        let Relations { length_of, below, under, atmost, twice, .. } = point.relations;
+        Self { block, types: point.types, length_of, below, under, atmost, twice }
     }
 
     /// The state on entry to the block: its relations name the registers their rows do.
     fn point(&self) -> Point {
         Point { types: self.types.clone(),
-            relations: Relations::of_rows(self.length_of.clone(), self.below.clone(), self.under.clone()) }
+            relations: Relations::of_rows(self.length_of.clone(), self.below.clone(), self.under.clone(), self.atmost.clone(), self.twice.clone()) }
     }
 }
 
@@ -326,8 +329,8 @@ impl crate::dataflow::Dataflow for FactFlow<'_, '_, '_> {
         let block = into.block;
         let widening = self.headers[block].get() && self.rounds[block].get() >= WIDENING_ROUNDS;
         let mut changed = join_types(&mut into.types, &incoming.types, widening);
-        changed |= meet_relations([&mut into.length_of, &mut into.below, &mut into.under],
-            [incoming.length_of.as_slice(), incoming.below.as_slice(), incoming.under.as_slice()]);
+        changed |= meet_relations([&mut into.length_of, &mut into.below, &mut into.under, &mut into.atmost, &mut into.twice],
+            [incoming.length_of.as_slice(), incoming.below.as_slice(), incoming.under.as_slice(), incoming.atmost.as_slice(), incoming.twice.as_slice()]);
         changed |= hold_contracts(self.seeds.contracts, self.heads[block], &mut into.types);
         self.joined(into, changed);
         changed
@@ -362,7 +365,7 @@ impl crate::dataflow::Dataflow for FactFlow<'_, '_, '_> {
         }
         self.raised = raised;
         // The edges carry their own states (`transfer_edge_at`).
-        Row { block, types: smallvec::SmallVec::new(), length_of: Vec::new(), below: Vec::new(), under: Vec::new() }
+        Row { block, types: smallvec::SmallVec::new(), length_of: Vec::new(), below: Vec::new(), under: Vec::new(), atmost: Vec::new(), twice: Vec::new() }
     }
 
     fn transfer_edge_at(&self, _block: usize, index: usize, _out: &Row) -> Row {
@@ -412,7 +415,7 @@ pub(in crate::vm::compiled) fn analyze_text(text: &Text<'_>, initial: &[Type], s
     facts.backedge = flow.backedge;
     for (row, pc) in rows.into_iter().zip(flow.heads) {
         let Some(row) = row else { continue };
-        facts.store_row(pc, &row.types, &row.length_of, &row.below, &row.under);
+        facts.store_row(pc, &row.types, [&row.length_of, &row.below, &row.under, &row.atmost, &row.twice]);
     }
     facts
 }
