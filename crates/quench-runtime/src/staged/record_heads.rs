@@ -65,8 +65,6 @@ pub(crate) struct FunctionRecord<O, K, V> {
     /// Beside the object, whose 12 bytes it fills to the words after: after them, its 12
     /// bytes and two of padding made the record 48 bytes (jsdom-d3: 114K records at its peak).
     pub(crate) kind: K,
-    /// The creation realm.
-    pub(crate) realm: V,
     /// The closure environment.
     pub(crate) env: V,
 }

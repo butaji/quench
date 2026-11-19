@@ -1385,23 +1385,9 @@ impl<H: Host> Vm<H> {
         if !self.is_function(next) {
             return Err(self.type_error(p, "iterator next method is not callable".into()));
         }
-        let source = self.heap.root_value(source_root).unwrap_or(source);
-        let next = self.heap.root_value(next_root).unwrap_or(next);
-        let result = match self.call_value(p, next, source, args) {
-            Ok(result) => result,
-            Err(error) => {
-                self.heap.release_root(next_root);
-                self.heap.release_root(source_root);
-                return Err(error);
-            }
-        };
-        let result_root = self.heap.root(result);
-        let result = self.heap.root_value(result_root).unwrap_or(result);
-        let step = self.iterator_result_value(p, result);
-        self.heap.release_root(result_root);
-        self.heap.release_root(next_root);
-        self.heap.release_root(source_root);
-        step
+        // The caller roots `source` and `next` for the call (`with_call_roots`).
+        let result = self.call_value(p, next, source, args)?;
+        self.with_call_roots([result], |vm| vm.iterator_result_value(p, result))
     }
 
     fn mark_iterator_done(&mut self, iterator: Value) {
@@ -3043,6 +3029,36 @@ impl<H: Host> Vm<H> {
                 }
             }
         })
+    }
+
+    /// `is_current_realm_native` of a step's `next` (`StepNative`), proved once: the proof holds
+    /// the method's bits, the collection epoch (a slot names the same cell while it is unchanged)
+    /// and the realm, so a loop's later steps make three compares instead of reading the method's
+    /// record.
+    #[inline(always)]
+    pub(super) fn proved_step_native(&self, method: Value, step: StepNative) -> bool {
+        let proof = &self.step_native_proofs[step as usize];
+        (proof.method.get() == method.to_bits()
+            && proof.epoch.get() == self.heap.collection_epoch()
+            && proof.realm.get() == self.realm.globals)
+            || self.prove_step_native(method, step)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn prove_step_native(&self, method: Value, step: StepNative) -> bool {
+        let native = match step {
+            StepNative::ArrayIteratorNext => Native::ArrayIteratorNext,
+            StepNative::GeneratorNext => Native::GeneratorNext,
+        };
+        let proved = self.is_current_realm_native(method, native);
+        if proved {
+            let proof = &self.step_native_proofs[step as usize];
+            proof.method.set(method.to_bits());
+            proof.epoch.set(self.heap.collection_epoch());
+            proof.realm.set(self.realm.globals);
+        }
+        proved
     }
 
     /// Whether `value` is the current realm's `native` function: one installed for this realm,

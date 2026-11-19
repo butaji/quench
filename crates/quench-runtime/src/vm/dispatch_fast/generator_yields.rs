@@ -6,7 +6,8 @@
 //! step the lane's frame declines take the general path, which suspends the frame back into its
 //! generator.
 use super::*;
-use super::lane_frame::{lane_suspension, yield_star_kind, Suspender, LANE_YIELD};
+use crate::bytecode::Class;
+use super::lane_frame::{suspension_row_in_lane, yield_star_kind, Suspender, LANE_YIELD};
 use super::super::activation::{JobRoot, SuspendKind};
 use crate::staged::{SuspendEffect, Suspending, Suspension};
 
@@ -139,14 +140,14 @@ script_handler! {
     /// the row with its suspender known. Any other `await` takes the general path, which a
     /// conversion that could run guest code, or a settling body that keeps its values, reaches.
     #[inline(never)]
-    fn lane_await<>(cx, r, ip, i, view) {
+    fn await_row<>(cx, r, ip, i, view) {
         if super::async_requests::running_request(unsafe { vm(cx) }) {
-            resume!(cx, lane_suspension(cx, r, ip, i, (Suspension::Await, Suspender::Request)))
+            resume!(cx, suspension_row_in_lane(cx, r, ip, i, (Suspension::Await, Suspender::Request)))
         }
         let Some(suspender) = Suspender::of_await(cx) else {
             return exit(ip);
         };
-        resume!(cx, lane_suspension(cx, r, ip, i, (Suspension::Await, suspender)))
+        resume!(cx, suspension_row_in_lane(cx, r, ip, i, (Suspension::Await, suspender)))
     }
 }
 
@@ -175,7 +176,7 @@ fn suspend_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, (pc, destina
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let activation = *vm.lane_stack.activations.last().expect("a settling activation runs");
+    let activation = *vm.lane_stack.activations().last().expect("a settling activation runs");
     // The converted value may be a fresh promise, which the safepoints after the run collect.
     note_allocation(vm);
     let frame = settling_frame(vm, code, &activation, (r, pc));
@@ -218,7 +219,7 @@ fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &
     let mut frame = detached.unwrap_or_else(|| pushed_settling_frame(vm, code, activation, r, (count, argc)));
     frame.pc = pc;
     frame.pc_is_resume = true;
-    let depth = vm.lane_stack.activations.len() - 1;
+    let depth = vm.lane_stack.activation_count() - 1;
     vm.lane_stack.take_iterators(depth, &mut frame.active_iterators);
     debug_assert_ne!(frame.function, super::super::ROOT_FUNCTION_ID);
     frame

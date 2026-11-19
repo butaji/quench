@@ -83,7 +83,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn job_chain_admits(&self, job: JobRoot) -> bool {
         job.kind == SuspendKind::AsyncFunction
             && self.native_microtask_running
-            && self.lane_stack.activations.is_empty()
+            && self.lane_stack.activation_count() == 0
             && self.lane_deferred.is_none()
     }
 
@@ -163,7 +163,7 @@ impl<H: Host> Vm<H> {
         how: JobResume,
         pending: &mut Vec<PendingGeneralCall>,
     ) -> JobEnd {
-        debug_assert!(self.lane_stack.activations.is_empty() && self.lane_deferred.is_none(), "a chained job's run is not nested");
+        debug_assert!(self.lane_stack.activation_count() == 0 && self.lane_deferred.is_none(), "a chained job's run is not nested");
         match self.run_chained_lane_job(code, (job, frame), how, pending) {
             Ok(end) => end,
             Err(refused) => self.run_job_frame(code, job, refused),
@@ -261,7 +261,7 @@ impl<H: Host> Vm<H> {
             || self.heap.should_collect()
             || self.static_module_jobs_pending()
             || !self.chain_roots_hold(ended)
-            || !self.lane_stack.activations.is_empty()
+            || !self.lane_stack.activation_count() == 0
             || self.lane_deferred.is_some()
         {
             return None;

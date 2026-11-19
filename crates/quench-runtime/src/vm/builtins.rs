@@ -61,7 +61,7 @@ impl NativeTable {
     }
 
     #[inline(always)]
-    fn get(&self, kind: Native) -> Option<Value> {
+    pub(super) fn get(&self, kind: Native) -> Option<Value> {
         self.functions
             .get(kind as usize)
             .copied()
