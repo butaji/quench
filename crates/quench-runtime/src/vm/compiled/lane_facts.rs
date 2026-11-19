@@ -86,7 +86,7 @@ pub(super) fn closes_loop(code: &[crate::bytecode::WideInstruction]) -> bool {
 /// the lane's own run of a short leaf never pays: a loop, an inlined call, a call of itself
 /// (its recursion runs natively inside the entry), or length (`Tiers::amortizing_instructions`).
 pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
-    closes_loop(&unit.instructions) || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
+    closes_loop(&unit.instructions) || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
 }
 
 /// Whether one entry of `unit` saves more interpreter time than the body's entry costs

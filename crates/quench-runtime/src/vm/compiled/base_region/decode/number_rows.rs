@@ -26,7 +26,8 @@ pub(in super::super) fn numeric_row(numbers: Numbers, instruction: WideInstructi
         // `++`/`--`: the int32 update by one (the row's overflow leaves, as the staged one does).
         // `IntCaseIndex`: the case slot of the operand among the labels from `minimum` (its immediate) to `maximum`, which
         // the row takes as `Decoded::hole` (the stencil's hole 3).
-        Some(Operation::Number(NumberOperation::IntCase { destination, source, minimum, maximum, count: _ })) => return Some(plain.then(|| Decoded {
+        // A register operand only: the row reads its operand from a frame slot.
+        Some(Operation::Number(NumberOperation::IntCase { destination, source, minimum, maximum, count: _ })) => return Some(source.register_index().filter(|_| plain).map(|source| Decoded {
             hole: u64::from(maximum as u32),
             ..Decoded::number(Kind::IntCase, Some(destination), Some(Source::Register(source)), Some(Source::Constant(Value::integer(minimum).to_bits())), None)
         })),

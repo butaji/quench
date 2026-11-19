@@ -339,6 +339,10 @@ impl<H: Host> Vm<H> {
             Protocol::IteratorClose => self.iterator_close(p, source).map(Some),
             Protocol::RestView { .. } => unreachable!("a rest view's step reads its activation (`rest_view_step`)"),
             Protocol::ConstantFieldsHeld { site } => Ok(Some(Value::boolean(self.constant_fields_held(source, site)))),
+            Protocol::Literal(step) => self.literal_step(p, site, step, array, operand),
+            Protocol::Class(step) => self.class_step(p, site, step, array, operand),
+            Protocol::Value(step) => self.value_step(p, site, step, array, operand),
+            Protocol::Owned(step) => self.owned_var_step(p, site, step, array, operand),
             Protocol::Wasm(step) => self.wasm_host_step(p, site, step, array, operand),
             Protocol::AppendArray { length, spread } => {
                 let array = array.expect("AppendArray names its array");

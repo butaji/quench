@@ -2,6 +2,7 @@ use super::*;
 use crate::bytecode::index;
 use crate::staged::frame_arm::FrameArm;
 mod loop_stack;
+mod interpreter_frame;
 pub(super) use interpreter_frame::{InterpreterFrame, RowRun, runs_row};
 mod materialized_stops;
 

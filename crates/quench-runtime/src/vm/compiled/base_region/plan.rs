@@ -311,11 +311,11 @@ pub(super) fn chain_reads(layout: &Layout, receiver: Register, cache: u16, scrat
     let row = HeapRow { heap: Heap::Held, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     reads(cache).into_iter().filter_map(|load| {
         let (holder, inherited) = (load.holder?, load.inherited?);
-        let [(link, value)] = inherited.values() else { return None };
+        let ([(link, value)], Some(chain)) = (inherited.values(), inherited.chains().next()) else { return None };
         if load.function_shape {
             return None;
         }
-        let folded = Folded { shape: load.shape, link: *link, holder };
+        let folded = Folded { shape: load.shape, link: *link, holder, depth: chain.depth };
         let object = u64::from(scratch) * SLOT | u64::from(receiver) * SLOT << numeric::site_bits::SITE_OBJECT_AT;
         let holes = padded_holes([object, folded.word(), value.to_bits(), 0, 0]);
         Some(ChainRead { callee: value.to_bits(), holder, stencil: base_rows::stencil(row).ok()?, holes })

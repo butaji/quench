@@ -124,6 +124,19 @@ pub(super) fn stores_name(instruction: WideInstruction) -> bool {
             Some(crate::staged::Operation::GlobalLexicalStore { .. }))
 }
 
+/// Whether `instruction` is a by-name read, `LoadName` or a call's `LoadNameCall`: the decode names both
+/// (`Operation::decode_load_name`), whose proof decides nothing about which opcode it is.
+fn named_load(instruction: WideInstruction) -> bool {
+    crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some()
+}
+
+/// Whether `instruction` loads a global name's value: a by-name read (`named_load`), or the load a
+/// `typeof` reads (`Operation::GlobalTypeof`).
+fn loads_global(instruction: WideInstruction) -> bool {
+    named_load(instruction)
+        || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::GlobalTypeof { .. }))
+}
+
 /// The register a name call's `undefined` receiver is defined in.
 fn receiver(instruction: WideInstruction) -> Option<Register> {
     matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()),

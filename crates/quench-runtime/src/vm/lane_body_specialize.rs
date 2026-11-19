@@ -73,7 +73,7 @@ impl LaneView {
             use super::super::super::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
             count(match &outcome {
                 O::Published(_) => Event::BodyPublished, O::Compiling(_) => Event::BodyCompiling, O::Unpaid => Event::BodyUnpaid,
-                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred,
+                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred | O::Base => Event::BodyDeferred,
             });
         }
         match outcome {
@@ -91,7 +91,8 @@ impl LaneView {
                 self.note_dropped_compile();
                 LaneBody::Unspecialized { entries: 0, recompiles, stuck }
             }
-            super::super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
+            // A b-jit pick stitches the stencil body on the entry (`Vm::base_body_work`); this body stays unspecialized.
+            super::super::super::compiled::LaneBodyOutcome::Deferred | super::super::super::compiled::LaneBodyOutcome::Base => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
             // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
             super::super::super::compiled::LaneBodyOutcome::Unpaid => {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });

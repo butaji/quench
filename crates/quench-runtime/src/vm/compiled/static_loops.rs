@@ -131,6 +131,7 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
         }
         return;
     }
+    let decoded = super::decoded(instruction);
     let value = match () {
         _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =>
             program.constants.get(instruction.constant_index()).and_then(facts::immediate),

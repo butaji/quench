@@ -55,7 +55,7 @@
 use super::*;
 use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
 use super::super::{LaneHelper, LaneHelpers};
-use crate::bytecode::Op;
+use crate::bytecode::{Op, Traits};
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
