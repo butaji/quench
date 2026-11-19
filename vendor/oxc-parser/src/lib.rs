@@ -314,8 +314,9 @@ pub struct ParseOptions {
     pub lazy_body_check: Option<LazyBodyCheck>,
 
     /// Called with each plain function whose body the parser skimmed without building a tree
-    /// (see `LazyBodySkim`), in place of `lazy_body_check`; it says whether it took the
-    /// function, and if not the body is parsed whole and checked as without this option.
+    /// (see `LazyBodySkim`), before `lazy_body_check` gets the body; it says whether it took the
+    /// function. A function it does not take parses whole, and is checked by `lazy_body_check`
+    /// where that is set, as without this option.
     ///
     /// Default: `None`
     pub lazy_body_skim: Option<LazyBodySkim>,
@@ -329,14 +330,23 @@ pub struct ParseOptions {
     /// Default: `false`
     pub lazy_nested_bodies: bool,
 
-    /// With `lazy_body_skim`, the body of a class's plain method, getter or setter that no
-    /// lazily parsed body encloses, named by a key that is neither computed nor private, is
-    /// skimmed as well: released when the skim decides it and takes it, else parsed whole.
+    /// With `lazy_body_skim` and no `lazy_body_check` (a skim-only parse), the body of a class's
+    /// plain method, getter or setter that no lazily parsed body encloses, named by a key that is
+    /// neither computed nor private, is skimmed as well: released when the skim decides it and
+    /// takes it, else parsed whole.
     /// A method that reads `super.x` says so (`SkimmedBody::names_super`); its consumer binds
     /// the home object.
     ///
     /// Default: `false`
     pub lazy_class_methods: bool,
+
+    /// With `lazy_body_skim`, the bodies of arrow functions are skimmed as well: released when
+    /// the skim decides them and takes them, else parsed whole. Set by a consumer whose parse
+    /// skims without a check (`lazy_body_check` unset), whose arrows compile on first call; a
+    /// consumer that also checks its bodies keeps its arrows whole, without a second scan.
+    ///
+    /// Default: `false`
+    pub lazy_skim_arrows: bool,
 
     /// The program inherits strict mode (eval code in strict code) without a directive of its
     /// own: lazily parsed bodies are checked as strict code (`lazy_body_check`).
@@ -502,6 +512,7 @@ impl Default for ParseOptions {
             lazy_body_skim: None,
             lazy_nested_bodies: false,
             lazy_class_methods: false,
+            lazy_skim_arrows: false,
             inherited_strict: false,
             lazy_recognize: false,
             lazy_recognize_verify: false,
