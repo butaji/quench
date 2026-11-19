@@ -139,7 +139,8 @@ impl Lowering<'_, '_> {
         leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> Vec<(Register, IntRange)> {
         if self.entering.is_empty() { return Vec::new(); }
         let dense = |pc: usize| self.hoisted_access(pc);
-        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
+        let typed = |pc: usize| self.typed_access(pc);
+        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
         let reads = self.element_reads(instructions);
         let signless = self.signless_products(instructions);
         let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
@@ -156,7 +157,8 @@ impl Lowering<'_, '_> {
     pub(super) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
         leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {
         let dense = |pc: usize| self.hoisted_access(pc);
-        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
+        let typed = |pc: usize| self.typed_access(pc);
+        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
         let reads = self.element_reads(instructions);
         let signless = self.signless_products(instructions);
         let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),

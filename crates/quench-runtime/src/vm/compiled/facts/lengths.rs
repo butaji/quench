@@ -3,7 +3,7 @@
 //! (`Model`) tracks them beside the registers' types; a relation dies with either register's
 //! next write, and one to an array's length with any instruction that may change it.
 
-use super::run::{Model, Point};
+use super::run::{Model, Point, TypedAccess};
 use crate::bytecode::{FieldLookup, Operand, Register, ResidualProgram, WideInstruction};
 use super::super::meaning_compiled::is_numeric_binary;
 use crate::staged::{DecodeContext, NumberOperation, Operation};
@@ -196,13 +196,13 @@ impl Relations {
 
     /// The relations after `instruction` at `pc`.
     pub(super) fn step(&mut self, model: &Model<'_>, pc: usize, instruction: WideInstruction,
-        written: &dyn Fn(WideInstruction) -> Vec<Register>, lookup: &dyn Fn(Operand) -> Option<IntRange>) {
+        written: &dyn Fn(WideInstruction) -> Vec<Register>, lookup: &dyn Fn(Operand) -> Option<IntRange>, numeric_store: bool) {
         if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Move { .. })) && instruction.result_flags() == 0 {
             self.copy(instruction.result_register(), instruction.register_b());
         } else {
             for register in written(instruction) { self.kill(register); }
         }
-        if model.disturbs_lengths(pc, instruction) { self.clear(); }
+        if model.disturbs_lengths(pc, instruction, numeric_store) { self.clear(); }
         self.relate_read(model.program, instruction);
         self.relate_sum(lookup, instruction);
         self.relate_shift(lookup, instruction);
@@ -212,16 +212,25 @@ impl Relations {
 impl Model<'_> {
     /// Whether `instruction` may change an array's length or run guest code that can: all but
     /// numeric steps, moves, jumps and reads of a hoisted view, whose misses leave.
-    pub(in crate::vm::compiled) fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction) -> bool {
+    /// `numeric_store`: the store at `pc`, where it is one, takes a Number value (`Relations::step`).
+    pub(in crate::vm::compiled) fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction, numeric_store: bool) -> bool {
         use crate::staged::Operation as Staged;
         let decoded = crate::vm::compiled::decoded(instruction);
         let completed = crate::vm::compiled::decoded_completed(instruction);
+        // A hoisted typed view's `length` is its array's own, which no guest code changes, and its
+        // Number store changes no length nor runs one: neither leaves the body for the VM.
+        let typed = match (self.typed)(pc) {
+            Some(TypedAccess::Length) => true,
+            Some(TypedAccess::Store) => numeric_store,
+            None => false,
+        };
         let quiet = matches!(decoded, Some(Staged::Move { .. } | Staged::Jump | Staged::Nop | Staged::JumpIf { .. }
                 | Staged::CompareJump { .. } | Staged::Number(crate::staged::NumberOperation::IncDec { .. })
                 | Staged::IncDecLocal { .. }))
             || crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
             || super::super::meaning_compiled::is_numeric_binary(instruction)
-            || (matches!(completed, Some(Staged::ElementRead { .. } | Staged::ElementReadOperand { .. })) && (self.dense)(pc));
+            || (matches!(completed, Some(Staged::ElementRead { .. } | Staged::ElementReadOperand { .. })) && (self.dense)(pc))
+            || typed;
         !quiet || self.generic.contains(&pc)
     }
 }

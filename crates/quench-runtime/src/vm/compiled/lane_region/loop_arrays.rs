@@ -3,6 +3,7 @@
 
 use crate::bytecode::Class;
 use super::*;
+use super::super::facts::TypedAccess;
 
 /// An array base a local loop indexes and never redefines: its loop's entry proves the
 /// array's view once, writable where the loop stores through it, and only the element
@@ -129,5 +130,29 @@ impl Lowering<'_, '_> {
             _ => None,
         };
         self.loop_array(pc, base).is_some()
+    }
+}
+
+impl Lowering<'_, '_> {
+    /// What the access at `pc` does through a hoisted typed view (`Model::typed`): a `length` read of a
+    /// register's typed array, which `length_read` answers from the view, or an element store through a
+    /// typed or double view, which the held view writes or leaves at its miss (`element_write`). Any
+    /// other access, or one through a view that is not hoisted, is `None`.
+    pub(super) fn typed_access(&self, pc: usize) -> Option<TypedAccess> {
+        let instruction = self.unit.instructions[pc];
+        let (base, access) = match crate::vm::compiled::performed(instruction) {
+            Some(crate::staged::Operation::ElementWrite { .. }) if !instruction.returns_from_frame() => (Some(instruction.register_b()), TypedAccess::Store),
+            _ if crate::vm::compiled::reads_length(self.program, instruction) => match instruction.field_lookup() {
+                Some(FieldLookup::Atom { base, .. }) => (base.register_index(), TypedAccess::Length),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let array = self.loop_array(pc, base)?;
+        let typed = match access {
+            TypedAccess::Length => matches!(array.views, ElementViews::Typed(_)) && matches!(array.source, ArraySource::Register(_)),
+            TypedAccess::Store => matches!(array.views, ElementViews::Typed(_) | ElementViews::Double) && array.writable,
+        };
+        typed.then_some(access)
     }
 }

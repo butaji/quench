@@ -170,7 +170,7 @@ impl Lowering<'_, '_> {
             .map(|hoist| hoist.header).fold(array.header, usize::max);
         nest.around(shape.pc).into_iter().find(|&span| span.0 >= floor && !self.generic.contains(&span.0)
             && nest.unwritten(span, &registers) && registers.iter().all(|register| self.int32_at(span.0, *register))
-            && !(span.0..=span.1).any(|at| model.disturbs_lengths(at, nest.instructions[at])))
+            && !(span.0..=span.1).any(|at| model.disturbs_lengths(at, nest.instructions[at], false)))
             .map(|(header, _)| header)
     }
 

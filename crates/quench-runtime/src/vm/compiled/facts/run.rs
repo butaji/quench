@@ -5,6 +5,7 @@ use super::lengths::Relations;
 use super::ranges::{self, Edge};
 use super::{hold_contracts, join_types, meet_relations, set, transfer_observed, Contract, Facts, Flow, Observed, INLINE_ANALYSIS_ITEMS};
 use crate::bytecode::{Class, Constant, ControlFlowLayout, Register, ResidualProgram, WideInstruction};
+use crate::staged::Operation;
 use crate::typed_ir::{IntRange, Type, WIDENING_ROUNDS};
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::cell::{Cell, RefCell};
@@ -30,6 +31,19 @@ pub(in crate::vm::compiled) struct Model<'a> {
     /// Whether the element access at a PC reads or writes a hoisted view, whose miss leaves the
     /// body (`Lowering::hoisted_access`).
     pub(in crate::vm::compiled) dense: &'a dyn Fn(usize) -> bool,
+    /// What the access at a PC does through a hoisted typed view (`Lowering::typed_access`), where it is
+    /// one that runs no guest code and changes no array's length (`TypedAccess`).
+    pub(in crate::vm::compiled) typed: &'a dyn Fn(usize) -> Option<TypedAccess>,
+}
+
+/// An instruction on a hoisted typed view whose effect on lengths is known (`Model::typed`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(in crate::vm::compiled) enum TypedAccess {
+    /// A `length` read of a register's typed array, which the view answers natively.
+    Length,
+    /// An element store through a typed or double view: it changes no length, and runs guest
+    /// code only where its value is no Number (`Relations::step`).
+    Store,
 }
 
 /// What a run assumes beyond the program text.
@@ -141,8 +155,11 @@ fn step(point: &mut Point, text: &Text<'_>, seeds: Seeds<'_>, pc: usize) -> Flow
     let instruction = text.instructions[pc];
     if let Some(model) = seeds.model {
         model.enter_frame(pc, point);
+        // A store of a Number runs no guest code (its value and key convert without a call).
+        let numeric_store = matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementWrite { value, .. })
+            if point.types.get(usize::from(value)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)));
         let lookup = ranges::lookup(&point.types, text.constants);
-        point.relations.step(&model, pc, instruction, text.written, &lookup);
+        point.relations.step(&model, pc, instruction, text.written, &lookup, numeric_store);
     }
     // A direct own read proves its receiver before defining its result.
     // If result and receiver alias, transfer kills that refinement.
