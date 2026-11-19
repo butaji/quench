@@ -7,7 +7,7 @@
 //! sorted static table (`OUT_DIR/rustc_stencils.rs`).
 //!
 //! Extension point: a new row family adds its `*_row!` macro to `rows.rs` and a generator line
-//! to `instances`; a new source file is found by its `#[path]` (`sources::watched`). Sharding, per-shard checks and
+//! to `instances`; a new source file is found by rustc's dep-info of `rows.rs` (`stencil_sources`). Sharding, per-shard checks and
 //! the merge apply to both without further edits. A row that contains a `call` or a `ret` is a
 //! build error: rows chain by `become` only, and only the `leave_*` rows return. Other targets
 //! get an empty table.
@@ -93,7 +93,7 @@ const EXIT_PREFIX: usize = "EXIT".len();
 const VARIANTS: [(&str, Option<&str>); 2] = [("BASELINE", Some("x86-64-v2")), ("V3", Some("x86-64-v3"))];
 /// The flags every stencil object is built with beyond the target (`stencil-rustc-flags.txt`, next to `Cargo.toml`).
 const RUSTC_FLAGS_FILE: &str = "stencil-rustc-flags.txt";
-/// The files beyond the `#[path]` graph (`sources::watched`) whose change reruns the build script, relative to the crate.
+/// The files beyond the stencil sources (`stencil_sources`) whose change reruns the build script, relative to the crate.
 const EXTRA_WATCHED: [&str; 3] = ["supernodes.txt", RUSTC_FLAGS_FILE, "../quench-runtime/src/bytecode.rs"];
 
 /// The flags of `RUSTC_FLAGS_FILE` in file order: one flag or flag-and-value pair per line, `#` starts a comment.
@@ -117,9 +117,6 @@ fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
 
 fn main() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for source in sources::watched(manifest) {
-        println!("cargo::rerun-if-changed={}", source.display());
-    }
     println!("cargo::rustc-check-cfg=cfg(stencil_build)");
     for extra in EXTRA_WATCHED {
         println!("cargo::rerun-if-changed={extra}");
@@ -131,6 +128,7 @@ fn main() {
     println!("cargo::rustc-env={SUPERNODES_VAR}={}", generated.display());
     let table = out.join("rustc_stencils.rs");
     let Some((arch, read)) = target() else {
+        watch(&sources::watched(manifest));
         fs::write(&table, VARIANTS.map(|(name, _)| library_source(name, Counts::default(), &[])).concat()).unwrap();
         return;
     };
@@ -141,7 +139,9 @@ fn main() {
     }
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
     let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &VARIANTS[..1] };
-    let sources = cache::sources_key(&rustc(), manifest, &sources::watched(manifest), &EXTRA_WATCHED);
+    let watched = stencil_sources(&out).unwrap_or_else(|| sources::watched(manifest));
+    watch(&watched);
+    let sources = cache::sources_key(&rustc(), manifest, &watched, &EXTRA_WATCHED);
     let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| (0..parts.len()).map(|shard| shard_job(&out, shard, *cpu, sources))).collect();
     if jobs.iter().any(|job| !job.cached()) {
         type_check(&out);
@@ -259,6 +259,34 @@ fn shard_job(out: &Path, shard: usize, cpu: Option<&'static str>, sources: u128)
     args.extend(["-o".into(), object.clone().into(), SOURCE.into()]);
     let envs = [(INSTANCES_VAR, instances), (CALL_ROWS_VAR, call_rows_file(out))];
     Shard { cpu, args, envs, key_file: object.with_extension("key"), object, key }
+}
+
+/// Prints the rerun triggers: `watched` and `EXTRA_WATCHED`.
+fn watch(watched: &std::collections::BTreeSet<PathBuf>) {
+    for source in watched {
+        println!("cargo::rerun-if-changed={}", source.display());
+    }
+}
+
+/// The source files the stencil crate is made of, as rustc reads them (`--emit=dep-info`, about a second: parse
+/// and expansion only), less the generated files under `out` (in each shard's key by content): the files whose
+/// change reruns the build script and whose contents are in every shard's key. The fixed-rows shard's cfgs, the
+/// widest set. `None` where rustc cannot read the source, which falls back to the `#[path]` graph.
+fn stencil_sources(out: &Path) -> Option<std::collections::BTreeSet<PathBuf>> {
+    let deps = out.join("rows.d");
+    let mut command = Command::new(rustc());
+    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit")));
+    command.args(["--cfg", "fixed_rows", "--emit=dep-info", "-o"]).arg(&deps).arg(SOURCE);
+    let status = command.env(INSTANCES_VAR, instance_file(out, FIXED_ROWS_SHARD)).env(CALL_ROWS_VAR, call_rows_file(out)).status().ok()?;
+    if !status.success() {
+        return None;
+    }
+    let text = fs::read_to_string(&deps).ok()?;
+    // The first rule names the output and then every input, separated by spaces (a space in a path is `\ `).
+    let (_, inputs) = text.lines().next()?.split_once(": ")?;
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let files = inputs.replace("\\ ", "\0").split_whitespace().map(|path| manifest.join(path.replace('\0', " "))).filter(|path| !path.starts_with(out)).collect();
+    Some(files)
 }
 
 /// Type-checks the stencil source once (`--emit=metadata`, the fixed-rows shard's instances) before any shard's
