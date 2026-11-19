@@ -29,8 +29,6 @@ pub(super) enum NameRead {
     Native,
     /// An intrinsic name's value (`Vm::intrinsic_name_value`).
     Intrinsic,
-    /// The global object's own data field the record's hint names.
-    Field(crate::vm::FieldCache),
 }
 
 /// What a by-name load's record resolved its name to: the global `undefined`, a constant no
@@ -1035,7 +1033,6 @@ unsafe fn lane_name_value<H: Host>(cx: *mut (), read: NameRead, atom: u32) -> Op
             Some(vm.native_value(native))
         }
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
-        NameRead::Field(hint) => vm.record_field_entry_hit(hint, vm.realm.globals),
     }
 }
 
