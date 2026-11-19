@@ -315,8 +315,8 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
     }
 
     /// The delegation's reads the lane finishes without guest code (`LaneSuspends::delegation`).
-    fn delegation(&mut self, _stage: &mut Concrete, step: crate::staged::DelegationStep<u64>) -> Option<(u64, ())> {
-        self.suspends?.delegation(step).map(|word| (word, ()))
+    fn delegation(&mut self, _stage: &mut Concrete, step: crate::staged::DelegationStep<u64>) -> Option<(u64, Boxing)> {
+        self.suspends?.delegation(step).map(|word| (word, Boxing::Value))
     }
 
     /// A delegate generator's step made in place (`LaneSuspends::in_place`).

@@ -422,7 +422,7 @@ impl<W, P> Operation<W, P> {
 
     /// The call operations of `decode`: a call or construction through its forms (`Invocation`),
     /// except `super(...)`, whose arguments the VM gathers (`spread`).
-    fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+    pub(crate) fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         if instruction.op() == Op::Construct && instruction.is_super_construct() {
             return spread::decode(instruction);
         }

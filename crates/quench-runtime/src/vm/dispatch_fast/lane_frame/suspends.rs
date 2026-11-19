@@ -58,7 +58,7 @@ impl Suspender {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn of_await<H: Host>(cx: *mut LaneContext<H>) -> Option<Self> {
         let vm = unsafe { vm(cx) };
-        let activation = vm.lane_stack.activations.last()?;
+        let activation = vm.lane_stack.activations().last()?;
         let script = activation.script()?;
         match script.completion {
             Completion::AsyncRequest => Some(Self::Request),

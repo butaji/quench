@@ -4287,6 +4287,7 @@ use local_fields::{local_field_handler, local_field_miss};
 mod window_bodies;
 pub(super) use window_bodies::body_locals;
 mod lane_reads;
+use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
@@ -5736,10 +5737,11 @@ fn new_object_in_lane<H: Host>(vm: &mut Vm<H>) -> Value {
     value
 }
 
-/// The `MakeArray` row's array of `length` holes, out of line as `compiled_new_object`.
+/// The `MakeArray` row's array of `length` holes (`Vm::make_array`, a double backing where the
+/// literal's annotation declares Number elements), out of line as `compiled_new_object`.
 #[inline(never)]
-fn new_hole_array_in_lane<H: Host>(vm: &mut Vm<H>, length: usize) -> Value {
-    let value = vm.hole_array(length);
+fn new_hole_array_in_lane<H: Host>(vm: &mut Vm<H>, length: usize, numbers: bool) -> Value {
+    let value = vm.make_array(length, numbers);
     note_allocation(vm);
     value
 }

@@ -6,7 +6,7 @@ use super::lane_reads::Reads;
 use crate::bytecode::{Operand, Register};
 use crate::typed_ir::Type;
 use crate::bytecode::RegisterWindow;
-use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
+use crate::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -42,6 +42,12 @@ pub(super) enum NameRead {
     Native,
     /// An intrinsic name's value (`Vm::intrinsic_name_value`).
     Intrinsic,
+    /// The global object's own data field the record's hint names.
+    Field(crate::vm::FieldCache),
+    /// The active realm's global lexical binding the record's hint locates by index (`slot`), taken
+    /// only while it is the name's and initialized (`Vm::global_lexical_at`). Subsumes the hand
+    /// `lane_load_name_lexical`.
+    Lexical(crate::vm::FieldCache),
 }
 
 /// What a by-name load's record resolved its name to: the global `undefined`, a constant no
@@ -61,9 +67,17 @@ struct LaneHost {
     define: ElementDefiner,
     delete: PropertyDeleter,
     read_name: NameReader,
+    /// The `typeof` kind of a heap value, as the VM names it (`typeof_kind`), for a staged `typeof` row.
+    type_of: unsafe fn(*mut (), Value) -> Option<crate::staged::value::TypeofKind>,
+    /// The interned `typeof` result string of a name index in `TYPEOF_NAMES` (`typeof_names`).
+    typeof_name: unsafe fn(*mut (), u64) -> Option<Value>,
+    /// SetFunctionName of a function to a program atom through a cache site (`Vm::set_function_name`).
+    set_name: unsafe fn(*mut (), Value, u32, u16) -> Option<()>,
     /// The values a keeping activation kept (`kept_values`): their count and the register
     /// that holds the first, past the function's registers.
     kept_values: KeptValues,
+    /// What an `await`'s source conversion asks (`staged::await_source`, `AwaitSource::of`).
+    awaits: AwaitSource,
     /// Whether a receiver already holds its constructor's run of constant fields
     /// (`Vm::constant_fields_held`).
     constant_fields: ConstantFieldsTest,
@@ -115,6 +129,11 @@ struct CaptureStores {
 }
 
 impl CaptureStores {
+    /// The stores of the running lane's `cx` (`store_to_capture`).
+    fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
+        Self { context: cx.cast(), store: |context, depth, slot, value| store_to_capture(context.cast::<LaneContext<H>>(), depth, slot, value) }
+    }
+
     /// The running function's own initialized slot written directly through its dense slots
     /// (`store_own_capture`), over the register file `r`; any other store is the row's miss
     /// (`row_miss`: the lane's walking store).
@@ -148,9 +167,140 @@ impl Decisions {
     /// The decisions of the running lane's `cx`.
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { context: cx.cast(), decide: |context, operator, left, right|
-            super::vm_steps::lane_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right),
-            prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext<H>>()) }.instanceof_link(constructor),
-            records: |context| unsafe { vm(context.cast::<LaneContext<H>>()) }.heap.object_record_base().map(|base| base as u64) }
+            super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right),
+            prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext<H>>()) }.instanceof_fact(constructor)
+                .map(|fact| fact.link),
+            records: |context| unsafe { vm(context.cast::<LaneContext<H>>()) }.heap.object_record_base().map(|base| base as u64),
+            instance: |context, value, constructor| {
+                let machine = unsafe { vm(context.cast::<LaneContext<H>>()) };
+                machine.record_instanceof(value, constructor).or_else(|| machine.ordinary_instanceof(value, constructor))
+            } }
+    }
+}
+
+/// The lane context's own-field store and add hits, erased of its host so the frame names no `H`:
+/// what `StorePlan::Layout` joins to (`field_store_host`), and what `StorePlan::Add` joins to
+/// (`field_add`).
+#[derive(Clone, Copy)]
+struct FieldStores {
+    context: *mut (),
+    /// The VM's own-field store of `value` to `atom` through `site`, which takes the form hint it
+    /// leaves for the record (`primary_own_field_store_hit`); `None` where the VM declines.
+    own: fn(*mut (), Value, u32, u16, Value) -> Option<crate::vm::FieldCache>,
+    /// The VM's add the proved chain makes (`proved_field_add_hit`), noting its allocation.
+    proved: fn(*mut (), Value, u32, u16, Value) -> bool,
+    /// The VM's cached add (`primary_field_add_hit`), noting its allocation.
+    primary: fn(*mut (), Value, u32, u16, Value) -> bool,
+    /// The VM's store through the record's hint (`hinted_primary_field_store_hit::<true>`, or the
+    /// narrow store `hinted_narrow_field_store_hit` when `narrow`).
+    hinted: fn(*mut (), Value, u32, Value, crate::vm::FieldCache, bool) -> bool,
+    /// The VM's store through the record's own hint (`hinted_own_field_store_hit`).
+    hinted_own: fn(*mut (), Value, u32, Value, crate::vm::FieldCache) -> bool,
+    /// The VM's store through the site's polymorphic entries (`polymorphic_own_field_store_hit`),
+    /// the own entry it hit, which the record's hint takes.
+    polymorphic: fn(*mut (), Value, u32, u16, Value) -> Option<crate::vm::FieldCache>,
+    /// The VM's general cached write (`cached_field_write_hit`) of a public name, noting its
+    /// allocation; a private name leaves to its own path.
+    general: fn(*mut (), Value, u32, u16, Value) -> bool,
+    /// The VM's own-field store a sinking read makes to `this` (`primary_own_field_store_hit`
+    /// without widening); a refusal is the general path's.
+    sink: fn(*mut (), Value, u32, u16, Value) -> bool,
+}
+
+/// The VM's Math calls of Number arguments a Math row computes in place, erased of its host
+/// so the frame names no `H` (`PropertyFrame::math_call`).
+#[derive(Clone, Copy)]
+struct MathCalls {
+    context: *mut (),
+    /// `number::math_inline_call` of the callee's native, the callee's identity read from its
+    /// function record; `None` for any other callee or argument.
+    call: fn(*mut (), Value, &[Value]) -> Option<Value>,
+}
+
+impl MathCalls {
+    /// The Math calls of the running lane's `cx`.
+    #[inline(always)]
+    fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
+        Self { context: cx.cast(), call: |context, callee, arguments| {
+            let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+            let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return None };
+            super::number::math_inline_call(*native, arguments)
+        } }
+    }
+}
+
+impl FieldStores {
+    /// The stores and adds of the running lane's `cx`.
+    #[inline(always)]
+    fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
+        Self { context: cx.cast(),
+            own: |context, object, atom, site, value| {
+                let cx = context.cast::<LaneContext<H>>();
+                let vm = unsafe { vm(cx) };
+                // SAFETY: the context's program outlives the lane run.
+                let code = unsafe { &*(*cx).code };
+                if !vm.primary_own_field_store_hit::<true>(code, object, atom, value, site, crate::heap::PropertyStoreLayout::MayWiden) {
+                    return None;
+                }
+                Some(vm.form_hint(vm.field_cache_entry(site), object))
+            },
+            proved: |context, object, atom, site, value| {
+                let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+                let added = vm.proved_field_add_hit(object, atom, value, site);
+                if added {
+                    // Adding a property can allocate.
+                    note_allocation(vm);
+                }
+                added
+            },
+            primary: |context, object, atom, site, value| {
+                let cx = context.cast::<LaneContext<H>>();
+                let vm = unsafe { vm(cx) };
+                // SAFETY: the context's program outlives the lane run.
+                let code = unsafe { &*(*cx).code };
+                let added = vm.primary_field_add_hit(code, object, atom, value, site);
+                if added {
+                    note_allocation(vm);
+                }
+                added
+            },
+            hinted: |context, object, atom, value, hint, narrow| {
+                let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+                if narrow { vm.hinted_narrow_field_store_hit(hint, object, atom, value) }
+                else { vm.hinted_primary_field_store_hit::<true>(hint, object, atom, value) }
+            },
+            hinted_own: |context, object, atom, value, hint| {
+                let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+                vm.hinted_own_field_store_hit(hint, object, atom, value)
+            },
+            polymorphic: |context, object, atom, site, value| {
+                let cx = context.cast::<LaneContext<H>>();
+                let vm = unsafe { vm(cx) };
+                // SAFETY: the context's program outlives the lane run.
+                let code = unsafe { &*(*cx).code };
+                vm.polymorphic_own_field_store_hit(code, object, atom, value, site, crate::heap::PropertyStoreLayout::MayWiden)
+            },
+            general: |context, object, atom, site, value| {
+                let cx = context.cast::<LaneContext<H>>();
+                let vm = unsafe { vm(cx) };
+                if vm.is_private_name(atom) { return false; }
+                // SAFETY: the context's program outlives the lane run.
+                let code = unsafe { &*(*cx).code };
+                let stored = vm.cached_field_write_hit(code, object, atom, value, site);
+                if stored {
+                    // Adding a property can allocate.
+                    note_allocation(vm);
+                }
+                stored
+            },
+            sink: |context, object, atom, site, value| {
+                let cx = context.cast::<LaneContext<H>>();
+                let vm = unsafe { vm(cx) };
+                // SAFETY: the context's program outlives the lane run.
+                let code = unsafe { &*(*cx).code };
+                vm.primary_own_field_store_hit::<false>(code, object, atom, value, site, crate::heap::PropertyStoreLayout::Preserve)
+            },
+        }
     }
 }
 
@@ -685,8 +835,11 @@ impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
     #[inline(always)]
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
-        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: delete_value_in_lane::<H>,
-            read_name: name_value_in_lane::<H>, kept_values: kept_values::<H>, constant_fields: constant_fields_value::<H>, name: None };
+        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, define: define_element_in_lane::<H>, delete: delete_value_in_lane::<H>,
+            read_name: name_value_in_lane::<H>, type_of: type_of_in_lane::<H>, typeof_name: typeof_string_in_lane::<H>,
+            set_name: set_function_name_in_lane::<H>, kept_values: kept_values::<H>, name: None,
+            object_like: object_like_in_lane::<H>, awaits: AwaitSource::of::<H>(),
+            constant_fields: constant_fields_value::<H> };
         Self { host: Some(host), ..Self::new(registers, view) }
     }
 
@@ -1102,10 +1255,105 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             let held = unsafe { (host.constant_fields)(host.cx, receiver, site) };
             return Some((Value::boolean(held).to_bits(), Boxing::Value));
         }
-        let CallOut::Decide { left, right, operator } = operation else { return None };
-        let Decisions { context, decide, .. } = self.decisions?;
-        let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
-        decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
+        if let Some((context, binary)) = self.binary
+            && let Some((left, right, operator)) = binary_call(operation)
+        {
+            let (left, right) = (self.operand_word(stage, left)?, self.operand_word(stage, right)?);
+            let (left, right) = (Value::from_bits(left), Value::from_bits(right));
+            // SAFETY: the running lane's context, live for the row's step.
+            return unsafe { binary(context, operator, left, right) }.map(|value| (value.to_bits(), Boxing::Value));
+        }
+        match operation {
+            CallOut::Decide { left, right, operator } => {
+                let Decisions { context, decide, .. } = self.decisions?;
+                let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
+                decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
+            }
+            CallOut::Protocol { .. } | CallOut::ForInNext { .. } | CallOut::PropertyKey { .. } => {
+                let (context, step) = self.names?;
+                let operands = operation.operands().fixed;
+                let operands = operands.map(|operand| operand.and_then(|operand| self.operand_word(stage, operand)).map(Value::from_bits));
+                // SAFETY: the running lane's context, live for the row's step.
+                unsafe { step(context, operation, operands) }.map(|value| (value.to_bits(), Boxing::Value))
+            }
+            // The clone defines no register; its word is a placeholder the row does not write.
+            CallOut::CloneEnv { plan } => {
+                let EnvironmentClones { context, window, run } = self.clones?;
+                // SAFETY: the running lane's context and register file, live for the row's step.
+                unsafe { run(context, self.registers, window, plan) }.then_some((Value::UNDEFINED.to_bits(), Boxing::Value))
+            }
+            _ => None,
+        }
+    }
+
+    #[inline(always)]
+    fn arguments_length(&mut self, _stage: &mut Concrete, slot: u16) -> Option<(u64, Boxing)> {
+        let (context, count) = self.arguments?;
+        // SAFETY: the running lane's context, live for the row's step.
+        Some((unsafe { count(context, slot) }?.to_bits(), Boxing::Value))
+    }
+
+    /// The kept value at `index` of a keeping activation's `arguments` binding in local `slot`: the
+    /// value after the running function's registers (`kept`), in range of the activation's count.
+    #[inline(always)]
+    fn argument(&mut self, _stage: &mut Concrete, slot: u16, index: u64) -> Option<(u64, Boxing)> {
+        let (context, count) = self.arguments?;
+        // SAFETY: the running lane's context, live for the row's step.
+        let count = unsafe { count(context, slot) }?.as_int()?;
+        let index = Value::from_bits(index).as_int().and_then(|index| u16::try_from(index).ok())?;
+        if i32::from(index) >= count {
+            return None;
+        }
+        Some((self.registers.get(self.kept + index).to_bits(), Boxing::Value))
+    }
+
+    /// The keeping activation's `arguments` binding in local `slot` (`kept_binding`): the marker a forwarding
+    /// read passes on, the object it makes at its last read, or a frame's binding as the Vm reads it.
+    #[inline(always)]
+    fn arguments_binding(&mut self, _stage: &mut Concrete, slot: u16) -> Option<(u64, Boxing)> {
+        let (context, binding) = self.kept_binding?;
+        // SAFETY: the running lane's context and register file, live for the row's step.
+        Some((unsafe { binding(context, self.registers, slot) }?.to_bits(), Boxing::Value))
+    }
+
+    /// `value instanceof constructor` by the VM's proof of the constructor's chain, else the ordinary walk
+    /// (`Decisions::instance`), which runs no guest code; `None` where only the full algorithm decides.
+    #[inline(always)]
+    fn instance_of(&mut self, _stage: &mut Concrete, value: u64, constructor: u64) -> Option<bool> {
+        let Decisions { context, instance, .. } = self.decisions?;
+        instance(context, Value::from_bits(value), Value::from_bits(constructor))
+    }
+
+    /// The by-name read through the window's scope (`ScopeReads::name`): the destination and the call
+    /// receiver are written by the callout, which finds the binding the scope holds.
+    #[inline(always)]
+    fn scoped_name(&mut self, _stage: &mut Concrete, destination: Register, receiver: Option<Register>, atom: u32) -> Option<()> {
+        let ScopeReads { context, ip, name, site, .. } = self.scope?;
+        // SAFETY: the running lane's context and register file, live for the row's step.
+        unsafe { name(context, self.registers, ip, atom, destination, receiver, site) }.then_some(())
+    }
+
+    /// The store of `value` to the `with` object the window's scope holds the name in (`ScopeReads::store`).
+    #[inline(always)]
+    fn scoped_store(&mut self, _stage: &mut Concrete, atom: u32, value: u64) -> Option<()> {
+        let ScopeReads { context, ip, store, .. } = self.scope?;
+        // SAFETY: as `scoped_name`.
+        unsafe { store(context, self.registers, ip, atom, value) }.then_some(())
+    }
+
+    /// The store of `value` to local `slot` through the window's scope (`ScopeReads::local`).
+    #[inline(always)]
+    fn scoped_local_store(&mut self, _stage: &mut Concrete, slot: u16, value: u64) -> Option<()> {
+        let ScopeReads { context, ip, local, .. } = self.scope?;
+        // SAFETY: as `scoped_name`.
+        unsafe { local(context, self.registers, ip, slot, value) }.then_some(())
+    }
+
+    #[inline(always)]
+    fn callee_value(&mut self, _stage: &mut Concrete) -> Option<(u64, Boxing)> {
+        let (context, read) = self.callee?;
+        // SAFETY: the running lane's context, live for the row's step.
+        Some((unsafe { read(context) }?.to_bits(), Boxing::Value))
     }
 
     #[inline(always)]
@@ -1137,7 +1385,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn environment_write(&mut self, _stage: &mut Concrete, slot: u16, value: u64) -> Option<()> {
+    fn environment_write(&mut self, _stage: &mut Concrete, slot: u16, value: u64, initialize: bool) -> Option<()> {
         // A window whose names resolve through its scope leaves its local stores to the scope's rules (`scoped_local_store`).
         if self.scope.is_some() {
             return None;
@@ -1145,8 +1393,14 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let EnvironmentReads { context, write, .. } = self.environment?;
         // SAFETY: as `environment`; `write` took the environment's barrier, and no collection runs in the lane.
         let storage = unsafe { write(context, slot) }?;
-        unsafe { crate::staged::environment::concrete_environment_slot_store(storage, slot, Value::from_bits(value)) }
-            .then_some(())
+        // An initializing store defines over the binding's dead zone; any other stores to a live binding.
+        let value = Value::from_bits(value);
+        let stored = if initialize {
+            unsafe { crate::staged::environment::concrete_environment_slot_define(storage, slot, value) }
+        } else {
+            unsafe { crate::staged::environment::concrete_environment_slot_store(storage, slot, value) }
+        };
+        stored.then_some(())
     }
 
     /// A Wasm scalar read straight from the register file (never the carried accumulator, which
@@ -2685,7 +2939,7 @@ lane_handler! {
         // instantiation holds its one decoder (a `match` on a constant compiles every arm).
         // A superinstruction's pair decodes from its parts in the program's table (`super_parts_in_lane`).
         let decoded = (if const { crate::staged::super_const_array_family(LaneFields::<OP, FLAG>::OPCODE) } {
-            Operation::decode_literal_with(crate::staged::Fields::wide(fields), super::super_parts_in_lane::<H>(cx, i.imm() as usize), ())
+            Operation::decode_literal_with(crate::staged::Fields::wide(fields), unsafe { super::super_parts_in_lane::<H>(cx, i.imm() as usize) }, ())
         } else {
             row_decode!(OP, FLAG, fields)
         })
@@ -3287,7 +3541,7 @@ script_handler! {
         let fields = LaneFields::<OP>(i);
         // A superinstruction's pair decodes from its parts in the program's table (`super_parts_in_lane`).
         let decoded = if const { crate::staged::super_const_array_family(LaneFields::<OP>::OPCODE) } {
-            Operation::decode_literal_completed_with(crate::staged::Fields::wide(fields), super::super_parts_in_lane::<H>(cx, i.imm() as usize), ())
+            Operation::decode_literal_completed_with(crate::staged::Fields::wide(fields), unsafe { super::super_parts_in_lane::<H>(cx, i.imm() as usize) }, ())
         } else {
             Operation::decode_completed(crate::staged::Fields::wide(fields), crate::staged::DecodeContext::EMPTY)
         };
@@ -3453,6 +3707,8 @@ unsafe fn name_value_in_lane<H: Host>(cx: *mut (), read: NameRead, atom: u32) ->
             Some(vm.native_value(native))
         }
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
+        NameRead::Field(hint) => vm.record_field_entry_hit(hint, vm.realm.globals),
+        NameRead::Lexical(hint) => vm.global_lexical_at(atom, hint.slot),
     }
 }
 
@@ -3662,3 +3918,91 @@ pub(super) fn staged_delete<H: Host>(cx: *mut LaneContext<H>, r: Registers, [des
 #[path = "lane_frame/fused.rs"]
 mod fused;
 pub(in crate::vm::dispatch_fast) use fused::{chain_row, fused_row, fused_rows, fuse_chains, fuse_rows, is_window_row};
+
+/// The lane context's string-case index for a `StringCaseIndex` row (`case_index_in_lane`): the record's
+/// filter, null where the record has none.
+#[derive(Clone, Copy)]
+struct StringCases {
+    context: *mut (),
+    filter: *const super::string_case_filter::StringCaseFilter,
+    index: unsafe fn(*mut (), *const super::string_case_filter::StringCaseFilter, Value, usize, usize) -> u32,
+}
+
+/// The `typeof` kind of the heap value `value`, as the VM's `typeof` names it (`Vm::typeof_kind`: an
+/// IsHTMLDDA object reads as undefined): the index of its name in `TYPEOF_NAMES`.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn type_of_in_lane<H: Host>(cx: *mut (), value: Value) -> Option<crate::staged::value::TypeofKind> {
+    let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
+    let index = crate::vm::coercion::typeof_name_index(vm.typeof_kind(value));
+    Some(crate::staged::value::TypeofKind::of_index(index as u64))
+}
+
+/// The interned `typeof` result string of the name index `name` (`Vm::typeof_names`), which
+/// `typeof` yields without allocating.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn typeof_string_in_lane<H: Host>(cx: *mut (), name: u64) -> Option<Value> {
+    let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
+    vm.typeof_names.get(usize::try_from(name).ok()?).copied()
+}
+
+/// SetFunctionName of `function` to the program atom `name` through cache `site`, by the VM's own naming
+/// (`Vm::set_function_name`); `None` where it raises.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn set_function_name_in_lane<H: Host>(cx: *mut (), function: Value, name: u32, site: u16) -> Option<()> {
+    let cx = cx.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    vm.set_function_name(code, function, (name, site)).ok()
+}
+
+/// Whether `value` is an object of any kind the VM admits as an iterator result (`Vm::is_object_like`),
+/// for `RequireIteratorResult`'s object arm (`LaneFrame::object_like`).
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn object_like_in_lane<H: Host>(cx: *mut (), value: Value) -> bool {
+    unsafe { vm(cx.cast::<LaneContext<H>>()) }.is_object_like(value)
+}
+
+/// `IteratorCleanupPush` in the running VM frame, as the general loop runs it: the iterator to close if
+/// the loop exits abruptly. A frameless activation keeps it on the lane stack (`LaneStack::iterators`),
+/// which its frame takes if it materializes.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn iterator_push_in_lane<H: Host>(cx: *mut (), iterator: Register, done: Register) {
+    let cx = cx.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    let iterator = crate::vm::ActiveIterator { iterator, done };
+    if let Some(depth) = vm.lane_stack.activations().len().checked_sub(1) {
+        vm.lane_stack.iterators.push((depth, iterator));
+    } else {
+        let frame = unsafe { (*cx).frame() };
+        vm.frames[frame].active_iterators.push(iterator);
+    }
+}
+
+/// `IteratorCleanupPop` in the running VM frame: the running activation's own entry, the last. `false`
+/// where there is none, which the general path raises for.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn iterator_pop_in_lane<H: Host>(cx: *mut ()) -> bool {
+    let cx = cx.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    match vm.lane_stack.activations().len().checked_sub(1) {
+        Some(depth) => vm.lane_stack.iterators.pop_if(|(owner, _)| *owner == depth).is_some(),
+        None => {
+            let frame = unsafe { (*cx).frame() };
+            vm.frames[frame].active_iterators.pop().is_some()
+        }
+    }
+}
