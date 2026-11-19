@@ -204,15 +204,8 @@ impl Unit {
             if let Some(frame) = self.markers.iter().position(|marker| *marker == pc) {
                 successors.extend(self.frames[frame].alternative);
             }
-            match instruction.op().control_flow_layout() {
-                crate::bytecode::ControlFlowLayout::Terminal => {},
-                crate::bytecode::ControlFlowLayout::Jump => successors.push(instruction.jump_target() as usize),
-                crate::bytecode::ControlFlowLayout::ConditionalJump => {
-                    successors.push(instruction.jump_target() as usize);
-                    successors.push(pc + 1);
-                }
-                _ => successors.push(pc + 1),
-            }
+            // The one successor table: a branch table continues at every one of its entries.
+            crate::bytecode::for_each_instruction_successor(pc, *instruction, |successor| successors.push(successor));
         }
         starts.push(successors.len());
         let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, &[], |pc| masks[pc]);
