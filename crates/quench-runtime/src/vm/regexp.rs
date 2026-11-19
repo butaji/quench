@@ -1032,7 +1032,8 @@ impl<H: Host> Vm<H> {
                 .collect()
         };
         if let Some(last) = matches.last() {
-            self.record_regexp_legacy_match(receiver, input.clone(), last.clone())?;
+            let owner = self.regexp_legacy_owner(receiver)?;
+            self.record_regexp_legacy_match(owner, input.clone(), last.clone());
         }
 
         let mut output = super::wtf16::JsStringBuilder::default();
@@ -1160,9 +1161,10 @@ impl<H: Host> Vm<H> {
             // No match leaves the subject as it is: the same string value answers.
             return Ok(input_value);
         };
+        let owner = self.regexp_legacy_owner(receiver)?;
         match last {
-            Ok(found) => self.record_regexp_legacy_match(receiver, input.clone(), found)?,
-            Err(start) => self.record_regexp_legacy_pending(receiver, input.clone(), Rc::clone(matcher), start)?,
+            Ok(found) => self.record_regexp_legacy_match(owner, input.clone(), found),
+            Err(start) => self.record_regexp_legacy_pending(owner, input.clone(), Rc::clone(matcher), start),
         }
         // Nothing reads the result: building it runs no guest code, so only its one
         // observable outcome, a length past the limit raising, needs the length.
@@ -1564,7 +1566,8 @@ impl<H: Host> Vm<H> {
         array: Value,
     ) -> Result<Value, JsError> {
         if let Some(matched) = last_match {
-            self.record_regexp_legacy_match(splitter, input.clone(), matched)?;
+            let owner = self.regexp_legacy_owner(splitter)?;
+            self.record_regexp_legacy_match(owner, input.clone(), matched);
         }
         Ok(array)
     }
@@ -1862,7 +1865,8 @@ impl<H: Host> Vm<H> {
         let Some(last) = ranges.last() else {
             return Ok(Value::NULL);
         };
-        self.record_regexp_legacy_pending(receiver, input.clone(), Rc::clone(matcher), last.start)?;
+        let owner = self.regexp_legacy_owner(receiver)?;
+        self.record_regexp_legacy_pending(owner, input.clone(), Rc::clone(matcher), last.start);
         let units = input.units();
         let matched = ranges.into_iter().map(|range| self.heap.alloc_unit_run(units.slice(range))).collect();
         Ok(self.new_array(matched))
@@ -2296,12 +2300,14 @@ impl<H: Host> Vm<H> {
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 // With the builtin exec, only the match and its effects are observable: the
-                // result array it would build never escapes.
-                if vm.regexp_builtin_exec_matcher(receiver).is_some() {
+                // result array it would build never escapes. The proof alone decides it; the
+                // match reads the compiled matcher once, in `regexp_match_from`.
+                if vm.regexp_exec_is_builtin(receiver) {
                     let matched = vm.regexp_builtin_match(p, receiver, &input)?;
                     let found = matched.is_some();
                     if let Some(matched) = matched {
-                        vm.record_regexp_legacy_match(receiver, input, matched)?;
+                        let owner = vm.regexp_legacy_owner(receiver)?;
+                        vm.record_regexp_legacy_match(owner, input, matched);
                     }
                     return Ok(if found { Value::TRUE } else { Value::FALSE });
                 }
@@ -2442,9 +2448,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         {
             let vm = self;
-            let has_indices = match vm.heap.get(this) {
-                Some(Cell::RegExp { meta, .. }) => meta.flags.contains(RegExpFlags::HAS_INDICES),
-                _ => false,
+            // The receiver's cell is read once: its flags say whether the result has indices,
+            // and its legacy owner records the match.
+            let (has_indices, owner) = match vm.heap.get(this) {
+                Some(Cell::RegExp { meta, .. }) => (meta.flags.contains(RegExpFlags::HAS_INDICES), meta.legacy_constructor),
+                _ => return Err(JsError("RegExp instance unavailable after match".into())),
             };
             let named = regexp_named_capture_ranges(&matched);
             // A match or capture of the whole input is the input itself, as a pattern that
@@ -2484,7 +2492,7 @@ impl<H: Host> Vm<H> {
                 let indices_atom = vm.intern_atom("indices");
                 vm.set_property(result, indices_atom, indices)?;
             }
-            vm.record_regexp_legacy_match(this, input, matched)?;
+            vm.record_regexp_legacy_match(owner, input, matched);
             Ok(result)
         }
     }

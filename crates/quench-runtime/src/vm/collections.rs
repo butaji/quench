@@ -1178,6 +1178,8 @@ impl<H: Host> Vm<H> {
             .flatten()
     }
 
+    /// The value of a Map `get` (`undefined` when absent), or the presence of `key` for a
+    /// `has`; one hash of the key and one probe, whatever the lookup.
     #[inline(always)]
     pub(super) fn pure_collection_lookup(
         &self,
@@ -1190,12 +1192,8 @@ impl<H: Host> Vm<H> {
                 self.collection_entry_index(entries, key, self.same_value_zero_hash(key))
                     .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
             ),
-            (Native::MapHas, Cell::Map { entries, .. }) => {
-                Some(Value::boolean(self.collection_entry_index(entries, key, self.same_value_zero_hash(key)).is_some()))
-            }
-            (Native::SetHas, Cell::Set { entries, .. }) => {
-                Some(Value::boolean(self.collection_entry_index(entries, key, self.same_value_zero_hash(key)).is_some()))
-            }
+            (Native::MapHas, Cell::Map { entries, .. }) => Some(self.has_key(entries, key)),
+            (Native::SetHas, Cell::Set { entries, .. }) => Some(self.has_key(entries, key)),
             // A value that cannot be held weakly is never a key.
             (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(entries.get(key).unwrap_or(Value::UNDEFINED)),
             (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => Some(Value::boolean(entries.contains(key))),
@@ -1204,10 +1202,16 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `Map.prototype.set` of `map` with its `args`, which runs no guest code: the key's
-    /// entry takes the value, or a new entry is appended. `false`, with nothing written,
-    /// when `map` is no Map.
-    /// Set.prototype.add's effect on a Set; `false` for any other receiver.
+    /// Whether `key` is an entry of the collection `entries` (`Map.prototype.has`,
+    /// `Set.prototype.has`), by one hash and one probe.
+    #[inline(always)]
+    fn has_key<T: crate::heap::CollectionEntry>(&self, entries: &crate::heap::CollectionEntries<T>, key: Value) -> Value {
+        Value::boolean(self.collection_entry_index(entries, key, self.same_value_zero_hash(key)).is_some())
+    }
+
+    /// Set.prototype.add's effect on a Set; `false` for any other receiver. The value is
+    /// canonicalized, then hashed once; a probe that finds it adds nothing, and a miss
+    /// appends the entry.
     pub(super) fn set_add(&mut self, set: Value, value: Value) -> bool {
         if !matches!(self.heap.get(set), Some(Cell::Set { .. })) {
             return false;
@@ -1224,6 +1228,9 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// `Map.prototype.set` of `map` with its `args`, which runs no guest code: the key's
+    /// entry takes the value, or a new entry is appended. `false`, with nothing written,
+    /// when `map` is no Map.
     pub(super) fn map_set(&mut self, map: Value, args: &[Value]) -> bool {
         let Some(Cell::Map { entries, .. }) = self.heap.get(map) else { return false };
         // Map.prototype.set stores -0 as +0 (`canonical_collection_key`).

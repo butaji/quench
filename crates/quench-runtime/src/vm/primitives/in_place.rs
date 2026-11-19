@@ -4,31 +4,34 @@ use super::*;
 use crate::vm::wtf16::Units;
 
 impl<H: Host> Vm<H> {
-    /// `indexOf`, `includes` or `startsWith` of a flat string receiver searching for a flat
-    /// string, from a position left out or passed as an integer: every conversion the
-    /// method makes is then the value itself, so the search reads the units in place, as
-    /// `call_primitive_native` would after copying them. `None` leaves any other call to it.
+    /// `indexOf`, `lastIndexOf`, `includes`, `startsWith` or `endsWith` of a flat string receiver
+    /// searching for a flat string, from a position left out or passed as an integer: every
+    /// conversion the method makes is then the value itself, so the search reads both strings'
+    /// units in place, as `call_primitive_native` would after copying them. `None` leaves any
+    /// other call to it.
     pub(super) fn string_search_in_place(&self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
-        if !matches!(native, Native::StringIndexOf | Native::StringIncludes | Native::StringStartsWith) {
+        if !matches!(
+            native,
+            Native::StringIndexOf
+                | Native::StringLastIndexOf
+                | Native::StringIncludes
+                | Native::StringStartsWith
+                | Native::StringEndsWith
+        ) {
             return None;
         }
         let [search, rest @ ..] = args else {
             return None;
         };
-        let text = self.heap.string(receiver)?.existing_flat()?.view();
-        let needle = self.heap.string(*search)?.existing_flat()?.view();
-        let length = text.len();
-        // A position below zero reads as zero and one past the end as the end, for all three.
-        let position = match rest.first() {
-            None => 0,
-            Some(position) if position.is_undefined() => 0,
-            Some(position) => usize::try_from(position.as_int()?).unwrap_or(0).min(length),
+        let text = self.heap.flat_text(receiver)?;
+        let needle = self.heap.flat_text(*search)?;
+        let (text, needle) = (text.units(), needle.units());
+        // The forward searches start at zero by default, the backward ones at the end.
+        let position = match native {
+            Native::StringEndsWith | Native::StringLastIndexOf => search_position(rest.first(), text.len(), text.len())?,
+            _ => search_position(rest.first(), 0, text.len())?,
         };
-        Some(match native {
-            Native::StringIndexOf => Value::number(text.find(needle, position).map_or(-1.0, |index| index as f64)),
-            Native::StringIncludes => Value::boolean(text.find(needle, position).is_some()),
-            _ => Value::boolean(text.slice(position..length).starts_with(needle)),
-        })
+        Some(search_result(native, text, needle, position))
     }
 
     /// `slice` or `substring` of a flat string receiver with integer or left-out bounds:
@@ -301,4 +304,36 @@ pub(super) fn substring_range(native: Native, length: i64, start: i64, end: i64)
         (start.min(end), start.max(end))
     };
     start as usize..end.max(start) as usize
+}
+
+/// A search's position argument as the integer ToIntegerOrInfinity gives it, clamped to
+/// `0..=length`; `default` when it is left out or undefined. `None` for a value that is not an
+/// integer, which the general path converts.
+fn search_position(argument: Option<&Value>, default: usize, length: usize) -> Option<usize> {
+    match argument {
+        Some(value) if !value.is_undefined() => Some(usize::try_from(value.as_int()?).unwrap_or(0).min(length)),
+        _ => Some(default),
+    }
+}
+
+/// The result of a string search method at `position` (already clamped) of `needle` in `text`:
+/// the index it finds, or the boolean it answers.
+fn search_result(native: Native, text: Units<'_>, needle: Units<'_>, position: usize) -> Value {
+    let length = text.len();
+    match native {
+        Native::StringIndexOf => index_value(text.find(needle, position)),
+        Native::StringLastIndexOf => index_value(text.rfind(needle, position)),
+        Native::StringIncludes => Value::boolean(text.find(needle, position).is_some()),
+        Native::StringStartsWith => Value::boolean(text.slice(position..length).starts_with(needle)),
+        _ => Value::boolean(
+            position
+                .checked_sub(needle.len())
+                .is_some_and(|start| text.slice(start..position) == needle),
+        ),
+    }
+}
+
+/// A search index as a number value: the index found, or -1 for none.
+fn index_value(found: Option<usize>) -> Value {
+    Value::number(found.map_or(-1.0, |index| index as f64))
 }

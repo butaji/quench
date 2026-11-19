@@ -108,7 +108,8 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn pure_string_in_place(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         match native {
-            Native::StringIndexOf | Native::StringIncludes | Native::StringStartsWith =>
+            Native::StringIndexOf | Native::StringLastIndexOf | Native::StringIncludes | Native::StringStartsWith
+            | Native::StringEndsWith =>
                 self.string_search_in_place(native, receiver, args),
             Native::StringSlice | Native::StringSubstring | Native::StringSubstr =>
                 self.substring_in_place(native, receiver, args),

@@ -257,6 +257,10 @@ pub struct Regex {
 struct CompleteMatcher {
     /// Literal units every match consumes contiguously (`required_literal`); empty if none.
     required_literal: Box<[u32]>,
+    /// The most code points a match consumes before `required_literal`'s first unit (`None`
+    /// where unbounded). The leftmost match holding a hit of the literal starts no earlier than
+    /// the hit less this (`Regex::ascii_begin`).
+    literal_reach: Option<usize>,
     /// The micro-VM's program (`backtrack::Program`): every search of the pattern runs it.
     backtracking: backtrack::Program,
     /// `backtracking` without its captures, for a search that reads only the match's bounds
@@ -341,7 +345,7 @@ impl CompleteMatcher {
         let backtracking = backtrack::Program::compile(&program, flags, names.len()).expect("every pattern compiles to the VM");
         let bounds = (!names.is_empty() && !has_backreference(&program))
             .then(|| backtrack::Program::compile(&without_captures(&program), flags, 0).expect("every pattern compiles to the VM"));
-        let required_literal = required_literal(&program, flags);
+        let RequiredLiteral { units: required_literal, reach: literal_reach } = required_literal(&program, flags);
         // A program that starts every ASCII search at its prefix finds the same literal
         // there, so the run's own search answers a subject without it; an anchored one tries
         // a single position, which costs less than scanning the subject for the literal.
@@ -355,6 +359,7 @@ impl CompleteMatcher {
         let literal_run = range_search::LiteralRun::of(&program, &required_literal);
         Self {
             required_literal,
+            literal_reach,
             backtracking,
             bounds,
             required_bytes,
@@ -1015,13 +1020,6 @@ fn units_from_str(text: &str, unicode: bool) -> Vec<Unit> {
 /// backreferences may consume none; a class consumes one code point unless it has string
 /// alternatives (`v`-mode `\q{…}`), which may be empty.
 fn min_length(expr: &Expr) -> usize {
-    fn class_has_strings(class: &ClassExpr) -> bool {
-        class.items.iter().any(|item| match item {
-            ClassItem::String(_) => true,
-            ClassItem::Nested(nested) => class_has_strings(nested),
-            _ => false,
-        })
-    }
     match expr {
         Expr::Sequence(parts) => parts
             .iter()
@@ -1035,28 +1033,101 @@ fn min_length(expr: &Expr) -> usize {
     }
 }
 
-fn required_literal(program: &Expr, flags: Flags) -> Box<[u32]> {
-    fn visit(expr: &Expr, run: &mut Vec<u32>, best: &mut Vec<u32>) {
+/// Whether a class has string alternatives (`v`-mode `\q{…}`), whose length varies.
+fn class_has_strings(class: &ClassExpr) -> bool {
+    class.items.iter().any(|item| match item {
+        ClassItem::String(_) => true,
+        ClassItem::Nested(nested) => class_has_strings(nested),
+        _ => false,
+    })
+}
+
+/// The most code points any match of `expr` consumes, `None` where that is unbounded: an
+/// unbounded repeat of a consuming body, a backreference, or a class with string alternatives.
+fn max_length(expr: &Expr) -> Option<usize> {
+    match expr {
+        Expr::Sequence(parts) => parts.iter().try_fold(0, |total: usize, part| total.checked_add(max_length(part)?)),
+        Expr::Alternation(branches) => branches.iter().try_fold(0, |most: usize, branch| Some(most.max(max_length(branch)?))),
+        Expr::Literal(_) | Expr::Dot => Some(1),
+        Expr::Class(class) => (!class_has_strings(class)).then_some(1),
+        Expr::Capture { body, .. } | Expr::Mode { body, .. } => max_length(body),
+        Expr::Repeat { body, max, .. } => {
+            let width = max_length(body)?;
+            match max {
+                Some(max) => width.checked_mul(*max),
+                None => (width == 0).then_some(0),
+            }
+        }
+        Expr::Assertion(_) | Expr::Lookaround { .. } => Some(0),
+        Expr::Backreference(_) => None,
+    }
+}
+
+/// The literal `required_literal` finds, and the most code points a match consumes before it.
+#[derive(Default)]
+struct RequiredLiteral {
+    units: Box<[u32]>,
+    reach: Option<usize>,
+}
+
+/// The walk of a pattern's top-level literal runs: the run being read, the best run so far,
+/// and the code points consumed so far (`consumed`, `None` once unbounded), with the count
+/// at each run's first unit (`run_reach`, `best_reach`).
+#[derive(Default)]
+struct LiteralWalk {
+    run: Vec<u32>,
+    run_reach: Option<usize>,
+    best: Vec<u32>,
+    best_reach: Option<usize>,
+    consumed: Option<usize>,
+}
+
+impl LiteralWalk {
+    /// Reads `expr`: a literal extends the run, and any other part ends it and consumes what
+    /// it may match. Sequences and captures are read through, as a match always enters them.
+    fn visit(&mut self, expr: &Expr) {
         match expr {
-            Expr::Sequence(parts) => parts.iter().for_each(|part| visit(part, run, best)),
-            Expr::Capture { body, .. } => visit(body, run, best),
-            Expr::Literal(value) => run.push(*value),
-            _ => end_run(run, best),
+            Expr::Sequence(parts) => parts.iter().for_each(|part| self.visit(part)),
+            Expr::Capture { body, .. } => self.visit(body),
+            Expr::Literal(value) => {
+                if self.run.is_empty() {
+                    self.run_reach = self.consumed;
+                }
+                self.run.push(*value);
+                self.consume(max_length(expr));
+            }
+            _ => {
+                self.end_run();
+                self.consume(max_length(expr));
+            }
         }
     }
-    fn end_run(run: &mut Vec<u32>, best: &mut Vec<u32>) {
-        if run.len() > best.len() {
-            std::mem::swap(run, best);
-        }
-        run.clear();
+
+    /// Counts `width` more code points, `None` as unbounded.
+    fn consume(&mut self, width: Option<usize>) {
+        self.consumed = self.consumed.zip(width).and_then(|(total, width)| total.checked_add(width));
     }
+
+    /// Ends the run being read, keeping it as the best run where it is longer than the best.
+    fn end_run(&mut self) {
+        if self.run.len() > self.best.len() {
+            std::mem::swap(&mut self.run, &mut self.best);
+            self.best_reach = self.run_reach;
+        }
+        self.run.clear();
+    }
+}
+
+/// The longest run of literal units every match consumes contiguously, with the reach of the
+/// literal. Empty for case-insensitive patterns, whose literals match more than their own value.
+fn required_literal(program: &Expr, flags: Flags) -> RequiredLiteral {
     if flags.ignore_case {
-        return Box::default();
+        return RequiredLiteral::default();
     }
-    let (mut run, mut best) = (Vec::new(), Vec::new());
-    visit(program, &mut run, &mut best);
-    end_run(&mut run, &mut best);
-    best.into()
+    let mut walk = LiteralWalk { consumed: Some(0), ..LiteralWalk::default() };
+    walk.visit(program);
+    walk.end_run();
+    RequiredLiteral { units: walk.best.into(), reach: walk.best_reach }
 }
 
 /// The native-endian bytes of `literal`'s code units, which a search of a UTF-16 text's bytes

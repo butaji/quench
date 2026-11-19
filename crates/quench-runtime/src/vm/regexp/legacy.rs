@@ -244,39 +244,47 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The legacy `RegExp` static state a successful builtin exec of `this` leaves behind.
+    /// The legacy statics' owner of the RegExp `this`, read from its cell: a caller that
+    /// records a match of `this` but holds no owner reads it once, here.
+    pub(in crate::vm) fn regexp_legacy_owner(&self, this: Value) -> Result<crate::heap::RegExpLegacyOwner, JsError> {
+        match self.heap.get(this) {
+            Some(Cell::RegExp { meta, .. }) => Ok(meta.legacy_constructor),
+            _ => Err(JsError("RegExp instance unavailable after match".into())),
+        }
+    }
+
+    /// The legacy `RegExp` static state a successful builtin exec leaves behind, for a RegExp
+    /// whose legacy owner is `owner`.
     pub(in crate::vm) fn record_regexp_legacy_match(
         &mut self,
-        this: Value,
+        owner: crate::heap::RegExpLegacyOwner,
         input: JsString,
         matched: quench_regexp::Match,
-    ) -> Result<(), JsError> {
-        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Matched { input, matched })
+    ) {
+        self.record_regexp_legacy(owner, input, |input| LegacyRegExpMatch::Matched { input, matched });
     }
 
     /// `record_regexp_legacy_match` for the match `matcher` finds from `start`, found again
     /// only if a static is read.
     pub(in crate::vm) fn record_regexp_legacy_pending(
         &mut self,
-        this: Value,
+        owner: crate::heap::RegExpLegacyOwner,
         input: JsString,
         matcher: Rc<quench_regexp::Regex>,
         start: usize,
-    ) -> Result<(), JsError> {
+    ) {
         let storage = pending_storage(&input);
-        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending { input, matcher, start, storage })
+        self.record_regexp_legacy(owner, input, |input| LegacyRegExpMatch::Pending { input, matcher, start, storage });
     }
 
+    /// Records `matched` over `input` as the legacy statics' state, when the RegExp's owner
+    /// `owner` is the active realm's `RegExp` constructor (or a disabled one clears them).
     pub(super) fn record_regexp_legacy(
         &mut self,
-        this: Value,
+        owner: crate::heap::RegExpLegacyOwner,
         input: JsString,
         matched: impl FnOnce(JsString) -> LegacyRegExpMatch,
-    ) -> Result<(), JsError> {
-        let owner = match self.heap.get(this) {
-            Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
-            _ => return Err(JsError("RegExp instance unavailable after match".into())),
-        };
+    ) {
         let state = self
             .realm
             .intrinsics
@@ -297,7 +305,6 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        Ok(())
     }
 }
 
