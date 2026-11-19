@@ -52,7 +52,26 @@ fn literal_elements(make: WideInstruction, following: &[WideInstruction]) -> Opt
     RegisterList::collect(length, |index| defines[index].register_a())
 }
 
+/// The empty allocations both JIT tiers make inline from a space's cursor and captured template.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum InlineEmpty {
+    /// `Allocation::Empty`: an empty ordinary object.
+    Object,
+    /// `Allocation::Array { length: 0 }`: a zero-length array, whose elements are the static empty header.
+    Array,
+}
+
 impl Allocation {
+    /// The inline empty allocation this is, or `None`. The one predicate both tiers read: the u-jit's
+    /// `allocate_value` and the b-jit planner (`base_region::steps`) decide an inline empty allocation by it.
+    pub(crate) fn inline_empty(self) -> Option<InlineEmpty> {
+        match self {
+            Self::Empty => Some(InlineEmpty::Object),
+            Self::Array { length: 0 } => Some(InlineEmpty::Array),
+            _ => None,
+        }
+    }
+
     /// The register `instruction` defines and the allocation it makes, given the instructions
     /// `following` it (an array literal's element definitions); `None` for an opcode that makes
     /// no such value.

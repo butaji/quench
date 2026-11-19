@@ -173,7 +173,22 @@ fn a_one_element_append_has_a_fast_row_and_a_spread_the_helper_alone() {
     assert!(matches!(row.a, Some(Source::Register(2))) && row.base == Some(1) && row.dst.is_none());
 }
 
-/// A guarded fast arm reads the payload but runs no helper, and a helper step runs one.
+/// An empty object and a zero-length array are the fast arms of their helper steps, whose destination is the row's
+/// only hole; a literal array of elements is the helper alone.
+#[test]
+fn an_empty_allocation_has_a_fast_row_and_a_literal_the_helper_alone() {
+    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let program = empty_program();
+    let lower = |instruction| lowering(instruction, known(&program), process);
+    assert_eq!(lower(WideInstruction::new(Op::MakeObject, 1, 0, 0, 0)), Step::Fast(Heap::EmptyObject));
+    assert_eq!(lower(WideInstruction::new(Op::MakeArray, 1, 0, 0, 0)), Step::Fast(Heap::EmptyArray));
+    assert_eq!(lower(WideInstruction::new(Op::MakeArray, 1, 0, 0, 2)), Step::Helper);
+    let row = decode_step(0, WideInstruction::new(Op::MakeObject, 1, 0, 0, 0), known(&program), (process, false));
+    assert!(row.dst == Some(1) && row.a.is_none() && row.b.is_none());
+}
+
+/// Where a region's heap rows read snapshots a helper's effects would not reach, a fast arm stays
+/// and its slow arm becomes the leave, while a helper step leaves; elsewhere both are kept.
 #[test]
 fn a_guard_reads_the_payload_and_runs_no_helper() {
     assert!(Step::Guard(Heap::Append).reads_payload() && !Step::Guard(Heap::Append).runs_helper());

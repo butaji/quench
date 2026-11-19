@@ -149,7 +149,8 @@ pub(super) enum Heap {
     Length,
     /// An empty ordinary object (`Allocation::Empty`), or a zero-length array, made inline from the object or array
     /// space's cursor and the captured template (`JsStepDispatch::empty_*`): the destination (hole 0) takes the
-    /// direct reference of the new record. Nothing is planned for these yet (the b-jit has no allocation planner).
+    /// direct reference of the new record. Planned as the fast arm of the instruction's helper step
+    /// (`base_region::steps::allocation_arm`); its exit 0 is that helper step.
     EmptyObject,
     EmptyArray,
     /// Stores the value operand (hole 1) into the own data field the site's cache entry (hole 2) names

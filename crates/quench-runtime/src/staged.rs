@@ -108,7 +108,7 @@ pub(crate) use suspend::{await_source, suspend as suspension_step, SuspendEffect
 mod delegation;
 pub(crate) use delegation::DelegationStep;
 mod allocation;
-pub(crate) use allocation::Allocation;
+pub(crate) use allocation::{Allocation, InlineEmpty};
 pub(crate) mod plan_fields;
 pub(crate) mod property;
 mod property_write;
