@@ -635,6 +635,10 @@ impl<H: Host> NumericFrame<Concrete> for InterpreterFrame<'_, H> {
     #[inline(always)]
     fn int_fact(&self) -> InterpreterFact { InterpreterFact::Value }
 
+    /// The interpreter's registers hold tagged words, so a Number is defined as its boxed word.
+    #[inline(always)]
+    fn tagged_number_fact(&self) -> Option<InterpreterFact> { Some(InterpreterFact::Value) }
+
     #[inline(always)]
     fn number_fact(&self) -> InterpreterFact { InterpreterFact::Double }
 

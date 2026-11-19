@@ -146,6 +146,12 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + supe
     fn int_fact(&self) -> Self::Fact;
     fn number_fact(&self) -> Self::Fact;
 
+    /// The fact a Number takes where the frame keeps Numbers tagged: an int32 boxed in place and a binary64
+    /// canonicalized (`box_number`), defined once by `number_arithmetic`. `None` where the frame keeps every
+    /// Number unboxed, and a row defines its binary64 result with `number_fact` alone.
+    #[inline(always)]
+    fn tagged_number_fact(&self) -> Option<Self::Fact> { None }
+
     /// Write `word`, of `fact`, to frame local slot `local` (a numeric local target); `false` where this
     /// frame keeps no locals of its own.
     #[inline(always)]
@@ -512,8 +518,45 @@ pub(crate) fn int32_binary_operation(operator: u32, destination: Register, left:
 #[inline(always)]
 pub(super) fn relation_holds<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> Option<S::Cond> {
-    let (left, right) = operands(stage, frame, left, right, domain)?;
-    Some(stage.relation(relation, domain, left, right))
+    match domain {
+        Domain::Int32 => {
+            let (left, right) = operands(stage, frame, left, right, domain)?;
+            Some(stage.relation(relation, domain, left, right))
+        }
+        Domain::Float64 => relation_number(stage, frame, (left, right), relation),
+    }
+}
+
+/// `relation` of two Number operands: where both are int32 at run time it is one int32 compare, and every
+/// other pair takes the binary64 compare (`relation_float`). A choice yields a predicate word, so the two
+/// arms each keep their own compare, and the word is read back as the condition.
+#[inline(always)]
+fn relation_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    (left, right): (Operand, Operand), relation: NumberRelation) -> Option<S::Cond> {
+    let Some(((left_int, left_test), (right_int, right_test))) =
+        fast_int(stage, frame, left).zip(fast_int(stage, frame, right))
+    else {
+        return relation_float(stage, frame, (left, right), relation);
+    };
+    let Some(tests) = both_tests(stage, [left_test, right_test]) else {
+        return Some(stage.relation(relation, Domain::Int32, left_int, right_int));
+    };
+    let word = stage.choose_leaving(tests, |stage| {
+        let holds = stage.relation(relation, Domain::Int32, left_int, right_int);
+        Some(stage.cond_word(holds))
+    }, |stage| {
+        let holds = relation_float(stage, frame, (left, right), relation)?;
+        Some(stage.cond_word(holds))
+    })?;
+    Some(stage.ne_imm(word, 0u64))
+}
+
+/// `relation` of two Number operands as binary64 (`float_word`); `None` where an operand is no Number.
+#[inline(always)]
+fn relation_float<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    (left, right): (Operand, Operand), relation: NumberRelation) -> Option<S::Cond> {
+    let (left, right) = operands(stage, frame, left, right, Domain::Float64)?;
+    Some(stage.relation(relation, Domain::Float64, left, right))
 }
 
 /// Arithmetic of two operands in `domain`; the result in `domain` or widened to binary64.
@@ -521,19 +564,90 @@ pub(super) fn relation_holds<S: NumericStage, F: NumericFrame<S>>(stage: &mut S,
 fn arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand,
     operation: NumberArithmetic, domain: Domain, overflow: (Overflow, NegativeZero)) -> Step<S::Word, F::Control> {
-    let Some((left, right)) = operands(stage, frame, left, right, domain) else { return Step::Unresolved };
     match domain {
-        Domain::Float64 => {
-            let result = stage.float_arithmetic(operation, left, right);
-            let fact = frame.number_fact();
-            frame.write(stage, destination, result, fact);
-            Step::Value(result)
-        }
+        Domain::Float64 => match number_arithmetic(stage, frame, destination, (left, right), operation) {
+            Some(result) => Step::Value(result),
+            None => Step::Unresolved,
+        },
         Domain::Int32 => {
+            let Some((left, right)) = operands(stage, frame, left, right, domain) else { return Step::Unresolved };
             let miss = frame.miss();
             int_arithmetic_result(stage, frame, destination, left, right, operation, overflow, miss)
         }
     }
+}
+
+/// `left operation right` of two Number operands, defining `destination` and returning its Number word.
+/// A frame that keeps Numbers tagged (`tagged_number_fact`) takes the int32 fast path: where both operands
+/// are int32 at run time and the operation is integral, the result is boxed directly as an int32 when it
+/// neither overflows nor is `-0` (`int_fast_result`), and every other pair is the binary64 result boxed
+/// (`box_number`). The tags are tested first, so a Number that is no int32 computes no int32 result. The
+/// register is written once, with the tagged fact, so no arm defines it in another representation. Any
+/// other frame defines the binary64 result with `number_fact`. `None` where an operand is no Number, which
+/// leaves the row.
+#[inline(always)]
+fn number_arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, (left, right): (Operand, Operand), operation: NumberArithmetic) -> Option<S::Word> {
+    let int_operands = match frame.tagged_number_fact() {
+        Some(fact) if operation.integral() => match (fast_int(stage, frame, left), fast_int(stage, frame, right)) {
+            (Some(left), Some(right)) => Some((fact, left, right)),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some((fact, (left_int, left_test), (right_int, right_test))) = int_operands else {
+        let result = float_operation(stage, frame, (left, right), operation)?;
+        let fact = frame.number_fact();
+        frame.write(stage, destination, result, fact);
+        return Some(result);
+    };
+    let packed = match both_tests(stage, [left_test, right_test]) {
+        Some(tests) => stage.choose(tests,
+            |stage| int_fast_result(stage, operation, left_int, right_int),
+            |stage| stage.constant(NOT_INT32)),
+        None => int_fast_result(stage, operation, left_int, right_int),
+    };
+    let taken = stage.ne_imm(packed, NOT_INT32);
+    let boxed_int = frame.int_result(stage, packed);
+    let boxed = stage.choose_leaving(taken, |_| Some(boxed_int), |stage| {
+        let number = float_operation(stage, frame, (left, right), operation)?;
+        Some(stage.box_number(number))
+    })?;
+    frame.write(stage, destination, boxed, fact);
+    Some(boxed)
+}
+
+/// The word no int32 fast path yields. An int32 word is its low 32 bits, so a word above them names no
+/// int32, and the row takes the binary64 path.
+const NOT_INT32: u64 = 1 << u32::BITS;
+
+/// `left operation right` of two int32 words, as the int32 result where it neither overflows nor is `-0`
+/// (`negative_zero`); `NOT_INT32` otherwise. Only integral operations (add, subtract, multiply) reach it.
+#[inline(always)]
+fn int_fast_result<S: NumericStage>(stage: &mut S, operation: NumberArithmetic, left: S::Word, right: S::Word) -> S::Word {
+    let (result, overflowed) = stage.int_arithmetic(operation, left, right);
+    let mut fast = stage.not(overflowed);
+    if let Some(zero) = negative_zero(stage, operation, left, right, result) {
+        let not_zero = stage.not(zero);
+        fast = stage.both(fast, not_zero);
+    }
+    let sentinel = stage.constant(NOT_INT32);
+    stage.select(fast, result, sentinel)
+}
+
+/// `left operation right` of two Number operands as binary64 (`float_word`); `None` where an operand is no Number.
+#[inline(always)]
+fn float_operation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    (left, right): (Operand, Operand), operation: NumberArithmetic) -> Option<S::Word> {
+    let (left, right) = operands(stage, frame, left, right, Domain::Float64)?;
+    Some(stage.float_arithmetic(operation, left, right))
+}
+
+/// The conjunction of the int32 tests `fast_int` returned for the register operands, or `None` where
+/// both operands are constants that need none.
+#[inline(always)]
+fn both_tests<S: NumericStage>(stage: &mut S, tests: [Option<S::Cond>; 2]) -> Option<S::Cond> {
+    tests.into_iter().flatten().reduce(|a, b| stage.both(a, b))
 }
 
 /// `left % right` in `domain`. An int32 remainder is an int32 except at a zero divisor (NaN)
@@ -599,25 +713,32 @@ fn remainder_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
 #[inline(always)]
 fn remainder_float<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand) -> Option<S::Word> {
-    let miss = frame.miss();
-    let left = float_word(stage, frame, left, miss)?;
-    let right = float_word(stage, frame, right, miss)?;
+    let (left, right) = operands(stage, frame, left, right, Domain::Float64)?;
     Some(stage.float_remainder(left, right))
 }
 
-/// `operand`'s int32 word for `remainder_number`, with the test that makes it an int32 at run
+/// `operand`'s int32 word for the int32 fast paths, with the test that makes it an int32 at run
 /// time. A program constant that is an int32 is its own word with no test: its decode proved it,
-/// so its tag is never read at run time. A register is its low word, tested by its tag. `None`
-/// where the operand is neither, or a constant that is no int32, which keeps the binary64 path.
+/// so its tag is never read at run time. A register is its low word, tested by its tag unless the
+/// frame's type fact already proves it an int32 (then the test is folded away: `None`). A frame that
+/// keeps its Numbers unboxed (`tagged_number_fact` is `None`) has no tag to test, and boxing a binary64
+/// register to test it would cost more than the binary64 path, so such a register takes that path.
+/// `None` where the operand is neither, or a constant that is no int32, which keeps the binary64 path.
 #[inline(always)]
 fn fast_int<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operand: Operand) -> Option<(S::Word, Option<S::Cond>)> {
     match frame.constant_operand(operand) {
         Some(value) => Some((stage.i32_constant(value.as_int()?), None)),
         None => {
+            let proven = operand.register_index()
+                .and_then(|register| frame.register_type(register))
+                .is_some_and(|ty| ty.is_int32());
+            if !proven && frame.tagged_number_fact().is_none() {
+                return None;
+            }
             let bits = frame.operand_word(stage, operand)?;
-            let test = super::value::is_int(stage, bits);
-            Some((stage.narrow(bits), Some(test)))
+            let test = (!proven).then(|| super::value::is_int(stage, bits));
+            Some((stage.narrow(bits), test))
         }
     }
 }
