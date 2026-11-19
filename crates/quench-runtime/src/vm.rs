@@ -169,7 +169,7 @@ mod dispatch_wasm;
 mod dynamic_strings;
 #[cfg(feature = "profile-lane-exits")]
 mod lane_exits;
-mod embedding;
+mod embedding; mod embedding_values; pub use embedding_values::Detach;
 mod provenance;
 mod preshaped_receiver;
 mod inspection;

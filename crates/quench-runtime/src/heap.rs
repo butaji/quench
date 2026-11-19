@@ -1338,6 +1338,24 @@ impl Heap {
         self.alloc_slotless_array_of(object, prototype)
     }
 
+    /// A new array of `prototype`, with no properties, whose elements are the values of `parts`
+    /// in order, copied once into a young run where one is free (`alloc_literal_array`), else
+    /// into one allocation of the total length.
+    #[inline(always)]
+    pub(crate) fn alloc_literal_array_from_parts(&mut self, prototype: Value, parts: &[&[Value]]) -> Value {
+        let len: usize = parts.iter().map(|part| part.len()).sum();
+        let elements = match self.properties.young_elements(len) {
+            // SAFETY: the run is the nursery's and nothing else's; the record follows at once.
+            Some(run) => unsafe { ArrayElements::young_from_parts(run, parts) },
+            None => ArrayElements::from_parts(parts),
+        };
+        let object = ArrayObject::fresh(prototype, elements);
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::Array { object });
+        }
+        self.alloc_array_of(object, prototype)
+    }
+
     /// The allocation ledger's charge for one cell owning `payload` bytes beyond its slot, of
     /// which `external` are external buffers.
     #[inline(always)]

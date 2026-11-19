@@ -514,7 +514,7 @@ impl<H: Host> Vm<H> {
             };
             super::index::mutable_array_elements(array_object.elements_mut()).fill(in_dense, value);
         }
-        if self.heap.fills_sparse_tail(array, &indices) {
+        if indices.end > dense && self.heap.fills_sparse_tail(array, &indices) {
             self.heap.fill_array_tail(array, value);
             return true;
         }
@@ -534,7 +534,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let source = self.box_object_or_type_error(p, this)?;
-        if let Some(result) = self.array_concat_dense(source, args) {
+        // The dense prefix, unless the dispatcher just ran it and it declined (`fast_declined`).
+        if self.declined_fast.take() != Some(Native::ArrayConcat)
+            && let Some(result) = self.array_concat_dense(source, args)
+        {
             return Ok(result);
         }
         let target = self.array_species_create(p, source, 0)?;

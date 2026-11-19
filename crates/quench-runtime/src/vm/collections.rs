@@ -1212,6 +1212,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// The slot of the entry whose key is SameValueZero to `key`, whose hash is `key_hash`.
+    /// Inlined into every lookup, so a Map or Set read is one probe with no call.
+    #[inline(always)]
     fn collection_entry_index<T: crate::heap::CollectionEntry>(
         &self,
         entries: &crate::heap::CollectionEntries<T>,
@@ -1231,6 +1233,8 @@ impl<H: Host> Vm<H> {
     }
     /// A hash under which SameValueZero-equal keys agree: numbers by value with both zeros
     /// and every NaN as one, strings and BigInts by content, everything else by identity.
+    /// Numbers are hashed inline; the rest goes to the out-of-line `non_number_key_hash`.
+    #[inline(always)]
     pub(super) fn same_value_zero_hash(&self, key: Value) -> u64 {
         match key.as_number() {
             Some(number) => crate::heap::number_key_hash(number),

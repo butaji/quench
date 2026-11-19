@@ -15,8 +15,8 @@ mod byte_class;
 use byte_class::{byte_class, byte_class_of, exponent_mark, JsonByteClass, WHITESPACE_BYTES};
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_min_epu8, _mm_movemask_epi8, _mm_or_si128, _mm_set1_epi8,
-    _mm_setzero_si128,
+    __m128i, _mm_and_si128, _mm_cmpeq_epi16, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_min_epu8, _mm_movemask_epi8,
+    _mm_or_si128, _mm_packs_epi16, _mm_set1_epi16, _mm_set1_epi8, _mm_setzero_si128,
 };
 use error_message::json_syntax_message;
 use heap_builder::{short_run_ends, JsonBuildError, JsonHeapBuilder};
@@ -123,6 +123,59 @@ fn sse2_run_tail(tail: &[u8]) -> Option<usize> {
     let mut block = [JSON_QUOTE as u8; SIMD_BLOCK_BYTES];
     block[..tail.len()].copy_from_slice(tail);
     let position = sse2_run_end_mask(sse2_load(&block)).trailing_zeros() as usize;
+    (position < tail.len()).then_some(position)
+}
+
+/// Units in one SSE2 block of 16-bit units: a register of eight lanes.
+#[cfg(target_arch = "x86_64")]
+const WIDE_BLOCK_UNITS: usize = 8;
+
+/// The bits of a wide block's mask: one per unit of the block.
+#[cfg(target_arch = "x86_64")]
+const WIDE_BLOCK_MASK: u32 = (1 << WIDE_BLOCK_UNITS) - 1;
+
+/// The mask of the units of a wide block that end a string run (`ends_string_run`): bit `i`
+/// is set when unit `i` is a quote, an escape or a control unit. A unit is a control unit
+/// exactly when none of its bits past the control range is set.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_wide_run_end_mask(block: &[u16; WIDE_BLOCK_UNITS]) -> u32 {
+    // SAFETY: SSE2 is part of the x86_64 baseline, and the load reads exactly the block's units.
+    unsafe {
+        let units = _mm_loadu_si128(block.as_ptr().cast());
+        let quote = _mm_cmpeq_epi16(units, _mm_set1_epi16(JSON_QUOTE as i16));
+        let escape = _mm_cmpeq_epi16(units, _mm_set1_epi16(JSON_ESCAPE as i16));
+        let control_bits = _mm_set1_epi16(!(LAST_CONTROL_CHARACTER as i16));
+        let control = _mm_cmpeq_epi16(_mm_and_si128(units, control_bits), _mm_setzero_si128());
+        let ends = _mm_or_si128(_mm_or_si128(quote, escape), control);
+        // Each lane is all ones or all zeros, which saturating packs keeps; the second copy
+        // of the lanes is masked off.
+        let packed = _mm_packs_epi16(ends, ends);
+        (_mm_movemask_epi8(packed) as u32) & WIDE_BLOCK_MASK
+    }
+}
+
+/// `sse2_run_blocks` of 16-bit units, a block of eight at a time.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_wide_run_blocks(units: &[u16]) -> Result<usize, usize> {
+    let (blocks, _) = units.as_chunks::<WIDE_BLOCK_UNITS>();
+    for (index, block) in blocks.iter().enumerate() {
+        let mask = sse2_wide_run_end_mask(block);
+        if mask != 0 {
+            return Ok(index * WIDE_BLOCK_UNITS + mask.trailing_zeros() as usize);
+        }
+    }
+    Err(blocks.len() * WIDE_BLOCK_UNITS)
+}
+
+/// `sse2_run_tail` of 16-bit units: the tail is padded with quotes, which end a run.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_wide_run_tail(tail: &[u16]) -> Option<usize> {
+    let mut block = [JSON_QUOTE; WIDE_BLOCK_UNITS];
+    block[..tail.len()].copy_from_slice(tail);
+    let position = sse2_wide_run_end_mask(&block).trailing_zeros() as usize;
     (position < tail.len()).then_some(position)
 }
 
@@ -751,6 +804,24 @@ impl JsonUnit for u8 {
 impl JsonUnit for u16 {
     #[inline(always)] fn unit(self) -> u16 {
         self
+    }
+    /// Eight units at a time where SSE2 is the baseline (`sse2_wide_run_blocks`), with the
+    /// tail as one padded block (`sse2_wide_run_tail`); elsewhere one unit at a time.
+    #[inline(always)]
+    fn string_run_length(units: &[u16]) -> Option<usize> {
+        #[cfg(target_arch = "x86_64")]
+        {
+            match sse2_wide_run_blocks(units) {
+                Ok(length) => Some(length),
+                Err(scanned) => {
+                    sse2_wide_run_tail(&units[scanned..]).map(|length| scanned + length)
+                }
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            units.iter().position(|unit| unit.ends_string_run())
+        }
     }
     #[inline(always)]
     fn run(units: &[u16]) -> JsonStringUnits<'_> {
@@ -2288,6 +2359,32 @@ mod tests {
                             <u8 as JsonUnit>::string_run_length(&units),
                             expected,
                             "prefix {prefix:#x} length {length} position {position} byte {ending:#x}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_string_runs_end_where_each_unit_scan_ends() {
+        // Units that end no run before, and a spread of units that do, at every position of
+        // three 8-unit blocks and a partial one, as the per-unit definition finds it.
+        let fill = [b'a' as u16, 0x00e9, 0x3042, 0xd83e, b' ' as u16, 0x0100];
+        let endings: Vec<u16> = (0..=0x7f_u16).chain([0x80, 0xe9, 0x3042, 0xd800, 0xffff]).collect();
+        for &prefix in &fill {
+            for length in 0..(3 * 8 + 3) {
+                for position in 0..=length {
+                    for &ending in &endings {
+                        let mut units = vec![prefix; length];
+                        if position < length {
+                            units[position] = ending;
+                        }
+                        let expected = units.iter().position(|unit| unit.ends_string_run());
+                        assert_eq!(
+                            <u16 as JsonUnit>::string_run_length(&units),
+                            expected,
+                            "prefix {prefix:#x} length {length} position {position} unit {ending:#x}"
                         );
                     }
                 }

@@ -546,7 +546,6 @@ impl<H: Host> Vm<H> {
     /// Whether a property of `shape` may be keyed by a symbol or private name (`ShapeFacts::HAS_SYMBOL_KEY`):
     /// a dictionary shape keeps its keys outside its transitions, any other knows from its chain.
     #[inline(always)]
-    #[allow(dead_code)] // Read by the object-keys paths that come after this change.
     pub(super) fn shape_may_have_symbol_keys(&self, shape: u32) -> bool {
         let entry = &self.shapes[shape as usize];
         entry.dictionary_trigger.is_some() || entry.facts.has_symbol_key()

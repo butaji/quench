@@ -29,9 +29,9 @@ impl<H: Host> Vm<H> {
             if data.kind == crate::heap::SymbolKind::HostPrivate)
     }
 
-    /// A new array of `elements`, in a young run where one is free (`Heap::alloc_literal_array`).
+    /// A new array of `elements`, in a young run where one is free (`Heap::alloc_literal_array_from_parts`).
     pub(super) fn array_of(&mut self, elements: &[Value]) -> Value {
-        self.heap.alloc_literal_array(self.array_proto, elements.len(), |index| elements[index])
+        self.heap.alloc_literal_array_from_parts(self.array_proto, &[elements])
     }
 
     fn is_internal_property_name(&self, atom: Atom) -> bool {
@@ -410,7 +410,8 @@ impl<H: Host> Vm<H> {
             self.initialize_plain_copy(target, shape, &values, slots.iter().map(|(atom, _)| *atom));
             return true;
         }
-        if self.shape_entries(source_shape).any(|(key, _)| matches!(key, PropertyKey::Symbol(_))) {
+        // One shape fact, not a scan of its keys (private names count too, which only declines more).
+        if self.shape_may_have_symbol_keys(source_shape) {
             return false;
         }
         // A rest pattern's excluded keys are strings or symbols; the source has no symbol key,
@@ -421,6 +422,8 @@ impl<H: Host> Vm<H> {
             .collect::<smallvec::SmallVec<[Option<Atom>; PLAIN_COPY_INLINE_PROPERTIES]>>();
         let mut copies =
             smallvec::SmallVec::<[(Atom, Value, PlainCopyWrite); PLAIN_COPY_INLINE_PROPERTIES]>::new();
+        // The target's record is one lookup for every key of the loop.
+        let target_object = self.object_data(target);
         for (atom, slot) in slots.iter() {
             if excluded.contains(&Some(*atom)) {
                 continue;
@@ -435,8 +438,7 @@ impl<H: Host> Vm<H> {
             let key = PropertyKey::string(*atom);
             let write = match self.property_shape_slot(target_shape, key) {
                 Some(slot) => {
-                    let Some(attributes) = self.object_data(target).and_then(|object| self.slot_attributes(object, slot))
-                    else {
+                    let Some(attributes) = target_object.and_then(|object| self.slot_attributes(object, slot)) else {
                         return false;
                     };
                     // CreateDataProperty keeps a default data property's attributes; `Set` writes
