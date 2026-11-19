@@ -104,6 +104,7 @@ impl Lowering<'_, '_> {
         // Before the views: a scalar native's allocation reloads the arena the views' bases come from.
         self.hoist_scalar_calls(state, header);
         self.hoist_arrays(state, header, false);
+        self.hoist_strings(state, header);
         self.hoist_stable(state, header);
         self.hoist_receivers(state, header);
         self.hoist_reads(state, header);
