@@ -3,7 +3,6 @@
 //! specializer reads them to keep facts across operations (a fact about a region survives
 //! until an operation that writes the region), and the interpreter ignores them.
 
-#![allow(dead_code)] // Stage v2 vocabulary; first consumers are the rows moving under `Concrete` next.
 
 use super::{Allocation, CallOperation, Operation};
 pub(crate) use super::region::Region;
