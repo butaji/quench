@@ -145,6 +145,8 @@ pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, inva
 
 impl Stitched {
     fn push(&mut self, row: Decoded, origin: Origin, live: impl Iterator<Item = Register>) {
+        // A row that folds a global member holds its cell's fact: the body subscribes to it, so a reassignment retires the body.
+        self.facts.extend(row.cell.map(|cell| cell.fact));
         self.rows.push(row);
         self.origins.push(origin);
         self.live.push(live);
