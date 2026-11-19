@@ -40,7 +40,17 @@ impl Lowering<'_, '_> {
     /// of converting a Number per use. Whether it took any.
     pub(super) fn seed_loop_ints(&self, initial: &mut [Type], loops: &[(usize, usize)]) -> bool {
         let mut seeded = false;
-        for register in self.index_inputs(loops) {
+        let mut inputs = self.index_inputs(loops);
+        // A hypothesized entry may also take the function's numeric parameters: a loop's index
+        // may be re-initialized from one inside an enclosing loop (`let i = lo;`), which the
+        // analysis of this loop's region reaches through the enclosing back edge, and a Number
+        // there would widen the index at this loop's header. Conformance checks each once.
+        if self.entry_ints == EntryInts::Hypothesized {
+            inputs.extend(self.numeric_parameters());
+            inputs.sort_unstable();
+            inputs.dedup();
+        }
+        for register in inputs {
             let slot = &mut initial[usize::from(register)];
             if slot.is_any_or_number() {
                 *slot = Type::INT32;
@@ -48,6 +58,25 @@ impl Lowering<'_, '_> {
             }
         }
         seeded
+    }
+
+    /// The function's parameters no instruction of the unit uses in an object position — a
+    /// receiver or index base, a callee, a construction's target. Anywhere else a parameter may
+    /// be an int32 (an operand, a copy, a passed argument), and a hypothesized entry takes it as
+    /// one, which conformance checks once.
+    fn numeric_parameters(&self) -> Vec<Register> {
+        let Some(function) = self.program.function_get(self.function_id as usize) else { return Vec::new() };
+        let object_position = |instruction: &WideInstruction, register: Register| {
+            let class = instruction.op().class();
+            let base = matches!(class, Class::GetField | Class::GetIndex | Class::SetIndex)
+                && instruction.operand_b().register_index() == Some(register);
+            let callee = matches!(class, Class::Call | Class::CallKnown | Class::Construct | Class::LoadNameCall)
+                && instruction.register_b() == register;
+            base || callee
+        };
+        (0..function.params).filter(|register| {
+            !self.unit.instructions.iter().any(|instruction| object_position(instruction, *register))
+        }).collect()
     }
 
     /// The observed int32 entries live at `entry` (a dead register's value is stale, and nothing
