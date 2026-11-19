@@ -819,7 +819,9 @@ pub(crate) fn recompile(
         };
     let (prefix, suffix) = replay_wrapper(&function_replay.call, strict);
     let wrapped = format!("{prefix}{snippet}{suffix}");
-    let allocator = oxc_allocator::Allocator::with_capacity(wrapped.len().saturating_mul(6));
+    // Sized as a program's parse is (`lazy_bodies::arena`, 32 bytes per source byte), so a large
+    // function's tree fits its first chunk instead of adding chunks past the 6 bytes per byte here.
+    let allocator = super::lazy_bodies::arena(&wrapped);
     let mut parsed = super::annex_b_targets::parse_program(&allocator, &wrapped, replay.source_type);
     if parsed.stack_exhausted || !parsed.diagnostics.is_empty() {
         return Err(format!(
