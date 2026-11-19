@@ -298,11 +298,38 @@ fn emit_js_tagged_number(
     bits: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    // The tagged Number row (`tagged_number_f64`): a non-Number word leaves to `fallback`.
+    use crate::staged::machine::{Lane, Relation, Unary};
+    let nan = builder.create_block();
+    let tagged = builder.create_block();
+    let integer_block = builder.create_block();
+    let join = builder.create_block();
+    builder.append_block_param(join, types::F64);
     let mut stage = object_slots::emit(builder);
-    let (decided, value) = crate::staged::value_machine::tagged_number_f64(&mut stage, bits);
-    stage.guard(decided, fallback);
-    value
+    let number = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
+    let unordered = stage.raw_compare(Relation::FloatUnordered, number, number);
+    stage.branch_if(unordered, (nan, &[]), (join, &[number]));
+
+    // An integer is the common NaN-space value (a double column holds its integral
+    // values tagged), so its tag is tested first.
+    stage.builder.switch_to_block(nan);
+    let integer = crate::staged::value::is_int(&mut stage, bits);
+    stage.branch_if(integer, (integer_block, &[]), (tagged, &[]));
+
+    // Any other tag leaves; an untagged NaN is the double NaN.
+    stage.builder.switch_to_block(tagged);
+    let double = crate::staged::value::is_double(&mut stage, bits);
+    stage.branch_if(double, (join, &[number]), (fallback, &[]));
+
+    stage.builder.switch_to_block(integer_block);
+    let low = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
+    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), low);
+    stage.goto(join, &[int]);
+    builder.seal_block(nan);
+    builder.seal_block(tagged);
+    builder.seal_block(integer_block);
+    builder.seal_block(join);
+    builder.switch_to_block(join);
+    builder.block_params(join)[0]
 }
 
 /// An exact int32 projection of a Number, including its zero sign. The predicate
