@@ -172,7 +172,6 @@ mod owner_step; mod var_owner;
 mod root_bindings;
 mod handler_entry;
 mod equality; mod error; mod eval;
-mod fdlibm_math;
 mod field_cache;
 mod in_presence;
 mod instanceof_walk;

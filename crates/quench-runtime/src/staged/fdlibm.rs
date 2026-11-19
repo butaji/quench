@@ -1,5 +1,5 @@
 // Platform-independent binary64 approximations used by the shared Math operations.
-// See fdlibm_math.LICENSE for the retained Sun and V8 terms.
+// See fdlibm.LICENSE for the retained Sun and V8 terms.
 // Adapted from V8 src/base/ieee754.cc at Node 26.12's pinned source.
 // Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
 // Developed at SunSoft, a Sun Microsystems, Inc. business.

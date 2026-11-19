@@ -247,18 +247,33 @@ script_handler! {
 #[inline(always)]
 pub(super) fn in_place_row_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value,
     args: &[Value]) -> Option<Value> {
+    // A new attempt clears any flag a previous attempt left for its general native.
+    vm.declined_fast = None;
     let first = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
-        Native::ArraySlice => vm.plain_array_slice(receiver, args),
+        Native::ArraySlice => {
+            let sliced = vm.plain_array_slice(receiver, args);
+            vm.fast_declined(native, sliced)
+        }
         Native::ArrayConcat => vm.array_concat_dense(receiver, args),
-        Native::ArrayIndexOf | Native::ArrayIncludes => vm.dense_search_call(native, receiver, args),
+        Native::ArrayIndexOf | Native::ArrayIncludes => {
+            let found = vm.dense_search_call(native, receiver, args);
+            vm.fast_declined(native, found)
+        }
         Native::ArrayJoin => vm.plain_array_join(receiver, args),
         Native::ArrayAt => vm.plain_array_at(receiver, args),
         Native::ArrayFill => vm.plain_array_fill(receiver, args),
-        Native::ObjectKeys => vm.plain_enumerable_own_properties(first, crate::vm::object_keys::EnumerableOwnPropertyKind::Key),
+        Native::ObjectKeys => {
+            let listed = vm.plain_enumerable_own_properties(first, crate::vm::object_keys::EnumerableOwnPropertyKind::Key);
+            vm.fast_declined(native, listed)
+        }
         Native::ObjectAssign => vm.plain_object_assign(args),
         // Each string row's body, folded to it by `pure_string_method_call`'s inlining.
-        Native::StringTrim | Native::StringIndexOf | Native::StringSlice | Native::StringSplit
+        Native::StringSplit => {
+            let parts = vm.pure_string_method_call(code, native, receiver, args);
+            vm.fast_declined(native, parts)
+        }
+        Native::StringTrim | Native::StringIndexOf | Native::StringSlice
         | Native::StringToUpperCase | Native::StringToLowerCase | Native::StringPadStart
         | Native::StringStartsWith | Native::StringIncludes => vm.pure_string_method_call(code, native, receiver, args),
         _ => None,
