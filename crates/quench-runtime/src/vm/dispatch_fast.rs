@@ -15201,6 +15201,9 @@ script_handler! {
             && argc <= FIXED_ARGUMENT_COPIES
             && lane_admits_window(vm, target, argc)
         {
+            // The link now proves the plain form (`PLAIN_LINK`): this callee's entry activates
+            // plainly and its window takes `argc`, facts fixed for the callee in this generation.
+            i.call_link.set(i.call_link.get() | PLAIN_LINK);
             requicken::<H>(ip, cross_plain_handler::<H>(argc));
             // SAFETY: the record's window of `r` holds its values.
             let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
@@ -15230,15 +15233,21 @@ script_handler! {
     fn lane_script_call_cross_plain<ARGC: u16>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        // The link's admission (`Admission::admits_across`) proves the run calls script
-        // functions and has no construction pending; a refused link falls to the general form,
-        // which decides.
-        let target = vm.linked_cross_call_entry(callee, &i.call_link);
-        // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
-        let Some(target) = target.map(|target| unsafe { &*target }) else {
+        // The link proves the call (`PLAIN_LINK`, set where the general form requickened to
+        // this one): its admission (`Admission::admits_across`) that the run calls script
+        // functions with no construction pending, and, for this callee in this generation, a
+        // plain entry whose window takes `ARGC`. A link without the bit names no entry, so any
+        // other callee or a refused run falls to the general form, which decides and relinks.
+        let index = usize::from(i.call_link.get() ^ PLAIN_LINK);
+        if !vm.cross_call_holds(index, callee) {
             sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        if target.entry != CallEntry::Activates || !lane_admits_window(vm, target, ARGC) {
+        }
+        // SAFETY: `cross_call_holds` found the entry within the cache; nothing below resolves a
+        // target or collects.
+        let target = unsafe { &*std::ptr::from_ref(vm.lane_stack.cross_targets.entries.get_unchecked(index)) };
+        debug_assert!(target.entry == CallEntry::Activates && crate::staged::call::concrete_fits(u64::from(target.params), u64::from(ARGC)));
+        // The stack's room is the one test that stays per call: it is the push's depth check.
+        if !lane_activation_room(vm, target) {
             sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
         }
         let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
