@@ -110,16 +110,18 @@ impl MethodCacheTable {
     }
 
     /// Empties the sites in `sites`, whose program was reclaimed.
+    /// The site indices only read here; their pages are then handed back
+    /// (`SiteTable::empty_range`), so a range's empty sites stay off the resident set.
     pub(in crate::vm) fn empty_sites(&mut self, sites: std::ops::Range<usize>) {
-        for site in sites {
+        for site in sites.clone() {
             let slot = self.slots.get(site);
             if slot != NO_SLOT {
                 self.entries[slot as usize] = EMPTY_WAYS;
                 self.entry_sites[slot as usize] = NO_SLOT;
                 self.free.push(slot);
-                self.slots.set(site, NO_SLOT);
             }
         }
+        self.slots.empty_range(sites);
     }
 
     /// Drops every site.

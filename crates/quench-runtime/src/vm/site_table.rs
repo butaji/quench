@@ -95,6 +95,17 @@ pub(in crate::vm) mod storage {
     }
 }
 
+/// The host's page size, which `madvise` ranges align to.
+#[cfg(target_os = "linux")]
+fn page_size() -> usize {
+    static PAGE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *PAGE.get_or_init(|| {
+        // SAFETY: a plain query.
+        let bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        usize::try_from(bytes).ok().filter(|bytes| bytes.is_power_of_two()).unwrap_or(MAPPING_GRANULE_BYTES)
+    })
+}
+
 /// One entry per cache site. Entries at and past `len` are zero bits, so growth only
 /// moves the length.
 pub(super) struct SiteTable<T: SiteEntry> {
@@ -204,6 +215,46 @@ impl<T: SiteEntry> SiteTable<T> {
         assert!(index < self.len, "cache site out of range");
         // SAFETY: checked above; an index inside the table names an entry of the mapping.
         unsafe { &mut *self.base.as_ptr().add(index) }
+    }
+
+    /// Empties the entries of `range`, a site range a reclaimed program left. The pages
+    /// wholly inside it go back to the kernel, which reads them as zero, empty, entries
+    /// again and keeps them out of the resident set until a site on them records; only the
+    /// partial pages at its ends are written. Writing every entry empty, as a reused range
+    /// was emptied, made each page of the range resident, though most sites of a large
+    /// bundle never record.
+    pub(super) fn empty_range(&mut self, range: std::ops::Range<usize>) {
+        assert!(range.start <= range.end && range.end <= self.len, "cache site range out of range");
+        if range.is_empty() {
+            return;
+        }
+        // SAFETY: the range lies inside the table's mapping.
+        let start = unsafe { self.base.as_ptr().cast::<u8>().add(range.start * Self::ENTRY_BYTES) };
+        let bytes = range.len() * Self::ENTRY_BYTES;
+        #[cfg(target_os = "linux")]
+        {
+            let page = page_size();
+            let address = start as usize;
+            let head = address.next_multiple_of(page) - address;
+            let tail = (address + bytes) / page * page - address;
+            if head < tail {
+                // SAFETY: whole pages inside the table's own private anonymous mapping, every
+                // entry of which lies in the range and empties.
+                let released = unsafe {
+                    libc::madvise(start.add(head).cast(), tail - head, libc::MADV_DONTNEED)
+                };
+                if released == 0 {
+                    // SAFETY: the partial pages at either end lie in the range.
+                    unsafe {
+                        start.write_bytes(0, head);
+                        start.add(tail).write_bytes(0, bytes - tail);
+                    }
+                    return;
+                }
+            }
+        }
+        // SAFETY: the range lies inside the mapping; zero bytes store empty entries.
+        unsafe { start.write_bytes(0, bytes) };
     }
 
     #[cfg(test)]

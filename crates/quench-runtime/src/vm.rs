@@ -3454,19 +3454,20 @@ impl<H: Host> Vm<H> {
 
     /// Empties every cache entry in `layout`'s ranges, which a reclaimed program left, for
     /// the program taking them over.
+    ///
+    /// Every table's empty entry stores as zero bits, so a range empties by handing its whole
+    /// pages back to the kernel (`SiteTable::empty_range`): both when its program is reclaimed
+    /// (`free_cache_layouts_of`), so the dead program's recorded pages leave the resident set
+    /// at once, and again on reuse, where only the sites recorded since are written.
     fn empty_cache_ranges(&mut self, layout: ProgramCacheLayout) {
         let fields = layout.field_base..layout.field_base + usize::from(layout.sites.fields);
-        for site in fields {
-            self.field_caches.set(site, EMPTY_CACHE);
-            self.field_add_indices.set(site, NO_FIELD_ADD_SET);
-            self.megamorphic_field_indices.set(site, NO_MEGAMORPHIC_FIELD);
-            self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
-            self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
-        }
+        self.field_caches.empty_range(fields.clone());
+        self.field_add_indices.empty_range(fields.clone());
+        self.megamorphic_field_indices.empty_range(fields.clone());
+        self.inherited_field_indices.empty_range(fields.clone());
+        self.accessor_field_indices.empty_range(fields);
         self.method_caches.empty_sites(layout.method_base..layout.method_base + layout.sites.methods);
-        for site in layout.object_base..layout.object_base + layout.sites.objects {
-            self.object_shapes.set(site, NO_OBJECT_SHAPE);
-        }
+        self.object_shapes.empty_range(layout.object_base..layout.object_base + layout.sites.objects);
     }
 
     /// Files the cache-site ranges of reclaimed `programs` for programs with the same site
@@ -3475,6 +3476,7 @@ impl<H: Host> Vm<H> {
         for program in programs {
             let Some(&layout) = self.program_cache_layouts.get(program.raw() as usize) else { continue };
             if layout.sites != crate::bytecode::CacheSiteCounts::default() {
+                self.empty_cache_ranges(layout);
                 self.free_cache_layouts.entry(layout.sites).or_default().push(layout);
             }
         }
