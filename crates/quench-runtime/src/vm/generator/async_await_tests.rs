@@ -175,3 +175,24 @@ fn an_await_of_a_settled_value_continues_in_place_only_where_no_other_job_waits(
     );
     assert_eq!(lines, ["a0 b0 sync a1 b1 c1 then a2 b2 c5 solo10"]);
 }
+
+#[test]
+fn chained_await_jobs_keep_the_queue_order_and_yield_to_other_jobs() {
+    // Consecutive await jobs of one program run in one resumption (`Vm::run_job_chain`); a
+    // `then` callback between them ends the chain, and more workers than a chain holds still
+    // resume round by round in the queue's order.
+    let lines = agree(
+        r#"
+        const log = [];
+        async function worker(name, n) { for (let i = 0; i < n; i++) { log.push(name + i); await null; } }
+        const first = [worker("x", 3), worker("y", 3)];
+        Promise.resolve().then(() => log.push("t"));
+        first.push(worker("z", 2));
+        const many = [];
+        async function round(k) { for (let i = 0; i < 3; i++) { many.push(k + ":" + i); await i; } }
+        for (let k = 0; k < 300; k++) first.push(round(k));
+        Promise.all(first).then(() => print(log.join(" ") + " | " + [many.length, many[0], many[299], many[300], many[599], many[899]].join(" ")));
+        "#,
+    );
+    assert_eq!(lines, ["x0 y0 z0 x1 y1 t z1 x2 y2 | 900 0:0 299:0 0:1 299:1 299:2"]);
+}

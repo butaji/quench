@@ -52,6 +52,8 @@ impl<H: Host> Vm<H> {
             declined_fast: _,
             unobserved_jobs_entered: _,
             job_queue_programs: _,
+            queue_chains: _,
+            chainable_job: _,
             host,
             specialized,
             heap,

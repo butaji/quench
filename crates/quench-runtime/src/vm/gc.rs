@@ -1191,7 +1191,7 @@ impl<H: Host> Vm<H> {
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = (|| {
             self.check_execution_interrupt()?;
-            self.run_job_queue(program, |_| true)?;
+            self.run_job_queue(program, true, |_| true)?;
             Ok(Value::UNDEFINED)
         })();
         self.native_microtask_running = previous;
@@ -1215,15 +1215,18 @@ impl<H: Host> Vm<H> {
     /// and the drain's end, however it ends. The active program is kept the same way: an
     /// await's job leaves its function's program active (`Vm::resume_queued_await`), so
     /// consecutive resumptions of one program switch to it once, and the queue's own program
-    /// returns where its realm does.
+    /// returns where its realm does. A queue that `chains`, one whose `more` always holds, lets
+    /// an await's job run the queue's next await jobs in its lane run (`Vm::chain_next_job`).
     fn run_job_queue(
         &mut self,
         program: &ResidualProgram,
+        chains: bool,
         mut more: impl FnMut(&Self) -> bool,
     ) -> Result<(), JsError> {
         let home = self.realm.globals;
         let home_program = self.active_program;
         self.job_queue_programs.push(home_program);
+        let outer_chains = std::mem::replace(&mut self.queue_chains, chains);
         // An enclosing queue's entry stays in place below this queue's own.
         let outer = std::mem::replace(&mut self.unobserved_jobs_entered, false);
         let result = (|| {
@@ -1250,6 +1253,7 @@ impl<H: Host> Vm<H> {
         self.switch_realm_global(home);
         self.restore_active_program(home_program);
         self.job_queue_programs.pop();
+        self.queue_chains = outer_chains;
         result
     }
 
@@ -1318,7 +1322,7 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Result<(), JsError> {
         loop {
-            self.run_job_queue(program, |vm| vm.promise_record(promise)
+            self.run_job_queue(program, false, |vm| vm.promise_record(promise)
                 .is_some_and(|record| record.state() == PromiseState::Pending))?;
             if self.promise_record(promise).is_none_or(|record| record.state() != PromiseState::Pending)
                 || !self.realm.jobs.is_empty() { return Ok(()); }
