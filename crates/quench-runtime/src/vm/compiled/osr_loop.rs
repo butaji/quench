@@ -228,7 +228,9 @@ impl MethodCalls {
 
 impl RegionAnalysisFailure {
     /// The region stops only at a call, which may run inlined once the site is hot.
-    pub(crate) fn is_call_boundary(self) -> bool { self.reason == RegionRejection::UnsupportedInstruction(crate::bytecode::index::Call) }
+    pub(crate) fn is_call_boundary(self) -> bool {
+        matches!(self.reason, RegionRejection::UnsupportedInstruction(opcode) if super::meaning_compiled::is_call_rejection(opcode))
+    }
 
     fn at(reason: RegionRejection, header: u32, offset: usize) -> Self {
         Self { reason, pc: header.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)) }
@@ -810,12 +812,12 @@ fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option
     let FieldLookup::Site(index) = instruction.field_lookup()? else { return None };
     let site = *sites.get(index)?;
     let result = instruction.result_register();
-    let mut parts = vec![WideInstruction::new(Op::GetField, result, site.base.0, site.first.1, site.first.0)];
+    let mut parts = vec![super::meaning_compiled::field_read_record(result, site.base.0, site.first.1, site.first.0)];
     if let Some((atom, cache_site)) = site.second {
-        parts.push(WideInstruction::new(Op::GetField, result, FieldBase::register(result).0, cache_site, atom));
+        parts.push(super::meaning_compiled::field_read_record(result, FieldBase::register(result).0, cache_site, atom));
     }
     let (sink_atom, sink_site) = site.sink?;
-    parts.push(WideInstruction::new(Op::SetThisField, result, 0, sink_site, sink_atom));
+    parts.push(super::meaning_compiled::this_field_store_record(result, 0, sink_site, sink_atom));
     Some(parts)
 }
 
@@ -1099,7 +1101,7 @@ pub(super) fn inline_region<'a>(
             .then_some(())?;
             let fresh = Register::try_from(total).ok()?;
             total += 1;
-            rewritten.insert(header + own as u32, WideInstruction::new(Op::GetField, fresh, caller[own].b(), caller[own].c(), caller[own].imm()));
+            rewritten.insert(header + own as u32, super::meaning_compiled::field_read_record(fresh, caller[own].b(), caller[own].c(), caller[own].imm()));
             callee_path.root = receiver_path.root;
             callee_path.steps.splice(0..0, receiver_path.steps);
             receiver = fresh;
@@ -1782,7 +1784,7 @@ fn admit_register_roles(
         if is_field_read(instruction) {
             let path = field_path(instruction, sites, &rooted).ok_or_else(|| {
                 RegionAnalysisFailure::at(
-                    RegionRejection::UnsupportedInstruction(crate::bytecode::index::GetField),
+                    RegionRejection::UnsupportedInstruction(instruction.op() as u16),
                     header,
                     offset,
                 )
