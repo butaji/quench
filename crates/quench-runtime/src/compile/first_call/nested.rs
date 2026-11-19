@@ -217,8 +217,10 @@ impl<'a> oxc_ast_visit::Visit<'a> for ReachByName<'_, '_> {
         if self.found {
             return;
         }
-        if arrow.body.statements.is_empty() {
-            if self.released_reaches(arrow.span.start, arrow.body.span) {
+        if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &arrow.body
+            && body.statements.is_empty()
+        {
+            if self.released_reaches(arrow.span.start, body.span) {
                 self.found = true;
             } else {
                 oxc_ast_visit::walk::walk_formal_parameters(self, &arrow.params);

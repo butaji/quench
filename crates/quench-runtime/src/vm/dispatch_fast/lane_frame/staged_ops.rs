@@ -8,8 +8,8 @@ use super::*;
 fn jump_edge(step: Step<u64, LaneControl>) -> Option<Edge> {
     match step {
         Step::Control(LaneControl::Edge(edge)) => Some(edge),
-        Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_)) => unreachable!("a jump suspends nothing"),
         Step::Unresolved => None,
+        Step::Control(LaneControl::Resumed(..) | LaneControl::Suspend(_)) => unreachable!("a jump activates or suspends nothing"),
         Step::Value(_) => unreachable!("a jump produces no value"),
     }
 }
@@ -225,6 +225,66 @@ impl AwaitSource {
     }
 }
 
+/// What `await` of `awaited` waits on in the lane context `cx` (registers `r`): the staged
+/// conversion (`staged::await_source`) over the lane's own PromiseResolve. `None` leaves a
+/// conversion that could run guest code, or throw into the frame's handlers, to the general path.
+pub(in crate::vm::dispatch_fast) fn awaited_value_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, awaited: Value) -> Option<Value> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
+    crate::staged::await_source(&mut stage, &mut frame, awaited.to_bits()).map(Value::from_bits)
+}
+
+/// The activation entries of the running lane context, erased of its host so the frame names no `H`
+/// (`PrologueFrame`): the tier prologue and the body entry the prologue records run
+/// (`tier_prologue_resumed`, `body_entry_resumed`), each answering where the lane resumes. `ip` is the
+/// body entry's record.
+#[derive(Clone, Copy)]
+pub(in crate::vm::dispatch_fast) struct EntryHost {
+    pub(in crate::vm::dispatch_fast) cx: *mut (),
+    pub(in crate::vm::dispatch_fast) ip: super::super::Ip,
+    pub(in crate::vm::dispatch_fast) tier: unsafe fn(*mut (), Registers, Carried, u32, usize) -> super::super::Resumed,
+    pub(in crate::vm::dispatch_fast) body: unsafe fn(*mut (), super::super::Ip, Registers, Carried, u32, bool) -> super::super::Resumed,
+}
+
+impl<const ACC: u8> crate::staged::PrologueFrame<Concrete> for LaneFrame<ACC> {
+    /// The tier prologue's entry: the function is entered in the lane context, which resumes where
+    /// the activation continues (`tier_prologue_resumed`).
+    fn tier_prologue(&mut self, _stage: &mut Concrete, function: u32, parameters: u16) -> Option<LaneControl> {
+        let entry = self.entry?;
+        // SAFETY: the row runs in the lane context `entry` names, whose views outlive the run.
+        let resumed = unsafe { (entry.tier)(entry.cx, self.registers, self.view, function, usize::from(parameters)) };
+        Some(LaneControl::Resumed(resumed))
+    }
+
+    /// The specialized body's prologue: the body runs on the activation's registers, and the lane
+    /// resumes where it leaves (`body_entry_resumed`).
+    fn body_entry(&mut self, _stage: &mut Concrete, function: u32, binds_this: bool) -> Option<LaneControl> {
+        let entry = self.entry?;
+        // SAFETY: as `tier_prologue`; `entry.ip` is the prologue record the row runs at.
+        let resumed = unsafe { (entry.body)(entry.cx, entry.ip, self.registers, self.view, function, binds_this) };
+        Some(LaneControl::Resumed(resumed))
+    }
+}
+
+/// The call hooks of a call row's frame (`protocol_row`, `LaneCall`): the proved plain call
+/// (`script_call_miss`'s proven arm, `lane_plain_activation!`) and the proved leaf call
+/// (`script_call_leaf_miss`) as the staged call protocol's rows (`staged::invoke`), in its order:
+///
+/// - `call_entry`: the site's entry, the link masked to the cache (no bounds test), tested whole by
+///   one admission compare (link-proofs.md: generation, program, the run's conditions, `DIAGNOSED`,
+///   `UNPROVEN`), the argument count against its parameters, and a leaf row's form; the callee's
+///   identity is the plan's guard (`Identity::Guarded`), the one compare `invoke` makes of it;
+/// - `this`: the plan binds as `direct_call_this_in_lane` does: an arrow's lexical `this` (and a plain
+///   receiver's, `PLAIN`) as the plan's bound `this`, a sloppy callee's through `bind_this` with the
+///   realm's global object, any other the receiver as it is;
+/// - `call_room`: the one `plain_room` compare, at the plain depth it loads once;
+/// - `call_activate`: the window filled and the plain header pushed (`lane_enter_plain_window`,
+///   `protocol::push_plain_at`) or the leaf entered (`lane_run_leaf`), handed back as
+///   `LaneControl::Resumed`.
+///
+/// Anything else (another form, a returning call, a failed compare or binding, no room) answers
+/// `CallEntry::Helper` or leaves at the guard before any word is written, so the row is
+/// `Step::Unresolved` and its miss arm (`protocol_miss`) runs the full handler.
 impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
     /// Whether `value` is an object, by the lane context's VM; `None` without a context.
     fn object_test(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
@@ -264,45 +324,124 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
         -> Option<LaneControl> {
         self.suspends?.in_place(self.registers, step).map(LaneControl::Resumed)
     }
-}
 
-/// What `await` of `awaited` waits on in the lane context `cx` (registers `r`): the staged
-/// conversion (`staged::await_source`) over the lane's own PromiseResolve. `None` leaves a
-/// conversion that could run guest code, or throw into the frame's handlers, to the general path.
-pub(in crate::vm::dispatch_fast) fn awaited_value_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, awaited: Value) -> Option<Value> {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
-    crate::staged::await_source(&mut stage, &mut frame, awaited.to_bits()).map(Value::from_bits)
-}
-
-/// The activation entries of the running lane context, erased of its host so the frame names no `H`
-/// (`PrologueFrame`): the tier prologue and the body entry the prologue records run
-/// (`tier_prologue_resumed`, `body_entry_resumed`), each answering where the lane resumes. `ip` is the
-/// body entry's record.
-#[derive(Clone, Copy)]
-pub(in crate::vm::dispatch_fast) struct EntryHost {
-    pub(in crate::vm::dispatch_fast) cx: *mut (),
-    pub(in crate::vm::dispatch_fast) ip: super::super::Ip,
-    pub(in crate::vm::dispatch_fast) tier: unsafe fn(*mut (), Registers, Carried, u32, usize) -> super::super::Resumed,
-    pub(in crate::vm::dispatch_fast) body: unsafe fn(*mut (), super::super::Ip, Registers, Carried, u32, bool) -> super::super::Resumed,
-}
-
-impl<const ACC: u8> crate::staged::PrologueFrame<Concrete> for LaneFrame<ACC> {
-    /// The tier prologue's entry: the function is entered in the lane context, which resumes where
-    /// the activation continues (`tier_prologue_resumed`).
-    fn tier_prologue(&mut self, _stage: &mut Concrete, function: u32, parameters: u16) -> Option<LaneControl> {
-        let entry = self.entry?;
-        // SAFETY: the row runs in the lane context `entry` names, whose views outlive the run.
-        let resumed = unsafe { (entry.tier)(entry.cx, self.registers, self.view, function, usize::from(parameters)) };
-        Some(LaneControl::Resumed(resumed))
+    #[inline(always)]
+    fn call_entry(&self, site: &crate::staged::Invocation) -> crate::staged::CallEntry {
+        use crate::staged::{Arguments, Callee, Receiver};
+        let Some(call) = &self.call else { return crate::staged::CallEntry::Helper };
+        // The form the proved calls make: a callee and a receiver register and a window, a
+        // result defined, not returned (a returning call's admission is the run's,
+        // `returning_call_admitted`, which the miss arm makes).
+        let (Callee::Register(_), Receiver::Register(_), Arguments::Window { count, .. }) = (site.callee, site.receiver, site.arguments) else {
+            return crate::staged::CallEntry::Helper;
+        };
+        if site.returns || site.forwards {
+            return crate::staged::CallEntry::Helper;
+        }
+        // SAFETY: the running lane's stack, which nothing below changes.
+        let stack = unsafe { &*call.stack };
+        let entries = &stack.script_targets.entries;
+        // SAFETY: the call record the row runs.
+        let index = usize::from(unsafe { (*call.record).call_link.get() }) & (entries.len() - 1);
+        // SAFETY: the cache's length is a power of two (`SCRIPT_CALL_TARGETS_INITIAL`), so the masked
+        // index lies within it; nothing before the hand-off resolves a target or collects.
+        let target = unsafe { entries.get_unchecked(index) };
+        // A static count is the row's (`call_form`), so its tests fold as `script_call_miss`'s `ARGC`.
+        let argc = if call.form.argc == ANY_ARGC { count } else { call.form.argc };
+        let leaf = call.form.leaf;
+        if target.admission != stack.admission
+            || (leaf == NOT_LEAF && argc > FIXED_ARGUMENT_COPIES)
+            || (leaf != NOT_LEAF && target.entry != CallEntry::leaf(leaf))
+            || !crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc))
+        {
+            return crate::staged::CallEntry::Helper;
+        }
+        debug_assert!(leaf != NOT_LEAF || target.entry.activates(), "a proved plain call's entry activates");
+        call.target.set(std::ptr::from_ref(target));
+        let lexical = || Some(crate::staged::plan::Bound { this: target.lexical_this.to_bits(),
+            arguments: crate::staged::plan::WordList { start: 0, count: 0 } });
+        let (sloppy, bound) = if call.form.plain {
+            // A plain call's receiver is `undefined` by its record, whose `this` is its target's.
+            (None, lexical())
+        } else {
+            match target.this_binding {
+                ThisBinding::Lexical => (None, lexical()),
+                // SAFETY: the realm's global object, read only for a sloppy callee.
+                ThisBinding::Sloppy => (Some(unsafe { *call.globals }.to_bits()), None),
+                _ => (None, None),
+            }
+        };
+        crate::staged::CallEntry::Direct(crate::staged::DirectPlan {
+            kind: crate::staged::CalleeKind::Script,
+            identity: crate::staged::Identity::Guarded(target.callee.to_bits()),
+            sloppy,
+            registers: target.registers,
+            returned: 0,
+            bound,
+        })
     }
 
-    /// The specialized body's prologue: the body runs on the activation's registers, and the lane
-    /// resumes where it leaves (`body_entry_resumed`).
-    fn body_entry(&mut self, _stage: &mut Concrete, function: u32, binds_this: bool) -> Option<LaneControl> {
-        let entry = self.entry?;
-        // SAFETY: as `tier_prologue`; `entry.ip` is the prologue record the row runs at.
-        let resumed = unsafe { (entry.body)(entry.cx, entry.ip, self.registers, self.view, function, binds_this) };
-        Some(LaneControl::Resumed(resumed))
+    #[inline(always)]
+    fn call_registers(&mut self, _stage: &mut Concrete) -> Option<u64> {
+        self.call.as_ref()?;
+        Some(self.registers.0.expose_provenance() as u64)
+    }
+
+    /// A method site's list (`Arguments::List`, `CallMethod`/`CallThisMethod` only): no lane
+    /// handler runs those records (`other_handler` names neither), so no call row reaches here. A
+    /// method call `o.m(x)` is a register `Call` whose receiver is `c`, which `call_entry` admits.
+    #[inline(always)]
+    fn call_list(&self, _list: crate::staged::RegisterList) -> Option<&[Register]> {
+        None
+    }
+
+    /// The constants of the plan `call_entry` made: only the empty list of its lexical `this`
+    /// (`Bound`), which prefixes no argument.
+    #[inline(always)]
+    fn call_constants(&self, list: crate::staged::plan::WordList) -> Option<&[u64]> {
+        (self.call.is_some() && list.count == 0).then_some(&[][..])
+    }
+
+    /// A method site's load (`Callee::Method`): as `call_list`, no call row runs a method site.
+    #[inline(always)]
+    fn call_method(&mut self, _stage: &mut Concrete, _receiver: u64, _atom: u32, _site: u32, _miss: ()) -> Option<u64> {
+        None
+    }
+
+    /// A construction's receiver: no call row runs a construction (`Construct` takes
+    /// `lane_script_construct`, which requickens to the planned constructions; `CONSTRUCT` has no
+    /// protocol row), and `call_entry` answers `Helper` for `Receiver::Allocated`.
+    #[inline(always)]
+    fn call_receiver(&mut self, _stage: &mut Concrete, _constructor: u64) -> Option<u64> {
+        None
+    }
+
+    #[inline(always)]
+    fn call_room(&mut self, _stage: &mut Concrete, _miss: ()) -> Option<crate::staged::Room<u64>> {
+        let call = self.call.as_mut()?;
+        // SAFETY: the running lane's stack and the entry `call_entry` admitted.
+        let (stack, target) = unsafe { (&*call.stack, &*call.target.get()) };
+        // The activation count and the values' room in one compare, the depth loaded once for the
+        // push past it (`LaneStack::plain_room`); a leaf pushes none, so the bound stands for it too.
+        let depth = stack.plain.depth.get();
+        if !stack.plain_room(depth, target.room) {
+            return None;
+        }
+        call.depth = depth;
+        let top = stack.values.top().expose_provenance() as u64;
+        Some(crate::staged::Room { cell: 0, top, next: top, shadow: 0 })
+    }
+
+    #[inline(always)]
+    fn call_activate(&mut self, _stage: &mut Concrete, this: u64, _room: crate::staged::Room<u64>) -> Option<LaneControl> {
+        let call = self.call.as_ref()?;
+        // SAFETY: the hand-off's contract (`CallActivation`): the context, record and registers are
+        // the running call's, and the entry, its room at `depth` and `this` what the hooks before
+        // admitted and bound.
+        let (registers, start) = unsafe {
+            (call.activate)(call.context, self.registers, call.ip, call.record, call.target.get(), call.depth, Value::from_bits(this))
+        };
+        // The callee's view is the caller's script view: the same context, no accumulator.
+        Some(LaneControl::Resumed(Resumed::At(registers, start, Carried { acc: Slot::unset(), ..self.view })))
     }
 }

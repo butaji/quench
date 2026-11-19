@@ -1336,7 +1336,10 @@ fn read_function(input: &mut BinaryReader<'_>, header: Option<&super::FunctionHe
         let class_initializer = input.flag("class field initializer")?;
         let prototype_unobservable = input.flag("prototype observability")?;
         let parameter_eval_arguments_error = input.flag("parameter eval")?;
-        let unaliased_arguments = input.flag("unaliased arguments")?;
+        let (unaliased_arguments, rest_alias) = match input.u8()? {
+            flags if flags & !(UNALIASED_ARGUMENTS_BIT | REST_ALIAS_BIT) == 0 => (flags & UNALIASED_ARGUMENTS_BIT != 0, flags & REST_ALIAS_BIT != 0),
+            _ => return Err("invalid unaliased arguments flags".into()),
+        };
         let simple_parameters = input.flag("simple parameters")?;
         let strict = input.flag("strict function")?;
         let arguments_slot = match input.u16()? {
@@ -1360,6 +1363,8 @@ fn read_function(input: &mut BinaryReader<'_>, header: Option<&super::FunctionHe
             1 => Some(input.u16s()?.into()),
             _ => return Err("invalid selective capture layout".into()),
         };
+        let declared_functions = input.u16s()?.into();
+        let declared_captures = input.u16s()?.into();
         let inherited_with_scope = input.flag("inherited with-scope")?;
         let lexical_atoms = input.list(|input| input.atom())?;
         let global_lexical_atoms = input.list(|input| input.atom())?;
@@ -1467,13 +1472,13 @@ fn read_function(input: &mut BinaryReader<'_>, header: Option<&super::FunctionHe
             parameter_atoms: parameter_atoms.into(),
             rare: crate::bytecode::FunctionRare {
                 declared_parameters: declared_parameters.into(),
-                global_declarations: super::GlobalDeclarations {
-                    lexical: global_lexical_atoms,
-                    var: global_var_atoms,
-                    function: global_function_atoms,
-                    annex_b_var: global_annex_b_var_atoms,
-                    immutable: global_immutable_atoms,
-                }
+                global_declarations: super::GlobalDeclarations::new(
+                    global_lexical_atoms,
+                    global_var_atoms,
+                    global_function_atoms,
+                    global_annex_b_var_atoms,
+                    global_immutable_atoms,
+                )
                 .boxed(),
                 instance_initializer,
             }
@@ -1570,7 +1575,7 @@ pub(super) fn decode_deferred_function(
         return Some(Err("deferred record checksum mismatch".into()));
     }
     let mut reader = BinaryReader { bytes, cursor: 0, atoms: records.atoms.clone(), packed: false, unlowered: record.unlowered() };
-    Some(read_function(&mut reader).and_then(|function| reader.finish().map(|()| function)))
+    Some(read_function(&mut reader, None).and_then(|function| reader.finish().map(|()| function)))
 }
 
 /// The bytes of function `index`'s deferred record, when it has one.

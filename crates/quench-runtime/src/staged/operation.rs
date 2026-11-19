@@ -2,6 +2,7 @@
 //! decoder for the opcode (`Op::staged`), and its queries over instructions. `staged.rs` re-exports it.
 
 use super::*;
+use super::wasm_jump::WasmJump;
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
@@ -241,6 +242,9 @@ pub(crate) enum Operation<W, P> {
     /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
     /// holds, or fails where `negate` (`JumpBinaryFalse`); otherwise continue after it.
     CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
+    /// A Wasm float, float conversion or select (`wasm_float`); the frame's Wasm words decide it.
+    #[cfg(not(stencil_build))]
+    WasmFloat(wasm_float::WasmFloatOperation),
     /// A Wasm i32 or i64 register or immediate operator (`wasm_int`), which the row answers from its words.
     WasmInt(wasm_int::WasmIntOperation),
     /// A Wasm i32 conditional jump or fused add-and-jump over int32 operands (`wasm_jump`).
@@ -309,6 +313,12 @@ impl<W, P> Operation<W, P> {
     #[inline(always)]
     pub(crate) fn decode_wasm_jump(instruction: WideInstruction) -> Option<Self> {
         WasmJump::decode(instruction).map(Self::WasmJump).or_else(|| BranchTable::decode(instruction).map(Self::BranchTable))
+    }
+
+    /// The Wasm integer operations of `decode` (`Decoder::WasmInt`), from a record's wide fields.
+    #[inline(always)]
+    pub(crate) fn decode_wasm_int(instruction: WideInstruction) -> Option<Self> {
+        wasm_int::decode(instruction).map(Self::WasmInt)
     }
 
     /// The staged operation `instruction` makes apart from how its result completes the frame

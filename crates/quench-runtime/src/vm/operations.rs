@@ -655,8 +655,39 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `native` called with `this` and `args`, rooting both for the native's run: the entry
+    /// for callers whose arguments nothing else holds (the embedding API, host callbacks,
+    /// natives calling natives, tests).
     #[inline(always)]
     pub(super) fn call_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.call_native_rooting::<true>(p, native, this, args)
+    }
+
+    /// `call_native` whose caller keeps every value of `args` reachable for the native's whole
+    /// run, so only the receiver is rooted here: a frame parked at the call (`pc_is_resume`),
+    /// which the collector scans at the call's own liveness (`Frame::source_instruction_pc`),
+    /// holding them in its argument registers, or a caller that roots them itself
+    /// (`call_value`, `spread_call`, a job's roots). The receiver stays rooted: a method
+    /// site's receiver may be a value its path loaded (`CallThisMethod`), held by no register.
+    #[inline(always)]
+    pub(super) fn call_native_arguments_held(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.call_native_rooting::<false>(p, native, this, args)
+    }
+
+    #[inline(always)]
+    fn call_native_rooting<const ROOT_ARGUMENTS: bool>(
         &mut self,
         p: &ResidualProgram,
         native: Native,
@@ -672,15 +703,27 @@ impl<H: Host> Vm<H> {
         {
             Ok(value)
         } else {
-            self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
-                let receiver = vm.string_method_receiver(p, native, this)?;
-                if receiver == this {
-                    return vm.call_native_dispatch(p, native, receiver, args);
+            // The receiver, and the arguments unless the caller holds them
+            // (`call_native_arguments_held`), are rooted for the native's run: the values may
+            // be a copy only this call holds. Pushed as a slice: the chained iterator's extend
+            // cost each call a callback per value (`call_value_with_target`).
+            let start = self.active_call_roots.len();
+            if ROOT_ARGUMENTS {
+                self.active_call_roots.reserve(args.len() + 2);
+                self.active_call_roots.push(this);
+                self.active_call_roots.extend_from_slice(args);
+            } else {
+                self.active_call_roots.push(this);
+            }
+            let result = self.string_method_receiver(p, native, this).and_then(|receiver| {
+                if receiver != this {
+                    // A boxed receiver only this call holds.
+                    self.active_call_roots.push(receiver);
                 }
-                vm.with_call_roots([receiver], |vm| {
-                    vm.call_native_dispatch(p, native, receiver, args)
-                })
-            })
+                self.call_native_dispatch(p, native, receiver, args)
+            });
+            self.active_call_roots.truncate(start);
+            result
         };
         // String natives make text on demand; charge it before the caller's next safepoint.
         self.heap.charge_materialized_text();

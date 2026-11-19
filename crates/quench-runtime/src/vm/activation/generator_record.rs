@@ -193,8 +193,17 @@ impl GeneratorRecord {
         }
     }
 
-    /// The frame of a windowed run, taken: the generator executes without one (a
-    /// materialization makes its frame).
+    /// The frame of a windowed run, read in place: what `take_windowed` would give a
+    /// materialization (`Vm::lane_stack_sites`).
+    pub(crate) fn windowed_frame(&self) -> Option<&FrameRecord> {
+        if self.life != GeneratorLife::Windowed {
+            return None;
+        }
+        self.parked.as_ref().map(|continuation| &*continuation.frame)
+    }
+
+    /// The frame of a windowed run, taken: the generator executes without one (a yield
+    /// suspends it again, a materialization makes its frame, a completion drops it).
     pub(crate) fn take_windowed(&mut self) -> Option<Box<FrameRecord>> {
         if self.life != GeneratorLife::Windowed {
             return None;

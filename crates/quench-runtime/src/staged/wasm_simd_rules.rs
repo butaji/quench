@@ -44,7 +44,7 @@ pub(crate) struct SimdKernel {
     pub(crate) right: Option<WasmType>,
     /// How many lanes a lane immediate may name: one for an operator without one.
     lanes: u32,
-    result: WasmType,
+    pub(crate) result: WasmType,
     operator: SimdOperator,
 }
 

@@ -829,7 +829,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn calls_direct_eval(&self, callee: Value) -> bool {
         matches!(
             self.heap.function(callee),
-            Some(FunctionRecord { kind: FunctionKind::Native(Native::Eval), realm, .. }) if *realm == self.realm.globals
+            Some(record @ FunctionRecord { kind: FunctionKind::Native(Native::Eval), .. }) if self.record_realm(record) == self.realm.globals
         )
     }
 

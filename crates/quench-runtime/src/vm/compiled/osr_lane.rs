@@ -5,13 +5,23 @@ use super::*;
 
 /// The loop's own words: its receiver, the entry's counter and the scratch a leave inside an
 /// inlined callee writes the callee's live registers to.
-pub(super) fn bind_loop<H: Host>(dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize) {
+///
+/// # Safety
+/// `lane_context` is the running lane's context for `H`; `registers` is the live window the run
+/// executes in, whose header is its own.
+pub(super) unsafe fn bind_loop<H: Host>(
+    dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize, registers: *mut crate::value::Value,
+) {
     dispatch.lane_context = lane_context;
     // A region's `THIS`-based reads take the running activation's receiver, as a lane
     // body's do (`run_loop_body`); `with` leaves it `DELETED`. A frameless activation's
     // receiver is the lane context's: `frame` is then the VM frame beneath it, its caller's.
-    // SAFETY: `lane_context` is the running lane's context for `H`.
-    dispatch.receiver = unsafe { super::dispatch_fast::context_this_in_lane::<H>(lane_context) }.to_bits();
+    // The receiver lives in the window's header (`CONTEXT_THIS`), as a lane body's does.
+    // SAFETY: as the caller promises.
+    unsafe {
+        let this = super::dispatch_fast::context_this_in_lane::<H>(lane_context).to_bits();
+        super::dispatch_fast::set_frame_word(registers, crate::staged::frame::CONTEXT_THIS, this);
+    }
     // The counter is the `words` field's first word, not the struct's offset 0:
     // `LoopEntry` is not `repr(C)`.
     dispatch.loop_entry = entry.words_mut() as usize;
@@ -153,5 +163,5 @@ pub(super) unsafe fn enter<H: Host>(
     }
     let exit = super::entry_protocol::exit(&descriptor, returned, || dispatch.returned_pc);
     // A leave with native frames on the lane stack is read in the innermost of them.
-    RegionRun { exit, nested: vm.lane_stack.activations().native_depth() != 0 }
+    RegionRun { exit, nested: vm.lane_stack.native_depth() != 0 }
 }

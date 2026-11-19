@@ -14,14 +14,14 @@ use super::scoped_names::window_scope;
 use super::super::activation::FrameRecord;
 
 impl LaneStack {
-    /// Keeps `record`, made for the activation at `depth`, until that activation pops, and names
-    /// it from the activation.
+    /// Keeps `record`, made for the innermost activation, at `depth`, until that activation pops,
+    /// and names it from the activation where it is (one-frame-one-call.md F4 (3)): a header's
+    /// side record, which `frame::OWNS_FLAG` tags, or the record's `ScriptActivation::record`.
     fn own_record(&mut self, depth: usize, record: Box<FrameRecord>) -> *mut FrameRecord {
+        debug_assert_eq!(depth + 1, self.activation_count(), "an eval runs in the innermost activation");
         self.records.push((depth, record));
         let record: *mut FrameRecord = &mut *self.records.last_mut().expect("the record just pushed").1;
-        if let Some(ActivationKind::Script(script)) = self.activations_mut().get_mut(depth).map(|activation| activation.kind_mut()) {
-            script.record = record;
-        }
+        self.name_top_record(record);
         record
     }
 }
@@ -50,7 +50,7 @@ fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parame
     let (this, env) = unsafe { ((*cx).registers.this(), (*cx).registers.env()) };
     let record = if scope.record.is_null() {
         let depth = vm.lane_stack.activation_count() - 1;
-        let callee = vm.lane_stack.activations().last().and_then(Activation::script)?.callee;
+        let callee = vm.lane_stack.top_frame().and_then(|frame| frame.script())?.callee;
         vm.lane_stack.own_record(depth, FrameRecord::for_eval(scope.program, scope.function, callee, this, env))
     } else {
         scope.record

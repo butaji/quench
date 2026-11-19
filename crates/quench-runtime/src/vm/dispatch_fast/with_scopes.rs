@@ -93,7 +93,7 @@ pub(super) fn native_with_scope<H: Host>(cx: *mut LaneContext<H>, native: Native
         return None;
     }
     let depth = vm.lane_stack.activation_count().checked_sub(1)?;
-    vm.lane_stack.activations().last().and_then(Activation::script)?;
+    vm.lane_stack.top_frame().and_then(|frame| frame.script())?;
     if native == Native::WithEnter {
         let object = args.first().copied().filter(|value| vm.is_object_like(*value))?;
         vm.lane_stack.with_objects.push((depth, object));

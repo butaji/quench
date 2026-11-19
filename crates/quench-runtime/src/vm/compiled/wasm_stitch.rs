@@ -482,14 +482,8 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
     let rest = u64::from(function.registers).checked_sub(past_parameters)?;
     let vectors = wasm_stitch_simd::uses_vectors(&instructions, world);
     // A v128 local starts as zero like any other: the vector area follows the registers, so the
-    // entry's zeroing runs on through its two words per register. Without vectors the entry zeroes
-    // only the registers an entry may read before writing (`entry_fill`), which lie past the
-    // parameters below that bound.
-    let rest = if vectors {
-        rest + 2 * u64::from(function.registers)
-    } else {
-        u64::from(crate::vm::dispatch_fast::entry_fill(function)).saturating_sub(past_parameters)
-    };
+    // entry's zeroing runs on through its two words per register.
+    let rest = if vectors { rest + 2 * u64::from(function.registers) } else { rest };
     let entry = entry_stencil(params, rest)?;
     let rows_at = entry.code.len() + trap.code.len();
     let mut code = vec![0u8; rows_at + stencils.iter().map(|stencil| stencil.code.len()).sum::<usize>()];

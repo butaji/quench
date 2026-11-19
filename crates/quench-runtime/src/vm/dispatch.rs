@@ -164,14 +164,48 @@ impl<H: Host> Vm<H> {
     /// A plain construction the loop pushes in place (`inline_construct_target`), its receiver bound.
     pub(super) fn try_inline_construct(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize)
         -> Option<Result<StepResult, JsError>> {
-        let (crate::bytecode::ConstructArguments::Registers(window), false) = (i.construct_arguments(), i.is_super_construct())
-            else { return None };
+        if i.is_super_construct() {
+            return self.try_inline_super_construct(p, f, i, pc);
+        }
+        let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else { return None };
         let callee = self.read(f, i.register_b());
-        let (program, id, env, this) = self.inline_construct_target(p, f, callee)?;
         let arguments: *const [Value] = self.register_window(f, window);
-        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-        self.push_in_loop_activation(p, f, pc, (program, id, env), callee, this, unsafe { &*arguments },
-            i.result_register(), CallCompletion::Constructor(this))
+        if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
+            // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+            return self.push_in_loop_activation(p, f, pc, (program, id, env), callee, this, unsafe { &*arguments },
+                i.result_register(), CallCompletion::Constructor(this));
+        }
+        // A derived class constructor: its frame binds `this` at `super(...)`, and its pending
+        // call applies the derived return rules, as `construct_value` would around a nested run.
+        let (program, id, env) = self.inline_derived_construct_target(p, f, callee)?;
+        // SAFETY: as above.
+        self.push_in_loop_activation(p, f, pc, (program, id, env), callee, Value::UNDEFINED, unsafe { &*arguments },
+            i.result_register(), CallCompletion::DerivedConstructor)
+    }
+
+    /// `super(...)` of the running constructor pushed in place (`inline_super_construct_target`):
+    /// the parent's [[Construct]] with the constructor's `new.target`, a base parent's over the
+    /// receiver made from it (`CallCompletion::Constructor`), a derived parent's binding its own
+    /// (`CallCompletion::DerivedConstructor`). The construction's value lands in the record's
+    /// register, which `SuperCallCheck` and `InitializeThis` then bind, as after
+    /// `construct_super_value`. Applied arguments (an implicit constructor's rest list) are
+    /// passed where a dense array holds them (`dense_super_arguments`); arguments that reading
+    /// would run guest code for, and any other parent, keep that path.
+    fn try_inline_super_construct(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize)
+        -> Option<Result<StepResult, JsError>> {
+        let parent = self.read(f, i.register_b());
+        let construction = self.inline_super_construct_target(p, f, parent)?;
+        let listed;
+        let arguments: *const [Value] = match i.construct_arguments() {
+            crate::bytecode::ConstructArguments::Registers(window) => std::ptr::from_ref(self.register_window(f, window)),
+            crate::bytecode::ConstructArguments::Array(register) => {
+                listed = self.dense_super_arguments(self.read(f, register))?;
+                std::ptr::from_ref(listed.as_slice())
+            }
+        };
+        // SAFETY: see `push_general_user_frame`; the window (or list) outlives callee setup.
+        self.push_in_loop_construction(p, f, pc, construction.target, (parent, Some(construction.new_target)), construction.this,
+            unsafe { &*arguments }, i.result_register(), construction.completion)
     }
 
     /// A field read's `getter`, a user function the loop may push in place, run as the next
@@ -232,6 +266,27 @@ impl<H: Host> Vm<H> {
         destination: crate::bytecode::Register,
         completion: CallCompletion,
     ) -> Option<Result<StepResult, JsError>> {
+        let new_target = matches!(completion, CallCompletion::Constructor(_) | CallCompletion::DerivedConstructor).then_some(callee);
+        self.push_in_loop_construction(p, f, pc, (program, id, env), (callee, new_target), this, arguments, destination, completion)
+    }
+
+    /// `push_in_loop_activation` with [[Construct]]'s `new.target` given: `Some` binds the
+    /// construction target (`construct_target`) for the callee's activation to take, as a
+    /// `super(...)` pushed in place passes its constructor's `new.target` to the parent's
+    /// (`try_inline_super_construct`).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn push_in_loop_construction(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        pc: usize,
+        (program, id, env): (ProgramId, u32, Value),
+        (callee, new_target): (Value, Option<Value>),
+        this: Value,
+        arguments: &[Value],
+        destination: crate::bytecode::Register,
+        completion: CallCompletion,
+    ) -> Option<Result<StepResult, JsError>> {
         let caller_program = self.active_program;
         let callee_residual = if program == caller_program {
             None
@@ -243,8 +298,8 @@ impl<H: Host> Vm<H> {
         if callee_residual.is_some() {
             self.set_active_program(program);
         }
-        let constructs = matches!(completion, CallCompletion::Constructor(_));
-        if constructs { self.set_construct_target(Some(ConstructionTarget { callee, new_target: callee })); }
+        let constructs = new_target.is_some();
+        if let Some(new_target) = new_target { self.set_construct_target(Some(ConstructionTarget { callee, new_target })); }
         let call_guard = self.push_general_user_frame(callee_residual.as_deref().unwrap_or(p), id, env, this, arguments,
             CallContext::user_function(id, callee));
         if constructs { self.set_construct_target(None); }

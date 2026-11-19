@@ -507,11 +507,6 @@ impl ArrayElements {
         self.get(0)
     }
 
-    #[inline]
-    pub(crate) fn last(&self) -> Option<Value> {
-        self.len().checked_sub(1).map(|index| self.read(index))
-    }
-
     /// The values in order.
     #[inline]
     pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + Clone + '_ {
@@ -855,6 +850,14 @@ impl ArrayElements {
         // SAFETY: `UniqueElements` is a transparent wrapper; the backing is now this array's
         // own, or the empty header, which only growth replaces.
         unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() }
+    }
+
+    /// `make_mut` of a backing already this array's own and wide, which copies nothing;
+    /// `None`, which changes nothing, where `make_mut` would copy it.
+    #[inline(always)]
+    pub(crate) fn unique_mut(&mut self) -> Option<&mut UniqueElements> {
+        // SAFETY: `UniqueElements` is a transparent wrapper; the backing is this array's own.
+        self.is_unique().then(|| unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() })
     }
 
     #[cold]
