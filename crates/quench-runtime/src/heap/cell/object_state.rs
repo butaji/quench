@@ -42,6 +42,15 @@ impl Object {
         self.extras_mut().rare_mut().boxed_primitive = Some(value);
     }
 
+    /// A function's creation realm when it is not the main realm (`FunctionRecord::realm_override`).
+    pub(crate) fn function_realm_override(&self) -> Option<Value> {
+        self.extras()?.rare()?.function_realm
+    }
+
+    pub(crate) fn set_function_realm_override(&mut self, realm: Value) {
+        self.extras_mut().rare_mut().function_realm = Some(realm);
+    }
+
     pub(crate) fn stack_data(&self) -> Option<&StackData> {
         self.extras()?.rare()?.stack_data.as_ref()
     }
@@ -57,6 +66,9 @@ impl Object {
         let Some(extras) = self.extras().and_then(ObjectExtras::rare) else { return };
         if let Some(value) = extras.boxed_primitive {
             visit(value);
+        }
+        if let Some(realm) = extras.function_realm {
+            visit(realm);
         }
         match extras.stack_data.as_ref() {
             Some(StackData::Captured { records, .. }) => {
