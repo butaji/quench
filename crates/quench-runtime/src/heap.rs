@@ -176,9 +176,10 @@ mod string_alloc;
 mod string_atoms;
 mod native_layout;
 mod record_layouts;
+#[allow(unused_imports)] // `NATIVE_RECORD_CURSOR_LAYOUT` is read by the stencil layout check (tests) and generated code.
 pub(crate) use record_layouts::{
-    NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, PropertyStoreLayout,
-    absent_environment_storage,
+    NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT,
+    PropertyStoreLayout, absent_environment_storage,
 };
 mod string_parts;
 mod small_strings;
@@ -1279,12 +1280,14 @@ impl Heap {
     fn alloc_slotless_array_of(&mut self, object: ArrayObject, prototype: Value) -> Value {
         debug_assert!(object.shape() == 0);
         self.mark_prototype(prototype);
-        self.charge_payload_allocation(array_payload_bytes(&object));
+        self.charge_array_payload(array_payload_bytes(&object));
         #[cfg(feature = "profile-aggregate")]
         let bytes = object.allocated_extra_bytes() + object.elements().capacity() * size_of::<Value>();
-        let Ok(record_id) = self.array_records.try_insert(object) else {
+        let Some(record_id) = self.array_records.bump_id(&mut self.allocated) else {
             panic!("array records exhausted: the array space holds 2^30 records");
         };
+        // SAFETY: the id is claimed uninitialized and written whole here, before any safepoint.
+        unsafe { self.array_records.record_ptr(record_id).write(object) };
         let value = Value::direct_array(record_id);
         #[cfg(feature = "profile-aggregate")]
         self.profile_record_allocation(CellKind::Array, "array", bytes);
@@ -1328,6 +1331,15 @@ impl Heap {
         let weight = 1 + payload / payload_unit();
         self.payload_bytes = self.payload_bytes.saturating_add(payload);
         self.allocated += weight;
+    }
+
+    /// The payload charge of an array record: its record's own unit is charged with its run
+    /// (`RecordSpace::bump_id`), so only the payload weight moves per allocation.
+    #[inline(always)]
+    fn charge_array_payload(&mut self, payload: usize) {
+        self.charge_materialized_text();
+        self.payload_bytes = self.payload_bytes.saturating_add(payload);
+        self.allocated += payload / payload_unit();
     }
 
     fn alloc_cell(&mut self, cell: Cell) -> Value {
@@ -1416,11 +1428,12 @@ impl Heap {
         slots: EnvironmentSlots,
         scope: EnvironmentScopeRef,
     ) -> (Value, *const EnvironmentSlots) {
-        self.allocated += 1;
-        let Ok(record_id) = self.environment_records.try_insert(EnvironmentRecord { parent, function, slots, scope }) else {
+        let Some(record_id) = self.environment_records.bump_id(&mut self.allocated) else {
             panic!("environment records exhausted");
         };
-        // SAFETY: just inserted; records never move while they live.
+        // SAFETY: the id is claimed uninitialized and written whole here, before any safepoint.
+        unsafe { self.environment_records.record_ptr(record_id).write(EnvironmentRecord { parent, function, slots, scope }) };
+        // SAFETY: just written; records never move while they live.
         let storage = unsafe { &self.environment_records.get_live(record_id).slots } as *const EnvironmentSlots;
         (Value::direct_environment(record_id), storage)
     }
@@ -1527,7 +1540,12 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return None;
         }
-        self.function_records.claim_uninit_quick().map(Value::direct_function)
+        if let Some(id) = self.function_records.cursor_take() {
+            return Some(Value::direct_function(id));
+        }
+        let id = self.function_records.claim_uninit_quick()?;
+        self.allocated += 1;
+        Some(Value::direct_function(id))
     }
 
     /// `alloc_function_under_flagged_prototype` of `function` into the record `claimed`
@@ -1537,7 +1555,6 @@ impl Heap {
         debug_assert!(self.prototype_flagged(function.object.proto()));
         let id = claimed.direct_function_index().expect("a claimed function record");
         self.admit_object_contents(&function.object);
-        self.allocated += 1;
         // SAFETY: the claim made the id occupied with its record uninitialized, written once here.
         unsafe { self.function_records.record_ptr(id).write(function) };
         #[cfg(feature = "profile-memory")]
@@ -1600,14 +1617,15 @@ impl Heap {
     /// an object.
     #[inline(always)]
     fn insert_object_record(&mut self, object: Object) -> Value {
-        // An object owns no payload or external bytes: only the allocation count moves, as
-        // the record fast path always did (no `charge_allocation` on the hot path).
-        self.allocated += 1;
+        // An object owns no payload or external bytes: its record is the whole charge, made
+        // with its cursor run (`RecordSpace::bump_id`), with no `charge_allocation` on the hot path.
         #[cfg(feature = "profile-aggregate")]
         self.profile_record_allocation(CellKind::Object, "object", 0);
-        let Ok(record_id) = self.object_records.try_insert(object) else {
+        let Some(record_id) = self.object_records.bump_id(&mut self.allocated) else {
             panic!("object records exhausted: the object space holds 2^30 records");
         };
+        // SAFETY: the id is claimed uninitialized and written whole here, before any safepoint.
+        unsafe { self.object_records.record_ptr(record_id).write(object) };
         let value = Value::direct_object(record_id);
         #[cfg(feature = "profile-memory")]
         self.profile_allocation(value);
@@ -1665,10 +1683,11 @@ impl Heap {
         #[cfg(feature = "profile-aggregate")]
         let bytes = function.object.allocated_extra_bytes() + size_of::<FunctionRecord>();
         self.admit_object_contents(&function.object);
-        self.allocated += 1;
-        let Ok(record_id) = self.function_records.try_insert(function) else {
+        let Some(record_id) = self.function_records.bump_id(&mut self.allocated) else {
             panic!("function records exhausted: the function space holds 2^30 records");
         };
+        // SAFETY: the id is claimed uninitialized and written whole here, before any safepoint.
+        unsafe { self.function_records.record_ptr(record_id).write(function) };
         let value = Value::direct_function(record_id);
         #[cfg(feature = "profile-aggregate")]
         self.profile_record_allocation(CellKind::Function, "function", bytes);
@@ -2458,9 +2477,20 @@ impl Heap {
         }
     }
 
+    /// Frees the unallocated rest of each hot space's cursor run and refunds its charge
+    /// (`RecordSpace::retire_cursor`), before a collection reads occupancy or `allocated`.
+    fn retire_record_cursors(&mut self) {
+        let unspent = self.object_records.retire_cursor()
+            + self.array_records.retire_cursor()
+            + self.function_records.retire_cursor()
+            + self.environment_records.retire_cursor();
+        self.allocated = self.allocated.saturating_sub(unspent);
+    }
+
     /// Notes a full collection's start for the old-generation sizing
     /// (`GenerationalPacing::old_sizing`).
     fn start_collection(&mut self, full: bool) -> bool {
+        self.retire_record_cursors();
         self.retire_bump();
         if full {
             self.pacing_state.old_generation.start_full();

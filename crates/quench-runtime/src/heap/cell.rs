@@ -659,6 +659,10 @@ pub(crate) enum Native {
     CallSiteConstructor,
     CallSiteGetFunction,
     MathInitialize,
+    /// Initializers of the lazily installed namespaces and groups (`install_lazy_builtin_namespace`).
+    AtomicsInitialize,
+    WebAssemblyInitialize,
+    IntlInitialize,
 }
 
 /// A native's traits, each derived once at compile time from its defining predicate

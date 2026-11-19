@@ -623,6 +623,7 @@ mod tests {
         assert_eq!(format!("{:?}", crate::heap::NATIVE_OBJECT_LAYOUT), format!("{:?}", mirror::NATIVE_OBJECT_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_FUNCTION_LAYOUT), format!("{:?}", mirror::NATIVE_FUNCTION_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_ARRAY_LAYOUT));
+        assert_eq!(format!("{:?}", crate::heap::NATIVE_RECORD_CURSOR_LAYOUT), format!("{:?}", mirror::NATIVE_RECORD_CURSOR_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_TYPED_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_TYPED_ARRAY_LAYOUT));
         assert_eq!(format!("{:?}", crate::heap::NATIVE_ENVIRONMENT_LAYOUT), format!("{:?}", mirror::NATIVE_ENVIRONMENT_LAYOUT));
         let (cache, copy) = (crate::vm::NATIVE_FIELD_CACHE_LAYOUT, mirror::NATIVE_FIELD_CACHE_LAYOUT);

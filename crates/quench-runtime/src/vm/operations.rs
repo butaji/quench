@@ -790,6 +790,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match native {
             Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
+            Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
+            Native::WebAssemblyInitialize => self.install_webassembly(p).map(|()| Value::UNDEFINED),
+            Native::IntlInitialize => self
+                .install_intl_for_realm(p, self.realm.globals, self.object_proto)
+                .map(|()| Value::UNDEFINED),
             Native::TemporalInitialize => self.install_temporal(p).map(|()| Value::UNDEFINED),
             Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),

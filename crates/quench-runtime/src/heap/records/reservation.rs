@@ -106,6 +106,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Drop for RecordSpace<T, CAPACI
         }
         let layout = Layout::array::<MaybeUninit<T>>(CAPACITY)
             .expect("record-space layout was validated at reservation");
+        // The cursor's unallocated run is occupied but uninitialized: its ids are not dropped.
+        let cursor = self.cursor;
         for (block_index, block) in self.blocks.iter().enumerate() {
             for (word_index, word) in block.occupied.iter().copied().enumerate() {
                 let mut live = word;
@@ -114,7 +116,11 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Drop for RecordSpace<T, CAPACI
                     let id = (block_index * RECORDS_PER_BLOCK
                         + word_index * OCCUPANCY_WORD_BITS
                         + bit) as RecordId;
-                    // SAFETY: every set bit denotes exactly one initialized record.
+                    if (cursor.next..cursor.limit).contains(&id) {
+                        live &= live - 1;
+                        continue;
+                    }
+                    // SAFETY: every set bit outside the cursor's unallocated run denotes exactly one initialized record.
                     unsafe {
                         self.base
                             .as_ptr()
