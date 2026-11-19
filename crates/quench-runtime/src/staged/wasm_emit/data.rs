@@ -1,5 +1,5 @@
-//! Emit functions for the Wasm lowering's reference, table, segment, memory and atomic
-//! operations. Each one names the meaning of an instruction (a type test, a table store, a
+//! Emit functions for the Wasm lowering's reference, i31, table, segment, global, memory and
+//! atomic operations. Each one names the meaning of an instruction (a type test, a table store, a
 //! memory access) and returns the `Emission` it lowers to: the same opcode and operands the
 //! lowering built before, so the bytecode is unchanged.
 

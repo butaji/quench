@@ -4,10 +4,10 @@
 //! `Lowering::emit_emission`. The lowering names no opcode itself, and every function
 //! returns exactly the operands the lowering wrote before, so the encoding is unchanged.
 //!
-//! `control` holds control flow, locals, exceptions, arrays and register moves; `numeric`
-//! holds the i32, i64 and scalar-conversion operators; `data` holds the reference, table,
-//! memory, atomic and segment emits. The predicates over lowered instructions and the
-//! operator-to-opcode tables stay here.
+//! `control` holds control flow, locals, calls, exceptions, arrays and register moves; `numeric`
+//! holds the i32, i64 and scalar-conversion operators and the selector families; `data` holds
+//! the reference, i31, global, table, memory, atomic and segment emits. The predicates over
+//! lowered instructions and the operator-to-opcode tables stay here.
 
 mod control;
 mod data;
