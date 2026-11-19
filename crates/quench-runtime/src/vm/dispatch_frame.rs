@@ -2142,24 +2142,7 @@ impl<H: Host> Vm<H> {
                     if let Some(register) = ins.optional_register_b() {
                         self.write(frame, register, value);
                     }
-                    RowRun::Done(crate::staged::Edge::Leave | crate::staged::Edge::Transfer | crate::staged::Edge::Entry(_)) =>
-                        unreachable!("the interpreter frame neither suspends the lane nor enters a branch table"),
-                    RowRun::Declined => {
-                        // A heap value's truthiness is the VM's, which runs no guest code.
-                        if let crate::staged::Operation::JumpIf { register, taken } = operation {
-                            if self.truthy(self.read(frame, register)) == taken {
-                                pc = ins.jump_target() as usize;
-                                if pc <= instruction_pc {
-                                    self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
-                                }
-                            }
-                            continue;
-                        }
-                        // The arm below runs the miss path; its step takes this declined row, undecoded.
-                        self.pending_row = Some(operation);
-                    }
-                    // A return, a raise or a suspension: the step result the run completes with.
-                    RowRun::Stop(stop) => self.row_stop = Some(stop),
+                    continue;
                 }
                 FrameArm::Move => {
                     self.write(

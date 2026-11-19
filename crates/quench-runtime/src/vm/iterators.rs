@@ -2788,8 +2788,7 @@ impl<H: Host> Vm<H> {
                         Value::FALSE
                     },
                 ],
-            ),
-        });
+            ));
         let natives = [Native::AsyncFromSyncValue, Native::AsyncFromSyncValueRejected];
         self.then_with_natives(p, value_promise, natives, env, super::promise::ThenCapability::Resolving)
     }
