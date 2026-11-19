@@ -295,7 +295,7 @@ pub(super) fn lane_resume_generator<H: Host>(
     }
     // SAFETY: the record keeps the frame, and so its registers, until the activation ends; the
     // window, laid out above, moves the registers no more.
-    let (prefix, window, size) = unsafe { ((*frame).prefix(), (*frame).registers.as_mut_ptr(), (*frame).registers.len()) };
+    let (prefix, window, size) = unsafe { ((*frame).prefix(), (&mut (*frame).registers).as_mut_ptr(), (&(*frame).registers).len()) };
     let (this, pc, function, program) = unsafe { ((*frame).this(), (*frame).pc, (*frame).function, (*frame).program) };
     push_generator_window(cx, vm, (r, ip, depth), GeneratorWindow { prefix, function, generator, completion, environment, record: frame });
     let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
