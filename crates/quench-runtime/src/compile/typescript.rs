@@ -15,12 +15,14 @@ mod enum_folding;
 mod enums;
 mod fields;
 mod imports;
+mod names;
 mod signatures;
 pub(super) use imports::{elide as elide_type_only_imports, type_only_imports};
 pub(super) use admit::admit;
 pub(super) use checked::{lookup as checked_parameters, parameter_sites};
 pub use checked::{CheckedParameters, ParameterSite};
 pub(super) use checked::register as register_checked_parameters;
+pub(super) use names::{Named, TypeNames};
 
 /// The language types (`crate::typed_ir::Type::language` bits) each formal parameter of
 /// `formals` declares, by argument index; empty where none declares one. An undeclared or
@@ -52,8 +54,21 @@ pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Optio
 pub(crate) const DECLARED_ANY: u16 = crate::typed_ir::ANY_LANGUAGES;
 
 /// The language types a TypeScript type admits at run time, `DECLARED_ANY` where it does not
-/// name a closed set.
+/// name a closed set. A program's own type names are not known here (`declared_language_in`).
 fn declared_language(ty: &TSType<'_>) -> u16 {
+    declared_language_in(ty, &TypeNames::default())
+}
+
+/// The language types a TypeScript type admits at run time, with the program's type-level names
+/// (`TypeNames`) resolved.
+pub(super) fn declared_language_in(ty: &TSType<'_>, names: &TypeNames<'_>) -> u16 {
+    languages(ty, names, 0)
+}
+
+/// How many alias expansions a name may take before it is open (a cycle is cut here).
+const MAX_ALIAS_DEPTH: u8 = 8;
+
+fn languages(ty: &TSType<'_>, names: &TypeNames<'_>, depth: u8) -> u16 {
     use crate::ValueType as V;
     match ty {
         TSType::TSNumberKeyword(_) => language_bit(V::Number),
@@ -73,25 +88,62 @@ fn declared_language(ty: &TSType<'_>) -> u16 {
             TSLiteral::BigIntLiteral(_) => language_bit(V::BigInt),
             TSLiteral::UnaryExpression(_) => language_bit(V::Number) | language_bit(V::BigInt),
         },
-        TSType::TSParenthesizedType(inner) => declared_language(&inner.type_annotation),
-        TSType::TSUnionType(union) => union.types.iter().fold(0, |set, member| set | declared_language(member)),
+        TSType::TSParenthesizedType(inner) => languages(&inner.type_annotation, names, depth),
+        TSType::TSUnionType(union) => union.types.iter().fold(0, |set, member| set | languages(member, names, depth)),
+        TSType::TSTypeReference(reference) => reference_languages(reference, names, depth),
+        _ => DECLARED_ANY,
+    }
+}
+
+/// The language types a named type denotes: what the program declares it to be (an alias's
+/// expansion, an interface's object or function, a class's object, an enum's values), else the
+/// builtin global of that name.
+fn reference_languages(reference: &TSTypeReference<'_>, names: &TypeNames<'_>, depth: u8) -> u16 {
+    use crate::ValueType as V;
+    let TSTypeName::IdentifierReference(identifier) = &reference.type_name else { return DECLARED_ANY };
+    match names.get(identifier.name.as_str()) {
+        Some(Named::Alias { annotation, open }) => {
+            if open || reference.type_arguments.is_some() || depth >= MAX_ALIAS_DEPTH {
+                DECLARED_ANY
+            } else {
+                languages(annotation, names, depth + 1)
+            }
+        }
+        Some(Named::Interface) => language_bit(V::Object) | language_bit(V::Function),
+        Some(Named::Class(_)) => language_bit(V::Object),
+        Some(Named::Enum(bits)) => bits,
+        Some(Named::Unknown) => DECLARED_ANY,
+        None => builtin_languages(identifier.name.as_str()),
+    }
+}
+
+/// The language types of a builtin global type the program does not declare: the object
+/// globals, `Function` for callables. `String`, `Number` and `Boolean` admit primitives and
+/// boxes alike, and `Object` admits anything, so they stay `DECLARED_ANY`.
+fn builtin_languages(name: &str) -> u16 {
+    use crate::ValueType as V;
+    match name {
+        "Function" => language_bit(V::Function),
+        "Array" | "ReadonlyArray" | "Map" | "Set" | "WeakMap" | "WeakSet" | "Date" | "RegExp" | "Promise"
+        | "Error" | "Uint8Array" | "Uint8ClampedArray" | "Uint16Array" | "Int16Array" | "Uint32Array"
+        | "Int32Array" | "Float32Array" | "Float64Array" | "ArrayBuffer" | "DataView" => language_bit(V::Object),
         _ => DECLARED_ANY,
     }
 }
 
 /// The language types of the elements an array type holds: `T[]`, `readonly T[]`, `Array<T>` and
 /// `ReadonlyArray<T>` hold `T`s. Any other type, or an array of an open type, is `DECLARED_ANY`.
-pub(super) fn element_languages(ty: &TSType<'_>) -> u16 {
+pub(super) fn element_languages(ty: &TSType<'_>, names: &TypeNames<'_>) -> u16 {
     match ty {
-        TSType::TSArrayType(array) => declared_language(&array.element_type),
+        TSType::TSArrayType(array) => declared_language_in(&array.element_type, names),
         TSType::TSTypeOperatorType(operator) if operator.operator == TSTypeOperatorOperator::Readonly => {
-            element_languages(&operator.type_annotation)
+            element_languages(&operator.type_annotation, names)
         }
         TSType::TSTypeReference(reference) => match (&reference.type_name, reference.type_arguments.as_deref()) {
             (TSTypeName::IdentifierReference(name), Some(arguments))
                 if matches!(name.name.as_str(), "Array" | "ReadonlyArray") && arguments.params.len() == 1 =>
             {
-                declared_language(&arguments.params[0])
+                declared_language_in(&arguments.params[0], names)
             }
             _ => DECLARED_ANY,
         },
@@ -223,6 +275,44 @@ mod tests {
         let other = Engine::specialize_typescript(&format!("{source}\n"), "checked.cts").unwrap();
         assert!(other.functions.iter().enumerate().filter_map(|(index, _)| other.function_get(index))
             .filter(|function| function.is_arrow).all(|function| function.declared_parameters.is_empty()));
+    }
+
+    /// The declared return languages of the function `f` in `source` (`DECLARED_ANY` if undeclared).
+    fn declared_return(source: &str) -> u16 {
+        let program = Engine::specialize_typescript(source, "names.cts").unwrap();
+        let declared = program.declared_types.as_deref().expect("a typed program keeps its declarations");
+        let start = source.find("function f").unwrap() as u32;
+        declared.declared_signature(start).map_or(super::DECLARED_ANY, |signature| signature.returns)
+    }
+
+    #[test]
+    fn named_types_declare_their_language_sets() {
+        use crate::ValueType as V;
+        let bit = |kind: V| crate::typed_ir::Languages::of(kind).bits();
+        assert_eq!(declared_return("type N = number;\nfunction f(): N { return 1; }"), bit(V::Number));
+        assert_eq!(declared_return("type N = number;\ntype M = N;\nfunction f(): M { return 1; }"), bit(V::Number));
+        assert_eq!(declared_return("interface I { x: number }\nfunction f(): I { return { x: 1 }; }"),
+            bit(V::Object) | bit(V::Function));
+        assert_eq!(declared_return("interface I { x: number }\ninterface I { y: string }\nfunction f(): I { return { x: 1, y: '' }; }"),
+            bit(V::Object) | bit(V::Function));
+        assert_eq!(declared_return("enum E { A, B }\nfunction f(): E { return E.A; }"), bit(V::Number));
+        assert_eq!(declared_return("enum E { A = 'a', B = 'b' }\nfunction f(): E { return E.A; }"), bit(V::String));
+        assert_eq!(declared_return("enum E { A = 'a', B = 2 }\nfunction f(): E { return E.B; }"),
+            bit(V::Number) | bit(V::String));
+        assert_eq!(declared_return("function f(): Map<string, number> { return new Map(); }"), bit(V::Object));
+        assert_eq!(declared_return("function f(): Function { return () => 1; }"), bit(V::Function));
+        assert_eq!(declared_return("function f(): String { return 'x'; }"), super::DECLARED_ANY);
+    }
+
+    #[test]
+    fn duplicate_and_shadowed_type_names_stay_open() {
+        let open = super::DECLARED_ANY;
+        assert_eq!(declared_return("class D {}\ninterface D {}\nfunction f(): D { return null as any; }"), open);
+        assert_eq!(declared_return("type N = number;\nfunction f<N>(x: N): N { return x; }"), open);
+        assert_eq!(declared_return("type Box<T> = T;\nfunction f(): Box<number> { return 1; }"), open);
+        assert_eq!(declared_return("type A = B;\ntype B = A;\nfunction f(): A { return 1 as any; }"), open);
+        assert_eq!(declared_return("type Map = number;\nfunction f(): Map { return 1; }"),
+            crate::typed_ir::Languages::of(crate::ValueType::Number).bits());
     }
 
     #[test]

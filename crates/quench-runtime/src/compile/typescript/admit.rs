@@ -28,8 +28,11 @@ mod decorators;
 /// Admit a typed tree: the declared environment out, run-time meaning in.
 pub(in crate::compile) fn admit<'a>(allocator: &'a Allocator, program: &mut Program<'a>, declarations: &mut DeclaredTypes) {
     // Before the class bodies change: signature-only members and parameter modifiers are still in place.
-    super::fields::collect(program, declarations);
-    super::signatures::collect(program, declarations);
+    {
+        let names = super::TypeNames::of(program);
+        super::fields::collect(program, &names, declarations);
+        super::signatures::collect(program, &names, declarations);
+    }
     let bindings = if program.source_text.contains("enum") { binding_counts(program) } else { FxHashMap::default() };
     let folded = enum_folding::foldable(program, &bindings);
     let mut admit = Admit {

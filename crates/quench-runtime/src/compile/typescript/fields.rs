@@ -7,17 +7,18 @@ use oxc_ast_visit::{Visit, walk};
 
 use crate::bytecode::DeclaredTypes;
 use crate::typed_ir::language_bit;
-use super::{DECLARED_ANY, declared_language, element_languages};
+use super::{DECLARED_ANY, TypeNames, declared_language_in, element_languages};
 
 /// Record each annotated instance and static field of every class in `program`, and each
 /// annotated parameter property of a constructor (an instance field named by its parameter).
 /// Run before admission, so the modifiers and signature-only members are still in place.
-pub(super) fn collect<'a>(program: &Program<'a>, declarations: &mut DeclaredTypes) {
-    Collect { declarations }.visit_program(program);
+pub(super) fn collect<'a>(program: &Program<'a>, names: &TypeNames<'_>, declarations: &mut DeclaredTypes) {
+    Collect { declarations, names }.visit_program(program);
 }
 
 struct Collect<'d> {
     declarations: &'d mut DeclaredTypes,
+    names: &'d TypeNames<'d>,
 }
 
 impl<'a> Visit<'a> for Collect<'_> {
@@ -51,8 +52,8 @@ impl Collect<'_> {
         }
         let PropertyKey::StaticIdentifier(identifier) = &property.key else { return };
         let Some(annotation) = &property.type_annotation else { return };
-        let mut languages = declared_language(&annotation.type_annotation);
-        let elements = element_languages(&annotation.type_annotation);
+        let mut languages = declared_language_in(&annotation.type_annotation, self.names);
+        let elements = element_languages(&annotation.type_annotation, self.names);
         if property.optional {
             languages |= language_bit(crate::ValueType::Undefined);
         }
@@ -68,8 +69,8 @@ impl Collect<'_> {
             return;
         }
         let (Some(name), Some(annotation)) = (parameter.pattern.get_identifier_name(), &parameter.type_annotation) else { return };
-        let languages = declared_language(&annotation.type_annotation);
-        let elements = element_languages(&annotation.type_annotation);
+        let languages = declared_language_in(&annotation.type_annotation, self.names);
+        let elements = element_languages(&annotation.type_annotation, self.names);
         if languages != DECLARED_ANY || elements != DECLARED_ANY {
             self.declarations.declare_field(class_start, &name.to_string(), languages, elements, false);
         }

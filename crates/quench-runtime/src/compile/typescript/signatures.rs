@@ -10,12 +10,10 @@ use oxc_ast_visit::{Visit, walk};
 use oxc_span::{GetSpan, Span};
 use oxc_syntax::scope::ScopeFlags;
 
-use rustc_hash::FxHashMap;
-
 use crate::bytecode::{DeclaredSignature, DeclaredTypes};
 use crate::compile::class::class_method_source_span;
 use crate::typed_ir::language_bit;
-use super::{DECLARED_ANY, declared_language, element_languages};
+use super::{DECLARED_ANY, Named, TypeNames, declared_language_in, element_languages};
 
 /// The function a local is declared in when it is top-level code of a script or module.
 const TOP_LEVEL: u32 = u32::MAX;
@@ -23,7 +21,7 @@ const TOP_LEVEL: u32 = u32::MAX;
 /// Record each declared signature and annotated local of `program`, keyed by the source span
 /// start each function's bytecode header begins at. Run before admission, so the annotations
 /// are still in place.
-pub(super) fn collect<'a>(program: &Program<'a>, declarations: &mut DeclaredTypes) {
+pub(super) fn collect<'a>(program: &Program<'a>, names: &TypeNames<'_>, declarations: &mut DeclaredTypes) {
     let mut collect = Collect {
         text: program.source_text,
         declarations,
@@ -31,51 +29,9 @@ pub(super) fn collect<'a>(program: &Program<'a>, declarations: &mut DeclaredType
         class: TOP_LEVEL,
         method: None,
         loop_head: false,
-        classes: top_level_classes(program),
+        names,
     };
     collect.visit_program(program);
-}
-
-/// The top-level classes a parameter annotation may name, by name, with each class's span start
-/// (the key `DeclaredField::class_start` uses). A name counts only when one top-level declaration
-/// (a class, an interface, a type alias or an enum) declares it, so the annotation denotes that class.
-fn top_level_classes(program: &Program<'_>) -> FxHashMap<String, u32> {
-    let mut declared: FxHashMap<String, u32> = FxHashMap::default();
-    let mut classes: FxHashMap<String, u32> = FxHashMap::default();
-    let mut note = |id: &BindingIdentifier<'_>, class: Option<u32>| {
-        let name = id.name.as_str().to_string();
-        *declared.entry(name.clone()).or_default() += 1;
-        if let Some(start) = class {
-            classes.insert(name, start);
-        }
-    };
-    for statement in &program.body {
-        match statement {
-            Statement::ClassDeclaration(class) => {
-                if let Some(id) = &class.id { note(id, Some(class.span.start)) }
-            }
-            Statement::TSInterfaceDeclaration(declaration) => note(&declaration.id, None),
-            Statement::TSTypeAliasDeclaration(declaration) => note(&declaration.id, None),
-            Statement::TSEnumDeclaration(declaration) => note(&declaration.id, None),
-            Statement::ExportDeclaration(export) => match &export.declaration {
-                Declaration::ClassDeclaration(class) => {
-                    if let Some(id) = &class.id { note(id, Some(class.span.start)) }
-                }
-                Declaration::TSInterfaceDeclaration(declaration) => note(&declaration.id, None),
-                Declaration::TSTypeAliasDeclaration(declaration) => note(&declaration.id, None),
-                Declaration::TSEnumDeclaration(declaration) => note(&declaration.id, None),
-                _ => {}
-            },
-            Statement::ExportDefaultDeclaration(export) => {
-                if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &export.declaration {
-                    if let Some(id) = &class.id { note(id, Some(class.span.start)) }
-                }
-            }
-            _ => {}
-        }
-    }
-    classes.retain(|name, _| declared.get(name) == Some(&1));
-    classes
 }
 
 struct Collect<'a, 'd> {
@@ -91,8 +47,8 @@ struct Collect<'a, 'd> {
     method: Option<(Span, Option<u32>)>,
     /// Whether the visit is inside a `for`-`in`/`of` head, whose bindings take no annotation.
     loop_head: bool,
-    /// The top-level classes a parameter annotation may name (`top_level_classes`), by name.
-    classes: FxHashMap<String, u32>,
+    /// The program's type-level names, which a parameter annotation may name a class by.
+    names: &'d TypeNames<'d>,
 }
 
 impl<'a> Visit<'a> for Collect<'a, '_> {
@@ -119,9 +75,9 @@ impl<'a> Visit<'a> for Collect<'a, '_> {
             _ => Some(function.span.start),
         };
         if let Some(start) = key {
-            let returns = returns_of(function.r#async || function.generator, function.return_type.as_deref());
-            let this = this_of(function.this_param.as_deref());
-            self.record(start, returns, &function.params, function.type_parameters.as_deref(), this);
+            let returns = returns_of(function.r#async || function.generator, function.return_type.as_deref(), self.names);
+            let this = this_of(function.this_param.as_deref(), self.names);
+            self.record(start, returns, &function.params, this);
         }
         let outer = std::mem::replace(&mut self.function, key);
         walk::walk_function(self, function, flags);
@@ -130,8 +86,8 @@ impl<'a> Visit<'a> for Collect<'a, '_> {
 
     fn visit_arrow_function_expression(&mut self, arrow: &ArrowFunctionExpression<'a>) {
         let start = arrow.span.start;
-        let returns = returns_of(arrow.r#async, arrow.return_type.as_deref());
-        self.record(start, returns, &arrow.params, arrow.type_parameters.as_deref(), DECLARED_ANY);
+        let returns = returns_of(arrow.r#async, arrow.return_type.as_deref(), self.names);
+        self.record(start, returns, &arrow.params, DECLARED_ANY);
         let outer = std::mem::replace(&mut self.function, Some(start));
         walk::walk_arrow_function_expression(self, arrow);
         self.function = outer;
@@ -171,20 +127,17 @@ impl<'a> Collect<'a, '_> {
     }
 
     /// Record a signature unless every part is `DECLARED_ANY`, and each parameter's declared shape.
-    fn record(&mut self, start: u32, returns: u16, params: &FormalParameters<'_>,
-        type_parameters: Option<&TSTypeParameterDeclaration<'_>>, this: u16) {
-        let rest = rest_of(params);
+    fn record(&mut self, start: u32, returns: u16, params: &FormalParameters<'_>, this: u16) {
+        let rest = rest_of(params, self.names);
         if returns != DECLARED_ANY || rest != DECLARED_ANY || this != DECLARED_ANY {
             self.declarations.declare_signature(DeclaredSignature { start, returns, rest, this });
         }
-        self.parameters(start, params, type_parameters);
+        self.parameters(start, params);
     }
 
     /// Record the declared shape of each parameter with a plain identifier pattern and a type
     /// annotation: the properties of a type literal, or the top-level class a type reference names.
-    /// A type parameter of the function that has the class's name shadows it, so it records nothing.
-    fn parameters(&mut self, function: u32, params: &FormalParameters<'_>,
-        type_parameters: Option<&TSTypeParameterDeclaration<'_>>) {
+    fn parameters(&mut self, function: u32, params: &FormalParameters<'_>) {
         for (index, parameter) in params.items.iter().enumerate() {
             let (Ok(index), Some(annotation)) = (u16::try_from(index), &parameter.type_annotation) else { continue };
             if parameter.pattern.get_identifier_name().is_none() {
@@ -198,11 +151,7 @@ impl<'a> Collect<'a, '_> {
                 }
                 TSType::TSTypeReference(reference) => {
                     let TSTypeName::IdentifierReference(name) = &reference.type_name else { continue };
-                    let name = name.name.as_str();
-                    if shadowed(type_parameters, name) {
-                        continue;
-                    }
-                    if let Some(&class) = self.classes.get(name) {
+                    if let Some(Named::Class(class)) = self.names.get(name.name.as_str()) {
                         self.declarations.declare_parameter_class(function, index, class);
                     }
                 }
@@ -217,7 +166,7 @@ impl<'a> Collect<'a, '_> {
         let TSSignature::TSPropertySignature(property) = member else { return };
         let PropertyKey::StaticIdentifier(identifier) = &property.key else { return };
         let Some(annotation) = &property.type_annotation else { return };
-        let mut languages = declared_language(&annotation.type_annotation);
+        let mut languages = declared_language_in(&annotation.type_annotation, self.names);
         if property.optional {
             languages |= language_bit(crate::ValueType::Undefined);
         }
@@ -230,44 +179,38 @@ impl<'a> Collect<'a, '_> {
     /// An array annotation is recorded for its element types even where its own languages are open.
     fn local(&mut self, name: Option<&str>, annotation: Option<&TSTypeAnnotation<'_>>) {
         let (Some(function), Some(name), Some(annotation)) = (self.function, name, annotation) else { return };
-        let languages = declared_language(&annotation.type_annotation);
-        let elements = element_languages(&annotation.type_annotation);
+        let languages = declared_language_in(&annotation.type_annotation, self.names);
+        let elements = element_languages(&annotation.type_annotation, self.names);
         if languages != DECLARED_ANY || elements != DECLARED_ANY {
             self.declarations.declare_local(function, name, languages, elements);
         }
     }
 }
 
-/// Whether a type parameter of the function (`type_parameters`) has the name `name`, so that the
-/// name denotes it rather than a top-level class.
-fn shadowed(type_parameters: Option<&TSTypeParameterDeclaration<'_>>, name: &str) -> bool {
-    type_parameters.is_some_and(|parameters| parameters.params.iter().any(|parameter| parameter.name.name.as_str() == name))
-}
-
 /// The return type's languages. An `async` function returns a Promise and a generator returns
 /// an iterator: both are objects whatever the annotation names.
-fn returns_of(object: bool, annotation: Option<&TSTypeAnnotation<'_>>) -> u16 {
+fn returns_of(object: bool, annotation: Option<&TSTypeAnnotation<'_>>, names: &TypeNames<'_>) -> u16 {
     if object {
         language_bit(crate::ValueType::Object)
     } else {
-        annotation.map_or(DECLARED_ANY, |annotation| declared_language(&annotation.type_annotation))
+        annotation.map_or(DECLARED_ANY, |annotation| declared_language_in(&annotation.type_annotation, names))
     }
 }
 
 /// The `this` parameter's languages. A named type stays open (`DECLARED_ANY`): it may be an
 /// alias of a primitive or a type parameter, which no syntax tells apart from a class.
-fn this_of(parameter: Option<&TSThisParameter<'_>>) -> u16 {
+fn this_of(parameter: Option<&TSThisParameter<'_>>, names: &TypeNames<'_>) -> u16 {
     parameter.and_then(|parameter| parameter.type_annotation.as_deref())
-        .map_or(DECLARED_ANY, |annotation| declared_language(&annotation.type_annotation))
+        .map_or(DECLARED_ANY, |annotation| declared_language_in(&annotation.type_annotation, names))
 }
 
 /// The languages of an annotated rest parameter's elements: `...xs: T[]` and `...xs: Array<T>`
 /// hold `T`s.
-fn rest_of(params: &FormalParameters<'_>) -> u16 {
+fn rest_of(params: &FormalParameters<'_>, names: &TypeNames<'_>) -> u16 {
     let Some(annotation) = params.rest.as_ref().and_then(|rest| rest.type_annotation.as_deref()) else {
         return DECLARED_ANY;
     };
-    element_languages(&annotation.type_annotation)
+    element_languages(&annotation.type_annotation, names)
 }
 
 #[cfg(test)]
