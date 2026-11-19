@@ -208,6 +208,7 @@ pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl 
     let status = helper();
     if status == LANE_CALL_LEFT {
         // The lane continues above the frames, which return into the interpreter.
+        retire_header_bodies(cx);
         vm.lane_stack.records_mut().retire_bodies(depth);
     } else if status != LANE_CALL_TERMINATED {
         owner.install(cx);
@@ -245,7 +246,8 @@ pub(super) fn left_native_frames<H: Host>(cx: *mut LaneContext<H>) -> bool {
 fn advance_into_native_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'static LaneView, &'static super::super::compiled::LaneMethod)> {
     let vm = unsafe { vm(cx) };
     vm.link_natives(cx);
-    let (count, len) = (vm.lane_stack.native_depth(), vm.lane_stack.record_count());
+    let headers = vm.lane_stack.header_native_depth();
+    let (count, len) = (vm.lane_stack.record_native_depth_in_run(headers), vm.lane_stack.record_count());
     let mut innermost = None;
     for depth in len - count..len {
         let slot = vm.lane_stack.records_mut().slot(depth);
@@ -261,6 +263,28 @@ fn advance_into_native_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'sta
         }
         innermost = Some(frame);
     }
+    // The plain headers that are native, innermost first: each is advanced into and its side names no
+    // callee after (`Side::native`); the innermost's prefix is the one the lane continues in.
+    if headers != 0 {
+        let stack = &mut vm.lane_stack;
+        let depth = stack.plain.depth.get();
+        let base = stack.frames_below_plain();
+        let mut window = Registers(stack.plain.registers.get());
+        for above in 0..headers {
+            let index = base + depth - 1 - above;
+            let side_at = unsafe { (*stack.sides.get()).len() } - 1 - above;
+            let side = unsafe { &mut (*stack.sides.get())[side_at] };
+            let desc = unsafe { &*(stack.native_table[index] as *const super::super::compiled::DirectCallee) };
+            unsafe { &*desc.target.view }.note_native_leave();
+            let frame = super::super::compiled::ShadowFrame {
+                callee: desc as *const _, this: 0, body: stack.body_table[index], window: window.0.addr(),
+            };
+            if let Some(skipped) = desc.forwarder { side.payload = super::lane_frames::SidePayload::Forwarder(skipped); }
+            side.native = super::lane_frames::NO_NATIVE;
+            if above == 0 { innermost = Some(frame); }
+            window = window.plain_caller().1;
+        }
+    }
     let frame = innermost?;
     CallerState::of_frame(&frame).install(cx);
     // The body the call ran is the cell's at that moment, not the descriptor's; the caller's
@@ -272,12 +296,31 @@ fn advance_into_native_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'sta
 /// Drops the native frames a terminated run left, with their windows.
 pub(super) fn discard_frames<H: Host>(cx: *mut LaneContext<H>) {
     let vm = unsafe { vm(cx) };
-    let (count, len) = (vm.lane_stack.native_depth(), vm.lane_stack.record_count());
-    if count == 0 { return; }
-    // SAFETY: the values hold no drop glue; native frames own no side record.
-    unsafe {
-        let window = (*vm.lane_stack.records_mut().slot(len - count)).window_word();
-        vm.lane_stack.records_mut().set_len(len - count);
-        vm.lane_stack.values.release_window(window);
+    let headers = vm.lane_stack.header_native_depth();
+    let (count, len) = (vm.lane_stack.record_native_depth_in_run(headers), vm.lane_stack.record_count());
+    if headers == 0 && count == 0 { return; }
+    // The headers first, innermost out: the last one popped is the outermost, whose window the run releases.
+    let mut outer = None;
+    for _ in 0..headers { outer = vm.lane_stack.pop_activation().map(|frame| frame.window_word()); }
+    if count != 0 {
+        // SAFETY: the values hold no drop glue; native frames own no side record.
+        unsafe {
+            outer = Some((*vm.lane_stack.records_mut().slot(len - count)).window_word());
+            vm.lane_stack.records_mut().set_len(len - count);
+        }
+    }
+    if let Some(window) = outer { vm.lane_stack.values.release_window(window); }
+}
+
+/// Retires the bodies of the native headers the lane continues in, innermost out, as `retire_bodies` does for
+/// records: their table entries name no body after this (one-frame-one-call.md F5).
+pub(super) fn retire_header_bodies<H: Host>(cx: *mut LaneContext<H>) {
+    let stack = &mut unsafe { vm(cx) }.lane_stack;
+    let headers = stack.header_native_depth();
+    let (depth, base) = (stack.plain.depth.get(), stack.frames_below_plain());
+    for above in 0..headers {
+        let index = base + depth - 1 - above;
+        if stack.body_table[index] == 0 { break; }
+        stack.body_table[index] = 0;
     }
 }

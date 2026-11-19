@@ -72,6 +72,8 @@ impl Frame {
     #[inline(always)] pub(super) fn payload(&self) -> SidePayload { self.payload }
     /// Its prefix's WINDOW word, heap mark included (`Activation::window_word`).
     #[inline(always)] pub(in crate::vm) fn window_word(&self) -> usize { self.native.window }
+    /// Its native prefix: a linked native header's descriptor and body, or a record's own (F5).
+    #[inline(always)] pub(super) fn native_prefix(&self) -> super::super::compiled::ShadowFrame { self.native }
 
     /// The address of its first register (`Activation::window_ptr`).
     #[inline(always)]
@@ -530,7 +532,14 @@ impl LaneStack {
     /// none above a plain header, whose prefix names no callee.
     #[inline]
     pub(in crate::vm) fn native_depth(&self) -> usize {
-        if self.plain.depth.get() != 0 { return self.header_native_depth(); }
+        let headers = self.header_native_depth();
+        headers + self.record_native_depth_in_run(headers)
+    }
+
+    /// The native record frames in the run that continues into the records: only when every plain header
+    /// is native (`headers`), since the records under a header that is not native are not in the run.
+    pub(super) fn record_native_depth_in_run(&self, headers: usize) -> usize {
+        if headers != self.plain.depth.get() { return 0; }
         // SAFETY: the reference ends here.
         unsafe { self.records_unspilled() }.native_depth()
     }
@@ -539,7 +548,11 @@ impl LaneStack {
     /// (`LaneActivations::top_native`): none for a plain header.
     #[inline(always)]
     pub(in crate::vm) fn top_native(&self) -> Option<super::super::compiled::ShadowFrame> {
-        if self.plain.depth.get() != 0 { return None; }
+        if self.plain.depth.get() != 0 {
+            // A linked native header carries its prefix in its frame; an unlinked one is linked first by its callers.
+            let prefix = self.top_frame()?.native_prefix();
+            return (!prefix.callee.is_null() && prefix.body != 0).then_some(prefix);
+        }
         // SAFETY: the reference ends here.
         unsafe { self.records_unspilled() }.top_native()
     }

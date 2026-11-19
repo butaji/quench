@@ -15034,6 +15034,8 @@ impl<H: Host> Vm<H> {
         };
         // The bound is set last: `plain_frames_word` above voids it.
         stack.frames_below.set(stack.frames_below_plain());
+        // Once native headers are enabled, emitted pushes keep body_top equal to the total count between bindings.
+        debug_assert!(!NATIVE_FRAMES_ENABLED || stack.body_top.get() == stack.activation_count(), "body_top names the total frame count at binding");
         stack.body_top.set(stack.activation_count());
         stack.plain_depth_limit.set(if NATIVE_FRAMES_ENABLED { stack.activation_limit.get().min(LANE_STACK_ACTIVATIONS) } else { 0 });
         words
