@@ -171,6 +171,35 @@ impl ClosureReads {
         }
     }
 
+    /// Whether a closure of `function` reads nothing of the environment it closes over, so it
+    /// may take none (`Vm::closure_needs_no_environment`). The function and every function
+    /// nested in it read no slot outside themselves (`reads` is empty, not the whole chain),
+    /// so no capture reaches an environment. No ancestor holds named slots, which a by-name
+    /// lookup walking the chain would find (home objects, private names). An arrow reads no
+    /// implicit binding of its enclosing non-arrow (`reads_lexical`).
+    pub(crate) fn environment_unobservable(&self, function: u32, reads_lexical: impl FnOnce() -> bool) -> bool {
+        let Some(closure) = self.functions.get(function as usize) else {
+            return false;
+        };
+        if !closure.reads.as_deref().is_some_and(|reads| reads.is_empty()) {
+            return false;
+        }
+        if closure.is_arrow && reads_lexical() {
+            return false;
+        }
+        let mut owner = closure.parent;
+        while let Some(id) = owner {
+            let Some(ancestor) = self.functions.get(id as usize) else {
+                return false;
+            };
+            if !ancestor.named_slots.is_empty() {
+                return false;
+            }
+            owner = ancestor.parent;
+        }
+        closure.parent.is_some()
+    }
+
     /// What a closure of `function` needs of the environment `distance` (at least 1)
     /// activations out of its own.
     pub(crate) fn demand(&self, function: u32, distance: u32) -> EnvironmentDemand<'_> {
@@ -263,6 +292,33 @@ mod tests {
         functions[2].instance_initializer = Some(3);
         let reads = ClosureReads::derive(&functions);
         assert_eq!(slots(reads.demand(2, 1)), Some((1, vec![1], false)));
+    }
+
+    #[test]
+    fn closures_reading_nothing_take_no_environment() {
+        // 0 root { 1 reads nothing; 2 captures root's slot 0 } and 3 nests 4 which reads nothing
+        let mut functions = vec![
+            function(None, false, &[]),
+            function(Some(0), false, &[]),
+            function(Some(0), false, &[(1, 0)]),
+            function(Some(0), false, &[]),
+            function(Some(3), false, &[]),
+        ];
+        let reads = ClosureReads::derive(&functions);
+        assert!(reads.environment_unobservable(1, || false));
+        assert!(reads.environment_unobservable(4, || false));
+        assert!(!reads.environment_unobservable(2, || false));
+        // The root is no closure, and an arrow reading implicit bindings keeps its environment.
+        assert!(!reads.environment_unobservable(0, || false));
+        functions[1].is_arrow = true;
+        let reads = ClosureReads::derive(&functions);
+        assert!(!reads.environment_unobservable(1, || true));
+        assert!(reads.environment_unobservable(1, || false));
+        // A named slot of an ancestor, which a by-name lookup of the chain finds, keeps it.
+        let named = [1u16];
+        functions[0].named_slots = &named;
+        let reads = ClosureReads::derive(&functions);
+        assert!(!reads.environment_unobservable(4, || false));
     }
 
     #[test]

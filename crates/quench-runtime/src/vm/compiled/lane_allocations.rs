@@ -123,7 +123,12 @@ pub(super) unsafe extern "C" fn lane_new_closure<H: Host>(vm: u64, residual: u64
         return Value::DELETED.to_bits();
     }
     let captured = vm.frames[dispatch.frame].captured;
-    let env = vm.promote_frame_environment(dispatch.frame);
+    // A closure that reads nothing of its environment takes none, and the frame stays unpromoted.
+    let env = if vm.closure_needs_no_environment(program, id as u32) {
+        Value::NULL
+    } else {
+        vm.promote_frame_environment(dispatch.frame)
+    };
     let closure = vm.closure(program, id as u32, env).unwrap_or(Value::DELETED);
     super::dispatch_fast::note_allocation(vm);
     // The allocation moves only the record bases; the frame's views change where this closure first captured it.

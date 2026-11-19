@@ -687,6 +687,12 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(Value::UNDEFINED);
                 self.write(f, i.result_register(), value);
             }
+            Op::MakeClosure if self.closure_needs_no_environment(p, i.closure_function_index()) => {
+                // Nothing the closure runs reads its environment: it takes none, and the frame
+                // keeps its locals unpromoted (`Vm::closure_needs_no_environment`).
+                let v = self.closure(p, i.closure_function_index(), Value::NULL)?;
+                self.write(f, i.result_register(), v);
+            }
             Op::MakeClosure => {
                 let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
                 let module_root = p.is_module()

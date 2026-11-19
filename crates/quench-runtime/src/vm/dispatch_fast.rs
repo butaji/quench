@@ -3624,6 +3624,12 @@ fn lane_window_closure_value<H: Host>(
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let parent = unsafe { (*cx).registers }.env();
+    // A closure that reads nothing of its environment takes none, so the window is not made.
+    if vm.closure_needs_no_environment(code, function) {
+        let value = lane_closure(vm, code, function, Value::NULL);
+        note_allocation(vm);
+        return value;
+    }
     // SAFETY: the running environment activation's window, whose function is the
     // innermost activation's and whose environment's parent is the context's.
     let window = |vm: &mut Vm<H>| unsafe {
@@ -7077,10 +7083,15 @@ fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Va
     {
         return None;
     }
-    let env = vm.promote_frame_environment(frame);
-    // Promotion moves the frame's captured locals into the environment, so a capture
-    // slot pointer found before it is not reused.
-    unsafe { (*cx).registers.set_capture(std::ptr::null()) };
+    let env = if vm.closure_needs_no_environment(code, id) {
+        Value::NULL
+    } else {
+        let env = vm.promote_frame_environment(frame);
+        // Promotion moves the frame's captured locals into the environment, so a capture
+        // slot pointer found before it is not reused.
+        unsafe { (*cx).registers.set_capture(std::ptr::null()) };
+        env
+    };
     let value = lane_closure(vm, code, id, env);
     note_allocation(vm);
     value

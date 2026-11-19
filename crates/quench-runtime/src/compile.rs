@@ -3423,6 +3423,10 @@ impl<'a> Compiler<'a> {
         // A replay compiles one function and records no facts; it keeps no program. A class
         // constructor runs its instance initializer on its own environment
         // (`Vm::initialize_this_binding`); a released constructor's link is not at hand.
+        // A private name is found by walking the environment chain from the activation that
+        // uses it (`Vm::private_home`), and no capture records that walk, so a program that names
+        // any private member reads each closure's whole chain.
+        let names_private_members = self.private_name_references != 0;
         let closure_reads = (facts.len() == functions.len()).then(|| {
             let initializers: Vec<capture_layout::InstanceInitializer> = functions
                 .iter()
@@ -3435,7 +3439,8 @@ impl<'a> Compiler<'a> {
                     None => capture_layout::InstanceInitializer::Known(None),
                 })
                 .collect();
-            std::rc::Rc::new(capture_layout::closure_reads(&facts, &reachable, &initializers))
+            let dynamic_scopes = if names_private_members { vec![true; facts.len()] } else { reachable.clone() };
+            std::rc::Rc::new(capture_layout::closure_reads(&facts, &dynamic_scopes, &initializers))
         });
         self.resolve_name_bindings(&mut functions, &reachable);
         let mut layout_inputs = capture_layout::inputs(&facts, &dynamic, |id| {
