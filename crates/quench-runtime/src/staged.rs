@@ -222,151 +222,326 @@ pub(crate) const fn miss(op: Op) -> Miss {
     }
 }
 
-/// An instruction `step` runs, with the operands a tier decoded.
-#[derive(Clone, Copy)]
-pub(crate) enum Operation<W, P> {
-    /// Copy register `source` into `destination` with its facts.
-    Move { destination: Register, source: Register },
-    /// Define `destination` from `constant`.
-    LoadConst { destination: Register, constant: Constant },
-    /// Define `destination` from local slot `slot`.
-    LoadLocalPlain { destination: Register, slot: u16 },
-    /// Write `source` to local slot `slot`, and to `result` where the instruction has one.
-    StoreLocalPlain { source: Register, slot: u16, result: Option<Register> },
-    /// Continue at the jump target.
-    Jump,
-    /// Continue at the jump target when register `register` is truthy, or when it is falsy
-    /// where `taken` is false; otherwise continue after this instruction.
-    JumpIf { register: Register, taken: bool },
-    /// Define `destination` with the activation's `this`; where the activation does not
-    /// hold it, leave at the frame's miss edge.
-    LoadThis { destination: Register },
-    /// A Number operation (`numeric`).
-    Number(NumberOperation),
-    /// Continue where register `register` is neither `null` nor `undefined`; those leave at
-    /// the frame's miss edge, where the interpreter throws the TypeError
-    /// (RequireObjectCoercible).
-    RequireObjectCoercible { register: Register },
-    /// Continue where register `register` holds an object or array record, which
-    /// `RequireIteratorResult` accepts as it is; any other value leaves at the frame's miss edge,
-    /// where the VM raises or reads it.
-    RequireIteratorResult { register: Register },
-    /// Define `destination` with the logical negation of register `source`'s truthiness.
-    LogicalNot { destination: Register, source: Register },
-    /// Define `destination` with the `typeof` name index (int32) of register `source`'s value
-    /// where its own word decides it; a heap value leaves at the frame's miss edge.
-    TypeofIndex { destination: Register, source: Register },
-    /// Store `value` at dense array element `index`, under `proof`.
-    IndexWrite { index: W, value: W, proof: P },
-    /// The empty object, object or array literal, constant array, regexp literal, closure,
-    /// literal template or string concatenation `allocation` makes, defined into `destination`; a due collection leaves
-    /// at the frame's miss edge (`Frame::allocate_value`).
-    Allocate { destination: Register, allocation: Allocation, proof: P },
-    /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
-    Safepoint { proof: P },
-    /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
-    Nop,
-    /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
-    /// miss edge takes a failed store.
-    IndexSetHelper { base: W, key: W, value: W, proof: P },
-    /// The name read of `atom` through cache `site` into `destination`, and `undefined` into
-    /// `receiver` where it is a call's: the frame's facts about the global (`GlobalFrame::global_binding`)
-    /// decide it, else the VM's read (`CallOut::LoadName`). A call's receiver is the VM's where
-    /// a `with` scope may bind the name, so a read the frame does not resolve leaves.
-    LoadName { destination: Register, atom: u32, site: u16, receiver: Option<Register>, proof: P },
-    /// Define `destination` as `undefined` (`void`).
-    Void { destination: Register },
-    /// ToPropertyKey of a string `source`, which is its own key; any other value leaves at the
-    /// miss edge, where the VM converts it (`Vm::to_property_key`: a Number allocates, an object
-    /// runs guest code).
-    PropertyKey { destination: Register, source: Register },
-    /// `left == right` (or `===`; negated for `!=`, `!==`) where the two words decide it: the
-    /// same word, two int32s, or `null` and `undefined` under `==`. Any other pair leaves at the
-    /// miss edge, where the VM compares (strings, BigInts, conversions that run guest code).
-    Equality { destination: Register, left: Register, right: Register, strict: bool, negated: bool },
-    /// Any other `Binary` of two registers (a string or BigInt relation, an arithmetic of other
-    /// than Numbers, `instanceof`, `in`): the VM's own operation, a callout.
-    Binary { destination: Register, left: Register, right: Register, operator: u32 },
-    /// Define `destination` from environment slot `slot` (`environment::environment_slot`); a
-    /// sparse storage or an internal marker leaves at the frame's miss edge.
-    LoadEnvLocal { destination: Register, slot: u16 },
-    /// Write `source` to environment slot `slot`, and to `result` where the instruction has one;
-    /// `initialize` where the store is the binding's declaration.
-    StoreEnvLocal { source: Register, slot: u16, result: Option<Register>, initialize: bool },
-    /// Define `destination` with the length of the arguments binding in local `slot`.
-    ArgumentsLength { destination: Register, slot: u16 },
-    /// Define `destination` with the `typeof` name of the global `atom` through cache `site`
-    /// (the lane's own read); an unresolvable name is `undefined`, not an error.
-    GlobalTypeof { destination: Register, atom: u32, site: u16 },
-    /// The global-name store of `source` to `atom` through cache `site`, an initialization
-    /// where `initialize`; a binding the lane's store does not take leaves at the miss edge.
-    GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool },
-    /// Define `destination` with the script-top-level binding the declaration `declaration` names (its
-    /// position in the root's global lexicals), through cache `site`; a temporal dead zone is the VM's to raise.
-    GlobalLexicalLoad { destination: Register, declaration: u32, site: u16 },
-    /// The store of `source` to the script-top-level binding the declaration `declaration` names, through
-    /// cache `site`, an initialization where `initialize`; the VM makes it (const and dead zone rules included).
-    GlobalLexicalStore { source: Register, declaration: u32, site: u16, initialize: bool },
-    /// An iteration or spread step (`Protocol`) over the `operands` registers, defining
-    /// `destination` where it has one; the generic protocol runs guest code, a callout.
-    Protocol { step: Protocol, destination: Option<Register>, operands: [Option<Register>; 2] },
-    /// Define `destination` with the next key of the for-in state in register `state`; continue
-    /// at the jump target once none is left.
-    ForInNext { destination: Register, state: Register },
-    /// `base[key]` in the body of the for-in whose state register is `state`: the key's listed
-    /// slot where the state's memo answers (`iteration::for_in_keyed_get`), else the element read.
-    EnumeratedGet { destination: Register, state: Register, base: Register, key: Register },
-    /// The VM field-store helper for `object.atom = value` through cache `site`.
-    #[cfg_attr(not(test), allow(dead_code))] // no tier builds it until the call-out rows land
-    FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
-    /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
-    /// defines the result register.
-    GetField { base: FieldBase, lookup: FieldLookup },
-    /// `base.atom = value` through cache `site`'s store plan (`property_write::set_field`);
-    /// `base` is `this` for `None`.
-    SetField { value: Register, base: Option<Register>, atom: u32, site: u16 },
-    /// `base.atom = value` of a word no register names, of type `fact`, through cache site
-    /// `site`'s store plan (`property_write::store_word`); `base` is `this` for `None`.
-    StoreField { base: Option<Register>, value: W, fact: Type, atom: u32, site: u16 },
-    /// The VM's read of `atom` of `object`, a value no register names, through `site`
-    /// (`PropertyFrame::field_probe`).
-    FieldGetHost { object: W, atom: u32, site: u16 },
-    /// The VM's adding store of `value` to `atom` of `object` (`PropertyFrame::field_add`).
-    #[cfg_attr(not(test), allow(dead_code))]
-    FieldAdd { object: W, atom: u32, site: u16, value: W },
-    /// `delete base[key]` into `destination`, throwing on a refusal where `strict`
-    /// (`PropertyFrame::delete_property`, else `CallOut::Delete`).
-    Delete { destination: Register, base: Register, key: Register, strict: bool },
-    /// `base[key]` past the dense and typed element reads (`PropertyFrame::index_get_host`).
-    #[cfg_attr(not(test), allow(dead_code))]
-    IndexGetHost { base: W, key: W },
-    /// A step of the call protocol: admission, `this` binding, the callee's window, completion
-    /// (`protocol`).
-    Call(CallOperation<W>),
-    /// A call whose one argument register holds an iterable to spread or an array to apply
-    /// (`CallSpread`, `CallArray`): the VM's call, a callout (`spread`).
-    SpreadCall { destination: Register, callee: Register, receiver: Register, arguments: Arguments, passing: Passing },
-    /// `super(...)`: the VM's construction with the activation's `new.target`, a callout (`spread`).
-    SuperCall { destination: Register, callee: Register, arguments: Arguments, passing: Passing },
-    /// Complete the activation with the value of `source` (`invoke::ret`).
-    Return { source: Register },
-    /// The value `base[key]` reads, a present dense element where the array and the key's int32
-    /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
-    ElementRead { base: Register, key: Operand },
-    /// `base[key] = value`, replacing a present dense element in place where the array owns its
-    /// backing alone and the value needs no barrier log, else the VM's store.
-    ElementWrite { value: Register, base: Register, key: Register },
-    /// Define `destination` from the capture `slot`, `depth` scopes out, or from the root
-    /// environment's projected binding where `root` (`Frame::capture_slot`). The decode never
-    /// names a root: only a tier that found the walk end at one does.
-    LoadCapture { destination: Register, depth: u16, slot: u16, root: bool },
-    /// Store `source` to the capture `slot`, `depth` scopes out (`Frame::store_capture`).
-    StoreCapture { source: Register, depth: u16, slot: u16 },
-    /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
-    /// holds, or fails where `negate` (`JumpBinaryFalse`); otherwise continue after it.
-    CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
+/// The adjacent opcode pairs a tier runs as one generated record (`dispatch_fast::fused_rows`):
+/// row `.0` then row `.1`, with no dispatch between them. Each is a pair of generated rows the
+/// lane meets back to back in loops: a local store or a move then the loop's back jump, a local
+/// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
+///
+/// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 92] = [
+    // An i32 add of a constant then the direct load at its sum (the load reads the register).
+    (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI64Load as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmF32Load as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmF64Load as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI32Load8S as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI32Load8U as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI32Load16S as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI32Load16U as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI64Load8S as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI64Load8U as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI64Load16S as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI64Load16U as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI64Load32S as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI64Load32U as u16, FUSED_PLAIN),
+    // Two i32 adds: a strided loop's pointer and counter updates (the second may be the loop's step and test).
+    (Op::WasmI32Add as u16, Op::WasmI32AddImmediateJumpNonZero as u16, FUSED_PLAIN),
+    (Op::WasmI32Add as u16, Op::WasmI32AddImmediate as u16, FUSED_PLAIN),
+    (Op::WasmI32Add as u16, Op::WasmI32Add as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI32AddImmediateJumpNonZero as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI32AddImmediate as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI32Add as u16, FUSED_PLAIN),
+    // An i32 `and` with an immediate, then the register comparison jump on its result.
+    (Op::WasmI32AndImmediate as u16, Op::WasmJumpI32Equal as u16, FUSED_PLAIN),
+    (Op::WasmI32AndImmediate as u16, Op::WasmJumpI32NotEqual as u16, FUSED_PLAIN),
+    // A constant then the direct Wasm store of it (the store reads the constant's register).
+    (Op::LoadConst as u16, Op::WasmI32Store as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI64Store as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmF32Store as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmF64Store as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI32Store8 as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI32Store16 as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI64Store8 as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI64Store16 as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI64Store32 as u16, FUSED_PLAIN),
+    (Op::StoreLocalPlain as u16, Op::Jump as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::Jump as u16, FUSED_PLAIN),
+    // An i32 add of a constant then the unconditional jump after it (a loop latch).
+    (Op::WasmI32AddImmediate as u16, Op::Jump as u16, FUSED_PLAIN),
+    // A local read then a branch on it.
+    (Op::LoadLocalPlain as u16, Op::JumpFalse as u16, FUSED_PLAIN),
+    (Op::LoadLocalPlain as u16, Op::JumpTrue as u16, FUSED_PLAIN),
+    // `x++` / `x--` on a Number (`ToNumeric` then the update). Subsumes `specialize_updates`
+    // (`lane_postfix_update`).
+    (Op::ToNumeric as u16, Op::IncDec as u16, FUSED_PLAIN),
+    // An update then the unconditional jump after it. Subsumes `specialize_update_jumps`
+    // (`lane_inc_dec_jump`) and the update of `specialize_update_back_edges` where it sits
+    // directly before the back jump (its loop-test variant `lane_inc_dec_loop` is not kept).
+    (Op::IncDec as u16, Op::Jump as u16, FUSED_PLAIN),
+    // A Number operation then a branch on its result. Subsumes `specialize_value_jumps`
+    // (`lane_value_jump`, the value's write kept: the dead-value variant is not kept).
+    (Op::Binary as u16, Op::JumpFalse as u16, FUSED_PLAIN),
+    (Op::Binary as u16, Op::JumpTrue as u16, FUSED_PLAIN),
+    // Two arithmetic or bitwise operators, the second reading the first's result: `(a + b) * c`,
+    // `(a + b) | 0`. Both rows run in full; the first's double result stays raw where the second
+    // reads it and nothing after does (`FUSED_RAW`, the hand pair's raw result made general).
+    (Op::Binary as u16, Op::Binary as u16, FUSED_RAW),
+    // A `typeof` test then the branch on it (`if (typeof x === "number")`).
+    (Op::Unary as u16, Op::JumpFalse as u16, FUSED_PLAIN),
+    // `!(x instanceof C)` tests also take the `Binary` then `JumpTrue` pair above.
+    // `c = c + 1` of a capture: the store, then the read of the same capture. Subsumes
+    // `specialize_capture_updates`' store-then-read form (`lane_store_capture_load`).
+    (Op::StoreCapture as u16, Op::LoadCapture as u16, FUSED_PLAIN),
+    // A bit-field extraction then an i32 operator (another extraction, a multiply, or an xor).
+    (Op::WasmI32ShiftRightUnsignedAndImmediate as u16, Op::WasmI32ShiftRightUnsignedAndImmediate as u16, FUSED_PLAIN),
+    (Op::WasmI32ShiftRightUnsignedAndImmediate as u16, Op::WasmI32Multiply as u16, FUSED_PLAIN),
+    (Op::WasmI32ShiftRightUnsignedAndImmediate as u16, Op::WasmI32XorImmediate as u16, FUSED_PLAIN),
+    // A scaled index: a shift left by a constant, then the add that takes it.
+    (Op::WasmI32ShiftLeftImmediate as u16, Op::WasmI32Add as u16, FUSED_PLAIN),
+    // A plain i32 store, then a move.
+    (Op::WasmI32Store as u16, Op::Move as u16, FUSED_PLAIN),
+    (Op::WasmI32Store8 as u16, Op::Move as u16, FUSED_PLAIN),
+    (Op::WasmI32Store16 as u16, Op::Move as u16, FUSED_PLAIN),
+    // Two moves in a row (a parallel copy resolved in order).
+    (Op::Move as u16, Op::Move as u16, FUSED_PLAIN),
+    // A move then a Wasm i32 zero test, which reads the register the move wrote.
+    (Op::Move as u16, Op::WasmJumpI32Zero as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::WasmJumpI32NonZero as u16, FUSED_PLAIN),
+    // A move whose moved value the next i32 load takes as its address.
+    (Op::Move as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::WasmI32Load8S as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::WasmI32Load8U as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::WasmI32Load16S as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::WasmI32Load16U as u16, FUSED_PLAIN),
+    // An i32 load whose value the next branch table selects on (the table reads the register).
+    (Op::WasmI32Load as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
+    (Op::WasmI32Load8S as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
+    (Op::WasmI32Load8U as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
+    (Op::WasmI32Load16S as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
+    (Op::WasmI32Load16U as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
+    // A local or capture read then a register comparison jump (`JumpBinaryFalse`). Subsumes
+    // `specialize_load_branch_pairs` (`load_relation_jump_handler`), both directions of the jump.
+    (Op::LoadLocalPlain as u16, Op::JumpBinaryFalse as u16, FUSED_PLAIN),
+    (Op::LoadCapture as u16, Op::JumpBinaryFalse as u16, FUSED_PLAIN),
+    // A direct load then the direct store of its value, of the same width.
+    (Op::WasmI32Load as u16, Op::WasmI32Store as u16, FUSED_PLAIN),
+    (Op::WasmI32Load8U as u16, Op::WasmI32Store8 as u16, FUSED_PLAIN),
+    (Op::WasmI64Load as u16, Op::WasmI64Store as u16, FUSED_PLAIN),
+    // A pointer chase: an i32 load, then the i32 load its value addresses.
+    (Op::WasmI32Load as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
+    (Op::WasmI32Load as u16, Op::WasmI32Load8S as u16, FUSED_PLAIN),
+    (Op::WasmI32Load as u16, Op::WasmI32Load8U as u16, FUSED_PLAIN),
+    (Op::WasmI32Load as u16, Op::WasmI32Load16S as u16, FUSED_PLAIN),
+    (Op::WasmI32Load as u16, Op::WasmI32Load16U as u16, FUSED_PLAIN),
+    // An i32 load then the zero test of its value (`WasmJumpI32Zero`, `WasmJumpI32NonZero`).
+    (Op::WasmI32Load as u16, Op::WasmJumpI32Zero as u16, FUSED_PLAIN),
+    (Op::WasmI32Load as u16, Op::WasmJumpI32NonZero as u16, FUSED_PLAIN),
+    (Op::WasmI32Load8S as u16, Op::WasmJumpI32Zero as u16, FUSED_PLAIN),
+    (Op::WasmI32Load8S as u16, Op::WasmJumpI32NonZero as u16, FUSED_PLAIN),
+    (Op::WasmI32Load8U as u16, Op::WasmJumpI32Zero as u16, FUSED_PLAIN),
+    (Op::WasmI32Load8U as u16, Op::WasmJumpI32NonZero as u16, FUSED_PLAIN),
+    (Op::WasmI32Load16S as u16, Op::WasmJumpI32Zero as u16, FUSED_PLAIN),
+    (Op::WasmI32Load16S as u16, Op::WasmJumpI32NonZero as u16, FUSED_PLAIN),
+    (Op::WasmI32Load16U as u16, Op::WasmJumpI32Zero as u16, FUSED_PLAIN),
+    (Op::WasmI32Load16U as u16, Op::WasmJumpI32NonZero as u16, FUSED_PLAIN),
+    // `a[++i]`: an update then the keyed read it indexes. Subsumes `specialize_updated_index_reads`
+    // (`lane_update_get_index`).
+    (Op::IncDec as u16, Op::GetIndex as u16, FUSED_PLAIN),
+    // `x[t = i]`: a register copy then the keyed read of the copy's element. Subsumes
+    // `specialize_moved_index_reads` (`lane_move_get_index_proved`; the proof is the read's flag).
+    (Op::Move as u16, Op::GetIndex as u16, FUSED_PLAIN),
+    // `t + K` then the element read or store its result addresses. Subsumes the operator pairs
+    // (`specialize_operator_pairs`, `lane_operator_pair` and its constant form) into an element access.
+    (Op::Binary as u16, Op::GetIndex as u16, FUSED_PLAIN),
+    (Op::Binary as u16, Op::SetIndex as u16, FUSED_PLAIN),
+    // `a[i] = v; t = v` of a register copy of the stored value. Subsumes `specialize_store_moves`
+    // (`lane_set_index_move`).
+    (Op::SetIndex as u16, Op::Move as u16, FUSED_PLAIN),
+    // f64 arithmetic then f64 arithmetic (any operator, comparisons included: each row decodes its own
+    // operator from its immediate). Subsumes the boxed float pairs (`lane_f64_pair`, `FloatPairs::HANDLERS`).
+    (Op::WasmF64Binary as u16, Op::WasmF64Binary as u16, FUSED_PLAIN),
+    // The raw form of the same pair: both rows read and write raw words (`raw_representation`).
+    // Subsumes the raw float pairs (`lane_f64_pair` with `RAW`).
+    (Op::WasmF64BinaryRaw as u16, Op::WasmF64BinaryRaw as u16, FUSED_PLAIN),
+    // An f64 load then the f64 operator on the loaded value. Subsumes `lane_f64_load_pair`.
+    (Op::WasmF64Load as u16, Op::WasmF64Binary as u16, FUSED_PLAIN),
+    // An f64 operator then the f64 store of its result. Subsumes `lane_f64_store_pair`.
+    (Op::WasmF64Binary as u16, Op::WasmF64Store as u16, FUSED_PLAIN),
+];
+
+/// Runs of three or four generated rows the lane runs as one record (`chain_rows`): each
+/// entry's links in record order, `NO_LINK` padding a three-link chain. Only the last link may
+/// be a jump. A chain at a record wins over a `FUSED_ROWS` pair there. A link whose result only the
+/// next link reads, and dies there, keeps its double result raw where `chain_raw_links` allows it
+/// (`chain_mode`'s raw mask).
+pub(crate) const FUSED_CHAINS: [[u16; 4]; 42] = [
+    // A local or capture read, then a register comparison, then its branch. Subsumes the value
+    // jump of `specialize_value_jumps` (`lane_value_jump`) after a read.
+    [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpFalse as u16, NO_LINK],
+    [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpTrue as u16, NO_LINK],
+    [Op::LoadCapture as u16, Op::Binary as u16, Op::JumpFalse as u16, NO_LINK],
+    [Op::LoadCapture as u16, Op::Binary as u16, Op::JumpTrue as u16, NO_LINK],
+    // An i32 load, an i32 operator on the loaded value, then the i32 store of its result.
+    [Op::WasmI32Load as u16, Op::WasmI32Add as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32Subtract as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32Multiply as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32And as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32Or as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32Xor as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32ShiftLeft as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32ShiftRightSigned as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32ShiftRightUnsigned as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32Equal as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32NotEqual as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32LessSigned as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32LessUnsigned as u16, Op::WasmI32Store as u16, NO_LINK],
+    // An i32 add of a constant, an f64 load at its sum, then an f64 operator on the loaded value.
+    [Op::WasmI32AddImmediate as u16, Op::WasmF64Load as u16, Op::WasmF64Binary as u16, NO_LINK],
+    // `c = (c + 1) | 0` of a capture: its read, the operator, the truncation, then the store.
+    // Subsumes the int32 capture update (`specialize_capture_updates`, `lane_update_capture_int32`).
+    [Op::LoadCapture as u16, Op::Binary as u16, Op::Binary as u16, Op::StoreCapture as u16],
+    // `c = c + x` / `c -= x` of a capture: its read, the numeric operation, then the store. Subsumes
+    // the untruncated capture update (`specialize_capture_updates`, `lane_store_capture_load`).
+    [Op::LoadCapture as u16, Op::Binary as u16, Op::StoreCapture as u16, NO_LINK],
+    // A move pair then the unconditional jump after it (a parallel copy at a loop's latch).
+    [Op::Move as u16, Op::Move as u16, Op::Jump as u16, NO_LINK],
+    // `(c ± k) & m` then an immediate comparison jump on the masked value (`c - '0'` digit tests).
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32EqualImmediate as u16, NO_LINK],
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32NotEqualImmediate as u16, NO_LINK],
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32LessUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32LessEqualUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32GreaterUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32GreaterEqualUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32EqualImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32NotEqualImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32LessUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32LessEqualUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32GreaterUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32GreaterEqualUnsignedImmediate as u16, NO_LINK],
+    // Two i32 loads of one width, whose values one i32 operator combines.
+    [Op::WasmI32Load as u16, Op::WasmI32Load as u16, Op::WasmI32Add as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32Load as u16, Op::WasmI32Multiply as u16, NO_LINK],
+    [Op::WasmI32Load16S as u16, Op::WasmI32Load16S as u16, Op::WasmI32Multiply as u16, NO_LINK],
+    [Op::WasmI32Load16U as u16, Op::WasmI32Load16U as u16, Op::WasmI32Multiply as u16, NO_LINK],
+    [Op::WasmI32Load8U as u16, Op::WasmI32Load8U as u16, Op::WasmI32Add as u16, NO_LINK],
+    // `a[++i + K]`: the update, the keyed read it indexes, then the Number operation on the read.
+    // Subsumes `specialize_updated_index_operators` (`lane_update_get_index_operator`).
+    [Op::IncDec as u16, Op::GetIndex as u16, Op::Binary as u16, NO_LINK],
+    // `heap[(p + K) >> S]` and `heap[p + K]`: the address sum, its shift, then the element read or
+    // store it addresses.
+    [Op::Binary as u16, Op::Binary as u16, Op::GetIndex as u16, NO_LINK],
+    [Op::Binary as u16, Op::Binary as u16, Op::SetIndex as u16, NO_LINK],
+    // `mem[x] op= v` on f64: the load, the f64 operator on the loaded value, then the f64 store of its
+    // result. Subsumes `lane_f64_update` (`FloatPairs::UPDATES`).
+    [Op::WasmF64Load as u16, Op::WasmF64Binary as u16, Op::WasmF64Store as u16, NO_LINK],
+];
+
+/// Whether every `FUSED_ROWS` pair and `FUSED_CHAINS` chain joins rows of one representation
+/// (`raw_representation`): a raw word is not a boxed value, so no fused record mixes them.
+const fn fused_links_share_representation() -> bool {
+    let mut pair = 0;
+    while pair < FUSED_ROWS.len() {
+        let (a, b, _) = FUSED_ROWS[pair];
+        match (Op::from_index(a as usize), Op::from_index(b as usize)) {
+            (Some(a), Some(b)) => {
+                if raw_representation(a) != raw_representation(b) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+        pair += 1;
+    }
+    let mut chain = 0;
+    while chain < FUSED_CHAINS.len() {
+        let links = FUSED_CHAINS[chain];
+        let mut link = 0;
+        let mut first: Option<bool> = None;
+        while link < 4 {
+            if links[link] != NO_LINK {
+                let Some(op) = Op::from_index(links[link] as usize) else { return false };
+                let raw = raw_representation(op);
+                match first {
+                    None => first = Some(raw),
+                    Some(earlier) => {
+                        if earlier != raw {
+                            return false;
+                        }
+                    }
+                }
+            }
+            link += 1;
+        }
+        chain += 1;
+    }
+    true
 }
 const _: () = assert!(fused_links_share_representation(), "a fused pair or chain mixes raw and boxed rows");
+
+/// The mode of a `FUSED_CHAINS` record (`chain_rows`' `MODE`): the chain's staged mode (`FUSED_PLAIN`
+/// or `FUSED_WINDOW`) in the low `CHAIN_RAW_SHIFT` bits, and above them the raw mask: bit `k` set
+/// when link `k`'s double result stays raw (`LaneFrame::raw_result`). `fuse_chains` picks the raw mask
+/// per record, from liveness, among the bits `chain_raw_links` names for the chain.
+pub(crate) const CHAIN_RAW_SHIFT: u8 = 4;
+/// The `MODE` of a chain record in `mode` with raw mask `raw`.
+pub(crate) const fn chain_mode(mode: u8, raw: u8) -> u8 { mode | (raw << CHAIN_RAW_SHIFT) }
+/// The staged mode (`FUSED_PLAIN`, `FUSED_WINDOW`) of a chain `MODE`, without its raw mask.
+pub(crate) const fn chain_base(mode: u8) -> u8 { mode & ((1 << CHAIN_RAW_SHIFT) - 1) }
+/// The raw mask of a chain `MODE`: bit `k` for link `k`.
+pub(crate) const fn chain_raw(mode: u8) -> u8 { mode >> CHAIN_RAW_SHIFT }
+/// The raw-mask bit of a chain's last link: its double result stays raw into the record after the chain,
+/// where a Number binary row reads it (`fuse_chains`, `number_binary_row`). No in-chain link names it
+/// (`chain_raw_links` names only links with a next link in the chain), so it is free at either length.
+pub(crate) const CHAIN_RAW_OUT: u8 = 3;
+/// The `MODE` bit that keeps a fused record's last link's double result raw into the next record (the
+/// raw-out bit). A pair's `MODE` carries it above its staged mode; a chain's carries it as `chain_mode`'s
+/// raw mask bit `CHAIN_RAW_OUT`, which is the same bit. Only a Number operator's last link takes it.
+pub(crate) const FUSED_RAW_OUT: u8 = 1 << (CHAIN_RAW_SHIFT + CHAIN_RAW_OUT);
+/// A pair's staged mode without its raw-out bit (`FUSED_RAW_OUT`).
+pub(crate) const fn fused_base(mode: u8) -> u8 { mode & !FUSED_RAW_OUT }
+/// `FUSED_RAW_OUT` where the last row `op` of a pair may keep its double result raw (a Number operator),
+/// else 0: the raw-out bit `fuse_rows` ORs into the pair's `MODE`.
+pub(crate) const fn raw_out_bit(op: Op) -> u8 { if number_operator(op) { FUSED_RAW_OUT } else { 0 } }
+/// The raw mask bits `fuse_chains` may set for `chain`: `chain_raw_links`, plus `CHAIN_RAW_OUT` where the
+/// chain's last link is a Number operator (its raw result may feed the record after the chain).
+pub(crate) const fn chain_raw_eligible(chain: [u16; 4]) -> u8 {
+    let last = if chain[3] == NO_LINK { chain[2] } else { chain[3] };
+    chain_raw_links(chain) | (if number_operator(row_op(last)) { 1 << CHAIN_RAW_OUT } else { 0 })
+}
+/// The row of a Number binary operator (`JsDenotation::NumericBinary`): `Binary`, `NumericAdd`, `NumericMultiply`.
+/// Its operands are read as Numbers (`numeric::binary_operation`), so a raw double operand is one. These
+/// are the only rows a raw result (`FUSED_RAW_OUT`) may feed: a Unary's operand reads as an int32 first.
+pub(crate) const BINARY_ROW: u16 = Op::Binary as u16;
+/// The row of `NumericAdd`, a Number binary operator (see `BINARY_ROW`).
+pub(crate) const NUMERIC_ADD_ROW: u16 = Op::NumericAdd as u16;
+/// The row of `NumericMultiply`, a Number binary operator (see `BINARY_ROW`).
+pub(crate) const NUMERIC_MULTIPLY_ROW: u16 = Op::NumericMultiply as u16;
+
+/// Whether the result of a `FUSED_CHAINS` link may stay raw where the next link reads it: the next
+/// link is a keyed element access (`keyed_element`), which reads its key as a Number, or both links
+/// are Number operators (`number_operator`). Bit `k` is for link `k`; the last link and a link whose
+/// next link is `NO_LINK` name none. `fuse_chains` also requires, per record, that the register is
+/// read only there and dies after (or is overwritten by) the next link.
+pub(crate) const fn chain_raw_links(chain: [u16; 4]) -> u8 {
+    let mut mask = 0;
+    let mut k = 0;
+    while k < 3 {
+        if chain[k + 1] != NO_LINK && raw_result_link(row_op(chain[k]), row_op(chain[k + 1])) { mask |= 1 << k; }
+        k += 1;
+    }
+    mask
+}
+
+/// The bits of `chain_raw_links` whose next link is a keyed element access, which take the key
+/// rule: none, as no keyed link keeps a raw key (`raw_result_link`).
+pub(crate) const fn chain_keyed_links(_chain: [u16; 4]) -> u8 { 0 }
+
+/// Whether `producer`'s result may stay raw in `consumer`, judged by meaning alone.
+/// A keyed consumer is not one: its key guard wants an int32, which an integral raw double is not,
+/// so a raw key would take the row's miss every time.
+const fn raw_result_link(producer: Op, consumer: Op) -> bool {
+    number_operator(producer) && number_operator(consumer)
+}
 
 /// The absent fourth link of a three-link `FUSED_CHAINS` entry.
 pub(crate) const NO_LINK: u16 = u16::MAX;
@@ -401,8 +576,11 @@ pub(crate) const FUSED_WINDOW: u8 = 3;
 ///   then its test), and an update pair into an update then its test;
 /// - a lone back jump with no pair before it (`row_jump`'s target run, `lone_target_form`). Subsumes
 ///   `lane_jump_back_nullish` and `specialize_nullish_back_edges` (a nullish test), and
-///   `lane_jump_back_update_small` for an update then a test directly (its copy-then-test variant is not
-///   a form: a `Move` between the update and the test is not a prefix row).
+///   `lane_jump_back_update_small` for an update then a test directly;
+/// - a lone back jump whose target run is a prefix row, a copy (`FUSED_TARGET_COPY_ROWS`) and the test
+///   (`lone_copy_target_form`). The copy runs its register write as its own row does, so the test reads
+///   the copied value from its register; the form is taken only where the test names the copy's
+///   destination. Subsumes `lane_jump_back_update_small`'s copy-then-test variant.
 /// The back edge's fuel check runs before the prefix, as the jump's own does (`take_jump`).
 pub(crate) const FUSED_TARGET: u8 = 4;
 
@@ -411,10 +589,19 @@ pub(crate) const FUSED_TARGET: u8 = 4;
 /// the test itself (`NO_LINK`).
 pub(crate) const FUSED_TARGET_PREFIX_ROWS: [u16; 3] = [LOAD_LOCAL_PLAIN_ROW, LOAD_CAPTURE_ROW, INC_DEC_ROW];
 
+/// The row a back edge's target run may carry between its prefix row and its test (`FUSED_TARGET`'s second
+/// prefix slot): a register copy (`copies_register`), whose destination the test reads.
+pub(crate) const FUSED_TARGET_COPY_ROWS: [u16; 1] = [MOVE_ROW];
+
 const _: () = {
     let mut k = 0;
     while k < FUSED_TARGET_PREFIX_ROWS.len() {
         assert!(target_prefix(row_op(FUSED_TARGET_PREFIX_ROWS[k])), "a FUSED_TARGET_PREFIX_ROWS entry is not a target prefix");
+        k += 1;
+    }
+    let mut k = 0;
+    while k < FUSED_TARGET_COPY_ROWS.len() {
+        assert!(copies_register(row_op(FUSED_TARGET_COPY_ROWS[k])), "a FUSED_TARGET_COPY_ROWS entry is not a register copy");
         k += 1;
     }
 };
@@ -724,6 +911,9 @@ pub(crate) const fn reads_named_field(op: Op) -> bool { matches!(op, Op::GetFiel
 pub(crate) const fn reads_element(op: Op) -> bool { matches!(op, Op::GetIndex) }
 /// Stores an element by index (`SetIndex`).
 pub(crate) const fn writes_element(op: Op) -> bool { matches!(op, Op::SetIndex) }
+/// Reads or stores an element by a keyed index (`GetIndex`, `SetIndex`): its key register is read as
+/// a Number index (`element_rows`' `index_key`).
+pub(crate) const fn keyed_element(op: Op) -> bool { reads_element(op) || writes_element(op) }
 /// Accesses an element through its object register as an indexed receiver (`GetIndex`,
 /// `SetIndex`, `RequireObjectCoercible`).
 pub(crate) const fn indexes_receiver(op: Op) -> bool { matches!(op, Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible) }
