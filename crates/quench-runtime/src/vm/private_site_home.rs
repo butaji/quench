@@ -12,8 +12,16 @@
 //! accessors once, under its own home, and no program can redefine them. The element follows
 //! the home alone, so it outlives a new environment that finds the same home again (an arrow
 //! field's closure per instance).
+//!
+//! Until some class is evaluated twice (`Vm::unique_private_homes`), each site's home is one
+//! value for good: a home is made by a class evaluation, which is a closure of the class's
+//! constructor (`Vm::note_class_evaluation`), and the code of a site is made by the same
+//! evaluation's program. A site's shape and slot then hold for any environment, so an access
+//! compares the receiver's shape alone (`PrivateSiteHomes::unique_field_slot`): the shape names
+//! the private key with its home, so it proves the brand, and no environment is found.
 
 use super::{Atom, Host, ResidualProgram, Value, Vm};
+use rustc_hash::FxHashSet;
 use crate::heap::PrivateBrand;
 
 /// Direct-mapped entries: a power of two that holds the private-name sites a request runs
@@ -39,6 +47,10 @@ struct SiteHome {
 
 /// `SiteHome::shape` of an entry that records no shape.
 const NO_SHAPE: u32 = u32::MAX;
+
+/// `SiteHome::slot` of a read site's shape that carries the brand of a private method or
+/// accessor, not a field (`record_brand_shape`): the read answers the entry's element.
+const BRAND_SLOT: u32 = u32::MAX;
 
 /// A private name's method or accessor, which an object carrying its brand reads.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -101,13 +113,52 @@ impl PrivateSiteHomes {
     #[inline(always)]
     pub(super) fn field_slot(&self, site: usize, environment: Value, shape: u32) -> Option<usize> {
         let entry = self.entries.get(Self::index(site))?;
-        (entry.site == site && entry.environment == environment && entry.shape == shape).then_some(entry.slot as usize)
+        (entry.site == site && entry.environment == environment && entry.shape == shape && entry.slot != BRAND_SLOT)
+            .then_some(entry.slot as usize)
+    }
+
+    /// `field_slot` under any environment, which only a site whose home is one value for good
+    /// may take (`Vm::unique_private_homes`): the shape names the field's key with that home.
+    #[inline(always)]
+    pub(super) fn unique_field_slot(&self, site: usize, shape: u32) -> Option<usize> {
+        let entry = self.entries.get(Self::index(site))?;
+        (entry.site == site && entry.shape == shape && entry.slot != BRAND_SLOT).then_some(entry.slot as usize)
+    }
+
+    /// The private method or accessor site `site` reads of an object of `shape`, which
+    /// carries its brand (`record_brand_shape`), under any environment: as `unique_field_slot`,
+    /// only for a site whose home is one value for good.
+    #[inline(always)]
+    pub(super) fn unique_element(&self, site: usize, shape: u32) -> Option<PrivateElement> {
+        let entry = self.entries.get(Self::index(site))?;
+        (entry.site == site && entry.shape == shape && entry.slot == BRAND_SLOT).then_some(entry.element).flatten()
+    }
+
+    /// Whether objects of `shape` carry the private name site `site` names, a field or a
+    /// method's or accessor's brand (`record_field_slot`, `record_brand_shape`), under any
+    /// environment: as `unique_field_slot`, only for a site whose home is one value for good.
+    #[inline(always)]
+    pub(super) fn unique_carrier(&self, site: usize, shape: u32) -> bool {
+        self.entries.get(Self::index(site)).is_some_and(|entry| entry.site == site && entry.shape == shape)
+    }
+
+    /// Records that objects of `shape`, a shape no dictionary edit changes, carry the brand
+    /// of the private method or accessor site `site` names under `home`: a read's answers the
+    /// entry's element (`unique_element`), an `in`'s is true (`unique_carrier`).
+    pub(super) fn record_brand_shape(&self, site: usize, home: Value, shape: u32) {
+        let index = Self::index(site);
+        if let Some(entry) = self.entries.get(index)
+            && entry.site == site
+            && entry.home == home
+        {
+            self.entries.set(index, SiteHome { shape, slot: BRAND_SLOT, ..entry });
+        }
     }
 
     /// The shape and slot site `site` recorded under the home it found for `environment`.
     pub(super) fn field_entry(&self, site: usize, environment: Value) -> Option<(u32, usize)> {
         let entry = self.entries.get(Self::index(site))?;
-        (entry.site == site && entry.environment == environment && entry.shape != NO_SHAPE)
+        (entry.site == site && entry.environment == environment && entry.shape != NO_SHAPE && entry.slot != BRAND_SLOT)
             .then_some((entry.shape, entry.slot as usize))
     }
 
@@ -179,6 +230,31 @@ impl PrivateSiteHomes {
 }
 
 impl<H: Host> Vm<H> {
+    /// Records a closure of class constructor `function` of the active program: a class
+    /// evaluation, which makes the homes of the private names the class declares. A second
+    /// closure of one constructor makes a second home for each of them, which the sites of
+    /// the class may meet from then on (`unique_private_homes`). A constructor of another
+    /// program is another class's: a site's code belongs to the program whose evaluation
+    /// made its function (a first-call chunk to its stub's), so the sites of two programs
+    /// are distinct records. A program id that a freed program's reuses is only a false
+    /// second evaluation.
+    pub(super) fn note_class_evaluation(&mut self, function: u32) {
+        if !self.private_homes_shared && !self.class_evaluations.insert((self.active_program, function)) {
+            self.private_homes_shared = true;
+            // Shared for good: the set has nothing more to prove.
+            self.class_evaluations = FxHashSet::default();
+        }
+    }
+
+    /// Whether every private-name site's home is one value for good: no class was evaluated
+    /// twice (`note_class_evaluation`) and no eval code that names private names, whose
+    /// program its callers share, was compiled. A site's shape then proves its brand under
+    /// any environment (`PrivateSiteHomes::unique_field_slot`).
+    #[inline(always)]
+    pub(super) fn unique_private_homes(&self) -> bool {
+        !self.private_homes_shared
+    }
+
     /// The private brand of `atom` at lane site `site` of `function`, whose frame captures
     /// from `environment`: the home the site found last for that environment, inline, else
     /// `site_private_brand_miss`. `None` leaves the access to the general path.

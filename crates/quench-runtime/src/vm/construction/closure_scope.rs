@@ -53,6 +53,11 @@ impl<H: Host> Vm<H> {
         let parts = self.closure_parts(plan, id, realm);
         let recorded_shapes = self.closure_shapes[parts.shapes_key].filter(|_| parts.ordinary);
         let (function, named_shape) = self.alloc_closure(&parts, env, recorded_shapes);
+        // A class constructor's closure is a class evaluation, which makes the class's private
+        // homes. No template makes one: only an ordinary closure records its shapes.
+        if plan.is_class_constructor {
+            self.note_class_evaluation(id);
+        }
         self.record_top_level_closure(plan, id, function);
         let Some(shapes) = recorded_shapes else {
             self.define_closure_properties(function, plan, &parts)?;

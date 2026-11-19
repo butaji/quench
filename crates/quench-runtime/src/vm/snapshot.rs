@@ -117,6 +117,8 @@ impl<H: Host> Vm<H> {
             symbol_write_proofs: _,
             symbol_load_proofs: _,
             private_site_homes: _,
+            class_evaluations,
+            private_homes_shared,
             array_iteration_shape: _,
             collection_iteration_shape: _,
             array_species_proof: _,
@@ -295,6 +297,10 @@ impl<H: Host> Vm<H> {
             writer.values(&live);
         }
         private_homes.snap(&mut writer)?;
+        // The heap keeps the closures of the classes evaluated so far, so a restored VM must
+        // know them: a second evaluation of one shares its private-name sites' homes.
+        class_evaluations.snap(&mut writer)?;
+        private_homes_shared.snap(&mut writer)?;
         let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag } = wasm_js;
         [*module, *instance, *memory, *table, *global, *tag, *js_tag].snap(&mut writer)?;
         writer.value(*instanceof_has_instance_holder);
@@ -414,6 +420,8 @@ impl<H: Host> Vm<H> {
         self.descriptors = Snap::unsnap(&mut reader)?;
         self.read_function_values(&mut reader)?;
         self.private_homes = Snap::unsnap(&mut reader)?;
+        self.class_evaluations = Snap::unsnap(&mut reader)?;
+        self.private_homes_shared = Snap::unsnap(&mut reader)?;
         let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;
         self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag };
         let holder = reader.value()?;
