@@ -694,7 +694,7 @@ pub(super) fn express_strict_sets(function: &mut BcFunction) {
 /// another register is then the same operation, which `ProducerMove` retargets to a `Move`'s
 /// destination. A suspension (`Await`, `Yield`) writes its result on resume, from a frame the
 /// tiers rebuild, so it keeps its register.
-const fn plain_producer(op: Op) -> bool {
+pub(super) const fn plain_producer(op: Op) -> bool {
     const fn other_field_plain(layout: FieldLayout) -> bool {
         !matches!(
             layout,

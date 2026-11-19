@@ -73,14 +73,15 @@ impl FunctionCompiler<'_, '_> {
         let mut values = SmallVec::new();
         let last = expressions.len().saturating_sub(1);
         for (index, expression) in expressions.into_iter().enumerate() {
-            let start = self.next_reg;
-            let mut item = self.expression(expression);
-            if item < start && index < last {
-                let copy = self.reg();
-                self.emit(Op::Move, copy, item, 0, 0);
-                item = copy;
+            if index < last {
+                // Each element but the last is computed into its own register, so a later
+                // element's assignment cannot change it.
+                let slot = self.reg();
+                self.expression_into(expression, slot);
+                values.push(slot);
+            } else {
+                values.push(self.expression(expression));
             }
-            values.push(item);
         }
         Some(values)
     }

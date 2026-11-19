@@ -125,6 +125,12 @@ impl WideInstruction {
         self.op = op;
     }
 
+    /// Retargets the A field, which a result-register op writes.
+    #[inline]
+    pub(crate) fn set_a(&mut self, value: u16) {
+        self.a = value;
+    }
+
     #[allow(dead_code)] #[inline]
     pub(crate) fn set_b(&mut self, value: u16) {
         self.b = value;
