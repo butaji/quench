@@ -31,7 +31,7 @@ fn folded(value: &Expression<'_>, depth: u32, names: Names<'_>) -> Option<Consta
         Expression::NumericLiteral(value) => Some(Constant::Number(value.value)),
         Expression::StringLiteral(value) => Some(super::string::constant(value)),
         Expression::BigIntLiteral(value) => {
-            Some(Constant::BigInt(crate::bigint::decimal_literal(&value.value)))
+            Some(Constant::BigInt(Box::new(crate::bigint::decimal_literal(&value.value))))
         }
         Expression::BooleanLiteral(value) => Some(Constant::Boolean(value.value)),
         Expression::NullLiteral(_) => Some(Constant::Null),

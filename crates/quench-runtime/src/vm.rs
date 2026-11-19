@@ -3368,7 +3368,7 @@ impl<H: Host> Vm<H> {
                 .typeof_constant(v)
                 .unwrap_or_else(|| self.heap.alloc_string(JsString::from_shared_text(v))),
             Constant::StringUnits(v) => self.heap.alloc_string(JsString::from_units(v)),
-            Constant::BigInt(v) => self.heap.alloc(Cell::bigint(v.clone())),
+            Constant::BigInt(v) => self.heap.alloc(Cell::bigint((**v).clone())),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
             Constant::Null => Value::NULL,

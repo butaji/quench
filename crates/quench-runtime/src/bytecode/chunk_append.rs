@@ -2,6 +2,7 @@
 //! after its own entries (`ResidualProgram::append_chunk`) in the room its load reserved, so
 //! a call between the chunk's functions and the program's stays a call within one program.
 use super::*;
+use crate::compile::replay::Settled;
 use std::cell::Cell;
 
 /// A program's count of inline-cache sites, and how many it may grow to when chunks are
@@ -154,7 +155,7 @@ impl ResidualProgram {
         // The load ran every decoded record's rewrites, except those it deferred: their first
         // reads settle them against the room restored above, so they stay unsettled here.
         *self.rewrite_ranges.settled.borrow_mut() = (0..self.functions.len())
-            .map(|id| (!self.rewrite_ranges.defers(id)).then_some(None))
+            .map(|id| if self.rewrite_ranges.defers(id) { Settled::UNSETTLED } else { Settled::UNRUN })
             .collect();
         self.rewrite_ranges.kept_pending = true;
         self.replay = Some(std::rc::Rc::new(crate::compile::replay::ProgramReplay::for_chunks(

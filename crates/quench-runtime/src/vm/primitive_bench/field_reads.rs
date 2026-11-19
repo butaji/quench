@@ -52,7 +52,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
     let field = match instruction.field_lookup().unwrap() {
         FieldLookup::Atom { atom, base, cache_site } => FieldSite {
             base, first: (atom, cache_site), second: None,
-            sink: None, sources: std::array::from_fn(|_| None),
+            sink: None, sources: [FieldSite::NO_SOURCE; 3],
         },
         FieldLookup::Site(index) => *program.field_sites.get(index).unwrap(),
     };

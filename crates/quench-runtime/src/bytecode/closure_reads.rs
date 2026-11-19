@@ -35,12 +35,27 @@ pub(crate) struct FunctionReadFacts<'a> {
 
 #[derive(Clone, Debug)]
 pub(super) struct FunctionReads {
-    pub(super) parent: Option<u32>,
+    /// The function it is nested in, or `NO_PARENT` for a program's root.
+    parent: u32,
     pub(super) is_arrow: bool,
     /// The (distance, slot) pairs the function and every function nested in it read of the
     /// environments outside the function, sorted; `None` for the whole chain.
     pub(super) reads: Option<Box<[(u32, u16)]>>,
     pub(super) named_slots: Box<[u16]>,
+}
+
+impl FunctionReads {
+    /// The `parent` of a program's root function, which nests in none.
+    pub(super) const NO_PARENT: u32 = u32::MAX;
+
+    pub(super) fn new(parent: Option<u32>, is_arrow: bool, reads: Option<Box<[(u32, u16)]>>, named_slots: Box<[u16]>) -> Self {
+        Self { parent: parent.unwrap_or(Self::NO_PARENT), is_arrow, reads, named_slots }
+    }
+
+    /// The function this one is nested in, if any.
+    pub(super) fn enclosing(&self) -> Option<u32> {
+        (self.parent != Self::NO_PARENT).then_some(self.parent)
+    }
 }
 
 /// Each function's closure reads (`FunctionReads`), indexed by function id. A program's
@@ -147,16 +162,16 @@ impl ClosureReads {
             functions: functions
                 .iter()
                 .zip(reads)
-                .map(|(function, reads)| FunctionReads {
-                    parent: function.parent,
-                    is_arrow: function.is_arrow,
-                    reads: reads.map(|mut reads| {
+                .map(|(function, reads)| FunctionReads::new(
+                    function.parent,
+                    function.is_arrow,
+                    reads.map(|mut reads| {
                         reads.sort_unstable();
                         reads.dedup();
                         reads.into_boxed_slice()
                     }),
-                    named_slots: function.named_slots.into(),
-                })
+                    function.named_slots.into(),
+                ))
                 .collect(),
             environment_elision: Default::default(),
         }
@@ -251,7 +266,7 @@ impl ClosureReads {
             if level != 0 {
                 lexical_this &= self.functions.get(owner as usize).is_some_and(|function| function.is_arrow);
             }
-            match self.functions.get(owner as usize).and_then(|function| function.parent) {
+            match self.functions.get(owner as usize).and_then(FunctionReads::enclosing) {
                 Some(parent) => owner = parent,
                 None => return EnvironmentDemand::Whole,
             }
@@ -259,7 +274,7 @@ impl ClosureReads {
         let Some(owner_reads) = self.functions.get(owner as usize) else {
             return EnvironmentDemand::Whole;
         };
-        if owner_reads.parent.is_none() {
+        if owner_reads.enclosing().is_none() {
             return EnvironmentDemand::Whole;
         }
         let start = reads.partition_point(|&(at, _)| at < distance);

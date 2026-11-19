@@ -4,7 +4,7 @@
 //! semantic SSA specializer that frameless JIT bodies and linked AOT regions share
 //! (`compile_js_typed_numeric_region`): an interpreter change reaches it.
 
-use crate::bytecode::{Function, ProgramKind, ResidualProgram, Traits};
+use crate::bytecode::{Function, LazyFlag, ProgramKind, ResidualProgram, Traits};
 
 /// Native code and its result interpretation for a JavaScript function.
 pub(super) struct JsJitArtifact {
@@ -64,7 +64,7 @@ pub(super) fn candidate_rejection_reason(program: &ResidualProgram, function_id:
 }
 
 pub(super) fn function_candidate(function: &Function, program: &ResidualProgram) -> bool {
-    *function.js_tier_candidate.get_or_init(|| scanned_function_candidate(function, program))
+    function.lazy_flag(LazyFlag::JsTierCandidate, || scanned_function_candidate(function, program))
 }
 
 fn scanned_function_candidate(function: &Function, program: &ResidualProgram) -> bool {

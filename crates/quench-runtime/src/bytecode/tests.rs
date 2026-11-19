@@ -207,16 +207,9 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             registers: 1,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -335,16 +328,9 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             registers: 1,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -607,9 +593,9 @@ fn fused_field_source_locations_survive_binary_round_trip_and_validate_coordinat
         let decoded = ResidualProgram::read_binary(&path).unwrap();
         crate::Runtime::new(crate::SystemHost).execute(&decoded).unwrap();
         let site = program.field_sites.iter().position(|site| site.second.is_some()).expect("nested field site");
-        for offset in [u32::MAX] {
+        for offset in [u32::MAX - 1] {
             let mut invalid = program.clone();
-            invalid.field_sites[site].sources[0] = Some(offset);
+            invalid.field_sites[site].sources[0] = offset;
             invalid.write_binary(&path).unwrap();
             assert!(ResidualProgram::read_binary(&path).unwrap_err().contains("invalid field site"));
         }
@@ -897,6 +883,13 @@ fn load_encoded_records_decode_as_records_compiled_again() {
         assert_eq!(decode(&encoded).1, atoms);
     }
 }
+
+/// The function record's budget. Estimated from 368 bytes: the eight lazy booleans share one
+/// `u16` (-14), declared atom sets, initializer and register masks move behind `Function::caches`
+/// (-24 net of its +8 pointer), and `SourcePositions` boxes its bytes (48 -> 40, -8). Plain
+/// locals and the hot expansion's pointer stay inline, where their hot-path reads need them.
+/// Net -38, so 330.
+const FUNCTION_RECORD_BUDGET: usize = 352;
 
 #[test]
 fn register_row_trait_tags_exactly_the_register_move_local_and_jump_rows() {

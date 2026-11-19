@@ -1,6 +1,7 @@
 use super::*;
 use super::site_table::CacheSiteTable;
 use crate::Engine;
+use crate::bytecode::ReceiverPath;
 use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
@@ -78,7 +79,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         cache,
         argument_start: 0,
         argument_count: 0,
-        receiver_path: None,
+        receiver_path: ReceiverPath::NONE,
     });
     let function = program
         .functions
@@ -102,7 +103,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
     let methods = program
         .method_sites
         .iter()
-        .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path))
+        .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path.get()))
         .collect::<Vec<_>>();
     crate::compile::liveness::mark_register_roots(
         program.functions.iter_mut().map(|function| &mut **function),

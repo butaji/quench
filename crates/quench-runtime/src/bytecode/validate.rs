@@ -887,7 +887,7 @@ function.plain_local_slots(&self.superinstructions)
                 || (site.argument_start as usize)
                     .checked_add(site.argument_count as usize)
                     .is_none_or(|end| end > self.method_arguments.len())
-                || site.receiver_path.is_some_and(|(atom, cache)| {
+                || site.receiver_path.get().is_some_and(|(atom, cache)| {
                     !atom_in_bounds(atom, self.atoms.len())
                         || !cache_in_bounds(cache, self.cache_sites.get())
                 })
@@ -896,7 +896,7 @@ function.plain_local_slots(&self.superinstructions)
             }
         }
         for site in &self.field_sites {
-            if site.sources.iter().flatten().any(|offset| source_end.is_some_and(|end| *offset as usize > end))
+            if site.source_offsets().into_iter().flatten().any(|offset| source_end.is_some_and(|end| offset as usize > end))
                 || !field_base_in_bounds(site.base.0, REGISTER_MASK, 0)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
                 || !cache_in_bounds(site.first.1, self.cache_sites.get())
@@ -1330,16 +1330,9 @@ mod tests {
             registers,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: crate::bytecode::RegisterRoots::new(root != u32::MAX),
             undefined_register: None,

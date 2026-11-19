@@ -141,7 +141,6 @@ impl Compiler<'_> {
         }
         // As in `Compiler::compile_function`: no doubling slack beside the syntax tree.
         function.code.shrink_to_fit();
-        function.source_positions.shrink_to_fit();
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
@@ -188,23 +187,16 @@ impl Compiler<'_> {
             lexical_atoms: lexical_atoms.into(),
             name_bindings,
             binding_sites: function.binding_sites.into(),
-            source_positions: function.source_positions,
+            source_positions: function.source_positions.freeze(),
             environment_clones,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: function.handlers.into(),
             register_roots: Default::default(),
             undefined_register,

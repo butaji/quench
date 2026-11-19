@@ -175,7 +175,7 @@ impl Invocation {
         let site = context.method_site(index)?;
         let receiver = match instruction.op() {
             Op::CallMethod => Receiver::Register(instruction.register_b()),
-            _ => Receiver::This { path: site.receiver_path },
+            _ => Receiver::This { path: site.receiver_path.get() },
         };
         Some((Callee::Method { atom: site.atom, site: u32::try_from(index).ok()? }, receiver,
             Arguments::List(RegisterList { start: site.argument_start, count: site.argument_count })))
@@ -219,7 +219,7 @@ impl Invocation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::{MethodSite, SET_THIS_REGISTER};
+    use crate::bytecode::{MethodSite, ReceiverPath, SET_THIS_REGISTER};
     use crate::staged::test_words::FACTS;
 
     fn call_instruction(op: Op, constructs: bool) -> WideInstruction {
@@ -235,8 +235,8 @@ mod tests {
     }
 
     const SITES: [MethodSite; 2] = [
-        MethodSite { atom: 8, cache: 3, argument_start: 0, argument_count: 2, receiver_path: None },
-        MethodSite { atom: 9, cache: 4, argument_start: 2, argument_count: 1, receiver_path: Some((11, 6)) },
+        MethodSite { atom: 8, cache: 3, argument_start: 0, argument_count: 2, receiver_path: ReceiverPath::NONE },
+        MethodSite { atom: 9, cache: 4, argument_start: 2, argument_count: 1, receiver_path: ReceiverPath::at(11, 6) },
     ];
     const RECORDS: [Register; 3] = [4, 2, 7];
 

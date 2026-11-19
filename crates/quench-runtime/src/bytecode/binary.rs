@@ -323,7 +323,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
             && crate::DYNAMIC_EXECUTION_ENABLED
             && !load_records.contains_key(&(index as u32))
             && function.record.get().is_none())
-        .then(|| function.unlowered.borrow().as_ref().map(|unlowered| unlowered.function(function.header())))
+        .then(|| function.unlowered.with(|unlowered| unlowered.map(|unlowered| unlowered.function(function.header()))))
         .flatten();
         let rewrites_pending = program.rewrite_ranges.defers(index);
         out.u8(match (deferred, unlowered.is_some(), rewrites_pending) {
@@ -379,7 +379,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         out.u16(site.cache);
         out.u32(site.argument_start);
         out.u16(site.argument_count);
-        out.optional_atom_pair(site.receiver_path);
+        out.optional_atom_pair(site.receiver_path.get());
     }
     out.u16s(&program.method_arguments);
     out.u32(program.field_sites.len() as u32);
@@ -388,7 +388,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         out.atom_pair(site.first);
         out.optional_atom_pair(site.second);
         out.optional_atom_pair(site.sink);
-        for source in site.sources {
+        for source in site.source_offsets() {
             out.u8(source.is_some() as u8);
             if let Some(offset) = source {
                 out.u32(offset);
@@ -425,7 +425,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     }
     out.u32(program.superinstructions.len() as u32);
     for site in &program.superinstructions {
-        for instruction in site.code {
+        for instruction in site.wide {
             out.instruction(instruction.op(), instruction.a(), instruction.b(), instruction.c(), instruction.imm());
         }
     }
@@ -685,11 +685,11 @@ fn decode_program(
         )),
         0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
         1 => Ok(Constant::String(input.string()?.into())),
-        7 => Ok(Constant::StringUnits(input.u16s()?)),
-        6 => Ok(Constant::BigInt(input
+        7 => Ok(Constant::StringUnits(input.u16s()?.into())),
+        6 => Ok(Constant::BigInt(Box::new(input
             .string()?
             .parse()
-            .map_err(|_| "invalid residual BigInt constant")?)),
+            .map_err(|_| "invalid residual BigInt constant")?))),
         2 => Ok(Constant::Boolean(true)),
         3 => Ok(Constant::Boolean(false)),
         4 => Ok(Constant::Null),
@@ -718,13 +718,9 @@ fn decode_program(
                 return Err("deferred record outside its region".into());
             }
             let start = u32::try_from(region + offset).map_err(|_| "residual records exceed u32")?;
-            ranges.push(Some(super::DeferredRecord {
-                start,
-                length,
-                checksum,
-                unlowered: entry >= DEFERRED_UNLOWERED,
-                rewrites_pending: entry == DEFERRED_UNREWRITTEN,
-            }));
+            let record = super::DeferredRecord::new(start, length, checksum, entry >= DEFERRED_UNLOWERED, entry == DEFERRED_UNREWRITTEN)
+                .ok_or("deferred record exceeds the encoding's record length")?;
+            ranges.push(Some(record));
             functions.push(FunctionSlot::released(header));
             continue;
         }
@@ -749,7 +745,7 @@ fn decode_program(
             cache: input.u16()?,
             argument_start: input.u32()?,
             argument_count: input.u16()?,
-            receiver_path: input.optional_atom_pair()?,
+            receiver_path: input.optional_atom_pair()?.into(),
         })
     })?;
     let method_arguments = input.u16s()?;
@@ -760,9 +756,9 @@ fn decode_program(
             second: input.optional_atom_pair()?,
             sink: input.optional_atom_pair()?,
             sources: [
-                input.optional_source_offset()?,
-                input.optional_source_offset()?,
-                input.optional_source_offset()?,
+                field_source_word(input)?,
+                field_source_word(input)?,
+                field_source_word(input)?,
             ],
         })
     })?;
@@ -889,7 +885,7 @@ fn append_to(out: &mut BinaryWriter, target: &mut Vec<u8>, write: impl FnOnce(&m
 /// its names resolve statically, given the facts of the functions encoded before it.
 fn write_record(program: &super::ResidualProgram, index: usize, static_names: &[bool], out: &mut BinaryWriter) -> bool {
     program.with_record(index, |record| {
-        let names_static = *record.static_name_scope.get_or_init(|| {
+        let names_static = record.lazy_flag(super::LazyFlag::StaticNameScope, || {
             record.own_names_resolve_statically(program) && enclosing_names_static(program, static_names, record.parent)
         });
         let facts = record.derived_facts(program, names_static);
@@ -1466,15 +1462,9 @@ fn read_function(input: &mut BinaryReader<'_>, header: Option<&super::FunctionHe
             dispatch,
             decoded: Default::default(),
             plain_locals: if packed { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(plain_locals) },
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: handlers.into(),
             register_roots,
             undefined_register,
@@ -1524,19 +1514,19 @@ pub(super) fn decode_deferred_function(
 ) -> Option<Result<Function, String>> {
     let record = (*records.ranges.get(index)?)?;
     let start = record.start as usize;
-    let bytes = records.bytes.as_ref().as_ref().get(start..start + record.length as usize)?;
+    let bytes = records.bytes.as_ref().as_ref().get(start..start + record.length())?;
     if compact_checksum(bytes) != record.checksum {
         return Some(Err("deferred record checksum mismatch".into()));
     }
-    let mut reader = BinaryReader { bytes, cursor: 0, atoms: records.atoms.clone(), packed: false };
-    Some(read_function(&mut reader, None).and_then(|function| reader.finish().map(|()| function)))
+    let mut reader = BinaryReader { bytes, cursor: 0, atoms: records.atoms.clone(), packed: false, unlowered: record.unlowered() };
+    Some(read_function(&mut reader).and_then(|function| reader.finish().map(|()| function)))
 }
 
 /// The bytes of function `index`'s deferred record, when it has one.
 pub(super) fn deferred_record_bytes(records: &super::EncodedRecords, index: usize) -> Option<&[u8]> {
     let record = (*records.ranges.get(index)?)?;
     let start = record.start as usize;
-    records.bytes.as_ref().as_ref().get(start..start + record.length as usize)
+    records.bytes.as_ref().as_ref().get(start..start + record.length())
 }
 
 /// A lowered instruction's fixed-width record: four `u16` fields and a `u32` immediate.
@@ -1645,6 +1635,16 @@ impl BinaryWriter {
     pub(super) fn strings(&mut self, values: &AtomTable) { self.u32(values.len() as u32); for value in values.iter() { self.string(value); } }
     pub(super) fn u16s(&mut self, values: &[u16]) { self.u32(values.len() as u32); for value in values { self.u16(*value); } }
     pub(super) fn option_u32(&mut self, value: Option<u32>) { self.u32(value.unwrap_or(u32::MAX)); }
+}
+
+/// A field site's source word, read as its optional offset (`FieldSite::sources`): an offset
+/// of `FieldSite::NO_SOURCE` names no source, so an encoding that stores one is invalid.
+fn field_source_word(input: &mut BinaryReader<'_>) -> Result<u32, String> {
+    match input.optional_source_offset()? {
+        None => Ok(FieldSite::NO_SOURCE),
+        Some(FieldSite::NO_SOURCE) => Err("invalid field site".into()),
+        Some(offset) => Ok(offset),
+    }
 }
 
 pub(super) struct BinaryReader<'a> {
