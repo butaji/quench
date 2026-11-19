@@ -562,3 +562,6 @@ impl PendingOsrRegion {
 #[cfg(test)]
 #[path = "osr_compile/tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "osr_compile/method_tests.rs"]
+mod method_tests;

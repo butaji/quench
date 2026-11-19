@@ -242,7 +242,7 @@ pub(crate) mod words {
 pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = 240;
 /// The lane-call protocol, shared with the host (`quench_bjit::call_record`).
 #[path = "../src/call_record.rs"]
-pub(crate) mod call_record;
+pub mod call_record;
 /// The words shared with the host (`quench_bjit::shared_words`).
 #[path = "../src/shared_words.rs"]
 pub(crate) mod shared_words;

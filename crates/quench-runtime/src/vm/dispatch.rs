@@ -970,15 +970,7 @@ impl<H: Host> Vm<H> {
                     i.op().field_store().is_some_and(|store| store.strict),
                 )?;
             }
-            Op::SetIndex => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.set_index_miss(p, f, i);
-                    }
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
+            Op::SetIndex => self.step_index_set(p, f, i)?,
             Op::DefineArrayElement => {
                 let (array, value) = (self.read(f, i.register_b()), self.read(f, i.register_a()));
                 self.define_array_literal_element(p, array, i.array_index() as usize, value)?;
@@ -989,8 +981,15 @@ impl<H: Host> Vm<H> {
                     RowRun::Declined => {
                         return self.binary_miss(p, f, i, pc);
                     }
-                    RowRun::Stop(stop) => return stop,
                 }
+                let v = match self.number_binary(operator, left, right) {
+                    Some(value) => value,
+                    None => self.binary(p, operator, left, right)?,
+                };
+                if i.returns_from_frame() {
+                    return Ok(StepResult::Return(v));
+                }
+                self.write_binary_result(f, i, v);
             }
             Op::IncDec => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
@@ -1384,9 +1383,38 @@ impl<H: Host> Vm<H> {
         {
             return result.map(Some);
         }
-        let v = self.get_index(p, base, key)?;
+        let v = match self.element_read_fast(base, key) {
+            Some(value) => value,
+            None => self.get_index(p, base, key)?,
+        };
         self.write(f, i.result_register(), v);
         Ok(None)
+    }
+
+    /// `SetIndex` of the record `i` in frame `f`: a store to a present dense element (`store_present_element`),
+    /// else the general index store (`set_index_mode`).
+    fn step_index_set(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<(), JsError> {
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.index_dispatch(true, false);
+        let (object, key, value) = (self.read(f, i.register_b()), self.read(f, i.register_c()), self.read(f, i.register_a()));
+        if let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok())
+            && self.store_present_element(object, index, value)
+        {
+            return Ok(());
+        }
+        let strict = p.function(self.frames[f].function as usize).strict || i.boolean_flag().expect("validated boolean immediate");
+        self.set_index_mode(p, object, key, value, strict)
+    }
+
+    /// Writes the value a binary operator made: to the frame's numeric local target where the record names one,
+    /// else to its result register.
+    pub(super) fn write_binary_result(&mut self, f: usize, i: WideInstruction, v: Value) {
+        if let Some(local) = i.numeric_local_target() {
+            self.frames[f].locals[local as usize] = v;
+            self.profile.virtual_opcode(self.frames[f].program.raw(), Op::StoreLocalPlain as usize);
+        } else {
+            self.write(f, i.result_register(), v);
+        }
     }
 
     /// An opcode with no arm of its own in `step`: a row the catalog stages among the names and
@@ -1394,27 +1422,11 @@ impl<H: Host> Vm<H> {
     /// (`staged_value_step`); any other is a Wasm step.
     #[inline(never)]
     fn step_unlisted(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
-        // The register moves, local slot accesses and jumps no arm names run as their staged rows
-        // on the running frame (`InterpreterFrame`). A jump on a heap value's truthiness is the
-        // VM's, which runs no guest code; any other row that leaves is unreachable on validated bytecode.
-        if let Some(operation @ (crate::staged::Operation::Move { .. } | crate::staged::Operation::LoadLocalPlain { .. }
-            | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. })) =
-            crate::staged::Operation::<u64, ()>::of(i)
-        {
-            match self.run_row(p, f, i, pc, operation) {
-                RowRun::Done(_) => return Ok(StepResult::Continue),
-                RowRun::Stop(stop) => return stop,
-                RowRun::Declined => {}
-            }
-            let crate::staged::Operation::JumpIf { register, taken } = operation else {
-                unreachable!("validated bytecode bounds the registers and slots of a register row");
-            };
-            if self.truthy(self.read(f, register)) == taken {
-                *pc = i.jump_target() as usize;
-            }
-            return Ok(StepResult::Continue);
-        }
-        if !matches!(i.op().staged(), Some(crate::bytecode::Decoder::Names)) {
+        // A generic staged row the interpreter takes through its staged step: a case selector (`IntCase`).
+        let staged_case = matches!(i.op().staged(), Some(crate::bytecode::Decoder::Generic))
+            && matches!(crate::staged::Operation::<u64, ()>::decode(i, crate::staged::DecodeContext::of(p)),
+                Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IntCase { .. })));
+        if !staged_case && !matches!(i.op().staged(), Some(crate::bytecode::Decoder::Names)) {
             return self.step_wasm(p, f, i, pc);
         }
         let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };

@@ -12,6 +12,15 @@ impl<H: Host> Vm<H> {
         self.heap.array(object)?.elements().get(index).filter(|value| !value.is_deleted())
     }
 
+    /// `object[key]` where the key is an integer and the element is a present dense element or a non-BigInt
+    /// typed array's (`dense_element`, `typed_array_number_element`): no guest code, no allocation. `None`
+    /// leaves the read to `get_index`, which decides every other case.
+    #[inline(always)]
+    pub(in crate::vm) fn element_read_fast(&self, object: Value, key: Value) -> Option<Value> {
+        let index = usize::try_from(key.as_int()?).ok()?;
+        self.dense_element(object, index).or_else(|| self.typed_array_number_element(object, index))
+    }
+
     /// `get_index` of `object` at the array index `index` (the key `key`): the value or error
     /// of the read where the element storage, a Proxy, a typed array, a string or an accessor
     /// index decides it; `None` leaves the read to the named-key walk.

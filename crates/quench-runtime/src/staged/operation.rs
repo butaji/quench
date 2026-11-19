@@ -198,36 +198,12 @@ impl<W, P> Operation<W, P> {
         }
     }
 
-    /// The Wasm i32 jumps of `decode` (`Decoder::WasmJump`), from any record's wide fields
-    /// (`Fields::wide`).
-    #[inline(always)]
-    pub(crate) fn decode_wasm_jump(instruction: WideInstruction) -> Option<Self> {
-        WasmJump::decode(instruction).map(Self::WasmJump).or_else(|| BranchTable::decode(instruction).map(Self::BranchTable))
-    }
-
-    /// The staged operation `instruction` makes apart from how its result completes the frame
-    /// (its result flags: a return, a `this` write), and those flags. A tier that completes a
-    /// record's result itself asks this instead of naming the opcode; `decode` alone stays the
-    /// operation with no completion.
-    pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
-        use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
-        // A numeric local target is where the result goes, not how it completes: it stays.
-        // (It shares its bit with the `this` write: only `ReturnableAndThis` reads that bit as one.)
-        let layout = instruction.op().result_layout();
-        let completing = (layout.allowed_flags() & RETURN_REGISTER)
-            | if matches!(layout, crate::bytecode::ResultLayout::ReturnableAndThis) { SET_THIS_REGISTER } else { 0 };
-        let flags = instruction.result_flags() & completing;
-        if instruction.result_flags() & !layout.allowed_flags() != 0 { return None; }
-        let plain = if flags != 0 { instruction.without_result_flags() } else { instruction };
-        Some((Self::decode(plain, context)?, flags))
-    }
-
-    /// The destination and constant index of an instruction `decode_flow` reads as `LoadConst`,
-    /// for a tier that holds its constants in a table of its own (the b-jit's Numbers): the
-    /// same decode, with the constant left for the tier to look up.
-    #[inline(always)]
-    pub(crate) fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
-        (instruction.op() == Op::LoadConst).then(|| (instruction.result_register(), instruction.constant_index()))
+    /// Whether the packed step helper runs this operation directly (`dispatch_fast::family_helpers`): its
+    /// direct arm reads the operands from the running frame and declines, before any effect, where the
+    /// general step decides. Only the operations whose arms are shared with `Vm::step` and whose miss the
+    /// site's feedback can gate qualify (`write_binary_result`; element and field sites record none).
+    pub(crate) fn direct_helper(&self) -> bool {
+        matches!(self, Self::Binary { .. })
     }
 
     /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a

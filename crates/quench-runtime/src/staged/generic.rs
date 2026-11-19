@@ -29,27 +29,27 @@ impl<W, P> Operation<W, P> {
             #[cfg(not(stencil_build))]
             Op::NumericAdd | Op::NumericMultiply => return Self::decode_numeric_arithmetic(instruction),
             Op::JumpBinaryFalse => Self::decode_compare(instruction),
+            Op::IntCaseIndex => return Self::decode_int_case(instruction),
             _ => return None,
         })
     }
 
-    /// `NumericAdd` and `NumericMultiply`: the Number arithmetic of their own operator (`+` or `*`)
-    /// over their two operands, which `Binary` decodes to the same operation (`decode_binary`). A record
-    /// whose operator field names another operator is none.
-    #[cfg(not(stencil_build))]
-    fn decode_numeric_arithmetic(instruction: WideInstruction) -> Option<Self> {
-        let own = match instruction.op() {
-            Op::NumericAdd => oxc_ast::ast::BinaryOperator::Addition,
-            _ => oxc_ast::ast::BinaryOperator::Multiplication,
-        } as u32;
-        if instruction.binary_operator() != own { return None; }
-        Self::decode_binary(instruction)
+    /// `IntCaseIndex`: the case slot of register `c` among the `b` dense int labels from `imm`.
+    fn decode_int_case(instruction: WideInstruction) -> Option<Self> {
+        let count = instruction.element_count();
+        if count == 0 { return None; }
+        let minimum = instruction.imm() as i32;
+        let maximum = minimum.checked_add(i32::from(count) - 1)?;
+        Some(Self::Number(NumberOperation::IntCase {
+            destination: instruction.result_register(),
+            source: crate::bytecode::Operand::register(instruction.register_c()),
+            minimum,
+            maximum,
+            count,
+        }))
     }
 
-    /// `Binary`: an arithmetic, bitwise or relation operator as its Number operation
-    /// (`numeric::binary_operation`), equality as its own row, and any other operator the VM's.
-    /// Both operands may be registers or program constants; any other operand leaves the record
-    /// to the general step.
+    /// `Binary` over two registers: equality as its own row, any other operator the VM's.
     fn decode_binary(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         let destination = instruction.result_register();

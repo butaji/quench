@@ -6,8 +6,6 @@
 //! next value; `reserve(n)` skips `n` codes (a block's extent, or a gap no row uses). Adding a row is
 //! one line in its namespace's list, and every later code shifts only if the row is inserted before it.
 
-#![allow(dead_code)]
-
 #[macro_use]
 #[path = "row_catalog.rs"]
 mod row_catalog;

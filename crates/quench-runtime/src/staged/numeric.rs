@@ -189,6 +189,10 @@ pub(crate) enum NumberOperation {
     /// `Math.imul` of two int32s: `staged::math::int_multiply`. Any other value leaves.
     #[cfg_attr(not(stencil_build), allow(dead_code))]
     Imul { destination: Register, left: Operand, right: Operand },
+    /// The case slot of a `switch` over the dense int labels `minimum..=maximum` (`count` slots, the
+    /// slot of label `i` at `i - minimum`): the slot of `source` where it is an int32 or an integral
+    /// double in the run (`===` of that label), else `count`. Every value is decided: none leaves.
+    IntCase { destination: Register, source: Operand, minimum: i32, maximum: i32, count: u16 },
 }
 
 /// Run the Number `operation` on `frame`; its word, or `Unresolved` where it left.
@@ -215,6 +219,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         NumberOperation::Math { destination, source, operation } => math(stage, frame, destination, source, operation),
         NumberOperation::Extreme { destination, left, right, maximum } => extreme(stage, frame, destination, (left, right), maximum),
         NumberOperation::Imul { destination, left, right } => imul(stage, frame, destination, left, right),
+        NumberOperation::IntCase { destination, source, minimum, maximum, count } =>
+            int_case(stage, frame, destination, source, (minimum, maximum), count),
     }
 }
 
@@ -245,6 +251,46 @@ fn extreme<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 
 /// `Math.imul` of two int32s: their wrapping product; any other operand leaves.
 #[inline(always)]
+/// The case slot of `source` in a `switch` over the dense int labels `minimum..=maximum` (`count` slots). A value
+/// is its own label's slot where it is an int32 or an integral double in the run; every other value (a string,
+/// an object, a fraction) takes `count`, the default. The int32 word is ToInt32 of the Number, which is exact
+/// for the integral ones, so the classes come from the staged tag tests and float steps only.
+#[inline(always)]
+fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+    source: Operand, (minimum, maximum): (i32, i32), count: u16) -> Step<S::Word, F::Control> {
+    let Some(tagged) = frame.operand_word(stage, source) else { return Step::Unresolved };
+    // An int word is read as the double it holds; any other word as the double its bits are.
+    let narrowed = stage.narrow(tagged);
+    let from_int = stage.i32_to_f64(narrowed);
+    let int_tag = super::value::is_int(stage, tagged);
+    let double_tag = super::value::is_double(stage, tagged);
+    let number_tag = stage.either(int_tag, double_tag);
+    let number = stage.select(int_tag, from_int, tagged);
+    let truncated = stage.float_unary(super::math::FloatUnary::Trunc, number);
+    let exact = stage.relation(NumberRelation::Equal, Domain::Float64, truncated, number);
+    let lowest = stage.f64_constant(f64::from(i32::MIN));
+    let highest = stage.f64_constant(f64::from(i32::MAX));
+    let above = stage.relation(NumberRelation::GreaterEqual, Domain::Float64, truncated, lowest);
+    let below = stage.relation(NumberRelation::LessEqual, Domain::Float64, truncated, highest);
+    let integral = stage.both(exact, above);
+    let integral = stage.both(integral, below);
+    let integral = stage.both(integral, number_tag);
+    let miss = frame.miss();
+    let Some(value) = stage.to_int32(number, miss) else { return Step::Unresolved };
+    let low = stage.i32_constant(minimum);
+    let high = stage.i32_constant(maximum);
+    let from_low = stage.relation(NumberRelation::GreaterEqual, Domain::Int32, value, low);
+    let to_high = stage.relation(NumberRelation::LessEqual, Domain::Int32, value, high);
+    let inside = stage.both(integral, from_low);
+    let inside = stage.both(inside, to_high);
+    let (offset, _) = stage.int_arithmetic(NumberArithmetic::Subtract, value, low);
+    let fallback = stage.i32_constant(i32::from(count));
+    let slot = stage.select(inside, offset, fallback);
+    let fact = frame.int_fact();
+    frame.write(stage, destination, slot, fact);
+    Step::Value(slot)
+}
+
 fn imul<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand,
 ) -> Step<S::Word, F::Control> {

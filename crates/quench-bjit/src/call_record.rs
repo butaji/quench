@@ -22,6 +22,32 @@ pub const MAX_DIRECT_ARGC: usize = 3;
 /// window slot (`CallRecord::argument_places`); the rest are always read from the window.
 pub const PLACED_ARGUMENTS: usize = 2;
 
+/// The value holes of a helper call row (`CallRow::Helper`, `CallRow::HelperPacked`), by position. The planner
+/// (`helper_part` in `call_plan.rs`) fills each at its index; `stencils/call_rows.rs` reads it by the same index.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelperHole {
+    /// The call pc the helper is told.
+    CallPc = 0,
+    /// The helper's address.
+    Helper = 1,
+    /// The packed row's instruction first word (its opcode and operands).
+    PackedFirst = 2,
+    /// The packed row's instruction immediate.
+    PackedImm = 3,
+}
+
+/// The value holes of a direct call row (`CallRow::Direct`), by position. The planner (`direct_part` in
+/// `call_plan.rs`) fills each at its index; `stencils/call_rows.rs` reads it by the same index.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirectHole {
+    /// The address of the site's `CallRecord`.
+    Record = 0,
+    /// The call's pc, which a raise names to the lane.
+    CallPc = 1,
+}
+
 /// Bytes of one register slot of the frame window (`size_of::<Value>()`, a word).
 pub const REGISTER_BYTES: usize = core::mem::size_of::<u64>();
 

@@ -150,7 +150,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
         *body = LoopBody::Declined;
         return;
     }
-    let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, body)).unwrap_or_default();
+    let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, code, body)).unwrap_or_default();
     // The loop's arrays are the activation's registers live at its header now: sampled, as an
     // OSR loop samples its own. A dead register may hold any value a window held before
     // (`ResidualProgram::entry_fill`), so it reads as `undefined`.

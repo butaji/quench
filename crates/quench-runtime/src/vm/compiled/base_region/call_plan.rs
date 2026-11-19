@@ -45,7 +45,7 @@ use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
 use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
 use quench_bjit::call::{self, CallRow, ThisRow};
-use quench_bjit::call_record::{CallRecord, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
+use quench_bjit::call_record::{CallRecord, DirectHole, HelperHole, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{HOLES, Stencil, padded_holes};
 
@@ -64,6 +64,17 @@ pub(super) enum CallForm {
     /// callee to call by its entry cell, and a method call's callee is the method cache's lookup,
     /// which no register holds for a call row to read.
     Stepped,
+    /// `CallMethod` with a window of consecutive argument registers (`method_shape`): a site read writes the
+    /// method's value to a scratch register, which the checked direct row compares with the recorded callee.
+    Method,
+}
+
+/// A method call's site read (`plan::method_read`): the cache entry that answers the method, and the scratch register
+/// the read writes the callee to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Method {
+    pub(super) cache: u16,
+    pub(super) scratch: Register,
 }
 
 impl CallForm {
@@ -98,7 +109,7 @@ impl CallForm {
         match self {
             Self::Plain => LaneHelper::Call,
             Self::Construct => LaneHelper::ConstructCall,
-            Self::Stepped => LaneHelper::Step,
+            Self::Stepped | Self::Method => LaneHelper::Step,
         }
     }
 }
@@ -119,9 +130,8 @@ pub(super) struct CallShape {
     /// follows it does (`steps::completing`), and nothing is live after it.
     pub(super) returning: bool,
     pub(super) form: CallForm,
-    /// The opcode of the call record, which keys the fast-row counter of a planned direct call (`note_fast`).
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) op: crate::bytecode::Op,
+    /// The method site read a `Method` call makes before its direct row (`None` for the other forms).
+    pub(super) method: Option<Method>,
 }
 
 impl CallShape {
@@ -138,11 +148,38 @@ impl CallShape {
                 result,
                 returning,
                 form,
-                op,
+                method: None,
             },
-            CallForm::Construct | CallForm::Stepped => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form, op },
+            CallForm::Construct | CallForm::Stepped | CallForm::Method => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form, method: None },
         }
     }
+}
+
+/// The shape of the method call `instruction` at `call_pc` (`CallMethod`, a receiver register and a method site) as a
+/// `Method` chain: its receiver is the direct row's `this`, its callee the `scratch` register the site read writes,
+/// its arguments a window of consecutive registers the direct row reads. `None` for any other call, or one whose
+/// arguments are not consecutive (`Arguments::List` is a list of registers, not a window).
+pub(super) fn method_shape(program: &crate::bytecode::ResidualProgram, instruction: WideInstruction, call_pc: u32, scratch: Register, returning: bool) -> Option<CallShape> {
+    if instruction.op() != crate::bytecode::Op::CallMethod || instruction.writes_current_this() || instruction.resolves_dynamic_scope()
+        || instruction.direct_eval() || instruction.parameter_eval() {
+        return None;
+    }
+    let context = crate::staged::DecodeContext::of(program);
+    let invocation = crate::staged::Invocation::of(instruction, context)?;
+    let crate::staged::Receiver::Register(receiver) = invocation.receiver else { return None };
+    let crate::staged::Arguments::List(list) = invocation.arguments else { return None };
+    let start = list.start as usize;
+    let registers = program.method_arguments.get(start..start + usize::from(list.count))?;
+    let window = registers.first().copied().unwrap_or(0);
+    if !registers.iter().enumerate().all(|(k, &register)| register == window + k as Register) {
+        return None;
+    }
+    let crate::staged::Callee::Method { site, .. } = invocation.callee else { return None };
+    let cache = context.method_site(site as usize)?.cache;
+    Some(CallShape {
+        call_pc, callee: scratch, this: receiver, window, argc: list.count, result: instruction.result_register(), returning,
+        form: CallForm::Method, method: Some(Method { cache, scratch }),
+    })
 }
 
 /// What the call site's target record says of its callee, read once (`DirectFacts::of`).
@@ -230,7 +267,8 @@ pub(super) enum Choice {
 /// The row class of a call: direct when its target's cell is stable and describes the callee,
 /// else the helper row, with the first reason it cannot be direct.
 pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice {
-    if shape.form != CallForm::Plain {
+    let method = shape.form == CallForm::Method && shape.method.is_some();
+    if shape.form != CallForm::Plain && !method {
         return Choice::Helper(Declined::Form);
     }
     let Some(facts) = direct else { return Choice::Helper(Declined::NoTarget) };
@@ -274,6 +312,9 @@ pub(super) struct CallPlan<'a> {
     /// The arguments the caller proves Numbers (bit `k`: argument `k`, `call_args::proven_arguments`), which the direct row
     /// passes on to the callee's proven-arguments entry where its guards are covered (`CallRecord::proven_args`).
     pub(super) proven_args: u64,
+    /// The site read a `Method` call's direct rows follow (`plan::method_read`): its stencil and holes. Planned only
+    /// where a direct row is, after the spills; its miss goes to the helper row behind the direct rows.
+    pub(super) read: Option<(&'static Stencil, [u64; HOLES])>,
 }
 
 /// The address of `helper` in a process helper table; none for a linked or symbolic one.
@@ -306,9 +347,16 @@ fn helper_part(call_pc: u32, helper: usize, packed: Option<[u64; 2]>) -> Result<
         return Err("call: no helper address".to_string());
     }
     let exits = vec![Exit::At(call_pc), Exit::Status];
+    let mut holes = [0; HOLES];
+    holes[HelperHole::CallPc as usize] = u64::from(call_pc);
+    holes[HelperHole::Helper as usize] = helper as u64;
     match packed {
-        None => Ok(part(call::stencil(CallRow::Helper)?, padded_holes([u64::from(call_pc), helper as u64]), exits)),
-        Some([first, imm]) => Ok(part(call::stencil(CallRow::HelperPacked)?, padded_holes([u64::from(call_pc), helper as u64, first, imm]), exits)),
+        None => Ok(part(call::stencil(CallRow::Helper)?, holes, exits)),
+        Some([first, imm]) => {
+            holes[HelperHole::PackedFirst as usize] = first;
+            holes[HelperHole::PackedImm as usize] = imm;
+            Ok(part(call::stencil(CallRow::HelperPacked)?, holes, exits))
+        }
     }
 }
 
@@ -357,7 +405,10 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
     let stencil = call::stencil(CallRow::Direct { argc, this, checked: !facts.held })?;
-    Ok((part(stencil, quench_bjit::padded_holes([std::ptr::from_ref(&*record).addr() as u64, u64::from(shape.call_pc)]), vec![Exit::Status]), record))
+    let mut holes = [0; HOLES];
+    holes[DirectHole::Record as usize] = std::ptr::from_ref(&*record).addr() as u64;
+    holes[DirectHole::CallPc as usize] = u64::from(shape.call_pc);
+    Ok((part(stencil, holes, vec![Exit::Status]), record))
 }
 
 /// The builtin row of a call of the builtin's arity whose callee is that builtin, and the record the row reads (its
@@ -402,9 +453,16 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     // The spills before the direct rows; the spills of pinned arguments that only the refusal path reads
     // (`refusal_only`) follow them, where the rows' NEXT falls to the helper row. Without a direct row, all come first.
     let (mut parts, mut refusal) = (Vec::new(), Vec::new());
+    // A site read's miss leaves before any refusal spill runs, so with a read every spill comes first.
+    let read = plan.read.filter(|_| !directs.is_empty());
     for &(place, register) in plan.spills {
         let spill = spill_part(place, register)?;
-        if directs.is_empty() || !refusal_only(plan, register) { parts.push(spill) } else { refusal.push(spill) }
+        if directs.is_empty() || read.is_some() || !refusal_only(plan, register) { parts.push(spill) } else { refusal.push(spill) }
+    }
+    if let Some((stencil, holes)) = read {
+        // A miss takes the helper row behind the direct rows, as a refused direct call does: the spills ran, so the frame is canonical.
+        let helper = 1 + directs.len() + refusal.len();
+        parts.push(CallPart { stencil, holes, taken: None, exits: vec![Exit::Ahead(helper)] });
     }
     // Past every direct row, the refusal spills and the helper row that follows them: the first reload, or the next instruction.
     let past = parts.len() + directs.len() + refusal.len() + 1;

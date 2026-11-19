@@ -78,7 +78,14 @@ pub(in crate::vm::compiled) struct Callees {
 /// is its register's, or one that returns its result (`return f(x)`), which the row after it
 /// completes with. The other forms record no callee (`call_plan::CallForm`).
 pub(super) fn chains(instruction: WideInstruction) -> bool {
-    CallForm::of(instruction.split_return().0) == Some(CallForm::Plain)
+    let plain = instruction.split_return().0;
+    CallForm::of(plain) == Some(CallForm::Plain) || is_method_call(plain)
+}
+
+/// Whether `instruction` is a method call `o.m(args)`, whose callee its site's call feedback records and whose chain reads it
+/// (`call_plan::Method`).
+pub(super) fn is_method_call(instruction: WideInstruction) -> bool {
+    instruction.op() == crate::bytecode::Op::CallMethod && CallForm::of(instruction) == Some(CallForm::Stepped)
 }
 
 /// The callee the call site `instruction` makes calls, if its body's call chain makes it: the
@@ -128,7 +135,7 @@ impl Callees {
 
     /// Whether every call of `code` is a direct one (`LaneMethod::closed`).
     pub(in crate::vm::compiled) fn closed(&self, code: &[WideInstruction]) -> bool {
-        code.iter().zip(&self.at).all(|(instruction, callee)| !super::super::meaning_compiled::is_call(*instruction) || callee.is_some())
+        code.iter().zip(&self.at).all(|(instruction, callee)| !instruction.op().is_call() || (callee.is_some() && !is_method_call(*instruction)))
     }
 
     /// What each call site recorded of its callee, by PC.
@@ -173,6 +180,10 @@ impl Callees {
     /// The call `shape` planned as its callee's rows (`facts`: what each site recorded), in
     /// `context`, which it spends from; none where the callee stays a call.
     pub(super) fn inlined_call(&self, facts: &[Option<DirectFacts>], region: &LoopRegion, context: &mut Context, shape: &CallShape) -> Option<InlineSite> {
+        // A method call's callee is read into a scratch register, not the callee register an inlined site proves.
+        if shape.method.is_some() {
+            return None;
+        }
         let at = self.at.get(shape.call_pc as usize)?.as_ref()?.start;
         let (callee, body) = (&self.owned[at], self.bodies[at].as_ref()?);
         let numbers = |index: usize| body.numbers.get(&index).copied().or_else(|| region.number_constant(index));
