@@ -442,6 +442,24 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
     nullish_constant.then_some(IdentityBranch { register })
 }
 
+/// The register and constant index of a strict (in)equality jump of a register and a constant that is
+/// no Number (`=== "o"`): the value a string the region compares holds by its identity or its units,
+/// which its tagged word carries (`admit`, `tagged_registers_with_failure`).
+fn strict_constant_test(instruction: WideInstruction, constants: &[Value]) -> Option<(Register, usize)> {
+    if !comparison_jump(instruction)
+        || !super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
+    {
+        return None;
+    }
+    let (register, index) = match (instruction.operand_b().kind()?, instruction.operand_c().kind()?) {
+        (OperandKind::Register, OperandKind::Constant) => (instruction.operand_b().payload(), instruction.operand_c().payload()),
+        (OperandKind::Constant, OperandKind::Register) => (instruction.operand_c().payload(), instruction.operand_b().payload()),
+        _ => return None,
+    };
+    let index = usize::from(index);
+    constants.get(index)?.as_number().is_none().then_some((register, index))
+}
+
 /// Whether `register` has definitions in `instructions` and every one is a `load`, which may
 /// give an object, or a move of a register only such loads define (`const p = a[i]; p.x`: the
 /// element read's register reaches the receiver through a `Move`) or of an entry value.
@@ -524,6 +542,8 @@ fn tagged_registers_with_failure(
         .chain(instructions.iter().filter_map(|instruction| array_read(*instruction))
             .filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| call_window_tagged(instructions, &numeric_uses, offset, instruction)))
+        // The register a strict test against a non-Number constant compares is tagged: its value may be a string.
+        .chain(instructions.iter().filter_map(|instruction| strict_constant_test(*instruction, constants).map(|(register, _)| register)))
         .chain(instructions.iter().filter_map(|instruction| {
             if !crate::staged::loads_constant(instruction.op()) {
                 return None;
@@ -2246,6 +2266,9 @@ fn admit(
             {
                 admission.tagged(register)?;
                 admission.constant(constant)?;
+            } else if let Some((register, constant)) = strict_constant_test(instruction, constants) {
+                admission.tagged(register)?;
+                admission.any_constant(constant)?;
             } else if let (Some(left), Some(right)) =
                 (instruction.operand_b().register_index(), instruction.operand_c().register_index())
                 && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some()
@@ -2408,8 +2431,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
     let pc = region.header + offset as u32;
     let strict_number_test = crate::staged::compare_jump(instruction.op())
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
-        && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
-            operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
+        && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand| operand.kind() == Some(OperandKind::Constant));
     let expected = if is_move_row(instruction) || is_truthiness_row(instruction)
         || region.identity_branches.contains_key(&pc) || strict_number_test {
         Type::ANY
