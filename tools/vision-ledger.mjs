@@ -278,9 +278,11 @@ function scan(tree, branch, wantOwners) {
         if (commas >= 8) add("hand-table", rel, lineOf(starts, m.index), m[1], `${m[1]}: ${commas + 1} hand-listed entries`);
       }
       const lits = [...s.matchAll(/\bconst\s+([A-Z][A-Z0-9_]+)\s*:\s*(?:usize|isize|u8|u16|u32|u64|i8|i16|i32|i64)\s*=\s*(0x[0-9a-fA-F_]+|\d[\d_]*)\s*;/g)].filter(m => !inRanges(tests, m.index));
-      if (lits.length >= 8 && /^crates\/quench-bjit\/|staged\/(layout|frame)|codes|layout/.test(rel))
+      // The row catalog (row_catalog.rs, and codes.rs that only includes it) is the single source.
+      const isCatalog = /row_catalog\.rs$/.test(rel) || (/codes\.rs$/.test(rel) && /row_catalog/.test(src));
+      if (!isCatalog && lits.length >= 8 && /^crates\/quench-bjit\/|staged\/(layout|frame)|codes|layout/.test(rel))
         add("hand-table", rel, lineOf(starts, lits[0].index), "literal consts", `${lits.length} numeric constants typed in by hand (offsets/codes); generate from the runtime layout/catalog`);
-      for (const m of s.matchAll(/\b(numbered_codes|codes|call_rows)!\s*\{/g)) add("hand-table", rel, lineOf(starts, m.index), `${m[1]}!`, `${m[1]}! hand-lists row names`);
+      for (const m of s.matchAll(/\b(numbered_codes|codes|call_rows)!\s*\{/g)) if (!isCatalog) add("hand-table", rel, lineOf(starts, m.index), `${m[1]}!`, `${m[1]}! hand-lists row names`);
     }
 
     // H. Rules from principles.md and the project instructions.
