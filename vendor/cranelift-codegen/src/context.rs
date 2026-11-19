@@ -388,16 +388,18 @@ impl Context {
         trace!("After egraph optimization:\n{}", self.func.display());
         crate::conditional_xor::run(&mut self.func);
 
+        // Branch optimizations can invalidate the CFG and dominator tree; recompute them once.
+        // A rotation recomputes them itself before repairing phis, which change no edge, so
+        // they stand after it.
         if crate::loop_rotate::run(&mut self.func) {
             self.compute_cfg();
             self.compute_domtree();
             self.remove_constant_phis(fisa)?;
             self.func.dfg.resolve_all_aliases();
+        } else {
+            self.compute_cfg();
+            self.compute_domtree();
         }
-
-        // Branch optimizations can invalidate these; recompute them.
-        self.compute_cfg();
-        self.compute_domtree();
         self.compute_loop_analysis();
         if crate::countdown::run(&mut self.func, &self.cfg, &self.domtree, &self.loop_analysis) {
             self.compute_cfg();
