@@ -75,12 +75,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The array of `values` with `prototype`. Out of line: the cell it builds lives in its
-    /// own frame, not its caller's.
+    /// The array of `values` with `prototype`, copied once from the argument slice into its
+    /// elements (`alloc_literal_array_from_parts`), with no intermediate `Vec`. Out of line: the
+    /// cell it builds lives in its own frame, not its caller's.
     #[inline(never)]
     fn array_of_values(&mut self, prototype: Value, values: &[Value]) -> Value {
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), values.to_vec()),
-        })
+        self.heap.alloc_literal_array_from_parts(prototype, &[values])
     }
 }
