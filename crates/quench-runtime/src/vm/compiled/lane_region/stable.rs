@@ -5,6 +5,7 @@ use crate::bytecode::Class;
 use super::*;
 use super::super::object_slots::emit;
 use crate::staged::machine::{Lane, MachineScalar, Relation};
+use crate::staged::property::StoreJoin;
 use crate::staged::{Region, Stage};
 
 /// The Stable facts a region's code folded (`typed_ir::BindingTime::Stable`), each the subject
@@ -256,15 +257,30 @@ impl Lowering<'_, '_> {
     /// where it fails, rather than each store testing both and joining the VM's store.
     pub(super) fn online_store_held(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> Option<ir::Value> {
         self.vm.online.filter(|online| !online.names(atom))?;
-        if !state.proofs.specialized {
-            let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.stores_specialized));
-            let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
-            emit_js_guard(&mut self.builder, specialized, exit);
-            state.proofs.specialized = true;
-        }
+        self.hold_specialized(state, exit);
         self.hold_stable(state, exit);
         self.stable.atoms.insert(atom);
         Some(self.builder.ins().iconst(types::I8, 1))
+    }
+
+    /// The run's stores proved specialized (`stores_specialized`) where no block proof of it holds
+    /// yet: a guard leaving through `exit` where the run does not. The loop's entering edge makes
+    /// this proof once for a loop whose stores all hold it (`hoist_stable`).
+    pub(super) fn hold_specialized(&mut self, state: &mut State, exit: ir::Block) {
+        if state.proofs.specialized { return; }
+        let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.stores_specialized));
+        let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
+        emit_js_guard(&mut self.builder, specialized, exit);
+        state.proofs.specialized = true;
+    }
+
+    /// Whether the field store `instruction` at `pc` keeps every Stable fact in a loop: its join is
+    /// the host's (no entry binding, no adding entry) and its region is a loop not widened at `pc`,
+    /// so a store the in-place arms miss leaves (`store_leaves`, `field_store_host`) and runs no
+    /// guest code; the store changes no fact the loop holds beyond the invalidation word it reads.
+    pub(super) fn store_keeps_facts(&self, pc: usize, instruction: WideInstruction) -> bool {
+        let (_, join) = self.site_store_plan(instruction.cache_site_index(), Type::ANY);
+        join == StoreJoin::Host && matches!(self.coverage, Coverage::Loop { .. }) && !self.generic.contains(&pc)
     }
 
     /// Where offline code holds `atom` unnamed (`VmFacts::held_atoms`), the admission of its stores
@@ -348,6 +364,7 @@ impl Lowering<'_, '_> {
             _ if matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(crate::staged::Operation::LoadName { .. })) => self.global_reads.contains_key(&pc),
             _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) => !instruction.writes_current_this(),
             _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => true,
+            _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => self.store_keeps_facts(pc, instruction),
             _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call) => super::native_calls::keeps_arrays(&self.intrinsics, pc),
             _ if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary => true,
             _ => reads_only(&self.program.constants, instruction),

@@ -56,6 +56,45 @@ fn admitted_integer_stores_do_not_repeat_heap_barrier_checks() {
     }
 }
 
+/// The constant `value` is in `native`, where an `iconst` defines it.
+fn constant_word(native: &ir::Function, value: ir::Value) -> Option<i64> {
+    let definition = native.dfg.value_def(value).inst()?;
+    match native.dfg.insts[definition] {
+        ir::InstructionData::UnaryImm { imm, .. } => Some(imm.bits()),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_loop_of_leaving_stores_reads_the_invalidation_word_once_on_its_entering_edge() {
+    // Two stores, one per branch: each branch's block reads the word unless the loop holds it.
+    let program = crate::Engine::specialize(
+        "function fill(o, n, f) { for (let i=0;i<n;i=(i+1)|0) { if (f) o.y=i; else o.y=0; } }", "store-hold.js").unwrap();
+    let function = program.function(1);
+    let fields = flat_table(function.instructions().filter(|instruction| instruction.op().is_set_field())
+        .map(|instruction| (usize::from(instruction.cache_site_index()), vec![NativeFieldLoad {
+            shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: Type::INT32, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None,
+        }])));
+    let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+    let (backedge, header) = unit.instructions.iter().enumerate()
+        .filter_map(|(pc, instruction)| (matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump))
+            && instruction.jump_target() as usize <= pc).then_some((pc, instruction.jump_target() as usize)))
+        .last().expect("the loop closes with a backward jump");
+    let word = crate::code_dependencies::Invalidation::default();
+    let atoms = crate::bitset::BitSet::default();
+    let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &atoms, invalidation: word.address(), constants: &[],
+        instanceofs: &|_| None, shape_stable: &|_| false, names: None, own_constant: &|_| None, root_constant: &|_| None }), ..VmFacts::STATIC };
+    let isa = super::super::super::jit_backend::target_isa().unwrap();
+    let native = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
+        facts, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[],
+        Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Dense, true).unwrap().function;
+    let address = word.address() as i64;
+    let reads = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+        .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { arg, .. }
+            if constant_word(&native, arg) == Some(address))).count();
+    assert_eq!(reads, 1, "the loop's stores hold the invalidation word from its entering edge alone:\n{native}");
+}
+
 #[test]
 fn object_shape_proofs_survive_verified_control_flow_edges() {
     let program = crate::Engine::specialize(
