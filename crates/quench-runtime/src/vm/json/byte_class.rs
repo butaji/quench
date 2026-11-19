@@ -26,14 +26,18 @@ pub(super) enum JsonByteClass {
     False,
 }
 
+/// The bytes JSON whitespace is made of: space, tab, line feed and carriage return.
+pub(super) const WHITESPACE_BYTES: [u8; 4] = [b' ', b'\t', b'\n', b'\r'];
+
 /// The class of every byte, so the parser learns a byte's class from one load of this table
-/// (`byte_class`).
+/// (`byte_class_of`).
 const JSON_BYTE_CLASSES: [JsonByteClass; 1 << u8::BITS] = {
     let mut classes = [JsonByteClass::Other; 1 << u8::BITS];
-    classes[b' ' as usize] = JsonByteClass::Whitespace;
-    classes[b'\t' as usize] = JsonByteClass::Whitespace;
-    classes[b'\n' as usize] = JsonByteClass::Whitespace;
-    classes[b'\r' as usize] = JsonByteClass::Whitespace;
+    let mut whitespace = 0;
+    while whitespace < WHITESPACE_BYTES.len() {
+        classes[WHITESPACE_BYTES[whitespace] as usize] = JsonByteClass::Whitespace;
+        whitespace += 1;
+    }
     classes[b'"' as usize] = JsonByteClass::Quote;
     classes[b'-' as usize] = JsonByteClass::Minus;
     let mut digit = b'0';
@@ -49,12 +53,18 @@ const JSON_BYTE_CLASSES: [JsonByteClass; 1 << u8::BITS] = {
     classes
 };
 
+/// The class of `byte`. The table holds every byte, so the lookup needs no bounds check.
+#[inline(always)]
+pub(super) fn byte_class_of(byte: u8) -> JsonByteClass {
+    JSON_BYTE_CLASSES[usize::from(byte)]
+}
+
 /// The class of `unit`, which is `Other` past the bytes the table holds.
 #[inline(always)]
 pub(super) fn byte_class(unit: u16) -> JsonByteClass {
-    match JSON_BYTE_CLASSES.get(usize::from(unit)) {
-        Some(&class) => class,
-        None => JsonByteClass::Other,
+    match u8::try_from(unit) {
+        Ok(byte) => byte_class_of(byte),
+        Err(_) => JsonByteClass::Other,
     }
 }
 

@@ -34,7 +34,8 @@ macro_rules! in_place_rows {
         const fn in_place_row_native(row: u8) -> Native {
             match row { $($row => Native::$native,)* _ => unreachable!() }
         }
-        fn in_place_row(native: Native) -> Option<u8> {
+        /// The in-place row of `native`, or `None` where no row serves it (`in_place_natives`).
+        pub(super) const fn in_place_row(native: Native) -> Option<u8> {
             match native { $(Native::$native => Some($row),)* _ => None }
         }
         fn in_place_handler<H: Host>(row: u8) -> Handler {
@@ -228,7 +229,7 @@ script_handler! {
 /// arguments. Each arm is the body `Vm::in_place_native_value` reaches for that native, with
 /// the same arguments and the same preconditions. `None` leaves the call to the native.
 #[inline(always)]
-fn in_place_row_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value,
+pub(super) fn in_place_row_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value,
     args: &[Value]) -> Option<Value> {
     let first = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
@@ -240,6 +241,7 @@ fn in_place_row_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: N
         Native::ArrayFill => vm.plain_array_fill(receiver, args),
         Native::ObjectKeys => vm.plain_enumerable_own_properties(first, crate::vm::object_keys::EnumerableOwnPropertyKind::Key),
         Native::ObjectAssign => vm.plain_object_assign(args),
+        // Each string row's body, folded to it by `pure_string_method_call`'s inlining.
         Native::StringTrim | Native::StringIndexOf | Native::StringSlice | Native::StringSplit
         | Native::StringToUpperCase | Native::StringToLowerCase | Native::StringPadStart
         | Native::StringStartsWith | Native::StringIncludes => vm.pure_string_method_call(code, native, receiver, args),

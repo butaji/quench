@@ -95,6 +95,12 @@ struct JsonParseState {
 /// Bytes of keys and strings past which the cache is dropped rather than kept: a large text
 /// (a data literal) would otherwise stay resident through its strings.
 const JSON_CACHE_BYTES: usize = 1 << 16;
+/// Bytes of key and string text one layout edge may stand for: the edges a cache keeps are
+/// bounded by the cache's byte budget divided by this.
+const JSON_CACHE_BYTES_PER_EDGE: usize = 16;
+/// Distinct keys past which the atom table is cleared at the end of a parse, so texts with
+/// ever-new keys do not grow it without bound. Atoms are re-interned on their next use.
+const JSON_CACHE_KEYS: usize = 1 << 12;
 
 impl JsonParseState {
     /// Readies this cache for a parse in `epoch` of the realm of `object_prototype`, whose
@@ -121,8 +127,18 @@ impl JsonParseState {
         self.string_bytes.clear();
     }
 
+    /// Clears the atom table once it holds more keys than `JSON_CACHE_KEYS`, which keeps the
+    /// table from growing with every distinct key of every text parsed.
+    fn trim_keys(&mut self) {
+        if self.ascii_keys.len() > JSON_CACHE_KEYS {
+            self.ascii_keys.clear();
+        }
+    }
+
+    /// Whether the cache is within its byte and edge budgets, so the next parse keeps it.
     fn small(&self) -> bool {
-        self.key_bytes.len() + self.string_bytes.len() <= JSON_CACHE_BYTES && self.edges.len() <= JSON_CACHE_BYTES / 16
+        self.key_bytes.len() + self.string_bytes.len() <= JSON_CACHE_BYTES
+            && self.edges.len() <= JSON_CACHE_BYTES / JSON_CACHE_BYTES_PER_EDGE
     }
 }
 
@@ -338,7 +354,8 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
 impl<H: Host> Drop for JsonHeapBuilder<'_, H> {
     fn drop(&mut self) {
         // SAFETY: the builder is dropping, so nothing reads the cache after this.
-        let cache = unsafe { std::mem::ManuallyDrop::take(&mut self.cache) };
+        let mut cache = unsafe { std::mem::ManuallyDrop::take(&mut self.cache) };
+        cache.trim_keys();
         if cache.small() {
             self.vm.json_parse_cache = JsonParseCache(Some(cache));
         }

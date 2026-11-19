@@ -99,13 +99,15 @@ impl<H: Host> Vm<H> {
             return Some(slots);
         }
         let keys = self.shape_enumerable_key_walk(object)?;
-        let slots = keys
+        let entries = keys
             .into_iter()
             .map(|atom| {
                 let slot = self.property_shape_slot(shape, PropertyKey::string(atom))?;
                 Some((atom, u32::try_from(slot).ok()?))
             })
-            .collect::<Option<super::enumerable_key_memo::EnumerableSlots>>()?;
+            .collect::<Option<Vec<(Atom, u32)>>>()?;
+        let storage_len = self.shapes[shape as usize].storage_len();
+        let slots = super::enumerable_key_memo::EnumerableSlots::new(entries.into(), storage_len);
         self.enumerable_keys.record(shape, slots.clone());
         Some(slots)
     }

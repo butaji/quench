@@ -73,7 +73,10 @@ impl<H: Host> Vm<H> {
     /// `args`, answered without the general call path. `None` leaves the call to it: a call
     /// outside the method's admission, or one that fails, which the general path repeats
     /// to raise the same error, since the attempt had no observable effect.
-    #[inline(never)]
+    ///
+    /// Inlined into each caller, so a caller with a constant native folds the admission and
+    /// the body choice to that one body.
+    #[inline(always)]
     pub(super) fn pure_string_method_call(
         &mut self,
         p: &ResidualProgram,
@@ -81,26 +84,45 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Option<Value> {
-        if !native.is_pure_string_method()
-            || !self.heap.is_string(receiver)
-            || args.iter().any(|argument| self.is_object_like(*argument))
-        {
+        if !self.pure_string_admitted(native, receiver, args) {
             return None;
         }
-        if let Some(value) = self.string_search_in_place(native, receiver, args) {
-            return Some(value);
+        self.pure_string_in_place(native, receiver, args)
+            .or_else(|| self.pure_string_general(p, native, receiver, args))
+    }
+
+    /// The admission of `pure_string_method_call`: a pure String method on a string receiver,
+    /// with no object-like argument.
+    #[inline(always)]
+    fn pure_string_admitted(&self, native: Native, receiver: Value, args: &[Value]) -> bool {
+        native.is_pure_string_method()
+            && self.heap.is_string(receiver)
+            && !args.iter().any(|argument| self.is_object_like(*argument))
+    }
+
+    /// The one in-place body that serves `native` among the pure String methods, or `None`
+    /// where that body leaves the call to `pure_string_general`. Each native belongs to one
+    /// body only, so no other body is tried.
+    #[inline(always)]
+    fn pure_string_in_place(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+        match native {
+            Native::StringIndexOf | Native::StringIncludes | Native::StringStartsWith =>
+                self.string_search_in_place(native, receiver, args),
+            Native::StringSlice | Native::StringSubstring | Native::StringSubstr =>
+                self.substring_in_place(native, receiver, args),
+            Native::StringSplit => self.split_in_place(native, receiver, args),
+            Native::StringToUpperCase | Native::StringToLowerCase | Native::StringTrim | Native::StringTrimStart
+            | Native::StringTrimEnd | Native::StringPadStart | Native::StringPadEnd | Native::StringRepeat =>
+                self.ascii_text_method(native, receiver, args),
+            _ => None,
         }
-        if let Some(value) = self.substring_in_place(native, receiver, args) {
-            return Some(value);
-        }
-        if let Some(value) = self.split_in_place(native, receiver, args) {
-            return Some(value);
-        }
-        if let Some(value) = self.ascii_text_method(native, receiver, args) {
-            return Some(value);
-        }
+    }
+
+    /// A pure String method's general call: `call_primitive_native`, whose result is the
+    /// call's value. A string method reads its receiver as text, which it may make on demand.
+    #[inline(never)]
+    fn pure_string_general(&mut self, p: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let result = self.call_primitive_native(p, native, receiver, args).ok();
-        // A string method reads its receiver as text, which it may make on demand.
         self.heap.charge_materialized_text();
         result
     }

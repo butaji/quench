@@ -411,6 +411,9 @@ pub(crate) struct ValueArena {
     /// entered that type wait in `widened` for the heap to recode them (`recode_owned_run`).
     float: bool,
     widened: Vec<u32>,
+    /// Bumped whenever an owner's type or shape assignment changes: slots of two shapes encode
+    /// alike only under one epoch, as `encodings_match` proved them.
+    owner_epoch: u64,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
@@ -437,6 +440,7 @@ impl Default for ValueArena {
             tracking: false,
             float: false,
             widened: Vec::new(),
+            owner_epoch: 0,
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
             next_dictionary: 0,
@@ -463,7 +467,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, float: _, widened: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _ } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, float: _, widened: _, owner_epoch: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _ } = self;
         writer.values(values);
         for bucket in 0..BUCKETS {
             writer.u32s(&self.free_starts(bucket));
@@ -564,6 +568,7 @@ impl ValueArena {
         self.shape_chains.clear();
         self.chain_owners.clear();
         self.owner_types.clear();
+        self.owner_epoch += 1;
     }
 
     /// Registers `shape`, of `length` slots, made from `parent` (of `parent_length`): one slot
@@ -580,6 +585,7 @@ impl ValueArena {
         }
         self.slot_readers.retire(shape);
         self.owner_types[index] = SlotType::None;
+        self.owner_epoch += 1;
         // A parent's chain covers its length once registered; one that does not (a parent the
         // heap never registered at that length) lends no owners, and the child owns its slots.
         let covered = parent.filter(|(parent, parent_length)| self.shape_chains.get(*parent as usize)
@@ -630,11 +636,26 @@ impl ValueArena {
         self.float = switches::float_slots();
         self.widened.clear();
         self.owner_types.fill(SlotType::None);
+        self.owner_epoch += 1;
     }
 
     /// Whether slots of Number owners hold raw doubles.
     #[inline(always)] pub(crate) fn float_slots(&self) -> bool {
         self.float
+    }
+
+    /// The epoch of the owners' types (`owner_epoch`): an `encodings_match` proof holds while it is current.
+    #[inline(always)] pub(crate) fn owner_epoch(&self) -> u64 {
+        self.owner_epoch
+    }
+
+    /// Whether the first `len` slots of an object of `source` shape and of `target` shape each have
+    /// one encoding (`word_type`), so a word of one shape's slot is the word of the other's. Both
+    /// shapes must hold `len` slots; the proof holds under the current `owner_epoch`.
+    pub(crate) fn encodings_match(&self, source: u32, target: u32, len: usize) -> bool {
+        self.shape_length(source) == len
+            && self.shape_length(target) == len
+            && (0..len).all(|slot| self.word_type(source, slot) == self.word_type(target, slot))
     }
 
     /// Whether the word of `slot` of an object of `shape` is a raw double, which only a native reader
@@ -697,6 +718,7 @@ impl ValueArena {
 
     #[inline(never)]
     fn widen_owner(&mut self, owner: u32, class: SlotType) -> bool {
+        self.owner_epoch += 1;
         self.slot_readers.retire(owner);
         let held = std::mem::replace(&mut self.owner_types[owner as usize], class);
         if self.float && (held == SlotType::Number) != (class == SlotType::Number) {
@@ -1029,6 +1051,19 @@ impl ValueArena {
             vector.use_dictionary(self.allocate_dictionary(values.to_vec()));
         }
         vector
+    }
+
+    /// A new arena run for an object of `shape`, holding the `len` words of `source`, an arena
+    /// vector outside dictionary storage and not narrow. Its words are copied as they are: no value
+    /// is decoded or recoded, so the caller proved `encodings_match` for the source and `shape`
+    /// under the current `owner_epoch`. `None` once the arena's positions are spent.
+    pub(crate) fn copy_run(&mut self, source: ValueVec, len: usize, shape: u32) -> Option<ValueVec> {
+        debug_assert!(len > 0 && source.has_compact_range() && !source.is_narrow());
+        debug_assert_eq!(self.len(source), len);
+        let target = self.allocate(capacity_class(len), MAX_ARENA_START)?;
+        let from = source.start();
+        self.values.copy_within(from..from + len, target);
+        Some(ValueVec { start: target as u32, auxiliary: shape })
     }
 
     /// The start of a new arena run holding `values`, of the capacity their count derives

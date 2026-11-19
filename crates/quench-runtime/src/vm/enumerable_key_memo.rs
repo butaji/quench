@@ -14,6 +14,7 @@
 use super::Atom;
 use crate::Value;
 use std::cell::RefCell;
+use std::ops::Deref;
 use std::rc::Rc;
 
 /// Sets of `ENUMERABLE_KEY_MEMO_WAYS` entries: a power of two. A request serializes and
@@ -25,8 +26,39 @@ const ENUMERABLE_KEY_MEMO_SETS: usize = 1 << 8;
 /// three keys).
 const ENUMERABLE_KEY_MEMO_WAYS: usize = 2;
 
-/// A shape's enumerable string keys in OrdinaryOwnPropertyKeys order, with their slots.
-pub(super) type EnumerableSlots = Rc<[(Atom, u32)]>;
+/// A shape's enumerable string keys in OrdinaryOwnPropertyKeys order, with their slots, and
+/// whether they are the shape's whole storage in order (`contiguous`): slot `i` is key `i`,
+/// so a copy reads the storage's first values in order with no slot lookup. Derefs to the
+/// `(key, slot)` pairs.
+#[derive(Clone)]
+pub(super) struct EnumerableSlots {
+    entries: Rc<[(Atom, u32)]>,
+    contiguous: bool,
+}
+
+impl EnumerableSlots {
+    /// The memo fact for `entries` of a shape whose storage holds `storage_len` values: contiguous
+    /// when the entries are exactly slots `0..storage_len`, in order.
+    pub(super) fn new(entries: Rc<[(Atom, u32)]>, storage_len: usize) -> Self {
+        let contiguous = entries.len() == storage_len
+            && entries.iter().enumerate().all(|(index, &(_, slot))| slot as usize == index);
+        Self { entries, contiguous }
+    }
+
+    /// Whether the entries are the shape's first storage slots in order (`new`).
+    pub(super) fn contiguous(&self) -> bool {
+        self.contiguous
+    }
+}
+
+impl Deref for EnumerableSlots {
+    type Target = [(Atom, u32)];
+
+    /// The `(key, slot)` pairs in order.
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
 
 /// One shape's memoized keys: their atoms and slots, and their strings once a call made them.
 struct MemoEntry {

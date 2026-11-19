@@ -46,19 +46,44 @@ impl Heap {
         }
     }
 
-    /// `alloc_ascii_run` of the `len` ASCII bytes that `fill` writes, each of them, with no
-    /// staging buffer of the result: a short string is filled on the stack and written into
-    /// its inline record (`alloc_ascii_run`); a longer one is filled straight into its flat
-    /// payload, which becomes the record's (`alloc_string_record`). Both charge as they do.
+    /// `alloc_ascii_run` of the `len` ASCII bytes that `fill` writes, given the flat ASCII bytes
+    /// of `sources` read in place, with no copy of any source. A short string is filled on the
+    /// stack and written into its inline record; a longer one is filled straight into its flat
+    /// payload, which becomes the record's. `None` when a source is not flat ASCII, before any
+    /// record is made.
     #[inline]
-    pub(crate) fn alloc_ascii_filled(&mut self, len: usize, fill: impl FnOnce(&mut [u8])) -> Value {
+    pub(crate) fn alloc_ascii_derived<const N: usize>(
+        &mut self,
+        sources: [Value; N],
+        len: usize,
+        fill: impl FnOnce(&mut [u8], [&[u8]; N]),
+    ) -> Option<Value> {
         debug_assert!(len <= crate::vm::wtf16::MAX_STRING_UNITS);
         if len <= crate::vm::wtf16::SHORT_ASCII_CAPACITY {
-            let mut bytes = [0u8; crate::vm::wtf16::SHORT_ASCII_CAPACITY];
-            fill(&mut bytes[..len]);
-            return self.alloc_ascii_run(&bytes[..len]);
+            let mut inline = [0u8; crate::vm::wtf16::SHORT_ASCII_CAPACITY];
+            self.with_ascii_sources(sources, |bytes| fill(&mut inline[..len], bytes))?;
+            return Some(self.alloc_ascii_run(&inline[..len]));
         }
-        self.alloc_string_record(JsString::from_ascii_zeroed_with(len, fill))
+        let string = self.with_ascii_sources(sources, |bytes| {
+            JsString::from_ascii_zeroed_with(len, |out| fill(out, bytes))
+        })?;
+        Some(self.alloc_string_record(string))
+    }
+
+    /// `build` run on the flat ASCII bytes of `sources`, each read in place from its record or
+    /// small string. The heap is only read while `build` runs: it makes no record, so nothing
+    /// moves or is freed under the bytes. `None`, before `build` runs, when a source is not flat
+    /// ASCII.
+    fn with_ascii_sources<const N: usize, R>(&self, sources: [Value; N], build: impl FnOnce([&[u8]; N]) -> R) -> Option<R> {
+        let texts = sources.map(|source| self.flat_text(source));
+        let mut bytes: [&[u8]; N] = [&[]; N];
+        for (slot, text) in bytes.iter_mut().zip(&texts) {
+            let crate::vm::wtf16::Units::Ascii(units) = text.as_ref()?.units() else {
+                return None;
+            };
+            *slot = units;
+        }
+        Some(build(bytes))
     }
 
     /// The string of the one Latin-1 code unit `unit` past ASCII, one record per unit while

@@ -12,7 +12,12 @@ mod error_message;
 mod plain_write;
 mod parse_stacks;
 mod byte_class;
-use byte_class::{byte_class, exponent_mark, JsonByteClass};
+use byte_class::{byte_class, byte_class_of, exponent_mark, JsonByteClass, WHITESPACE_BYTES};
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::{
+    __m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_min_epu8, _mm_movemask_epi8, _mm_or_si128, _mm_set1_epi8,
+    _mm_setzero_si128,
+};
 use error_message::json_syntax_message;
 use heap_builder::{short_run_ends, JsonBuildError, JsonHeapBuilder};
 use parse_stacks::{JsonFrame, JsonStacks};
@@ -39,7 +44,6 @@ const JSON_FORM_FEED: u16 = b'\x0C' as u16;
 /// parse compares, keys and repeated strings, are mostly a few words long.
 #[inline(always)]
 fn same_ascii(a: &[u8], b: &[u8]) -> bool {
-    let word = |bytes: &[u8], at: usize| u64::from_le_bytes(bytes[at..at + WORD_BYTES].try_into().expect("a word"));
     let length = a.len();
     if length != b.len() {
         return false;
@@ -47,48 +51,118 @@ fn same_ascii(a: &[u8], b: &[u8]) -> bool {
     if length < WORD_BYTES {
         return short_run_ends(a) == short_run_ends(b);
     }
-    let mut at = 0;
-    while at + WORD_BYTES < length {
-        if word(a, at) != word(b, at) {
-            return false;
-        }
-        at += WORD_BYTES;
-    }
-    // The last word ends at the end, overlapping the one before when the length is not a
-    // multiple of a word.
-    word(a, length - WORD_BYTES) == word(b, length - WORD_BYTES)
+    let (a_words, a_tail) = a.as_chunks::<WORD_BYTES>();
+    let (b_words, _) = b.as_chunks::<WORD_BYTES>();
+    // A partial last word is compared as the word that ends the text, overlapping the one
+    // before it.
+    a_words.iter().zip(b_words).all(|(a_word, b_word)| a_word == b_word)
+        && (a_tail.is_empty() || a.last_chunk::<WORD_BYTES>() == b.last_chunk::<WORD_BYTES>())
 }
 
-/// The length of the run of `units` no byte ends (`ends_string_run`), from whole 16-byte
-/// blocks: `Ok` when a block holds its end, else `Err` of the bytes the blocks covered.
+/// Bytes in one SIMD block: an SSE2 register, which the byte scans read whole.
+const SIMD_BLOCK_BYTES: usize = 16;
+
+/// The bytes of `block` in one SSE2 register, read by an unaligned load.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_load(block: &[u8; SIMD_BLOCK_BYTES]) -> __m128i {
+    // SAFETY: SSE2 is part of the x86_64 baseline, and the load reads exactly the block's bytes.
+    unsafe { _mm_loadu_si128(block.as_ptr().cast()) }
+}
+
+/// The mask of the bytes of `block` that end a string run (`ends_string_run`): bit `i` is set
+/// when byte `i` is a quote, an escape or a control byte.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_run_end_mask(block: __m128i) -> u32 {
+    // SAFETY: SSE2 is part of the x86_64 baseline, and these intrinsics touch no memory.
+    unsafe {
+        // A byte is a control byte exactly when its unsigned minimum with the last one is itself.
+        let control = _mm_cmpeq_epi8(_mm_min_epu8(block, _mm_set1_epi8(LAST_CONTROL_CHARACTER as i8)), block);
+        let quote = _mm_cmpeq_epi8(block, _mm_set1_epi8(JSON_QUOTE as i8));
+        let escape = _mm_cmpeq_epi8(block, _mm_set1_epi8(JSON_ESCAPE as i8));
+        _mm_movemask_epi8(_mm_or_si128(_mm_or_si128(quote, escape), control)) as u32
+    }
+}
+
+/// The mask of the bytes of `block` that are JSON whitespace: bit `i` is set when byte `i` is one.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_whitespace_mask(block: __m128i) -> u32 {
+    // SAFETY: SSE2 is part of the x86_64 baseline, and these intrinsics touch no memory.
+    unsafe {
+        let mut whitespace = _mm_setzero_si128();
+        for byte in WHITESPACE_BYTES {
+            whitespace = _mm_or_si128(whitespace, _mm_cmpeq_epi8(block, _mm_set1_epi8(byte as i8)));
+        }
+        _mm_movemask_epi8(whitespace) as u32
+    }
+}
+
+/// The length of the run of `units` no byte ends (`ends_string_run`), from whole blocks: `Ok`
+/// of the offset of the first ending byte, else `Err` of the bytes the blocks covered.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn sse2_run_blocks(units: &[u8]) -> Result<usize, usize> {
-    use std::arch::x86_64::{
-        __m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_min_epu8, _mm_movemask_epi8, _mm_or_si128, _mm_set1_epi8,
-    };
-    const BLOCK_BYTES: usize = size_of::<__m128i>();
-    let mut offset = 0;
-    // SAFETY: SSE2 is part of the x86_64 baseline, and each load reads a whole block of
-    // `units`.
-    unsafe {
-        let quote = _mm_set1_epi8(JSON_QUOTE as i8);
-        let escape = _mm_set1_epi8(JSON_ESCAPE as i8);
-        let last_control = _mm_set1_epi8(LAST_CONTROL_CHARACTER as i8);
-        while offset + BLOCK_BYTES <= units.len() {
-            let block = _mm_loadu_si128(units.as_ptr().add(offset).cast());
-            // A byte is a control byte exactly when its unsigned minimum with the last one is
-            // itself.
-            let control = _mm_cmpeq_epi8(_mm_min_epu8(block, last_control), block);
-            let ends = _mm_or_si128(_mm_or_si128(_mm_cmpeq_epi8(block, quote), _mm_cmpeq_epi8(block, escape)), control);
-            let mask = _mm_movemask_epi8(ends) as u32;
-            if mask != 0 {
-                return Ok(offset + mask.trailing_zeros() as usize);
-            }
-            offset += BLOCK_BYTES;
+    let (blocks, _) = units.as_chunks::<SIMD_BLOCK_BYTES>();
+    for (index, block) in blocks.iter().enumerate() {
+        let mask = sse2_run_end_mask(sse2_load(block));
+        if mask != 0 {
+            return Ok(index * SIMD_BLOCK_BYTES + mask.trailing_zeros() as usize);
         }
     }
-    Err(offset)
+    Err(blocks.len() * SIMD_BLOCK_BYTES)
+}
+
+/// `sse2_run_blocks` of the tail after its whole blocks, which is shorter than a block. The
+/// tail is padded with quotes, which end a run: an end at or past the tail's length is no end
+/// of the tail's own bytes.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_run_tail(tail: &[u8]) -> Option<usize> {
+    let mut block = [JSON_QUOTE as u8; SIMD_BLOCK_BYTES];
+    block[..tail.len()].copy_from_slice(tail);
+    let position = sse2_run_end_mask(sse2_load(&block)).trailing_zeros() as usize;
+    (position < tail.len()).then_some(position)
+}
+
+/// The whitespace bytes at the start of `units` in whole blocks: the count stops in the block
+/// that holds the first byte which is not whitespace, or at the last whole block.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_whitespace_blocks(units: &[u8]) -> usize {
+    let (blocks, _) = units.as_chunks::<SIMD_BLOCK_BYTES>();
+    for (index, block) in blocks.iter().enumerate() {
+        // Whitespace bytes are the set bits of the mask, so the first clear bit ends the run.
+        let run = (!sse2_whitespace_mask(sse2_load(block))).trailing_zeros() as usize;
+        if run < SIMD_BLOCK_BYTES {
+            return index * SIMD_BLOCK_BYTES + run;
+        }
+    }
+    blocks.len() * SIMD_BLOCK_BYTES
+}
+
+/// The whitespace bytes at the start of `units`, one table load per byte.
+#[inline(always)]
+fn scalar_whitespace_run(units: &[u8]) -> usize {
+    units.iter().take_while(|&&byte| byte_class_of(byte) == JsonByteClass::Whitespace).count()
+}
+
+/// `string_run_length` of bytes a word at a time, for targets without SSE2 blocks. The tail is
+/// padded with quotes to a word, as `sse2_run_tail` pads to a block.
+#[cfg(not(target_arch = "x86_64"))]
+fn word_run_length(units: &[u8]) -> Option<usize> {
+    let (words, tail) = units.as_chunks::<WORD_BYTES>();
+    for (index, word) in words.iter().enumerate() {
+        let ends = json_escape_bytes(u64::from_le_bytes(*word));
+        if ends != 0 {
+            return Some(index * WORD_BYTES + (ends.trailing_zeros() / u8::BITS) as usize);
+        }
+    }
+    let mut padded = [JSON_QUOTE as u8; WORD_BYTES];
+    padded[..tail.len()].copy_from_slice(tail);
+    let position = (json_escape_bytes(u64::from_le_bytes(padded)).trailing_zeros() / u8::BITS) as usize;
+    (position < tail.len()).then_some(words.len() * WORD_BYTES + position)
 }
 
 enum JsonValue {
@@ -539,6 +613,8 @@ const JSON_INLINE_NUMBER_LENGTH: usize = 64;
 const JSON_EXACT_INTEGER_DIGITS: usize = 15;
 /// Decimal digits a `u64` accumulates without overflow.
 const JSON_MANTISSA_DIGITS: usize = 19;
+/// The base of the decimal digits a number's mantissa and exponent accumulate in.
+const JSON_DECIMAL_BASE: u64 = 10;
 /// The integers up to this are all exact doubles.
 const EXACT_DOUBLE_INTEGER: u64 = 1 << f64::MANTISSA_DIGITS;
 /// The powers of ten that are exact doubles: 10^22 is the last, as 5^22 < 2^53 < 5^23.
@@ -587,17 +663,27 @@ trait JsonUnit: Copy {
     fn ends_string_run(self) -> bool {
         ends_string_run(self.unit())
     }
-    /// The units of `units` before the first that `ends_string_run`; `None` when none does.
+    /// The units of `units` before the first that `ends_string_run`; `None` when none does. A
+    /// length returned is the index of the ending unit, which lies within `units`.
     #[inline(always)]
     fn string_run_length(units: &[Self]) -> Option<usize> {
         units.iter().position(|unit| unit.ends_string_run())
+    }
+    /// The units of `units` at its start that are JSON whitespace.
+    #[inline(always)]
+    fn whitespace_run_length(units: &[Self]) -> usize {
+        units.iter().take_while(|unit| byte_class(unit.unit()) == JsonByteClass::Whitespace).count()
+    }
+    /// Whether `units` start with the ASCII `text`.
+    #[inline(always)]
+    fn starts_with_ascii(units: &[Self], text: &[u8]) -> bool {
+        units.len() >= text.len() && units.iter().zip(text).all(|(unit, &byte)| unit.unit() == u16::from(byte))
     }
     /// Whether `units` start with `key`, an ASCII key whose text needs no escape, and then
     /// the quote that closes it: the source of a string whose units are `key`.
     #[inline(always)]
     fn starts_key(units: &[Self], key: &[u8]) -> bool {
-        units.get(key.len()).is_some_and(|unit| unit.unit() == JSON_QUOTE)
-            && units.iter().zip(key).all(|(unit, &byte)| unit.unit() == u16::from(byte))
+        units.get(key.len()).is_some_and(|unit| unit.unit() == JSON_QUOTE) && Self::starts_with_ascii(units, key)
     }
     /// `units` as a run of string units.
     fn run(units: &[Self]) -> JsonStringUnits<'_>;
@@ -613,28 +699,41 @@ impl JsonUnit for u8 {
     fn ends_string_run(self) -> bool {
         STRING_RUN_ENDS[usize::from(self)]
     }
-    /// Sixteen bytes at a time where SSE2 is the baseline (`sse2_run_blocks`), then a word
-    /// at a time (`json_escape_bytes`, the bytes that end a run), then the rest one by one.
+    /// Sixteen bytes at a time where SSE2 is the baseline (`sse2_run_blocks`), with the tail
+    /// as one padded block (`sse2_run_tail`); elsewhere a word at a time (`word_run_length`).
     #[inline(always)]
     fn string_run_length(units: &[u8]) -> Option<usize> {
         #[cfg(target_arch = "x86_64")]
-        let offset = match sse2_run_blocks(units) {
-            Ok(length) => return Some(length),
-            Err(scanned) => scanned,
-        };
-        #[cfg(not(target_arch = "x86_64"))]
-        let offset = 0;
-        let (words, remainder) = units[offset..].as_chunks::<WORD_BYTES>();
-        let mut offset = offset;
-        for word in words {
-            let word = u64::from_le_bytes(*word);
-            let ends = json_escape_bytes(word);
-            if ends != 0 {
-                return Some(offset + (ends.trailing_zeros() / u8::BITS) as usize);
+        {
+            match sse2_run_blocks(units) {
+                Ok(length) => Some(length),
+                Err(scanned) => sse2_run_tail(&units[scanned..]).map(|length| scanned + length),
             }
-            offset += WORD_BYTES;
         }
-        remainder.iter().position(|unit| unit.ends_string_run()).map(|position| offset + position)
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            word_run_length(units)
+        }
+    }
+    /// The whitespace run's first `SIMD_BLOCK_BYTES` bytes by one table load each; from a
+    /// whole block of whitespace, the rest in SSE2 blocks (`sse2_whitespace_blocks`), then by
+    /// one table load per byte again.
+    #[inline(always)]
+    fn whitespace_run_length(units: &[u8]) -> usize {
+        let head = scalar_whitespace_run(&units[..units.len().min(SIMD_BLOCK_BYTES)]);
+        if head < SIMD_BLOCK_BYTES {
+            return head;
+        }
+        #[cfg(target_arch = "x86_64")]
+        let blocks = sse2_whitespace_blocks(&units[SIMD_BLOCK_BYTES..]);
+        #[cfg(not(target_arch = "x86_64"))]
+        let blocks = 0;
+        let offset = SIMD_BLOCK_BYTES + blocks;
+        offset + scalar_whitespace_run(&units[offset..])
+    }
+    #[inline(always)]
+    fn starts_with_ascii(units: &[u8], text: &[u8]) -> bool {
+        units.get(..text.len()) == Some(text)
     }
     #[inline(always)]
     fn starts_key(units: &[u8], key: &[u8]) -> bool {
@@ -677,10 +776,16 @@ impl Utf8Byte {
         unsafe { std::slice::from_raw_parts(text.as_ptr().cast::<Self>(), text.len()) }
     }
 
+    /// The bytes of `units`, which are a `str`'s.
+    #[inline(always)]
+    fn bytes(units: &[Self]) -> &[u8] {
+        // SAFETY: `Utf8Byte` is a transparent `u8`.
+        unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) }
+    }
+
     /// The text of a run of whole UTF-8 characters.
     fn text(units: &[Self]) -> &str {
-        // SAFETY: `Utf8Byte` is a transparent `u8`.
-        let bytes = unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) };
+        let bytes = Self::bytes(units);
         debug_assert!(std::str::from_utf8(bytes).is_ok(), "a run bounded by ASCII terminators is whole UTF-8 text");
         // SAFETY: the units are a `str`'s (`Utf8Byte::of`), and a run bounded by ASCII
         // terminators, which no UTF-8 sequence holds, is whole characters of it.
@@ -698,13 +803,19 @@ impl JsonUnit for Utf8Byte {
     }
     #[inline(always)]
     fn string_run_length(units: &[Self]) -> Option<usize> {
-        // SAFETY: `Utf8Byte` is a transparent `u8`.
-        u8::string_run_length(unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) })
+        u8::string_run_length(Self::bytes(units))
+    }
+    #[inline(always)]
+    fn whitespace_run_length(units: &[Self]) -> usize {
+        u8::whitespace_run_length(Self::bytes(units))
+    }
+    #[inline(always)]
+    fn starts_with_ascii(units: &[Self], text: &[u8]) -> bool {
+        u8::starts_with_ascii(Self::bytes(units), text)
     }
     #[inline(always)]
     fn starts_key(units: &[Self], key: &[u8]) -> bool {
-        // SAFETY: `Utf8Byte` is a transparent `u8`.
-        u8::starts_key(unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) }, key)
+        u8::starts_key(Self::bytes(units), key)
     }
     fn run(units: &[Self]) -> JsonStringUnits<'_> {
         let text = Self::text(units);
@@ -1014,10 +1125,16 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         });
         let layout = self.builder.layout(parent);
         let (values, keys) = (self.values.len(), self.keys.len());
-        if self.token() == Some(JSON_OBJECT_END) {
-            self.index += 1;
-            let value = self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..));
-            return Ok(JsonOpened::Value(value));
+        // One read of the next token decides both the empty object and the first key, which
+        // `quoted_key` takes from the quote already read.
+        match self.token() {
+            Some(JSON_OBJECT_END) => {
+                self.index += 1;
+                let value = self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..));
+                return Ok(JsonOpened::Value(value));
+            }
+            Some(JSON_QUOTE) => {}
+            _ => return Err(self.error(JsonSyntax::ExpectedPropertyNameOrBrace)),
         }
         // The frame holds the layout its keys advance in place: a copy made right after
         // their stores would read them back through memory.
@@ -1025,7 +1142,7 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         let Some(JsonFrame::Object { layout, .. }) = frames.last_mut() else {
             unreachable!("the frame is an object's")
         };
-        self.member_key(layout, JsonSyntax::ExpectedPropertyNameOrBrace)?;
+        self.quoted_key(layout)?;
         Ok(JsonOpened::Container)
     }
 
@@ -1105,6 +1222,12 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         if self.token() != Some(JSON_QUOTE) {
             return Err(self.error(missing));
         }
+        self.quoted_key(layout)
+    }
+
+    /// `member_key` of a key whose opening quote is the current unit, which the caller read.
+    #[inline(always)]
+    fn quoted_key(&mut self, layout: &mut B::Layout) -> Result<(), JsonParseError> {
         let text = &self.units[self.index + 1..];
         let key = match self.builder.expected_key(layout, |key| T::starts_key(text, key)) {
             Some((key, length)) => {
@@ -1126,13 +1249,26 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
 
     /// A literal, whose first unit the caller matched.
     fn literal(&mut self, expected: &[u8], value: JsonLiteral) -> Result<B::Value, JsonParseError> {
-        for &unit in expected {
-            if self.peek() != Some(u16::from(unit)) {
-                return Err(self.error(JsonSyntax::Unexpected));
-            }
-            self.index += 1;
+        if !T::starts_with_ascii(&self.units[self.index..], expected) {
+            return Err(self.literal_mismatch(expected));
         }
+        self.index += expected.len();
         Ok(self.builder.literal(value))
+    }
+
+    /// The error of `literal` at the first unit that differs from `expected`, or at the end of
+    /// the text when it ends first.
+    #[cold]
+    fn literal_mismatch(&self, expected: &[u8]) -> JsonParseError {
+        let matched = self.units[self.index..]
+            .iter()
+            .zip(expected)
+            .take_while(|(unit, byte)| unit.unit() == u16::from(**byte))
+            .count();
+        JsonParseError {
+            syntax: JsonSyntax::Unexpected,
+            position: self.index + matched,
+        }
     }
 
     /// A string's code units, from its opening quote, which the caller matched: a run of the
@@ -1257,7 +1393,8 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     /// continues it and it is short enough to be exact: an `i32` when it fits, else a double.
     #[inline(always)]
     fn exact_integer(&self, mantissa: u64, digits: usize, negative: bool) -> Option<JsonNumber> {
-        let continued = self.peek() == Some(u16::from(b'.')) || exponent_mark(self.peek());
+        let next = self.peek();
+        let continued = next == Some(u16::from(b'.')) || exponent_mark(next);
         if continued || digits > JSON_EXACT_INTEGER_DIGITS {
             return None;
         }
@@ -1292,7 +1429,6 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
 
     /// The signed exponent after an exponent mark, which the parse moves past.
     fn exponent(&mut self) -> Result<i32, JsonParseError> {
-        const DECIMAL_BASE: i32 = 10;
         let negative = self.take_if(b'-');
         if !negative {
             self.take_if(b'+');
@@ -1302,7 +1438,7 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         }
         let mut exponent = 0_i32;
         while let Some(digit) = self.digit_value() {
-            exponent = exponent.saturating_mul(DECIMAL_BASE).saturating_add(digit as i32);
+            exponent = exponent.saturating_mul(JSON_DECIMAL_BASE as i32).saturating_add(digit as i32);
             self.index += 1;
         }
         Ok(if negative { -exponent } else { exponent })
@@ -1333,11 +1469,8 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     fn accumulate_digits(&mut self, mut mantissa: u64) -> u64 {
         let units = self.units;
         let mut at = self.index;
-        while let Some(unit) = units.get(at)
-            && let digit = unit.unit().wrapping_sub(JSON_DIGIT_START)
-            && digit <= JSON_DIGIT_END - JSON_DIGIT_START
-        {
-            mantissa = mantissa.wrapping_mul(10).wrapping_add(u64::from(digit));
+        while let Some(digit) = units.get(at).and_then(|unit| decimal_digit(unit.unit())) {
+            mantissa = mantissa.wrapping_mul(JSON_DECIMAL_BASE).wrapping_add(digit);
             at += 1;
         }
         self.index = at;
@@ -1347,9 +1480,7 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     /// The value of the current unit when it is a decimal digit.
     #[inline(always)]
     fn digit_value(&self) -> Option<u64> {
-        self.peek()
-            .filter(|unit| (JSON_DIGIT_START..=JSON_DIGIT_END).contains(unit))
-            .map(|unit| u64::from(unit - JSON_DIGIT_START))
+        self.peek().and_then(decimal_digit)
     }
 
     /// The next unit past whitespace, which the parse moves past.
@@ -1361,12 +1492,10 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         }
     }
 
-    /// The next unit after a run of whitespace, which the parse moves past.
-    #[cold]
+    /// The next unit after the run of whitespace at the current unit, which the parse moves
+    /// past. Whitespace is one or two bytes in most JSON, so the run is scanned in place.
     fn token_after_whitespace(&mut self) -> Option<u16> {
-        while self.peek().is_some_and(|unit| byte_class(unit) == JsonByteClass::Whitespace) {
-            self.index += 1;
-        }
+        self.index += T::whitespace_run_length(&self.units[self.index..]);
         self.peek()
     }
 
@@ -1384,6 +1513,13 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     fn peek(&self) -> Option<u16> {
         self.units.get(self.index).map(|unit| unit.unit())
     }
+}
+
+/// The value of `unit` when it is a decimal digit.
+#[inline(always)]
+fn decimal_digit(unit: u16) -> Option<u64> {
+    let digit = unit.wrapping_sub(JSON_DIGIT_START);
+    (digit <= JSON_DIGIT_END - JSON_DIGIT_START).then_some(u64::from(digit))
 }
 
 fn hex_digit(unit: u16) -> Option<u16> {

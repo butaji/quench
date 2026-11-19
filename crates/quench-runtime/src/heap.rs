@@ -151,6 +151,7 @@ mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
 mod float_slots;
+mod slot_words;
 #[cfg(test)] mod float_slot_tests;
 #[cfg(test)] mod access_tests;
 mod inline_storage;
