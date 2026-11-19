@@ -493,6 +493,23 @@ pub(crate) fn binary_operation(operator: u32, destination: Register, left: Opera
         NumberOperation::RelationValue { destination, left, right, relation, domain: Domain::Float64 })
 }
 
+/// `binary_operation` for two operands an int32 constant decides: add, subtract and multiply in
+/// `Int32`, leaving at an overflow and at a negative zero, and the remainder in `Int32`, leaving at a
+/// zero divisor and a negative zero. A division has no int32 result, and the other operators are
+/// `binary_operation`'s own.
+#[cfg(not(stencil_build))]
+pub(crate) fn int32_binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
+    let int32 = match NumberArithmetic::from_operator(operator) {
+        Some(NumberArithmetic::Divide) => None,
+        Some(operation) => Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Int32,
+            overflow: Overflow::Exit, zero: NegativeZero::Exit }),
+        None if operator == BinaryOperator::Remainder as u32 =>
+            Some(NumberOperation::Remainder { destination, left, right, domain: Domain::Int32 }),
+        None => None,
+    };
+    int32.or_else(|| binary_operation(operator, destination, left, right))
+}
+
 /// Whether `relation` holds of two operands in `domain`; `None` where the frame proves neither.
 #[inline(always)]
 pub(super) fn relation_holds<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,

@@ -3317,18 +3317,25 @@ script_handler! {
     /// The lane handler of a returning `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
     /// value) on a register and a constant, at leaf form `LEAF`, whose RETURN parameter is `MISS`
     /// (`protocol_misses::operator_return_code`). The operator is static, so the row builds the staged
-    /// `Binary` operation directly, as its decoder does (`numeric::binary_operation`): the left operand is
-    /// the record's register, the right one its constant, which the record's immediate (the operator
-    /// field) no longer holds, so the frame's reads answer it from the record's own constant word. It
-    /// runs over the frame `returning_row` runs over, and completes the activation with its value. Any
-    /// other step, and a record whose flags are not exactly the return, takes the record's protocol miss
-    /// (`protocol_miss`), which completes the value itself.
-    pub(super) fn returning_operator_row<OP: u16, OPERATOR: u8, LEAF: u8, MISS: u16>(cx, r, ip, i, view) {
+    /// `Binary` operation directly (`numeric::int32_binary_operation` where the record's constant is an
+    /// int32 `INT32`, else `numeric::binary_operation`): the left operand is the record's register, the
+    /// right one its constant, which the record's immediate (the operator field) no longer holds, so the
+    /// frame's reads answer it from the record's own constant word. It runs over the frame `returning_row`
+    /// runs over, and completes the activation with its value. Any other step, and a record whose flags
+    /// are not exactly the return, takes the record's protocol miss (`protocol_miss`), which completes the
+    /// value itself.
+    pub(super) fn returning_operator_row<OP: u16, OPERATOR: u8, LEAF: u8, INT32: bool, MISS: u16>(cx, r, ip, i, view) {
         if i.a & !crate::bytecode::REGISTER_MASK != crate::bytecode::RETURN_REGISTER {
             sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
         }
         let destination = i.a & crate::bytecode::REGISTER_MASK;
-        let Some(number) = crate::staged::numeric::binary_operation(OPERATOR as u32, destination, Operand::register(i.b), Operand(i.c)) else {
+        let (left, right) = (Operand::register(i.b), Operand(i.c));
+        let number = if INT32 {
+            crate::staged::numeric::int32_binary_operation(OPERATOR as u32, destination, left, right)
+        } else {
+            crate::staged::numeric::binary_operation(OPERATOR as u32, destination, left, right)
+        };
+        let Some(number) = number else {
             sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
         };
         let mut stage = Concrete::new(std::ptr::null());
@@ -3336,9 +3343,10 @@ script_handler! {
             ..row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view) };
         match crate::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
             Step::Value(value) => {
-                // An integral Number is made as the integer it is (`Value::number`), as the integer operator makes it.
+                // An int32 row's result is an integer already; a Float64 one is made as its canonical Value
+                // (`Value::number`), so an integral result is the integer it is.
                 let value = Value::from_bits(value);
-                let value = value.as_number().map_or(value, Value::number);
+                let value = if INT32 { value } else { value.as_number().map_or(value, Value::number) };
                 if let Some(resumed) = by_leaf!(LEAF, |L| super::complete_plain_activation_in_lane::<H, L>(cx, value)) {
                     resume!(cx, resumed)
                 }

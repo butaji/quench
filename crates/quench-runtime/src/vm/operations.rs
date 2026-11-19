@@ -564,27 +564,10 @@ fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Op
         BinaryOperator::Addition => numeric_integer_arithmetic_result(NumberArithmetic::Add, left, right),
         BinaryOperator::Subtraction => numeric_integer_arithmetic_result(NumberArithmetic::Subtract, left, right),
         BinaryOperator::Multiplication => numeric_integer_arithmetic_result(NumberArithmetic::Multiply, left, right),
-        BinaryOperator::Division => {
-            if right == 0 || (left == 0 && right < 0) {
-                return None;
-            }
-            let remainder = left.checked_rem(right)?;
-            if remainder != 0 {
-                return None;
-            }
-            Value::integer(left.checked_div(right)?)
-        }
-        BinaryOperator::Remainder => {
-            if right == 0 {
-                return None;
-            }
-            let remainder = left.checked_rem(right)?;
-            if remainder == 0 && left < 0 {
-                Value::number(-0.0)
-            } else {
-                Value::integer(remainder)
-            }
-        }
+        // The Number operations' own values: `Value::number` makes an integral quotient or remainder the
+        // integer it is, and -0 the double it is.
+        BinaryOperator::Division => Value::number(number_arithmetic_result(NumberArithmetic::Divide, f64::from(left), f64::from(right))),
+        BinaryOperator::Remainder => Value::number(number_remainder(f64::from(left), f64::from(right))),
         BinaryOperator::Exponential => return None,
         operator => number_bitwise_result(
             NumberBitwise::from_binary_operator(operator)

@@ -51,11 +51,12 @@ macro_rules! returning_row_of {
 }
 
 /// The lane handler of a returning constant-right `Binary` of arithmetic operator `$op` at leaf form
-/// `$leaf` (`returning_operator_row`): its RETURN parameter is `operator_return_code($op, $leaf)`, which
-/// its miss body (`returning_operator_miss_of`) completes.
+/// `$leaf`, whose constant is an int32 where `$int32` (`returning_operator_row`): its RETURN parameter is
+/// `operator_return_code($op, $leaf)`, which its miss body (`returning_operator_miss_of`) completes.
 macro_rules! returning_operator_row_of {
-    ($op:expr, $leaf:expr) => {
-        returning_operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $op as u8 }, { $leaf }, { operator_return_code($op as u8, $leaf) }> as Handler
+    ($op:expr, $leaf:expr, $int32:expr) => {
+        returning_operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $op as u8 }, { $leaf }, { $int32 },
+            { operator_return_code($op as u8, $leaf) }> as Handler
     };
 }
 
@@ -553,7 +554,8 @@ impl LaneView {
                 macro_rules! pick {
                     ($op:expr) => {
                         [
-                            (returning_operator_row_of!($op, NOT_LEAF), returning_operator_row_of!($op, $leaf)),
+                            (returning_operator_row_of!($op, NOT_LEAF, true), returning_operator_row_of!($op, $leaf, true)),
+                            (returning_operator_row_of!($op, NOT_LEAF, false), returning_operator_row_of!($op, $leaf, false)),
                         ]
                     };
                 }
@@ -18391,9 +18393,10 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
         },
         _ => return,
     };
+    let int32 = constant.as_int().is_some();
     macro_rules! pick {
         ($op:expr) => {
-            returning_operator_row_of!($op, NOT_LEAF)
+            if int32 { returning_operator_row_of!($op, NOT_LEAF, true) } else { returning_operator_row_of!($op, NOT_LEAF, false) }
         };
     }
     let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) else {
