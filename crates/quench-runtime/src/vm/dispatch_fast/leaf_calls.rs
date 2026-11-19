@@ -17,11 +17,10 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         // A pending construction refuses every cached target (`LaneStack::set_refused`).
-        let target = if unsafe { (*cx).script_calls } {
-            vm.linked_script_call_entry(callee, &i.call_link)
-        } else {
-            None
-        };
+        // `linked_script_call_entry` names no entry while the run calls no script functions
+        // (`Admission::NO_SCRIPT_CALLS` fails the link, `relink_site_closure` refuses a new one).
+        let target = vm.linked_script_call_entry(callee, &i.call_link);
+        debug_assert!(unsafe { (*cx).script_calls } || target.is_none());
         // SAFETY: as `Vm::script_call_entry`; nothing in the leaf resolves a target or collects.
         let Some(target) = target.map(|target| unsafe { &*target }) else {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))

@@ -8889,6 +8889,12 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn relink_site_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
+        // The only entry creation a run with `script_calls` off could reach: refused here, so a
+        // linked entry never reaches a handler while the lane admits no script calls
+        // (`set_script_calls` sets `Admission::NO_SCRIPT_CALLS`, which `script_call_holds` tests).
+        if !self.lane_stack.script_calls_allowed() {
+            return None;
+        }
         // Only a call-only closure (`Value::known_closure`) takes the known form.
         if callee.as_known_closure().is_some()
             && let Some(index) = self.relink_known_closure(callee, linked)
@@ -9772,7 +9778,9 @@ script_handler! {
         let callee = r.get(i.b);
         let target = vm
             .linked_script_call_entry(callee, &i.call_link)
-            .filter(|_| unsafe { (*cx).script_calls } && !constructing_in_lane(vm, callee));
+            .filter(|_| !constructing_in_lane(vm, callee));
+        // A linked target exists only while the run calls script functions (`linked_script_call_entry`).
+        debug_assert!(unsafe { (*cx).script_calls } || target.is_none());
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let Some(target) = target.map(|target| unsafe { &*target }).filter(|target| {
             !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles) && !target.forwards()
@@ -9800,14 +9808,17 @@ script_handler! {
     fn lane_script_call_environment<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        if !unsafe { (*cx).script_calls } || constructing_in_lane(vm, callee) {
+        if constructing_in_lane(vm, callee) {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
         }
         // The site's linked entry, which a fresh closure of a function already resolved relinks
         // (`Vm::linked_script_call_entry`); a callee with no target yet resolves in the full form.
+        // No entry exists while the run calls no script functions, so that case takes the full
+        // form too, which exits (`lane_script_call_full`).
         let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
         };
+        debug_assert!(unsafe { (*cx).script_calls });
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         if target.entry != CallEntry::Environment {
@@ -9843,7 +9854,9 @@ script_handler! {
         let callee = r.get(i.b);
         let target = vm
             .linked_script_call_entry(callee, &i.call_link)
-            .filter(|_| unsafe { (*cx).script_calls } && !constructing_in_lane(vm, callee));
+            .filter(|_| !constructing_in_lane(vm, callee));
+        // A linked target exists only while the run calls script functions (`linked_script_call_entry`).
+        debug_assert!(unsafe { (*cx).script_calls } || target.is_none());
         // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
         let Some(target) = target.map(|target| unsafe { *target }).filter(ScriptCallTarget::settles) else {
             requicken::<H>(ip, lane_script_call_full::<H>);
@@ -11080,11 +11093,13 @@ fn passed_linked_call_in_lane<H: Host>(
 ) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
-    if !unsafe { (*cx).script_calls } || constructing_in_lane(vm, callee) {
+    if constructing_in_lane(vm, callee) {
         return None;
     }
     // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything else runs.
+    // `linked_script_call_entry` names no entry while the run calls no script functions.
     let target = vm.linked_script_call_entry(callee, &i.call_link).map(|target| unsafe { *target })?;
+    debug_assert!(unsafe { (*cx).script_calls });
     if target.entry == CallEntry::Gathers && target.forms & TARGET_GATHERS_KEEPING == 0 {
         if !admits_activation_in_lane(&target) || valid < argc {
             return None;
