@@ -363,7 +363,9 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 92] = [
 
 /// Runs of three or four generated rows the lane runs as one record (`chain_rows`): each
 /// entry's links in record order, `NO_LINK` padding a three-link chain. Only the last link may
-/// be a jump. A chain at a record wins over a `FUSED_ROWS` pair there.
+/// be a jump. A chain at a record wins over a `FUSED_ROWS` pair there. A link whose result only the
+/// next link reads, and dies there, keeps its double result raw where `chain_raw_links` allows it
+/// (`chain_mode`'s raw mask).
 pub(crate) const FUSED_CHAINS: [[u16; 4]; 42] = [
     // A local or capture read, then a register comparison, then its branch. Subsumes the value
     // jump of `specialize_value_jumps` (`lane_value_jump`) after a read.
@@ -467,6 +469,51 @@ const fn fused_links_share_representation() -> bool {
     true
 }
 const _: () = assert!(fused_links_share_representation(), "a fused pair or chain mixes raw and boxed rows");
+
+/// The mode of a `FUSED_CHAINS` record (`chain_rows`' `MODE`): the chain's staged mode (`FUSED_PLAIN`
+/// or `FUSED_WINDOW`) in the low `CHAIN_RAW_SHIFT` bits, and above them the raw mask: bit `k` set
+/// when link `k`'s double result stays raw (`LaneFrame::raw_result`). `fuse_chains` picks the raw mask
+/// per record, from liveness, among the bits `chain_raw_links` names for the chain.
+pub(crate) const CHAIN_RAW_SHIFT: u8 = 4;
+/// The `MODE` of a chain record in `mode` with raw mask `raw`.
+pub(crate) const fn chain_mode(mode: u8, raw: u8) -> u8 { mode | (raw << CHAIN_RAW_SHIFT) }
+/// The staged mode (`FUSED_PLAIN`, `FUSED_WINDOW`) of a chain `MODE`, without its raw mask.
+pub(crate) const fn chain_base(mode: u8) -> u8 { mode & ((1 << CHAIN_RAW_SHIFT) - 1) }
+/// The raw mask of a chain `MODE`: bit `k` for link `k`.
+pub(crate) const fn chain_raw(mode: u8) -> u8 { mode >> CHAIN_RAW_SHIFT }
+
+/// Whether the result of a `FUSED_CHAINS` link may stay raw where the next link reads it: the next
+/// link is a keyed element access (`keyed_element`), which reads its key as a Number, or both links
+/// are Number operators (`number_operator`). Bit `k` is for link `k`; the last link and a link whose
+/// next link is `NO_LINK` name none. `fuse_chains` also requires, per record, that the register is
+/// read only there and dies after (or is overwritten by) the next link.
+pub(crate) const fn chain_raw_links(chain: [u16; 4]) -> u8 {
+    let mut mask = 0;
+    let mut k = 0;
+    while k < 3 {
+        if chain[k + 1] != NO_LINK && raw_result_link(row_op(chain[k]), row_op(chain[k + 1])) { mask |= 1 << k; }
+        k += 1;
+    }
+    mask
+}
+
+/// The bits of `chain_raw_links` whose next link is a keyed element access. Those take the key rule
+/// instead of the operator rule: the producer's register must be the key alone, never the base or a
+/// store's value.
+pub(crate) const fn chain_keyed_links(chain: [u16; 4]) -> u8 {
+    let mut mask = 0;
+    let mut k = 0;
+    while k < 3 {
+        if chain[k + 1] != NO_LINK && keyed_element(row_op(chain[k + 1])) { mask |= 1 << k; }
+        k += 1;
+    }
+    mask
+}
+
+/// Whether `producer`'s result may stay raw in `consumer`, judged by meaning alone.
+const fn raw_result_link(producer: Op, consumer: Op) -> bool {
+    keyed_element(consumer) || (number_operator(producer) && number_operator(consumer))
+}
 
 /// The absent fourth link of a three-link `FUSED_CHAINS` entry.
 pub(crate) const NO_LINK: u16 = u16::MAX;
@@ -824,6 +871,9 @@ pub(crate) const fn reads_named_field(op: Op) -> bool { matches!(op, Op::GetFiel
 pub(crate) const fn reads_element(op: Op) -> bool { matches!(op, Op::GetIndex) }
 /// Stores an element by index (`SetIndex`).
 pub(crate) const fn writes_element(op: Op) -> bool { matches!(op, Op::SetIndex) }
+/// Reads or stores an element by a keyed index (`GetIndex`, `SetIndex`): its key register is read as
+/// a Number index (`element_rows`' `index_key`).
+pub(crate) const fn keyed_element(op: Op) -> bool { reads_element(op) || writes_element(op) }
 /// Accesses an element through its object register as an indexed receiver (`GetIndex`,
 /// `SetIndex`, `RequireObjectCoercible`).
 pub(crate) const fn indexes_receiver(op: Op) -> bool { matches!(op, Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible) }

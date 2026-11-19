@@ -17409,7 +17409,7 @@ fn derive_lane_view<'live, H: Host>(
     };
     // Adjacent generated rows the staged pair list names run as one generated record.
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
-    let mut fused = lane_frame::fuse_chains::<H>(&mut records);
+    let mut fused = lane_frame::fuse_chains::<H>(&mut records, live().map(|masks| &**masks), function.handlers.is_empty());
     fuse_target_backedges::<H>(&mut records, loop_tier);
     fused.extend(lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
     // A record reads the accumulator its predecessor produced only when control reaches it

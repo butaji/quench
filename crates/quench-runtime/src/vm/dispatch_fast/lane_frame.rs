@@ -3317,9 +3317,12 @@ lane_handler! {
     /// with no dispatch between links, as `fused_rows` does for two. A link's miss takes its
     /// row's miss at its own record, after the earlier links' effects, as separate records
     /// would. Only the last link may be a jump (`BACKWARD` its direction). `L3` is
-    /// `staged::NO_LINK` for a three-link chain.
+    /// `staged::NO_LINK` for a three-link chain. `MODE` is `staged::chain_mode`: the chain's staged
+    /// mode, and the raw mask whose bit `k` keeps link `k`'s double result raw (`LaneFrame::raw_result`),
+    /// which the next link reads as its operand or key.
     pub(super) fn chain_rows<L0: u16, L1: u16, L2: u16, L3: u16, BACKWARD: bool, MODE: u8>(cx, r, ip, i, view) {
-        macro_rules! link_flag { ($L:ident, $flag:expr) => {{
+        // Link `$k` at flag `$flag`; its double result is raw where `MODE`'s raw mask has bit `$k`.
+        macro_rules! link_flag { ($L:ident, $k:literal, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>(i);
             let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(lane_general_step::<H>, r, ip, view) };
             let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
@@ -3327,6 +3330,7 @@ lane_handler! {
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
             let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, ip, i, view);
+            frame.raw_result = const { (crate::staged::chain_raw(MODE) >> $k) & 1 != 0 };
             match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<$L>::OPCODE) } {
@@ -3336,11 +3340,11 @@ lane_handler! {
                 Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, ip, view),
             }
         }}; }
-        macro_rules! value_link { ($L:ident) => {
+        macro_rules! value_link { ($L:ident, $k:literal) => {
             if LaneFields::<$L>::FLAG_ROLE {
-                if i.imm() != 0 { link_flag!($L, FLAG_SET) } else { link_flag!($L, FLAG_CLEAR) }
+                if i.imm() != 0 { link_flag!($L, $k, FLAG_SET) } else { link_flag!($L, $k, FLAG_CLEAR) }
             } else {
-                if const { MODE == crate::staged::FUSED_WINDOW } { link_flag!($L, FLAG_WINDOW) } else { link_flag!($L, FLAG_UNREAD) }
+                if const { crate::staged::chain_base(MODE) == crate::staged::FUSED_WINDOW } { link_flag!($L, $k, FLAG_WINDOW) } else { link_flag!($L, $k, FLAG_UNREAD) }
             }
         }; }
         macro_rules! last_flag { ($L:ident, $flag:expr) => {{
@@ -3393,20 +3397,20 @@ lane_handler! {
             if LaneFields::<$L>::FLAG_ROLE {
                 if i.imm() != 0 { last_flag!($L, FLAG_SET) } else { last_flag!($L, FLAG_CLEAR) }
             } else {
-                if const { MODE == crate::staged::FUSED_WINDOW } { last_flag!($L, FLAG_WINDOW) } else { last_flag!($L, FLAG_UNREAD) }
+                if const { crate::staged::chain_base(MODE) == crate::staged::FUSED_WINDOW } { last_flag!($L, FLAG_WINDOW) } else { last_flag!($L, FLAG_UNREAD) }
             }
         }}; }
-        value_link!(L0);
+        value_link!(L0, 0);
         let ip = following(ip);
         // SAFETY: the next record of the running view (the chain's install checked its length).
         let i = unsafe { &*ip };
-        value_link!(L1);
+        value_link!(L1, 1);
         let ip = following(ip);
         if const { L3 == crate::staged::NO_LINK } {
             last_link!(L2)
         } else {
             let i = unsafe { &*ip };
-            value_link!(L2);
+            value_link!(L2, 2);
             let ip = following(ip);
             last_link!(L3)
         }
@@ -3427,14 +3431,45 @@ pub(in crate::vm::dispatch_fast) fn is_window_row<H: Host, const OP: u16>(handle
 /// `chains!` index `chain` within `staged::FUSED_CHAINS` (past its end, entry 0 again).
 const fn chain_index(chain: usize) -> usize { if chain < crate::staged::FUSED_CHAINS.len() { chain } else { 0 } }
 
+/// Whether the double result of the producer at `producer` keeps its raw bits (a chain's raw link):
+/// the next record reads that register as an operand, and the register is dead after the next record
+/// or the next record writes it. A keyed element access (`keyed`) reads it as its key alone, so its
+/// base and a store's value must not name the register. Liveness is asked only where the link shape holds.
+fn chain_link_raw(records: &[LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, producer: usize, keyed: bool) -> bool {
+    let (first, second) = (&records[producer], &records[producer + 1]);
+    let names = |field: u16| Operand(field).register_index() == Some(first.a);
+    let dead_after = || live.and_then(|masks| masks.get(producer + 2))
+        .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)));
+    if keyed {
+        names(second.c) && !names(second.b) && second.a != first.a && dead_after()
+    } else {
+        (names(second.b) || names(second.c)) && (second.a == first.a || dead_after())
+    }
+}
+
 /// Gives each record that starts a run of records whose rows are a chain of
 /// `staged::FUSED_CHAINS` the chain's record (`chain_rows`). Runs before `fuse_rows`, so a
 /// chain wins over the pair at its head; the later records keep their own rows for jumps
 /// into them. A chain whose middle record is a jump target still fuses: the jump enters at
-/// that record's own row.
-pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInstruction]) -> Vec<(usize, usize)> {
+/// that record's own row. A link keeps its double result raw (`chain_mode`'s raw mask) where
+/// `chain_raw_links` allows it and `chain_link_raw` holds for the record; `raw_results` (no
+/// handler in the function) gates it, as for `fuse_rows`. Returns each fused record's head and last record.
+pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, raw_results: bool) -> Vec<(usize, usize)> {
     if const { crate::staged::FUSED_CHAINS.is_empty() } { return Vec::new(); }
     macro_rules! link { ($chain:literal, $k:literal) => { crate::staged::FUSED_CHAINS[chain_index($chain)][$k] }; }
+    // Chain `$chain`'s record handlers over the raw masks `$raw`, as `[raw][backward]`: `chain_mode` names
+    // the `MODE` a mask takes, `$mode` the chain's staged mode. A mask past the chain's eligible links
+    // (`staged::chain_raw_links`) names the same record as the mask without them, so it is built once.
+    macro_rules! chain_rows_of {
+        ($mode:path, $chain:literal, $($raw:literal),*) => {
+            [$(
+                [chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) },
+                    { crate::staged::chain_mode($mode, $raw & crate::staged::chain_raw_links(crate::staged::FUSED_CHAINS[chain_index($chain)])) }>(false),
+                 chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) },
+                    { crate::staged::chain_mode($mode, $raw & crate::staged::chain_raw_links(crate::staged::FUSED_CHAINS[chain_index($chain)])) }>(true)],
+            )*]
+        };
+    }
     macro_rules! chains {
         ($($chain:literal),*) => {
             [$((
@@ -3446,8 +3481,9 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
                 ],
                 if link!($chain, 3) == crate::staged::NO_LINK { 3usize } else { 4 },
                 (|handler| if const { link!($chain, 3) == crate::staged::NO_LINK } { jump_row_backward::<H, { link!($chain, 2) }>(handler) } else { jump_row_backward::<H, { link!($chain, 3) }>(handler) }) as fn(*const ()) -> bool,
-                [chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_PLAIN }>(false),
-                    chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_PLAIN }>(true)],
+                chain_rows_of!(crate::staged::FUSED_PLAIN, $chain, 0, 1, 2, 3, 4, 5, 6, 7),
+                crate::staged::chain_raw_links(crate::staged::FUSED_CHAINS[chain_index($chain)]),
+                crate::staged::chain_keyed_links(crate::staged::FUSED_CHAINS[chain_index($chain)]),
             )),*]
         };
     }
@@ -3464,8 +3500,9 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
                 ],
                 if link!($chain, 3) == crate::staged::NO_LINK { 3usize } else { 4 },
                 (|handler| if const { link!($chain, 3) == crate::staged::NO_LINK } { jump_row_backward::<H, { link!($chain, 2) }>(handler) } else { jump_row_backward::<H, { link!($chain, 3) }>(handler) }) as fn(*const ()) -> bool,
-                [chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_WINDOW }>(false),
-                    chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_WINDOW }>(true)],
+                chain_rows_of!(crate::staged::FUSED_WINDOW, $chain, 0, 1, 2, 3, 4, 5, 6, 7),
+                crate::staged::chain_raw_links(crate::staged::FUSED_CHAINS[chain_index($chain)]),
+                crate::staged::chain_keyed_links(crate::staged::FUSED_CHAINS[chain_index($chain)]),
             )),*]
         };
     }
@@ -3474,10 +3511,18 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
     const { assert!(crate::staged::FUSED_CHAINS.len() <= 64, "`chains!` covers 64 chains; add indices") };
     let mut fused_records = Vec::new();
     for pc in 0..records.len() {
-        let Some((_, length, backward, row)) = chains.iter().chain(window_chains.iter()).find(|(links, length, _, _)| {
+        let Some((_, length, backward, rows, eligible, keyed)) = chains.iter().chain(window_chains.iter()).find(|(links, length, _, _, _, _)| {
             pc + length <= records.len() && (0..*length).all(|k| links[k](records[pc + k].handler))
         }) else { continue };
-        records[pc].handler = row[usize::from(backward(records[pc + length - 1].handler))] as *const ();
+        let (length, eligible, keyed) = (*length, *eligible, *keyed);
+        // The raw mask: each eligible link whose producer's register the next record takes raw.
+        let mut raw = 0usize;
+        if raw_results {
+            for k in 0..length - 1 {
+                if eligible & (1 << k) != 0 && chain_link_raw(records, live, pc + k, keyed & (1 << k) != 0) { raw |= 1 << k; }
+            }
+        }
+        records[pc].handler = rows[raw][usize::from(backward(records[pc + length - 1].handler))] as *const ();
         fused_records.push((pc, pc + length - 1));
     }
     fused_records
