@@ -17084,7 +17084,8 @@ script_handler! {
             _ => sibling!(native_call_miss::<H>, r, ip, Carried::script_in(cx, view)),
         };
         // SAFETY: the call's window is registers of the running function, which the native
-        // call copies before anything can move them.
+        // call copies before anything can move them, or reads in place where nothing does
+        // (`lane_call_native_out`).
         let args = unsafe { lane_call_window(r, i) };
         // One element, tested inline: a longer array takes the iteration at no further cost.
         if DISCARDS
@@ -17275,7 +17276,7 @@ fn lane_promise_native<H: Host>(
 
 /// A lane `Call` of a native that `Native::runs_from_lane` admits, made as the general path
 /// makes it from the running frame: with the frame's resume PC published and the arguments
-/// copied out of its registers, which stay rooted by the frame. Only a frame's own lane run
+/// read from its registers, which the frame keeps live at the call. Only a frame's own lane run
 /// calls out, so the frame stack the native and its nested calls observe is the general
 /// path's. `None` exits to the general path, which raises the error the call stashed in
 /// `Vm::lane_raised` or makes a call this does not admit.
@@ -17313,16 +17314,18 @@ fn lane_call_native_out<H: Host>(
     }
     // Arguments in the call's window are held by the frame parked at the call, so the native
     // roots only its receiver; any others (an `apply`'s elements) are rooted with it.
-    let held = lane_arguments_in_window(cx, args);
+    let in_window = lane_arguments_in_window(cx, args);
     // SAFETY: `ip` is a record of the active view, which is the running function's.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
     // Without activations the window lies in the lane's frame's register file, which nothing
     // moves or writes while the frame is parked at the call: the native reads it in place.
-    if held && !vm.lane_stack.has_frames() && lane_registers_are_frames(vm, cx) {
+    if in_window && !vm.lane_stack.has_frames() && lane_registers_are_frames(vm, cx) {
         return lane_call_from_frame(cx, ip, |vm, code| {
             vm.call_native_from_lane_arguments_held(code, native, receiver, args, callee)
         });
     }
+    // With activations the innermost one's frame holds the window once they become frames.
+    let held = in_window && vm.lane_stack.has_frames();
     // The values are copied before activations become frames, which moves the registers
     // they may lie in; the frames then hold what the call passes.
     let arguments = super::call_arguments::CallArguments::from_slice(args);
