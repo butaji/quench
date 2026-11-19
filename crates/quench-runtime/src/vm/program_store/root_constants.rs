@@ -3,6 +3,8 @@
 //! initialized holds that value for every later read, while the root has run at most once,
 //! so its root environment is the program's only one.
 use super::{ProgramId, ProgramStore};
+use crate::code_dependencies::{CodeReaders, DependentCode};
+use std::rc::Rc;
 
 #[derive(Default)]
 pub(super) struct RootConstants {
@@ -15,6 +17,9 @@ pub(super) struct RootConstants {
     /// The root closures made for the program (`Vm::note_root_run`), counted up to two: past
     /// one, no root slot is written-once for reads anymore.
     root_runs: std::cell::Cell<u8>,
+    /// The published code that folded a written-once slot's value (`Identity::Folded`), retired
+    /// by the program's second root run (`ProgramStore::note_root_run`).
+    readers: std::cell::RefCell<CodeReaders>,
 }
 
 /// The root runs past which a program has more than one root environment.
@@ -43,10 +48,22 @@ impl ProgramStore {
         held.as_ref().is_some_and(|(words, _)| crate::bitset::words_contain(words, usize::from(slot)))
     }
 
-    /// Notes another run of program `id`'s root (its root closure is made).
+    /// Notes another run of program `id`'s root (its root closure is made). From its second, the
+    /// code that folded a written-once root slot is retired: its root environment is no longer
+    /// the program's only one.
     pub(crate) fn note_root_run(&self, id: ProgramId) {
         let Some(entry) = self.entry(id) else { return };
         let runs = &entry.root_constants.root_runs;
         runs.set(runs.get().saturating_add(1).min(ONE_ROOT_RUN + 1));
+        if runs.get() > ONE_ROOT_RUN {
+            entry.root_constants.readers.borrow_mut().retire(0);
+        }
+    }
+
+    /// Makes `code`, which folded a written-once root slot of program `id`, retire at the root's
+    /// second run (`note_root_run`); `false` where a reader table is full.
+    pub(crate) fn subscribe_root_constant(&self, id: ProgramId, code: &Rc<dyn DependentCode>) -> bool {
+        let Some(entry) = self.entry(id) else { return false };
+        entry.root_constants.readers.borrow_mut().subscribe(0, code)
     }
 }
