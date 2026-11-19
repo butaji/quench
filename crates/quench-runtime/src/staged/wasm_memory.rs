@@ -421,6 +421,7 @@ impl Memory {
 // Scalar memory32 accesses with a static offset have one opcode each. The access semantics
 // remain the MemoryLoad/MemoryStore rules above; the opcode only names the operator so dispatch
 // needs no selector decode.
+#[cfg(not(stencil_build))]
 macro_rules! direct_accesses {
     ($kind:ty; $($name:ident => $op:ident;)+) => {
         impl $kind {
@@ -433,6 +434,7 @@ macro_rules! direct_accesses {
         }
     }
 }
+#[cfg(not(stencil_build))]
 direct_accesses! { crate::wasm::memory::MemoryLoad;
     I32Load => WasmI32Load;
     I64Load => WasmI64Load;
@@ -449,6 +451,7 @@ direct_accesses! { crate::wasm::memory::MemoryLoad;
     I64Load32S => WasmI64Load32S;
     I64Load32U => WasmI64Load32U;
 }
+#[cfg(not(stencil_build))]
 direct_accesses! { crate::wasm::memory::MemoryStore;
     I32Store => WasmI32Store;
     I64Store => WasmI64Store;

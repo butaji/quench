@@ -26,8 +26,17 @@ mod layout;
 #[macro_use]
 #[path = "stencils/row_catalog.rs"]
 mod row_catalog;
+// Shared definitions (library, row names, supernode rules): the build script reads a subset of each; the
+// lib and the stencil crate mount the same files and keep the dead-code check on every item.
+#[allow(dead_code)]
 #[path = "stencils/library.rs"]
 mod library;
+// Shared definitions (library, row names, supernode rules): the build script reads a subset of each; the
+// lib and the stencil crate mount the same files and keep the dead-code check on every item.
+#[allow(dead_code)]
+#[path = "stencils/row_names.rs"]
+mod row_names;
+use library::TYPED_KINDS;
 #[path = "build/macho.rs"]
 mod macho;
 #[path = "build/sources.rs"]
@@ -36,6 +45,11 @@ mod sources;
 mod shards;
 #[path = "build/supernodes.rs"]
 mod supernodes;
+// Shared definitions (library, row names, supernode rules): the build script reads a subset of each; the
+// lib and the stencil crate mount the same files and keep the dead-code check on every item.
+#[allow(dead_code)]
+#[path = "stencils/supernode_rules.rs"]
+mod supernode_rules;
 #[path = "stencils/wasm_families.rs"]
 mod wasm_families;
 #[path = "stencils/wasm_kinds.rs"]
@@ -145,7 +159,7 @@ fn instances(listed: &supernodes::Listed) -> Vec<String> {
     let heaps = library::heap_library().into_iter().map(|c| format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4));
     let supers = supernodes::instances(listed).into_iter().map(|nodes| format!("supernode_row!({}, {});\n", supernode_rules::name(&nodes), supernode_rules::macro_args(&nodes)));
     let wasm = wasm_library::wasm_library().into_iter().map(|c| format!("wasm_row!({}, {}, {}, {}, {});\n", wasm_library::wasm_name(c), c.0, c.1, c.2, c.3));
-    base.into_iter().chain(wasm).collect()
+    numbers.chain(heaps).chain(supers).chain(wasm).collect()
 }
 
 fn instance_file(out: &Path, shard: usize) -> PathBuf {

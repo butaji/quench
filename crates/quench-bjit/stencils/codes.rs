@@ -1,10 +1,6 @@
 //! The codes a Number or heap row is named by: the places of its operands, its kind and its heap
 //! operation. The one definition `numeric.rs` (the semantics), `library.rs` (which rows exist) and
 //! the runtime (which row it plans) all read.
-//!
-//! No code is written by hand. `codes!` lists each name once, in code order, and assigns each the
-//! next value; `reserve(n)` skips `n` codes (a block's extent, or a gap no row uses). Adding a row is
-//! one line in its namespace's list, and every later code shifts only if the row is inserted before it.
 
 /// The Number kinds' codes and the heap tables (`row_tables.rs`, the catalog's build-side half).
 #[path = "row_tables.rs"]
@@ -43,8 +39,10 @@ pub const LAST_INT_PIN: u8 = PIN + INT_PINS - 1;
 pub const MATH_FIRST: u8 = SQRT;
 pub const MATH_LAST: u8 = SIGN;
 
-/// The typed-array kinds, the runtime's enum (`layout::typed_array_catalog`, mounted once for both builds).
-use crate::layout::typed_array_catalog::TypedArrayKind;
+/// The typed-array kinds, the runtime's own enum, mounted here once for every build (the stencils' `layout` re-exports it).
+#[path = "../../quench-runtime/src/heap/cell/typed_array_catalog.rs"]
+pub(crate) mod typed_array_catalog;
+use typed_array_catalog::TypedArrayKind;
 
 /// The planned typed array kinds: each typed row family (`TYPED_INDEX_ROW`, `TYPED_STORE_ROW`) has one row per kind.
 pub const TYPED_KINDS: u8 = TypedArrayKind::COUNT as u8;
@@ -77,31 +75,9 @@ const fn non_native_kinds() -> [u8; non_native_count()] {
     kinds
 }
 
-/// The operands a kind reads, the others fixed to `MEM`: the one definition of which places a row
-/// reads, which `library.rs` (the rows the library holds) canonicalizes by and `places.rs` (the
-/// representation of each place) reads through.
-pub const fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
-    if is_copy(kind) {
-        (dst, a, MEM)
-    } else if is_compare(kind) {
-        (MEM, a, b)
-    } else if matches!(kind, JUMP | JUMP_POLL | JUMP_WATCH | POLL | TAG_INIT) {
-        (MEM, MEM, MEM)
-    } else if matches!(kind, GUARD | NOT | NEG) || (MATH_FIRST <= kind && kind <= MATH_LAST) {
-        (dst, a, MEM)
-    } else if matches!(kind, JUMP_TRUE | JUMP_FALSE | SPILL) {
-        (MEM, a, MEM)
-    } else {
-        (dst, a, b)
-    }
-}
-
 /// The kind families the library is built from.
 pub const fn is_copy(kind: u8) -> bool {
     kind <= COPY
-}
-pub const fn is_arith(kind: u8) -> bool {
-    ADD <= kind && kind <= MUL
 }
 pub const fn is_bitwise(kind: u8) -> bool {
     AND <= kind && kind <= USHR

@@ -1,6 +1,6 @@
 //! The heap rows' codes (the catalog in `names` mode, `row_catalog.rs`), and the ranges and last rows the stencils,
 //! the runtime and the lib's tests read as codes. Mounted by the stencils (`codes.rs` re-exports it under
-//! `stencil_build`), by the lib (`numeric.rs`), and read by the runtime through `numeric::row_names`. `build.rs` does not mount it.
+//! `stencil_build`), by the lib (`numeric.rs`), and read by the runtime through `numeric::row_names`. `build.rs` mounts it beside the library, which re-exports it.
 
 use super::TYPED_KINDS;
 
