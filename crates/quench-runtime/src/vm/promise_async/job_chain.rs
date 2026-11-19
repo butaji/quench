@@ -169,7 +169,8 @@ impl<H: Host> Vm<H> {
     /// due), request termination, import a module, or call into a host that starts observing
     /// promises, and may leave the queue or the call roots otherwise. All of them only read, so
     /// the queue's front is looked at first: an empty or unchainable front, where every chain
-    /// ends, answers before the loop's checks.
+    /// ends, answers before the loop's checks. No lane run may be live when the next job enters
+    /// the lane directly (`run_chained_job`), so that is checked here too, not only asserted.
     fn chained_front(&self, program: ProgramId, ended: AwaitResume) -> Option<(AwaitRole, Value, *const FrameRecord)> {
         let Some(PendingJob::Reaction(reaction)) = self.realm.jobs.front() else {
             return None;
@@ -180,6 +181,8 @@ impl<H: Host> Vm<H> {
             || self.heap.should_collect()
             || self.static_module_jobs_pending()
             || !self.chain_roots_hold(ended)
+            || !self.lane_stack.activations.is_empty()
+            || self.lane_deferred.is_some()
         {
             return None;
         }
