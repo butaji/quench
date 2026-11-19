@@ -7,7 +7,7 @@
 use super::*;
 use super::super::object_slots::emit;
 use crate::staged::flow::FlowStage;
-use crate::staged::machine::{Binary, Lane, MachineScalar, Relation};
+use crate::staged::machine::{Lane, MachineScalar, Relation};
 use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
 use super::super::entry_cell::{EntryCell, RAISED_RUN};
@@ -178,7 +178,6 @@ impl EmitFrame<'_> {
 impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_entry(&self, site: &Invocation) -> CallEntry {
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
-        if callee.lexical { return CallEntry::Helper; }
         let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
         // A callee register the state already holds as this very function (a Stable binding's
         // read, or an identity an earlier guard proved) needs no check: the identity is folded.
@@ -236,8 +235,8 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         }
         self.push_native(stage, callee, this, room);
         let entry = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, entry)));
-        let signature = body_signature_in_lane(types::I64, stage.builder.func.signature.call_conv);
-        let signature = crate::vm::jit_backend::signature_ref(stage.builder.func, signature);
+        let signature = lane_body_signature(types::I64, stage.builder.func.signature.call_conv);
+        let signature = stage.builder.import_signature(signature);
         let captures = address(self.helpers, stage.builder, RelocKind::CaptureWords, callee.target.function,
             callee.capture_word());
         let (status, word) = stage.call_entry(signature, entry, &[call.context, this, captures, room.top]);
@@ -259,13 +258,10 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         self.pop_native(stage, room);
         stage.store_u64(FRAME, call.registers, register_offset(site.result), value);
         stage.jump(call.completed, &[]);
-        let (left, missed, raised) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
-        for block in [left, missed, raised] {
+        let (left, missed, threw, raised) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
+        for block in [left, missed, threw, raised] {
             stage.builder.set_cold_block(block);
         }
-        // A callee that never entered and one that threw both pop the frame, once, in one
-        // block; a leave keeps it pushed for the lane to link.
-        let popped = super::cold_block(&mut stage.builder);
         stage.builder.switch_to_block(entered.unfinished);
         let not_entered = status_is(stage, entered.status, StatusClass::NotEntered);
         stage.branch(not_entered, (missed, &[]), (threw, &[]));
@@ -279,6 +275,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let counters = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)));
         let counted = stage.add_imm(counters, RAISED_RUN);
         stage.store_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)), counted);
+        self.pop_native(stage, room);
         stage.jump(call.raised, &[]);
         stage.builder.switch_to_block(left);
         call.leave.with(stage.builder, entered.status, Some(entered.word));
@@ -305,16 +302,25 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let record = stage.raw_const(Lane::I64, i64::from(call.record));
         let address = self.helpers.address(&mut stage.builder, which);
         let status = emit_lane_helper_call(stage.builder, self.payload, address, &[context, record]);
-        let (done, other) = (stage.raw_compare_imm(Relation::Equal, status, LANE_CALL_COMPLETED as i64), stage.builder.create_block());
-        stage.branch(done, (call.completed, &[]), (other, &[]));
-        stage.builder.switch_to_block(other);
-        if direct_entry { stage.builder.set_cold_block(other); }
-        let (missed, unmissed) = (stage.raw_compare_imm(Relation::Equal, status, LANE_CALL_MISSED as i64), stage.builder.create_block());
-        stage.branch(missed, (call.missed, &[]), (unmissed, &[]));
-        stage.builder.switch_to_block(unmissed);
-        if direct_entry { stage.builder.set_cold_block(unmissed); }
-        let raised = stage.raw_compare_imm(Relation::Equal, status, LANE_CALL_RAISED as i64);
-        stage.branch(raised, (call.raised, &[]), (call.stop, &[status]));
+        // The status dispatch, generated from the shared outcome table: each test but the first
+        // is cold where a direct entry was emitted; the last miss leaves with the status.
+        let outcomes = crate::staged::protocol::HELPER_OUTCOMES;
+        for (index, (code, outcome)) in outcomes.into_iter().enumerate() {
+            let target = match outcome {
+                crate::staged::protocol::HelperOutcome::Completed => call.completed,
+                crate::staged::protocol::HelperOutcome::Missed => call.missed,
+                crate::staged::protocol::HelperOutcome::Raised => call.raised,
+            };
+            let hit = stage.raw_compare_imm(Relation::Equal, status, i64::from(code));
+            if index + 1 == outcomes.len() {
+                stage.branch(hit, (target, &[]), (call.stop, &[status]));
+            } else {
+                let other = stage.builder.create_block();
+                stage.branch(hit, (target, &[]), (other, &[]));
+                stage.builder.switch_to_block(other);
+                if direct_entry { stage.builder.set_cold_block(other); }
+            }
+        }
         stage.builder.switch_to_block(call.completed);
         Some(stage.constant(0))
     }
