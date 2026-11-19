@@ -1,8 +1,8 @@
 //! The protocol miss tables (`lane_frame::protocol_miss`): per family, the body that completes a
 //! protocol record its row leaves unresolved, by the family's static parameters.
 
-mod element; pub(in crate::vm::dispatch_fast) use element::element_miss_of;
-mod private; pub(in crate::vm::dispatch_fast) use private::private_miss_of;
+pub(in crate::vm::dispatch_fast) mod element; pub(in crate::vm::dispatch_fast) use element::element_miss_of;
+pub(in crate::vm::dispatch_fast) mod private; pub(in crate::vm::dispatch_fast) use private::private_miss_of;
 mod script_call; pub(in crate::vm::dispatch_fast) use script_call::script_call_miss_of;
 mod iteration; pub(in crate::vm::dispatch_fast) use iteration::iteration_miss_of;
 mod native_call; pub(in crate::vm::dispatch_fast) use native_call::native_call_miss_of;

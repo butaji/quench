@@ -178,7 +178,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The running function's own frame, for the steps that read state only a frame has (its
-    /// `arguments` object). A step made beside frameless activations (`lane_in_place`) has the
+    /// `arguments` object). A step made beside frameless activations (`in_place_in_lane`) has the
     /// caller's frame innermost: the activations become frames first, as guest code would make them.
     pub(super) fn own_frame(&mut self) -> usize {
         self.materialize_deferred_lane();

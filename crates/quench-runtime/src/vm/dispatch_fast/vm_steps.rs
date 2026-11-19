@@ -40,7 +40,7 @@ unsafe fn vm_operation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
         .and_then(|row| row.call_out()).expect("a call-out record decodes");
     let operands = operation.operands().read(&code.method_arguments, |operand| call_operand_in_lane(cx, r, operand));
-    let Some(value) = lane_in_place(cx, ip, |vm, code| {
+    let Some(value) = in_place_in_lane(cx, ip, |vm, code| {
         let site = super::super::call_out::CallSite { owner: vm.call_out_owner(operation), function, resume: call_pc as usize + 1 };
         vm.call_out(code, site, operation, operands)
     }) else { return LANE_CALL_MISSED };
@@ -121,7 +121,7 @@ pub(in crate::vm) unsafe extern "C" fn decide_comparison<H: Host>(vm: u64, _resi
 /// (`Vm::materialize_deferred_lane`), the step is made on the innermost as the general loop makes it, and the body
 /// leaves for the general path past the record (`LANE_CALL_LEFT`), which resumes in those frames. A record that returned
 /// its result is returned from its frame there (`frame_return_in_lane`), and an error the step raised is stashed for
-/// the general path to raise at the record (`lane_in_place`). `LANE_CALL_MISSED` where the record is no such step.
+/// the general path to raise at the record (`in_place_in_lane`). `LANE_CALL_MISSED` where the record is no such step.
 ///
 /// # Safety
 /// As `body_general_step`; `record` is the record at `call_pc` of the innermost activation's function.
@@ -131,7 +131,7 @@ unsafe fn frames_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record:
     if !(instruction.op().steps_in_body() || instruction.op().makes_script_call()) { return LANE_CALL_MISSED; }
     let (base, pc) = unsafe { ((*cx).base, call_pc as usize) };
     let ip = unsafe { base.add(pc) };
-    let made = lane_in_place(cx, ip, |vm, code| {
+    let made = in_place_in_lane(cx, ip, |vm, code| {
         vm.materialize_deferred_lane();
         let frame = vm.frames.len() - 1;
         vm.frames[frame].pc = pc;
@@ -164,7 +164,7 @@ unsafe fn left_operand_at<H: Host>(cx: *mut LaneContext<H>, resume: Ip) -> u64 {
 /// in place. Guest code the step ran (a getter or a proxy trap of a `with` object or the global object) made the
 /// activations frames, which finish the step: the body leaves for the general path past the record
 /// (`LANE_CALL_LEFT`), as `frames_step_in` does. `LANE_CALL_MISSED` where it raised: the error is stashed for
-/// the general path to raise at the record (`lane_in_place`).
+/// the general path to raise at the record (`in_place_in_lane`).
 ///
 /// # Safety
 /// As `frames_step_in`.
@@ -173,7 +173,7 @@ unsafe fn owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: 
     let instruction = record.without_return();
     let (base, pc) = unsafe { ((*cx).base, call_pc as usize) };
     let ip = unsafe { base.add(pc) };
-    let made = lane_in_place(cx, ip, |vm, code| {
+    let made = in_place_in_lane(cx, ip, |vm, code| {
         let owner = vm.running_owner();
         vm.owner_step(code, owner, instruction, pc + 1)?;
         // The activations stayed the lane's while the step made no frame of them.
@@ -267,7 +267,7 @@ unsafe fn body_general_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -
     let instruction = function.widened(function.code[call_pc as usize]).without_return();
     if !(instruction.op().steps_in_body() || instruction.op().makes_script_call()) { return LANE_CALL_MISSED; }
     let following = call_pc as usize + 1;
-    let branched = lane_in_place(cx, ip, |vm, code| {
+    let branched = in_place_in_lane(cx, ip, |vm, code| {
         let mut next = following;
         vm.step(code, frame, instruction, &mut next, false).map(|result| {
             debug_assert!(matches!(result, StepResult::Continue), "an in-place step only continues");

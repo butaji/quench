@@ -221,7 +221,7 @@ fn default_osr_keeps_self_contained_loop_regions() {
                 .and_then(super::program_store::derived_lane_view).unwrap();
             let osr = view.osr_diagnostics();
             assert!(osr.currently_compiled_sites > 0 && osr.native_region_runs > 0, "loop region must run: {osr:?}");
-            assert!(view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
+            assert!(view.tier().body_stats.report(0, view.body_state_in_lane(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
         }
     }
     assert_eq!(answers[0], answers[1]);
@@ -287,7 +287,7 @@ fn lane_body_returns_ssa_values_from_a_vm_owned_frame() {
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap().get(2)
                 .and_then(super::program_store::derived_lane_view).unwrap();
-            let report = view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None).expect("the return must run in the lane body");
+            let report = view.tier().body_stats.report(0, view.body_state_in_lane(), &|_, _| None).expect("the return must run in the lane body");
             assert!(!report.contains("\"completed\":0,"), "SSA returns must complete: {report}");
         }
     }
@@ -1248,7 +1248,7 @@ fn shape_compaction_clears_own_field_hints() {
 #[test]
 fn nested_reads_follow_their_first_steps_hint_across_shapes() {
     // A nested read's record keeps the own entry its first step last hit as its hint
-    // (`lane_nested_own_value`): bases of two layouts holding the first field at different
+    // (`nested_own_value_in_lane`): bases of two layouts holding the first field at different
     // slots, alternating and in runs, a prototype-held first field, and a parser whose `this`
     // gains a field mid-run each read the field the layout in hand holds. Expected value is
     // Node's (v26).
@@ -21054,7 +21054,7 @@ fn assert_drive_leaves_no_method_call(vm: &Vm<TestHost>, program: &crate::Residu
         .and_then(super::program_store::derived_lane_view).unwrap();
     let op_at = |function: u32, pc: u32| program.function(function as usize).instructions().nth(pc as usize)
         .map(|instruction| format!("{:?}", instruction.op()));
-    if let Some(report) = view.tier().body_stats.report(0, view.lane_body_state(), &op_at) {
+    if let Some(report) = view.tier().body_stats.report(0, view.body_state_in_lane(), &op_at) {
         assert!(!report.contains("CallMethod") && !report.contains("CallThisMethod"), "no leave at a method call: {report}");
     }
 }
@@ -23171,7 +23171,7 @@ fn lane_leaf_calls_keep_legacy_caller_and_arguments() {
 #[test]
 fn lane_leaf_calls_survive_collections_their_getters_make() {
     // A leaf's field read that meets a getter makes the leaf an activation before the
-    // getter's (`lane_getter_activation`), so the object in the leaf's register survives the
+    // getter's (`getter_activation_in_lane`), so the object in the leaf's register survives the
     // collections the getter's allocations make; a leaf's concatenation allocates too.
     let source = r#"
       var holder = { get x() { var a = []; for (var k = 0; k < 64; k++) a.push({ k: k }); return a.length; } };
@@ -23361,7 +23361,7 @@ fn lane_leaf_calls_bind_receivers_as_activations() {
 
 #[test]
 fn lane_leaf_calls_make_operations_in_place_as_activations() {
-    // A leaf's operation made in place (`lane_in_place`: a `valueOf` a binary reaches, a
+    // A leaf's operation made in place (`in_place_in_lane`: a `valueOf` a binary reaches, a
     // proxy's read) makes the leaf an activation first, from an activation or from the
     // frame, so the guest code runs above the leaf's frame (expected values from Node).
     let source = r#"

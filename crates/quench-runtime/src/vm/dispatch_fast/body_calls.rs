@@ -405,7 +405,7 @@ fn body_push_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: 
 fn warm_callee_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32) {
     if own.respecializes() {
         specialize_in_lane(cx, own, function, true, &[]);
-    } else if own.lane_body().is_none() {
+    } else if own.body_view_in_lane().is_none() {
         specialize_in_lane(cx, own, function, false, &[]);
     }
 }
@@ -435,7 +435,7 @@ fn body_activate_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, targ
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::super::program_store::derived_lane_view);
     let Some(own) = own else { return leave(start, Value::UNDEFINED) };
     warm_callee_in_lane(cx, own, target.function);
-    let Some(method) = own.lane_body().filter(|method| body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS)) else {
+    let Some(method) = own.body_view_in_lane().filter(|method| body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
         return leave(start, Value::UNDEFINED);
     };

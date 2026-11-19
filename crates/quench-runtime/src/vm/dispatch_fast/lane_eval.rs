@@ -89,7 +89,7 @@ unsafe fn settle_eval_record(record: *mut FrameRecord, previous_this: Option<Val
 /// The value of the direct eval the call record `i` at `ip` of the innermost window activation
 /// makes, which runs above the activation with the record as its caller (`Vm::eval_callers`).
 /// A raised error is stashed in `Vm::lane_raised` for the frames the general path makes to raise,
-/// and `None` is returned, as for any step the lane makes in place (`lane_in_place`).
+/// and `None` is returned, as for any step the lane makes in place (`in_place_in_lane`).
 fn direct_eval_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);

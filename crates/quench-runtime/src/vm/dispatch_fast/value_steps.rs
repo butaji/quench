@@ -49,7 +49,7 @@ pub(super) unsafe fn activation_value_step<H: Host>(cx: *mut LaneContext<H>, cal
     let r = unsafe { (*cx).registers };
     let Some(values) = operand_values(cx, r, step, instruction) else { return Some(LANE_CALL_MISSED) };
     let ip = unsafe { (*cx).base.add(call_pc as usize) };
-    let Some(made) = lane_in_place(cx, ip, |vm, code| make(vm, code, (step, instruction), values)) else { return Some(LANE_CALL_MISSED) };
+    let Some(made) = in_place_in_lane(cx, ip, |vm, code| make(vm, code, (step, instruction), values)) else { return Some(LANE_CALL_MISSED) };
     // Guest code the step ran may have made the activations frames, whose registers these are.
     let after = unsafe { (*cx).registers };
     if let Some(value) = made.value { after.set(instruction.result_register(), value); }

@@ -158,7 +158,7 @@ lane_handler! {
 #[cold]
 #[inline(never)]
 fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
-    let cx = lane_context::<H>();
+    let cx = context_in_lane::<H>();
     // SAFETY: called only while a lane runs, from its call handler.
     let i = unsafe { &*ip };
     let vm = unsafe { vm(cx) };
@@ -198,7 +198,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
 }
 
 /// A Wasm call of `function`, which native code holds, made from the lane beside its
-/// activations (`lane_in_place`), so the callers stay activations unless guest code the
+/// activations (`in_place_in_lane`), so the callers stay activations unless guest code the
 /// callee reaches makes them frames. The caller resumes after the call as a returning
 /// activation's does (`resume_after_call_in_lane`), its memory view read again: the callee may
 /// have grown the memory. `None` when native code declines the call, which then enters as
@@ -213,7 +213,7 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
     let args = unsafe { lane_call_window(r, i) };
     let vm = unsafe { vm(cx) };
     let (program, env) = (unsafe { (*cx).program }, instance_env_in_lane(cx));
-    let Some(called) = lane_in_place(cx, ip, |vm, _| vm.run_compiled(program, env, function, args).transpose()) else {
+    let Some(called) = in_place_in_lane(cx, ip, |vm, _| vm.run_compiled(program, env, function, args).transpose()) else {
         return Some(Resumed::Exit(exit(ip)));
     };
     let value = called?;
@@ -237,7 +237,7 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
 }
 
 /// A Wasm reference call of a JavaScript-backed import, made from the lane beside its
-/// activations (`lane_in_place`) through the import's shared conversion path
+/// activations (`in_place_in_lane`) through the import's shared conversion path
 /// (`Vm::call_compiled_js_wasm_import`), so the Wasm callers stay activations unless the
 /// JavaScript callee makes them frames. The caller resumes as `lane_call_compiled`'s does.
 /// `None` for a host-backed import, which leaves for the general loop.
@@ -268,7 +268,7 @@ fn lane_call_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, m
         return None;
     }
     let program = unsafe { (*cx).program };
-    let Some(called) = lane_in_place(cx, ip, |vm, code| {
+    let Some(called) = in_place_in_lane(cx, ip, |vm, code| {
         vm.call_compiled_js_wasm_import(
             program, code, callee, target, capture, &signature, Value::UNDEFINED, &args,
             Value::UNDEFINED, std::ptr::null_mut(),

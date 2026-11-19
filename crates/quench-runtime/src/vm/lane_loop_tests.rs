@@ -294,7 +294,7 @@ fn a_hot_loop_that_leaves_at_calls_specializes_its_function_before_the_entry_war
     assert_eq!(output.take(), interpreted);
     let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
     let view = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("the driver's lane view");
-    assert!(!matches!(view.lane_body_state(), "unspecialized" | "compiling"), "eight entries settle the driver's body");
+    assert!(!matches!(view.body_state_in_lane(), "unspecialized" | "compiling"), "eight entries settle the driver's body");
 }
 
 /// A body its caller's body calls by its entry leaves at its own native calls (a string

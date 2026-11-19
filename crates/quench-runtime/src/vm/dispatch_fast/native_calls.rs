@@ -256,7 +256,7 @@ script_handler! {
     /// `lane_native_call` of `Reflect.get`, read once along an ordinary chain
     /// (`Vm::reflect_chain_read`): a data value or an absent key completes the call in place,
     /// an accessor with a getter is that getter's activation with the receiver argument as
-    /// `this` (`lane_activate_getter`), whose completion is the call's value; any other
+    /// `this` (`activate_getter_in_lane`), whose completion is the call's value; any other
     /// call is the native's (`native_call_value_in_lane`).
     #[inline(never)]
     pub(super) fn reflect_get_miss<>(cx, r, ip, i, view) {
@@ -274,7 +274,7 @@ script_handler! {
             Some((ChainRead::Value(value), _)) => resume!(cx, native_complete_in_lane(cx, ip, i, Some(value))),
             Some((ChainRead::Absent, _)) => resume!(cx, native_complete_in_lane(cx, ip, i, Some(Value::UNDEFINED))),
             Some((ChainRead::Getter(Some(getter)), receiver)) if !getter.is_undefined() => {
-                match lane_activate_getter(cx, r, ip, getter, receiver, None) {
+                match activate_getter_in_lane(cx, r, ip, getter, receiver, None) {
                     Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
                     Err(next) => next,
                 }

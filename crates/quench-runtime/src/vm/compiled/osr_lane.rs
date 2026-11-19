@@ -13,7 +13,7 @@ pub(super) fn bind_loop<H: Host>(
     // body's do (`run_loop_body`); `with` leaves it `DELETED`. A frameless activation's
     // receiver is the lane context's: `frame` is then the VM frame beneath it, its caller's.
     // SAFETY: `lane_context` is the running lane's context for `H`.
-    dispatch.receiver = unsafe { super::dispatch_fast::lane_context_this::<H>(lane_context) }.to_bits();
+    dispatch.receiver = unsafe { super::dispatch_fast::context_this_in_lane::<H>(lane_context) }.to_bits();
     // The counter is the `words` field's first word, not the struct's offset 0:
     // `LoopEntry` is not `repr(C)`.
     dispatch.loop_entry = entry.words_mut() as usize;
@@ -68,7 +68,7 @@ pub(super) unsafe fn bind_captures<H: Host>(
 }
 
 /// The lane activation's own registers, locals, body and field cache entries. Its locals are where a lane body's
-/// are (`dispatch_fast::lane_body_locals`): the VM frame may name the caller.
+/// are (`dispatch_fast::body_locals_in_lane`): the VM frame may name the caller.
 ///
 /// # Safety
 /// `registers` is the activation's live register file; `lane_context` the running lane's
@@ -82,7 +82,7 @@ pub(super) unsafe fn bind_frame<H: Host>(
         && let Some(body) = residual.function_get(function as usize) {
         dispatch.native_registers = registers;
         dispatch.register_count = usize::from(body.registers);
-        dispatch.native_locals = super::dispatch_fast::lane_body_locals::<H>(lane_context as *mut (), registers, false);
+        dispatch.native_locals = super::dispatch_fast::body_locals_in_lane::<H>(lane_context as *mut (), registers, false);
         dispatch.local_count = usize::from(body.locals);
         dispatch.body = body as *const _;
         dispatch.residual = Rc::as_ptr(residual) as usize;

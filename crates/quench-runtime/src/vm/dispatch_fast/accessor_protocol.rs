@@ -105,7 +105,7 @@ impl<H: Host> AccessorCall<H> {
 
     /// A lane read of `base` at the record `i` (at `ip`) that met `getter`: its value where a read
     /// answers the getter's call (`getter_answer`), else the getter's activation
-    /// (`lane_activate_getter`), whose completion is the read's value. Only a read that writes its
+    /// (`activate_getter_in_lane`), whose completion is the read's value. Only a read that writes its
     /// register is answered in place: a returning read (`RETURN_REGISTER`) completes its
     /// activation, which only the getter's activation does. A native getter is called in place
     /// (`call_native_in_lane`); `Err` after such a call that raised leaves the error in
@@ -125,7 +125,7 @@ impl<H: Host> AccessorCall<H> {
                 }
                 return self.native_getter(ip, i, native, getter, base);
             }
-            return lane_activate_getter(self.cx, r, ip, getter, base, None);
+            return activate_getter_in_lane(self.cx, r, ip, getter, base, None);
         }
         let target = script_target_in_lane(self.cx, getter);
         if reads
@@ -140,7 +140,7 @@ impl<H: Host> AccessorCall<H> {
             r.set(i.a, value);
             return Ok((r, following(ip)));
         }
-        lane_activate_getter(self.cx, r, ip, getter, base, target)
+        activate_getter_in_lane(self.cx, r, ip, getter, base, target)
     }
 
     /// `read_getter` of a native getter: called as a lane `Call` of it with no arguments is.
@@ -156,7 +156,7 @@ impl<H: Host> AccessorCall<H> {
 
     /// What the getter the site cached answers for `base` (`getter_answer`), made the record's
     /// hint where the getter returns an own field of its receiver; any other getter moves the record
-    /// to `lane_get_field_getter` for good.
+    /// to `get_field_getter_miss` for good.
     ///
     /// # Safety
     /// `self.cx` is the running lane's context and `ip` the `GetField` record `i`.
@@ -169,7 +169,7 @@ impl<H: Host> AccessorCall<H> {
             .getter_field_slot(getter, base)
             .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
         if !slot.is_some_and(|slot| set_getter_hint(vm, ip, i.imm(), base, slot)) {
-            requicken::<H>(ip, lane_get_field_getter::<H>);
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>);
         }
         Some(value)
     }
@@ -215,7 +215,7 @@ impl<H: Host> AccessorCall<H> {
         match vm.ordinary_chain_read_proved(target, atom) {
             Some(ChainRead::Value(value)) => Self::complete_read(r, ip, i, value),
             Some(ChainRead::Absent) => Self::complete_read(r, ip, i, Value::UNDEFINED),
-            Some(ChainRead::Getter(Some(getter))) if !getter.is_undefined() => lane_activate_getter(self.cx, r, ip, getter, base, None),
+            Some(ChainRead::Getter(Some(getter))) if !getter.is_undefined() => activate_getter_in_lane(self.cx, r, ip, getter, base, None),
             _ => Err(exit(ip)),
         }
     }

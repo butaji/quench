@@ -847,13 +847,13 @@ impl<const ACC: u8> LaneFrame<ACC> {
         };
         match probe {
             super::object::FieldCacheProbe::Hit(value) => Some(value),
-            // A proxy's handler answers its reads (`lane_getter_activation` runs the trap): no
+            // A proxy's handler answers its reads (`getter_activation_in_lane` runs the trap): no
             // getter entry or data lookup below holds one.
             super::object::FieldCacheProbe::Ineligible if unsafe { vm(cx) }.proxy_parts(object).is_some() => None,
             // An accessor's entry answers before the data lookups, which would walk the chain to
             // reach the same accessor and decline it.
             // A getter the lane cannot answer in place is the activation's to call
-            // (`lane_getter_activation`); only a virtual field may still answer.
+            // (`getter_activation_in_lane`); only a virtual field may still answer.
             probe => match unsafe { super::AccessorCall::of(cx).getter_read(object, atom, site) } {
                 Some(Some(value)) => Some(value),
                 Some(None) => unsafe { vm(cx) }.pure_virtual_field(object, atom),
@@ -2652,7 +2652,7 @@ lane_handler! {
             }
             if const { super::private_field_site(FLAG) } {
                 // A method, accessor or missing private field: the general private read.
-                sibling!(lane_get_private_field::<H>, r, ip, Carried::script_in(script, view))
+                sibling!(get_private_field_miss::<H>, r, ip, Carried::script_in(script, view))
             }
             if const { super::cached_field_site(FLAG) } {
                 // A read the cache does not answer: the general read, which runs the getter.
@@ -2674,7 +2674,7 @@ lane_handler! {
             if const { FLAG == super::NESTED_SITE } {
                 // A nested read whose hops the record does not hold (or whose steps miss): the hand
                 // read that refreshes the hint from the steps' entries.
-                sibling!(lane_get_field_nested::<H>, r, ip, Carried::script_in(script, view))
+                sibling!(get_field_nested_miss::<H>, r, ip, Carried::script_in(script, view))
             }
             if const { super::own_constant_site(FLAG) } {
                 // Another object, or the object was written: the site reads as its tier decides
@@ -3145,7 +3145,7 @@ lane_handler! {
             // A keyed write past its in-place replacement: an append, a hole, a typed array, a key.
             Step::Unresolved if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } => {
                 let script: *mut LaneContext<H> = view.memory.bytes.cast();
-                sibling!(super::lane_set_index_slot::<H>, r, ip, Carried::script_in(script, view))
+                sibling!(super::set_index_slot_miss::<H>, r, ip, Carried::script_in(script, view))
             }
             // A transfer (a Wasm return) resumes the register file the frame switched to.
             Step::Control(LaneControl::Resumed(resumed)) => resume!(cx, resumed),
@@ -3279,14 +3279,14 @@ fn jump_row_backward<H: Host, const OP: u16>(handler: *const ()) -> bool {
 unsafe fn allocation_in_lane<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
     let cx = cx.cast::<LaneContext<H>>();
     match allocation {
-        Allocation::Empty => Some(lane_new_object(unsafe { vm(cx) })),
+        Allocation::Empty => Some(new_object_in_lane(unsafe { vm(cx) })),
         Allocation::Array { length } => Some(new_hole_array_in_lane(unsafe { vm(cx) }, length as usize)),
         Allocation::ArrayOf { elements } => Some(literal_array_value_in_lane(unsafe { vm(cx) }, r, elements)),
-        Allocation::RegExp { site } => lane_regexp_literal_value(cx, site),
+        Allocation::RegExp { site } => regexp_literal_value_in_lane(cx, site),
         Allocation::ConstArray { constant, count } => const_array_value_in_lane(cx, constant, count),
-        Allocation::ObjectPair { site, first, second } => Some(lane_object_pair(cx, r, site, [first, second])),
+        Allocation::ObjectPair { site, first, second } => Some(object_pair_in_lane(cx, r, site, [first, second])),
         Allocation::ObjectLiteral { site, window } => Some(object_literal_value_in_lane(cx, r, site, window)),
-        Allocation::Closure { function } => lane_closure_value_of(cx, function),
+        Allocation::Closure { function } => closure_value_of_in_lane(cx, function),
         Allocation::Template { template } => template_value_in_lane(cx, template),
         Allocation::Concat { window } => concat_value_in_lane(cx, r, window),
     }
