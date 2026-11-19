@@ -338,6 +338,16 @@ impl Traits {
     /// a fused `GetSetThis`). Tagged: `SetThisField` alone. `SetThisFieldStrict` is not: the inlined expansion
     /// of a sink re-emits it as a `SetThisField`, so the strict variant has no sink in every tier.
     pub(crate) const THIS_FIELD_SINK: Self = Self(1 << 36);
+    /// A named field store (`SetField`, `SetFieldStrict`, `SetThisField`, `SetThisFieldStrict`): its receiver is
+    /// field B's register, or the frame's `this` with `FIELD_STORE_THIS`; a rejected write throws with `FIELD_STORE_STRICT`.
+    pub(crate) const FIELD_STORE: Self = Self(1 << 37);
+    pub(crate) const FIELD_STORE_THIS: Self = Self(1 << 38);
+    pub(crate) const FIELD_STORE_STRICT: Self = Self(1 << 39);
+    /// A binary operation whose arithmetic operator the operand's `binary_operator` names (`Binary`, `NumericAdd`,
+    /// `NumericMultiply`).
+    pub(crate) const ARITHMETIC_BINARY: Self = Self(1 << 40);
+    /// A first-call stub (`CallFirstChunk`): its function's chunk compiles on the first call.
+    pub(crate) const FIRST_CALL_STUB: Self = Self(1 << 41);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }

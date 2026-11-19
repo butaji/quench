@@ -1082,6 +1082,8 @@ pub(crate) const fn wasm_setup_family(op: Op) -> bool {
 // Row constants of the opcodes the lane's tables name by index.
 /// The opcode whose row increments or decrements a Number (`IncDec`).
 pub(crate) const INC_DEC_ROW: u16 = Op::IncDec as u16;
+/// The opcode whose row reads an element by index (`GetIndex`).
+pub(crate) const ELEMENT_READ_ROW: u16 = Op::GetIndex as u16;
 /// The opcode whose row writes a capture (`StoreCapture`).
 pub(crate) const STORE_CAPTURE_ROW: u16 = Op::StoreCapture as u16;
 

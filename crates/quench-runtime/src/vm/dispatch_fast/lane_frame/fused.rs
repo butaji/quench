@@ -290,7 +290,7 @@ fn chain_link_raw(records: &[LaneInstruction], live: Option<&crate::compile::liv
 /// plain increment and element read rows (`plain_row`), at any flag. Neither jumps nor calls, and a
 /// jump row or a call row never matches these two opcodes' plain rows.
 fn passed_row<H: Host>(handler: *const ()) -> bool {
-    plain_row::<H, { crate::staged::INC_DEC_ROW }>(handler) || plain_row::<H, { crate::bytecode::Op::GetIndex as u16 }>(handler)
+    plain_row::<H, { crate::staged::INC_DEC_ROW }>(handler) || plain_row::<H, { crate::staged::ELEMENT_READ_ROW }>(handler)
 }
 
 /// The jump targets of a function's decoded instructions, or `None` where one cannot be named: a Wasm

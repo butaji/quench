@@ -109,7 +109,7 @@ impl Op {
     /// A binary operation whose arithmetic `binary_operator` names.
     #[allow(dead_code)]
     pub(crate) const fn is_binary_arithmetic(self) -> bool {
-        matches!(self, Op::Binary | Op::NumericAdd | Op::NumericMultiply)
+        self.traits().has(crate::bytecode::Traits::ARITHMETIC_BINARY)
     }
 
     /// An access that reads its object register as an indexed receiver.

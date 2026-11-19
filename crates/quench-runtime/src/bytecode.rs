@@ -894,12 +894,12 @@ opcodes!($;
     CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused; class CopyDataProperties; staged Names; step Lane, @ Register, @ fields(Register, Register, Register),
     MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex; class MarkPrivateName; staged Names; step Lane, @ Register, @ fields(Unused, Register, Register),
     DefinePrivateField => WRITE_THROW; layout Scalar; meaning AtomIndex; class DefinePrivateField; staged Names; step Lane, @ Register, @ fields(Register, Register, Register),
-    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body; traits INLINABLE, @ Register, @ fields(Register, Register, CacheSiteIndex),
+    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body; traits INLINABLE FIELD_STORE, @ Register, @ fields(Register, Register, CacheSiteIndex),
     DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused; step Lane, @ Register, @ fields(Register, Register, Register),
-    SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body; traits INLINABLE THIS_FIELD_SINK, @ Register, @ fields(Register, Unused, CacheSiteIndex),
+    SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body; traits INLINABLE THIS_FIELD_SINK FIELD_STORE FIELD_STORE_THIS, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag; class SetIndex; staged Element; step Body; traits INLINABLE ELEMENT_ACCESS LIFETIME_SAFE, @ Register, @ fields(Register, Register, Register),
     DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex; class DefineArrayElement; step Lane, @ Register, @ fields(Register, Register, Unused),
-    Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary; class Binary; staged Generic; step Body; value Binary; traits BINARY_RESULT LEAF_BINARY RETURNING_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary; class Binary; staged Generic; step Body; value Binary; traits BINARY_RESULT ARITHMETIC_BINARY LEAF_BINARY RETURNING_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     IncDec => READ_THROW; layout Scalar; meaning BooleanFlag; class IncDec; staged Value; traits ROW_HANDLER LEAF_VALUE INLINABLE PURE_SETUP SCALAR_REGION LIFETIME_SAFE, @ Register, @ fields(ResultRegister, Register, Unused),
     Unary => READ_THROW; layout Scalar; meaning UnaryOperator; js NumericUnary; class Unary; staged Value; step Body; value Unary; traits ROW_HANDLER LEAF_VALUE RETURNING_UNARY INLINABLE PURE_SETUP ACTIVATION_FREE FRAME_RETURNABLE LIFETIME_SAFE, @ Returnable, @ fields(ResultRegister, Register, Unused),
     // `a` = ToString of each register of the window `b` of `c` registers, concatenated in
@@ -921,15 +921,15 @@ opcodes!($;
     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump; class JumpBinaryFalse; staged Generic; step Body; value CompareJump; traits LEAF_BINARY INLINABLE ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE, @ Register, @ fields(BinaryOperator, Operand, Operand),
     Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; js Return; class Return; staged Flow; traits UNIT_REWRITTEN LEAF_VALUE INLINABLE ACTIVATION_FREE SCALAR_REGION, @ Register, @ fields(Register, Unused, Unused),
     Throw => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal; class Throw; staged Flow; step Body; traits UNIT_REWRITTEN RAISES, @ Register, @ fields(Register, Unused, Unused),
-    NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator; js NumericBinary; class NumericAdd; staged Generic; traits ROW_HANDLER LEAF_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator; js NumericBinary; class NumericMultiply; staged Generic; traits ROW_HANDLER LEAF_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator; js NumericBinary; class NumericAdd; staged Generic; traits ROW_HANDLER LEAF_BINARY ARITHMETIC_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator; js NumericBinary; class NumericMultiply; staged Generic; traits ROW_HANDLER LEAF_BINARY ARITHMETIC_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     InitializeThis => CALL_EFFECT.union(Effect::CONTROL); layout Scalar; meaning Unused; step Body; traits BINDS_THIS NAME_OPERATION, @ Register, @ fields(Register, Unused, Unused),
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning TemplateSiteIndex; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
     DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldDefinition; class DefineField; step Lane, @ Register, @ fields(Register, Register, CacheSiteIndex),
     ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused; step Body, @ Register, @ fields(Register, Unused, Unused),
-    SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body, @ Register, @ fields(Register, Register, CacheSiteIndex),
-    SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body, @ Register, @ fields(Register, Unused, CacheSiteIndex),
+    SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body; traits FIELD_STORE FIELD_STORE_STRICT, @ Register, @ fields(Register, Register, CacheSiteIndex),
+    SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body; traits FIELD_STORE FIELD_STORE_THIS FIELD_STORE_STRICT, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     // The general loop's fast arms dispatch on these with the opcodes above, so they share
     // one dense range of opcode numbers.
     LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalLoad; class LoadLocalPlain; staged Local; traits ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_LOAD, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
@@ -1139,7 +1139,7 @@ opcodes!($;
     // the rest register, `undefined` where the entry kept the values passed, which it spreads.
     CallRest => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallRest; staged Names; traits CALL_LINK, @ Returnable, @ fields(ResultRegister, Register, Register),
     // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
-    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused; traits FIRST_CALL_STUB, @ Register, @ fields(ResultRegister, Register, Register),
     WasmSegmentDrop => Effect::WRITES_HEAP; layout Scalar; meaning WasmInstanceSlot; class WasmSegmentDrop, @ Register, @ fields(Unused, Unused, Unused),
 );
 

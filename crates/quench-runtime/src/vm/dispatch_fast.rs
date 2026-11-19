@@ -9336,7 +9336,7 @@ impl<H: Host> Vm<H> {
             let Some(residual) = self.programs.get(ProgramId::from_raw(index as u32)) else { continue };
             residual.compile_released();
             for function in 0..residual.functions.len() as u32 {
-                if residual.function_get(function as usize).is_some_and(|code| code.instructions().any(|instruction| instruction.op() == Op::CallFirstChunk)) {
+                if residual.function_get(function as usize).is_some_and(|code| code.instructions().any(|instruction| instruction.op().traits().has(crate::bytecode::Traits::FIRST_CALL_STUB))) {
                     stubs.push((residual.clone(), ProgramId::from_raw(index as u32), function));
                 }
             }

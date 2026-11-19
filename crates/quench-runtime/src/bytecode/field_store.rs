@@ -1,4 +1,4 @@
-use super::{Op, Register, WideInstruction};
+use super::{Op, Register, Traits, WideInstruction};
 
 /// Where a named field store finds its receiver: field B's register, or the frame's `this`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,14 +18,15 @@ pub(crate) struct FieldStore {
 impl Op {
     #[inline(always)]
     pub(crate) const fn field_store(self) -> Option<FieldStore> {
-        let (receiver, strict) = match self {
-            Self::SetField => (StoreReceiver::Register, false),
-            Self::SetFieldStrict => (StoreReceiver::Register, true),
-            Self::SetThisField => (StoreReceiver::This, false),
-            Self::SetThisFieldStrict => (StoreReceiver::This, true),
-            _ => return None,
+        if !self.is_field_store() {
+            return None;
+        }
+        let receiver = if self.traits().has(Traits::FIELD_STORE_THIS) {
+            StoreReceiver::This
+        } else {
+            StoreReceiver::Register
         };
-        Some(FieldStore { receiver, strict })
+        Some(FieldStore { receiver, strict: self.traits().has(Traits::FIELD_STORE_STRICT) })
     }
 
     /// Whether this is a strict named field store (`SetFieldStrict`, `SetThisFieldStrict`).
@@ -36,7 +37,7 @@ impl Op {
 
     #[inline(always)]
     pub(crate) const fn is_field_store(self) -> bool {
-        self.field_store().is_some()
+        self.traits().has(Traits::FIELD_STORE)
     }
 
     /// Whether this reads or stores a named field (`GetField` or a field store).
