@@ -5,6 +5,7 @@
 
 use crate::bytecode::{Operand, Register, ResidualProgram, WideInstruction};
 use crate::host::Host;
+use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::{CallOut, Concrete, Constant, Edge, NumericFrame, Operation, Step};
 use crate::staged::Frame as _;
 use crate::vm::call_out::CallSite;
@@ -225,11 +226,16 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
         true
     }
 
-    /// The VM's operation for a name read, a global `typeof` or a global store (`CallOut`), at the
-    /// frame's site. A raise is stashed for the runner.
+    /// The VM's operation for a name read, a global `typeof` or a store, a for-in step, an async
+    /// iterator and a template object (`CallOut`), at the frame's site. A raise is stashed for the runner.
     #[inline(always)]
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, InterpreterFact)> {
-        if !matches!(operation, CallOut::LoadName { .. } | CallOut::GlobalTypeof { .. } | CallOut::GlobalWrite { .. }) {
+        if !matches!(operation,
+            CallOut::LoadName { .. } | CallOut::GlobalTypeof { .. } | CallOut::GlobalWrite { .. } | CallOut::ForInNext { .. }
+                | CallOut::Protocol { step: crate::staged::Protocol::Value(crate::staged::protocol_values::ValueStep::GetAsyncIterator)
+                    | crate::staged::Protocol::Literal(crate::staged::protocol_literals::LiteralStep::CacheTemplate { .. }
+                        | crate::staged::protocol_literals::LiteralStep::LoadTemplate { .. }), .. })
+        {
             return None;
         }
         let (program, site) = (self.program, self.site);
@@ -238,6 +244,23 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
             Some(register) => vm.owner_register(site.owner, register),
             None => vm.active_constant(usize::from(operand.payload())).expect("a call-out's constant is in its program"),
         });
+        // A template object is the cache entry of the frame the row runs in, so it is keyed by that frame
+        // rather than the VM's innermost one (`call_out` makes the step over its own frame).
+        if let CallOut::Protocol { step: crate::staged::Protocol::Literal(step @ (LiteralStep::CacheTemplate { .. } | LiteralStep::LoadTemplate { .. })), .. } = operation {
+            let VarOwner::Frame(frame) = site.owner else { return None };
+            let (program, function) = (vm.frames[frame].program, vm.frames[frame].function);
+            let value = match step {
+                LiteralStep::CacheTemplate { site } => {
+                    let first = operands.fixed[0].expect("CacheTemplateObject names its template object");
+                    *vm.realm.template_objects.entry((program, function, site)).or_insert(first)
+                }
+                LiteralStep::LoadTemplate { site } => {
+                    vm.realm.template_objects.get(&(program, function, site)).copied().unwrap_or(Value::UNDEFINED)
+                }
+                _ => unreachable!("{step:?} is no template object step"),
+            };
+            return Some((value.to_bits(), InterpreterFact::Value));
+        }
         match vm.call_out(program, site, operation, operands) {
             Ok(value) => Some((value.map_or(0, Value::to_bits), InterpreterFact::Value)),
             Err(error) => {
@@ -284,6 +307,43 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
     #[inline(always)]
     fn raise(&mut self, stage: &mut Concrete, source: Register) -> Option<InterpreterControl> {
         Some(InterpreterControl::Throw(Value::from_bits(self.read(stage, source))))
+    }
+
+    /// `StringCaseIndex`: the case the VM's table selects for `source` among the `count` program
+    /// constants from `start` (`Vm::string_case_index`). Constants outside the program raise.
+    #[inline(always)]
+    fn case_index(&mut self, stage: &mut Concrete, source: Register, start: u32, count: u16) -> Option<(u64, InterpreterFact)> {
+        let VarOwner::Frame(frame) = self.site.owner else { return None };
+        let value = Value::from_bits(self.read(stage, source));
+        let vm = self.vm();
+        let start = start as usize;
+        let cases = vm.programs.constants(vm.frames[frame].program).get(start..start + usize::from(count));
+        let Some(cases) = cases else {
+            self.raised = Some(JsError::validation("switch cases are outside program".into()));
+            return None;
+        };
+        let index = vm.string_case_index(value, cases);
+        Some((Value::integer(index as i32).to_bits(), InterpreterFact::Value))
+    }
+
+    /// `IteratorCleanupPush`: the running frame's cleanup stack takes `iterator` with its `done` register.
+    #[inline(always)]
+    fn iterator_push(&mut self, _stage: &mut Concrete, iterator: Register, done: Register) -> Option<()> {
+        let VarOwner::Frame(frame) = self.site.owner else { return None };
+        self.vm().frames[frame].active_iterators.push(crate::vm::ActiveIterator { iterator, done });
+        Some(())
+    }
+
+    /// `IteratorCleanupPop`: the running frame's innermost cleanup entry is removed. An empty stack is
+    /// the interpreter's underflow error, which the runner throws.
+    #[inline(always)]
+    fn iterator_pop(&mut self, _stage: &mut Concrete) -> Option<()> {
+        let VarOwner::Frame(frame) = self.site.owner else { return None };
+        if self.vm().frames[frame].active_iterators.pop().is_some() {
+            return Some(());
+        }
+        self.raised = Some(JsError("iterator cleanup stack underflow".into()));
+        None
     }
 }
 

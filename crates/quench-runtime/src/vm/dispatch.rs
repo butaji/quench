@@ -20,14 +20,12 @@
 //   MakeObject, MakeObject2, MakeObjectLiteral, SuperConstArrayObject2, MakeArray, MakeConstArray,
 //   MakeLiteralTemplate, CreateRegExpLiteral, StringConcat.
 // - Hand semantics with no staged row yet: CloneEnv (environment clone plan), LoadThis, LoadCallee,
-//   LoadImportMeta, InitializeThis, InitializeTdz, CallFirstChunk, CacheTemplateObject,
-//   LoadCachedTemplateObject, ResolveName, LoadResolvedName, StoreResolvedName, DeleteName,
+//   LoadImportMeta, InitializeThis, InitializeTdz, CallFirstChunk, ResolveName, LoadResolvedName, StoreResolvedName, DeleteName,
 //   ValidateClassHeritage, RequireObjectCoercible, RequireIteratorResult, SuperCallCheck,
-//   IteratorCleanupPush, IteratorCleanupPop, SetFunctionName, SetFunctionNameKey, SetFunctionDebugName,
+//   SetFunctionName, SetFunctionNameKey, SetFunctionDebugName,
 //   SetThisField, SetThisFieldStrict, DefinePropertyRecord, DefinePrivateField, DefineField,
 //   DefineComputedField, DefineArrayElement, CopyDataProperties, CheckPrivate, PrivateIn, MarkPrivateName,
-//   ArgumentsLength, ArgumentGet, GetAsyncIterator, ForInNext (lane loop exit), StringCaseIndex,
-//   WasmBranchTable.
+//   ArgumentsLength, ArgumentGet, WasmBranchTable.
 
 use super::*;
 use super::dispatch_frame::{InterpreterFrame, RowRun};
@@ -696,34 +694,13 @@ impl<H: Host> Vm<H> {
                 let value = self.read(f, i.register_a());
                 self.initialize_this_binding(p, f, value)?;
             }
-            Op::CacheTemplateObject => {
-                let key = (
-                    self.frames[f].program,
-                    self.frames[f].function,
-                    i.template_site_index(),
-                );
-                let value = if let Some(value) = self.realm.template_objects.get(&key).copied() {
-                    value
-                } else {
-                    let value = self.read(f, i.register_a());
-                    self.realm.template_objects.insert(key, value);
-                    value
-                };
-                self.write(f, i.register_a(), value);
-            }
-            Op::LoadCachedTemplateObject => {
-                let key = (
-                    self.frames[f].program,
-                    self.frames[f].function,
-                    i.template_site_index(),
-                );
-                let value = self
-                    .realm
-                    .template_objects
-                    .get(&key)
-                    .copied()
-                    .unwrap_or(Value::UNDEFINED);
-                self.write(f, i.result_register(), value);
+            // The template object cache: a literal-site call-out row (`protocol_literals`), which the frame answers.
+            Op::CacheTemplateObject | Op::LoadCachedTemplateObject => {
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => unreachable!("the interpreter frame answers every template object step"),
+                    RowRun::Stop(stop) => return stop,
+                }
             }
             Op::MakeClosure => {
                 let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
@@ -777,7 +754,14 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
                 self.write(f, i.result_register(), v);
             }
-            Op::StringCaseIndex => self.select_string_case(f, i)?,
+            // A string switch's case selector, run as its staged row (`Frame::case_index`).
+            Op::StringCaseIndex => {
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => unreachable!("the interpreter frame answers every string case selection"),
+                    RowRun::Stop(stop) => return stop,
+                }
+            }
             Op::MakeLiteralTemplate => {
                 let v = self.literal_template(p, f, i.literal_template_index())?;
                 self.write(f, i.result_register(), v);
@@ -897,15 +881,13 @@ impl<H: Host> Vm<H> {
             }
             Op::RequireIteratorResult => self.require_iterator_result(p, self.read(f, i.register_b()))?,
             Op::SuperCallCheck => self.check_super_call(p)?,
-            Op::IteratorCleanupPush => self.frames[f].active_iterators.push(ActiveIterator {
-                iterator: i.register_a(),
-                done: i.register_b(),
-            }),
-            Op::IteratorCleanupPop => {
-                self.frames[f]
-                    .active_iterators
-                    .pop()
-                    .ok_or_else(|| JsError("iterator cleanup stack underflow".into()))?;
+            // The running frame's iterator cleanup stack, as its staged rows (`Frame::iterator_push`, `iterator_pop`).
+            Op::IteratorCleanupPush | Op::IteratorCleanupPop => {
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => unreachable!("the interpreter frame answers every iterator cleanup step"),
+                    RowRun::Stop(stop) => return stop,
+                }
             }
             Op::SetFunctionDebugName => {
                 self.set_function_debug_name(self.read(f, i.register_a()), i.atom_index());
@@ -933,8 +915,11 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
             }
             Op::GetAsyncIterator => {
-                let value = self.get_async_iterator(p, self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), value);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => unreachable!("the interpreter frame answers every async iterator step"),
+                    RowRun::Stop(stop) => return stop,
+                }
             }
             Op::Await | Op::Yield | Op::YieldStar => {
                 let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
@@ -1043,9 +1028,11 @@ impl<H: Host> Vm<H> {
                     RowRun::Stop(stop) => return stop,
                 }
             }
-            Op::ForInNext => match self.for_in_next(p, self.read(f, i.register_b()))? {
-                Some(key) => self.write(f, i.result_register(), key),
-                None => *pc = i.jump_target() as usize,
+            // The for-in step, a conditional jump past the last key (its row takes the `Edge::Target`).
+            Op::ForInNext => match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                RowRun::Done(_) => {}
+                RowRun::Declined => unreachable!("the interpreter frame answers every for-in step"),
+                RowRun::Stop(stop) => return stop,
             },
             Op::JumpBinaryFalse => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
