@@ -366,6 +366,7 @@ mod tests {
             ("local_count", at!(JsStepDispatch, local_count), m::JS_STEP_LOCAL_COUNT),
             ("epoch", at!(JsStepDispatch, epoch), m::JS_STEP_EPOCH),
             ("string_record_base", at!(JsStepDispatch, string_record_base), m::JS_STEP_STRING_RECORD_BASE),
+            ("ascii_unit_strings", at!(JsStepDispatch, ascii_unit_strings), m::JS_STEP_ASCII_UNIT_STRINGS),
             ("function_mark_blocks", at!(JsStepDispatch, function_mark_blocks), m::JS_STEP_FUNCTION_MARK_BLOCKS),
             ("function_mark_block_count", at!(JsStepDispatch, function_mark_block_count), m::JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
             ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),

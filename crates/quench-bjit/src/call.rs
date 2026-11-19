@@ -37,6 +37,8 @@ pub enum CallRow {
 pub enum BuiltinRow {
     /// `String.prototype.charCodeAt` of a flat string.
     CharCodeAt,
+    /// `String.prototype.charAt` of a flat string, at an index of an ASCII unit.
+    CharAt,
     /// `Number.isInteger` of a Number.
     IsInteger,
     /// `Math.floor` of a Number.
@@ -63,8 +65,8 @@ pub enum BuiltinRow {
 
 impl BuiltinRow {
     /// Every builtin row, each with its own stencil.
-    pub const ALL: [BuiltinRow; 12] = [
-        BuiltinRow::CharCodeAt, BuiltinRow::IsInteger, BuiltinRow::Floor, BuiltinRow::Ceil, BuiltinRow::Trunc, BuiltinRow::Abs,
+    pub const ALL: [BuiltinRow; 13] = [
+        BuiltinRow::CharCodeAt, BuiltinRow::CharAt, BuiltinRow::IsInteger, BuiltinRow::Floor, BuiltinRow::Ceil, BuiltinRow::Trunc, BuiltinRow::Abs,
         BuiltinRow::Sqrt, BuiltinRow::Fround, BuiltinRow::Round, BuiltinRow::Max, BuiltinRow::Min, BuiltinRow::Imul,
     ];
 
@@ -72,6 +74,7 @@ impl BuiltinRow {
     pub const fn symbol(self) -> &'static str {
         match self {
             BuiltinRow::CharCodeAt => "char_code_at",
+            BuiltinRow::CharAt => "char_at",
             BuiltinRow::IsInteger => "is_integer",
             BuiltinRow::Floor => "floor",
             BuiltinRow::Ceil => "ceil",

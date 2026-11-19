@@ -22,6 +22,7 @@ pub(in super::super) struct BuiltinCall {
 pub(in super::super) fn of(native: Native) -> Option<BuiltinRow> {
     match native {
         Native::StringCharCodeAt => return Some(BuiltinRow::CharCodeAt),
+        Native::StringCharAt => return Some(BuiltinRow::CharAt),
         Native::NumberIsInteger => return Some(BuiltinRow::IsInteger),
         _ => {}
     }

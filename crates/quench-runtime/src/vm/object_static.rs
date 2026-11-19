@@ -1,3 +1,4 @@
+use super::native_rows::Holder;
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::object_keys::EnumerableOwnPropertyKind;
 use super::object_symbols::PropertyCopyKind;
@@ -427,57 +428,15 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    pub(super) fn install_object_extra(
-        &mut self,
-        program: &ResidualProgram,
-        object: Value,
-    ) -> Result<(), JsError> {
-        self.install_object_prototype_methods(program, self.object_proto, None)?;
-        for (name, native) in [
-            ("getOwnPropertyNames", Native::ObjectGetOwnPropertyNames),
-            (
-                "getOwnPropertyDescriptor",
-                Native::ObjectGetOwnPropertyDescriptor,
-            ),
-            ("getOwnPropertySymbols", Native::ObjectGetOwnPropertySymbols),
-            (
-                "getOwnPropertyDescriptors",
-                Native::ObjectGetOwnPropertyDescriptors,
-            ),
-            ("defineProperty", Native::ObjectDefineProperty),
-            ("defineProperties", Native::ObjectDefineProperties),
-            ("values", Native::ObjectValues),
-            ("entries", Native::ObjectEntries),
-            ("fromEntries", Native::ObjectFromEntries),
-            ("is", Native::ObjectIs),
-        ] {
-            self.set_builtin_named(program, object, name, native)?;
-        }
-        Ok(())
-    }
-
     pub(super) fn install_object_prototype_methods(
         &mut self,
         program: &ResidualProgram,
         prototype: Value,
         realm: Option<Value>,
     ) -> Result<(), JsError> {
-        for (name, native) in [
-            ("toLocaleString", Native::ObjectPrototypeToLocaleString),
-            ("toString", Native::ObjectPrototypeToString),
-            ("valueOf", Native::ObjectPrototypeValueOf),
-            ("hasOwnProperty", Native::ObjectPrototypeHasOwnProperty),
-            (
-                "propertyIsEnumerable",
-                Native::ObjectPrototypePropertyIsEnumerable,
-            ),
-            ("__lookupGetter__", Native::ObjectPrototypeLookupGetter),
-            ("__lookupSetter__", Native::ObjectPrototypeLookupSetter),
-            ("__defineGetter__", Native::ObjectPrototypeDefineGetter),
-            ("__defineSetter__", Native::ObjectPrototypeDefineSetter),
-            ("isPrototypeOf", Native::ObjectPrototypeIsPrototypeOf),
-        ] {
-            self.set_realm_builtin_named(program, prototype, name, native, realm)?;
+        match realm {
+            None => self.install_native_rows(program, prototype, Holder::ObjectPrototype)?,
+            Some(global) => self.install_realm_native_rows(prototype, Holder::ObjectPrototype, global)?,
         }
         let prototype_atom = self.intern_atom("__proto__");
         let getter = self.realm_native_value_optional(Native::ObjectPrototypeProtoGetter, realm);
