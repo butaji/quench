@@ -26,7 +26,6 @@
 <catalog> unstaged:StoreVarBinding 1
 <catalog> unstaged:StringCaseIndex 1
 <catalog> unstaged:StringConcat 1
-<catalog> unstaged:SuperConstArrayObject2 1
 <catalog> unstaged:Throw 1
 <catalog> unstaged:WasmArrayCopy 1
 <catalog> unstaged:WasmArrayFill 1
@@ -367,7 +366,6 @@ vm/dispatch.rs op:SetFieldStrict 1
 vm/dispatch.rs op:SetIndex 1
 vm/dispatch.rs op:SetThisField 1
 vm/dispatch.rs op:SetThisFieldStrict 1
-vm/dispatch.rs op:SuperConstArrayObject2 1
 vm/dispatch.rs op:Unary 1
 vm/dispatch.rs op:WasmBranchTable 1
 vm/dispatch_fast.rs Class:AppendArray 1
@@ -419,7 +417,6 @@ vm/dispatch_fast.rs Class:StoreEnvLocal 1
 vm/dispatch_fast.rs Class:StoreLocal 1
 vm/dispatch_fast.rs Class:StoreName 1
 vm/dispatch_fast.rs Class:StringCaseIndex 1
-vm/dispatch_fast.rs Class:SuperConstArrayObject2 2
 vm/dispatch_fast.rs Class:ToPropertyKey 1
 vm/dispatch_fast.rs Class:Unary 1
 vm/dispatch_fast.rs Class:WasmFillRegisters 2

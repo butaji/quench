@@ -11,8 +11,6 @@
 // (`staged_value_step`).
 // What is left, and why:
 // - Hand semantics with no staged row: CallFirstChunk (the first-call stub, `call_first_chunk`).
-// - Superinstruction: SuperConstArrayObject2 makes a constant array, runs two binary operations, then makes an
-//   object pair. No single `Allocation` decodes it, and its return is its own.
 // - Row, then a per-opcode miss: Binary, NumericAdd, NumericMultiply, Unary, JumpBinaryFalse. Each
 //   miss is that opcode's own semantics, not a staged row's. What keeps each from its arm alone:
 //   - Binary, NumericAdd, NumericMultiply: `decode_binary` declines an operand that is neither a register nor
@@ -596,11 +594,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<StepResult, JsError> {
         match i.op() {
             Op::CallFirstChunk => self.call_first_chunk(p, f, i, *pc)?,
-            Op::SuperConstArrayObject2 => {
-                if let Some(value) = self.execute_const_array_object2(p, f, i)? {
-                    return Ok(StepResult::Return(value));
-                }
-            }
             Op::GetField => {
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
@@ -1225,9 +1218,11 @@ impl<H: Host> Vm<H> {
                 Ok(StepResult::Continue)
             }
             // A literal's allocation or element definition: its staged row (`decode_literal`), run completed. Its
-            // return flags complete the frame as the record asks.
+            // return flags complete the frame as the record asks. A superinstruction's pair reads its four parts
+            // from the program's table.
             Runner::Literal => {
-                let (operation, completes) = crate::staged::Operation::<u64, ()>::decode_literal_completed(i, ())
+                let parts = crate::staged::super_const_array_family(i.op()).then(|| p.superinstructions[i.superinstruction_index()].wide);
+                let (operation, completes) = crate::staged::Operation::<u64, ()>::decode_literal_completed_with(i, parts, ())
                     .expect("a literal row decodes");
                 match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
                     RowRun::Done(_) => Ok(StepResult::Continue),

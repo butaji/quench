@@ -29,6 +29,7 @@ pub(crate) mod barrier;
 #[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's operations; the interpreter has native Numbers
 pub(crate) mod number_machine;
 mod heap;
+mod superinstructions;
 mod global;
 #[cfg_attr(not(test), allow(dead_code))] // the division is data the specializers will ask; today only its tests do
 pub(crate) mod division;

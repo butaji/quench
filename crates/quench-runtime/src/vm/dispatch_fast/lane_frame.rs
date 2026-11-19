@@ -2847,7 +2847,13 @@ lane_handler! {
         }
         // `if const`, not `match const`: rustc compiles only a taken `if const` branch, so each
         // instantiation holds its one decoder (a `match` on a constant compiles every arm).
-        let decoded = row_decode!(OP, FLAG, fields).map(|operation| if const { FLAG == FLAG_ROOT } { operation.rooted() } else { operation });
+        // A superinstruction's pair decodes from its parts in the program's table (`super_parts_in_lane`).
+        let decoded = (if const { crate::staged::super_const_array_family(LaneFields::<OP, FLAG>::OPCODE) } {
+            Operation::decode_literal_with(crate::staged::Fields::wide(fields), super::super_parts_in_lane::<H>(cx, i.imm() as usize), ())
+        } else {
+            row_decode!(OP, FLAG, fields)
+        })
+        .map(|operation| if const { FLAG == FLAG_ROOT } { operation.rooted() } else { operation });
         let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, ip, view) };
         // A row that reads records in place (`Decoder::Names`) or a planned named read may read a slot of the property arena.
         let property_values = if property && !store {
@@ -3283,7 +3289,12 @@ script_handler! {
     /// but a value, takes the record's protocol miss, which completes the returning value itself.
     pub(super) fn returning_row<OP: u16, LEAF: u8, MISS: u16>(cx, r, ip, i, view) {
         let fields = LaneFields::<OP>(i);
-        let decoded = Operation::decode_completed(crate::staged::Fields::wide(fields), crate::staged::DecodeContext::EMPTY);
+        // A superinstruction's pair decodes from its parts in the program's table (`super_parts_in_lane`).
+        let decoded = if const { crate::staged::super_const_array_family(LaneFields::<OP>::OPCODE) } {
+            Operation::decode_literal_completed_with(crate::staged::Fields::wide(fields), super::super_parts_in_lane::<H>(cx, i.imm() as usize), ())
+        } else {
+            Operation::decode_completed(crate::staged::Fields::wide(fields), crate::staged::DecodeContext::EMPTY)
+        };
         let Some((operation, _)) = decoded.filter(|(_, flags)| *flags == crate::bytecode::RETURN_REGISTER) else {
             sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
         };

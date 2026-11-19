@@ -5079,10 +5079,23 @@ fn object_pair_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: u32
     value
 }
 
+/// The four records of superinstruction `index` of the running lane's program, which a
+/// `SuperConstArrayObject2` record names (`Operation::decode_literal_with`); `None` past the table.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+pub(super) unsafe fn super_parts_in_lane<H: Host>(cx: *mut LaneContext<H>, index: usize) -> Option<[WideInstruction; 4]> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    code.superinstructions.get(index).map(|site| site.wide)
+}
+
 /// A `SuperConstArrayObject2` record's object: a copy of the constant array, the two
 /// fused `Binary` results, and the literal holding them, with each part's result in its
 /// register as the general path leaves it. `None` before any guest code could run: an
-/// operation on an object, or one that throws.
+/// operation on an object, or one that throws. The hand body a returning pair's staged row
+/// (`returning_row`) misses to (`returning_miss`); a non-returning pair's miss is the general step.
 ///
 /// Out of line: its general binary result returns through a stack slot, which would cost a
 /// handler inlining it the tail call to the next record.

@@ -28,6 +28,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } | Operation::CloneEnv { .. }
             | Operation::IteratorCleanupPush { .. } | Operation::IteratorCleanupPop | Operation::SetFunctionName { .. }
             => super::names::step(stage, frame, operation),
+        Operation::SuperConstArrayObject2(pair) => super::superinstructions::step(stage, frame, pair),
         value => value_step(stage, frame, value),
     }
 }

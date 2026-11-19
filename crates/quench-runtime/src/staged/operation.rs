@@ -66,6 +66,9 @@ pub(crate) enum Operation<W, P> {
     /// literal template or string concatenation `allocation` makes, defined into `destination`; a due collection leaves
     /// at the frame's miss edge (`Frame::allocate_value`).
     Allocate { destination: Register, allocation: Allocation, proof: P },
+    /// A `SuperConstArrayObject2` record's pair (`superinstructions`): a constant array, two `Binary`
+    /// operations, then an object pair, each part's row in turn (`superinstructions::step`).
+    SuperConstArrayObject2(super::superinstructions::ConstArrayPair<P>),
     /// Define element `index` of the literal array in `array` as `value` (`DefineArrayElement`), a
     /// fresh hole of that array; the frame's element definer answers it (`Frame::define_element`).
     DefineElement { array: Register, index: u32, value: Register },
@@ -266,11 +269,13 @@ impl<W, P> Operation<W, P> {
         Some((Self::decode(plain, context)?, flags))
     }
 
-    /// `decode_completed` of the literal operations (`decode_literal`) under the tier's `proof`: the operation
-    /// and the flags its record completes the frame by.
-    pub(crate) fn decode_literal_completed(instruction: WideInstruction, proof: P) -> Option<(Self, crate::bytecode::Register)> {
+    /// `decode_completed` of the literal operations (`decode_literal_with`) under the tier's `proof`, with the
+    /// superinstruction parts `parts` of `decode_literal_with`: the operation and the flags its record completes
+    /// the frame by.
+    pub(crate) fn decode_literal_completed_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P)
+        -> Option<(Self, crate::bytecode::Register)> {
         let (plain, flags) = Self::completion_split(instruction)?;
-        Some((Self::decode_literal(plain, proof)?, flags))
+        Some((Self::decode_literal_with(plain, parts, proof)?, flags))
     }
 
     /// The record `instruction` is without its completion flags, and those flags: a return, or a `this` write.
@@ -311,9 +316,20 @@ impl<W, P> Operation<W, P> {
     /// array is a hole array and each definition is `DefineElement`), and an element definition.
     #[inline(always)]
     pub(crate) fn decode_literal(instruction: WideInstruction, proof: P) -> Option<Self> {
+        Self::decode_literal_with(instruction, None, proof)
+    }
+
+    /// `decode_literal`, where `parts` are the four records of the superinstruction a
+    /// `SuperConstArrayObject2` record names (the program's table entry); `None` for any other record,
+    /// and for a pair whose `parts` are none.
+    pub(crate) fn decode_literal_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P) -> Option<Self> {
         match instruction.op() {
             Op::DefineArrayElement => Some(Self::DefineElement {
                 array: instruction.register_b(), index: instruction.imm(), value: instruction.register_a() }),
+            Op::SuperConstArrayObject2 => {
+                let pair = super::superinstructions::ConstArrayPair::decode(instruction, parts?, proof)?;
+                Some(Self::SuperConstArrayObject2(pair))
+            }
             _ => {
                 let (destination, allocation) = Allocation::decode(instruction, &[])?;
                 Some(Self::Allocate { destination, allocation, proof })
