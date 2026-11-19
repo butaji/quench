@@ -50,12 +50,7 @@ impl<H: Host> Vm<H> {
         }
         self.enter_windowed(suspended, sent);
         // The frames the lane's activations become sit below the generator's.
-        self.realm.promise.active_native.push(super::super::activation::NativeActivation {
-            callable: method,
-            receiver: generator,
-            frame_depth: self.frames.len() + depth,
-            boundary: super::super::activation::NativeCallBoundary::Opaque,
-        });
+        self.push_host_frame(method, generator, self.frames.len() + depth, super::super::activation::NativeCallBoundary::Opaque);
     }
 
     /// Enters the suspended frame a windowed run resumes, which its owner handed over running
@@ -86,7 +81,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         depth: usize,
     ) {
-        self.realm.promise.active_native.pop();
+        self.pop_host_frame();
         // SAFETY: the generator's record keeps the frame its activation runs over boxed, and
         // parking reads the lane stack, not the record.
         let frame = unsafe { &mut *frame };
@@ -178,7 +173,7 @@ impl<H: Host> Vm<H> {
 
     /// Ends the windowed run of `generator` at its return: it completes, dropping its frame.
     pub(in crate::vm) fn finish_generator_window(&mut self, generator: Value) {
-        self.realm.promise.active_native.pop();
+        self.pop_host_frame();
         if let Some(record) = self.generator_record_mut(generator) {
             record.complete();
         }
