@@ -364,13 +364,19 @@ function scan(tree, branch, wantOwners) {
     const re = new RegExp(`^(?:[a-z0-9]+_)*(?:${keys.join("|")})(?:_[a-z0-9]+)*$`);
     const bodies = fnIndex.filter(f => re.test(f.name) && f.lines >= 4 && !BODY_SKIP_FILE.test(f.rel) && !BODY_SKIP_NAME.test(f.name) && !/^\{\s*[A-Za-z_:.<>]+\([^;]*\)\s*\}$/s.test(f.body.trim()));
     // A plain_* fast prefix that declines into the generic native is one body with it.
-    for (let i = bodies.length - 1; i >= 0; i--) if (/^plain_/.test(bodies[i].name) && bodies.some(b => b !== bodies[i] && (/_native$/.test(b.name) || /declined/.test(bodies[i].body)))) bodies.splice(i, 1);
+    for (let i = bodies.length - 1; i >= 0; i--) if (/^plain_/.test(bodies[i].name) && bodies.some(b => b !== bodies[i])) bodies.splice(i, 1);
     // Another builtin's body (TypedArray.*, Wasm array.*) only shares the method name.
     for (let i = bodies.length - 1; i >= 0; i--) if (/^(construct_)?(typed_array|wasm)_/.test(bodies[i].name) && !/^(typed_array|wasm)/.test(full)) bodies.splice(i, 1);
     // Bodies that run the builtin's staged row are tiers of one semantics, not copies.
     for (let i = bodies.length - 1; i >= 0; i--) if (/\bstaged::/.test(bodies[i].body)) bodies.splice(i, 1);
-    // Helpers are layers, not bodies.
-    for (let i = bodies.length - 1; i >= 0; i--) if (/_helper$/.test(bodies[i].name)) bodies.splice(i, 1);
+    // A builtin with a staged row: the row and every body that calls it by name are one semantics.
+    const rowNames = bodies.filter(b => /\/staged\//.test(b.rel)).map(b => b.name);
+    if (rowNames.length) {
+      const callsRow = new RegExp(`\\b(${rowNames.join("|")})\\b`);
+      for (let i = bodies.length - 1; i >= 0; i--) if (/\/staged\//.test(bodies[i].rel) || callsRow.test(bodies[i].body)) bodies.splice(i, 1);
+    }
+    // Helpers and embedding wrappers are layers, not bodies.
+    for (let i = bodies.length - 1; i >= 0; i--) if (/_(helper|embedding)$/.test(bodies[i].name)) bodies.splice(i, 1);
     const filesSet = new Set(bodies.map(b => b.rel));
     if (bodies.length >= 2 && filesSet.size >= 2 && bodies.length <= 12 && !seen.has(tail)) {
       seen.add(tail);

@@ -26,3 +26,4 @@ per-call-recheck	.	^lane_forwarded_cell_entry$	code lifecycle: entry_published i
 per-call-recheck	.	^call_admitted$	reads script_calls_allowed only to name the miss reason after its one admission compare fails (call-proofs kind 2)
 per-call-recheck	.	^lane_deferred_callback$	activation_count() records the floor depth the callback returns to, an index; the push asks the depth predicate through lane_push_callback (call-proofs kind 4)
 builtin-bodies	.	^(IteratorClose|StringRepeat|ArrayOf)$	layers of one body: close protocol steps; repeat size plan, byte writer and rope path; allocation helpers shared by many builtins (Builtins triage)
+builtin-bodies	.	^ArraySpecies$	name collision: the species abstract operation of Array, Promise and RegExp are different builtins (scanner triage)
