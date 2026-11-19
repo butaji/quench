@@ -1247,7 +1247,7 @@ pub(crate) struct LoopEntry {
     /// An inlining region's callee registers, which leaving at an inlined instruction
     /// writes back here for its activation.
     scratch: [std::mem::MaybeUninit<u64>; MAX_REGION_REGISTERS],
-    /// What the backward-edge counter started at (`set_backedge_budget`), 0 by default.
+    /// What the backward-edge counter started at (`set_backedge_budget`), `BACKEDGE_BUDGET` by default.
     seed: u64,
 }
 
@@ -1287,7 +1287,15 @@ impl LoopEntry {
         let mut words = [std::mem::MaybeUninit::uninit(); ENTRY_WORDS];
         // The backward-edge budget is the one leading word native code reads before any push.
         words[ENTRY_BACKEDGE_COUNT].write(BACKEDGE_BUDGET as u64);
-        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS] }
+        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS], seed: BACKEDGE_BUDGET as u64 }
+    }
+
+    /// Starts the backward-edge counter at `budget` (at most `BACKEDGE_BUDGET`), so a run leaves
+    /// after that many iterations (`LoopTier::backedge_budget`).
+    pub(crate) fn set_backedge_budget(&mut self, budget: u64) {
+        let budget = budget.clamp(1, BACKEDGE_BUDGET as u64);
+        self.words[ENTRY_BACKEDGE_COUNT].write(budget);
+        self.seed = budget;
     }
 
     /// Number of taken executions of this region's backward edge in the most recent run: the budget less what the
@@ -1295,7 +1303,7 @@ impl LoopEntry {
     pub(crate) fn backedge_count(&self) -> u64 {
         // SAFETY: `new` initializes the budget word.
         let left = unsafe { self.words[ENTRY_BACKEDGE_COUNT].assume_init() } as i64;
-        (BACKEDGE_BUDGET - left).max(0) as u64
+        (self.seed as i64 - left).max(0) as u64
     }
 
     /// The record's words. Native OSR may also update the private first counter word.
