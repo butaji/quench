@@ -1929,6 +1929,8 @@ pub(crate) struct Vm<H> {
     /// receiver and argument slots, innermost proof last. Apart from `active_call_roots`, so a
     /// native's own nested call roots (`with_call_roots`) neither drop nor displace them.
     prepared_roots: Vec<Value>,
+    /// The step natives an iteration proved (`Vm::proved_step_native`), one per `StepNative`.
+    step_native_proofs: [iterators::StepNativeProof; iterators::STEP_NATIVES],
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
     startup_intrinsics: startup_intrinsics::StartupIntrinsics,

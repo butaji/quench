@@ -89,6 +89,7 @@ impl<H: Host> Vm<H> {
             execution_interrupt,
             active_call_roots: vec![],
             prepared_roots: vec![],
+            step_native_proofs: Default::default(),
             with_stack: vec![],
             with_scope_entered: false, scope_names: Default::default(),
             test262_agent: Default::default(),

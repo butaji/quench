@@ -90,6 +90,7 @@ impl<H: Host> Vm<H> {
             execution_interrupt: _,
             active_call_roots: _,
             prepared_roots: _,
+            step_native_proofs: _,
             with_stack: _,
             startup_intrinsics,
             with_scope_entered, scope_names: _,
