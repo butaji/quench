@@ -204,8 +204,12 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
 unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, Views), callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
-    let facts = unsafe { callees.facts() };
-    let sites = Sites { function: spec.known.program.function(spec.function as usize), id: spec.function, callees, facts: &facts, context: Context::root(spec.function, spec.registers, spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
+    let (facts, targets) = unsafe { (callees.facts(), callees.targets()) };
+    let function = spec.known.program.function(spec.function as usize);
+    // The prototypes the entry may check and the rows may fold on: none where the function's rows reshape an object.
+    let classes = super::declared::class_prototypes(function, spec.known.classes);
+    let known = Known { classes: &classes, ..spec.known };
+    let sites = Sites { function, id: spec.function, callees, facts: &facts, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known, ending, views };
     let built = assemble(region, spec, sites, helpers).map(|body| with_native_holders(body, callees));
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built
@@ -221,6 +225,12 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
 /// `registers` overwrote the environment word (JetStream earley-boyer's "invalid local environment").
 fn inline_base(function: &crate::bytecode::Function, registers: u16) -> u16 {
     registers.saturating_add(crate::vm::dispatch_fast::WINDOW_LOCALS).saturating_add(function.locals)
+}
+
+/// `body` with the holders its builtin calls' guards depend on (`Callees::native_holders`) among its own.
+fn with_native_holders(mut body: Body, callees: &Callees) -> Body {
+    body.holders = body.holders.iter().copied().chain(callees.native_holders()).collect();
+    body
 }
 
 /// The bit of a widened key that says the instruction is an inlined callee's (`inlined_exit_key`).
@@ -284,7 +294,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let seeded: Vec<Register> = numbers.iter().copied().chain(pinned_doubles).collect();
     let proven_args = super::call_args::proven_arguments(function, &spec.known.program.constants, &seeded, &pinned_ints).unwrap_or_default();
     let chain_holders = std::cell::RefCell::new(Vec::new());
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders };
+    let builtins = sites.callees.builtins();
+    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     let (code, resumes, number_guards) = link(&layout, &planned)?;
@@ -299,7 +310,21 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let holders: Box<[u32]> = held_holders(&decoded).iter().copied().chain(layout.prototypes.iter().map(|proto| proto.holder)).chain(layout.holders.borrow().iter().copied())
         .collect::<std::collections::BTreeSet<u32>>().into_iter().collect();
     let names_shapes = decoded.iter().any(|row| row.ic.is_some());
-    Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region))), atoms, holders,
+    Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region)).chain(sites.callees.held_facts())), atoms, holders,
         chains: held_chains(&decoded), instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
-        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes })
+        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes, number_guards,
+        uses_this: crate::bytecode::activation_reads_this(spec.known.program, function) })
+}
+
+/// Admits a packed helper row only where its site's feedback admits its direct arm (`family_helpers::admits`):
+/// a binary site met Number operands only, an element site met a dense or typed element. Another site would
+/// run the general step on every execution. An inlined row has no site of its own, and is not admitted.
+fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>], fields: Option<&dyn Fn(u16) -> bool>) {
+    for (row, site) in decoded.iter_mut().zip(kinds) {
+        if let Some(words) = row.packed
+            && !crate::vm::dispatch_fast::family_helpers::admits(words, *site, fields)
+        {
+            row.packed = None;
+        }
+    }
 }
