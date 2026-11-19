@@ -454,6 +454,8 @@ pub(super) struct LoopSite {
     /// interpreter before the next attempt (`LoopSite::note_decline`): a decline whose cause
     /// persists costs attempts logarithmic in the iterations, not one per iteration.
     declines_in_row: std::cell::Cell<u8>,
+    /// The attempts that entered nothing, by reason (`count_decline`, `RegionDecline`).
+    declines: [std::cell::Cell<u64>; RegionDecline::COUNT],
     skipped_entries: std::cell::Cell<u32>,
     /// Whether this VM requested OSR diagnostics when its lane view was derived.
     diagnostics: bool,
@@ -1072,7 +1074,7 @@ impl ActivationShape {
             parameters,
             params: function.params,
             initial: function.initial_register.value(),
-            fill: entry_fill(function),
+            fill: entry_fill_known(function),
         })
     }
 }
@@ -1080,11 +1082,20 @@ impl ActivationShape {
 /// The registers of an activation of `function` that start initialized: those below its entry
 /// liveness bound. A body whose frames a collection scans whole (`RegisterMasks::too_large_to_keep`)
 /// keeps every register initialized, as its masks are not kept.
-pub(in crate::vm) fn entry_fill(function: &Function) -> u16 {
+pub(in crate::vm) fn entry_fill(code: &crate::bytecode::ResidualProgram, function: &Function) -> u16 {
     if crate::compile::liveness::RegisterMasks::too_large_to_keep(function) {
         function.registers
     } else {
-        function.register_roots.entry_fill(function.registers)
+        code.entry_fill(function)
+    }
+}
+
+/// `entry_fill` where only the function is at hand: its bound where derived already, else every
+/// register (a fill that covers all is always sound).
+fn entry_fill_known(function: &Function) -> u16 {
+    match function.register_roots.entry_live_known() {
+        Some(live) if !crate::compile::liveness::RegisterMasks::too_large_to_keep(function) => live.min(function.registers),
+        _ => function.registers,
     }
 }
 
@@ -2390,13 +2401,6 @@ impl Admission {
 
     /// The generation's bits and the lane's condition bits: what a link proved for any program.
     const RUN: u64 = ScriptGeneration::MAX as u64 | Self::CONDITIONS;
-
-    /// Whether a link made under `self` admits a call in the lane whose admission is `lane`, in
-    /// the link's own program: one compare of generation, program and conditions.
-    #[inline(always)]
-    fn admits(self, lane: Admission) -> bool {
-        self == lane
-    }
 
     /// Whether a link made under `self` for another program admits a call in the lane whose
     /// admission is `lane`: the generation and conditions in one compare (a link carries no
@@ -4533,7 +4537,7 @@ unsafe fn clone_environment_of<H: Host>(cx: *mut (), r: Registers, window: u16, 
         return false;
     };
     note_allocation(vm);
-    let Some(crate::heap::Cell::Environment { slots, .. }) = vm.heap.get(environment) else {
+    let Some(crate::heap::EnvironmentRecord { slots, .. }) = vm.heap.environment(environment) else {
         unreachable!("an iteration copy is an environment");
     };
     let storage = std::ptr::from_ref(slots);
@@ -8804,7 +8808,7 @@ unsafe fn region_run_in_lane<H: Host>(
         return Ok(super::compiled::RegionRun::own(if grown { super::compiled::LaneExit::At(region.header as usize) } else { super::compiled::LaneExit::Entry }));
     }
     // SAFETY: the caller's contract.
-    unsafe { code.run::<H>(r.0, entry, region, machine, program, function, (*cx).frame(), interrupt, (cx as usize, direct_calls_in_lane(cx)), from) }
+    Ok(unsafe { code.run::<H>(r.0, entry, region, machine, program, function, (*cx).frame(), interrupt, (cx as usize, direct_calls_in_lane(cx)), from) })
 }
 
 /// Whether a run of `code`, the region of the loop of `function` the lane is in, may start: the lane
@@ -9105,15 +9109,16 @@ fn inlining_region_in_lane<H: Host>(
     let live = code.register_root_masks(function_index)?;
     // The callee is the last of the fields its read reads through, each read from the
     // registers and the fields before it as they are now.
-    let mut resolve = |chain: &[super::compiled::FieldUse], capture: Option<u16>| -> Option<super::compiled::InlineCallee<'_>> {
+    let mut resolve = |chain: &[super::compiled::FieldUse], source: super::compiled::CalleeSource| -> Option<super::compiled::InlineCallee<'_>> {
         let mut values = Vec::with_capacity(chain.len());
         for field in chain {
             let value = region_field_in_lane(cx, r, field, |index| values[index])?;
             values.push(value);
         }
-        let callee = match capture {
-            Some(slot) => capture_read_value(cx, 0, slot)?,
-            None => *values.last()?,
+        let callee = match source {
+            super::compiled::CalleeSource::Capture(slot) => capture_read_value(cx, 0, slot)?,
+            super::compiled::CalleeSource::Register(register) => r.get(register),
+            super::compiled::CalleeSource::Path => *values.last()?,
         };
         let vm = unsafe { vm(cx) };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
@@ -10088,7 +10093,7 @@ impl<H: Host> Vm<H> {
             // frame; only its constructions activate frameless (`script_construct_miss`).
             let entry = body_entry(body, &code.constants);
             // SAFETY: the program store keeps a derived view alive with its program.
-            unsafe { &*view }.entry.set_facts(crate::staged::call::CellFacts::of_function(body.registers, body.params, body.register_roots.entry_fill(body.registers), entry == CallEntry::Activates && !environment));
+            unsafe { &*view }.entry.set_facts(crate::staged::call::CellFacts::of_function(body.registers, body.params, entry_fill(code, body), entry == CallEntry::Activates && !environment));
             TargetBody {
                 entry,
                 constructs,
@@ -10326,7 +10331,7 @@ impl<H: Host> Vm<H> {
             let Some(residual) = self.programs.get(ProgramId::from_raw(index as u32)) else { continue };
             residual.compile_released();
             for function in 0..residual.functions.len() as u32 {
-                if residual.function_get(function as usize).is_some_and(|code| code.instructions().any(|instruction| instruction.op().traits().has(crate::bytecode::Traits::FIRST_CALL_STUB))) {
+                if residual.function_get(function as usize).is_some_and(|code| code.instructions().any(|instruction| instruction.op().traits().has(crate::bytecode::Traits::FIRST_CALL_CHUNK))) {
                     stubs.push((residual.clone(), ProgramId::from_raw(index as u32), function));
                 }
             }
@@ -11004,7 +11009,12 @@ script_handler! {
     #[inline(never)]
     fn generator_step_miss<READS: u8>(cx, r, ip, i, view) {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
-        if let Some((registers, start)) = resume_generator_step_in_lane(cx, r, ip, i, method, iterator) {
+        let completion = match READS {
+            STEP_READS_EMITTED => Completion::StepReads(ForOfTest::Emitted),
+            STEP_READS_THREADED => Completion::StepReads(ForOfTest::Threaded),
+            _ => Completion::Steps,
+        };
+        if let Some((registers, start)) = resume_generator_step_in_lane(cx, r, ip, i, method, iterator, completion) {
             next!(cx, registers, start, Carried::script_in(cx, view))
         }
         let value = call_from_frame_in_lane(cx, ip, |vm, code| vm.generator_iteration_step(code, method, iterator));
@@ -13971,7 +13981,7 @@ fn body_entry_resumed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, vi
     // The activation just pushed is this entry's: its caller runs this function's records
     // where it is a recursive call.
     let recursive = vm.lane_stack.top_frame().is_some_and(|activation| activation.caller_base() == base);
-    if own.audit_entry(true, recursive) {
+    if own.audit_entry(true, || recursive) {
         return Resumed::At(r, base, Carried::script_in(cx, view));
     }
     // A body a lifecycle edge retired gives its prologue back and warms again.
@@ -15668,6 +15678,7 @@ fn wasm_lane_handler<H: Host>(instruction: WideInstruction) -> Option<Option<Lan
         // A value row reads the receiver and the captures from the context, which a Wasm view lacks.
         return Some(None);
     }
+    let op = instruction.op();
     match op {
         _ if crate::staged::call_family(op) => Some(Some(call)),
         _ if crate::staged::return_family(op) => Some(Some(ret)),
@@ -18059,7 +18070,7 @@ fn operand_in_lane(
         ImmediateRole::ConstantIndex => LaneOperand {
             constant: *constants.get(instruction.imm() as usize)?,
         },
-        _ if holds_field_hint(instruction) => LaneOperand {
+        _ if holds_field_hint(instruction.op()) => LaneOperand {
             field: FieldOperand { imm: instruction.imm(), shape: super::NO_FIELD_RECEIVER },
         },
         _ if instruction.op().makes_script_call() => LaneOperand {
@@ -18807,7 +18818,7 @@ fn derive_lane_view<'live, H: Host>(
             .iter()
             .enumerate()
             .filter(|&(pc, instruction)| {
-                holds_field_hint(*instruction)
+                holds_field_hint(instruction.op())
                     && is_global_name_access(instruction.op()) == names
                     && !loops.iter().any(|site| site.hookable && site.header as usize == pc)
             })
@@ -18986,6 +18997,7 @@ fn install_loop_sites<'live, H: Host>(
                     entering: std::cell::Cell::new(true),
                     enclosing: std::cell::OnceCell::new(),
                     declines_in_row: std::cell::Cell::new(0),
+                    declines: Default::default(),
                     skipped_entries: std::cell::Cell::new(0),
                     diagnostics,
                     tiers,
@@ -20294,6 +20306,7 @@ impl CallbackTrampoline {
             a: CALLBACK_RESULT,
             b: 0,
             c: 0,
+            mode: 0,
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         };
         Self {

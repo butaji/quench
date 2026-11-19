@@ -2110,6 +2110,11 @@ impl RegisterRoots {
     pub(crate) fn covered(&self) -> bool {
         self.covered
     }
+
+    /// `entry_live` where it is derived already (by the lowering or a first ask), else `None`.
+    pub(crate) fn entry_live_known(&self) -> Option<u16> {
+        self.entry_live.get().copied()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
