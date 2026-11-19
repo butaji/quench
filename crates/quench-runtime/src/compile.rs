@@ -2279,6 +2279,7 @@ pub(crate) fn lower_settled<'a>(
             rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
         }
         object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
+        rewrite::hoist_loop_constants(function, methods, field_sites, superinstructions);
     }
     rest_reads::rewrite(function, methods, field_sites, superinstructions, &|atom| atom_name(atom as usize) == Some("length"));
     let mut solved = None;
