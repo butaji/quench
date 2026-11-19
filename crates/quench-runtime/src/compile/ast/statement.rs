@@ -371,6 +371,13 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
+    /// Whether the TypeScript annotation of this function's local `name` declares an array of
+    /// Numbers alone (`DeclaredTypes::declared_local_elements`).
+    fn declares_number_elements(&self, name: &str) -> bool {
+        let numbers = crate::typed_ir::Languages::of(crate::ValueType::Number).bits();
+        self.declared_key.and_then(|key| self.owner.declared_types.declared_local_elements(key, name)) == Some(numbers)
+    }
+
     pub(super) fn initializer_value(
         &mut self,
         initializer: &Expression<'_>,
@@ -381,6 +388,14 @@ impl FunctionCompiler<'_, '_> {
                 if class.id.is_none() =>
             {
                 self.named_class_expression(class, identifier.name.as_str())
+            }
+            (Expression::ArrayExpression(array), BindingPattern::BindingIdentifier(identifier))
+                if array.elements.is_empty() && self.declares_number_elements(identifier.name.as_str()) =>
+            {
+                // `MakeArray`'s flag: the array starts with a double backing (`Vm::make_array`).
+                let dst = self.reg();
+                self.emit(Op::MakeArray, dst, 1, 0, 0);
+                dst
             }
             _ => {
                 let debug_name = if !Self::anonymous_function_definition(initializer) {

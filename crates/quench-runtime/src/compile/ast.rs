@@ -170,6 +170,10 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// The literal singletons initialized so far: closures created from here on read each
     /// as its constant (`CaptureScope::folds`).
     capture_folds: super::capture_scope::CaptureFolds,
+    /// The key this function's TypeScript declarations are recorded under
+    /// (`DeclaredTypes::declared_local`): `u32::MAX` at the top level, a nested function's source
+    /// span start; `None` for a function without a source span, whose locals have none.
+    pub(super) declared_key: Option<u32>,
 }
 
 #[derive(Default)]
@@ -278,6 +282,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             hidden_local_suffixes: FxHashMap::default(),
             literal_singletons: Vec::new(),
             capture_folds: std::rc::Rc::new([]),
+            declared_key: None,
         }
     }
 

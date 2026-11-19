@@ -853,7 +853,7 @@ opcodes!($;
     LoadCallee => Effect::PURE; layout Scalar; meaning Unused; class LoadCallee; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex; class MakeClosure; step Body; traits MAKES_CLOSURE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; class MakeArray; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
+    MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; class MakeArray; step Body, @ Register, @ fields(ResultRegister, BooleanFlag, Unused),
     MakeConstArray => CALL_EFFECT; layout Scalar; meaning ConstantIndex; class MakeConstArray; step Body, @ Register, @ fields(ResultRegister, ElementCount, Unused),
     // `a` = the position among the `b` string constants from `imm` of the first strictly equal
     // to register `c`, or `b` when none is: a string `switch`'s case selector, which a

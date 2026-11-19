@@ -7238,7 +7238,7 @@ script_handler! {
 lane_handler! {
     /// `MakeArray`: a fresh array of the record's length in holes (`Vm::hole_array`).
     fn lane_make_array<>(cx, r, ip, i, view) {
-        if !staged_allocate(cx, r, i.a, Allocation::Array { length: i.imm() }) {
+        if !staged_allocate(cx, r, i.a, Allocation::Array { length: i.imm(), numbers: i.b == 1 }) {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
@@ -7281,10 +7281,10 @@ fn lane_new_object<H: Host>(vm: &mut Vm<H>) -> Value {
     value
 }
 
-/// `lane_make_array`'s array of `length` holes, out of line as `lane_new_object`.
+/// `lane_make_array`'s array of `length` holes (`Vm::make_array`), out of line as `lane_new_object`.
 #[inline(never)]
-fn lane_new_hole_array<H: Host>(vm: &mut Vm<H>, length: usize) -> Value {
-    let value = vm.hole_array(length);
+fn lane_new_hole_array<H: Host>(vm: &mut Vm<H>, length: usize, numbers: bool) -> Value {
+    let value = vm.make_array(length, numbers);
     note_allocation(vm);
     value
 }

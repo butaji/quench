@@ -740,6 +740,19 @@ impl ArrayElements {
         }
     }
 
+    /// An empty double backing of one owner with room for its first appends, where backings
+    /// take the double kind (`double_elements`); the shared empty header where they do not.
+    /// A TypeScript `number[]` binding's empty literal starts with it (`Vm::make_array`).
+    pub(crate) fn double_with_room() -> Self {
+        if !double_elements() {
+            return Self::new();
+        }
+        let elements = Self::allocate(MIN_GROWN_CAPACITY, 0);
+        // SAFETY: a fresh allocation of one owner, empty.
+        unsafe { (*elements.header.as_ptr()).len = DOUBLE_LEN };
+        elements
+    }
+
     /// Appends the Number `value` to a double backing this array alone owns, or to an empty
     /// or all-int32 one that `value` (not an int32) turns double, growing as `reserve` does.
     /// `false` changes nothing: the caller appends as to any backing, which makes a double
@@ -750,10 +763,8 @@ impl ArrayElements {
                 return false;
             }
             if self.capacity() == 0 {
-                *self = Self::allocate(MIN_GROWN_CAPACITY, 0);
+                *self = Self::double_with_room();
                 *grown = MIN_GROWN_CAPACITY;
-                // SAFETY: a fresh allocation of one owner, empty.
-                unsafe { (*self.header.as_ptr()).len = DOUBLE_LEN };
             } else if self.is_unique() && self.header().others == 0 && self.takes_double() {
                 self.enter_double();
             } else {

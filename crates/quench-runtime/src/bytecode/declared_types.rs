@@ -273,7 +273,6 @@ impl DeclaredTypes {
     /// The declared element language types of local `name` of the function starting at `function`
     /// (`u32::MAX` for the top level), when its annotation is an array type with a closed element
     /// set (the last declaration wins).
-    #[cfg_attr(not(test), allow(dead_code, reason = "the tiers read array element types next"))]
     pub(crate) fn declared_local_elements(&self, function: u32, name: &str) -> Option<u16> {
         self.locals.iter().rev()
             .find(|local| local.function == function && &*local.name == name && local.elements != ANY_LANGUAGES)

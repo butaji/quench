@@ -345,7 +345,7 @@ fn an_allocation_row_defines_its_destination_through_the_frame_or_declines() {
         (Allocation::Closure { function: 1 }, 0),
         (Allocation::Template { template: 0 }, 0),
         (Allocation::Empty, 0),
-        (Allocation::Array { length: 3 }, 0),
+        (Allocation::Array { length: 3, numbers: false }, 0),
         (Allocation::RegExp { site: 0 }, 0),
         (Allocation::ConstArray { constant: 0, count: 2 }, 0),
         (Allocation::ObjectPair { site: 1, first: 1, second: 2 }, 2),

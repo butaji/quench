@@ -116,7 +116,7 @@ pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>
     allocation: Allocation, proof: EmitProof) -> Option<ir::Value> {
     let (helper, arguments) = match allocation {
         Allocation::Empty => (LaneHelper::NewObject, vec![]),
-        Allocation::Array { length } =>
+        Allocation::Array { length, .. } =>
             (LaneHelper::NewArray, vec![stage.raw_const(Lane::I64, i64::from(length)), stage.raw_const(Lane::I64, 0)]),
         Allocation::ArrayOf { elements } => {
             let registers = elements.registers();
