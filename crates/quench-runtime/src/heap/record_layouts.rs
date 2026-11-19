@@ -73,6 +73,32 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     integrity_mask: crate::value_vec::VALUE_VEC_INTEGRITY_BITS,
 };
 
+/// The native view of a hot record space's allocation cursor (`records::RecordCursor`): the run
+/// `[next, limit)` of fresh ids whose occupancy is already set. An inline allocation loads
+/// `next` and `limit`, and when `next < limit` stores `next + 1`, takes the old `next` as the
+/// record id, and writes the record at the space's base plus `id * record_size`. Otherwise it
+/// calls out to `Heap::alloc_*`, which refills the run (`RecordSpace::cursor_refill`), then
+/// `retire_cursor` at each collection frees the unallocated rest. Its words are `u32`s.
+#[allow(dead_code)] // read by generated allocation code (u-jit, b-jit), which lands after this layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeRecordCursorLayout {
+    pub(crate) size: usize,
+    pub(crate) align: usize,
+    pub(crate) next_offset: usize,
+    pub(crate) limit_offset: usize,
+    /// The ids a refill's run lies within: a run never crosses a block.
+    pub(crate) records_per_block: usize,
+}
+
+#[allow(dead_code)]
+pub(crate) const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
+    size: std::mem::size_of::<records::RecordCursor>(),
+    align: std::mem::align_of::<records::RecordCursor>(),
+    next_offset: std::mem::offset_of!(records::RecordCursor, next),
+    limit_offset: std::mem::offset_of!(records::RecordCursor, limit),
+    records_per_block: records::NATIVE_RECORDS_PER_BLOCK,
+};
+
 /// Which invariants an existing-slot store must preserve. Native views cannot
 /// replace property storage; typed native regions also leave on content widening.
 #[derive(Clone, Copy, PartialEq, Eq)]

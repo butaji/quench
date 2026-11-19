@@ -62,8 +62,15 @@ impl Heap {
             return None;
         }
         let object = Object::from_inline_header(header, inline)?;
-        let id = self.object_records.claim_uninit_quick()?;
-        self.allocated += 1;
+        // The cursor's next id is the call-free case; a spent cursor takes the per-id claim.
+        let id = match self.object_records.cursor_take() {
+            Some(id) => id,
+            None => {
+                let id = self.object_records.claim_uninit_quick()?;
+                self.allocated += 1;
+                id
+            }
+        };
         // SAFETY: the claimed record is uninitialized and written whole, before any safepoint.
         unsafe { self.object_records.record_ptr(id).write(object) };
         Some(Value::direct_object(id))
@@ -76,8 +83,7 @@ impl Heap {
     /// and admit its values (`ValueArena::note_plan_values`), before then.
     #[inline(always)]
     pub(crate) fn claim_object_record(&mut self) -> Option<(Value, *mut Object)> {
-        let id = self.object_records.claim_uninit()?;
-        self.allocated += 1;
+        let id = self.object_records.bump_id(&mut self.allocated)?;
         Some((Value::direct_object(id), self.object_records.record_ptr(id)))
     }
 

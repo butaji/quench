@@ -176,6 +176,18 @@ const _: () = assert!(OBJECT_RECORD_CAPACITY < u32::MAX as usize && FUNCTION_REC
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
 const _: () = assert!(OCCUPANCY_WORD_BITS.is_power_of_two());
 
+/// A space's allocation cursor: the run `[next, limit)` of fresh ids the allocator hands out
+/// one by one (`RecordSpace::cursor_take`). Every id of the run is occupied from the refill
+/// that made it (`cursor_refill`), so an allocation writes no occupancy bit; the ids past
+/// `next` are freed again by `retire_cursor` before any collection reads occupancy. Generated
+/// code reads and bumps `next` through `NATIVE_RECORD_CURSOR_LAYOUT`, so this is `repr(C)`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct RecordCursor {
+    pub(super) next: RecordId,
+    pub(super) limit: RecordId,
+}
+
 /// Each record family owns one fixed address range. Block metadata controls
 /// allocation and sweep, but resolving a live locator never walks it. A nonzero `HOLE` keeps
 /// the ids `[HOLE, 2 * HOLE)` out of use: their blocks exist, with every id withheld.
@@ -236,6 +248,8 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize, const HOLE: usize = 0> {
     /// for increments of their children at the epoch's end.
     rc_decrements: Vec<Value>,
     rc_logged: Vec<RecordId>,
+    /// The bump cursor the hot spaces allocate from (`RecordCursor`); empty elsewhere.
+    pub(super) cursor: RecordCursor,
 }
 
 impl<T, const CAPACITY: usize, const HOLE: usize> Default for RecordSpace<T, CAPACITY, HOLE> {
@@ -249,6 +263,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Default for RecordSpace<T, CAP
             free_word: 0,
             free_word_base: 0,
             free_word_occupied: std::ptr::null_mut(),
+            cursor: RecordCursor::default(),
             live: 0,
             remembered: Vec::new(),
             young_floor: 0,
@@ -472,6 +487,26 @@ impl RecordBlock {
         self.occupied[word_index] & (1_u64 << bit) != 0
     }
 
+    /// The occupancy bits of record indices `from..to` of this block, word by word: the masks
+    /// of one occupancy word at a time. `set` occupies them (none may be occupied yet), else frees them.
+    fn set_occupancy_range(&mut self, from: usize, to: usize, set: bool) {
+        let mut index = from;
+        while index < to {
+            let word_index = index / OCCUPANCY_WORD_BITS;
+            let word_end = ((word_index + 1) * OCCUPANCY_WORD_BITS).min(to);
+            let span = word_end - index;
+            let mask = (u64::MAX >> (OCCUPANCY_WORD_BITS - span)) << (index % OCCUPANCY_WORD_BITS);
+            let word = &mut self.occupied[word_index];
+            if set {
+                debug_assert_eq!(*word & mask, 0, "a cursor run's ids are unoccupied");
+                *word |= mask;
+            } else {
+                *word &= !mask;
+            }
+            index = word_end;
+        }
+    }
+
     #[cfg(test)]
     fn release(&mut self, index: usize) {
         let word_index = index / OCCUPANCY_WORD_BITS;
@@ -566,6 +601,102 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
                 .write(MaybeUninit::new(value));
         };
         Ok(id)
+    }
+
+    /// The next id of the cursor's run, bumped: the inline allocation, with no occupancy write
+    /// (the refill occupied the run). `None` once the run is spent.
+    #[inline(always)]
+    pub(super) fn cursor_take(&mut self) -> Option<RecordId> {
+        let cursor = &mut self.cursor;
+        if cursor.next < cursor.limit {
+            let id = cursor.next;
+            cursor.next = id + 1;
+            Some(id)
+        } else {
+            None
+        }
+    }
+
+    /// Claims the rest of the block the high water mark is in as the cursor's run, occupying
+    /// it, and returns the run's length (the allocation charge it carries). `None` where the
+    /// run cannot be fresh: a hole or loaded free word is still to reuse (the free scan takes
+    /// those first), the space is a hole space, or the range is not reserved or full.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn cursor_refill(&mut self) -> Option<usize> {
+        debug_assert!(self.cursor.next == self.cursor.limit, "a run is refilled once spent");
+        if HOLE != 0 || self.free_word != 0 || self.free_cursor != 0 || !self.ensure_reserved() {
+            return None;
+        }
+        let start = self.next_id as usize;
+        if start >= CAPACITY {
+            return None;
+        }
+        let (block_index, first) = Self::split_id(self.next_id);
+        let end = ((block_index + 1) * RECORDS_PER_BLOCK).min(CAPACITY);
+        self.add_blocks_through(block_index);
+        let run = end - start;
+        self.blocks[block_index].set_occupancy_range(first, first + run, true);
+        self.cursor = RecordCursor { next: start as RecordId, limit: end as RecordId };
+        self.next_id = end as RecordId;
+        self.live += run;
+        Some(run)
+    }
+
+    /// Frees the unallocated rest of the cursor's run and empties the cursor, returning how many
+    /// ids that was. Every collection calls it first (`Heap::retire_record_cursors`), so occupancy
+    /// names only initialized records when the sweep and the marks read it.
+    pub(super) fn retire_cursor(&mut self) -> usize {
+        let RecordCursor { next, limit } = std::mem::take(&mut self.cursor);
+        if next >= limit {
+            return 0;
+        }
+        // A run lies within one block: `cursor_refill` never crosses a block boundary.
+        let (block_index, first) = Self::split_id(next);
+        let count = (limit - next) as usize;
+        self.blocks[block_index].set_occupancy_range(first, first + count, false);
+        // A tail at the high water mark is never used: the high water falls back to it, so no
+        // hole is left for the free scan to reuse one id at a time.
+        if limit == self.next_id {
+            self.next_id = next;
+        }
+        self.live -= count;
+        count
+    }
+
+    /// Whether `id` lies in the cursor's run and is not yet allocated (occupied, unallocated).
+    #[inline(always)]
+    fn in_unallocated_run(cursor: RecordCursor, id: RecordId) -> bool {
+        cursor.next <= id && id < cursor.limit
+    }
+
+    /// A fresh id for a record the caller initializes before any safepoint: the cursor's next,
+    /// else the first id of a new run (`cursor_refill`), else the per-id claim. Allocation charges
+    /// `allocated` per run here (one unit per id a run holds) and per id on the per-id path, which
+    /// is the pacing approximation: a run is charged when it is claimed, and the unallocated rest
+    /// of it is refunded at the next collection (`retire_cursor`). `None` only where the space is full.
+    #[inline(always)]
+    pub(super) fn bump_id(&mut self, allocated: &mut usize) -> Option<RecordId> {
+        match self.cursor_take() {
+            Some(id) => Some(id),
+            None => self.bump_id_slow(allocated),
+        }
+    }
+
+    /// `bump_id` where the cursor is spent: a new run, or the per-id claim where a run cannot be made.
+    #[cold]
+    #[inline(never)]
+    fn bump_id_slow(&mut self, allocated: &mut usize) -> Option<RecordId> {
+        // Holes are reused first (the free words, then the free scan), one id at a time.
+        if self.free_word == 0 && self.free_cursor == 0 {
+            if let Some(run) = self.cursor_refill() {
+                *allocated += run;
+                return self.cursor_take();
+            }
+        }
+        let id = self.claim_uninit()?;
+        *allocated += 1;
+        Some(id)
     }
 
     /// Claims the highest id of the loaded free word, whose bits name unoccupied ids of one
@@ -993,6 +1124,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// quarter of a megabyte of max RSS, the capacity those lists kept.
     pub(super) fn prepare_minor(&mut self, logged: &[RecordId], age: PromotionAge) {
         debug_assert!(self.minor_words.is_empty());
+        // The newborns are named from occupancy: an unallocated run id is not one.
+        self.retire_cursor();
         if !age.ages() {
             return self.age_newborns(logged);
         }
@@ -1079,6 +1212,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         dispose: impl FnMut(RecordId, &T) -> bool,
         mut visit: impl FnMut(RecordSweep<'_, T>),
     ) -> (usize, usize) {
+        // The sweep frees each occupied, unmarked record: an unallocated run id is not a record.
+        self.retire_cursor();
         let mut visit = Sweeper { dispose, visit: &mut visit };
         let mut freed_count = 0;
         let live_count = if full {
@@ -1237,6 +1372,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     }
 
     pub(super) fn for_each_live(&self, mut visit: impl FnMut(RecordId, &T)) {
+        let cursor = self.cursor;
         for (block_index, block) in self.blocks.iter().enumerate() {
             for (word_index, word) in block.occupied.iter().copied().enumerate() {
                 let mut live = word;
@@ -1244,10 +1380,12 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
                     let bit = live.trailing_zeros() as usize;
                     let record_index = word_index * OCCUPANCY_WORD_BITS + bit;
                     let id = (block_index * RECORDS_PER_BLOCK + record_index) as RecordId;
-                    // SAFETY: every occupied bit names an initialized record.
-                    visit(id, unsafe {
-                        (*self.base.as_ptr().add(id as usize)).assume_init_ref()
-                    });
+                    if !Self::in_unallocated_run(cursor, id) {
+                        // SAFETY: every occupied bit outside the cursor's unallocated run names an initialized record.
+                        visit(id, unsafe {
+                            (*self.base.as_ptr().add(id as usize)).assume_init_ref()
+                        });
+                    }
                     live &= live - 1;
                 }
             }
@@ -1256,6 +1394,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
 
     pub(super) fn for_each_live_mut(&mut self, mut visit: impl FnMut(RecordId, &mut T)) {
         let base = self.base;
+        let cursor = self.cursor;
         for (block_index, block) in self.blocks.iter().enumerate() {
             for (word_index, word) in block.occupied.iter().copied().enumerate() {
                 let mut live = word;
@@ -1263,11 +1402,13 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
                     let bit = live.trailing_zeros() as usize;
                     let record_index = word_index * OCCUPANCY_WORD_BITS + bit;
                     let id = (block_index * RECORDS_PER_BLOCK + record_index) as RecordId;
-                    // SAFETY: each occupied ID is visited once and `&mut self`
-                    // excludes every other reference into this space.
-                    visit(id, unsafe {
-                        (*base.as_ptr().add(id as usize)).assume_init_mut()
-                    });
+                    if !Self::in_unallocated_run(cursor, id) {
+                        // SAFETY: each occupied ID is visited once and `&mut self`
+                        // excludes every other reference into this space.
+                        visit(id, unsafe {
+                            (*base.as_ptr().add(id as usize)).assume_init_mut()
+                        });
+                    }
                     live &= live - 1;
                 }
             }
