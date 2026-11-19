@@ -3820,6 +3820,9 @@ pub(super) struct LaneMethod {
     /// (`Heap::Realm`) and every callee it names is that realm's, so a switch to another realm
     /// changes nothing it relies on (`ProgramStore::retire_native_calls_across_realms`).
     pub(in crate::vm) realm_bound: bool,
+    /// Its entry types and its activation's result type (`lane_region::TypeSummary`), where it is a
+    /// whole function's body: a direct caller types the call's result with it (`DirectCallee::summary`).
+    pub(in crate::vm) summary: Option<lane_region::TypeSummary>,
 }
 
 impl LaneMethod {
@@ -3840,6 +3843,11 @@ impl LaneMethod {
     /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
     pub(super) fn entry_address(&self) -> usize {
         self.entry as usize
+    }
+
+    /// Its type summary, if its lowering made one (`lane_region::TypeSummary`).
+    pub(in crate::vm) fn summary(&self) -> Option<&lane_region::TypeSummary> {
+        self.summary.as_ref()
     }
 
     /// The address of its scalar entry, if it has one (`EntryCell::scalar`).

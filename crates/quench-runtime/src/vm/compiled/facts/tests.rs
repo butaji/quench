@@ -249,3 +249,31 @@ fn a_register_below_another_is_a_relation_that_dies_with_either_write_and_surviv
     relations.kill(index);
     assert!(relations.under[usize::from(index)].is_none());
 }
+
+/// A direct call whose callee's summary types its result (`lane_region::call_results`) types the
+/// register the call defines after it, where the lowering checks the result at the completion. Without
+/// the observed read the result is `ANY`, as every call's result was before.
+#[test]
+fn a_direct_call_result_takes_the_type_its_callee_summary_observed() {
+    let program = crate::Engine::specialize(
+        "function caller(f, value) { let r = f(value); return r; }", "summary-call.js").unwrap();
+    let function = program.function(1);
+    let instructions: Vec<_> = function.instructions().collect();
+    let call_pc = instructions.iter().position(|instruction| instruction.op().is_call()).unwrap();
+    let result = instructions[call_pc].result_register();
+    let leaders = super::super::lane_region::leaders(&instructions);
+    let initial = vec![Type::ANY; usize::from(function.registers)];
+    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
+        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: true, raises: &[] };
+    let typed_after = |reads: &[ObservedRead]| {
+        let seeds = Seeds { observed: Observed(reads), ..Seeds::observing(Observed::NONE) };
+        let mut after = None;
+        analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
+            if pc == call_pc + 1 { after = Some(point.types[usize::from(result)]); }
+        });
+        after
+    };
+    assert_eq!(typed_after(&[]), Some(Type::ANY), "an untyped call's result is ANY");
+    let reads = [ObservedRead { pc: call_pc, ty: Type::NUMBER }];
+    assert_eq!(typed_after(&reads), Some(Type::NUMBER), "the summary's result types the call's result after it");
+}

@@ -465,7 +465,10 @@ impl<H: Host> Vm<H> {
             .map_or(Vec::new(), |_| self.programs.constants(active).to_vec());
         let tables = FactTables::of(self, function, unit, fields, &global_reads, construct);
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(unit))).chain(self.adding_stores(unit)).collect();
-        let number_reads = super::osr_compile::observed_reads(&program, unit, arrays, &[], left_at);
+        // The element reads observed, and the direct calls whose results their callees' summaries type.
+        let mut number_reads = super::osr_compile::observed_reads(&program, unit, arrays, &[], left_at);
+        number_reads.extend(lane_region::call_results(&direct_sites, &unit.instructions));
+        number_reads.sort_by_key(|read| read.pc);
         LoweringJob { function, unit: unit.clone(), fields: fields.to_vec(), global_reads, direct_sites, frame_captures,
             helpers: Self::process_helpers(), facts: self.vm_facts(), method_cache_atoms: self.method_cache_atoms.bits().clone(),
             invalidation, constants, tables, leaves, number_reads, entry, program }
@@ -802,6 +805,7 @@ impl LanePlan {
             scratch_width, caller_registers, frame_reach: 0,
             amortizes, direct: self.direct, closed: self.closed,
             framed: false, _records: Vec::new(), constructors: Box::default(), realm_bound: false,
+            summary: self.lowered.region.summary.take(),
         })
     }
 }
