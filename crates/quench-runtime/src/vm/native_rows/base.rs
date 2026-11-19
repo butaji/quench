@@ -3,7 +3,7 @@
 
 use super::*;
 
-natives! {
+row_table! {
     // `Array.prototype`, in installation order.
     (ArrayPrototype, "push", ArrayPush, 1, LANE_METHOD),
     (ArrayPrototype, "pop", ArrayPop, 0, LANE_METHOD),

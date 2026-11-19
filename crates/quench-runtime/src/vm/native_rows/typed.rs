@@ -9,7 +9,7 @@ use crate::vm::date::{
     DATE_SETTER_YEAR_ARGUMENT_LIMIT,
 };
 
-natives! {
+row_table! {
     // `Date.prototype`, in installation order. Setters take the lengths `DateSetter` states.
     (DatePrototype, "toString", DateToString, 0),
     (DatePrototype, "valueOf", DateValueOf, 0),

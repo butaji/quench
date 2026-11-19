@@ -2,7 +2,7 @@
 
 use super::*;
 
-natives! {
+row_table! {
     // `Map.prototype`, in installation order (the `size` getter is not a row).
     (MapPrototype, "get", MapGet, 1),
     (MapPrototype, "set", MapSet, 2),

@@ -6,8 +6,10 @@
 //! (`native_lengths::ROW_LENGTHS`) are derived from the rows, so each fact about one of these
 //! builtins is stated once.
 //!
-//! The `Native` enum itself stays in `heap/cell.rs`, whose order fixes the discriminants that
-//! tables index and snapshots serialize; the rows name its variants and change none of them.
+//! The `Native` enum is declared by `natives!` in `heap/cell.rs`, whose order fixes the discriminants
+//! that tables index and snapshots serialize; the rows name its variants and change none of them.
+//! The flag predicates (`is_math_function`, `is_pure_string_method`) read the rows' flags, so each
+//! flag is stated once, in its row.
 
 use crate::heap::Native;
 
@@ -119,7 +121,7 @@ macro_rules! length_of {
 /// `(Holder, "name", NativeVariant, length, FLAG...)` rows to a table's `ROWS`. A length is a
 /// number, a named constant, or `[ArrayNative]` for a shared length. Rows of one holder keep
 /// their order, which is the order its properties are installed in.
-macro_rules! natives {
+macro_rules! row_table {
     ($( ($holder:ident, $name:literal, $native:ident, $length:tt $(, $flag:ident)*) ),* $(,)?) => {
         /// This table's rows, in installation order.
         pub(super) const ROWS: &[NativeRow] = &[
@@ -315,33 +317,41 @@ const fn same_name(left: &str, right: &str) -> bool {
     true
 }
 
-/// Whether some row names `native`.
-const fn has_row(native: Native) -> bool {
+/// Each native's row flags by discriminant: the union of the flags of the rows that name it.
+const NATIVE_FLAGS: [u8; Native::COUNT as usize] = {
+    let mut flags = [0; Native::COUNT as usize];
     let mut index = 0;
     while index < NATIVE_ROWS.len() {
-        if NATIVE_ROWS[index].native as u16 == native as u16 {
-            return true;
-        }
+        flags[NATIVE_ROWS[index].native as usize] |= NATIVE_ROWS[index].flags;
         index += 1;
     }
-    false
+    flags
+};
+
+impl Native {
+    /// `String.prototype` methods that, for a string primitive receiver and arguments that
+    /// are not objects, run no guest code and have no effect beyond allocating their result.
+    /// `split` looks `Symbol.split` up only on an object separator (ES2025), so it is among
+    /// them; `match` and `search`, which make a RegExp of a string, are not.
+    #[inline]
+    pub(crate) const fn is_pure_string_method(self) -> bool {
+        NATIVE_FLAGS[self as usize] & PURE_STRING != 0
+    }
+
+    /// The functions of the `Math` object: the natives of `Math`'s rows (`MATH_FUNCTIONS`).
+    pub(crate) const fn is_math_function(self) -> bool {
+        NATIVE_FLAGS[self as usize] & MATH != 0
+    }
 }
 
-// The rows agree with the predicates `heap/cell.rs` keeps beside the enum: each native has one
-// row, a row is flagged `MATH` exactly when `Math` holds it and the native is a Math function,
-// `PURE_STRING` exactly when the native is a pure string method, and every native either
-// predicate names has a row.
+// Each row flagged `MATH` is a `Math` row, and each alias (a native on several holders) agrees
+// with the rows it aliases on length, flags and name.
 const _: () = {
     let mut index = 0;
     while index < NATIVE_ROWS.len() {
         let row = NATIVE_ROWS[index];
         let math = row.flags & MATH != 0;
         assert!(math == (row.holder as u8 == Holder::Math as u8), "MATH flags exactly the Math rows");
-        assert!(math == row.native.is_math_function(), "MATH flag disagrees with is_math_function");
-        assert!(
-            (row.flags & PURE_STRING != 0) == row.native.is_pure_string_method(),
-            "PURE_STRING flag disagrees with is_pure_string_method"
-        );
         // A native on two holders is an alias: its rows agree on name, length and flags.
         let mut later = index + 1;
         while later < NATIVE_ROWS.len() {
@@ -356,13 +366,5 @@ const _: () = {
             later += 1;
         }
         index += 1;
-    }
-    let mut discriminant = 0;
-    while discriminant < Native::COUNT {
-        let native = Native::from_discriminant(discriminant).unwrap();
-        if native.is_math_function() || native.is_pure_string_method() {
-            assert!(has_row(native), "a Math function or pure string method has no row");
-        }
-        discriminant += 1;
     }
 };
