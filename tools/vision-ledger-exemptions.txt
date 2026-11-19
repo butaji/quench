@@ -29,3 +29,4 @@ builtin-bodies	.	^(IteratorClose|StringRepeat|ArrayOf)$	layers of one body: clos
 builtin-bodies	.	^ArraySpecies$	name collision: the species abstract operation of Array, Promise and RegExp are different builtins (scanner triage)
 builtin-bodies	.	^(ArrayConcat|StringSearch)$	in-place or dense fast prefix that declines once (fast_declined/declined_fast) into the single general body (Builtins triage)
 builtin-bodies	.	^ArrayValues$	name collision: array_values copies into a Vec, take_present_array_values is an iterator-list helper; neither is Array.prototype.values (Builtins triage)
+specializer-driver	vm/compiled/lane_region\.rs$	^lower_body$	u-jit lowering back end that every driver calls (lane_compile.rs, ahead_images.rs, OSR regions); the driver fold into one plan-then-specialize entry is Compile pipeline B4 (u-jit triage)
