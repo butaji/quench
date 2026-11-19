@@ -1,4 +1,4 @@
-//! Calls the lane answers in place for their common case (else `lane_native_call`), and
+//! Calls the lane answers in place for their common case (else `native_call_miss`), and
 //! for-in's step (`lane_for_in_next`).
 use super::*;
 use crate::vm::object_get::ordinary_chain::ChainRead;
@@ -36,7 +36,7 @@ macro_rules! builtin_rows {
             match native { $(Native::$native => Some($row),)* _ => None }
         }
         fn builtin_handler<H: Host>(row: u8) -> Handler {
-            match row { $($row => lane_call_builtin::<H, $row>,)* _ => lane_native_call::<H> }
+            match row { $($row => lane_call_builtin::<H, $row>,)* _ => call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() }
         }
     };
 }
@@ -216,7 +216,7 @@ fn install_math_field_call2<H: Host>(call_ip: Ip, native: Native) {
 script_handler! {
     /// A `Call` site whose callee was the native of builtin row `ROW` (`native_call_handler`): that
     /// call in its steady case (`Vm::steady_native_value`). Any other callee or case takes
-    /// `lane_native_call`.
+    /// `native_call_miss`.
     fn lane_call_builtin<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { row_native(ROW) };
@@ -225,7 +225,7 @@ script_handler! {
         } else if const { matches!(row_native(ROW), Native::RegExpTest | Native::RegExpExec) } {
             // A RegExp method's steady call (`Vm::steady_regexp_call`), entered from the site
             // without the general native protocol; an error it raises completes as
-            // `lane_native_call`'s does.
+            // `native_call_miss`'s does.
             // SAFETY: the call's window is registers of the running function; the context's
             // program outlives the lane run.
             let (args, code) = unsafe { (lane_call_window(r, i), &*(*cx).code) };
@@ -244,7 +244,7 @@ script_handler! {
             vm.steady_native_value(native, r.get(i.c), unsafe { lane_call_window(r, i) })
         };
         let Some(value) = value else {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
+            sibling!(native_call_miss::<H>, r, ip, Carried::script(cx))
         };
         // A steady case may allocate; a due collection runs at the lane's next safepoint.
         note_allocation(vm);
@@ -254,15 +254,15 @@ script_handler! {
 }
 
 /// The handler a `Call` site whose callee resolved to `native` takes from then on
-/// (`lane_script_call_resolve`): a native whose common case the lane makes in place has its
+/// (`script_call_resolve_miss`): a native whose common case the lane makes in place has its
 /// own handler, which tests the callee's identity once and hands any other call to
-/// `lane_native_call`, the handler of every other native. A call returning its result
-/// completes its caller, which only `lane_native_call` makes. An array callback method's site
+/// `native_call_miss`, the miss body of every other native's protocol row. A call returning its
+/// result completes its caller, which only `native_call_miss` makes. An array callback method's site
 /// whose result nothing reads (`result_dead`, asked only there) takes the form that may
 /// discard it (`lane_call_array_callback`'s `DISCARDS`).
 pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool) -> Handler {
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
-        return lane_native_call::<H>;
+        return call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>();
     }
     match native {
         native if let Some(row) = builtin_row(native) => builtin_handler::<H>(row),
@@ -270,7 +270,7 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
         native if super::number::math_numbers_inline(native) => lane_call_math::<H>,
         native if native.is_array_callback() && result_dead() => lane_call_array_callback::<H, true>,
         native if native.is_array_callback() => lane_call_array_callback::<H, false>,
-        _ => lane_native_call::<H>,
+        _ => call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>(),
     }
 }
 
@@ -298,7 +298,7 @@ pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, call: &sup
 }
 
 script_handler! {
-    /// `lane_native_call` of `Reflect.get`, read once along an ordinary chain
+    /// `native_call_miss` of `Reflect.get`, read once along an ordinary chain
     /// (`Vm::reflect_chain_read`): a data value or an absent key completes the call in place,
     /// an accessor with a getter is that getter's activation with the receiver argument as
     /// `this` (`lane_activate_getter`), whose completion is the call's value; any other
@@ -329,7 +329,7 @@ script_handler! {
     }
 }
 
-/// The handler of a `Reflect.get` call site (`lane_native_call`'s sibling).
+/// The handler of a `Reflect.get` call site (`native_call_miss`'s sibling).
 pub(super) fn reflect_get_call_handler<H: Host>() -> Handler {
     lane_reflect_get_call::<H>
 }

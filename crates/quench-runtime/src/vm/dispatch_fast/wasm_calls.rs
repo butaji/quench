@@ -296,7 +296,7 @@ fn lane_call_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, m
 }
 
 /// A Wasm reference call of a JavaScript-backed import whose callee the lane activates as a
-/// JavaScript call of another program would (`lane_script_call_cross`): the scalar arguments
+/// JavaScript call of another program would (`script_call_cross_miss`): the scalar arguments
 /// in their JavaScript form (ToJSValue, which allocates nothing for i32, f32 and f64), an
 /// `undefined` receiver, and a return that gives the Wasm caller the result's Wasm form
 /// (`Completion::ToWasm`). The import's wrapper is of the running realm and its native

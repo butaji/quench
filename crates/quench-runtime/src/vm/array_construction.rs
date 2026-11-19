@@ -19,7 +19,7 @@ impl<H: Host> Vm<H> {
     /// `new Array(length)` of a Number `length` with `prototype` (ECMA-262 23.1.1.1 step 5):
     /// an array of that length whose elements are all absent; `None` for a length that is no
     /// array length, which throws a RangeError. Out of line: the lane makes it too
-    /// (`lane_native_construct`), whose frame then holds none of its temporaries.
+    /// (`native_construct_miss`), whose frame then holds none of its temporaries.
     #[inline(never)]
     pub(in crate::vm) fn array_of_length(&mut self, prototype: Value, length: f64) -> Option<Value> {
         if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > f64::from(u32::MAX) {

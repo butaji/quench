@@ -72,7 +72,7 @@ pub(super) fn running_generator<H: Host>(vm: &Vm<H>) -> bool {
     vm.lane_stack.top_frame().and_then(|frame| frame.script()).is_some_and(|script| script.completion.is_generator())
 }
 
-/// `lane_generator_step` of a for-of step of a generator's `next` that the lane resumes as an
+/// `generator_step_miss` of a for-of step of a generator's `next` that the lane resumes as an
 /// activation (`lane_resume_generator`); `None` leaves any other step, and a step that returns
 /// its result from the frame, to the general ones.
 #[inline(never)]
