@@ -28,7 +28,9 @@ use crate::staged::typed_elements::{NativeKind, ViewKind};
 use crate::staged::typed_view::{prove_typed_view, TypedRecords, ViewAccess};
 use std::collections::{BTreeMap, BTreeSet};
 /// The direct callees of a body's call sites, by unit PC.
-pub(super) type DirectSites = BTreeMap<usize, *const DirectCallee>;
+/// The direct callees of each call site, by PC, in the order a chain of identity tests takes them
+/// (`Lowering::polymorphic_call`); one for a site that is not polymorphic.
+pub(super) type DirectSites = BTreeMap<usize, Vec<*const DirectCallee>>;
 use cranelift_codegen::bitset::CompoundBitSet;
 use cranelift_codegen::entity::EntityRef;
 
@@ -3467,27 +3469,39 @@ impl Lowering<'_, '_> {
         };
         let missed = self.guard_exit(state, pc as u32);
         self.home_written(state, pc);
-        let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
+        let completed = self.builder.create_block();
         let raised = cold_block(&mut self.builder);
         let entered = self.builder.create_block();
         // The callee's exception block is filled before the call's blocks, from the state the call is made in.
         self.goto(entered, &[]);
         self.raised_call(state, pc, record, raised);
         self.builder.switch_to_block(entered);
-        // SAFETY: the body owns the callee for as long as its code runs.
-        let callee = self.direct.get(&pc).map(|callee| unsafe { &**callee });
-        // A construction of a stores-only constructor, whose arguments are a window of the caller's
-        // registers (`CallSite::initializing`): its receiver is allocated finished and its body not entered.
-        let initializing = match (site.arguments, callee) {
-            // A forwarding site's target is the forwarded initializer, whose receiver its forwarder's plan
-            // allocates (`DirectCallee::forwarder`): that path keeps its body.
-            (crate::staged::Arguments::Window { first, count }, Some(callee))
-                if site.constructs() && callee.forwarder.is_none() && self.initializes_on_construction(callee.target.function) => Some((first, count)),
-            _ => None,
-        };
-        let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed, raised,
-            stop: self.call_out_stop(), leave: self.leave_site(), initializing };
-        self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
+        // SAFETY: the body owns its callees for as long as its code runs.
+        let callees: Vec<&DirectCallee> = self.direct.get(&pc).map(|sites| sites.iter().map(|callee| unsafe { &**callee }).collect()).unwrap_or_default();
+        // The declared result the call's completion conforms to: the callee's, where every candidate declares the same one.
+        let returns = callees.iter().filter(|_| !site.constructs())
+            .map(|callee| declared::declared_return(self.program, callee.target.function))
+            .reduce(|first, next| if first == next { first } else { None }).flatten();
+        match site.callee {
+            crate::staged::forms::Callee::Register(register) if callees.len() >= 2 && !site.constructs() =>
+                self.polymorphic_call(state, site, record, register, &callees, (completed, missed, raised)),
+            _ => {
+                let callee = callees.first().copied();
+                let generic = self.builder.create_block();
+                // A construction of a stores-only constructor, whose arguments are a window of the caller's
+                // registers (`CallSite::initializing`): its receiver is allocated finished and its body not entered.
+                let initializing = match (site.arguments, callee) {
+                    // A forwarding site's target is the forwarded initializer, whose receiver its forwarder's plan
+                    // allocates (`DirectCallee::forwarder`): that path keeps its body.
+                    (crate::staged::Arguments::Window { first, count }, Some(callee))
+                        if site.constructs() && callee.forwarder.is_none() && self.initializes_on_construction(callee.target.function) => Some((first, count)),
+                    _ => None,
+                };
+                let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed, raised,
+                    stop: self.call_out_stop(), leave: self.leave_site(), initializing };
+                self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
+            }
+        }
         self.reentries.push(completed);
         // A returning call's completion is its activation's: the lane completes it with the
         // result, which the call left in its register (`LaneExit::Returned`).
@@ -3500,6 +3514,39 @@ impl Lowering<'_, '_> {
         self.reload_result(state, site.result);
         if let Some(ty) = returns { self.conform_declared_result(state, pc, site.result, ty); }
         true
+    }
+
+    /// A call of a register callee that one of `callees` may be (several direct candidates of the
+    /// site): a chain of tests on the callee register, each leading to its candidate's direct call,
+    /// and the last to a call by the VM alone. A test's candidate is the one its step guards again,
+    /// which holds. Each step gets its own miss block, which its VM call fills (`CallFrame::call_helper`
+    /// appends the call to the block it is given, so blocks are not shared). The steps share `completed`,
+    /// `missed` and `raised`, and the chain ends at `completed`.
+    fn polymorphic_call(&mut self, state: &mut State, site: crate::staged::Invocation, record: u32, register: Register,
+        callees: &[&DirectCallee], (completed, missed, raised): (ir::Block, ir::Block, ir::Block)) {
+        use crate::staged::{CallOperation, Operation};
+        let (stop, leave, context, registers) = (self.call_out_stop(), self.leave_site(), self.context, self.registers_base);
+        // The callee register is read once: the steps write nothing before a test runs.
+        let word = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(register));
+        let tests: Vec<ir::Block> = callees.iter().map(|_| self.builder.create_block()).collect();
+        let fallback = self.builder.create_block();
+        self.goto(tests[0], &[]);
+        for (index, &callee) in callees.iter().enumerate() {
+            self.builder.switch_to_block(tests[index]);
+            let arm = self.builder.create_block();
+            let next = tests.get(index + 1).copied().unwrap_or(fallback);
+            let matched = self.raw_compare_imm(Relation::Equal, word, callee.callee.to_bits() as i64);
+            self.branch_if(matched, (arm, &[]), (next, &[]));
+            self.builder.switch_to_block(arm);
+            let miss = cold_block(&mut self.builder);
+            let call = CallSite { callee: Some(callee), record, context, registers, completed, missed, raised, stop, leave, initializing: None };
+            self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
+        }
+        // No candidate's identity: the VM's call alone, as a site with no direct entry makes it.
+        self.builder.switch_to_block(fallback);
+        let miss = cold_block(&mut self.builder);
+        let call = CallSite { callee: None, record, context, registers, completed, missed, raised, stop, leave, initializing: None };
+        self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
     }
 
     /// The activation completes with `register`, by the staged return (`Frame::ret`) at the

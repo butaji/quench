@@ -12,23 +12,36 @@ pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<u
 
 /// The calls a unit still makes (none it inlines) whose callees have bodies. Each candidate
 /// owns one contiguous stable slice, which the code names by address. A site with several
-/// callees binds the first the unit does not inline: the calls its alternatives miss.
+/// callees binds every candidate the unit does not inline, in the order the candidates list them
+/// (a chain of identity tests takes them, `Lowering::polymorphic_call`); a construction binds only
+/// the first, and a site whose candidates are all inlined binds the first of them.
 pub(super) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidates])
-    -> (Box<[DirectCallee]>, BTreeMap<usize, *const DirectCallee>) {
-    let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
+    -> (Box<[DirectCallee]>, BTreeMap<usize, Vec<*const DirectCallee>>) {
+    let chosen: Vec<(usize, Vec<DirectCallee>)> = unit.instructions.iter().enumerate()
         .filter(|(_, instruction)| crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Call) || crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Construct))
-        .filter_map(|(pc, _)| match unit.origins[pc] {
+        .filter_map(|(pc, instruction)| match unit.origins[pc] {
             lane_unit::Origin::Caller(origin) => {
                 let inlined = |callee: &DirectCallee| unit.frames.iter()
                     .any(|frame| frame.parent.is_none() && frame.call == origin && frame.target.function == callee.target.function);
                 let candidates = direct.get(origin as usize)?;
-                candidates.iter().find(|callee| !inlined(callee)).or_else(|| candidates.first()).cloned().map(|callee| (pc, callee))
+                let mut bound: Vec<DirectCallee> = candidates.iter().filter(|callee| !inlined(callee)).cloned().collect();
+                if bound.is_empty() { bound.extend(candidates.first().cloned()); }
+                if crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Construct) { bound.truncate(1); }
+                (!bound.is_empty()).then_some((pc, bound))
             }
             lane_unit::Origin::Inlined { .. } => None,
         })
-        .unzip();
-    let direct: Box<[DirectCallee]> = direct.into_boxed_slice();
-    let sites = pcs.iter().zip(direct.iter()).map(|(pc, callee)| (*pc, std::ptr::from_ref(callee))).collect();
+        .collect();
+    let mut owned: Vec<DirectCallee> = Vec::new();
+    let mut spans: Vec<(usize, std::ops::Range<usize>)> = Vec::with_capacity(chosen.len());
+    for (pc, callees) in chosen {
+        let start = owned.len();
+        owned.extend(callees);
+        spans.push((pc, start..owned.len()));
+    }
+    let direct: Box<[DirectCallee]> = owned.into_boxed_slice();
+    // The pointers are taken once the slice is boxed, so they name its final elements.
+    let sites = spans.into_iter().map(|(pc, span)| (pc, direct[span].iter().map(std::ptr::from_ref).collect())).collect();
     (direct, sites)
 }
 

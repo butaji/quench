@@ -55,7 +55,7 @@ impl ScalarAbi {
         let function = program.function_get(function_id as usize)?;
         let params = u8::try_from(function.params).ok().filter(|params| usize::from(*params) <= MAX_PARAMETERS)?;
         // SAFETY: the body owns its direct callees for as long as its code runs.
-        let recurses = direct.values().any(|callee| unsafe { &**callee }.target.function == function_id);
+        let recurses = direct.values().flatten().any(|callee| unsafe { &**callee }.target.function == function_id);
         if !recurses || !numeric_unit(program, unit, true, direct)
             || !crate::vm::js_compiled::function_candidate(function, program) { return None; }
         let mut written = CompoundBitSet::with_capacity(usize::from(unit.registers));
@@ -155,7 +155,7 @@ fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSi
     let read = unit.instructions[pc];
     let own = |at: usize| matches!(unit.origins[at], super::super::lane_unit::Origin::Caller(_));
     if !matches!(crate::vm::compiled::decoded(read), Some(crate::staged::Operation::LoadCapture { .. })) || read.capture_depth() != 0 || read.result_flags() != 0 || !own(pc) { return None; }
-    let call = direct.range(pc..).find(|(call, _)| own(**call) && unit.instructions[**call].register_b() == read.result_register())?.1;
+    let call = *direct.range(pc..).find(|(call, _)| own(**call) && unit.instructions[**call].register_b() == read.result_register())?.1.first()?;
     // SAFETY: the body owns its direct callees for as long as its code runs.
     Some(unsafe { &**call })
 }
@@ -303,7 +303,7 @@ impl Lowering<'_, '_> {
     /// The callee of the direct call at `pc` if it is of this function itself.
     fn scalar_target(&self, pc: usize) -> Option<&DirectCallee> {
         // SAFETY: the body owns its direct callees for as long as its code runs.
-        let callee = self.direct.get(&pc).map(|callee| unsafe { &**callee })?;
+        let callee = self.direct.get(&pc).and_then(|sites| sites.first()).map(|callee| unsafe { &**callee })?;
         (callee.target.function == self.function_id && callee.forwarder.is_none()).then_some(callee)
     }
 
