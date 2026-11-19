@@ -40,15 +40,15 @@
 //! writes the live pinned registers back: the lowering of an instruction whose operation only
 //! the interpreter runs.
 
-use crate::layout::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_BODY_THREW, LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, NATIVE_JS_STOPPED, PLACED_ARGUMENTS, REGISTER_BYTES, TERMINATED_STATUS};
+use crate::layout::call_record::{helper_outcome, CallRecord, LaneStatus, Outcome, CALLEE_EXIT, PLACED_ARGUMENTS, REGISTER_BYTES};
 use crate::codes::{LAST_DOUBLE_PIN, LAST_INT_PIN, MEM, PIN, PINF};
 use crate::heap_rows::{payload, set_context_word, word_at};
-use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_ACTIVATIONS_TOP, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_LANE_VALUES_TOP, JS_STEP_RESIDUAL, JS_STEP_RETURNED_PC, JS_STEP_VM, CONTEXT_BODY, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, CONTEXT_BODY, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::places::Places;
 use crate::stage::StencilStage;
 use crate::staged::region::Region;
 use crate::staged::{call::admit_native, protocol, value, word_offset, CallFrame, CallOperation, Passed, Stage, Step};
-use crate::words::{S, dead, hole64};
+use crate::words::{Out, S, dead, hole64};
 use crate::{Row, Value};
 use core::mem::{offset_of, transmute};
 
@@ -118,9 +118,8 @@ fn leaving(s: &S, status: u32, word: u64) -> S {
 /// in the payload for the lane to unwind from (`LANE_BODY_THREW`).
 #[inline(always)]
 unsafe fn raising(s: &S, payload: usize, pc: u64) -> S {
-    // SAFETY: the payload is the live activation's.
-    unsafe { put(payload, JS_STEP_RETURNED_PC, pc) };
-    leaving(s, LANE_BODY_THREW, 0)
+    protocol::record_raised_pc(&mut StencilStage::from_hole(0), payload as u64, pc);
+    leaving(s, LaneStatus::Threw as u32, 0)
 }
 
 macro_rules! go {
@@ -131,17 +130,12 @@ macro_rules! go {
     }};
 }
 
+/// The register index the record names at `field`, read as the frame's accesses are (`Region::Frame`: a call
+/// record lives on the lane stack).
 #[inline(always)]
-unsafe fn put(base: usize, offset: usize, word: u64) {
-    // SAFETY: a layout offset of a live record, as every staged store.
-    unsafe { ((base + offset) as *mut u64).write(word) }
-}
-
-/// The register index the record names at `field`.
-#[inline(always)]
-unsafe fn register_index(record: usize, field: usize) -> u16 {
-    // SAFETY: a register index the planner stored in a live record.
-    unsafe { ((record + field) as *const u16).read() }
+fn register_index(record: usize, field: usize) -> u16 {
+    // The planner stored the index in the live record, so the load reads a register number.
+    StencilStage::from_hole(0).load_u16(Region::Frame.mutable(), record as u64, field as i32) as u16
 }
 
 /// The word of the register the record names at `field`, in the caller's register file at `file`
@@ -149,14 +143,14 @@ unsafe fn register_index(record: usize, field: usize) -> u16 {
 #[inline(always)]
 unsafe fn read_register(file: u64, record: usize, field: usize) -> u64 {
     // SAFETY: as `register_index`, a register of the live frame.
-    StencilStage::from_hole(0).load_u64(Region::Frame.mutable(), file, word_offset(unsafe { register_index(record, field) }))
+    StencilStage::from_hole(0).load_u64(Region::Frame.mutable(), file, word_offset(register_index(record, field)))
 }
 
 /// Writes `word` to the register the record names at `field` of the file at `file`.
 #[inline(always)]
 unsafe fn write_register(file: u64, record: usize, field: usize, word: u64) {
     // SAFETY: as `read_register`.
-    StencilStage::from_hole(0).store_u64(Region::Frame.mutable(), file, word_offset(unsafe { register_index(record, field) }), word)
+    StencilStage::from_hole(0).store_u64(Region::Frame.mutable(), file, word_offset(register_index(record, field)), word)
 }
 
 /// The word a call-protocol step produced; `None` where it left at its miss edge.
@@ -175,24 +169,24 @@ pub unsafe extern "rust-preserve-none" fn call_helper(frame: usize, ctx: usize, 
         let payload = payload(&s);
         let helper: Helper = transmute(hole64::<HOLE_HELPER>() as usize);
         let status = helper(word_at(payload, JS_STEP_VM), word_at(payload, JS_STEP_RESIDUAL), word_at(payload, JS_STEP_LANE_CONTEXT), hole64::<HOLE_CALL_PC>());
-        match status {
-            LANE_CALL_COMPLETED => go!(HOLE_NEXT, dead(&s)),
-            LANE_CALL_BRANCHED => go!(HOLE_TAKEN, dead(&s)),
-            LANE_CALL_MISSED => {
+        match helper_outcome(status) {
+            Outcome::Next => go!(HOLE_NEXT, dead(&s)),
+            Outcome::Taken => go!(HOLE_TAKEN, dead(&s)),
+            Outcome::Missed => {
                 core::hint::cold_path();
                 go!(HOLE_EXIT0, dead(&s))
             }
-            LANE_CALL_LEFT => {
+            Outcome::Left => {
                 core::hint::cold_path();
-                go!(HOLE_EXIT1, leaving(&s, NATIVE_JS_STOPPED, CALLEE_EXIT))
+                go!(HOLE_EXIT1, leaving(&s, LaneStatus::NativeJsStopped as u32, CALLEE_EXIT))
             }
-            LANE_CALL_RAISED => {
+            Outcome::Raised => {
                 core::hint::cold_path();
                 go!(HOLE_EXIT1, raising(&s, payload, hole64::<HOLE_CALL_PC>()))
             }
-            _ => {
+            Outcome::Terminated => {
                 core::hint::cold_path();
-                go!(HOLE_EXIT1, leaving(&s, TERMINATED_STATUS, 0))
+                go!(HOLE_EXIT1, leaving(&s, LaneStatus::Terminated as u32, 0))
             }
         }
     }
@@ -246,18 +240,14 @@ struct Admitted {
     shadow: usize,
     /// The addresses of the lane stack's two top words, read once at admission: every move of the
     /// tops (push, completion) writes through them.
-    values_at: usize,
-    activations_at: usize,
+    tops: protocol::LaneTops<u64>,
 }
 
 /// Moves the lane stack's two tops through the top words admission found: the values' and the activations'.
 #[inline(always)]
-unsafe fn set_tops(a: &Admitted, values: usize, activations: usize) {
-    // SAFETY: the top words are the live lane stack's, which admission proved for this activation.
-    unsafe {
-        put(a.values_at, 0, values as u64);
-        put(a.activations_at, 0, activations as u64);
-    }
+fn set_tops(a: &Admitted, values: usize, activations: usize) {
+    // The top words are the live lane stack's, which admission proved for this activation.
+    protocol::set_tops(&mut StencilStage::from_hole(0), a.tops, values as u64, activations as u64);
 }
 
 /// The cell's validity and both stacks' room: `admit_native` over the values' free words less the callee's
@@ -267,17 +257,17 @@ unsafe fn admit(stage: &mut StencilStage, record: usize, payload: usize) -> Opti
     // SAFETY: the record and cell are live for the code's life, the payload for the activation's.
     unsafe {
         let cell = word_at(record, offset_of!(CallRecord, cell)) as usize;
-        let (values_at, activations_at) = (word_at(payload, JS_STEP_LANE_VALUES_TOP) as usize, word_at(payload, JS_STEP_LANE_ACTIVATIONS_TOP) as usize);
-        let (top, end) = (word_at(values_at, 0), word_at(payload, JS_STEP_LANE_VALUES_END));
+        let tops = protocol::lane_tops(stage, payload as u64);
+        let (top, end) = (word_at(tops.values_at as usize, 0), word_at(payload, JS_STEP_LANE_VALUES_END));
         let recovery = word_at(cell, CELL_RECOVERY_AT) as usize;
         let reserved = word_at(recovery, RECOVERY_VALUES_AT) + FRAME_CONTEXT_WORDS as u64;
         let (room, fill) = admit_native(stage, cell as u64, word_at(record, offset_of!(CallRecord, expected)), top, end, reserved, ())?;
         let top = top as usize;
-        let shadow = word_at(activations_at, 0) as usize;
+        let shadow = word_at(tops.activations_at as usize, 0) as usize;
         let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) as usize + 1;
         let needed = (shadow + frames * word_at(record, offset_of!(CallRecord, frame_bytes)) as usize) as u64;
         word_of(protocol::step(stage, (), CallOperation::Room { limit: word_at(payload, JS_STEP_LANE_FRAMES_END), needed }))?;
-        Some(Admitted { cell, top, room: room as usize, fill: fill as usize, shadow, values_at, activations_at })
+        Some(Admitted { cell, top, room: room as usize, fill: fill as usize, shadow, tops })
     }
 }
 
@@ -310,24 +300,24 @@ unsafe fn finish(file: u64, record: usize, a: &Admitted, returned: BodyReturn) -
     // SAFETY: as `push`.
     unsafe {
         // The protocol's completion: a returned callee's value, stored to the call's register.
-        let completion = CallOperation::Complete { status: u64::from(returned.status), value: returned.value, receiver: None, returned: LANE_BODY_RETURNED };
+        let completion = CallOperation::Complete { status: u64::from(returned.status), value: returned.value, receiver: None, returned: LaneStatus::Returned as u32 };
         if let Some(value) = word_of(protocol::step(&mut StencilStage::from_hole(0), (), completion)) {
             set_tops(a, a.top, a.shadow);
             write_register(file, record, offset_of!(CallRecord, result_register), value);
             return Entered::Returned;
         }
-        match returned.status {
-            LANE_BODY_NOT_ENTERED => {
+        match LaneStatus::of(returned.status) {
+            Some(LaneStatus::NotEntered) => {
                 set_tops(a, a.top, a.shadow);
                 Entered::Refused
             }
-            LANE_BODY_THREW => {
+            Some(LaneStatus::Threw) => {
                 set_tops(a, a.top, a.shadow);
                 let counters = word_at(a.cell, CELL_COUNTERS_AT);
-                put(a.cell, CELL_COUNTERS_AT, counters.wrapping_add(RAISED_RUN));
+                StencilStage::from_hole(0).store_u64(Region::EntryCell.mutable(), a.cell as u64, CELL_COUNTERS_AT as i32, counters.wrapping_add(RAISED_RUN));
                 Entered::Raised
             }
-            status => Entered::Left(status, returned.value),
+            _ => Entered::Left(returned.status, returned.value),
         }
     }
 }
@@ -415,7 +405,10 @@ macro_rules! direct_row {
 /// The unconditional leave: every register is passed to the exit as it came.
 #[unsafe(no_mangle)]
 pub unsafe extern "rust-preserve-none" fn exit_here(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
-    unsafe { go!(HOLE_EXIT0, S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] }) }
+    let s = match crate::words::exit_here(S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] }) {
+        Out::Exit(s) | Out::Next(s) | Out::Taken(s) => s,
+    };
+    unsafe { go!(HOLE_EXIT0, s) }
 }
 
 /// The direct-call rows and the reload rows, from one list of shapes. A `direct` shape is the

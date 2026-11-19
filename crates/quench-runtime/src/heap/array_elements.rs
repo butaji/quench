@@ -79,13 +79,10 @@ static EMPTY: Header = Header {
     head: ArrayHeaderHead { owners: 0, len: 0, capacity: 0, others: 0 },
 };
 
-/// The `Header::capacity` flag of a backing whose header moved past dropped front values.
-pub(super) const BIASED: u32 = 1 << 31;
-
-/// The `Header::capacity` flag of a wide backing made from a narrow one (`widened`): its
-/// array was read hot or written since it narrowed, so no collection narrows it again
-/// (`may_narrow`), and an array narrows and widens at most once. Front removals may drop it.
-const KEEP_WIDE: u32 = 1 << 30;
+// The `Header::capacity` flags (`staged::object_encoding`): `BIASED` marks a header moved past dropped
+// front values; `KEEP_WIDE` marks a wide backing made from a narrow one (`widened`), which no collection
+// narrows again (`may_narrow`), so an array narrows and widens at most once. Front removals may drop it.
+pub(super) use crate::staged::object_encoding::{BIASED, KEEP_WIDE};
 
 /// The `Header::len` flag of a narrow backing: its values are 4-byte narrow forms
 /// (`Value::to_narrow`) from `VALUES_OFFSET`, read through `ArrayElements::get`. A
@@ -181,7 +178,7 @@ pub(super) const NATIVE_HEADER_OWNERS_OFFSET: usize = std::mem::offset_of!(Heade
 pub(super) const NATIVE_HEADER_CAPACITY_OFFSET: usize = std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, capacity);
 /// The capacity word's bits that count values: those left once the `BIASED` and `KEEP_WIDE`
 /// flags are dropped.
-pub(super) const NATIVE_HEADER_CAPACITY_MASK: u32 = !(BIASED | KEEP_WIDE);
+pub(super) use crate::staged::object_encoding::HEADER_CAPACITY_MASK as NATIVE_HEADER_CAPACITY_MASK;
 pub(super) const NATIVE_HEADER_VALUES_OFFSET: usize = VALUES_OFFSET;
 
 const _: () = assert!(NATIVE_HEADER_POINTER_OFFSET == 0);

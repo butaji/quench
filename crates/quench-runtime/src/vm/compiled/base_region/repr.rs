@@ -53,6 +53,10 @@ fn selected(class: OperandClass) -> Variant {
 
 /// The variant of the row of `kind` at a site with `kinds`.
 pub(super) fn variant_of(kind: Kind, kinds: Option<&OperandKinds>) -> Variant {
+    // A no-overflow row's operands are int32s by proof: it never meets a string (no Concat) or a double.
+    if matches!(kind, Kind::AddNoOverflow | Kind::SubNoOverflow) {
+        return Variant::Int32;
+    }
     let Some(kinds) = kinds else { return Variant::Int32 };
     match selected(kinds.class()) {
         Variant::Generic if kinds.has_string() => STRING_VARIANTS.iter().find(|(candidate, _)| *candidate == kind).map_or(Variant::Generic, |(_, variant)| *variant),
@@ -113,7 +117,7 @@ fn kind_repr(kind: Kind, operands: Option<Representation>, widened: bool) -> Opt
         Kind::Imul | Kind::Clz32 => Some(Representation::Int32),
         Kind::Move | Kind::Const => operands,
         Kind::Div => Some(Representation::Float64),
-        Kind::Add | Kind::Sub | Kind::Mul | Kind::Rem => if widened || operands == Some(Representation::Float64) { Some(Representation::Float64) } else { Some(Representation::Int32) },
+        Kind::Add | Kind::Sub | Kind::AddNoOverflow | Kind::SubNoOverflow | Kind::Mul | Kind::Rem => if widened || operands == Some(Representation::Float64) { Some(Representation::Float64) } else { Some(Representation::Int32) },
         _ if widened => Some(Representation::Tagged),
         _ => Some(Representation::Int32),
     }

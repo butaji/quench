@@ -140,11 +140,14 @@ pub(super) struct Decoded {
     /// Some receiver proof reaches the row (`proofs::prove`), which a later row may stand on: the code
     /// is not resumed here.
     pub(super) relies: bool,
+    /// A proven store whose run-level stores test the region's entry made, and no call since (`proofs::prove`): the row
+    /// tests nothing of its own (`Heap::IcKnownSet`'s `admitted`).
+    pub(super) admitted: bool,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, proven: false, relies: false }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, proven: false, relies: false, admitted: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {

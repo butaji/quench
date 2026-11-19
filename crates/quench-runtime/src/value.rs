@@ -12,129 +12,14 @@ mod number_conversion;
 pub use number_conversion::{number_to_i32, number_to_u32, number_to_uint8_clamp};
 pub(crate) use number_conversion::EXACT_I64_TRUNCATION_LIMIT;
 use number_conversion::truncate_to_i32;
-/// The tags occupy one contiguous range of tag-field values, so a tag test
-/// is one range comparison.
-const FIRST_TAG: u64 = TAG_UNDEFINED;
-/// The tag field's position: above the payload.
-const TAG_SHIFT: u32 = PAYLOAD_MASK.count_ones();
 pub(crate) use crate::vm::operations::WORD32_SHIFT_MASK;
-const LAST_TAG: u64 = TAG_DELETED;
-const _: () = {
-    let tags = [
-        TAG_UNDEFINED,
-        TAG_NULL,
-        TAG_BOOL,
-        TAG_HEAP,
-        TAG_INT,
-        TAG_DELETED,
-    ];
-    let step = 1 << TAG_SHIFT;
-    let mut index = 1;
-    while index < tags.len() {
-        assert!(tags[index] == tags[index - 1] + step);
-        index += 1;
-    }
-    assert!(tags[0] == FIRST_TAG && tags[tags.len() - 1] == LAST_TAG);
-};
-const DIRECT_OBJECT_HANDLE_BIT: u64 = 1 << 47;
-/// The `TAG_DELETED` payload bit of `Value::shared_environment_slot`. An environment's payload
-/// never sets it (`DIRECT_ENVIRONMENT_HANDLE_BITS`).
-const SHARED_ENVIRONMENT_SLOT_BIT: u64 = DIRECT_OBJECT_HANDLE_BIT;
-/// The `TAG_DELETED` payload bit of `Value::environment_index`, distinct from the shared-slot
-/// bit and from the `DELETED`/`UNMATERIALIZED_ARGUMENTS` sentinels.
-const ENVIRONMENT_INDEX_BIT: u64 = DIRECT_ARRAY_HANDLE_BIT;
-const DIRECT_ARRAY_HANDLE_BIT: u64 = 1 << 46;
-/// Both direct-handle bits: the function record family's code.
-const DIRECT_FUNCTION_HANDLE_BITS: u64 = DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
-/// The promise record family's code, below the other direct-handle bits. Legacy slot and
-/// record indices stay below it (`LEGACY_SLOT_CAPACITY`, the record space capacities).
-const DIRECT_PROMISE_HANDLE_BIT: u64 = 1 << 45;
-/// The await-state record family's code.
-const DIRECT_AWAIT_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
-/// The iterator record family's code.
-const DIRECT_ITERATOR_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
-/// The collection record family's code (a Map or a Set): the vector bit with the promise and
-/// object bits. Like a vector, a collection is never narrow (`to_narrow` finds no upper word
-/// with the vector bit set), so storing one in an object field widens the field.
-const DIRECT_COLLECTION_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
-/// The string record family's code: every family bit.
-const DIRECT_STRING_HANDLE_BITS: u64 =
-    DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
-/// The payload bits that code the reference families a narrow value packs.
-pub(crate) const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
-/// The Wasm vector record family's code: a bit below `HEAP_FAMILY_BITS`, every combination
-/// of which another family names. Record and legacy slot indices stay below it
-/// (the record space capacities, `MAX_HEAP_CELLS`). No narrow upper word sets it, so a vector is
-/// never narrow.
-const DIRECT_V128_HANDLE_BIT: u64 = 1 << 44;
-/// The environment record family's code: the vector bit with the promise bit. Like a
-/// vector, an environment is never narrow. Not the object bit: a shared environment slot
-/// (`SHARED_ENVIRONMENT_SLOT_BIT`) marks its owner's payload with that one.
-const DIRECT_ENVIRONMENT_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_PROMISE_HANDLE_BIT;
-/// The symbol record family's code: the vector bit with the object bit. Like a vector, a symbol
-/// is never narrow (its upper word sets the vector bit, which `to_narrow` never names), and no
-/// object family tests it, since each family test compares the whole code.
-const DIRECT_SYMBOL_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
-/// The payload bits that code a heap value's reference family (`Value::heap_reference`).
-const HEAP_REFERENCE_BITS: u64 = HEAP_FAMILY_BITS | DIRECT_V128_HANDLE_BIT;
-/// Where a `Value::known_closure` keeps its function id: the payload bits above the 32-bit
-/// slot index and below `HEAP_REFERENCE_BITS`.
-const KNOWN_CLOSURE_FUNCTION_SHIFT: u32 = u32::BITS;
-const KNOWN_CLOSURE_FUNCTION_MASK: u64 = (1 << (DIRECT_V128_HANDLE_BIT.trailing_zeros() - KNOWN_CLOSURE_FUNCTION_SHIFT)) - 1;
-const KNOWN_CLOSURE_FUNCTION_BITS: u64 = KNOWN_CLOSURE_FUNCTION_MASK << KNOWN_CLOSURE_FUNCTION_SHIFT;
-/// The bits that name a heap value's reference family.
-const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_REFERENCE_BITS;
 
-/// A narrow value: a `Value` packed into 32 bits for an object's inline property slot. Bit 0
-/// set holds a `NARROW_INTEGER_BITS` integer above it. Bit 0 clear holds a `NARROW_CODE_BITS` code above it,
-/// naming the value's upper word in `NARROW_UPPER_WORDS`, and the lower word above that, at
-/// most `NARROW_INDEX_BITS` wide. Decoding rebuilds the exact bits, so a value is narrow
-/// exactly when it round-trips. The top two bits of a narrow value are equal, so a payload word
-/// whose upper half is a narrow value never carries an extras tag.
-pub(crate) const NARROW_INTEGER_FLAG: u32 = 1;
-const NARROW_CODE_BITS: u32 = 4;
-pub(crate) const NARROW_CODE_SHIFT: u32 = NARROW_INTEGER_FLAG.trailing_ones();
-pub(crate) const NARROW_INDEX_SHIFT: u32 = NARROW_CODE_SHIFT + NARROW_CODE_BITS;
-/// Lower-word width of a narrow non-integer: it leaves the top two bits clear.
-pub(crate) const NARROW_INDEX_BITS: u32 = u32::BITS - NARROW_INDEX_SHIFT - 2;
-/// Integer width of a narrow integer: its top two bits copy the sign.
-pub(crate) const NARROW_INTEGER_BITS: u32 = u32::BITS - NARROW_CODE_SHIFT - 1;
-pub(crate) const LOWER_WORD: u64 = u32::MAX as u64;
-/// Upper words of narrow non-integers by code: the eight heap reference families in
-/// `HEAP_FAMILY_BITS` order, then the tagged constants. Unused codes hold zero, the upper word
-/// of a number, which `to_narrow` never looks up.
-const NARROW_UPPER_WORDS: [u64; NARROW_LOOKUP_CODES] = {
-    let mut words = [0; NARROW_LOOKUP_CODES];
-    let mut family = 0;
-    while family < NARROW_HEAP_FAMILIES {
-        words[family] = TAG_HEAP | (family as u64) << HEAP_FAMILY_SHIFT;
-        family += 1;
-    }
-    words[NARROW_HEAP_FAMILIES] = TAG_UNDEFINED;
-    words[NARROW_HEAP_FAMILIES + 1] = TAG_NULL;
-    words[NARROW_HEAP_FAMILIES + 2] = TAG_BOOL;
-    words[NARROW_HEAP_FAMILIES + 3] = TAG_DELETED;
-    words
-};
-pub(crate) const HEAP_FAMILY_SHIFT: u32 = HEAP_FAMILY_BITS.trailing_zeros();
-/// `NARROW_UPPER_WORDS` at a fixed address, which compiled code indexes by code.
+/// The table `NARROW_UPPER_WORDS` sits in at a fixed address, which compiled code indexes by code.
 static NARROW_UPPER_WORD_TABLE: [u64; NARROW_LOOKUP_CODES] = NARROW_UPPER_WORDS;
 
-/// The narrow-value facts compiled code decodes an inline property slot with, as
-/// `Value::from_narrow` does: an integer below the flag, else an upper word by code with the
-/// lower word above the code.
-pub(crate) struct NarrowLayout;
-
+/// The narrow-value facts compiled code decodes an inline property slot with (`NarrowLayout`'s
+/// constants live in `staged::value_encoding`): the runtime's own table reads.
 impl NarrowLayout {
-    pub(crate) const INTEGER_FLAG: u32 = NARROW_INTEGER_FLAG;
-    pub(crate) const INTEGER_BITS: u32 = NARROW_INTEGER_BITS;
-    pub(crate) const CODE_SHIFT: u32 = NARROW_CODE_SHIFT;
-    pub(crate) const CODE_MASK: u32 = (1 << NARROW_CODE_BITS) - 1;
-    pub(crate) const INDEX_SHIFT: u32 = NARROW_INDEX_SHIFT;
-    pub(crate) const INDEX_BITS: u32 = NARROW_INDEX_BITS;
-    #[cfg(test)] pub(crate) const DIRECT_OBJECT_UPPER: u64 = DIRECT_OBJECT_UPPER;
-    #[cfg(test)] pub(crate) const DIRECT_OBJECT_CODE: u32 = DIRECT_OBJECT_NARROW_CODE;
-
     /// Only codes selected by the decoder belong in a native image.
     #[cfg(feature = "aot")]
     pub(crate) fn decode_words() -> &'static [u64] {
@@ -146,36 +31,6 @@ impl NarrowLayout {
         NARROW_UPPER_WORD_TABLE.as_ptr()
     }
 }
-/// The position of `tag` in tag order from `FIRST_TAG`.
-const fn tag_index(tag: u64) -> usize {
-    ((tag - FIRST_TAG) >> TAG_SHIFT) as usize
-}
-/// First narrow code of each tag, in tag order from `FIRST_TAG`; a value's code adds its
-/// family bits. The integer tag's entry is unused: integers pack apart.
-const NARROW_TAG_CODES: [usize; ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as usize + 1] = {
-    let mut codes = [0; ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as usize + 1];
-    codes[tag_index(TAG_UNDEFINED)] = NARROW_HEAP_FAMILIES;
-    codes[tag_index(TAG_NULL)] = NARROW_HEAP_FAMILIES + 1;
-    codes[tag_index(TAG_BOOL)] = NARROW_HEAP_FAMILIES + 2;
-    codes[tag_index(TAG_HEAP)] = 0;
-    codes[tag_index(TAG_DELETED)] = NARROW_HEAP_FAMILIES + 3;
-    codes
-};
-/// Codes `to_narrow` can compute: a constant's base plus stray family bits. Codes past the
-/// packed field name no upper word any value has.
-const NARROW_LOOKUP_CODES: usize = 2 * (1 << NARROW_CODE_BITS);
-pub(crate) const NARROW_HEAP_FAMILIES: usize = 1 << HEAP_FAMILY_BITS.count_ones();
-const _: () = assert!(HEAP_FAMILY_BITS >> HEAP_FAMILY_SHIFT == NARROW_HEAP_FAMILIES as u64 - 1);
-const _: () = assert!(NARROW_HEAP_FAMILIES + 4 <= 1 << NARROW_CODE_BITS);
-const _: () = assert!(NARROW_HEAP_FAMILIES + 3 + NARROW_HEAP_FAMILIES <= NARROW_LOOKUP_CODES);
-/// `null`'s narrow form, as `to_narrow` computes it.
-const NULL_NARROW: u32 = ((NARROW_HEAP_FAMILIES + 1) as u32) << NARROW_CODE_SHIFT;
-const _: () = assert!(NARROW_UPPER_WORDS[NARROW_HEAP_FAMILIES + 1] == TAG_NULL);
-/// The upper word of a direct object handle and its narrow code, its family bits, as
-/// `to_narrow`'s table names them; `to_narrow_reference` packs it without the lookup.
-pub(crate) const DIRECT_OBJECT_UPPER: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
-pub(crate) const DIRECT_OBJECT_NARROW_CODE: u32 = ((DIRECT_OBJECT_UPPER & HEAP_FAMILY_BITS) >> HEAP_FAMILY_SHIFT) as u32;
-const _: () = assert!(NARROW_UPPER_WORDS[DIRECT_OBJECT_NARROW_CODE as usize] == DIRECT_OBJECT_UPPER);
 
 impl Value {
     /// This value as a narrow value, when it has one.
@@ -285,40 +140,6 @@ pub struct Value(u64);
 #[repr(transparent)]
 pub(crate) struct IntegerEncoding(u64);
 
-/// The encoding facts compiled code tests and builds values with (`Value::number`,
-/// `Value::is_tagged`).
-pub(crate) struct ValueLayout;
-
-impl ValueLayout {
-    pub(crate) const TAG_MASK: u64 = TAG_MASK;
-    pub(crate) const INT_TAG: u64 = TAG_INT;
-    /// Tag shared by TDZ and internal environment-slot markers.
-    pub(crate) const INTERNAL_TAG: u64 = TAG_DELETED;
-    /// The tag of every heap reference (`Value::heap_index`).
-    pub(crate) const HEAP_TAG: u64 = TAG_HEAP;
-    /// Tag and family bits that distinguish a direct ordinary-array record.
-    pub(crate) const DIRECT_ARRAY_TAG: u64 = TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT;
-    /// Tag and family bits that distinguish a direct ordinary-object record.
-    pub(crate) const DIRECT_OBJECT_TAG: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
-    /// Tag and family bits that distinguish a direct function record.
-    pub(crate) const DIRECT_FUNCTION_TAG: u64 = TAG_HEAP | DIRECT_FUNCTION_HANDLE_BITS;
-    /// Tag and family bits that distinguish a direct promise record.
-    pub(crate) const DIRECT_PROMISE_TAG: u64 = TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT;
-    /// Tag and family bits that distinguish a direct iterator record.
-    pub(crate) const DIRECT_ITERATOR_TAG: u64 = TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS;
-    /// Tag and family bits that distinguish a direct collection (Map or Set) record.
-    pub(crate) const DIRECT_COLLECTION_TAG: u64 = TAG_HEAP | DIRECT_COLLECTION_HANDLE_BITS;
-    pub(crate) const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
-    /// Tag and family bits that distinguish a direct string record.
-    pub(crate) const DIRECT_STRING_TAG: u64 = TAG_HEAP | DIRECT_STRING_HANDLE_BITS;
-    pub(crate) const CANONICAL_NAN: u64 = CANONICAL_NAN;
-    /// A tag field is the bits at and above this shift.
-    pub(crate) const TAG_SHIFT: u32 = TAG_SHIFT;
-    /// The first tag's field; a value is tagged when its field less this is at most the span.
-    pub(crate) const FIRST_TAG_FIELD: u64 = FIRST_TAG >> TAG_SHIFT;
-    pub(crate) const TAG_FIELD_SPAN: u64 = (LAST_TAG - FIRST_TAG) >> TAG_SHIFT;
-}
-
 impl IntegerEncoding {
     pub(crate) const TAG: Self = Self(TAG_INT);
 
@@ -331,7 +152,7 @@ impl Value {
     pub const UNDEFINED: Self = Self(TAG_UNDEFINED);
     pub const NULL: Self = Self(TAG_NULL);
     pub const FALSE: Self = Self(TAG_BOOL);
-    pub const TRUE: Self = Self(TAG_BOOL | 1);
+    pub const TRUE: Self = Self(TAG_TRUE);
 
     /// The Boolean `value`.
     #[inline(always)]

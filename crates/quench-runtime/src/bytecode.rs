@@ -1484,8 +1484,9 @@ pub struct Function {
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
     /// Lazily derived `has_dynamic_scope_access`; never serialized.
     pub(crate) dynamic_scope_access: std::cell::OnceCell<bool>,
-    /// Lazily derived `evals_in_scope`; never serialized.
-    pub(crate) evals_in_scope: std::cell::OnceCell<bool>,
+    /// Lazily derived int32 `+`/`-` PCs the facts analysis proves exact, ascending (`base_region::exact`), `None` where the
+    /// analysis declines the function; never serialized.
+    pub(crate) exact_sums: std::cell::OnceCell<Option<Box<[u32]>>>,
     /// Whether the JavaScript tier's candidate filter admits the function
     /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
     pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,

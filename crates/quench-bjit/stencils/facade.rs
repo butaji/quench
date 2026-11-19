@@ -65,12 +65,11 @@ pub(crate) mod typed_ir {
 }
 
 pub(crate) mod value {
-    /// 2^63, the first double past `i64` (`number_conversion::EXACT_I64_TRUNCATION_LIMIT`).
-    pub(crate) const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
     pub(crate) use super::operations::WORD32_SHIFT_MASK;
-    pub(crate) use crate::layout::words::{DELETED as TAG_DELETED, FALSE as TAG_BOOL, HEAP_FAMILY_BITS, HEAP_FAMILY_SHIFT, LOWER_WORD, NARROW_HEAP_FAMILIES, NULL as TAG_NULL, UNDEFINED as TAG_UNDEFINED};
-    /// The value and narrow-word layouts (`staged/layout_offsets.rs`, one source with the runtime's checks).
-    pub(crate) use crate::layout::{NarrowLayout, ValueLayout};
+    pub(crate) use crate::layout::value_encoding::{
+        HEAP_FAMILY_BITS, HEAP_FAMILY_SHIFT, LOWER_WORD, NARROW_HEAP_FAMILIES, NarrowLayout, TAG_BOOL, TAG_DELETED, TAG_NULL,
+        TAG_UNDEFINED, ValueLayout,
+    };
     impl NarrowLayout {
         /// The process's upper-word table, which the one row that decodes a narrow value (the
         /// site field read, `heap_rows.rs`) is given as value hole 1.

@@ -347,7 +347,9 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
     }
     // A declared Number parameter of this body (not an inlined callee's register) is proved by the entry's guard.
     let proven = !layout.inlined(pc) && row.a.and_then(register_of).is_some_and(|register| layout.numbers.contains(&register));
-    if row.checked && place == Place::Mem && (body || layout.inlined(pc)) && !proven {
+    // A checked operand that is a Number on every path into the row needs no guard (`numbers::proven_operands`).
+    let held = layout.number_held.get(pc as usize).copied().unwrap_or(false);
+    if row.checked && place == Place::Mem && (body || layout.inlined(pc)) && !proven && !held {
         before.push(number_guard(pc, slot)?);
     }
     if body && row.kind != Kind::Jump && row.target.is_some_and(|target| target <= pc) {
@@ -464,6 +466,14 @@ pub(in crate::vm::compiled) struct ClassProto {
     pub(in crate::vm::compiled) link: u32,
     pub(in crate::vm::compiled) holder: u32,
     pub(in crate::vm::compiled) members: Vec<(crate::bytecode::Atom, u64)>,
+}
+
+/// A loop-invariant receiver and the exact shape its field accesses saw at the region's entry: the entry checks the shape
+/// once (`Heap::Shape`), and every access of the register the proofs carry takes its known-shape row (`proofs::prove`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::vm::compiled) struct ShapeProto {
+    pub(in crate::vm::compiled) register: crate::bytecode::Register,
+    pub(in crate::vm::compiled) shape: u32,
 }
 
 /// The body of the function `spec` names that `region` spans, over the callees its call sites
@@ -591,29 +601,45 @@ fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Pa
 }
 
 fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
-    let (ending, callees) = (sites.ending, sites.facts);
-    let builtins = sites.callees.builtins();
-    let stitched = stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
+    let (ending, callees, function) = (sites.ending, sites.targets, sites.function);
+    // The class-typed receivers the entry checks, as `build` limited them (`Known::classes`): the same list the rows fold on.
+    let prototypes = sites.known.classes.to_vec();
+    // The loop-invariant receivers whose entry shape is checked (`Known::shapes`, already limited to those the loop never writes).
+    let shapes = sites.known.shapes.to_vec();
+    let stitched =stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
     let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
     let reached = reachable(&span, &stitched.rows)?;
     if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) {
         return Err("first instruction leaves".to_string());
     }
-    let rows: Vec<Decoded> = stitched.rows.into_iter().enumerate()
+    let mut rows: Vec<Decoded> = stitched.rows.into_iter().enumerate()
         .map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else { row })
         .collect();
+    super::exact::promote(function, &spec.known.program.constants, &stitched.origins, &mut rows);
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let seen = super::declared::seen(function, ending, spec.seen);
     let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), &seen);
     let shaped: Vec<Register> = prototypes.iter().map(|proto| proto.register).collect();
-    proofs::prove(&span, &mut decoded, &reached, &super::declared::exact_objects(function, &prototypes), &shaped);
+    // The entry seeds the direct objects it checks: the declared ones, and each shape-checked receiver (`Heap::Shape`).
+    let objects: Vec<Register> = super::declared::exact_objects(function, &prototypes).into_iter().chain(shapes.iter().map(|proto| proto.register)).collect();
+    proofs::prove(&span, &mut decoded, &reached, &objects, &shaped);
+    // The run's stores word is checked at the entry where a store is admitted on it (`Heap::Stores`).
+    let stores = decoded.iter().any(|row| row.admitted);
     if ending == Ending::Region && let Some(generic) = decoded.iter().enumerate().find(|(k, row)| reached.contains(*k) && interprets(row)) {
         return Err(format!("interprets in the loop: row {} {:?}", generic.0, generic.1.step));
     }
     let invalidation = spec.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(Decoded::makes_calls));
-    let realm = (!stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, builtins: &builtins };
+    // A body proves the realm it was compiled in at its entry, whatever it folds: a program shared by
+    // realms enters it only in that one, so a realm switch need not retire it (`LaneMethod::realm_bound`).
+    let realm = (ending == Ending::Body || !stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
+    let relies: Vec<bool> = decoded.iter().map(|row| row.relies).collect();
+    let number_held = numbers::proven_operands(&span, &decoded, &reached, &homes, &webs, &kinds, ending, &stitched.entries);
+    let (guards, numbers) = (super::declared::entry_guards(function), super::declared::entry_numbers(function));
+    let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities().collect();
+    identities.sort_unstable();
+    identities.dedup();
+    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, guards, numbers, prototypes, shapes, stores, identities };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     let (code, resumes) = link(&layout, &planned)?;

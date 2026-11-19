@@ -45,3 +45,15 @@ typed_array_kinds! {
     Float32 => true,
     Float64 => true,
 }
+
+impl TypedArrayKind {
+    /// The element width in bytes.
+    pub(crate) const fn width(self) -> usize {
+        match self {
+            Self::Uint8 | Self::Uint8Clamped | Self::Int8 => size_of::<u8>(),
+            Self::Uint16 | Self::Int16 | Self::Float16 => size_of::<u16>(),
+            Self::Uint32 | Self::Int32 | Self::Float32 => size_of::<u32>(),
+            Self::BigInt64 | Self::BigUint64 | Self::Float64 => size_of::<u64>(),
+        }
+    }
+}

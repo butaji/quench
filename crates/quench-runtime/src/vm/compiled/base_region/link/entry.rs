@@ -66,6 +66,14 @@ pub(in super::super) fn entry_rows(layout: &Layout, entered: &[usize]) -> Result
         let receiver = u64::from(proto.shape) | (u64::from(proto.link) << numeric::library::HELD_LINK_AT);
         rows.push(EntryRow { stencil: base_rows::stencil(prototype)?, holes: padded_holes([u64::from(proto.register) * SLOT, receiver, 0]), declared: true });
     }
+    let shape = HeapRow { heap: Heap::Shape, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+    for proto in &layout.shapes {
+        rows.push(EntryRow { stencil: base_rows::stencil(shape)?, holes: padded_holes([u64::from(proto.register) * SLOT, u64::from(proto.shape), 0]), declared: true });
+    }
+    if layout.stores {
+        let stores = HeapRow { heap: Heap::Stores, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+        rows.push(EntryRow { stencil: base_rows::stencil(stores)?, holes: padded_holes([0, 0, 0]), declared: true });
+    }
     let identity = HeapRow { heap: Heap::CaptureIdentity, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     for (slot, callee) in &layout.identities {
         rows.push(EntryRow { stencil: base_rows::stencil(identity)?, holes: padded_holes([u64::from(*slot), *callee, 0]), declared: true });

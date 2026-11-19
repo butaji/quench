@@ -23,7 +23,7 @@ pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualTha
 
 /// `number_relations` rows' operators: which binary operator denotes each relation.
 macro_rules! number_relation_operators {
-    ($($relation:ident => [$($operator:ident),+ $(,)?], $stage_method:ident;)+) => {
+    ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {
         impl NumberRelation {
             #[inline(always)]
             pub(crate) fn from_operator(op: u32) -> Option<Self> {
@@ -131,7 +131,7 @@ number_unary_rows!(number_unary_operators);
 
 /// `number_bitwise_rows` rows' operators: which binary operator denotes each operation.
 macro_rules! number_bitwise_operators {
-    ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
+    ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
         impl NumberBitwise {
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]

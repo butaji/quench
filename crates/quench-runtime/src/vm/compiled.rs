@@ -302,6 +302,7 @@ const MAX_NATIVE_RECORDS: usize = quench_bjit::call_record::GENERAL_DISPATCH_BLO
 /// Return statuses encode the returning record's PC without colliding with the shared
 /// entry's small stop, resume, or trap statuses.
 const RETURN_STATUS_BASE: u32 = quench_bjit::call_record::GENERAL_RETURN_STATUS_BASE;
+const _: () = assert!(MAX_NATIVE_RECORDS as u32 == quench_bjit::call_record::GENERAL_DISPATCH_BLOCKS);
 
 const _: () = assert!(RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 
@@ -3786,11 +3787,11 @@ pub(super) enum LaneExit {
 /// The status of a lane body whose activation completes: its result word holds the value,
 /// and `JsStepDispatch::returned_pc` the record that completes it (`LaneExit::Returned`). It
 /// sits below the return statuses and above every small status.
-pub(super) use quench_bjit::call_record::LANE_BODY_RETURNED;
-/// The status of a lane body whose activation ends by an exception no handler of its function
-/// covers: the exception is in `Vm::lane_raised` and `JsStepDispatch::returned_pc` names the
-/// record that raised it (`LaneExit::Threw`). Native callers unwind through it.
-pub(super) use quench_bjit::call_record::LANE_BODY_THREW;
+/// The lane body's completion and exception statuses, defined once in `quench_bjit::call_record::LaneStatus`.
+/// `Returned`: the activation completes, its result word holds the value and `JsStepDispatch::returned_pc`
+/// names the completing record. `Threw`: the exception is in `Vm::lane_raised` and `returned_pc` names the
+/// record that raised it (`LaneExit::Threw`), which native callers unwind through.
+pub(super) use quench_bjit::call_record::{LANE_BODY_RETURNED, LANE_BODY_THREW};
 
 /// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
 /// result in the call's register; missed before any effect, so the body leaves at the call;

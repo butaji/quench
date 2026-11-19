@@ -355,6 +355,25 @@ fn plain_entry_fields(region: &LoopRegion, program: &ResidualProgram) -> Vec<Opt
             u32::try_from(osr_loop::field_word(region, *index)).ok()?))))
 }
 
+/// The loop-invariant receivers whose field reads all saw one exact shape at entry: each register a field read of the loop
+/// names and the loop never writes, when every observed load of its reads (`native_field_loads`) holds the same shape. The
+/// entry checks that shape once (`Heap::Shape`), so the reads of the receiver keep their known-shape rows.
+fn loop_shapes(region: &LoopRegion, observation: &Observation<'_>) -> Vec<super::base_region::function::ShapeProto> {
+    let code = region.instructions();
+    let mut shapes: std::collections::BTreeMap<crate::bytecode::Register, Option<u32>> = std::collections::BTreeMap::new();
+    for (&offset, &index) in region.field_reads() {
+        let Some(FieldLookup::Atom { base, .. }) = code[offset as usize].field_lookup() else { continue };
+        let (Some(register), Some(loads)) = (base.register_index(), observation.native_field_loads.get(index)) else { continue };
+        let Some(shape) = loads.first().map(|load| load.shape).filter(|shape| loads.iter().all(|load| load.shape == *shape)) else { continue };
+        let merged = shapes.entry(register).or_insert(Some(shape));
+        if *merged != Some(shape) { *merged = None; }
+    }
+    shapes.into_iter()
+        .filter_map(|(register, shape)| Some(super::base_region::function::ShapeProto { register, shape: shape? }))
+        .filter(|proto| !code.iter().any(|instruction| instruction.written_registers().any(|written| written == proto.register)))
+        .collect()
+}
+
 /// The loop's cached field reads, keyed by their field-cache site: the lane specializer's
 /// field-site map, from the observation's descriptors.
 fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
@@ -575,7 +594,8 @@ pub(in crate::vm) fn start_osr_region(
     stored_after_reads(region.instructions(), &mut row_fields);
     let reads = |site: u16| row_fields.get(usize::from(site)).cloned().flatten().unwrap_or_default();
     let reads = stores.is_some().then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>);
-    let known = super::base_region::Known { program, stores, reads, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch, classes: &[] };
+    let shapes = loop_shapes(region, observation);
+    let known =super::base_region::Known { program, stores, reads, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch, classes: &[], shapes: &shapes };
     let unit_calls = std::mem::take(&mut calls.direct);
     if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation.clone()), base) {
         return decided;

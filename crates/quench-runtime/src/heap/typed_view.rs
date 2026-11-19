@@ -108,7 +108,7 @@ impl Drop for NativeView {
 
 /// Entries a page of `TypedViewTable` holds, a power of two so a slot is a page and an entry by shift and mask.
 const PAGE_ENTRIES: usize = 1 << PAGE_SHIFT;
-const PAGE_SHIFT: u32 = 12;
+const PAGE_SHIFT: u32 = crate::staged::layout_offsets::TYPED_PAGE_SHIFT;
 
 /// The view records of a heap's typed arrays, by legacy slot, in zeroed pages of `PAGE_ENTRIES`
 /// words behind a directory of page addresses: zero where the slot is no typed array. Its

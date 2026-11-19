@@ -25,9 +25,7 @@ pub(crate) enum Overflow {
     Wrap,
     /// Continue as the binary64 result.
     Widen,
-    /// No overflow is possible: a tier's proof (a range fact of the operands) makes the exact int32
-    /// result fit, so the step takes it with no overflow test. The wrapping result is that exact
-    /// result, so the step computes it as `Wrap` does; a tier that does not hold the proof never selects it.
+    /// A tier's range proof makes the exact int32 result fit: no overflow test, computed as `Wrap`.
     Impossible,
 }
 

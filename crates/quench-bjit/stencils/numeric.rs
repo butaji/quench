@@ -53,8 +53,13 @@ const fn bitwise_of(kind: u8) -> NumberBitwise {
 }
 
 /// A row over a pinned double, other than a bitwise row (which reads a double as its ToInt32).
+/// Whether one of a row's places is a pinned double, so the row computes in binary64.
+pub(crate) const fn any_double(d: u8, a: u8, b: u8) -> bool {
+    d >= PINF || a >= PINF || b >= PINF
+}
+
 const fn is_double_row<const K: u8, const D: u8, const A: u8, const B: u8>() -> bool {
-    (D >= PINF || A >= PINF || B >= PINF) && K <= NE && !is_bitwise(K)
+    any_double(D, A, B) && K <= NE && !is_bitwise(K)
 }
 
 /// The outcome of a staged step that decides a branch: the taken successor where the frame took

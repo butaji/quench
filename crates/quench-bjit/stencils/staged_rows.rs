@@ -10,24 +10,19 @@
 //! guest call or a host callout (`Throw`, `Return`, `Await`, `Yield`, `Allocate`, ...): it writes
 //! nothing and leaves the registers as they came, as the call rows' exit does (`call_rows.rs`).
 //!
-//! The rows are heap rows: `library.rs` `HEAP_USES` names their places (entry false), `build.rs` instantiates each as
+//! The rows are heap rows: `row_catalog.rs` names their places (entry false), `build.rs` instantiates each as
 //! a `heap_row!`, and `heap_rows::run` routes the `STAGED_FIRST..=STAGED_LAST` codes (`codes.rs`) to `run` below, a hit
 //! hopping past the helper step the planner lays behind the row. `staged_row!` is unused: it would define a second symbol
 //! for a row `heap_name` already names.
 
 use crate::bytecode::Operand;
-use crate::codes::{LT, NE, PINF, STAGED_BITWISE_NOT, STAGED_COERCIBLE, STAGED_LOOSE_EQ, STAGED_INIT_LOCAL, STAGED_LOOSE_NE, STAGED_RELVAL_EQ, STAGED_RELVAL_GE, STAGED_RELVAL_GT, STAGED_RELVAL_LE, STAGED_RELVAL_LT, STAGED_RELVAL_NE, STAGED_REMAINDER, STAGED_STRICT_EQ, STAGED_STRICT_NE, STAGED_VOID};
-use crate::numeric::relation_of;
+use crate::codes::{STAGED_BITWISE_NOT, STAGED_COERCIBLE, STAGED_LOOSE_EQ, STAGED_INIT_LOCAL, STAGED_LOOSE_NE, STAGED_RELVAL_EQ, STAGED_RELVAL_GE, STAGED_RELVAL_GT, STAGED_RELVAL_LE, STAGED_RELVAL_LT, STAGED_RELVAL_NE, STAGED_REMAINDER, STAGED_STRICT_EQ, STAGED_STRICT_NE, STAGED_VOID};
+use crate::numeric::any_double;
 use crate::places::{DEST, LEFT, Places, RIGHT, finish};
 use crate::stage::StencilStage;
 use crate::staged::{Concrete, Domain, NumberOperation, Operation, Step, step_generic, step_local, step_number, step_value};
 use crate::vm::operations::NumberRelation;
 use crate::words::{HOLE_A, Out, S, exit_here, hole};
-
-/// Whether one of a row's places is a pinned double, so the row computes in binary64.
-const fn wide(d: u8, a: u8, b: u8) -> bool {
-    d >= PINF || a >= PINF || b >= PINF
-}
 
 /// The Number operation over the row's places, whether it completed.
 #[inline(always)]
@@ -35,12 +30,18 @@ fn number<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, op
     matches!(step_number(&mut Concrete::from_hole(0), frame, Operation::Number(operation)), Step::Value(_))
 }
 
-/// The Number relation a value-form relation row of code `kind` computes: the compare rows' relation (`numeric::relation_of`,
-/// the one table of the staged relations) at the same offset, since both runs list `LT`..`NE` in one order (asserted below).
+/// The Number relation a value-form relation row of code `kind` computes: the staged relation's own variant, the one
+/// table the operator rows define (`vm/operations/number_rows.rs`).
 const fn value_relation_of(kind: u8) -> NumberRelation {
-    relation_of(LT + (kind - STAGED_RELVAL_LT))
+    match kind {
+        STAGED_RELVAL_LT => NumberRelation::LessThan,
+        STAGED_RELVAL_LE => NumberRelation::LessEqual,
+        STAGED_RELVAL_GT => NumberRelation::GreaterThan,
+        STAGED_RELVAL_GE => NumberRelation::GreaterEqual,
+        STAGED_RELVAL_EQ => NumberRelation::Equal,
+        _ => NumberRelation::NotEqual,
+    }
 }
-const _: () = assert!(STAGED_RELVAL_NE - STAGED_RELVAL_LT == NE - LT);
 
 /// `Binary` `%` of the two operands into the destination (`NumberOperation::Remainder`). The int32
 /// computation leaves where its result is no int32 (a zero divisor's NaN, a negative dividend's
@@ -49,7 +50,7 @@ const _: () = assert!(STAGED_RELVAL_NE - STAGED_RELVAL_LT == NE - LT);
 pub(crate) fn remainder_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
     let remainder = |domain: Domain| NumberOperation::Remainder { destination: DEST, left, right, domain };
-    let done = if wide(D, A, B) {
+    let done = if any_double(D, A, B) {
         number(&mut frame, remainder(Domain::Float64))
     } else if frame.both_int() {
         frame.prove_ints();
@@ -66,7 +67,7 @@ pub(crate) fn remainder_row<const D: u8, const A: u8, const B: u8>(mut frame: Pl
 pub(crate) fn relation_value_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let (left, right, relation) = (Operand::register(LEFT), Operand::register(RIGHT), value_relation_of(K));
     let value = |domain: Domain| NumberOperation::RelationValue { destination: DEST, left, right, relation, domain };
-    let done = if wide(D, A, B) {
+    let done = if any_double(D, A, B) {
         number(&mut frame, value(Domain::Float64))
     } else if frame.both_int() {
         frame.prove_ints();

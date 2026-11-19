@@ -70,17 +70,15 @@ const EXIT_PREFIX: usize = "EXIT".len();
 /// The stencil libraries of an x86-64 build: the table's name and the `-C target-cpu` it is built for. Another
 /// target has the baseline table alone, which also names the second.
 const VARIANTS: [(&str, Option<&str>); 2] = [("BASELINE", Some("x86-64-v2")), ("V3", Some("x86-64-v3"))];
-/// The flags every stencil object is built with beyond the target: optimized, no panic or overflow machinery, no
-/// frame pointer or unwind tables (a row has no frame), one codegen unit per shard so LLVM sees every row of it
-/// at once, and absolute relocations for the holes.
-const RUSTC_FLAGS: &[&str] = &[
-    "--edition", "2024", "--crate-type=lib", "--crate-name=quench_stencil_rows", "--emit=obj", "-C", "opt-level=3", "-C", "panic=abort", "-C", "relocation-model=static",
-    "-C", "codegen-units=1", "-C", "debuginfo=0", "-C", "debug-assertions=off", "-C", "overflow-checks=off", "-C", "force-frame-pointers=no", "-C", "force-unwind-tables=no",
-    // A jump table is a relocation against read-only data, which no hole names: a row's dispatch stays compares.
-    "-C", "llvm-args=--min-jump-table-entries=65536",
-    // A vectorized comparison loads its constants from a pool, which a row has none of (a hole is the only relocation).
-    "-C", "no-vectorize-slp", "-C", "no-vectorize-loops",
-];
+/// The flags every stencil object is built with beyond the target (`stencil-rustc-flags.txt`, next to `Cargo.toml`).
+const RUSTC_FLAGS_FILE: &str = "stencil-rustc-flags.txt";
+
+/// The flags of `RUSTC_FLAGS_FILE` in file order: one flag or flag-and-value pair per line, `#` starts a comment.
+fn rustc_flags() -> Vec<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(RUSTC_FLAGS_FILE);
+    let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    text.lines().flat_map(|line| line.split('#').next().unwrap_or("").split_whitespace()).map(String::from).collect()
+}
 
 /// The architecture and object reader of a build target, if its stencils are supported.
 fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
@@ -99,6 +97,7 @@ fn main() {
         println!("cargo::rerun-if-changed={}", source.display());
     }
     println!("cargo::rerun-if-changed=supernodes.txt");
+    println!("cargo::rerun-if-changed={RUSTC_FLAGS_FILE}");
     println!("cargo::rerun-if-changed=../quench-runtime/src/bytecode.rs");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let listed = supernodes::load(manifest);
@@ -182,7 +181,7 @@ fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Ve
 fn compile(out: &Path, shard: usize, cpu: Option<&str>) -> PathBuf {
     let object = out.join(format!("rows_{}_{shard}.o", cpu.unwrap_or("native")));
     let mut command = Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
-    command.args(["--target", &env::var("TARGET").expect("cargo sets TARGET")]).args(RUSTC_FLAGS);
+    command.args(["--target", &env::var("TARGET").expect("cargo sets TARGET")]).args(rustc_flags());
     if let Some(cpu) = cpu {
         command.arg("-C").arg(format!("target-cpu={cpu}"));
     }

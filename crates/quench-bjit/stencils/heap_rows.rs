@@ -34,20 +34,21 @@
 //! Every failed proof leaves through exit 0 with nothing written, so the interpreter runs the
 //! instruction.
 
-use crate::layout::{LOOP_ENTRY_ARRAY_COUNT_AT, TypedArrayKind, CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_LOOP_ENTRY, JS_STEP_STRING_RECORD_BASE,
-    JS_STEP_OBJECT_CURSOR, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD, JS_STEP_ARRAY_CURSOR, JS_STEP_EMPTY_ARRAY_LAYOUT,
-    JS_STEP_EMPTY_ARRAY_PAYLOAD, NATIVE_ARRAY_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT};
-use crate::layout::words::{DIRECT_ARRAY_TAG, DIRECT_OBJECT_TAG};
+use crate::bytecode::Operand;
+use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE};
+use crate::layout::shared_words::{capture_len, capture_values};
 use crate::ic_rows;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of};
-use crate::words::{hole, hole64, hop, int_word};
+use crate::words::{canonical, hole, hole64, hop, int_word};
 use crate::places::{DEST, LEFT, RIGHT, Places, finish, finish_fast};
 pub(crate) use crate::stage::stage_site;
 pub(crate) use crate::words::{context_word, payload, set_context_word, word_at};
 use crate::stage::StencilStage;
-use crate::staged::{Frame, Stage, Step, elements, entry, load_this, read_initialized_local, read_local, string_length, typed_elements, value, write_initialized_local, write_local};
-use crate::codes::{EMPTY_ARRAY_ROW, EMPTY_OBJECT_ROW, LAST_INT_PIN, MEMINT, PIN, PINF, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CONSTANT_ROW, ENV_DEFINE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, TYPED_INDEX_ROW, TYPED_INDEX_LAST, TYPED_STORE_ROW, TYPED_STORE_LAST, TYPED_LENGTH_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LOAD_LOCAL_ROW, MEM, SITE_ROW, SITE_STORE_ROW, STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW, APPEND_ROW, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, FOR_IN_ROW, NAME_ARENA_ROW, NAME_EITHER_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW, IC_SET_ROW, IC_PROOF_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_ROW, IC_KNOWN_SET_INT_ROW};
-use crate::{environment_rows, key_rows, name_rows, site_rows};
+use crate::staged::{Frame, Operation, Stage, Step, step, step_local, step_value, string_length};
+use crate::codes::{ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_IDENTITY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, HELD_LINK_AT, PROTOTYPE_ROW, SHAPE_ROW, STORES_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
+use crate::staged::{code_units, environment, parse_int};
+use crate::places_view::{self, ELEMENT_SITES, PlacesView, entry_dense, entry_typed};
+use crate::{environment_rows, key_rows, name_rows, site_rows, staged_rows};
 
 unsafe extern "C" {
     static HOLE_V0: u8;
@@ -289,6 +290,26 @@ fn prototype_row(s: S) -> Out {
     guard_row(s, guard)
 }
 
+/// `GuardShape`: continues where the object at the frame offset in hole 0 is a direct object of the exact shape in hole 1
+/// (its record read from the object record table); any other object leaves with nothing written.
+#[inline(always)]
+fn shape_row(s: S) -> Out {
+    let guard = Operation::GuardShape {
+        source: word_at(s.frame, hole::<0>()),
+        records: word_at(payload(&s), JS_STEP_OBJECT_RECORD_BASE),
+        shape: hole64::<HOLE_A>(),
+    };
+    guard_row(s, guard)
+}
+
+/// `GuardStores`: continues where the run's dispatch says its stores specialized (`JS_STEP_STORES_SPECIALIZED`), else leaves
+/// with nothing written (`slot_store::store_admitted`).
+#[inline(always)]
+fn stores_row(s: S) -> Out {
+    let guard = Operation::GuardStores { specialized: word_at(payload(&s), JS_STEP_STORES_SPECIALIZED) };
+    guard_row(s, guard)
+}
+
 /// `DirectArray`: continues where the register at hole 1 holds a direct array.
 #[inline(always)]
 fn array_row(s: S) -> Out {
@@ -344,7 +365,18 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
 #[inline(always)]
 fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     let view = need!(s, entry_typed::<KIND>(payload, (HOLE_A, TYPED_INDEX_ROW)));
-    places_view::entry_read::<D, B>(s, view)
+    let mut places = Places::<D, MEM, B>::new(s);
+    let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT) };
+    let mut frame = PlacesView::new(&mut places, LEFT, view);
+    let word = match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
+        Step::Value(word) => Some(word),
+        _ => None,
+    };
+    // The entry's view is typed, so the Number is the double its bits hold, delivered canonical.
+    match word {
+        Some(word) => deliver::<D>(places.s, canonical(f64::from_bits(word))),
+        None => Out::Exit(places.s),
+    }
 }
 
 /// A typed element store of the Number operand (hole 1): the entry words' offset is hole 0, the index hole 2
@@ -352,7 +384,13 @@ fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usiz
 #[inline(always)]
 fn typed_store_row<const KIND: u8, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
     let view = need!(s, entry_typed::<KIND>(payload, (0, TYPED_STORE_ROW)));
-    places_view::entry_write::<A, B>(s, view)
+    let mut places = Places::<MEM, A, B>::new(s);
+    let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT };
+    let mut frame = PlacesView::new(&mut places, DEST, view);
+    match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
+        Step::Value(_) => Out::Next(places.s),
+        _ => Out::Exit(places.s),
+    }
 }
 
 /// A typed array's `length` (`TypedLength`): the count the loop entry's words hold, an int32. The frame
@@ -463,9 +501,15 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         ADD_PACKED_ROW | ADD_ARENA_ROW | ADD_EITHER_ROW | THIS_ADD_PACKED_ROW | THIS_ADD_ARENA_ROW | THIS_ADD_EITHER_ROW
             | NAME_EITHER_ROW | NAME_ARENA_ROW => name_rows::run::<KIND, ENTRY, A>(s, payload),
         IDENTITY_ROW | THIS_ROW | LOAD_LOCAL_ROW | STORE_LOCAL_ROW | LOAD_CHECKED_ROW | STORE_CHECKED_ROW => register_row::<KIND, D, A>(s),
-        IC_GET_ROW | IC_GET_HOLDER_ROW | IC_SET_ROW | IC_SET_INT_ROW | IC_PROOF_ROW | IC_KNOWN_GET_ROW | IC_KNOWN_SET_ROW | IC_KNOWN_SET_INT_ROW =>
+        IC_GET_ROW | IC_GET_HOLDER_ROW | IC_SET_ROW | IC_SET_INT_ROW | IC_PROOF_ROW | IC_KNOWN_GET_ROW | IC_KNOWN_SET_ROW | IC_KNOWN_SET_INT_ROW | IC_KNOWN_SET_ADMITTED_ROW | IC_KNOWN_SET_INT_ADMITTED_ROW =>
             ic_rows::run::<KIND, ENTRY, D, A>(s),
-        EMPTY_OBJECT_ROW | EMPTY_ARRAY_ROW => empty_row::<KIND, D>(s, payload),
+        DECLARED_ROW => declared_row(s),
+        CAPTURE_IDENTITY_ROW => capture_identity_row(s),
+        PROTOTYPE_ROW => prototype_row(s),
+        SHAPE_ROW => shape_row(s),
+        STORES_ROW => stores_row(s),
+        CHAR_CODE_AT_ROW => char_code_at_row::<D, B>(s, payload),
+        PARSE_INT_ROW => parse_int_row::<D>(s, payload),
         _ => element_row::<KIND, ENTRY, D, A, B>(s, payload),
     }
 }

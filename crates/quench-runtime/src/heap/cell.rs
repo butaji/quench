@@ -91,7 +91,7 @@ mod cell_layout_tests {
             NATIVE_ARRAY_ELEMENTS_OFFSET,
             std::mem::offset_of!(ArrayObject, object) + std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, payload)
         );
-        assert_eq!(NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET, std::mem::offset_of!(ObjectExtras, elements));
+        assert_eq!(NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET, std::mem::offset_of!(ObjectExtras, head) + std::mem::offset_of!(ObjectExtrasHead<DisplacedInline, super::ArrayElements>, elements));
         let layout = super::super::NATIVE_ARRAY_LAYOUT;
         assert_eq!(layout.extras_elements_offset, NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET);
         assert_eq!(layout.record_size, std::mem::size_of::<ArrayObject>());
@@ -1534,51 +1534,17 @@ impl std::ops::DerefMut for Object {
     }
 }
 
-/// Bits of `Object::meta` holding the prototype's heap reference (`PROTO_INDEX_BITS`, 28 bits).
-///
-/// The link is one flat index space, carved into windows in this order. Every window's base is
-/// the previous window's end, so each is a sum of the window sizes above it:
-///
-/// | window     | size (records)          | base (= sum of sizes before it) | end       |
-/// |------------|-------------------------|---------------------------------|-----------|
-/// | legacy     | `LEGACY_SLOT_CAPACITY`  | 0                               | 2^25      |
-/// | array      | `ARRAY_PROTO_WINDOW` | 2^25                            | 2^26      |
-/// | object     | `OBJECT_PROTO_WINDOW`| 2^26                            | 2^27      |
-/// | function   | `FUNCTION_PROTO_WINDOW` | 2^27                         | 2^27+2^26 |
-/// | promise    | `PROMISE_PROTO_WINDOW` | 3*2^26 = 201,326,592          | 218,103,808 |
-/// | iterator   | `ITERATOR_PROTO_WINDOW` | 218,103,808                  | 234,881,024 |
-/// | collection | `COLLECTION_PROTO_WINDOW` | 234,881,024               | 251,658,240 |
-/// | sentinels  | 2                       | 2^28-2 (undefined), 2^28-1 (null) | 2^28  |
-///
-/// Sum check: 2^25 + 2^25 + 2^26 + 2^26 + 3 * 2^24 = 251,658,240, below the sentinels at
-/// 268,435,454. 16,777,214 codes stay free. Each direct window is aligned to its own size, so a
-/// link inside it is `base | id` with `id < size`: the object window is the one
-/// `staged/object.rs` masks. A record past its window takes an overflow link instead (codes from
-/// `PROTO_RECORD_END` to the sentinels, `heap::prototypes`), so record spaces outgrow the windows.
-const PROTO_INDEX_BITS: u32 = (1 << 28) - 1;
-/// Window sizes of the prototype link space, one per family (the table above). A record space
-/// may grow past its window (`records.rs` capacities); a record past it that becomes a prototype
-/// takes an overflow link (`heap::prototypes`).
-const ARRAY_PROTO_WINDOW: usize = 1 << 25;
-const OBJECT_PROTO_WINDOW: usize = 1 << 26;
-const FUNCTION_PROTO_WINDOW: usize = 1 << 26;
-const PROMISE_PROTO_WINDOW: usize = 1 << 24;
-const ITERATOR_PROTO_WINDOW: usize = 1 << 24;
-const COLLECTION_PROTO_WINDOW: usize = 1 << 24;
+/// Bits of `Object::meta` holding the prototype's heap reference. The field is partitioned
+/// by reference family: legacy slot indices, then one range per direct record space, then
+/// the null and undefined sentinels at the top.
 const PROTO_NULL: u32 = PROTO_INDEX_BITS;
 const PROTO_UNDEFINED: u32 = PROTO_INDEX_BITS - 1;
-/// The record count of the environment, symbol and string spaces, which no prototype link names.
-pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
-/// Legacy slots a heap may hold, each a prototype link below `PROTO_ARRAY_RECORD_BASE`. Only
-/// exotic kinds (Proxy, TypedArray, Date, RegExp and the like) live there now.
-pub(crate) const LEGACY_SLOT_CAPACITY: usize = 1 << 25;
-const PROTO_ARRAY_RECORD_BASE: u32 = LEGACY_SLOT_CAPACITY as u32;
-const PROTO_OBJECT_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + ARRAY_PROTO_WINDOW as u32;
-const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + OBJECT_PROTO_WINDOW as u32;
-const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + FUNCTION_PROTO_WINDOW as u32;
-const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + PROMISE_PROTO_WINDOW as u32;
-const PROTO_COLLECTION_RECORD_BASE: u32 = PROTO_ITERATOR_RECORD_BASE + ITERATOR_PROTO_WINDOW as u32;
-const PROTO_RECORD_END: u32 = PROTO_COLLECTION_RECORD_BASE + COLLECTION_PROTO_WINDOW as u32;
+/// Cells a heap may hold so that any of them can be a prototype (`staged::object_encoding`).
+pub(crate) use crate::staged::object_encoding::{MAX_HEAP_CELLS, PROTO_ARRAY_RECORD_BASE, PROTO_INDEX_BITS, PROTO_OBJECT_RECORD_BASE};
+const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_RECORD_END: u32 = PROTO_ITERATOR_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
 const _: () = assert!(PROTO_OBJECT_RECORD_BASE.is_multiple_of(OBJECT_PROTO_WINDOW as u32));
 const _: () = assert!(PROTO_ARRAY_RECORD_BASE.is_multiple_of(ARRAY_PROTO_WINDOW as u32));
@@ -1657,30 +1623,7 @@ impl ProtoLink {
     }
 }
 
-/// The link of `prototype`, record `id` of a family whose window starts at `base` and holds
-/// `window` links: its window link while `id` fits, else an overflow link (`heap::prototypes`),
-/// so a record space may grow past its window and its records still serve as prototypes.
-#[inline]
-fn windowed(prototype: Value, base: u32, window: usize, id: u32) -> u32 {
-    if (id as usize) < window {
-        base + id
-    } else {
-        overflow_link(prototype)
-    }
-}
-
-/// The overflow link of `prototype` (`heap::prototypes`): past every window, below the sentinels.
-#[cold]
-#[inline(never)]
-fn overflow_link(prototype: Value) -> u32 {
-    let codes = (PROTO_UNDEFINED - PROTO_RECORD_END) as usize;
-    let index = super::prototypes::intern(prototype.to_bits(), codes)
-        .expect("prototype links exhausted: 16,777,214 out-of-window prototypes");
-    PROTO_RECORD_END + index
-}
-
-const OBJECT_ARRAY: u32 = 1 << 28;
-const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
+use crate::staged::object_encoding::{EXTRAS_TAG, EXTRAS_TAG_MASK, NARROW_RUN_TAG, OBJECT_ARRAY, OBJECT_INLINE_STORAGE};
 const _: () = assert!(
     PROTO_INDEX_BITS & (OBJECT_ARRAY | OBJECT_INLINE_STORAGE | VALUE_VEC_INTEGRITY_BITS) == 0
         && (OBJECT_ARRAY | OBJECT_INLINE_STORAGE) & VALUE_VEC_INTEGRITY_BITS == 0
@@ -1698,13 +1641,6 @@ impl Default for DisplacedInline {
     }
 }
 
-const EXTRAS_TAG: u64 = 0x7fff_0000_0000_0000;
-/// The payload bit of a plain object whose values are a narrow run (`value_vec::NARROW_FORM`):
-/// the word is then the run's start beside it, so the readers that take a payload with a zero
-/// upper half as a plain arena start (`plain_storage_start`, `plain_arena_start`) refuse it,
-/// and it is no extras tag.
-const NARROW_RUN_TAG: u64 = 1 << u32::BITS;
-const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
 /// The storage position of an object without property values (`ValueVec::new`): the only
 /// one an array without extras has, as its payload word holds its element backing instead.
 const EMPTY_POSITION: u32 = ValueVec::new().into_parts().0 & VALUE_VEC_START_BITS;
@@ -1726,7 +1662,7 @@ pub(super) const NATIVE_OBJECT_RECORD_ALIGN: usize = std::mem::align_of::<Object
 /// (`heap::layouts::table_base`), `meta` at `NATIVE_OBJECT_META_OFFSET` and `auxiliary` at
 /// `NATIVE_OBJECT_AUXILIARY_OFFSET` within it.
 pub(super) const NATIVE_OBJECT_LAYOUT_OFFSET: usize = std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, layout);
-pub(super) const NATIVE_OBJECT_META_OFFSET: usize = std::mem::size_of::<u32>();
+pub(super) const NATIVE_OBJECT_META_OFFSET: usize = crate::staged::object_encoding::META_OFFSET;
 pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = 0;
 
 /// An object's two header words as its layout's entry holds them (`heap::layouts`): the
@@ -1736,10 +1672,12 @@ const fn header_word(meta: u32, auxiliary: u32) -> u64 {
     auxiliary as u64 | (meta as u64) << u32::BITS
 }
 pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, payload);
-pub(super) const NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET: usize =
-    std::mem::offset_of!(ObjectExtras, arena_start);
-pub(super) const NATIVE_OBJECT_EXTRAS_INLINE_VALUES_OFFSET: usize =
-    std::mem::offset_of!(ObjectExtras, inline_properties) + std::mem::offset_of!(DisplacedInline, 0);
+/// Where the extras head's fields are: the head is the record's first field (`ObjectExtras::head`).
+pub(super) const NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET: usize = std::mem::offset_of!(ObjectExtras, head)
+    + std::mem::offset_of!(ObjectExtrasHead<DisplacedInline, super::ArrayElements>, arena_start);
+pub(super) const NATIVE_OBJECT_EXTRAS_INLINE_VALUES_OFFSET: usize = std::mem::offset_of!(ObjectExtras, head)
+    + std::mem::offset_of!(ObjectExtrasHead<DisplacedInline, super::ArrayElements>, inline_properties)
+    + std::mem::offset_of!(DisplacedInline, 0);
 pub(super) const NATIVE_OBJECT_INLINE_STORAGE_MASK: u32 = OBJECT_INLINE_STORAGE;
 pub(super) const NATIVE_OBJECT_INLINE_FORM: u32 = crate::value_vec::INLINE_FORM;
 pub(super) const NATIVE_OBJECT_NARROW_RUN_TAG: u64 = NARROW_RUN_TAG;
@@ -1808,7 +1746,8 @@ pub(super) const NATIVE_ARRAY_RECORD_ALIGN: usize = std::mem::align_of::<ArrayOb
 /// they hold it at `NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET`.
 pub(super) const NATIVE_ARRAY_ELEMENTS_OFFSET: usize =
     std::mem::offset_of!(ArrayObject, object) + NATIVE_OBJECT_PAYLOAD_OFFSET;
-pub(super) const NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET: usize = std::mem::offset_of!(ObjectExtras, elements);
+pub(super) const NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET: usize = std::mem::offset_of!(ObjectExtras, head)
+    + std::mem::offset_of!(ObjectExtrasHead<DisplacedInline, super::ArrayElements>, elements);
 /// Where an array record's object part (`Object`: meta, auxiliary, payload) starts.
 pub(super) const NATIVE_ARRAY_OBJECT_OFFSET: usize = std::mem::offset_of!(ArrayObject, object);
 pub(super) const NATIVE_FUNCTION_RECORD_SIZE: usize = std::mem::size_of::<FunctionRecord>();
@@ -2133,18 +2072,13 @@ enum PrototypeLookupState {
     Ready,
 }
 
+/// An object's extras. The head native code reads comes first (`staged::object_extras`), and `Deref`
+/// forwards its fields, so `extras.arena_start` and the rest read as before.
 #[derive(Clone, Debug, Default)]
 #[repr(C)]
 struct ObjectExtras {
+    head: ObjectExtrasHead<DisplacedInline, super::ArrayElements>,
     prototype_lookup: PrototypeLookupState,
-    /// The object's inline property values, displaced from its payload by the extras pointer.
-    inline_properties: DisplacedInline,
-    /// An array's storage position, displaced from its first payload word.
-    arena_start: u32,
-    /// An array's element backing, displaced from its payload word (`ArrayObject`); empty for
-    /// any other object. Native code reads it at a fixed offset, so it follows the fields that
-    /// native code reads, which keep theirs.
-    elements: super::ArrayElements,
     /// What has been recorded about the object's properties beside its shape; bits are set
     /// once and never cleared (`ElementFacts`).
     element_facts: ElementFacts,
@@ -2156,6 +2090,23 @@ struct ObjectExtras {
     /// carry none of it, and the whole set inline made each such array's extras 368 bytes.
     rare: Option<Box<RareExtras>>,
 }
+
+impl std::ops::Deref for ObjectExtras {
+    type Target = ObjectExtrasHead<DisplacedInline, super::ArrayElements>;
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.head
+    }
+}
+
+impl std::ops::DerefMut for ObjectExtras {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.head
+    }
+}
+
+use crate::staged::object_extras::ObjectExtrasHead;
 
 /// The extras of exotic, branded, host and module objects (`ObjectExtras::rare`).
 #[derive(Clone, Debug, Default)]
@@ -2728,9 +2679,7 @@ impl Object {
                     super::ArrayElements::new()
                 };
                 self.payload = Self::tag_extras(Box::new(ObjectExtras {
-                    inline_properties: DisplacedInline(inline),
-                    arena_start,
-                    elements,
+                    head: ObjectExtrasHead { inline_properties: DisplacedInline(inline), arena_start, elements },
                     ..ObjectExtras::default()
                 }));
                 // Extras are never dropped while the object lives, so the bit only sets.

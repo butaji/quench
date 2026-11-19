@@ -1347,7 +1347,7 @@ mod tests {
             plain_locals: Default::default(),
             declared_atom_sets: Default::default(),
             activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(),
+            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
             evals_in_scope: Default::default(),

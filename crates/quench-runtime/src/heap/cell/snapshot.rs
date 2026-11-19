@@ -167,14 +167,16 @@ fn read_object(reader: &mut Reader<'_>) -> SnapshotResult<Object> {
 
 fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()> {
     let ObjectExtras {
+        head: ObjectExtrasHead {
+            inline_properties,
+            arena_start,
+            // An array's elements are written with its record (`ArrayObject::write_snapshot`).
+            elements: _,
+        },
         prototype_lookup: lookup,
-        inline_properties,
-        arena_start,
         element_facts,
         // A restored heap gives each prototype a new watch (`Heap::register_restored_prototypes`).
         watch: _,
-        // An array's elements are written with its record (`ArrayObject::write_snapshot`).
-        elements: _,
         rare,
     } = extras;
     let default_rare = RareExtras::default();
@@ -267,12 +269,10 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     };
     let rare = Some(Box::new(rare));
     Ok(ObjectExtras {
+        head: ObjectExtrasHead { inline_properties, arena_start, elements: Default::default() },
         prototype_lookup,
-        inline_properties,
-        arena_start,
         element_facts,
         watch: Default::default(),
-        elements: Default::default(),
         rare,
     })
 }

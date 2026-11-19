@@ -28,6 +28,23 @@ pub(crate) mod layout_offsets;
 pub(crate) mod js_step_head;
 pub(crate) mod record_heads;
 pub(crate) mod encodings;
+/// The value encoding (tags, handle bits, narrow layout), shared with the stencils.
+pub(crate) mod value_encoding;
+/// The field cache entry's stored words and complement encoding, shared with the stencils.
+pub(crate) mod field_cache_layout;
+/// The object, array and record words (storage forms, tags, prototype ranges, record blocks), shared with the stencils.
+pub(crate) mod object_encoding;
+/// The head of an object's extras record (inline values, arena start, element backing).
+pub(crate) mod object_extras;
+/// The head of a property buffer (base pointer and length), embedded first by `PropertyBuffer`.
+pub(crate) mod property_buffer;
+/// The flat string forms' heads and offsets, shared with the stencils (`vm::wtf16::native_string`).
+pub(crate) mod string_form;
+/// The typed-array kinds, one file for the runtime and the stencils (`heap/cell/typed_array_catalog.rs`).
+#[path = "heap/cell/typed_array_catalog.rs"]
+pub(crate) mod typed_array_catalog;
+/// The b-jit's shared words, as the stencils take them.
+pub(crate) use quench_bjit::shared_words;
 pub(crate) mod flow;
 pub(crate) mod machine;
 #[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's composition

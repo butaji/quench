@@ -53,7 +53,7 @@ pub(super) type V128RecordSpace = RecordSpace<[u8; crate::wasm::V128_BYTES], V12
 /// records of small strings (`super::small_strings`), which stay below the narrow index limit.
 pub(super) type StringRecordSpace = RecordSpace<JsString, STRING_RECORD_CAPACITY, STRING_RECORD_HOLE>;
 pub(super) const STRING_RECORD_CAPACITY: usize = super::MAX_HEAP_CELLS;
-pub(super) const STRING_RECORD_HOLE: usize = 1 << 24;
+pub(super) const STRING_RECORD_HOLE: usize = crate::staged::layout_offsets::STRING_RECORD_HOLE as usize;
 const _: () = assert!(STRING_RECORD_HOLE.is_multiple_of(RECORDS_PER_BLOCK) && 2 * STRING_RECORD_HOLE <= STRING_RECORD_CAPACITY);
 const _: () = assert!(STRING_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(STRING_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
@@ -143,35 +143,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T
     }
 }
 
-const RECORDS_PER_BLOCK: usize = 1_024;
-const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
-const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
-/// Records each typed space holds, one constant per space. A capacity is no longer bounded by
-/// the prototype link: a record inside its family's link window (`cell.rs`, `*_PROTO_WINDOW`)
-/// is linked as `window base + id`, and a record past it that becomes a prototype takes an
-/// overflow link (`heap::prototypes`). The spaces reserve address space only (`MAP_NORESERVE`,
-/// `records/reservation.rs`), so a large capacity costs no memory until records are used.
-/// Every capacity is a power of two and a multiple of `RECORDS_PER_BLOCK`.
-pub(super) const OBJECT_RECORD_CAPACITY: usize = 1 << 30;
-pub(super) const ARRAY_RECORD_CAPACITY: usize = 1 << 30;
-pub(super) const FUNCTION_RECORD_CAPACITY: usize = 1 << 30;
-pub(super) const PROMISE_RECORD_CAPACITY: usize = 1 << 28;
-pub(super) const ITERATOR_RECORD_CAPACITY: usize = 1 << 28;
-pub(super) const COLLECTION_RECORD_CAPACITY: usize = 1 << 28;
-/// Await states and Wasm vectors are never prototypes.
-pub(super) const AWAIT_RECORD_CAPACITY: usize = 1 << 28;
-pub(super) const V128_RECORD_CAPACITY: usize = 1 << 28;
-
-#[cfg(test)]
-pub(super) const TEST_RECORD_CAPACITY: usize = 1 << 24;
-
-const _: () = assert!(OBJECT_RECORD_CAPACITY.is_power_of_two() && ARRAY_RECORD_CAPACITY.is_power_of_two());
-const _: () = assert!(FUNCTION_RECORD_CAPACITY.is_power_of_two() && PROMISE_RECORD_CAPACITY.is_power_of_two());
-const _: () = assert!(ITERATOR_RECORD_CAPACITY.is_power_of_two() && COLLECTION_RECORD_CAPACITY.is_power_of_two());
-const _: () = assert!(OBJECT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && ARRAY_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
-const _: () = assert!(AWAIT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && V128_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
-// Ids are `u32`, and the id after a space's last one must still fit.
-const _: () = assert!(OBJECT_RECORD_CAPACITY < u32::MAX as usize && FUNCTION_RECORD_CAPACITY < u32::MAX as usize);
+pub(super) use crate::staged::object_encoding::{BLOCK_WORDS, OCCUPANCY_WORD_BITS, RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK};
 
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
 const _: () = assert!(OCCUPANCY_WORD_BITS.is_power_of_two());
@@ -304,18 +276,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     }
 }
 
-// Native JIT/AOT guards read `marked` using offsets exported from this layout.
-#[repr(C)]
-struct RecordBlock {
-    occupied: [u64; BLOCK_WORDS],
-    marked: [u64; BLOCK_WORDS],
-    /// Young records that survived one minor collection (`PromotionAge::Second`): unmarked,
-    /// swept by the next minor collection, which frees or promotes them.
-    aged: [u64; BLOCK_WORDS],
-    /// Freed ids no allocation takes until `RecordSpace::release_withheld`
-    /// (`RecordSpace::withhold`).
-    withheld: [u64; BLOCK_WORDS],
-}
+// Native JIT/AOT guards read `marked` using offsets exported from this layout (`staged::object_encoding`).
+use crate::staged::object_encoding::RecordBlock;
 
 /// A block's reference counts under `QUENCH_DEV=rc-gc` (`super::rc`), beside its
 /// `RecordBlock` (whose layout native code reads): two bits per record, a saturating count of

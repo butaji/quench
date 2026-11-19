@@ -3,8 +3,8 @@
 use super::*;
 use crate::vm::dispatch_fast::LaneRecoverySpace;
 
-/// The status of a call that entered no body: its callee's entry cell held the stub, so the
-/// caller takes its helper path at the call.
+/// The status of a call that entered no body (`LaneStatus::NotEntered`): its callee's entry cell held the
+/// stub, so the caller takes its helper path at the call.
 pub(in crate::vm) use quench_bjit::call_record::LANE_BODY_NOT_ENTERED;
 
 /// What a function's native callers read to enter its lane body: the entry (the stub where no
@@ -91,7 +91,7 @@ static NO_RECOVERY: LaneRecoverySpace = LaneRecoverySpace { values: 0, activatio
 
 /// One completion in `EntryCell::counters` (its high word): a run of the body that ended by
 /// an exception through a native caller (`Lowering::direct_finish`), which no Rust code sees.
-pub(in crate::vm) const RAISED_RUN: u64 = 1 << u32::BITS;
+pub(in crate::vm) use crate::staged::layout_offsets::RAISED_RUN;
 
 impl EntryCell {
     /// The runs of the body that ended by an exception through a native caller, for tests.

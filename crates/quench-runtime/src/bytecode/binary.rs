@@ -1509,7 +1509,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             plain_locals: if packed { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(plain_locals) },
             declared_atom_sets: Default::default(),
             activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(),
+            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
             evals_in_scope: Default::default(),
