@@ -1511,7 +1511,6 @@ fn requicken<H: Host>(ip: Ip, handler: Handler) {
 /// The context words below register 0 (`staged::frame`, the one source of the frame layout).
 use crate::staged::frame::{CONTEXT_BODY, CONTEXT_CALL, CONTEXT_CALLEE, CONTEXT_CALLER_BASE, CONTEXT_CALLER_REGISTERS, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_PACKED, CONTEXT_THIS};
 const _: () = assert!(CONTEXT_BODY == super::register_file::FRAME_CONTEXT);
-const _: () = assert!(CAPTURE_STORES as u64 == quench_bjit::shared_words::CAPTURE_STORES_BIT);
 
 /// The header word `index` (a `staged::frame` `CONTEXT_*`) of the window at `registers`: the words count
 /// down from register 0, so `sub(index)` words below it.
@@ -3766,7 +3765,7 @@ const NO_OUTER_WALK: OuterWalk = OuterWalk { env: Value::DELETED, depth: 0, slot
 /// its environment admits every direct store (`Vm::admits_every_direct_store`) and is in the
 /// remembered set already, so a write needs no barrier until the next collection, which
 /// retires the target that tagged it.
-pub(super) const CAPTURE_STORES: usize = 1;
+pub(super) const CAPTURE_STORES: usize = quench_bjit::shared_words::CAPTURE_STORES_BIT as usize;
 const _: () = assert!(std::mem::align_of::<usize>() > CAPTURE_STORES);
 
 /// The slots a `LaneContext::capture` reads, its tag cleared.
