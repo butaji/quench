@@ -402,4 +402,36 @@ static void inline_dump(Buf *out) {
   buf_put(out, body.s, body.n);
 }
 
+/* ---- name-based resolution (NameContext.resolveFuncOverload, Inline.js resolveInlinedFunction) ---- */
+/* The global NameContext of the program being prepared (program.globalNameContext); set by the driver. */
+static NameCtx *PROG_GLOBAL_NC;
+
+/* NameContext.resolveFuncOverload(name, typeArguments, argumentTypes, returnType, allowEntryPoint): a name with no
+ * function resolves to no candidates (failures []). */
+static Overload resolve_func_overload(const char *name, Ast **targs, int ntargs, Ast **args, int nargs, Ast *ret,
+                                      int allowEntry) {
+  NameEntry *e = nc_get(PROG_GLOBAL_NC, K_FUNC, name);
+  if (!e) return overload_fail(NULL);
+  return resolve_overload(&e->funcs, targs, ntargs, args, nargs, ret, allowEntry);
+}
+
+/* resolveInlinedFunction(program, name, typeArguments, argumentTypes, allowEntryPoint): the instance of the matched
+ * function, inlined with its own VisitingSet, or NULL with the candidates' failures in failOut. */
+static Ast *resolve_inlined_function(const char *name, Ast **targs, int ntargs, Ast **args, int nargs, int allowEntry,
+                                     Overload *failOut) {
+  Overload o = resolve_func_overload(name, targs, ntargs, args, nargs, NULL, allowEntry);
+  if (!o.func) {
+    *failOut = o;
+    return NULL;
+  }
+  Ast *func = fi_get_unique(o.func, o.targs, o.ntargs);
+  VSet *saved = INL_VIS;
+  VSet vs = {NULL, 0, 0};
+  vset_push(&vs, o.func);
+  INL_VIS = &vs;
+  inline_function(func);
+  INL_VIS = saved;
+  return func;
+}
+
 #endif

@@ -200,6 +200,7 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
   fold_program(&PREP_OUT);
   if (STAGE >= 2) {
     NameCtx *global = program_global_ctx(&PREP_OUT);
+    PROG_GLOBAL_NC = global;
     names_types(&PREP_OUT, global);
     names_protocols(&PREP_OUT, global);
     if (STAGE >= 3) {
