@@ -128,7 +128,7 @@ fn a_dead_pinned_argument_is_passed_by_its_pin_and_spilled_on_refusal_only() {
 fn call_protocol_matches_the_runtime() {
     use super::super::super as compiled;
     use compiled::entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED};
-    use super::stencil_layout as mirror;
+    use stencil_layout as mirror;
     assert_eq!(
         [compiled::LANE_CALL_COMPLETED, compiled::LANE_CALL_MISSED, compiled::LANE_CALL_LEFT, compiled::LANE_CALL_TERMINATED, compiled::LANE_CALL_BRANCHED, compiled::LaneExit::Callee.word()],
         [protocol::LANE_CALL_COMPLETED, protocol::LANE_CALL_MISSED, protocol::LANE_CALL_LEFT, protocol::LANE_CALL_TERMINATED, protocol::LANE_CALL_BRANCHED, protocol::CALLEE_EXIT]
