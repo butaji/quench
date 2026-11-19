@@ -234,10 +234,10 @@ static Ast *rx_visit(RX *x, Ast *n) {
     /* the literal type: the same node under AutoWrapper (visitGenericLiteralType returns it), else a new one whose
      * type is the rewritten committed type (result.type = Node.visit(node.type, this)) */
     if (x->aw) t->type = n->type;
-    else {
+    else if (is_lit_type_tag(n->type->tag)) {
       t->type = lit_type_new(n->type->tag, t);
       if (n->type->type) t->type->type = rx_visit(x, n->type->type);
-    }
+    } else t->type = rx_visit(x, n->type);   /* a typeref-wrapped literal (withType): an ordinary type */
     if (n->tag == A_INTLITERAL || n->tag == A_UINTLITERAL) {
       t->u.intLit.value = n->u.intLit.value;
       t->u.intLit.dbl = n->u.intLit.dbl;

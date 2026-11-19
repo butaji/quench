@@ -156,8 +156,10 @@ static Ast *nu_visit(NuCx *c, Ast *n) {
     /* Rewriter.visitGenericLiteral: an IntLiteral with the same value and a copy of the literal type */
     if (!n->type) fatal_unsupported("literal without a type", n);
     Ast *t = mk_from(A_INTLITERAL, n);
-    t->type = lit_type_new(n->type->tag, t);
-    if (n->type->type) t->type->type = nu_visit(c, n->type->type);   /* visitGenericLiteralType: result.type = Node.visit(node.type, this) */
+    if (is_lit_type_tag(n->type->tag)) {
+      t->type = lit_type_new(n->type->tag, t);
+      if (n->type->type) t->type->type = nu_visit(c, n->type->type);   /* visitGenericLiteralType: result.type = Node.visit(node.type, this) */
+    } else t->type = nu_visit(c, n->type);   /* a typeref-wrapped literal (withType): an ordinary type */
     t->u.intLit.value = n->u.intLit.value;
     t->u.intLit.dbl = n->u.intLit.dbl;
     t->u.intLit.isDbl = n->u.intLit.isDbl;
@@ -169,8 +171,10 @@ static Ast *nu_visit(NuCx *c, Ast *n) {
      * IntLiteral has the isDbl field for it, so the copy keeps the exact double value like the JS. */
     if (!n->type) fatal_unsupported("literal without a type", n);
     Ast *t = mk_from(A_INTLITERAL, n);
-    t->type = lit_type_new(n->type->tag, t);
-    if (n->type->type) t->type->type = nu_visit(c, n->type->type);
+    if (is_lit_type_tag(n->type->tag)) {
+      t->type = lit_type_new(n->type->tag, t);
+      if (n->type->type) t->type->type = nu_visit(c, n->type->type);
+    } else t->type = nu_visit(c, n->type);
     t->u.intLit.isDbl = 1;
     t->u.intLit.dbl = n->u.fltLit.value;
     t->u.intLit.value = 0;

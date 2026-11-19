@@ -187,7 +187,12 @@ static Ast *ast_new(AstTag tag, int origin) {
 
 /* A literal expression's literal type (GenericLiteralType / NullType). The JS constructor makes it with
  * the literal; here the literal makes it with ast_new. Its value and preferredType are the owner's. */
+/* the kinds lit_type_new makes: the four GenericLiteralTypes and NullType */
+static int is_lit_type_tag(AstTag t) {
+  return t == A_INTLITERALTYPE || t == A_UINTLITERALTYPE || t == A_FLOATLITERALTYPE || t == A_DOUBLELITERALTYPE || t == A_NULLTYPE;
+}
 static Ast *lit_type_new(AstTag kind, Ast *owner) {
+  if (!is_lit_type_tag(kind)) { fprintf(stderr, "lit_type_new: not a literal type\n"); abort(); }
   Ast *t = ast_new(kind, owner->origin);
   t->native = owner->native;
   t->u.litType.owner = owner;

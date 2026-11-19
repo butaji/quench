@@ -127,10 +127,10 @@ static Ast *rw(const Rw *r, Ast *n) {
     /* Rewriter.visitGenericLiteralType: the source's literal type, its committed type visited too (AutoWrapper
      * returns the literal type as it is) */
     if (r->aw) t->type = n->type;
-    else {
+    else if (is_lit_type_tag(n->type->tag)) {
       t->type = lit_type_new(n->type->tag, t);
       if (n->type->type) t->type->type = rw(r, n->type->type);
-    }
+    } else t->type = rw(r, n->type);   /* a typeref-wrapped literal (withType): an ordinary type */
     double v = (n->tag == A_INTLITERAL || n->tag == A_UINTLITERAL)
                    ? (n->u.intLit.isDbl ? n->u.intLit.dbl : (double)n->u.intLit.value) : n->u.fltLit.value;
     if (v != (double)(long long)v) fatal_unsupported("non-integral literal in a type", n);
