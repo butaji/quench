@@ -1207,6 +1207,21 @@ opcodes!($;
     // shape, and raises nothing; not taking the skip is always exact too, as the defines then
     // write each value over itself (`compile::class::emit_instance_fields`).
     ConstantFieldsHeld => Effect::READS_HEAP; layout Scalar; meaning Unused; staged Names; step LaneResult; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, CacheSiteIndex),
+    // `imm` is the declaration index of a script-top-level lexical in the root's
+    // `global_declarations.lexical`, read through its realm index slot (`Function::global_lexical_declaration`).
+    // Each falls back to the by-name operation of its atom, which settles TDZ and const rules.
+    LoadGlobalLexical => READ_THROW; layout Scalar; meaning GlobalLexicalIndex; step Body; owned LoadGlobalLexical; traits BOXED_RESULT UNIT_REWRITTEN, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
+    StoreGlobalLexical => WRITE_THROW; layout Scalar; meaning GlobalLexicalIndex; step Body; owned StoreGlobalLexical, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
+    // `a` = the slot among the `b` dense int labels from `imm` (an i32 word) of register `c` where it is an int32 or an
+    // integral double in the run, else `b`: an int `switch`'s case selector, which a `WasmBranchTable` of `b` slots follows.
+    IntCaseIndex => Effect::PURE; layout Scalar; meaning Unused; staged Generic, @ Register, @ fields(ResultRegister, ElementCount, Register),
+    // Synthetic records only: the lane view's prologue records, which no bytecode holds. A frameless activation
+    // of a function the JavaScript tier may claim starts at `TierPrologue` (`imm` the function, `a` its parameter
+    // count); a specialized body's prologue is `BodyEntry` (`imm` the function, `b` whether it binds `this`).
+    // Their staged rows are `Operation::Prologue` and `Operation::BodyEntry` (`staged::prologue`).
+    TierPrologue => CALL_EFFECT; layout Scalar; meaning Unused; staged Lane, @ Register, @ fields(Unused, Unused, Unused),
+    BodyEntry => CALL_EFFECT; layout Scalar; meaning Unused; staged Lane, @ Register, @ fields(Unused, Unused, Unused),
+    WasmSegmentDrop => Effect::WRITES_HEAP; layout Scalar; meaning WasmInstanceSlot; class WasmSegmentDrop, @ Register, @ fields(Unused, Unused, Unused),
 );
 
 const _: () = {

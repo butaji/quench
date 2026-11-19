@@ -75,6 +75,8 @@ fn number(operation: &NumberOperation) -> OperandTimes {
             ("right", operand(*right)), ("relation", BYTECODE), ("domain", BYTECODE)]),
         Remainder { left, right, .. } => SmallVec::from_slice(&[("destination", REGISTER),
             ("left", operand(*left)), ("right", operand(*right)), ("domain", BYTECODE)]),
+        IntCase { source, .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", operand(*source)),
+            ("minimum", BYTECODE), ("maximum", BYTECODE), ("count", BYTECODE)]),
         IncDec { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER),
             ("decrement", BYTECODE), ("overflow", BYTECODE)]),
         Unary { source, .. } => SmallVec::from_slice(&[("destination", REGISTER),

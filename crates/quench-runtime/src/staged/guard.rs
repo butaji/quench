@@ -49,7 +49,7 @@ pub(crate) fn declared<S: Stage>(stage: &mut S, source: S::Word, mask: u64, miss
 /// receiver check). Any other word leaves.
 #[inline(always)]
 pub(crate) fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (shape, link): (u64, u64), miss: S::Miss) -> Option<()> {
-    let (_, record) = super::property::direct_record(stage, records, source, miss)?;
+    let (_, record) = super::entry::direct_record(stage, records, source, miss)?;
     super::entry::shape_link_matches(stage, record, (shape, link), miss)
 }
 
@@ -59,7 +59,7 @@ pub(crate) fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Wo
 /// with the inline bit set; `Either` the exact shape alone. Any other word leaves.
 #[inline(always)]
 pub(crate) fn shape<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (shape, form): (u64, Form), miss: S::Miss) -> Option<()> {
-    let (_, record) = super::property::direct_record(stage, records, source, miss)?;
+    let (_, record) = super::entry::direct_record(stage, records, source, miss)?;
     let word = super::object::aux_word(stage, record);
     let recorded = match form {
         Form::Arena => word,

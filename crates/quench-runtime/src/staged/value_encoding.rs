@@ -96,6 +96,8 @@ pub(crate) const DIRECT_FUNCTION_TAG: u64 = TAG_HEAP | DIRECT_FUNCTION_HANDLE_BI
 pub(crate) const DIRECT_PROMISE_TAG: u64 = TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT;
 /// Tag and family bits that distinguish a direct iterator record.
 pub(crate) const DIRECT_ITERATOR_TAG: u64 = TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS;
+/// Tag and family bits that distinguish a direct collection record (a Map, Set, WeakMap or WeakSet).
+pub(crate) const DIRECT_COLLECTION_TAG: u64 = TAG_HEAP | DIRECT_V128_HANDLE_BIT | DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
 /// Tag and family bits that distinguish a direct string record.
 pub(crate) const DIRECT_STRING_TAG: u64 = TAG_HEAP | DIRECT_STRING_HANDLE_BITS;
 /// The upper word of a direct object handle, and its narrow code: its family bits, as `to_narrow`'s
@@ -177,6 +179,7 @@ impl ValueLayout {
     pub(crate) const DIRECT_FUNCTION_TAG: u64 = DIRECT_FUNCTION_TAG;
     pub(crate) const DIRECT_PROMISE_TAG: u64 = DIRECT_PROMISE_TAG;
     pub(crate) const DIRECT_ITERATOR_TAG: u64 = DIRECT_ITERATOR_TAG;
+    pub(crate) const DIRECT_COLLECTION_TAG: u64 = DIRECT_COLLECTION_TAG;
     pub(crate) const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
     pub(crate) const DIRECT_STRING_TAG: u64 = DIRECT_STRING_TAG;
     pub(crate) const CANONICAL_NAN: u64 = CANONICAL_NAN;

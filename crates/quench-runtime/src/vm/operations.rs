@@ -96,7 +96,7 @@ impl NumberArithmetic {
     }
 
     /// Whether the result of two integers is an integer: all but a division.
-    pub(super) const fn integral(self) -> bool {
+    pub(crate) const fn integral(self) -> bool {
         !matches!(self, Self::Divide)
     }
 }

@@ -138,7 +138,7 @@ impl ConcreteString<'_> {
             Self::Units(units) => {
                 let wide = u64::from(matches!(units, Units::Wide(_)));
                 let (base, length) = match units {
-                    Units::Ascii(bytes) => (bytes.as_ptr() as u64, bytes.len() as u64),
+                    Units::Ascii(bytes) | Units::Latin1(bytes) => (bytes.as_ptr() as u64, bytes.len() as u64),
                     Units::Wide(units) => (units.as_ptr() as u64, units.len() as u64),
                 };
                 Some(FlatString { units: base, length, wide })

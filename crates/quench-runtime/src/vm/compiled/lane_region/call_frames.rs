@@ -311,7 +311,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
                 crate::staged::protocol::HelperOutcome::Missed => call.missed,
                 crate::staged::protocol::HelperOutcome::Raised => call.raised,
             };
-            let hit = stage.raw_compare_imm(Relation::Equal, status, i64::from(code));
+            let hit = stage.raw_compare_imm(Relation::Equal, status, code as i64);
             if index + 1 == outcomes.len() {
                 stage.branch(hit, (target, &[]), (call.stop, &[status]));
             } else {

@@ -71,7 +71,7 @@ impl Allocation {
     pub(crate) fn inline_empty(self) -> Option<InlineEmpty> {
         match self {
             Self::Empty => Some(InlineEmpty::Object),
-            Self::Array { length: 0 } => Some(InlineEmpty::Array),
+            Self::Array { length: 0, .. } => Some(InlineEmpty::Array),
             _ => None,
         }
     }
