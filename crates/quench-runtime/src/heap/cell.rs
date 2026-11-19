@@ -918,20 +918,20 @@ const PROTO_NULL: u32 = PROTO_INDEX_BITS;
 const PROTO_UNDEFINED: u32 = PROTO_INDEX_BITS - 1;
 /// Cells a heap may hold so that any of them can be a prototype (`staged::object_encoding`), and
 /// the link layout generated code reads: the legacy slots, then the object window, then the array
-/// window, each `RECORD_SPACE_CAPACITY` links and aligned to it.
+/// window, each `PROTO_RECORD_WINDOW` links and aligned to it.
 pub(crate) use crate::staged::object_encoding::{MAX_HEAP_CELLS, PROTO_ARRAY_RECORD_BASE, PROTO_INDEX_BITS, PROTO_OBJECT_RECORD_BASE};
-use crate::staged::object_encoding::RECORD_SPACE_CAPACITY;
+use crate::staged::object_encoding::PROTO_RECORD_WINDOW;
 /// The legacy slots a heap reserves, every one of which a window link names (`heap::slots`).
 pub(crate) const LEGACY_SLOT_CAPACITY: usize = MAX_HEAP_CELLS;
 /// Window sizes of the prototype link space, one per family. A record space may grow past its
 /// window (`records.rs` capacities); a record past it that becomes a prototype takes an overflow
 /// link (`heap::prototypes`), codes from `PROTO_RECORD_END` up to the sentinels.
-const OBJECT_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
-const ARRAY_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
-const FUNCTION_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
-const PROMISE_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
-const ITERATOR_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
-const COLLECTION_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
+const OBJECT_PROTO_WINDOW: usize = PROTO_RECORD_WINDOW;
+const ARRAY_PROTO_WINDOW: usize = PROTO_RECORD_WINDOW;
+const FUNCTION_PROTO_WINDOW: usize = PROTO_RECORD_WINDOW;
+const PROMISE_PROTO_WINDOW: usize = PROTO_RECORD_WINDOW;
+const ITERATOR_PROTO_WINDOW: usize = PROTO_RECORD_WINDOW;
+const COLLECTION_PROTO_WINDOW: usize = PROTO_RECORD_WINDOW;
 const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + ARRAY_PROTO_WINDOW as u32;
 const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + FUNCTION_PROTO_WINDOW as u32;
 const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + PROMISE_PROTO_WINDOW as u32;

@@ -162,15 +162,11 @@ const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
 /// overflow link (`heap::prototypes`). The spaces reserve address space only (`MAP_NORESERVE`,
 /// `records/reservation.rs`), so a large capacity costs no memory until records are used.
 /// Every capacity is a power of two and a multiple of `RECORDS_PER_BLOCK`.
-pub(super) const OBJECT_RECORD_CAPACITY: usize = 1 << 30;
-pub(super) const ARRAY_RECORD_CAPACITY: usize = 1 << 30;
-pub(super) const FUNCTION_RECORD_CAPACITY: usize = 1 << 30;
-pub(super) const PROMISE_RECORD_CAPACITY: usize = 1 << 28;
-pub(super) const ITERATOR_RECORD_CAPACITY: usize = 1 << 28;
-pub(super) const COLLECTION_RECORD_CAPACITY: usize = 1 << 28;
-/// Await states and Wasm vectors are never prototypes.
-pub(super) const AWAIT_RECORD_CAPACITY: usize = 1 << 28;
-pub(super) const V128_RECORD_CAPACITY: usize = 1 << 28;
+/// The capacities live in `staged::object_encoding`, beside the link layout they fit in.
+pub(super) use crate::staged::object_encoding::{
+    ARRAY_RECORD_CAPACITY, AWAIT_RECORD_CAPACITY, COLLECTION_RECORD_CAPACITY, FUNCTION_RECORD_CAPACITY,
+    ITERATOR_RECORD_CAPACITY, OBJECT_RECORD_CAPACITY, PROMISE_RECORD_CAPACITY, V128_RECORD_CAPACITY,
+};
 
 #[cfg(test)]
 pub(super) const TEST_RECORD_CAPACITY: usize = 1 << 24;

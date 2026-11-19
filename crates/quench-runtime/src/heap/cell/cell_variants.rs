@@ -112,7 +112,6 @@ pub(crate) enum Cell {
     },
     /// Digits inline up to `bigint::INLINE_DIGITS`, within the slot (`cells_stay_compact`).
     BigInt(crate::bigint::JsBigInt),
-    Symbol(SymbolData),
     Date { milliseconds: f64, object: Box<Object> },
     /// `meta` is shared: every evaluation of one literal site takes the site's record
     /// (`ProgramStore::regexp_literal_meta`), and `compile` replaces the receiver's copy.
@@ -224,7 +223,6 @@ impl Cell {
             Self::WasmMemory { .. } => "wasm_memory",
             Self::WasmTable { .. } => "wasm_table",
             Self::BigInt(_) => "bigint",
-            Self::Symbol(_) => "symbol",
             Self::Date { .. } => "date",
             Self::RegExp { .. } => "regexp",
             Self::Error(_) => "error",

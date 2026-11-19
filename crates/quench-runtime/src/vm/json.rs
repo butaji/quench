@@ -2239,8 +2239,8 @@ fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
     match cell {
         Some(C::BigInt(_)) => JsonForm::BigInt,
         Some(
-            C::Object(_) | C::Array { .. } | C::Promise(_) | C::Proxy { .. } | C::Date { .. } | C::Error(_)
-            | C::Map { .. } | C::Set { .. } | C::ShadowRealm { .. } | C::WeakMap { .. } | C::WeakSet { .. }
+            C::Promise(_) | C::Proxy { .. } | C::Date { .. } | C::Error(_)
+            | C::ShadowRealm { .. } | C::WeakMap { .. } | C::WeakSet { .. }
             | C::WeakRef { .. } | C::FinalizationRegistry { .. } | C::RegExp { .. } | C::TypedArray { .. }
             | C::ArrayBuffer { .. } | C::DataView { .. } | C::TemporalDuration { .. }
             | C::TemporalPlainDate { .. } | C::TemporalPlainDateTime { .. } | C::TemporalPlainMonthDay { .. }
@@ -2249,7 +2249,7 @@ fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
         ) => JsonForm::Object,
         None
         | Some(
-            C::Symbol(_) | C::Function(_) | C::Iterator(_) | C::ArrayFromAsyncState(_) | C::AwaitState(_)
+            C::ArrayFromAsyncState(_) | C::AwaitState(_)
             | C::PromiseResolvingState { .. } | C::WasmElements(_) | C::WasmBits64(_) | C::WasmInstance(_)
             | C::WasmGc { .. } | C::WasmExtern(_) | C::AccessorPair { .. } | C::WasmTag { .. }
             | C::WasmException { .. } | C::WasmV128(_) | C::BindingReference { .. }
