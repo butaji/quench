@@ -6,11 +6,10 @@
 //! at the callout's boundary (`operand_value`), and the status is 0 when the operation ran, else the
 //! status a raised error leaves with (`finish_callout`), which `propagate` carries out.
 //!
-//! What is not lowered: a `payload` read. Its result's kind is the caught tag's parameter type,
-//! which the bytecode does not name, so the analysis rejects it. A catch also reads a frame local,
-//! which a function with a handler must have, and the u-jit admits no function with frame locals
-//! (`Plan`'s `frame-locals` rejection); so a catch's function stays interpreted. A `throw_ref` is
-//! lowered only where no handler covers it, as the function then has none.
+//! A raised status at a pc a handler covers takes the handler's edge (`wasm_catch`), not the
+//! activation's exit: a throw, and a call whose callee raised. What is not lowered: a `payload` read.
+//! Its result's kind is the caught tag's parameter type, which the bytecode does not name, so the
+//! analysis rejects it.
 //!
 //! No frame roots anything across the construction: an allocation only makes a collection due, and
 //! a collection runs at an interpreter safepoint, which the callout does not reach.
@@ -19,7 +18,7 @@ use super::wasm_gc_allocate::operand_value;
 use super::wasm_instance_stage::value_kind;
 use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, Slot, Value, Vm, finish_callout};
 use crate::bytecode::{Function, WideInstruction};
-use crate::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _, MachineStage as _};
+use crate::staged::machine::{MachineAccess as _, MachineStage as _};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_exception::Exception;
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
@@ -73,11 +72,7 @@ impl<H: Host> Analysis<'_, H> {
                 state.set(instruction.a(), registers, Slot::Value(Kind::I32))
             }
             Exception::Payload => None,
-            Exception::ThrowRef => {
-                // A function with a handler is not lowered: the throw would have to be caught.
-                function.handlers.is_empty().then_some(())?;
-                holds_reference(state, registers, instruction.a())
-            }
+            Exception::ThrowRef => holds_reference(state, registers, instruction.a()),
         }
     }
 }
@@ -228,17 +223,14 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.write(instruction.a(), Kind::I32, flag);
     }
 
-    /// `throw_ref`: the callout always raises, so its status leaves the activation directly, as
-    /// `propagate`'s raised path does.
+    /// `throw_ref`: the callout always raises, so its status takes the raised path: a covering
+    /// handler catches it, else the activation leaves with it.
     fn exception_throw(&mut self, instruction: WideInstruction) {
         let exception = self.read(instruction.a(), Kind::Reference);
         let context = self.body.core.context;
         let target = exception_throw_callout::<H> as *const () as usize;
         let status = self.call_leaf(target, &[context, exception]);
-        let mut values = vec![status];
-        if let Some(ty) = self.plan.result {
-            values.push(self.raw_const(Kind::of(ty).expect("planned").lane(), 0));
-        }
-        self.leave(&values);
+        self.propagate(status);
+        self.leave_raised(status);
     }
 }

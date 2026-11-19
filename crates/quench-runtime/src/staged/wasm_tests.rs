@@ -322,7 +322,7 @@ fn the_concrete_words_of_a_narrow_width_stay_zero_extended() {
     assert_eq!(word, u64::from(u32::MAX));
 }
 
-/// The b-jit's Wasm row codes (`quench-bjit/stencils/wasm_codes.rs`) name operators by these
+/// The b-jit's Wasm row codes (`quench-bjit/stencils/wasm_kinds.rs`) name operators by these
 /// selector tags: the i32 operators first, the comparisons in one range.
 #[test]
 fn the_wasm_row_codes_match_the_selectors() {

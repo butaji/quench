@@ -65,7 +65,7 @@ impl<H: Host> Vm<H> {
             Instance::GlobalSet => {
                 self.wasm_global_store(self.read(f, i.register_b()), self.read(f, i.register_a()))?;
             }
-            Instance::Move | Instance::Constant | Instance::Fill => {
+            Instance::Move | Instance::Constant | Instance::Fill | Instance::LoadLocal | Instance::StoreLocal => {
                 unreachable!("step_wasm routes the other instance steps")
             }
         }

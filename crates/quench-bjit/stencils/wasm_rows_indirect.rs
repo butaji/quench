@@ -33,12 +33,12 @@ use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole64};
 use super::wasm_call_stage::{CallStage, Leave, NULL_SIGNATURE, TableStage, leave_with};
 use super::wasm_frame::{high, low, trap};
 
-use crate::wasm_codes::{
+use crate::wasm_layout::{
     CONTEXT_CALL_REFERENCE_AT, CONTEXT_INSTANCE_AT, CONTEXT_MEMORY_LENGTH_AT, CONTEXT_TABLE_WORDS_AT, TARGET_BODY_AT,
     TARGET_INSTANCE_AT,
 };
 
-// The offsets and sizes the row reads are defined once, in `wasm_codes.rs`; the runtime asserts
+// The offsets and sizes the row reads are defined once, in `wasm_layout.rs`; the runtime asserts
 // each equal to its own layout (`quench-runtime/src/vm/compiled/wasm_codes_check.rs`).
 // The row does not test `NO_ENTRY`: a row's body is 0 unless it names a compiled function of its
 // instance (`InstanceContext::published_body` publishes 0 for `NO_ENTRY`), so `body != 0` covers it.

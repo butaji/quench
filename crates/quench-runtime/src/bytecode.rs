@@ -231,6 +231,8 @@ pub(crate) enum FieldLayout {
     BinaryOperator,
     /// A 16-bit two's-complement operand carried in the instruction.
     SignedConstant,
+    /// The payload type a Wasm exception field read carries (`staged::wasm_exception::PayloadType`).
+    WasmPayloadType,
 }
 
 #[cfg(feature = "aot")]
@@ -289,7 +291,8 @@ impl FieldLayout {
             | Self::WideIndexChunk
             | Self::BooleanFlag
             | Self::BinaryOperator
-            | Self::SignedConstant => BindingTime::Static,
+            | Self::SignedConstant
+            | Self::WasmPayloadType => BindingTime::Static,
         }
     }
 }
@@ -1163,15 +1166,15 @@ opcodes!($;
     WasmArrayInitData => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; staged Names; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Register),
     WasmArrayInitElem => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; staged Names; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Register),
 
-    WasmExceptionNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmExceptionMatch => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmExceptionPayload => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmExceptionFieldIndex; staged Names; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmThrowRef => Effect::READS_HEAP.union(Effect::THROWS).union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal; staged Names; traits WASM_OPCODE, @ Register, @ fields(Register, Unused, Unused),
-    WasmStructNewDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; staged Names; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmStructNewDefaultDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; staged Names; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmRefGetDesc => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmRefGetDesc; staged Names; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmDescriptorTest => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget; class WasmDescriptorTest; staged Names; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmDescriptorCast => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget; class WasmDescriptorCast; staged Names; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmExceptionNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+    WasmExceptionMatch => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmExceptionPayload => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmExceptionFieldIndex, @ Register, @ fields(ResultRegister, Register, WasmPayloadType),
+    WasmThrowRef => Effect::READS_HEAP.union(Effect::THROWS).union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
+    WasmStructNewDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+    WasmStructNewDefaultDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+    WasmRefGetDesc => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmRefGetDesc, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmDescriptorTest => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget; class WasmDescriptorTest, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmDescriptorCast => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget; class WasmDescriptorCast, @ Register, @ fields(ResultRegister, Register, Register),
 
     WasmAtomicAccess => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmAtomicOperator; staged Names; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE, @ Register, @ fields(Unused, Unused, Unused),

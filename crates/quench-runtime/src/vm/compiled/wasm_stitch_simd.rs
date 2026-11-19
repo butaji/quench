@@ -123,7 +123,7 @@ pub(super) fn uses_vectors(instructions: &[WideInstruction], world: &World<'_>) 
     })
 }
 
-/// Each operator tag `wasm_codes.rs` names is the runtime's `SimdOperator` discriminant, checked at
+/// Each operator tag `wasm_runtime_codes.rs` names is the runtime's `SimdOperator` discriminant, checked at
 /// compile time: a reordered operator table fails the build here, not in a row.
 macro_rules! tags {
     ($($operator:ident = $code:ident;)*) => {

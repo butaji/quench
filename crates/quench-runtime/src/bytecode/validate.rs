@@ -266,6 +266,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             }
             FieldLayout::RegisterCount => true, // The associated window base owns the bounds check.
             FieldLayout::SignedConstant => true,
+            FieldLayout::WasmPayloadType => crate::staged::wasm_exception::PayloadType::of_code(value).is_some(),
             FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),

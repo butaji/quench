@@ -1,4 +1,4 @@
-//! The b-jit's vector rows over raw frame words (kinds `SIMD_*` in `wasm_codes.rs`).
+//! The b-jit's vector rows over raw frame words (kinds `SIMD_*` in `wasm_kinds.rs`).
 //!
 //! Representation: a v128 register is two consecutive frame words, low word first (bits 0..64,
 //! 64..128 of the vector, the layout `compiled_simd_kernel` reads), in the vector area past the

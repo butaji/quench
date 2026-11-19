@@ -174,6 +174,8 @@ mod wasm_gc_stage;
 mod wasm_gc_allocate;
 use self::wasm_gc_allocate::allocating_reads;
 mod wasm_exception_stage;
+mod wasm_catch;
+mod plan_report;
 mod wasm_gc_callout;
 mod wasm_instance_switch;
 mod wasm_roots;
@@ -5645,6 +5647,10 @@ struct Plan {
     /// Per instruction, the operand registers of an allocating GC step (`allocating_reads`) with
     /// their kinds, which the allocation callout converts; empty elsewhere.
     gc_reads: Vec<Vec<(u16, Kind)>>,
+    /// The frame's registers: a local is the register past them (`local_register`).
+    registers: u16,
+    /// Per instruction, the catch a raise there enters (`wasm_catch::catch_frame`).
+    catches: Vec<Option<wasm_catch::Catch>>,
 }
 
 impl Plan {
@@ -5658,6 +5664,8 @@ impl Plan {
             seconds: Vec::new(),
             references: Vec::new(),
             gc_reads: Vec::new(),
+            registers: self.registers,
+            catches: Vec::new(),
         }
     }
 
@@ -5869,7 +5877,7 @@ impl<H: Host> Analysis<'_, H> {
             self.reject(index, || "missing-signature".into());
             return None;
         };
-        if function.locals != 0 {
+        if function.locals != 0 && self.code.kind != crate::bytecode::ProgramKind::Wasm {
             self.reject(index, || format!("frame-locals:{}", function.locals));
             return None;
         }
@@ -5915,6 +5923,7 @@ impl<H: Host> Analysis<'_, H> {
         let mut states: Vec<Option<AnalysisState>> = vec![None; instructions.len()];
         states[0] = Some(entry);
         let mut work = vec![0usize];
+        let (catches, bound) = wasm_catch::catch_frame(function)?;
         while let Some(pc) = work.pop() {
             let instruction = instructions[pc];
             let mut state = states[pc]
@@ -5928,6 +5937,7 @@ impl<H: Host> Analysis<'_, H> {
                 self.reject(index, || format!("uncompiled-callee:{callee}@{pc}"));
                 return None;
             }
+            wasm_catch::raise_edge(&mut states, &mut work, catches[pc], &state, bound)?;
             if self
                 .transfer(
                     function,
@@ -5966,8 +5976,8 @@ impl<H: Host> Analysis<'_, H> {
             .map(|(state, instruction)| {
                 let state = state.as_ref()?;
                 let operand = Step::of(instruction.op(), instruction.imm())
-                    .map_or(instruction.b(), |step| step.operand(*instruction));
-                Some(state.get(operand, function.registers).unwrap_or(Slot::Conflict))
+                    .map_or(instruction.b(), |step| step.operand(*instruction, function.registers));
+                Some(state.get(operand, bound).unwrap_or(Slot::Conflict))
             })
             .collect();
         let seconds: Vec<Option<Slot>> = states
@@ -6012,30 +6022,7 @@ impl<H: Host> Analysis<'_, H> {
             })
             .collect();
         if let Some(started) = plan_started {
-            let reachable = states.iter().flatten().count();
-            let stored_slots: usize = states.iter().flatten().map(|state| state.slots.len()).sum();
-            let slot_capacity: usize = states
-                .iter()
-                .flatten()
-                .map(|state| state.slots.capacity())
-                .sum();
-            let dense_state_bytes = reachable
-                .saturating_mul(registers)
-                .saturating_mul(std::mem::size_of::<Slot>());
-            let sparse_state_bytes = states
-                .len()
-                .saturating_mul(std::mem::size_of::<Option<AnalysisState>>())
-                .saturating_add(slot_capacity.saturating_mul(std::mem::size_of::<(u16, Slot)>()));
-            let memory_after = jit_memory_snapshot();
-            eprintln!(
-                "QUENCH_WASM_JIT_PLAN_MEMORY function={index} bytecodes={} registers={registers} reachable={reachable} stored_slots={stored_slots} dense_state_bytes={dense_state_bytes} sparse_state_bytes={sparse_state_bytes} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
-                instructions.len(),
-                started.elapsed().as_micros(),
-                memory_before.map(|memory| memory.0),
-                memory_after.map(|memory| memory.0),
-                memory_before.map(|memory| memory.1),
-                memory_after.map(|memory| memory.1),
-            );
+            plan_report::report(index, started, memory_before, instructions.len(), registers, &states);
         }
         Some(Plan {
             params,
@@ -6044,6 +6031,8 @@ impl<H: Host> Analysis<'_, H> {
             seconds,
             references,
             gc_reads,
+            registers: function.registers,
+            catches,
         })
     }
 
@@ -6780,6 +6769,8 @@ struct Emitter<'a, 'b, H: Host> {
     /// The reference registers the instruction being emitted holds (`Plan::references`): the
     /// roots a call it makes holds (`wasm_roots`).
     roots: &'a [u16],
+    /// The instruction being emitted: a raised status of its calls takes its catch (`Plan::catches`).
+    pc: usize,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -6921,11 +6912,10 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.branch_if(status, (unwound, &[]), (next, &[]));
         self.body.core.builder.switch_to_block(unwound);
         self.body.core.builder.seal_block(unwound);
-        let mut values = vec![status];
-        if let Some(ty) = self.plan.result {
-            values.push(self.raw_const(Kind::of(ty).expect("planned").lane(), 0));
+        match self.plan.catches[self.pc] {
+            Some(catch) => self.catch_raised(status, catch),
+            None => self.leave_raised(status),
         }
-        self.leave(&values);
         self.body.core.builder.switch_to_block(next);
         self.body.core.builder.seal_block(next);
     }
@@ -7215,6 +7205,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             .expect("planned instructions have a denotation");
         let plan = self.plan;
         self.roots = &plan.references[pc];
+        self.pc = pc;
         match step {
             Step::Numeric(operation) => self.operation(pc, instruction, operation),
             Step::Instance(step) => {
@@ -7490,9 +7481,10 @@ impl<'a, H: Host> Analysis<'a, H> {
             indirect: None,
             checked_row: None,
             roots: &[],
+            pc: 0,
         };
         // Registers start at i32 zero, as an activation's register file does.
-        for register in 0..function.registers {
+        for register in 0..function.registers.saturating_add(function.locals) {
             emitter.write_constant(register, Kind::I32, 0);
             emitter.write_constant(register, Kind::I64, 0);
         }
@@ -7540,6 +7532,7 @@ impl<'a, H: Host> Analysis<'a, H> {
                     emitter.block(target);
                 }
             }
+            if let Some(catch) = plan.catches[pc] { emitter.block(catch.target); }
         }
         let mut open = false;
         for (pc, instruction) in instructions.iter().copied().enumerate() {

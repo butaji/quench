@@ -91,6 +91,7 @@ fn write_field(
         | FieldLayout::FunctionIndex
         | FieldLayout::ElementCount
         | FieldLayout::SignedConstant
+        | FieldLayout::WasmPayloadType
         | FieldLayout::CacheSiteIndex
         | FieldLayout::WideIndexChunk
         | FieldLayout::BooleanFlag => write_scalar_field(output, instruction, field, layout),

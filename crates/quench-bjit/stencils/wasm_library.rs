@@ -1,10 +1,9 @@
-//! Which Wasm rows the library holds, as codes (`wasm_codes.rs`): built from the kind table there
-//! (`ROW_FAMILIES`), the one definition `build.rs` generates the stencils from and the stitcher
-//! looks rows up by.
+//! Which Wasm rows the library holds, as codes: built from the kind table (`wasm_kinds.rs`) and its
+//! families (`wasm_families.rs`, `ROW_FAMILIES`), the one definition `build.rs` generates the stencils
+//! from and the stitcher looks rows up by. The lib exposes it with the runtime's codes as `quench_bjit::wasm`.
 
-#[path = "wasm_codes.rs"]
-mod wasm_codes;
-pub use wasm_codes::*;
+use crate::wasm_families::*;
+use crate::wasm_kinds::*;
 
 /// The routines around a function's rows (`wasm_entry.rs` on x86-64, `wasm_entry_a64.rs` on AArch64): its entry and the leaves
 /// with a word, with none, and with a trap's status. `build.rs` requires each to be a built row.

@@ -6,7 +6,7 @@ use super::wasm_call::Call;
 use super::wasm_exception::Exception;
 use super::wasm_flow::Flow;
 use super::wasm_gc::GcOp;
-use super::wasm_instance::Instance;
+use super::wasm_instance::{Instance, local_register};
 use super::wasm_memory::Memory;
 use super::wasm_operation::WasmOperation;
 use super::wasm_simd::Simd;
@@ -74,12 +74,15 @@ impl Step {
         }
     }
 
-    /// The register whose slot the plan records for the step: its first operand, or a vector
-    /// access's address.
-    pub(crate) fn operand(self, instruction: WideInstruction) -> u16 {
+    /// The register whose slot the plan records for the step: its first operand, a vector
+    /// access's address, or the frame local a load reads (a local is a register past the
+    /// `registers` of the frame, `local_register`).
+    pub(crate) fn operand(self, instruction: WideInstruction, registers: u16) -> u16 {
         match self {
             Self::Simd(simd) => simd.operand(instruction),
             Self::Table(table) => table.bindings(instruction).0.unwrap_or(instruction.b()),
+            Self::Instance(Instance::LoadLocal) => local_register(registers, instruction.imm()),
+            Self::Instance(Instance::StoreLocal) => instruction.a(),
             _ => instruction.b(),
         }
     }

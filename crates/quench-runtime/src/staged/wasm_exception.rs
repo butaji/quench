@@ -36,6 +36,55 @@ impl Exception {
     }
 }
 
+/// The type a payload read carries in its instruction's `c` field: a payload's Wasm type. A numeric
+/// type is decided by its code alone; a reference's word is its Value's bits.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum PayloadType {
+    I32,
+    I64,
+    F32,
+    F64,
+    Reference,
+}
+
+impl PayloadType {
+    /// Every payload type, in code order.
+    const ALL: [Self; 5] = [Self::I32, Self::I64, Self::F32, Self::F64, Self::Reference];
+
+    /// The code of the type, as the instruction's field carries it.
+    pub(crate) const fn code(self) -> u16 {
+        self as u16
+    }
+
+    /// The type a field's code names.
+    pub(crate) fn of_code(code: u16) -> Option<Self> {
+        Self::ALL.get(usize::from(code)).copied()
+    }
+
+    /// The payload type of a Wasm value type, or `None` for a vector, which a payload never holds.
+    pub(crate) fn of(ty: crate::WasmType) -> Option<Self> {
+        Some(match ty {
+            crate::WasmType::I32 => Self::I32,
+            crate::WasmType::I64 => Self::I64,
+            crate::WasmType::F32 => Self::F32,
+            crate::WasmType::F64 => Self::F64,
+            crate::WasmType::Reference { .. } => Self::Reference,
+            crate::WasmType::V128 => return None,
+        })
+    }
+
+    /// The numeric Wasm type of a numeric payload; `None` for a reference.
+    pub(crate) fn numeric(self) -> Option<crate::WasmType> {
+        Some(match self {
+            Self::I32 => crate::WasmType::I32,
+            Self::I64 => crate::WasmType::I64,
+            Self::F32 => crate::WasmType::F32,
+            Self::F64 => crate::WasmType::F64,
+            Self::Reference => return None,
+        })
+    }
+}
+
 /// The primitives of an exception heap the rules run on. A reference is its bits, a tag or an
 /// exception is a reference, and a flag is 0 or 1. The rules hold every check, its order and its
 /// trap or rejection; a stage answers the primitives only.

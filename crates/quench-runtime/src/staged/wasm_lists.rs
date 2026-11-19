@@ -5,12 +5,13 @@
 //!
 //! The I64 and float operator lists and the scalar conversions (`i64_binary_list!` and the rest) are
 //! the selector lists of `wasm/integer.rs`, `wasm/float.rs` and `wasm/conversion.rs`, which expand
-//! them; `wasm_codes.rs` counts them and derives the comparison bounds from their entries.
+//! them; `wasm_families.rs` counts them and derives the comparison bounds from their entries.
 //!
 //! This file is pure `macro_rules!`: no `use`, no items. It is included with `#[path]` by
 //! `staged/wasm_simd_lanes.rs`, `wasm/memory.rs`, `wasm/integer.rs`, `wasm/float.rs` and
 //! `wasm/conversion.rs` (the runtime), and by `quench-bjit`'s
-//! `stencils/wasm_codes.rs`, which the stencil crate, the lib and the build script all compile. A
+//! `stencils/wasm_kinds.rs`, `wasm_families.rs`, `wasm_layout.rs` and `wasm_runtime_codes.rs`, each context
+//! including the files it reads. A
 //! callback that needs only names (the b-jit's codes) ignores each row's body, which names runtime
 //! items that only the runtime resolves. A row's position is its tag, so reordering a list renumbers
 //! its tags; the runtime asserts each tag it names (`vm/compiled/wasm_codes_check.rs`).
@@ -19,7 +20,7 @@
 
 /// Every SIMD operator, in tag order: the name, the lane immediate marker (`[lane]` for an operator
 /// that takes one), the lane width, the left and right operand types (`None` for a unary operator),
-/// the result type, the family (the column `wasm_codes.rs` groups rows by), and the body over `a`
+/// the result type, the family (the column `wasm_families.rs` groups rows by), and the body over `a`
 /// (left), `b` (right) and `l` (lane). The body's value is the result's bits: a vector whole, a
 /// scalar in the low bits.
 macro_rules! simd_operator_list {
@@ -310,7 +311,7 @@ macro_rules! scalar_access_list {
     };
 }
 
-/// The I64 binary operators, one list every family expands (`wasm/integer.rs`, `wasm_codes.rs`): each
+/// The I64 binary operators, one list every family expands (`wasm/integer.rs`, `wasm_families.rs`): each
 /// entry is its name, its i32 and i64 wasm operators and its semantics over `left` and `right`. The shared
 /// entries come first (the i32 family is their prefix); the wide ones follow `@i64`.
 macro_rules! i64_binary_list {
@@ -376,7 +377,7 @@ macro_rules! i64_unary_list {
     };
 }
 
-/// The float binary operators, one list every family expands (`wasm/float.rs`, `wasm_codes.rs`): each
+/// The float binary operators, one list every family expands (`wasm/float.rs`, `wasm_families.rs`): each
 /// entry is its name, its f32 and f64 wasm operators and its semantics over `left` and `right`.
 macro_rules! float_binary_list {
     ($callback:ident) => {
@@ -423,7 +424,7 @@ macro_rules! float_unary_list {
     };
 }
 
-/// The scalar conversions, one list every family expands (`wasm/conversion.rs`, `wasm_codes.rs`): each
+/// The scalar conversions, one list every family expands (`wasm/conversion.rs`, `wasm_families.rs`): each
 /// entry is its name, its wasm operator, its source and result types and its semantics over `value`.
 macro_rules! scalar_conversion_list {
     ($callback:ident) => {
@@ -469,7 +470,7 @@ macro_rules! scalar_conversion_list {
     };
 }
 
-/// The log2 of a Wasm page, which the runtime and the b-jit both name. `wasm_codes.rs` expands it;
+/// The log2 of a Wasm page, which the runtime and the b-jit both name. `wasm_layout.rs` expands it;
 /// the runtime asserts its own `WASM_PAGE_BITS` equal (`vm/compiled/wasm_codes_check.rs`).
 macro_rules! wasm_page_bits {
     ($callback:ident) => {

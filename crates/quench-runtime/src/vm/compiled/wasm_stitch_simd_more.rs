@@ -101,7 +101,7 @@ pub(super) fn simd_more(_pc: usize, instruction: WideInstruction, world: &World<
 }
 
 /// The kind of the `SIMD_MORE_*` family `tag` is in, `None` for an operator these rows do not compute
-/// (`wasm_codes.rs` derives it from the list's family column).
+/// (`wasm_families.rs` derives it from the list's family column).
 fn kind_of(tag: u32) -> Option<u8> {
     codes::simd_more_kind(tag)
 }

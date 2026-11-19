@@ -1,4 +1,4 @@
-//! Compile-time checks that the b-jit's Wasm codes (`quench-bjit/stencils/wasm_codes.rs`) equal the
+//! Compile-time checks that the b-jit's Wasm codes (`quench-bjit/stencils/wasm_*.rs`) equal the
 //! runtime's values. The stencil build compiles `quench-bjit` alone and cannot see the runtime, so
 //! a count or tag that drifts from its operator family fails here, at build time, instead of
 //! silently building a row no operator selects. The SIMD operator tags are checked where they are

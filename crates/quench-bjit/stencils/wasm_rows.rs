@@ -20,7 +20,8 @@ use crate::staged::wasm_memory::{load, store};
 use crate::wasm::WasmTrap;
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole, hole64, slot};
 
-pub(crate) use crate::wasm_codes::*;
+pub(crate) use crate::wasm_kinds::*;
+pub(crate) use crate::wasm_layout::*;
 
 #[path = "wasm_frame.rs"]
 pub(crate) mod wasm_frame;
