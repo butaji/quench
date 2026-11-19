@@ -128,6 +128,9 @@ struct Forwarding {
 /// read that cannot be rewritten, at a protected position (a join or region boundary, where the
 /// move's value may meet other values), and at an instruction that leaves the block. `dead`
 /// says the destination is not read after the scan on any path the move's value reaches.
+/// The most live instructions one Move's scan looks at.
+const SCAN_LIMIT: usize = 64;
+
 fn scan_move(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: usize, (uses, definitions): Masks<'_>)
     -> Option<Forwarding> {
     let mov = function.code[pc];
@@ -158,6 +161,11 @@ fn scan_move(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: 
             break;
         }
         live_seen += 1;
+        // Bounds the scan so that a long straight-line block costs linear load time; the Move
+        // stays, and the readers forwarded so far are still valid.
+        if live_seen > SCAN_LIMIT {
+            break;
+        }
         let (read, written) = (uses(instruction), definitions(instruction));
         if read & destination_bit != 0 {
             let Some(rewritten) = forward_read(instruction, destination, source, (uses, definitions)) else {
