@@ -174,7 +174,7 @@ function scan(tree, branch, wantOwners) {
     const s = fs.readFileSync(path.join(tree, rel), "utf8");
     for (const m of s.matchAll(/\bfn\s+(is_[a-z0-9_]+)\s*\(\s*&?self\s*\)/g)) preds.add(m[1]);
   }
-  for (const p of ["is_wide", "is_module", "is_operand_field", "is_empty", "is_some", "is_none", "is_ok", "is_err", "is_null", "is_nan", "is_finite", "is_ascii", "is_zero", "is_negative", "is_positive"]) preds.delete(p);
+  for (const p of ["is_wide", "is_module", "is_shared", "is_operand_field", "is_empty", "is_some", "is_none", "is_ok", "is_err", "is_null", "is_nan", "is_finite", "is_ascii", "is_zero", "is_negative", "is_positive"]) preds.delete(p);
 
   // Builtin keys from the Native enum.
   let nativeKeys = [];
@@ -243,8 +243,21 @@ function scan(tree, branch, wantOwners) {
     const isLaneFile = /^crates\/quench-runtime\/src\/vm\/dispatch_fast(\.rs|\/)/.test(rel);
     const isStencilRows = /^crates\/quench-bjit\/.*stencils\/(.*_)?rows[^/]*\.rs$/.test(rel);
     const isClif = /^crates\/quench-runtime\/src\/vm\/compiled(\.rs|\/)/.test(rel);
+    // Methods of `impl <staged trait> for <stencil machine>` are the stage itself, not rows.
+    const stageImpls = [];
+    for (const m of s.matchAll(/\bimpl\b([^{;]*?)\bfor\b[^{;]+\{/g)) {
+      const head = m[1], trait = (head.match(/([A-Z][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*$/) || [])[1];
+      if (/staged::/.test(head) || (trait && stagedNames.has(trait)) || /(Stage|Machine[A-Za-z]*)\b/.test(trait || ""))
+        stageImpls.push([m.index, matchBrace(s, m.index + m[0].length - 1)]);
+    }
     for (const f of fns) {
       if (callsStaged.get(f.name)) continue;
+      if (isStencilRows && inRanges(stageImpls, f.at)) continue;
+      // A stencil row is a fn the stitcher places: const-generic and returning Out, or named *_row.
+      // const fn decoders, slot reads/writes and exit helpers are plumbing.
+      const sig = s.slice(f.at, f.open);
+      const isRowFn = (/<\s*const\b/.test(sig) && /->\s*Out\b/.test(sig)) || /_row$/.test(f.name);
+      if (isStencilRows && (!isRowFn || /\bconst\s+(unsafe\s+)?fn\s*$/.test(s.slice(Math.max(0, f.at - 16), f.at + 2)))) continue;
       const line = lineOf(starts, f.at), len = lineOf(starts, f.end) - line;
       if (/_handler$|handler_table/.test(f.name)) continue; // dispatch tables
       if (isLaneFile && f.name.startsWith("lane_")) add("handler-not-row", rel, line, f.name, `interpreter fn ${f.name} (${len} lines) runs no staged row`);
@@ -305,7 +318,7 @@ function scan(tree, branch, wantOwners) {
 
   // G. Declared TS types per tier.
   // Each tier's TS item is read from the branch that holds that tier's code.
-  const TS_SOURCE = { interpreter: "Fact store", "b-jit": "b-jit", "u-jit": "u-jit" };
+  const TS_SOURCE = { interpreter: "Fact store", "b-jit": "b-jit", "u-jit": "Fact store" }; // u-jit's declared.rs lives on the fact-store branch
   for (const [t, n] of Object.entries(declaredByTier))
       if (n === 0 && wants(TS_SOURCE[t])) items.push({ cat: "ts-types-unused", owner: "Fact store", file: `(tier ${t})`, line: 0, symbol: t, branch, key: `ts-types-unused|${t}`,
         detail: `${t} reads no declared TS type (no reference to DeclaredTypes/declared facts in its files)` });
@@ -323,14 +336,16 @@ function gate(file) {
     "Derive every tier from one semantics": "Derive", "Specialize u-jit on facts": "u-jit", "Cut environments, GC and heap memory": "Env, GC and heap memory",
     "Build b-jit as the interpreter's PE": "b-jit", "Replace hand-written tier code with generated": "Replace", "Compile pipeline: Cranelift and tier policy": "Compile pipeline" };
   const own = o => map[o] || o || "unowned";
+  // Rows whose fix lives on another branch than the gate's named owner (owners' triage).
+  const GATE_OWNER = { bi_set_has: "Builtins", bi_map_get: "Builtins", arr_includes: "Builtins", arr_indexof: "Builtins" };
   for (const m of txt.matchAll(/^([a-z0-9_]+): --(b-jit|u-jit) ([\d.]+) Ir\/iter, ceiling ([\d.]+) \(budget C \+ 6 = ([\d.]+)\) -> (.+)$/gm))
-    items.push({ cat: "budget-over-c6", owner: own(m[6].trim()), file: `ir-budget ${tag}`, line: 0, symbol: `${m[1]} ${m[2]}`, branch: "v2-merged", key: `budget-over-c6|${m[1]}|${m[2]}`,
+    items.push({ cat: "budget-over-c6", owner: GATE_OWNER[m[1]] || own(m[6].trim()), file: `ir-budget ${tag}`, line: 0, symbol: `${m[1]} ${m[2]}`, branch: "v2-merged", key: `budget-over-c6|${m[1]}|${m[2]}`,
       detail: `${m[1]} ${m[2]}: ${m[3]} Ir/iter vs budget C + 6 = ${m[5]} (${(+m[3] / +m[5]).toFixed(1)}x)` });
   for (const m of txt.matchAll(/^([a-z0-9_]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)x\s+over\s+(.*)$/gm)) {
     const first = (m[7].match(/\d+\s+([A-Za-z_:<>]+)/) || [])[1] || "";
     let o = ownerFor[m[1]];
     if (!o) o = /call|return|native/.test(first) ? "Cut calls and frames to C" : /row<(50|89)|field/.test(first) ? "Unify fact store and object model" : /Vm::|json|string|array|regexp/i.test(first) ? "Cut builtin library code to C" : "Derive every tier from one semantics";
-    items.push({ cat: "budget-over-floor", owner: own(o), file: `ir-budget ${tag}`, line: 0, symbol: m[1], branch: "v2-merged", key: `budget-over-floor|${m[1]}`,
+    items.push({ cat: "budget-over-floor", owner: GATE_OWNER[m[1]] || own(o), file: `ir-budget ${tag}`, line: 0, symbol: m[1], branch: "v2-merged", key: `budget-over-floor|${m[1]}`,
       detail: `${m[1]} interpreter: ${m[2]} Ir/iter vs floor ${m[3]} (C ${m[5]}, ${m[6]}x C); top: ${m[7].slice(0, 110)}` });
   }
   return items;
