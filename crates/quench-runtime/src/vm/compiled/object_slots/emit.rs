@@ -35,6 +35,18 @@ impl From<u32> for EmitImm { fn from(bits: u32) -> Self { Self::Const(u64::from(
 impl Emit<'_, '_> {
     /// `Math.round` of the binary64 `value`: the floor, one more where the excess reaches a half;
     /// a negative that rounds to zero is `-0`.
+    /// `Math.sign` (`staged::math::float_unary`): `-1` or `1` by the sign bit; NaN and both zeros are the operand.
+    fn sign(&mut self, value: ir::Value) -> ir::Value {
+        let zero = self.f64_constant(0.0);
+        let (one, minus_one) = (self.f64_constant(1.0), self.f64_constant(-1.0));
+        let negative = self.raw_compare(Relation::FloatLess, value, zero);
+        let signed = self.raw_select(negative, minus_one, one);
+        let is_zero = self.raw_compare(Relation::FloatEqual, value, zero);
+        let unordered = self.raw_compare(Relation::FloatUnordered, value, value);
+        let keep = self.raw_binary(Binary::Or, is_zero, unordered);
+        self.raw_select(keep, value, signed)
+    }
+
     fn round_half_up(&mut self, value: ir::Value) -> ir::Value {
         let floor = self.raw_unary(Unary::Floor, value);
         let excess = self.raw_binary(Binary::FloatSub, value, floor);
@@ -345,6 +357,11 @@ impl NumericStage for Emit<'_, '_> {
     fn float_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
         numbers::float_remainder(self, left, right)
     }
+    fn integral_remainder(&mut self, left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
+        // The u-jit makes the float remainder for every operand (a leaf call it can hold), so its miss is never taken.
+        let value = numbers::float_remainder(self, left, right);
+        (value, self.i32_constant(0))
+    }
     fn int_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
         self.raw_binary(Binary::RemainderSigned, left, right)
     }
@@ -360,6 +377,7 @@ impl NumericStage for Emit<'_, '_> {
                 self.raw_unary(Unary::Promote, single)
             }
             FloatUnary::Round => self.round_half_up(value),
+            FloatUnary::Sign => self.sign(value),
         }
     }
     fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {

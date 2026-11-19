@@ -113,7 +113,8 @@ fn kind_repr(kind: Kind, operands: Option<Representation>, widened: bool) -> Opt
         _ if operands == Some(Representation::Tagged) => Some(Representation::Tagged),
         Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Round if !widened && operands >= Some(Representation::Int32) => Some(Representation::Int32),
         Kind::Abs if !widened && operands == Some(Representation::Int32) => Some(Representation::Int32),
-        Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round | Kind::Min | Kind::Max => Some(Representation::Float64),
+        Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round | Kind::Min | Kind::Max
+        | Kind::Fround | Kind::Sign => Some(Representation::Float64),
         Kind::Imul | Kind::Clz32 => Some(Representation::Int32),
         Kind::Move | Kind::Const => operands,
         Kind::Div => Some(Representation::Float64),
@@ -169,7 +170,8 @@ pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds)
             }
             let Some(dst) = row.dst else { continue };
             let numbers = span.number_registers().contains(&webs.orig[usize::from(dst)]) || row.global.is_some_and(Access::numeric);
-            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some(), kinds.get(k).and_then(Option::as_ref)), numbers);
+            let site = kinds.get(k).and_then(Option::as_ref);
+            let result = if concat_site(row, site) { Some(Representation::Tagged) } else { result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some(), site), numbers) };
             if reprs[usize::from(dst)] < result {
                 reprs[usize::from(dst)] = result;
                 changed = true;
@@ -179,26 +181,10 @@ pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds)
     reprs
 }
 
-/// Keeps each site read's slot-type proof (`Decoded::typed`) only where a row drops a check on it: an
-/// inline-cache read of a receiver every path proved (`Heap::IcKnownGet`) into a pinned double, in code that
-/// makes no call or helper step.
-///
-/// INVARIANT (one fact store): a check the b-jit drops is backed by a fact-store proof and the dependency
-/// that keeps it true. Here the proof is the slot's observed type, a Number type (`NativeFieldLoad::ty`, the
-/// type `Heap::slot_type` maintains on every store), and the dependency is the same one the u-jit's code holds
-/// for it (`SlotDependency`, subscribed through `Body::slot_types` as `StableFacts::slots`): a store that widens
-/// the slot retires the code before its next entry. Inside one run nothing the rows do widens it (an in-place
-/// store writes only what the slot's type holds, or leaves through the store gate); only a call or a helper
-/// step could, so code that makes one keeps the tested read.
-pub(super) fn keep_typed_reads(homes: &Homes, decoded: &mut [Decoded]) {
-    let calls = decoded.iter().any(Decoded::makes_calls);
-    for row in decoded.iter_mut() {
-        let double = row.dst.is_some_and(|dst| matches!(homes.place(dst), Place::PinF(_)));
-        let known = row.heap == Some(Heap::Site) && row.ic.is_some() && row.proven;
-        if calls || !known || !double {
-            row.typed = None;
-        }
-    }
+/// Whether `row` is a generic `+` whose site met a string (`Variant::Concat`): its result is a tagged word, a string
+/// or a Number the step helper writes where the fast arm misses (`plan::concat_run`).
+fn concat_site(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
+    row.generic && row.kind == Kind::Add && row.heap.is_none() && row.step.is_none() && variant_of(Kind::Add, kinds) == Variant::Concat
 }
 
 /// Whether the row takes general (tagged word) semantics: its result or an operand of a

@@ -99,6 +99,9 @@ pub enum Kind {
     Trunc = library::TRUNC,
     Abs = library::ABS,
     Round = library::ROUND,
+    /// `Math.fround` and `Math.sign` of one Number (`codes::FROUND`, `codes::SIGN`).
+    Fround = library::FROUND,
+    Sign = library::SIGN,
     /// `Math.min`, `Math.max` of two Numbers and `Math.imul` of two int32s (`codes::MIN..=codes::IMUL`).
     Min = library::MIN,
     Max = library::MAX,

@@ -196,9 +196,10 @@ impl ExecutionInterrupt {
         self.state.tier_up.load(Ordering::Acquire)
     }
 
-    /// Clears a raised tier-up request at a loop header's dispatch.
+    /// Clears a raised tier-up request at a loop header's dispatch. The common case, no request
+    /// raised, is one plain load, not a locked read-modify-write per backward jump.
     pub(crate) fn clear_tier_up(&self) {
-        if self.state.tier_up.swap(false, Ordering::SeqCst) {
+        if self.state.tier_up.load(Ordering::Acquire) && self.state.tier_up.swap(false, Ordering::SeqCst) {
             self.settle_attention();
         }
     }

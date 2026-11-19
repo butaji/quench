@@ -407,9 +407,9 @@ fn body_push_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: 
 /// (`specialize_in_lane`): a constructor only body code constructs is entered by nothing else.
 fn warm_callee_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32) {
     if own.respecializes() {
-        specialize_in_lane(cx, own, function, true, &[]);
-    } else if own.body_view_in_lane().is_none() {
-        specialize_in_lane(cx, own, function, false, &[]);
+        lane_specialize(cx, own, function, true, &[], None);
+    } else if own.lane_body().is_none() {
+        lane_specialize(cx, own, function, false, &[], None);
     }
 }
 

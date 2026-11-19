@@ -330,6 +330,8 @@ fn math_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Place
         TRUNC => FloatUnary::Trunc,
         ABS => FloatUnary::Abs,
         ROUND => FloatUnary::Round,
+        FROUND => FloatUnary::Fround,
+        SIGN => FloatUnary::Sign,
         _ => FloatUnary::Sqrt,
     };
     let done = staged(&mut frame, NumberOperation::Math { destination: DEST, source: Operand::register(LEFT), operation }).is_some();
@@ -352,9 +354,9 @@ fn remainder<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>,
     staged(frame, NumberOperation::Remainder { destination: DEST, left, right, domain }).is_some()
 }
 
-/// A remainder row over int places: the int32 remainder where the row speculates int32s, else
-/// while both operand words are ints. Anything else (a zero divisor, a negative zero, a double)
-/// leaves: the f64 remainder is libm's `fmod`, a call a stencil cannot hold.
+/// A remainder row: the int32 remainder where the row speculates int32s or both operands are ints, else the staged
+/// Float64 remainder, whose exact integer path (`integral_remainder`) answers integral operands and misses on the rest, so
+/// the f64 `fmod` (a call a stencil cannot hold) is never reached from a stencil.
 #[inline(always)]
 fn remainder_row<const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut frame: Places<D, A, B>) -> Out {
     let done = if SPEC {
@@ -362,7 +364,7 @@ fn remainder_row<const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut fr
     } else {
         let ints = frame.both_int();
         frame.prove_ints();
-        ints && remainder(&mut frame, Domain::Int32)
+        if ints { remainder(&mut frame, Domain::Int32) } else { remainder(&mut frame, Domain::Float64) }
     };
     finish(frame, done)
 }

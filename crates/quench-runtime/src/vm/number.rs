@@ -651,9 +651,41 @@ pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
     }
 }
 
-/// Whether `native` is a Math function of one Number, which `math_unary` computes.
-pub(super) fn is_math_unary(native: Native) -> bool {
-    matches!(math_function(native), Some(MathFunction::Row(_) | MathFunction::Unary(_)))
+/// Select the numeric operation before entering its implementation, so rejection
+/// and simple operations do not pay the stack setup of more complex operations.
+#[inline(always)]
+fn math_unary_operation(native: Native) -> Option<fn(f64) -> f64> {
+    Some(match native {
+        Native::MathFloor => |value| crate::staged::math::float_unary(FloatUnary::Floor, value),
+        Native::MathAbs => |value| crate::staged::math::float_unary(FloatUnary::Abs, value),
+        Native::MathCeil => |value| crate::staged::math::float_unary(FloatUnary::Ceil, value),
+        Native::MathRound => |value| crate::staged::math::float_unary(FloatUnary::Round, value),
+        Native::MathTrunc => |value| crate::staged::math::float_unary(FloatUnary::Trunc, value),
+        Native::MathSqrt => |value| crate::staged::math::float_unary(FloatUnary::Sqrt, value),
+        Native::MathAcos => f64::acos,
+        Native::MathAsin => f64::asin,
+        Native::MathAtan => super::fdlibm_math::atan,
+        Native::MathCos => f64::cos,
+        Native::MathExp => f64::exp,
+        Native::MathSin => f64::sin,
+        Native::MathTan => f64::tan,
+        Native::MathAcosh => f64::acosh,
+        Native::MathAsinh => f64::asinh,
+        Native::MathAtanh => math_atanh,
+        Native::MathCbrt => super::fdlibm_math::cbrt,
+        Native::MathCosh => f64::cosh,
+        Native::MathExpm1 => f64::exp_m1,
+        Native::MathFround => |value| crate::staged::math::float_unary(FloatUnary::Fround, value),
+        Native::MathLog10 => f64::log10,
+        Native::MathLog1p => f64::ln_1p,
+        Native::MathLog2 => f64::log2,
+        Native::MathSinh => f64::sinh,
+        Native::MathTanh => f64::tanh,
+        Native::MathClz32 => |value| f64::from(crate::staged::math::leading_zeros(crate::value::number_to_u32(value))),
+        Native::MathF16Round => f16_round,
+        Native::MathSign => |value| crate::staged::math::float_unary(FloatUnary::Sign, value),
+        _ => return None,
+    })
 }
 
 impl<H: Host> Vm<H> {

@@ -11,8 +11,8 @@
 use crate::bytecode::{Operand, Register};
 use crate::codes::*;
 use crate::heap_rows::{context_word, payload, word_at};
-use crate::layout::{CONTEXT_THIS, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS};
-use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, value};
+use crate::layout::{CONTEXT_THIS, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_STRING_RECORD_BASE};
+use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, string_length, value};
 use crate::typed_ir::Representation;
 use crate::words::*;
 
@@ -245,9 +245,20 @@ fn truthy<const P: u8, const H: u8>(s: &S) -> Option<bool> {
         Representation::Float64 => Some(stage().number_truthy(word)),
         Representation::Tagged => {
             let (undecided, truthy) = value::tagged_truthiness(&mut stage(), word);
-            (!undecided).then_some(truthy)
+            (!undecided).then_some(truthy).or_else(|| string_truthy(s, word))
         }
     }
+}
+
+/// ToBoolean of a flat string `word` names: its length is not zero, read from its record as the string rows read it
+/// (`string_length::flat_string`, the interpreter's `concrete_string_length`). `None` for any other heap value, or a
+/// string form the record does not hold flat (a rope, a slice), which leaves the row.
+#[inline(always)]
+fn string_truthy(s: &S, word: u64) -> Option<bool> {
+    let mut stage = stage();
+    let records = word_at(payload(s), JS_STEP_STRING_RECORD_BASE);
+    let string = string_length::flat_string(&mut stage, records, word, ())?;
+    Some(string.length != 0)
 }
 
 /// A row's three places over the machine state. `proved` records that a dispatch already

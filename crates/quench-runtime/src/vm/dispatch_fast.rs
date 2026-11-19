@@ -487,11 +487,19 @@ pub(super) struct LoopSite {
     /// of the interpreter's or a region's entry, and the iterations the loop takes before its
     /// body is planned again (`loop_model::body_taken`, at the size its last plan had).
     body_seen: std::cell::Cell<u64>,
-    body_due: std::cell::Cell<u64>,
+    /// The header dispatches an idle body still waits for before its plan (`LoopSite::body_waits`).
+    body_wait: std::cell::Cell<u64>,
     /// Whether a call boundary no region runs made the loop a body's (`loop_body::offer_body`).
     body_offered: std::cell::Cell<bool>,
-    /// The attempts that entered no region code, by why (`RegionDecline`).
-    declines: [std::cell::Cell<u64>; RegionDecline::COUNT],
+    /// The body epoch (`LaneView::body_epoch`) a refused compile was refused under, and the back
+    /// edges still plain under it, and the wait that last refusal set (`LoopSite::refuse_warming`).
+    refused_epoch: std::cell::Cell<u32>,
+    /// The view that refused it: the site lies in that view, so its epoch is read through this pointer.
+    refused_view: std::cell::Cell<*const LaneView>,
+    refused_wait: std::cell::Cell<u32>,
+    refused_span: std::cell::Cell<u32>,
+    /// Whether an enclosing admitted loop still enters (`LoopSite::inside_admitted_loop`); false once none does.
+    enclosed: std::cell::Cell<bool>,
 }
 
 impl LoopSite {
@@ -1161,6 +1169,9 @@ pub(super) struct LaneTier {
     /// The warming tick (`body_tier_in_lane::warm_ticks`) of the entry its body began warming at, which a function
     /// entered rarely but for long (`LaneView::recurrent`) specializes by.
     warm_since: std::cell::Cell<u32>,
+    /// Counts each specialization attempt (`LaneView::specialize_lane_body`): a loop site's refused
+    /// compile is retried once this moves (`LoopSite::refuse_warming`).
+    body_epoch: std::cell::Cell<u32>,
     /// Every body it published, kept until the view drops: a native frame running a body that
     /// retired recovers its leave through `ShadowFrame::body`.
     pinned: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::LaneMethod>>>,
@@ -1184,6 +1195,7 @@ impl Default for LaneTier {
         Self {
             tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }),
             warm_since: std::cell::Cell::new(0),
+            body_epoch: std::cell::Cell::new(0),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
             audit_epochs: Default::default(),
@@ -7718,6 +7730,10 @@ script_handler! {
         if script_fuel_out(cx) {
             return safepoint_at::<H>(ip, header, Slot::unset());
         }
+        // A refused compile (`LoopSite::refuse_warming`) is one epoch compare and a countdown: the back edge is a plain jump.
+        if site.refused_now() {
+            next!(cx, r, header, Carried::script_in(cx, view))
+        }
         // A loop inside an admitted loop that still enters native code runs as plain jumps there: the outermost
         // such loop takes the region (`install_loop_sites`), and this one neither warms up nor enters its own.
         if site.inside_admitted_loop() {
@@ -7989,7 +8005,7 @@ script_handler! {
 /// Counts an entry of `function`'s lane activation toward its lane body (`own`), or, `now`,
 /// specializes it at once, from the targets and callees the program's views hold now. Whether the body
 /// is still warming or specialized (`LaneView::specialize_lane_body`).
-fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32, now: bool, parameters: &[Value]) -> bool {
+fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32, now: bool, parameters: &[Value], looped: Option<(u64, u64)>) -> bool {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -7998,8 +8014,9 @@ fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
     let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let specialize = |work: super::compiled::LaneBodyWork| {
         let work = match work {
-            super::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped, called, caller, .. } =>
-                super::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped, called, caller, arrays: &arrays },
+            // A looping caller's trips pay for the body as its own iterations do (`looped`).
+            super::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped: seen, called, caller, .. } =>
+                super::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped: looped.or(seen), called, caller, arrays: &arrays },
             poll => poll,
         };
         let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, code, body)).unwrap_or_default();
@@ -8026,10 +8043,10 @@ fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
         outcome
     };
     if now {
-        own.specialize_lane_body_now(body_entry_row::<H>(), specialize);
-        own.body_view_in_lane().is_some()
+        own.specialize_lane_body_now(lane_body_entry::<H>, looped.is_some(), specialize);
+        own.lane_body().is_some()
     } else {
-        own.specialize_lane_body(body_entry_row::<H>(), specialize)
+        own.specialize_lane_body(lane_body_entry::<H>, false, specialize)
     }
 }
 
@@ -8038,14 +8055,15 @@ fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
 fn loop_retire_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     // A hot loop no region runs makes its function worth a body past the entry warm-up: its
     // calls have run, so their sites have linked, and its next entry runs the loop natively.
-    // The site stays, and asks again a threshold of jumps on, while that body warms: the
-    // function's entries may be too few to wait for its callees' bodies or look for its code.
+    // A body still warming after the loop's trips asked for it is refused under the body's epoch
+    // (`LoopSite::refuse_warming`): its back edges are plain jumps until the epoch moves or the
+    // wait runs out, so a function whose entries do not advance costs no per-edge checks.
     // SAFETY: the program's views outlive the lane run.
     if unsafe { vm(cx) }.programs.js_jit_lane_methods_enabled()
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)
     {
-        specialize_in_lane(cx, own, site.function, true, &[]);
-        if own.warming() { return site.taken.set(0); }
+        lane_specialize(cx, own, site.function, true, &[], Some((site.span(), site.body_iterations())));
+        if own.warming() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
@@ -13720,7 +13738,7 @@ mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle
 mod vm_steps;
 pub(in crate::vm) mod family_helpers;
 mod value_steps;
-pub(in crate::vm) use vm_steps::{lane_body_step, lane_body_step_packed, lane_decide, lane_vm_step};
+pub(in crate::vm) use vm_steps::{lane_allocate_step, lane_body_step, lane_body_step_packed, lane_decide, lane_vm_step};
 mod handler_edges;
 pub(in crate::vm) use handler_edges::handler_edge;
 use array_steps::*;
@@ -15427,7 +15445,7 @@ fn tier_enter_in_lane<H: Host>(
     if vm.programs.js_jit_lane_methods_enabled()
         && let Some(own) = own
     {
-        if !specialize_in_lane(cx, own, function, false, parameters) {
+        if !lane_specialize(cx, own, function, false, parameters, None) {
             own.release_from_tier();
         }
         return None;
@@ -21115,8 +21133,8 @@ fn install_loop_sites<'live, H: Host>(
                     widenings: std::cell::Cell::new(0),
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial(tiers)), body_seen: std::cell::Cell::new(0), body_due: std::cell::Cell::new(0), body_offered: std::cell::Cell::new(false),
-                    declines: std::array::from_fn(|_| std::cell::Cell::new(0)),
+                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial(tiers)), body_seen: std::cell::Cell::new(0), body_wait: std::cell::Cell::new(0), body_offered: std::cell::Cell::new(false),
+                    refused_epoch: std::cell::Cell::new(loop_runs::NO_REFUSAL), refused_view: std::cell::Cell::new(std::ptr::null()), refused_wait: std::cell::Cell::new(0), refused_span: std::cell::Cell::new(0), enclosed: std::cell::Cell::new(true),
                 },
             )
         })

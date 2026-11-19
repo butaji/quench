@@ -1,6 +1,6 @@
 //! What a lane unit's by-name loads read at compile time: the global scope's bindings.
 use super::*;
-use super::super::global_facts::{GlobalRead, GlobalReads, GlobalTable};
+use super::super::global_facts::{GlobalRead, GlobalReads, GlobalTable, StableCell};
 
 impl<H: Host> Vm<H> {
     /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
@@ -63,9 +63,10 @@ impl<H: Host> Vm<H> {
             GlobalTable::Lane => reads,
             GlobalTable::Base => {
                 let loads: Vec<(usize, GlobalRead)> = reads.range(0..=usize::MAX).map(|(pc, read)| (pc, *read)).collect();
+                let held = held_objects(&loads);
                 let stores = self.lexical_stores(program, function, unit);
                 loads.into_iter().map(|(pc, read)| {
-                    let read = self.slot_load(unit, pc, read);
+                    let read = if held.contains(&pc) { read } else { self.slot_load(unit, pc, read) };
                     (pc, self.native_slot(pc, unit, read))
                 }).chain(stores).collect()
             }
@@ -183,7 +184,8 @@ impl<H: Host> Vm<H> {
         };
         let value = self.own_plain_data(holder, atom)??;
         let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
-        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder })
+        let native = *native;
+        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder, folds: false, cell: None })
     }
 
     /// The PCs of `unit` whose `StoreName` (not a declaration's) or `LoadNameTypeof` reaches the
@@ -218,6 +220,10 @@ impl<H: Host> Vm<H> {
     /// the member it names is an own data property holding a native function now.
     fn native_member(&mut self, unit: &lane_unit::Unit, pc: usize, read: &GlobalRead) -> Option<(usize, GlobalRead)> {
         let (GlobalRead::Constant(object) | GlobalRead::Stable { value: object, .. }) = *read else { return None };
+        let cell = match *read {
+            GlobalRead::Stable { fact, global, realm_offset, .. } => Some(StableCell { fact, global, realm_offset }),
+            _ => None,
+        };
         let (base, member) = (unit.instructions.get(pc)?.result_register(), unit.instructions.get(pc + 1)?);
         if !matches!(crate::staged::Operation::<u64, ()>::of(*member), Some(crate::staged::Operation::GetField { .. })) { return None; }
         let Some(crate::bytecode::FieldLookup::Atom { base: read_base, atom, .. }) = member.field_lookup() else { return None };
@@ -225,7 +231,7 @@ impl<H: Host> Vm<H> {
         let value = self.own_plain_data(object, atom)??;
         let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(native), .. } = self.heap.function(value)? else { return None };
         let native = *native;
-        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)?, folds: true }))
+        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)?, folds: true, cell }))
     }
 
     /// The exact shape of `holder`, an object whose own native functions code calls inline,
@@ -256,4 +262,15 @@ fn straight_definition(code: &[crate::bytecode::WideInstruction], entered: &cran
     let callee = code[call].register_b();
     let defined = (0..call).rev().find(|pc| code[*pc].written_registers().any(|register| register == callee))?;
     (defined + 1..=call).all(|pc| !entered.contains(pc)).then_some(defined)
+}
+
+/// The by-name loads of a global object a folded member read holds (`GlobalRead::NativeMember`'s `cell`): a Stable read at `pc` whose
+/// member read at `pc + 1` holds the same cell fact. The base table keeps these as held rows (`globals::global_row`), with no live slot
+/// read per use; the body subscribes to the fact, so a reassignment retires it.
+fn held_objects(loads: &[(usize, GlobalRead)]) -> Vec<usize> {
+    loads.iter().filter_map(|(pc, read)| {
+        let GlobalRead::Stable { fact, .. } = read else { return None };
+        let member = |next: &(usize, GlobalRead)| next.0 == pc + 1 && matches!(next.1, GlobalRead::NativeMember { cell: Some(cell), .. } if cell.fact == *fact);
+        loads.iter().any(member).then_some(*pc)
+    }).collect()
 }

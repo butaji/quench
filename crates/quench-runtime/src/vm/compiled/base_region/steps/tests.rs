@@ -238,3 +238,15 @@ fn nothing_in_the_lane_fixtures_is_refused() {
     }
     assert!(fixtures > 0 && instructions > 0);
 }
+
+/// An empty object and an object literal of a site's shape lower to the allocation step where the helper table
+/// addresses it; a literal that writes a flag does not.
+#[test]
+fn fixed_shape_objects_lower_to_the_allocation_step() {
+    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let program = empty_program();
+    assert_eq!(lowering(WideInstruction::new(Op::MakeObject, 1, 0, 0, 0), known(&program), process), Step::Allocate);
+    assert_eq!(lowering(WideInstruction::new(Op::MakeObjectLiteral, 4, 1, 3, 9), known(&program), process), Step::Allocate);
+    let flagged = WideInstruction::new(Op::MakeObject, 1 | crate::bytecode::RETURN_REGISTER, 0, 0, 0);
+    assert_ne!(lowering(flagged, known(&program), process), Step::Allocate);
+}

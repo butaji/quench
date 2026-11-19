@@ -41,7 +41,7 @@ pub const LAST_INT_PIN: u8 = PIN + INT_PINS - 1;
 
 /// The first and last of the Math rows of one Number.
 pub const MATH_FIRST: u8 = SQRT;
-pub const MATH_LAST: u8 = ROUND;
+pub const MATH_LAST: u8 = SIGN;
 
 /// The typed-array kinds, the runtime's enum (`layout::typed_array_catalog`, mounted once for both builds).
 use crate::layout::typed_array_catalog::TypedArrayKind;

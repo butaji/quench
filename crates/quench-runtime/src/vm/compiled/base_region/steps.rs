@@ -73,6 +73,9 @@ pub(super) enum Step {
     Fast(Heap),
     /// `LaneHelper::VmStep` makes the record's call-out in place (`staged::CallOut`) and the region continues.
     CallOut,
+    /// `LaneHelper::AllocateStep` makes the record's fixed-shape object in place (its destination written) and the region
+    /// continues; a declined allocation leaves at the record.
+    Allocate,
     /// A fast arm whose miss is the leave at the record, which the interpreter runs: an add with no
     /// in-place step (`lowering`), an `instanceof` jump (`sites::instanceof_jump`).
     Guard(Heap),
@@ -98,7 +101,7 @@ impl Step {
     /// as the raising step, or the VM step helper's call-out): it may allocate or run guest code, which
     /// no heap snapshot a region took sees.
     pub(super) fn runs_helper(self) -> bool {
-        matches!(self, Self::Helper | Self::CallOut | Self::Fast(_) | Self::Throw)
+        matches!(self, Self::Helper | Self::CallOut | Self::Allocate | Self::Fast(_) | Self::Throw)
     }
 
     /// Whether the run reads the dispatch payload: a helper step calls through it, and a guarded
@@ -287,6 +290,7 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::Leave => leave(pc),
         Step::Helper => plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers)),
         Step::CallOut => plan_helper(layout, pc, decoded, (LaneHelper::VmStep, helpers)),
+        Step::Allocate => plan_helper(layout, pc, decoded, (LaneHelper::AllocateStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
         Step::Switch => Err("switch: planned as a compare tree (plan_row)".into()),
@@ -344,7 +348,7 @@ fn reloads(layout: &Layout, decoded: &Decoded, pc: u32) -> Vec<(Place, Register)
 
 /// The chain of a step at `pc` that `helper` makes, which also branches to the target of its instruction where
 /// it jumps.
-fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
+pub(super) fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
     let row = helper_chain(layout, pc, &reloads(layout, decoded, pc), helper, decoded.packed)?;
     match decoded.target {
         Some(target) => branching(row, layout, (pc, target)),

@@ -369,6 +369,9 @@ macro_rules! catalog {
     TRUNC,
     ABS,
     ROUND,
+    /// `Math.fround` (the nearest binary32, as a double) and `Math.sign` of one Number, in the same staged native call.
+    FROUND,
+    SIGN,
     /// `Math.min`, `Math.max` of two Numbers (a double: `staged::math::float_extreme`) and `Math.imul` of
     /// two int32s (`staged::math::int_multiply`).
     MIN,

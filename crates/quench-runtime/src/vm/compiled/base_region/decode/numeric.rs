@@ -5,7 +5,7 @@ use super::*;
 
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it
 /// is one a row cannot take.
-pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Option<Option<Decoded>> {
+pub(in super::super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Option<Option<Decoded>> {
     use crate::staged::{NumberOperation, Operation};
     let copy = || Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Register(instruction.register_b())), None, None);
     let plain = instruction.result_flags() == 0;
@@ -43,7 +43,8 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
         return Some(load_const(numbers, destination, index).ok().filter(|_| plain));
     }
     Some(match instruction.op().class() {
-        Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
+        Class::Binary => binary(numbers, instruction).ok().map(|row| Decoded { generic: true, ..row }).filter(|_| plain),
+        Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
         _ => return None,
     })
 }

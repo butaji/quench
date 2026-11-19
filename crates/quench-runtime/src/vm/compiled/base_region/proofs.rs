@@ -62,15 +62,16 @@ impl Proved {
 fn may_reshape(row: &Decoded) -> bool {
     let reads_alone = row.heap.is_some_and(|heap| matches!(heap, Heap::Held | Heap::ThisHeld | Heap::Declared | Heap::Prototype | Heap::Realm
         | Heap::TypedLength | Heap::TypedIndex(_) | Heap::TypedStore(_)));
-    (row.heap.is_some() && !reads_alone) || row.step.is_some_and(|step| !matches!(step, Step::Guard(_) | Step::Leave))
+    (row.heap.is_some() && !reads_alone) || row.step.is_some_and(|step| !matches!(step, Step::Guard(_) | Step::Leave | Step::Allocate))
         || row.add.is_some() || row.name.is_some() || row.instanceof.is_some() || row.holder.is_some() || row.global.is_some()
         || row.declined.is_some() || row.checked
 }
 
 /// Whether `row` may rewrite the run's stores word: code that may run in a nested run (a call, a helper, an `instanceof`,
-/// a checked conversion, a declined store's step).
+/// a checked conversion, a declined store's step). An allocation runs no guest code and rewrites no object, so it clears
+/// nothing.
 fn clears_stores(row: &Decoded) -> bool {
-    row.makes_calls() || row.instanceof.is_some() || row.checked || row.declined.is_some()
+    (row.makes_calls() && row.step != Some(Step::Allocate)) || row.instanceof.is_some() || row.checked || row.declined.is_some()
 }
 
 /// The receiver register an inline-cache access names.
@@ -120,6 +121,24 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
         proved.stores = true;
         proved.released = false;
     }
+    established(&mut proved, row);
+    let source = copied(row).map(|source| proved.root(source));
+    for written in [row.dst, row.also].into_iter().flatten() {
+        proved.write(written);
+    }
+    allocated(&mut proved, row);
+    if let (Some(dst), Some(source)) = (row.dst, source) && dst != source {
+        proved.copies.push((dst, source));
+    }
+    // A held read checked its receiver's shape and link, which hold after it (the check left the body otherwise).
+    if row.class_read && let Some(register) = row.a.and_then(register_of) && !proved.shapes.contains(&register) {
+        proved.shapes.push(register);
+    }
+    proved
+}
+
+/// The receiver an inline-cache access names is a direct object after it, established by the body.
+fn established(proved: &mut Proved, row: &Decoded) {
     if let Some(register) = receiver(row) {
         let root = proved.root(register);
         if !proved.objects.contains(&root) {
@@ -129,18 +148,16 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
             proved.established.push(root);
         }
     }
-    let source = copied(row).map(|source| proved.root(source));
-    for written in [row.dst, row.also].into_iter().flatten() {
-        proved.write(written);
+}
+
+/// The proof an allocation row leaves: the object it defines is a direct object, as the record `Step::Allocate` makes is,
+/// so the rows after it test no family for it. Its exact shape is not proved here (the literal site's shape is a fact the
+/// code would have to depend on).
+fn allocated(proved: &mut Proved, row: &Decoded) {
+    if let Some(dst) = row.dst.filter(|_| row.step == Some(Step::Allocate)) {
+        proved.objects.push(dst);
+        proved.established.push(dst);
     }
-    if let (Some(dst), Some(source)) = (row.dst, source) && dst != source {
-        proved.copies.push((dst, source));
-    }
-    // A held read checked its receiver's shape and link, which hold after it (the check left the body otherwise).
-    if row.class_read && let Some(register) = row.a.and_then(register_of) && !proved.shapes.contains(&register) {
-        proved.shapes.push(register);
-    }
-    proved
 }
 
 /// The meet of two paths' proofs: what both hold.
