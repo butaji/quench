@@ -4387,6 +4387,16 @@ impl JsNativeActivation {
     }
 }
 
+/// The encoded link of `Array.prototype` where the held index-free chain proof covers its chain,
+/// else zero (`JsStepDispatch::array_chain_index_free`). A dense array whose prototype link equals
+/// it has a chain that holds no index, which its push needs.
+fn array_chain_index_free<H: Host>(vm: &Vm<H>) -> usize {
+    let prototype = vm.array_prototype_for_realm(vm.realm.globals);
+    vm.heap.dependencies().index_free_chain()
+        .filter(|proof| proof.first == prototype)
+        .map_or(0, |_| crate::heap::ProtoLink::of(prototype).bits() as usize)
+}
+
 impl JsStepDispatch {
     /// The payload of no activation: no frame, registers, locals or VM, every base word unbound.
     fn idle() -> Self {
@@ -4404,7 +4414,7 @@ impl JsStepDispatch {
             loop_entry: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
             empty_string: Value::DELETED.to_bits(),
             environment_storage: crate::heap::absent_environment_storage(),
-            armed_array_proofs: crate::heap::array_proofs::armed_proofs_address(),
+            armed_array_proofs: crate::heap::armed_proofs_address(),
             array_chain_index_free: 0,
             receiver: Value::DELETED.to_bits(),
             vm: 0, residual: 0, body: std::ptr::null(), inlined: 0, exit_line: 0, lane_context: 0, returned_pc: 0,
@@ -4445,6 +4455,7 @@ impl JsStepDispatch {
         let (blocks, count) = vm.heap.native_function_mark_blocks();
         (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
         self.empty_string = vm.empty_string_word().to_bits();
+        self.array_chain_index_free = array_chain_index_free(vm);
         self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());

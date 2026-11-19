@@ -61,13 +61,18 @@ pub enum BuiltinRow {
     Min,
     /// `Math.imul` of two int32 operands.
     Imul,
+    /// `Array.prototype.push` of one value onto a dense array (`staged::builtins::array_push_one`).
+    Push,
+    /// `Array.prototype.pop` of a dense array (`staged::builtins::array_pop`).
+    Pop,
 }
 
 impl BuiltinRow {
     /// Every builtin row, each with its own stencil.
-    pub const ALL: [BuiltinRow; 13] = [
+    pub const ALL: [BuiltinRow; 15] = [
         BuiltinRow::CharCodeAt, BuiltinRow::CharAt, BuiltinRow::IsInteger, BuiltinRow::Floor, BuiltinRow::Ceil, BuiltinRow::Trunc, BuiltinRow::Abs,
         BuiltinRow::Sqrt, BuiltinRow::Fround, BuiltinRow::Round, BuiltinRow::Max, BuiltinRow::Min, BuiltinRow::Imul,
+        BuiltinRow::Push, BuiltinRow::Pop,
     ];
 
     /// The row's name in the stencil object, after `call_builtin_`.
@@ -86,6 +91,8 @@ impl BuiltinRow {
             BuiltinRow::Max => "max",
             BuiltinRow::Min => "min",
             BuiltinRow::Imul => "imul",
+            BuiltinRow::Push => "push",
+            BuiltinRow::Pop => "pop",
         }
     }
 
@@ -93,6 +100,7 @@ impl BuiltinRow {
     pub const fn arguments(self) -> u16 {
         match self {
             BuiltinRow::Max | BuiltinRow::Min | BuiltinRow::Imul => 2,
+            BuiltinRow::Pop => 0,
             _ => 1,
         }
     }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::staged::strings::{ConcreteString, concrete_char_at, concrete_char_code_at};
 
 enum StringReplacement {
     Callable(Value),
@@ -916,11 +917,11 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(in crate::vm) fn string_char_code_at_core(&mut self, receiver: Value, index: Value) -> Option<Value> {
         let records = self.heap.string_record_base().unwrap_or(std::ptr::null());
-        if let Some(code) = crate::staged::strings::concrete_string_char_code_at(records, receiver, index) {
+        if let Some(code) = concrete_char_code_at(ConcreteString::Record { records, value: receiver }, index) {
             return Some(code);
         }
-        // Any other flat text: the staged row over its units, the semantics the tiers share.
-        if let Some(code) = self.heap.flat_text(receiver).and_then(|text| crate::staged::builtins::concrete_char_code_at(text.units(), index)) {
+        // Any other flat text: the same row over its units, the semantics the tiers share.
+        if let Some(code) = self.heap.flat_text(receiver).and_then(|text| concrete_char_code_at(ConcreteString::Units(text.units()), index)) {
             return Some(code);
         }
         let position = string_unit_index(index)?;
@@ -936,12 +937,13 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn string_char_at_core(&mut self, receiver: Value, index: Value) -> Option<Value> {
         let records = self.heap.string_record_base().unwrap_or(std::ptr::null());
         let table = self.heap.ascii_unit_strings_base().unwrap_or(std::ptr::null());
-        if let Some(character) = crate::staged::strings::concrete_string_char_at(records, table, receiver, index) {
+        if let Some(character) = concrete_char_at(ConcreteString::Record { records, value: receiver }, table, index) {
             return Some(character);
         }
-        // Any other flat text at an ASCII unit: the staged row, then the unit's shared string.
-        if let Some(byte) = self.heap.flat_text(receiver).and_then(|text| crate::staged::builtins::concrete_char_at_ascii(text.units(), index)) {
-            return Some(self.ascii_byte_string(byte));
+        // Any other flat text: the same row over its units; a unit with no shared string yet
+        // is made by the general steps below.
+        if let Some(character) = self.heap.flat_text(receiver).and_then(|text| concrete_char_at(ConcreteString::Units(text.units()), table, index)) {
+            return Some(character);
         }
         let position = string_unit_index(index)?;
         let unit = {

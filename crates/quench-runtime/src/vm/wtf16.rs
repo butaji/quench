@@ -1452,6 +1452,14 @@ impl JsString {
     }
 }
 
+/// Writes the non-empty ASCII `bytes` repeated through `out`, whose length is a multiple of
+/// `bytes.len()`: the one byte writer of a repeat over flat ASCII units.
+pub(crate) fn repeat_ascii_into(out: &mut [u8], bytes: &[u8]) {
+    for chunk in out.chunks_exact_mut(bytes.len()) {
+        chunk.copy_from_slice(bytes);
+    }
+}
+
 impl PartialEq for JsString {
     #[inline(always)]
     fn eq(&self, other: &Self) -> bool {

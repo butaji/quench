@@ -371,6 +371,8 @@ mod tests {
             ("function_mark_block_count", at!(JsStepDispatch, function_mark_block_count), m::JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
             ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),
             ("environment_storage", at!(JsStepDispatch, environment_storage), m::JS_STEP_ENV_STORAGE),
+            ("armed_array_proofs", at!(JsStepDispatch, armed_array_proofs), m::JS_STEP_ARMED_ARRAY_PROOFS),
+            ("array_chain_index_free", at!(JsStepDispatch, array_chain_index_free), m::JS_STEP_ARRAY_CHAIN_INDEX_FREE),
         ]
     }
 

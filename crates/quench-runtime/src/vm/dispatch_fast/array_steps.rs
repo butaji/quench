@@ -2,6 +2,8 @@
 //! callbacks' activations in the calling lane, each return stepping the loop
 //! (`lane_begin_array_iteration`).
 use super::*;
+use super::super::array_indexed::ArrayIteration;
+use crate::staged::array_iteration::{self as step_rules, Effect, Kind};
 #[cfg(test)]
 mod tests;
 
@@ -10,6 +12,41 @@ mod tests;
 fn array_callback_argument_count(native: Native) -> usize {
     const ELEMENT_INDEX_ARRAY: usize = 3;
     ELEMENT_INDEX_ARRAY + usize::from(native.is_array_reducer())
+}
+
+/// The step kind of the array callback method an iteration runs. Only the eleven natives
+/// `Native::is_array_callback` names reach a lane iteration.
+#[inline(always)]
+fn lane_kind(native: Native) -> Kind {
+    match native {
+        Native::ArrayForEach => Kind::ForEach,
+        Native::ArrayMap => Kind::Map,
+        Native::ArrayFilter => Kind::Filter,
+        Native::ArrayReduce => Kind::Reduce,
+        Native::ArrayReduceRight => Kind::ReduceRight,
+        Native::ArraySome => Kind::Some,
+        Native::ArrayEvery => Kind::Every,
+        Native::ArrayFind => Kind::Find,
+        Native::ArrayFindIndex => Kind::FindIndex,
+        Native::ArrayFindLast => Kind::FindLast,
+        Native::ArrayFindLastIndex => Kind::FindLastIndex,
+        _ => unreachable!("a lane iteration runs an array callback method"),
+    }
+}
+
+/// The next element of `iteration` (`staged::array_iteration::next_index`), counted as visited;
+/// `None` past its last.
+#[inline(always)]
+fn lane_next_index(iteration: &mut ArrayIteration) -> Option<usize> {
+    let (index, visited) = step_rules::next_index(lane_kind(iteration.native), iteration.visited, iteration.length)?;
+    iteration.visited = visited;
+    Some(index)
+}
+
+/// The method's value once `iteration` visited every element (`staged::array_iteration::completion`).
+#[inline(always)]
+fn lane_completion(iteration: &ArrayIteration) -> Value {
+    step_rules::completion(lane_kind(iteration.native), iteration.result)
 }
 
 /// An array callback method's iteration a lane runs (`lane_begin_array_iteration`), one

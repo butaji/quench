@@ -16,7 +16,6 @@ use super::{Concrete, Stage};
 use crate::Value;
 use crate::heap::ArrayObject;
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
-use crate::vm::wtf16::Units;
 
 /// The storage width of a flat string's units, a property of the string's form.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -1,7 +1,7 @@
 //! The builtins a b-jit call runs on their stencil rows (`quench_bjit::call::BuiltinRow`): the natives
 //! the u-jit runs inline by identity (`lane_region::native_calls::Inline::of`, `builtin_calls::Builtin::of`),
-//! as a call site names them. The array builtins (`push`, `pop`) are not among them: their rows make
-//! helper calls a stencil row does not make, so their calls take the helper row.
+//! as a call site names them. The array builtins (`push`, `pop`) run on their staged rows too, which
+//! miss to the helper row where the staged body leaves.
 
 use crate::staged::math::FloatUnary;
 use crate::vm::Native;
@@ -24,6 +24,8 @@ pub(in super::super) fn of(native: Native) -> Option<BuiltinRow> {
         Native::StringCharCodeAt => return Some(BuiltinRow::CharCodeAt),
         Native::StringCharAt => return Some(BuiltinRow::CharAt),
         Native::NumberIsInteger => return Some(BuiltinRow::IsInteger),
+        Native::ArrayPush => return Some(BuiltinRow::Push),
+        Native::ArrayPop => return Some(BuiltinRow::Pop),
         _ => {}
     }
     match math_function(native)? {

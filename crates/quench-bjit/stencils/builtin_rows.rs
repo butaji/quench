@@ -15,9 +15,13 @@
 
 use crate::heap_rows::{payload, word_at};
 use crate::layout::call_record::{CallRecord, REGISTER_BYTES};
-use crate::layout::{JS_STEP_ASCII_UNIT_STRINGS, JS_STEP_STRING_RECORD_BASE};
+use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+use crate::layout::{
+    JS_STEP_ARMED_ARRAY_PROOFS, JS_STEP_ARRAY_CHAIN_INDEX_FREE, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_ASCII_UNIT_STRINGS,
+    JS_STEP_STRING_RECORD_BASE,
+};
 use crate::stage::StencilStage;
-use crate::staged::{builtins, math, strings};
+use crate::staged::{builtins, elements, math, object, strings};
 use crate::words::{S, hole64};
 use crate::{Row, Value};
 use core::mem::{offset_of, transmute};
