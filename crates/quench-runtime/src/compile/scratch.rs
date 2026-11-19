@@ -5,15 +5,17 @@
 use crate::bytecode::{Instr, SourceSpan};
 
 /// Compiled source bytes per instruction a function's code is reserved for before it is
-/// emitted: one instruction per six source bytes, the ratio the lowering's bodies measure at.
-const SOURCE_BYTES_PER_INSTRUCTION: u32 = 6;
+/// emitted. A span includes its nested functions' bodies, which compile to their own records,
+/// so the ratio is set low (one instruction per twelve bytes, unmeasured): under-reserving costs
+/// a doubling, over-reserving costs the trim's copy at finish. Tune against a bundle profile.
+const SOURCE_BYTES_PER_INSTRUCTION: u32 = 12;
 
 /// A finished table's spare capacity is released past one of this many parts of its capacity.
 const TRIMMED_SLACK_DIVISOR: usize = 4;
 
 /// The most instructions reserved up front for one function. A body past it grows as it
 /// emits, so a pathological span cannot reserve far more than the body it compiles to.
-const MAX_RESERVED_INSTRUCTIONS: usize = 1 << 16;
+const MAX_RESERVED_INSTRUCTIONS: usize = 1 << 12;
 
 /// The temporary buffers of the lowering passes, owned by the `Compiler` that drives them.
 #[derive(Default)]
