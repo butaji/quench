@@ -14,6 +14,9 @@ pub(super) struct ArraySpeciesProof {
 }
 
 impl<H: Host> Vm<H> {
+    /// The element `Array.prototype.at` reads for `value` among `length` elements: ToIntegerOrInfinity
+    /// of `value`, then the staged relative position `element_at` (shared with
+    /// `%TypedArray%.prototype.at`). `None` when the position lies outside the array.
     pub(super) fn indexed_at_index(
         &mut self,
         p: &ResidualProgram,
@@ -21,16 +24,7 @@ impl<H: Host> Vm<H> {
         length: usize,
     ) -> Result<Option<usize>, JsError> {
         let integer = crate::units::to_integer_or_infinity(self.to_number(p, value)?);
-        let relative = if integer < 0.0 {
-            length as f64 + integer
-        } else {
-            integer
-        };
-        if relative < 0.0 || relative >= length as f64 {
-            Ok(None)
-        } else {
-            Ok(Some(relative as usize))
-        }
+        Ok(crate::staged::typed_elements::element_at(integer, length))
     }
 
     pub(super) fn array_value_at(&self, array: Value, index: usize) -> Value {

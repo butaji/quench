@@ -57,6 +57,24 @@ impl AsciiReplace {
     }
 }
 
+/// The search of flat ASCII `bytes` from `start`, the one in-place body of every steady and
+/// rope search (`Regex::find_ascii`). Where nothing reads the captures, the bounds alone are
+/// searched (`Regex::find_range_ascii`), which holds the same match. `None` where the pattern
+/// has no matcher over bytes.
+#[inline(always)]
+pub(super) fn ascii_search(
+    regex: &quench_regexp::Regex,
+    bytes: &[u8],
+    start: usize,
+    sticky: bool,
+    captures: bool,
+) -> Option<Option<quench_regexp::Match>> {
+    if captures {
+        return regex.find_ascii(bytes, start, sticky, true);
+    }
+    regex.find_range_ascii(bytes, start, sticky).map(|found| found.map(quench_regexp::Match::native))
+}
+
 /// The ranges of the matches of `bytes` a replace reads: the first, or each of a global
 /// search (an empty match advances it by one unit, a whole code point in ASCII). `None`
 /// where the pattern has no compiled matcher over bytes.

@@ -2,6 +2,7 @@
 //! `toLowerCase`, written straight into the result's units.
 
 use super::super::{FlatUnits, JsString, Units};
+use crate::staged::string_text;
 use std::borrow::Cow;
 
 /// The one letter whose default lowercase depends on its context (SpecialCasing's
@@ -24,17 +25,15 @@ impl JsString {
     }
 }
 
-fn ascii_byte_case(byte: u8, upper: bool) -> u8 {
-    if upper { byte.to_ascii_uppercase() } else { byte.to_ascii_lowercase() }
-}
-
 /// ASCII maps to ASCII unit for unit, straight into the result's storage; `None` where
 /// nothing changes.
 fn ascii_case(bytes: &[u8], upper: bool) -> Option<JsString> {
-    bytes.iter().position(|byte| ascii_byte_case(*byte, upper) != *byte)?;
+    if !string_text::ascii_case_changes(bytes, upper) {
+        return None;
+    }
     Some(JsString::from_flat(FlatUnits::ascii_with(bytes.len(), |output| {
         for (slot, byte) in output.iter_mut().zip(bytes) {
-            slot.write(ascii_byte_case(*byte, upper));
+            slot.write(string_text::ascii_case_byte(*byte, upper));
         }
     })))
 }
@@ -52,7 +51,7 @@ fn wide_case(units: &[u16], upper: bool) -> Option<Option<JsString>> {
     while let Some(&unit) = units.get(index) {
         index += 1;
         if let Some(byte) = ascii_unit(unit) {
-            output.push(u16::from(ascii_byte_case(byte, upper)));
+            output.push(u16::from(string_text::ascii_case_byte(byte, upper)));
             continue;
         }
         let pair = units.get(index).and_then(|low| crate::unicode::decode_surrogate_pair(unit, *low));
@@ -73,7 +72,7 @@ fn ascii_unit(unit: u16) -> Option<u8> {
 /// Whether `unit` is a whole character whose mapping is itself.
 fn maps_to_itself(unit: u16, upper: bool) -> bool {
     if let Some(byte) = ascii_unit(unit) {
-        return ascii_byte_case(byte, upper) == byte;
+        return string_text::ascii_case_byte(byte, upper) == byte;
     }
     let Some(character) = char::from_u32(u32::from(unit)) else { return false };
     if upper { is_only(character, character.to_uppercase()) } else { is_only(character, character.to_lowercase()) }

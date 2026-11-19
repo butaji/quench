@@ -228,24 +228,25 @@ impl<H: Host> Vm<H> {
         if index.checked_add(width)? > length {
             return None;
         }
+        let kind = data_view_kind(native);
         let setter = data_view_setter(native);
         let endian = args.get(if setter { DATA_VIEW_SET_ENDIAN_ARGUMENT } else { DATA_VIEW_GET_ENDIAN_ARGUMENT });
         let little_endian = width > DATA_VIEW_BYTE_WIDTH && endian.is_some_and(|value| value.as_bool().unwrap_or_else(|| self.truthy(*value)));
-        let (field, view_end) = (offset + index, offset.checked_add(length)?);
+        let view_end = offset.checked_add(length)?;
         if setter {
-            let bits = data_view_bits_of_number(native, args.get(DATA_VIEW_VALUE_ARGUMENT)?.immediate_number()?);
+            let number = args.get(DATA_VIEW_VALUE_ARGUMENT)?.immediate_number()?;
             let Some(Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. }) = self.heap.buffer_bytes_mut(buffer) else {
                 return None;
             };
             let bytes = bytes.mut_in_lane().filter(|bytes| view_end <= bytes.len())?;
-            store_field(&mut bytes[field..field + width], bits, little_endian);
+            crate::staged::typed_view::data_view_set(&mut bytes[offset..view_end], index, kind, number, little_endian)?;
             return Some(Value::UNDEFINED);
         }
         let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(buffer) else {
             return None;
         };
         let bytes = bytes.owned().filter(|bytes| view_end <= bytes.len())?;
-        Some(Value::number(data_view_number_of_bits(native, load_field(&bytes[field..field + width], little_endian))))
+        Some(Value::number(crate::staged::typed_view::data_view_get(&bytes[offset..view_end], index, kind, little_endian)?))
     }
 
     pub(super) fn data_view_native(
@@ -326,8 +327,8 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc(Cell::bigint(value)))
             }
             native if !data_view_setter(native) => {
-                let bits = self.data_view_read(buffer, offset + index, width, little_endian)?;
-                Ok(Value::number(data_view_number_of_bits(native, bits)))
+                let number = self.data_view_read_number(buffer, offset + index, data_view_kind(native), little_endian)?;
+                Ok(Value::number(number))
             }
             Native::DataViewSetUint8
             | Native::DataViewSetInt8
@@ -373,7 +374,7 @@ impl<H: Host> Vm<H> {
                 if check_bounds() || self.array_buffer_out_of_bounds(buffer, offset, length) {
                     return Err(self.data_view_write_error(p, buffer, offset, length));
                 }
-                self.data_view_write(buffer, offset + index, width, data_view_bits_of_number(native, value), little_endian)?;
+                self.data_view_write_number(buffer, offset + index, data_view_kind(native), value, little_endian)?;
                 Ok(Value::UNDEFINED)
             }
             _ => unreachable!(),
@@ -398,7 +399,7 @@ impl<H: Host> Vm<H> {
 
 
     /// The `width` bytes at `index` as an unsigned integer in the given byte order: one read
-    /// of the buffer for the whole field.
+    /// of the buffer for the whole field (`staged::typed_view::data_view_bits`).
     fn data_view_read(
         &self,
         buffer: Value,
@@ -410,20 +411,12 @@ impl<H: Host> Vm<H> {
             return Err(JsError("DataView buffer is invalid".into()));
         };
         let bytes = bytes.read();
-        let field = bytes
-            .get(index..index.saturating_add(width))
-            .ok_or_else(|| JsError("DataView byte offset is out of range".into()))?;
-        let mut word = [0; DATA_VIEW_DOUBLE_WIDTH];
-        word[..width].copy_from_slice(field);
-        Ok(if little_endian {
-            u64::from_le_bytes(word)
-        } else {
-            u64::from_be_bytes(word) >> ((DATA_VIEW_DOUBLE_WIDTH - width) * u8::BITS as usize)
-        })
+        crate::staged::typed_view::data_view_bits(&bytes[..], index, width, little_endian)
+            .ok_or_else(|| JsError("DataView byte offset is out of range".into()))
     }
 
     /// Writes the low `width` bytes of `value` at `index` in the given byte order: one write
-    /// of the buffer for the whole field.
+    /// of the buffer for the whole field (`staged::typed_view::data_view_store_bits`).
     fn data_view_write(
         &mut self,
         buffer: Value,
@@ -432,47 +425,47 @@ impl<H: Host> Vm<H> {
         value: u64,
         little_endian: bool,
     ) -> Result<(), JsError> {
-        let encoded = if little_endian {
-            value.to_le_bytes()
-        } else {
-            (value << ((DATA_VIEW_DOUBLE_WIDTH - width) * u8::BITS as usize)).to_be_bytes()
-        };
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.buffer_bytes_mut(buffer) else {
             return Err(JsError("DataView buffer is invalid".into()));
         };
         let mut guard = bytes.make_mut();
-        let Some(field) = guard.get_mut(index..index.saturating_add(width)) else {
-            return Err(JsError("DataView byte offset is out of range".into()));
+        crate::staged::typed_view::data_view_store_bits(&mut guard[..], index, width, value, little_endian)
+            .ok_or_else(|| JsError("DataView byte offset is out of range".into()))
+    }
+
+    /// The Number of the element `kind` at `index` of `buffer` in the given byte order: the
+    /// same body as the fast path's read (`staged::typed_view::data_view_get`).
+    fn data_view_read_number(
+        &self,
+        buffer: Value,
+        index: usize,
+        kind: TypedArrayKind,
+        little_endian: bool,
+    ) -> Result<f64, JsError> {
+        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
+            return Err(JsError("DataView buffer is invalid".into()));
         };
-        field.copy_from_slice(&encoded[..width]);
-        Ok(())
+        let bytes = bytes.read();
+        crate::staged::typed_view::data_view_get(&bytes[..], index, kind, little_endian)
+            .ok_or_else(|| JsError("DataView byte offset is out of range".into()))
     }
 
-}
-
-/// The Number a non-BigInt DataView get reads: the field's bits as its element type.
-#[inline(always)]
-fn data_view_number_of_bits(native: Native, bits: u64) -> f64 {
-    match native {
-        Native::DataViewGetInt8 => f64::from(bits as u8 as i8),
-        Native::DataViewGetInt16 => f64::from(bits as u16 as i16),
-        Native::DataViewGetInt32 => f64::from(bits as u32 as i32),
-        Native::DataViewGetFloat16 => super::number::half_to_f64(bits as u16),
-        Native::DataViewGetFloat32 => f64::from(f32::from_bits(bits as u32)),
-        Native::DataViewGetFloat64 => f64::from_bits(bits),
-        _ => bits as f64,
-    }
-}
-
-/// The bits a non-BigInt DataView set writes for `value`: its float encoding, or for an
-/// integer type ToUint32, whose low bytes (`data_view_write`) are ToUint8 and ToUint16 too.
-#[inline(always)]
-fn data_view_bits_of_number(native: Native, value: f64) -> u64 {
-    match native {
-        Native::DataViewSetFloat16 => u64::from(super::number::f64_to_half(value)),
-        Native::DataViewSetFloat32 => u64::from((value as f32).to_bits()),
-        Native::DataViewSetFloat64 => value.to_bits(),
-        _ => u64::from(crate::value::number_to_u32(value)),
+    /// Writes the Number `value` as the element `kind` at `index` of `buffer` in the given byte
+    /// order: the same body as the fast path's write (`staged::typed_view::data_view_set`).
+    fn data_view_write_number(
+        &mut self,
+        buffer: Value,
+        index: usize,
+        kind: TypedArrayKind,
+        value: f64,
+        little_endian: bool,
+    ) -> Result<(), JsError> {
+        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.buffer_bytes_mut(buffer) else {
+            return Err(JsError("DataView buffer is invalid".into()));
+        };
+        let mut guard = bytes.make_mut();
+        crate::staged::typed_view::data_view_set(&mut guard[..], index, kind, value, little_endian)
+            .ok_or_else(|| JsError("DataView byte offset is out of range".into()))
     }
 }
 
@@ -551,6 +544,25 @@ fn data_view_plain_index(index: Value) -> Option<usize> {
     }
 }
 
+/// The element type a DataView element `native` gets or sets, as the typed array kind whose
+/// element the staged access reads and writes (`staged::typed_view`).
+fn data_view_kind(native: Native) -> TypedArrayKind {
+    match native {
+        Native::DataViewGetUint8 | Native::DataViewSetUint8 => TypedArrayKind::Uint8,
+        Native::DataViewGetInt8 | Native::DataViewSetInt8 => TypedArrayKind::Int8,
+        Native::DataViewGetUint16 | Native::DataViewSetUint16 => TypedArrayKind::Uint16,
+        Native::DataViewGetInt16 | Native::DataViewSetInt16 => TypedArrayKind::Int16,
+        Native::DataViewGetUint32 | Native::DataViewSetUint32 => TypedArrayKind::Uint32,
+        Native::DataViewGetInt32 | Native::DataViewSetInt32 => TypedArrayKind::Int32,
+        Native::DataViewGetFloat16 | Native::DataViewSetFloat16 => TypedArrayKind::Float16,
+        Native::DataViewGetFloat32 | Native::DataViewSetFloat32 => TypedArrayKind::Float32,
+        Native::DataViewGetFloat64 | Native::DataViewSetFloat64 => TypedArrayKind::Float64,
+        Native::DataViewGetBigInt64 | Native::DataViewSetBigInt64 => TypedArrayKind::BigInt64,
+        Native::DataViewGetBigUint64 | Native::DataViewSetBigUint64 => TypedArrayKind::BigUint64,
+        _ => unreachable!("a DataView element"),
+    }
+}
+
 /// The bytes a DataView element `native` other than the BigInt ones gets or sets; `None` for
 /// any other native.
 #[inline(always)]
@@ -560,38 +572,4 @@ fn data_view_plain_width(native: Native) -> Option<usize> {
         Native::DataViewGetBigInt64 | Native::DataViewGetBigUint64 | Native::DataViewSetBigInt64 | Native::DataViewSetBigUint64
     );
     (data_view_element(native) && !bigint).then(|| data_view_width(native))
-}
-
-/// The unsigned integer `field` holds in the given byte order: one load and a swap.
-#[inline(always)]
-fn load_field(field: &[u8], little_endian: bool) -> u64 {
-    macro_rules! load {
-        ($int:ty) => {{
-            let bytes = field.try_into().expect("field width");
-            u64::from(if little_endian { <$int>::from_le_bytes(bytes) } else { <$int>::from_be_bytes(bytes) })
-        }};
-    }
-    match field.len() {
-        DATA_VIEW_BYTE_WIDTH => u64::from(field[0]),
-        DATA_VIEW_SHORT_WIDTH => load!(u16),
-        DATA_VIEW_WORD_WIDTH => load!(u32),
-        _ => load!(u64),
-    }
-}
-
-/// Stores the low bytes of `bits` into `field` in the given byte order: a swap and one store.
-#[inline(always)]
-fn store_field(field: &mut [u8], bits: u64, little_endian: bool) {
-    macro_rules! store {
-        ($int:ty) => {{
-            let value = bits as $int;
-            field.copy_from_slice(&if little_endian { value.to_le_bytes() } else { value.to_be_bytes() });
-        }};
-    }
-    match field.len() {
-        DATA_VIEW_BYTE_WIDTH => field[0] = bits as u8,
-        DATA_VIEW_SHORT_WIDTH => store!(u16),
-        DATA_VIEW_WORD_WIDTH => store!(u32),
-        _ => store!(u64),
-    }
 }

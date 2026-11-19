@@ -440,25 +440,18 @@ impl<H: Host> Vm<H> {
                 return Err(JsError("string method receiver is not a string".into()));
             };
             let units = receiver.units();
-            let index = if native == Native::StringAt && raw < 0 {
-                units.len() as i64 + raw
-            } else {
-                raw
-            };
-            let Some((index, first)) = usize::try_from(index)
-                .ok()
-                .and_then(|index| units.get(index).map(|unit| (index, unit)))
-            else {
+            let from_end = native == Native::StringAt;
+            let Some(index) = crate::staged::strings::relative_unit(units, raw, from_end) else {
                 return Ok(Value::UNDEFINED);
             };
-            if native == Native::StringAt {
+            if from_end {
+                let first = units.at(index);
                 return self.string_from_units(&[first]);
             }
-            let code_point = units
-                .get(index + 1)
-                .and_then(|low| crate::unicode::decode_surrogate_pair(first, low))
-                .unwrap_or_else(|| u32::from(first));
-            return Ok(Value::number(code_point as f64));
+            let Some(code_point) = crate::staged::strings::code_point_at(units, index) else {
+                return Ok(Value::UNDEFINED);
+            };
+            return Ok(Value::number(f64::from(code_point)));
         }
         let Some(receiver) = self.heap.string(this).cloned() else {
             return Err(JsError("string method receiver is not a string".into()));
@@ -570,7 +563,7 @@ impl<H: Host> Vm<H> {
 
     /// String.prototype.split: the in-place body (`split_in_place`) first, which takes a flat
     /// string at a flat string separator with no limit; any other call runs the general steps
-    /// (the protocol lookups, ToUint32 of the limit, `split_runs`).
+    /// (the protocol lookups, ToUint32 of the limit, `staged::string_split::runs`).
     pub(super) fn string_split_native(
         &mut self,
         p: &ResidualProgram,
@@ -597,7 +590,7 @@ impl<H: Host> Vm<H> {
             if separator.is_undefined() {
                 if limit != 0 { parts.push(vm.heap.alloc_string(input)); }
             } else {
-                input.split_runs(separator_string.units(), limit, |run| parts.push(vm.heap.alloc_unit_run(run)));
+                crate::staged::string_split::runs(input.units(), separator_string.units(), limit, |run| parts.push(vm.split_piece(run)));
             }
             let values = crate::heap::ArrayElements::from_slice(&parts);
             Ok(vm.heap.alloc_array(crate::heap::ArrayObject::new(
@@ -759,15 +752,17 @@ impl<H: Host> Vm<H> {
             } else {
                 StringReplacement::Template(vm.coerce_js_string(p, replacement_value)?)
             };
+            // A template replacement is the string-pattern core's (`Vm::replace_units`), the one
+            // body every caller shares; it answers `None` when nothing matches.
+            let method = match replacement {
+                StringReplacement::Template(template) => {
+                    let replaced = vm.replace_units(p, &input, &search, &template, replace_all)?;
+                    return Ok(replaced.unwrap_or_else(|| vm.heap.alloc_string(input)));
+                }
+                StringReplacement::Callable(method) => method,
+            };
             let Some(first) = input.find_units(search.units(), 0) else {
                 return Ok(vm.heap.alloc_string(input));
-            };
-            // A template replacement is the string-pattern core's (`Vm::replace_units`), the one
-            // body every caller shares; it reads the receiver only when nothing matches.
-            let method = match replacement {
-                StringReplacement::Template(template) =>
-                    return vm.replace_units(p, Value::UNDEFINED, &input, &search, &template, replace_all),
-                StringReplacement::Callable(method) => method,
             };
             vm.replace_with_callback(p, &input, &search, first, method, replace_all)
         })

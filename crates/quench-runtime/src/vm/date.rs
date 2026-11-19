@@ -21,7 +21,8 @@ const MILLISECONDS_PER_MINUTE: f64 = 60_000.0;
 const MILLISECONDS_PER_HOUR: f64 = 3_600_000.0;
 const HOURS_PER_DAY: f64 = 24.0;
 const MILLISECONDS_PER_DAY: f64 = MILLISECONDS_PER_HOUR * HOURS_PER_DAY;
-pub(super) const DATE_TIME_CLIP_LIMIT_MS: f64 = 8.64e15;
+pub(super) use crate::staged::date_fields::DATE_TIME_CLIP_LIMIT_MS;
+use crate::staged::date_fields::{self, DateParts, date_parts_utc, days_from_civil};
 const LEGACY_DATE_YEAR_MIN: f64 = 0.0;
 const LEGACY_DATE_YEAR_MAX: f64 = 99.0;
 const LEGACY_DATE_YEAR_MAX_INT: i32 = 99;
@@ -57,21 +58,6 @@ const DATE_NEGATIVE_ZERO_YEAR_TEXT: &str = "-000000";
 const DATE_MILLISECOND_DIGITS: usize = 3;
 const DATE_OFFSET_FIELD_WIDTH: usize = 2;
 const DATE_MINUTES_PER_HOUR: u32 = 60;
-const DATE_MILLISECONDS_PER_DAY: i64 = 86_400_000;
-const DATE_SECONDS_PER_MINUTE_I64: i64 = 60;
-const DATE_MINUTES_PER_HOUR_I64: i64 = 60;
-const DATE_EPOCH_WEEKDAY_SUNDAY_INDEX: i64 = 4;
-const DATE_DAYS_PER_WEEK: i64 = 7;
-const DATE_MILLISECONDS_PER_HOUR: i64 = 3_600_000;
-const DATE_MILLISECONDS_PER_MINUTE: i64 = 60_000;
-const DATE_MILLISECONDS_PER_SECOND: i64 = 1_000;
-const DATE_DAYS_PER_CYCLE: i64 = 146_097;
-const DATE_YEARS_PER_CYCLE: i64 = 400;
-const DATE_QUADRENNIAL_DAYS: i64 = 1_460;
-const DATE_CENTURY_DAYS: i64 = 36_524;
-const DATE_DAYS_PER_YEAR: i64 = 365;
-const DATE_MONTHS_PER_CYCLE_SEGMENT: i64 = 153;
-const DATE_EPOCH_DAY_OFFSET: i64 = 719_468;
 const ISO_YEAR_MAX: i64 = 9_999;
 const ISO_EXTENDED_YEAR_WIDTH: usize = 6;
 const DATE_WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -80,17 +66,6 @@ const DATE_MONTHS: [&str; 12] = [
 ];
 const DEFAULT_DATE_COMPONENTS: [f64; DATE_COMPONENT_COUNT] =
     [0.0, 0.0, FIRST_DAY_OF_MONTH, 0.0, 0.0, 0.0, 0.0];
-
-struct DateParts {
-    year: i32,
-    month: u32,
-    day: u32,
-    weekday: u32,
-    hour: u32,
-    minute: u32,
-    second: u32,
-    millisecond: u32,
-}
 
 impl DateParts {
     fn as_components(&self) -> [f64; DATE_COMPONENT_COUNT] {
@@ -597,42 +572,11 @@ fn date_getter(native: Native, milliseconds: f64) -> Option<f64> {
     })
 }
 
-fn date_parts_utc(milliseconds: f64) -> Option<DateParts> {
-    if !milliseconds.is_finite() || milliseconds.abs() > DATE_TIME_CLIP_LIMIT_MS {
-        return None;
-    }
-    date_parts_of(milliseconds.trunc() as i64)
-}
-
-/// The fields of the time `whole` milliseconds after the epoch, by integer arithmetic
-/// (`civil_from_days`): the proleptic Gregorian calendar chrono computes, for every time a
-/// Date holds.
-fn date_parts_of(whole: i64) -> Option<DateParts> {
-    let days = whole.div_euclid(DATE_MILLISECONDS_PER_DAY);
-    let time = whole.rem_euclid(DATE_MILLISECONDS_PER_DAY);
-    let (year, month, day) = civil_from_days(days);
-    Some(DateParts {
-        year: i32::try_from(year).ok()?,
-        month: u32::try_from(month - 1).ok()?,
-        day: u32::try_from(day).ok()?,
-        weekday: (days + DATE_EPOCH_WEEKDAY_SUNDAY_INDEX).rem_euclid(DATE_DAYS_PER_WEEK) as u32,
-        hour: (time / MILLISECONDS_PER_HOUR as i64) as u32,
-        minute: ((time / (MILLISECONDS_PER_SECOND as i64 * DATE_SECONDS_PER_MINUTE_I64))
-            % DATE_MINUTES_PER_HOUR_I64) as u32,
-        second: ((time / MILLISECONDS_PER_SECOND as i64) % DATE_SECONDS_PER_MINUTE_I64) as u32,
-        millisecond: (time % MILLISECONDS_PER_SECOND as i64) as u32,
-    })
-}
-
-/// The local fields of `milliseconds`: its UTC time moved by the local offset, as
-/// `date_local` moves it.
+/// The local fields of `milliseconds`, in the host's zone (`date_fields::date_parts_local`).
 fn date_parts_local(milliseconds: f64) -> Option<DateParts> {
-    if !milliseconds.is_finite() || milliseconds.abs() > DATE_TIME_CLIP_LIMIT_MS {
-        return None;
-    }
-    let timestamp = milliseconds.trunc() as i64;
-    let offset_seconds = date_offset_seconds(local_offset_cached(timestamp).unwrap_or_else(local_offset_now));
-    date_parts_of(timestamp + i64::from(offset_seconds) * DATE_MILLISECONDS_PER_SECOND)
+    date_fields::date_parts_local(milliseconds, |timestamp| {
+        date_offset_seconds(local_offset_cached(timestamp).unwrap_or_else(local_offset_now))
+    })
 }
 
 fn date_utc(milliseconds: f64) -> Option<DateTime<Utc>> {
@@ -929,20 +873,16 @@ pub(super) fn time_clip(value: f64) -> f64 {
 }
 
 fn format_date_iso(milliseconds: f64) -> Option<String> {
-    if !milliseconds.is_finite() || milliseconds.abs() > DATE_TIME_CLIP_LIMIT_MS {
-        return None;
-    }
-    let whole = milliseconds.trunc() as i64;
-    let days = whole.div_euclid(DATE_MILLISECONDS_PER_DAY);
-    let time = whole.rem_euclid(DATE_MILLISECONDS_PER_DAY);
-    let (year, month, day) = civil_from_days(days);
-    let hour = time / DATE_MILLISECONDS_PER_HOUR;
-    let minute = (time / DATE_MILLISECONDS_PER_MINUTE) % i64::from(DATE_MINUTES_PER_HOUR);
-    let second = (time / DATE_MILLISECONDS_PER_SECOND) % i64::from(DATE_MINUTES_PER_HOUR);
-    let millisecond = time % DATE_MILLISECONDS_PER_SECOND;
+    let parts = date_parts_utc(milliseconds)?;
     Some(format!(
-        "{}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millisecond:03}Z",
-        format_iso_year(year),
+        "{}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        format_iso_year(i64::from(parts.year)),
+        parts.month + 1,
+        parts.day,
+        parts.hour,
+        parts.minute,
+        parts.second,
+        parts.millisecond,
     ))
 }
 
@@ -958,43 +898,6 @@ fn format_iso_year(year: i64) -> String {
     } else {
         format!("+{year:0width$}", width = ISO_EXTENDED_YEAR_WIDTH)
     }
-}
-
-fn days_from_civil(year: f64, month: f64, day: f64) -> f64 {
-    let year = year - f64::from(month <= 2.0);
-    let years_per_cycle = DATE_YEARS_PER_CYCLE as f64;
-    let days_per_cycle = DATE_DAYS_PER_CYCLE as f64;
-    let era = (year / years_per_cycle).floor();
-    let year_of_era = year - era * years_per_cycle;
-    let month = month + if month > 2.0 { -3.0 } else { 9.0 };
-    let day_of_year =
-        ((DATE_MONTHS_PER_CYCLE_SEGMENT as f64 * month + 2.0) / 5.0).floor() + day - 1.0;
-    era * days_per_cycle + year_of_era * DATE_DAYS_PER_YEAR as f64 + (year_of_era / 4.0).floor()
-        - (year_of_era / 100.0).floor()
-        + day_of_year
-        - DATE_EPOCH_DAY_OFFSET as f64
-}
-
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let days = days + DATE_EPOCH_DAY_OFFSET;
-    let era = if days >= 0 {
-        days
-    } else {
-        days - (DATE_DAYS_PER_CYCLE - 1)
-    } / DATE_DAYS_PER_CYCLE;
-    let day_of_era = days - era * DATE_DAYS_PER_CYCLE;
-    let year_of_era = (day_of_era - day_of_era / DATE_QUADRENNIAL_DAYS
-        + day_of_era / DATE_CENTURY_DAYS
-        - day_of_era / (DATE_DAYS_PER_CYCLE - 1))
-        / DATE_DAYS_PER_YEAR;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_part = (5 * day_of_year + 2) / DATE_MONTHS_PER_CYCLE_SEGMENT;
-    (
-        year + i64::from(month_part >= 10),
-        month_part + if month_part < 10 { 3 } else { -9 },
-        day_of_year - (DATE_MONTHS_PER_CYCLE_SEGMENT * month_part + 2) / 5 + 1,
-    )
 }
 
 pub(super) fn format_date_string(milliseconds: f64) -> String {

@@ -4,7 +4,8 @@
 //! miss to the helper row where the staged body leaves.
 
 use crate::heap::Native;
-use crate::vm::number::{MathFunction, math_function};
+use crate::staged::call_native::MathCall;
+use crate::vm::number::math_call;
 use quench_bjit::call::BuiltinRow;
 
 /// A call whose callee the code guards as the builtin `row`: its identity is the word the callee
@@ -27,8 +28,8 @@ pub(in super::super) fn of(native: Native) -> Option<BuiltinRow> {
         Native::ArrayPop => return Some(BuiltinRow::Pop),
         _ => {}
     }
-    match math_function(native)? {
-        MathFunction::Imul => Some(BuiltinRow::Imul),
+    match math_call(native)? {
+        MathCall::Imul => Some(BuiltinRow::Imul),
         _ => None,
     }
 }
