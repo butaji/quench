@@ -140,7 +140,7 @@ script_handler! {
     /// conversion that could run guest code, or a settling body that keeps its values, reaches.
     #[inline(never)]
     fn lane_await<>(cx, r, ip, i, view) {
-        if super::super::async_requests::running_request(unsafe { vm(cx) }) {
+        if super::async_requests::running_request(unsafe { vm(cx) }) {
             resume!(cx, lane_suspension(cx, r, ip, i, (Suspension::Await, Suspender::Request)))
         }
         let Some(suspender) = Suspender::of_await(cx) else {
