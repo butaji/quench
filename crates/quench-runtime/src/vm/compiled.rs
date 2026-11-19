@@ -136,7 +136,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{binary_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
+use lane_allocations::{binary_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
@@ -1114,6 +1114,8 @@ lane_helper_inventory! { H;
     /// A two-property object literal's allocation (`new_object_pair_in_lane`).
     NewObjectPair => new_object_pair_in_lane::<H>,
     Binary => binary_in_lane::<H>,
+    /// A scalar native's call on its in-place case (`lane_allocations::scalar_native_in_lane`).
+    ScalarNative => scalar_native_in_lane::<H>,
     /// A store that may add its property (`field_add_in_lane`).
     FieldAdd => field_add_in_lane::<H>,
     /// The slow arm of a loop's hoisted typed array view proof (`typed_array_view_in_lane`).

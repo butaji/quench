@@ -21,6 +21,7 @@ use crate::vm::Native;
 use crate::vm::number::{MathFunction, math_function};
 use crate::vm::global_facts::GlobalRead;
 use super::builtin_calls::Builtin;
+use crate::vm::global_facts::scalar_native;
 
 /// A native a call runs inline: a Math function of Numbers, the wrapping product of two
 /// arguments' ToInt32 (`Math.imul`), or the machine operation the native's own definition
@@ -32,6 +33,8 @@ pub(super) enum Inline {
     /// `Math.max` (true) or `Math.min` of two Numbers.
     Extreme(bool),
     Builtin(Builtin),
+    /// A scalar native (`global_facts::scalar_native`), called in place by its helper (`Lowering::scalar_call`).
+    Scalar,
 }
 
 /// The argument counts of the inline operations.
@@ -49,11 +52,18 @@ impl Inline {
             _ => None,
         }
         .or_else(|| Builtin::of(native).map(Self::Builtin))
+        .or_else(|| scalar_native(native).then_some(Self::Scalar))
     }
 
     /// The arguments the inline operation reads; a call passing another count takes the native.
     const fn arguments(self) -> u16 {
-        match self { Self::Imul | Self::Extreme(_) => BINARY_ARGUMENTS, Self::Unary(_) => UNARY_ARGUMENTS, Self::Builtin(builtin) => builtin.arguments() }
+        match self { Self::Imul | Self::Extreme(_) | Self::Scalar => BINARY_ARGUMENTS, Self::Unary(_) => UNARY_ARGUMENTS, Self::Builtin(builtin) => builtin.arguments() }
+    }
+
+    /// Whether a call passing `count` arguments runs the operation inline: a scalar native takes one or two (`parseInt(s)`,
+    /// `parseInt(s, 10)`), every other operation exactly `arguments`.
+    const fn accepts(self, count: u16) -> bool {
+        match self { Self::Scalar => count == 1 || count == BINARY_ARGUMENTS, _ => count == self.arguments() }
     }
 
     /// Whether the operation may change an array's elements, which a loop's hoisted views
@@ -101,6 +111,12 @@ pub(in crate::vm) fn inlines_in_loop(native: Native) -> bool {
     Inline::of(native).is_some_and(Inline::holds_in_loop)
 }
 
+/// Whether the by-name load at `pc` reads a global name held as a scalar native's slot (`GlobalRead::NativeSlot`): its read
+/// is a slot or a live load that leaves at a miss, and it changes nothing a loop holds.
+pub(super) fn scalar_name_read(global_reads: &crate::vm::global_facts::GlobalReads, pc: usize) -> bool {
+    matches!(global_reads.get(&pc), Some(crate::vm::global_facts::GlobalRead::NativeSlot { .. }))
+}
+
 /// Whether the call at `pc` runs inline and changes no array, so the Stable facts its code
 /// folded survive it.
 pub(super) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
@@ -125,8 +141,9 @@ pub(super) fn searches(intrinsics: &Intrinsics, pc: usize) -> bool {
 
 /// The calls of `unit` that run inline, by PC: a call's callee register was defined by a field
 /// read that was a native function when the body was compiled (`GlobalRead::NativeMember`: a
-/// member of a Stable global, or a method of the string or array prototype), the call passes
-/// that function's argument count, and no direct callee is bound to it. Each with the function it held, whose identity the call guards.
+/// member of a Stable global, or a method of the string or array prototype; `GlobalRead::NativeSlot`: a
+/// global name holding a scalar native), the call passes that function's argument count, and no direct callee
+/// is bound to it. Each with the function it held, whose identity the call guards.
 pub(super) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads: &crate::vm::global_facts::GlobalReads,
     direct: impl Fn(usize) -> bool) -> Intrinsics {
     unit.instructions.iter().enumerate().map(|(pc, instruction)| Some((pc, instruction)).filter(|(pc, instruction)| crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Call)
@@ -135,10 +152,13 @@ pub(super) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads
         .and_then(|(pc, instruction)| {
             let callee = instruction.register_b();
             let defined = (0..pc).rev().find(|at| unit.instructions[*at].written_registers().any(|register| register == callee))?;
-            let GlobalRead::NativeMember { value, native, holder, .. } = global_reads.get(&defined)? else { return None };
-            let inline = Inline::of(*native)?;
-            (crate::bytecode::ImmediateLayout::argument_count(instruction.imm()) == inline.arguments())
-                .then_some((*value, inline, *holder))
+            let (value, native, holder) = match global_reads.get(&defined)? {
+                GlobalRead::NativeMember { value, native, holder, .. } | GlobalRead::NativeSlot { value, native, holder, .. } => (*value, *native, *holder),
+                _ => return None,
+            };
+            let inline = Inline::of(native)?;
+            inline.accepts(crate::bytecode::ImmediateLayout::argument_count(instruction.imm()))
+                .then_some((value, inline, holder))
         })).collect()
 }
 
@@ -163,9 +183,29 @@ impl Lowering<'_, '_> {
         emit_js_guard(&mut self.builder, same, exit);
         match inline {
             Inline::Builtin(builtin) => self.builtin_call(state, pc, instruction, builtin, exit),
+            Inline::Scalar => self.scalar_call(state, instruction, held, exit),
             _ => self.math_call(state, instruction, inline, exit),
         }
         true
+    }
+
+    /// The scalar native (`Inline::Scalar`) whose callee `held` the call guarded: its helper runs the native's in-place
+    /// case on the arguments (`lane_allocations::scalar_native_in_lane`), which reads the native from the callee. The call
+    /// leaves at `exit`, before it changes anything, where that case does not complete (an object argument, an error, a
+    /// due collection).
+    fn scalar_call(&mut self, state: &mut State, instruction: WideInstruction, held: ir::Value, exit: ir::Block) {
+        let argc = crate::bytecode::ImmediateLayout::argument_count(instruction.imm());
+        let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
+        let undefined = self.builder.ins().iconst(ir::types::I64, Value::UNDEFINED.to_bits() as i64);
+        let count = self.builder.ins().iconst(ir::types::I64, i64::from(argc));
+        let first = self.tagged(state, window);
+        let second = if argc == 2 { self.tagged(state, window + 1) } else { undefined };
+        let value = self.helper_call(LaneHelper::ScalarNative, &[held, count, undefined, first, second]);
+        let done = self.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
+        emit_js_guard(&mut self.builder, done, exit);
+        // A Number or other primitive argument may allocate its text, which a body's proofs of object layouts do not survive.
+        self.allocated(state);
+        self.set_tagged(state, instruction.result_register(), value);
     }
 
     /// The Math call `inline` of Numbers, its result an unboxed Number (an int32 for `imul`).

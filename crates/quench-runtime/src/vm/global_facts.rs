@@ -75,6 +75,13 @@ pub(crate) enum GlobalRead {
     NativeSlot { slot: GlobalSlot, value: Value, native: super::Native, holder: u32 },
 }
 
+/// The natives whose call a loop or body runs in place on scalar arguments and whose result allocates nothing: they
+/// run no guest code, change no array and observe no frame (`dispatch_fast::in_place_natives::primitive_leaf`, with a
+/// Number or Boolean result). A global cell holding one of them is read as a `GlobalRead::NativeSlot`.
+pub(in crate::vm) const fn scalar_native(native: super::Native) -> bool {
+    matches!(native, super::Native::ParseInt | super::Native::NumberParseFloat)
+}
+
 /// Which tier a table of by-name global accesses is for (`Vm::global_table`): the lane specializer
 /// folds a cell's value as a Stable fact; the b-jit's rows read a global object's own data
 /// property from its slot live, under the object's layout.

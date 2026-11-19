@@ -15,7 +15,7 @@ impl Lowering<'_, '_> {
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
             self.hold_global(state, exit, fact, (global, realm_offset));
         }
-        if let (GlobalBinding::Typed { .. }, Some(&GlobalRead::Slot(slot)), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
+        if let (GlobalBinding::Typed { .. }, Some(&(GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. })), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
             self.hold_global_slot(state, exit, slot);
         }
         if let (GlobalBinding::Lexical { .. }, Some(&GlobalRead::Lexical(slot)), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
@@ -37,7 +37,7 @@ impl Lowering<'_, '_> {
                 (GlobalBinding::Held { value, ty }, Some((fact, global, realm_offset))),
             GlobalRead::Frozen { value, ty } => (GlobalBinding::Frozen { value, ty }, None),
             GlobalRead::Lexical(slot) => (GlobalBinding::Lexical { address: slot.address as u64 }, None),
-            GlobalRead::Slot(slot) if slot.dependency.is_some() => (GlobalBinding::Typed { ty: slot.ty }, None),
+            GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. } if slot.dependency.is_some() => (GlobalBinding::Typed { ty: slot.ty }, None),
             GlobalRead::Slot(_) | GlobalRead::Held(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } | GlobalRead::NativeSlot { .. } => (GlobalBinding::Dynamic, None),
         };
         if self.division().folds(binding.time()) { (binding, held) } else { (GlobalBinding::Dynamic, None) }

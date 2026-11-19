@@ -70,7 +70,7 @@ fn inlined_capture_reads_require_an_admitted_invariant_callee() {
         let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
             instruction.op().control_flow_layout().jumps()
                 .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
-        let loops = local_loops(&unit, &program.constants, header, &vec![None; unit.instructions.len()]);
+        let loops = local_loops(&unit, &program.constants, header, &vec![None; unit.instructions.len()], &Default::default());
         let reads = invariant_reads(&program, &unit, &loops, &vec![None; unit.instructions.len()], &|_| false);
         let captures: Vec<_> = reads.values().flatten().map(|read| read.pc).filter(|&pc|
             unit.instructions[pc].op().is_load_capture()
@@ -215,7 +215,7 @@ fn capture_entry_does_not_follow_a_copy_across_a_diamond() {
                 .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
                 .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1, "exercise an actual inline marker: {name}");
-        let loops = local_loops(&unit, &program.constants, 0, &vec![None; unit.instructions.len()]);
+        let loops = local_loops(&unit, &program.constants, 0, &vec![None; unit.instructions.len()], &Default::default());
         assert!(!loops.is_empty(), "exercise an eligible loop: {name}");
         let reads = invariant_reads(&program, &unit, &loops, &vec![None; unit.instructions.len()], &|_| false);
         assert!(!reads.values().flatten().any(|read|

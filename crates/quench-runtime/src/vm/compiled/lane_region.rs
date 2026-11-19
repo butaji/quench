@@ -1326,7 +1326,7 @@ fn stays_native(constants: &[Constant], instruction: WideInstruction, intrinsic:
 /// only read or replace existing own fields and array elements. Misses leave before guest effects.
 /// A sole native entry at the header can supply the same entry proofs.
 fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], start: usize,
-    intrinsics: &native_calls::Intrinsics) -> Vec<(usize, usize)> {
+    intrinsics: &native_calls::Intrinsics, global_reads: &crate::vm::global_facts::GlobalReads) -> Vec<(usize, usize)> {
     let instructions = &unit.instructions;
     let target = |instruction: &WideInstruction| instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize);
     let falls = |instruction: &WideInstruction| instruction.op().control_flow_layout().falls_through();
@@ -1340,7 +1340,10 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
         if (entries != 1 && !entry_header) || side
             || (header + 1..=back).contains(&start)
-            || !body.iter().enumerate().all(|(offset, candidate)| stays_native(constants, *candidate, native_calls::holds_in_loop(intrinsics, header + offset))) { continue }
+            || !body.iter().enumerate().all(|(offset, candidate)| {
+                let pc = header + offset;
+                stays_native(constants, *candidate, native_calls::holds_in_loop(intrinsics, pc) || native_calls::scalar_name_read(global_reads, pc))
+            }) { continue }
         loops.push((header, back));
     }
     loops
@@ -1899,7 +1902,7 @@ pub(super) fn lower(
     };
     lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &lowering.raises, super::facts::Seeds::observing(observed));
     lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
-    let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
+    let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics, global_reads);
     // One entry query of the call depth replaces each binding's helper with its cached
     // target probe (`cached_call_target`). A completed call leaves the depth it found.
     if !numeric && unit.frames.iter().any(|frame| frame.target.callee == CalleeBinding::Function) {
