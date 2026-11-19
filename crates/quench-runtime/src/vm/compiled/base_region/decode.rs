@@ -16,14 +16,7 @@ pub(super) use numeric::{staged_binary, staged_unary};
 pub(super) fn kind_of(operator: u32, relational: bool) -> Option<Kind> {
     use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
     if relational {
-        return NumberRelation::from_operator(operator).map(|relation| match relation {
-            NumberRelation::LessThan => Kind::Lt,
-            NumberRelation::LessEqual => Kind::Le,
-            NumberRelation::GreaterThan => Kind::Gt,
-            NumberRelation::GreaterEqual => Kind::Ge,
-            NumberRelation::Equal => Kind::Eq,
-            NumberRelation::NotEqual => Kind::Ne,
-        });
+        return NumberRelation::from_operator(operator).map(relation_kind);
     }
     let arithmetic = NumberArithmetic::from_operator(operator).map(|operation| match operation {
         NumberArithmetic::Add => Kind::Add,
@@ -40,6 +33,19 @@ pub(super) fn kind_of(operator: u32, relational: bool) -> Option<Kind> {
         NumberBitwise::ShiftRight => Kind::Shr,
         NumberBitwise::ShiftRightUnsigned => Kind::UShr,
     }))
+}
+
+/// The row kind of a Number relation: the compare-and-jump rows and the relational `kind_of` both take it.
+pub(super) fn relation_kind(relation: crate::vm::operations::NumberRelation) -> Kind {
+    use crate::vm::operations::NumberRelation;
+    match relation {
+        NumberRelation::LessThan => Kind::Lt,
+        NumberRelation::LessEqual => Kind::Le,
+        NumberRelation::GreaterThan => Kind::Gt,
+        NumberRelation::GreaterEqual => Kind::Ge,
+        NumberRelation::Equal => Kind::Eq,
+        NumberRelation::NotEqual => Kind::Ne,
+    }
 }
 
 /// An operand: a register of the activation or a constant `Value` word.
@@ -264,16 +270,8 @@ pub(super) fn binary(numbers: Numbers, instruction: WideInstruction) -> Result<D
 pub(super) fn relation_jump(numbers: Numbers, instruction: WideInstruction, comparison: crate::staged::compare::Comparison,
     (left, right): (crate::bytecode::Operand, crate::bytecode::Operand)) -> Result<Decoded, String> {
     use crate::staged::compare::Comparison;
-    use crate::vm::operations::NumberRelation;
     let kind = match comparison {
-        Comparison::Relation { relation, .. } => match relation {
-            NumberRelation::LessThan => Kind::Lt,
-            NumberRelation::LessEqual => Kind::Le,
-            NumberRelation::GreaterThan => Kind::Gt,
-            NumberRelation::GreaterEqual => Kind::Ge,
-            NumberRelation::Equal => Kind::Eq,
-            NumberRelation::NotEqual => Kind::Ne,
-        },
+        Comparison::Relation { relation, .. } => relation_kind(relation),
         Comparison::Equality { negated: false, .. } => Kind::Eq,
         Comparison::Equality { negated: true, .. } => Kind::Ne,
         _ => return Err("comparison: not a Number relation".to_string()),

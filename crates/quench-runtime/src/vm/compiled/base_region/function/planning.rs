@@ -89,17 +89,13 @@ pub(super) fn leaves(layout: &Layout, row: &Decoded) -> bool {
 /// hundreds of instructions where the interpreter's quickened handler spends tens). The design is a
 /// ladder, b-jit at most the interpreter's instructions on every operation (b-jit is the interpreter
 /// with dispatch and decode folded), so a loop region holding one on its loop is not built and the
-/// interpreter runs the loop. A call keeps its call row (`region_call_rows`): a loop that calls is
-/// built, its calls direct rows into the callee's cell or the helper row, and the tier-ladder gate
+/// interpreter runs the loop. A call keeps its call row in every build: a loop that calls is built,
+/// its calls direct rows into the callee's cell or the helper row, and the tier-ladder gate
 /// (`quench-gate --only ir-budget`: call_direct, call_closure, k03_call_add) holds the call protocol
 /// at most the interpreter's. A fast arm's slow arm (`Step::Fast`), a throw and a leave are off the
 /// loop's steady path.
 pub(super) fn interprets(row: &Decoded) -> bool {
-    match row.step {
-        Some(Step::Helper | Step::CallOut) => true,
-        Some(Step::Call(_)) => !region_call_rows(),
-        _ => false,
-    }
+    matches!(row.step, Some(Step::Helper | Step::CallOut))
 }
 
 /// The plan of row `pc`: nothing where control never reaches it, a leave row, or the row with the

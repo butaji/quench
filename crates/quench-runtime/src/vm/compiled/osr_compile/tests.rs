@@ -430,27 +430,26 @@ fn a_call_in_a_loop_region_runs_as_a_call_row() {
     assert_eq!(osr.exits, 0, "the call is no exit: {osr:?}");
 }
 
-/// (Loop regions keep call rows only under `with_region_call_rows` while calls cost more than the
-/// interpreter's, `function::interprets`.) A callee that throws inside a region's loop ends the run at its call (the callee's activation
+/// A callee that throws inside a region's loop ends the run at its call (the callee's activation
 /// is the lane's now), and the caller's handler catches it as the interpreter's does.
 #[test]
 fn a_throwing_callee_in_a_loop_region_is_caught_as_in_the_interpreter() {
-    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || crate::vm::compiled::base_region::function::with_region_call_rows(|| osr_run(
+    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
         "function pick(n) { if (n === 150000) throw new Error('at ' + n); return n + 1; }
          function sum(n, f) { var s = 0; try { for (var i = 0; i < n; i++) { s = (s + f(i)) | 0; } } catch (e) { print(e.message + ' after ' + s); } return s; }
-         print(sum(200000, pick));", "sum")));
+         print(sum(200000, pick));", "sum"));
     assert_eq!(output.len(), 2);
 }
 
-/// (Under `with_region_call_rows`, as above.) A callee that changes what the loop's entry recorded (a field, an array's length, a capture)
+/// A callee that changes what the loop's entry recorded (a field, an array's length, a capture)
 /// is seen by the rows after the call, which read it live.
 #[test]
 fn a_callee_that_changes_the_loops_snapshot_is_seen_after_the_call() {
-    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || crate::vm::compiled::base_region::function::with_region_call_rows(|| osr_run(
+    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
         "var box = { n: 1 }, xs = [1, 2, 3], shared = 0;
          function grow(i) { box.n = box.n + 1; xs.push(i); shared = shared + 1; return 0; }
          function run(n) { var t = 0; for (var i = 0; i < n; i++) { grow(i); t = (t + box.n + xs.length + shared) | 0; } return t; }
-         print(run(100000));", "run")));
+         print(run(100000));", "run"));
     assert_eq!(output.len(), 1);
 }
 

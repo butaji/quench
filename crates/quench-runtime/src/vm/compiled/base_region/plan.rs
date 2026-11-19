@@ -344,14 +344,15 @@ fn number_plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): 
 /// A number row partially evaluated on its immediate operand, the way the C compiler treats the same
 /// expression: a commutative operation takes its immediate second (the form a row encodes into its
 /// instruction), and an operation whose immediate is its neutral element (`x | 0`, `x + 0`) over an
-/// int32 operand into an int32 home is the move of that operand. Only where the library has the
-/// folded row: otherwise the row as decoded.
+/// int32 operand into an int32 home or a frame slot (which takes the int word) is the move of that operand. Only where
+/// the library has the folded row: otherwise the row as decoded.
 fn folded(kind: Kind, [dst, a, b]: [(Place, u64); 3]) -> ((Kind, [Place; 3]), [u64; 3]) {
     let int32 = |place: Place| matches!(place, Place::Pin(_) | Place::MemInt);
     let (a, b) = if kind.commutes() && a.0 == Place::Imm && b.0 != Place::Imm { (b, a) } else { (a, b) };
     let neutral = b.0 == Place::Imm && kind.neutral() == Some(b.1 as u32 as i32);
     let moved = (Kind::Move, [dst.0, a.0, Place::Mem]);
-    if neutral && int32(a.0) && int32(dst.0) && numeric::stencil(numeric::Row { kind: Kind::Move, dst: dst.0, a: a.0, b: Place::Mem, speculate: true }).is_ok() {
+    let home = int32(dst.0) || dst.0 == Place::Mem;
+    if neutral && int32(a.0) && home && numeric::stencil(numeric::Row { kind: Kind::Move, dst: dst.0, a: a.0, b: Place::Mem, speculate: true }).is_ok() {
         return (moved, [dst.1, a.1, 0]);
     }
     ((kind, [dst.0, a.0, b.0]), [dst.1, a.1, b.1])

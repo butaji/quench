@@ -105,32 +105,6 @@ pub(super) fn skipped() -> Planned {
     Planned::single(&EMPTY, [0; HOLES], None, None)
 }
 
-/// Whether loop regions keep their call rows: always in a build; a test chooses (`with_region_call_rows`),
-/// as the protocol tests (a callee's throw, a callee changing what the entry recorded) do.
-#[cfg(not(test))]
-fn region_call_rows() -> bool {
-    true
-}
-
-#[cfg(test)]
-fn region_call_rows() -> bool {
-    REGION_CALL_ROWS.with(std::cell::Cell::get)
-}
-
-#[cfg(test)]
-thread_local! {
-    static REGION_CALL_ROWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Runs `body` with the calling thread's loop regions keeping their call rows.
-#[cfg(test)]
-pub(in crate::vm) fn with_region_call_rows<R>(body: impl FnOnce() -> R) -> R {
-    let previous = REGION_CALL_ROWS.with(|rows| rows.replace(true));
-    let result = body();
-    REGION_CALL_ROWS.with(|rows| rows.set(previous));
-    result
-}
-
 /// What a body is built for: its function and registers, the rows whose int32 speculation failed
 /// (`widened`, by caller PC), the types its entry held by register (`seen`, its declared Numbers joining as Number types), and what
 /// the program holds Stable (`Known`), whose invalidation word its code reads where a call may
