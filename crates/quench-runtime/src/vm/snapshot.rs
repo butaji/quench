@@ -392,7 +392,9 @@ impl<H: Host> Vm<H> {
         self.refresh_call_refusal();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_realm");
-        self.programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;
+        let programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;
+        programs.keep_ahead_images(&self.programs);
+        self.programs = programs;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_programs");
         self.read_shapes(&mut reader)?;

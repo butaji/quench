@@ -58,6 +58,15 @@ impl ProgramStore {
         self.ahead.borrow_mut().push(Rc::new(images));
     }
 
+    /// Keeps the images `from` had loaded. They are an input to the process — the bundle its
+    /// image carries — not state of the snapshot a restore replaces, so a store restored over
+    /// the one that loaded them still serves them.
+    pub(in crate::vm) fn keep_ahead_images(&self, from: &Self) {
+        let loaded = from.ahead.borrow();
+        if loaded.is_empty() { return; }
+        self.ahead.borrow_mut().extend(loaded.iter().cloned());
+    }
+
     /// The published body of `key`, if one still holds.
     pub(in crate::vm) fn installed_lane(&self, key: &LaneKey) -> Option<Rc<PublishedLaneMethod>> {
         self.lane_installed.borrow().get(key).and_then(Weak::upgrade).filter(|published| published.is_published())
