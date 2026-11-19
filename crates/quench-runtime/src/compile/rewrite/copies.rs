@@ -1,21 +1,23 @@
 //! Copy propagation over the bytecode: a read of a `Move`'s destination takes its source.
 use super::*;
 
-/// Lets the first reader of a `Move`'s destination read the move's source instead when the move
-/// feeds only that reader: `d = Move s; …; x(d)` becomes `Nop; …; x(s)`, the forward
-/// counterpart of `coalesce_distant_producer_moves`. Control reaches the reader only through the
-/// move, by instructions that fall through without writing `s` or `d` (`move_reader`); `d` is
-/// dead after it and not promoted local storage (whose writes legacy `f.arguments` reflection
-/// reads), and no instruction is inside a handler region. Only register, operand and field-base
-/// fields are rewritten; the reader's use and definition masks confirm the rewrite trades `d`
-/// for `s` and nothing else. A read of a binding a statement copied before evaluating its other
-/// operands (`o.v = o.v + 1`) then reads the binding: each tier sees one value, not a copy.
+/// Lets the readers of a `Move`'s destination read the move's source instead when the move
+/// feeds only them: `d = Move s; …; x(d); …; y(d)` becomes `Nop; …; x(s); …; y(s)`, the
+/// forward counterpart of `coalesce_distant_producer_moves`. Control reaches the readers only
+/// through the move, by instructions that fall through without writing `s` or `d`
+/// (`move_readers`); the moved value is dead where that span ends, `d` is not promoted local
+/// storage (whose writes legacy `f.arguments` reflection reads), and no instruction is inside
+/// a handler region. Only register, operand and field-base fields are rewritten; each
+/// reader's use and definition masks confirm the rewrite trades `d` for `s` and nothing else.
+/// A read of a binding a statement copied before evaluating its other operands
+/// (`o.v = o.v + 1`, `a[i] += x`, which reads `a` and `i` twice) then reads the binding: each
+/// tier sees one value, not a copy.
 ///
-/// Each rewrite updates the transfer masks of the reader and of the dropped move at once, so
+/// Each rewrite updates the transfer masks of its readers and of the dropped move at once, so
 /// a later move feeding the same reader forwards too: `t = Move i; u = Move n; Lt t, u`
 /// becomes `Lt i, n`, the two-operand reads of loop bounds and element accesses
-/// (`a[i]`, `i < n`). The live sets a rewrite leaves stale are those strictly after the move
-/// up to its reader, which no later forward consults (the note after this function).
+/// (`a[i]`, `i < n`). The live sets a rewrite leaves stale lie inside its span, and no later
+/// forward consults them (the note after this function).
 pub(super) fn forward_move_sources(
     function: &mut BcFunction,
     methods: &(impl liveness::MethodArguments + ?Sized),
@@ -34,27 +36,33 @@ pub(super) fn forward_move_sources(
     for pc in 0..function.code.len() {
         let uses = |instruction: Instr| liveness::uses(instruction.as_wide(), methods, field_sites, superinstructions);
         let definitions = |instruction: Instr| liveness::definitions(instruction.as_wide(), superinstructions);
-        if let Some((at, rewritten)) = forwarded(function, &analysis, &scope, pc, (&uses, &definitions)) {
-            function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
+        let Some(rewrites) = forwarded(function, &analysis, &scope, pc, (&uses, &definitions)) else {
+            continue;
+        };
+        function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
+        analysis.transfers[pc] = (RegisterSet::default(), RegisterSet::default());
+        changed.push(pc);
+        for (at, rewritten) in rewrites {
             function.code[at] = rewritten;
-            analysis.transfers[pc] = (RegisterSet::default(), RegisterSet::default());
             analysis.transfers[at] = (uses(rewritten), definitions(rewritten));
-            changed.extend([pc, at]);
+            changed.push(at);
         }
     }
     hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
 }
 
-// Why the live sets a forward leaves stale are never read again:
-// forwarding `d = Move s` at `pc` into its reader at `at` changes liveness only at the
-// positions `pc + 1 ..= at`. Before `pc` nothing changes: `s` was live there (the move read
-// it) and stays live (the reader reads it, and nothing between writes it), and `d` was dead
-// there (the move wrote it) and stays dead (its one reader no longer reads it). After `at`
-// nothing changes, as the reader's successors and their code are untouched; a jump target
-// inside the span would be a protected position, which `move_reader` refuses. A later
-// forward reads live sets only through `live_out` of its own reader: a reader past `at`
-// reads untouched sets, and one inside the span asks only about its own destination, which
-// is neither `d` nor `s`, since `move_reader` refused any write of either inside the span.
+// Why the live sets a forward leaves stale are never read again: forwarding `d = Move s` at
+// `pc` into its readers changes liveness only at the positions after `pc` up to the end of
+// its span, and only in the bits of `d` and `s`. Before `pc` nothing changes: `s` was live
+// there (the move read it) and stays live (a reader reads it, and nothing in the span writes
+// it), and `d` was dead there (the move wrote it) and stays dead (no reader reads it any
+// more, and the moved value is dead where the span ends). After the span nothing changes, as
+// its code is untouched and the span is entered only from the move: a jump target inside it
+// would be a protected position, where `move_readers` ends the span. A later forward reads
+// live sets only about its own destination `d'`, at positions after its own move: a move
+// inside an earlier span writes neither `d` nor `s` (any write of either ends that span
+// there, and the writing instruction's own queries lie past it), so `d'` is neither, and the
+// stale bits are never the ones asked about.
 
 /// What copy propagation may not cross or rewrite in a function.
 struct Scope {
@@ -104,21 +112,36 @@ fn handled_pcs(function: &BcFunction) -> crate::bitset::BitSet {
 
 type Masks<'m> = (&'m dyn Fn(Instr) -> RegisterSet, &'m dyn Fn(Instr) -> RegisterSet);
 
-/// The reader of the `Move` at `pc` and that reader rewritten to read the move's source.
-fn forwarded(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: usize, (uses, definitions): Masks<'_>)
-    -> Option<(usize, Instr)> {
+/// The readers of a `Move`'s destination, as `move_readers` finds them; most moves have one.
+type Readers = smallvec::SmallVec<[usize; 4]>;
+
+/// Each reader of the `Move` at `pc`, rewritten to read the move's source.
+fn forwarded(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: usize, masks: Masks<'_>)
+    -> Option<smallvec::SmallVec<[(usize, Instr); 4]>> {
     let mov = function.code[pc];
     if !scope.forwards(mov, pc) {
         return None;
     }
     let (source, destination) = (mov.register_b(), mov.result_register());
-    let at = move_reader(function, &analysis.transfers, scope, pc)?;
+    let readers = move_readers(function, analysis, scope, pc)?;
     // Legacy `f.arguments` reflection may rewrite a parameter during the instructions between.
+    if register_bit(source) & scope.parameters != 0 && readers.iter().any(|&at| at > pc + 1) {
+        return None;
+    }
+    readers.into_iter().map(|at| rewritten_reader(function, analysis, at, (source, destination), masks)).collect()
+}
+
+/// The reader at `at` reading register `source` where it read `destination`, when its masks
+/// confirm the rewrite trades the one register for the other and nothing else.
+fn rewritten_reader(
+    function: &BcFunction,
+    analysis: &CodeLiveness,
+    at: usize,
+    (source, destination): (Register, Register),
+    (uses, definitions): Masks<'_>,
+) -> Option<(usize, Instr)> {
     let consumer = function.code[at];
-    let crossed = at > pc + 1 && register_bit(source) & scope.parameters != 0;
-    if crossed || consumer.is_wide()
-        || liveness::live_out(&analysis.successors, &analysis.live, at) & register_bit(destination) != 0
-    {
+    if consumer.is_wide() {
         return None;
     }
     let rewritten = substitute_register_read(consumer, destination, source)?;
@@ -127,27 +150,37 @@ fn forwarded(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: 
     (uses(rewritten) == expected && definitions(rewritten) == written).then_some((at, rewritten))
 }
 
-/// The first instruction after the `Move` at `pc` that reads its destination, when control
-/// reaches it only from the `Move`, through instructions that fall through without writing its
-/// source or destination.
-fn move_reader(function: &BcFunction, transfers: &[(RegisterSet, RegisterSet)], scope: &Scope, pc: usize) -> Option<usize> {
+/// The instructions after the `Move` at `pc` that read its destination while it holds the
+/// moved value. The span they lie in starts at the move and runs through instructions that
+/// fall through without writing the move's source or destination; it ends before a protected
+/// position, a handler's region or the window's end, or at an instruction that writes either
+/// register or leaves the block. The moved value must be dead where the span ends: not live
+/// into the position it stops before, or not live out of the instruction it stops at unless
+/// that instruction overwrites the destination.
+fn move_readers(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: usize) -> Option<Readers> {
     const WINDOW: usize = 8;
     let mov = function.code[pc];
     let (source, destination) = (register_bit(mov.register_b()), register_bit(mov.result_register()));
-    for at in (pc + 1..function.code.len()).take(WINDOW) {
-        let (read, written) = transfers[at];
+    let found = |readers: Readers, dead: bool| (dead && !readers.is_empty()).then_some(readers);
+    let mut readers = Readers::new();
+    let end = (pc + 1 + WINDOW).min(function.code.len());
+    for at in pc + 1..end {
         if scope.protected.contains(at) || scope.in_handler(at) {
-            return None;
+            return found(readers, analysis.live[at] & destination == 0);
         }
+        let (read, written) = analysis.transfers[at];
         if read & destination != 0 {
-            return Some(at);
+            readers.push(at);
         }
-        let flow = fixed_width(function.code[at], &function.wide).op().control_flow_layout();
+        let instruction = fixed_width(function.code[at], &function.wide);
         if written & (source | destination) != 0
-            || !flow.only_falls_through()
+            || !instruction.op().control_flow_layout().only_falls_through()
+            || instruction.returns_from_frame()
         {
-            return None;
+            let dead = written & destination != 0
+                || liveness::live_out(&analysis.successors, &analysis.live, at) & destination == 0;
+            return found(readers, dead);
         }
     }
-    None
+    found(readers, analysis.live.get(end).is_none_or(|&live| live & destination == 0))
 }
