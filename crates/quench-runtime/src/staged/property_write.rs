@@ -76,7 +76,7 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
         StorePlan::Entry => {
             // A raw-double slot takes the binary64 word; a frame with no view of it leaves.
             if frame.entry_slot_raw() {
-                let number = number.or_else(|| { let zero = stage.constant(0); let never = stage.ne_imm(zero, 0u32); stage.guard(never, miss).map(|()| zero) })?;
+                let number = number.or_else(#[inline(always)] || { let zero = stage.constant(0); let never = stage.ne_imm(zero, 0u32); stage.guard(never, miss).map(|()| zero) })?;
                 return frame.entry_slot_store(stage, site, number, miss).map(|()| number);
             }
             let value = source.tagged(stage, frame);
@@ -117,7 +117,7 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
     };
     let base = base.map_or(FieldBase::THIS, FieldBase::register);
     let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
-    let slow = move |stage: &mut S, frame: &mut F, miss: S::Miss| {
+    let slow = #[inline(always)] move |stage: &mut S, frame: &mut F, miss: S::Miss| {
         let value = source.tagged(stage, frame);
         vm_store(stage, frame, join, at, (atom, site), (value, fact), miss)
     };
@@ -125,7 +125,7 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
         slow(stage, frame, miss)?;
     } else {
         frame.stored(stage, at.0, miss,
-            |stage, frame, miss| in_place(stage, frame, at, arms, (value, fact, number), miss), slow)?;
+            #[inline(always)] |stage, frame, miss| in_place(stage, frame, at, arms, (value, fact, number), miss), slow)?;
     }
     Some(source.answer())
 }

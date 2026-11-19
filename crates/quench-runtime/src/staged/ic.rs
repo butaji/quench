@@ -111,7 +111,10 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
             IcOp::Prototype => {
                 let link = proto_link(stage, at.record);
                 let id = proto_object_record_id(stage, link, miss)?;
-                let records = records.expect("a read through a prototype has the record table");
+                // A read through a prototype has the record table; a plan without it leaves, with
+                // no panic path, so a stencil's loop over the ops stays call-free and unrolls.
+                debug_assert!(records.is_some(), "a read through a prototype has the record table");
+                let records = records?;
                 at = Reached::bare(object_record_at(stage, records, id));
             }
             IcOp::LoadSlot { slot, form, storage_len, rep } => return load_slot(stage, &at, (slot, rep), form, storage_len, miss),

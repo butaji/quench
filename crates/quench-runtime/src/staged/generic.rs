@@ -155,8 +155,8 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     let result = if negated { stage.not(equal) } else { equal };
     let (decision, fact) = frame.boolean(stage, result);
     let call = CallOut::Equality { left, right, strict, negated };
-    let value = stage.choose_leaving(decided, |_| Some(decision),
-        |stage| frame.vm_step(stage, call, Some(destination)).map(|(word, _)| word));
+    let value = stage.choose_leaving(decided, #[inline(always)] |_| Some(decision),
+        #[inline(always)] |stage| frame.vm_step(stage, call, Some(destination)).map(#[inline(always)] |(word, _)| word));
     let Some(value) = value else { return Step::Unresolved };
     frame.write(stage, destination, value, fact);
     Step::Value(value)

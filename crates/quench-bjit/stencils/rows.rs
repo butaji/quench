@@ -9,7 +9,7 @@
 //! its own slice of the generated instances (one row per kind, places and speculation); the
 //! target's fixed rows (`entry*.rs`) belong to the shard built with `--cfg fixed_rows`.
 #![no_std]
-#![feature(explicit_tail_calls, rust_preserve_none_cc, core_float_math)]
+#![feature(explicit_tail_calls, rust_preserve_none_cc, core_float_math, stmt_expr_attributes)]
 #![allow(incomplete_features, non_upper_case_globals, dead_code, unused_imports)]
 extern crate core as std;
 

@@ -541,8 +541,8 @@ pub(crate) fn read_slot_value<S: Stage>(stage: &mut S, layout: Layout<S::Word, S
     match (rep, layout.slots) {
         (Representation::Float64, Slots::Flat(_)) => { let number = read_slot(stage, layout, slot, rep); stage.box_number(number) }
         (Representation::Float64, Slots::Either { packed, inline, flat }) => stage.choose(inline,
-            |stage| packed_read(stage, packed, slot, Representation::Tagged),
-            |stage| { let number = flat_read(stage, flat, slot, rep); stage.box_number(number) }),
+            #[inline(always)] |stage| packed_read(stage, packed, slot, Representation::Tagged),
+            #[inline(always)] |stage| { let number = flat_read(stage, flat, slot, rep); stage.box_number(number) }),
         _ => read_slot(stage, layout, slot, Representation::Tagged),
     }
 }
