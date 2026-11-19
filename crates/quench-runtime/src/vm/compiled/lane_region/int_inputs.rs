@@ -21,10 +21,18 @@ impl Lowering<'_, '_> {
             .flat_map(|(_, instruction)| [instruction.operand_b(), instruction.operand_c()])
             .filter_map(Operand::register_index)
             .filter(|register| *register < self.unit.caller_registers && !written.contains(register)
-                && self.int_entries.iter().any(|(entry, _)| entry == register) && self.is_live(header, *register)).collect();
+                && self.int_input(*register) && self.is_live(header, *register)).collect();
         inputs.sort_unstable();
         inputs.dedup();
         inputs
+    }
+
+    /// Whether `register` may enter as an int32: an entry this compilation observed, or, for code
+    /// lowered before any run (`EntryInts::Hypothesized`), any input — conformance checks the
+    /// assumed int32 once at the entry and leaves where the value is not one.
+    fn int_input(&self, register: Register) -> bool {
+        self.entry_ints == EntryInts::Hypothesized
+            || self.int_entries.iter().any(|(entry, _)| *entry == register)
     }
 
     /// Takes each input of the loop's index arithmetic (`index_inputs`) for an int32 contract of

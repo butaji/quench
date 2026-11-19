@@ -550,6 +550,9 @@ struct Lowering<'a, 'f> {
     views: ElementViews,
     /// Whether loops version their bounds on entry (`RegionPlan::entry_bounds`).
     entry_bounds: bool,
+    /// Whether the entry's int32 index inputs are observed or assumed and guarded once
+    /// (`RegionPlan::entry_ints`).
+    entry_ints: EntryInts,
     /// Successful write-through stores defining a loop-header field's SSA variable.
     loop_fields: Vec<LoopField>,
     loop_stores: BTreeMap<usize, LoopStore>,
@@ -666,6 +669,17 @@ pub(in crate::vm) enum ElementViews {
     #[default]
     Dense,
     Typed(Option<crate::heap::TypedArrayKind>),
+}
+
+/// How an entry treats the input registers its index arithmetic reads: observed int32 at
+/// compilation (a run proved it, so the entry needs no check of its own), or hypothesized — code
+/// lowered before any run assumes each is an int32, and conformance checks it once at the entry
+/// (a value that is not leaves at the exact PC, and the general body runs the loop instead).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum EntryInts {
+    #[default]
+    Observed,
+    Hypothesized,
 }
 
 impl ElementViews {
@@ -1383,6 +1397,9 @@ pub(super) struct RegionPlan {
     /// Whether loops may version their bounds on entry (`int_ranges::prove_loops`): an OSR site
     /// whose entries kept missing compiles again without (`LoopTier::missed_entry`).
     pub(super) entry_bounds: bool,
+    /// Whether the entry's int32 index inputs are observed (`EntryInts::Observed`) or assumed
+    /// and guarded once (`EntryInts::Hypothesized`).
+    pub(super) entry_ints: EntryInts,
 }
 
 /// Futamura's first projection for one region: the same `lower` a lane body, a static typed
@@ -1445,7 +1462,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.entry_fields, self.number_reads, self.int_entries, self.typed_captures, self.int_captures, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
+            self.isa, self.entry_fields, self.number_reads, self.int_entries, self.typed_captures, self.int_captures, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds, self.plan.entry_ints)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1469,7 +1486,7 @@ pub(super) fn lower_body(
     let isa = super::jit_backend::target_isa()?;
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
         generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], typed_captures: &[], int_captures: &[],
-        plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
+        plan: RegionPlan { entry_bounds: true, entry_ints: EntryInts::Observed, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::Body, views: ElementViews::Dense } };
     // The scalar entry lowers first: the body calls it only where it exists.
     let abi = scalar::ScalarAbi::of(program, function_id, unit, direct).filter(|_| entry.is_none());
@@ -1510,6 +1527,7 @@ pub(super) fn lower(
     completion: Completion,
     views: ElementViews,
     entry_bounds: bool,
+    entry_ints: EntryInts,
 ) -> Option<LoweredRegion> {
     // A loop entry may take the rotated residual of its proven condition.
     let residual = super::static_loops::specialize(program, unit, coverage.entry())
@@ -1658,6 +1676,7 @@ pub(super) fn lower(
         array_vars: BTreeMap::new(),
         views,
         entry_bounds,
+        entry_ints,
         loop_fields: Vec::new(),
         loop_stores: BTreeMap::new(),
         ranges: int_ranges::IntRanges::new(0),

@@ -1338,7 +1338,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
         fields: &[], global_reads, facts, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
         entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-        plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
+        plan: lane_region::RegionPlan { entry_bounds: true, entry_ints: lane_region::EntryInts::Observed, coverage: lane_region::Coverage::Prefix,
             completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok().filter(|region| region.native != 0)
 }
@@ -1368,6 +1368,9 @@ pub(in crate::vm::compiled) fn ahead_loop_region(program: &ResidualProgram, func
     // (`ElementViews::Typed(None)`, a dynamic kind) rather than the dense indexed path being
     // taken per element. A loop whose typed view cannot be proved lowers dense instead.
     let plan = |views| lane_region::RegionPlan { entry_bounds: true,
+        // No run observed this loop's inputs: each int32 the index arithmetic reads is assumed
+        // and checked once at the entry, instead of every use converting a Number.
+        entry_ints: lane_region::EntryInts::Hypothesized,
         coverage: lane_region::Coverage::Loop { header: region.header as usize, backedge: region.backedge as usize, poll: true },
         completion: lane_region::Completion::Body, views };
     let mut failure = String::from("region lowers no record");
