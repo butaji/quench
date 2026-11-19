@@ -245,7 +245,10 @@ fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hol
         (_, false) => Heap::IcSet { int },
         (_, true) => Heap::IcKnownSet { int },
     };
-    let row = HeapRow { heap: ic, dst, a, b: Place::Mem, entry: true };
+    // A known get whose slot the fact store proved a Number (`Decoded::typed`, kept by `repr::keep_typed_reads`)
+    // takes the row variant that delivers to its pinned double untested: its entry flag cleared.
+    let untested = ic == Heap::IcKnownGet && decoded.typed.is_some() && matches!(dst, Place::PinF(_));
+    let row = HeapRow { heap: ic, dst, a, b: Place::Mem, entry: !untested };
     let holes = heap_holes(decoded, homes, ic, false, [dst_hole, a_hole, 0]);
     let mut fast = Planned::single(base_rows::stencil(row)?, holes, Some(pc + 1), None);
     fast.exits = vec![Exit::Ahead(1)];

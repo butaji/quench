@@ -205,12 +205,14 @@ pub(super) fn held_layouts(decoded: &[Decoded]) -> Box<[GlobalLayoutFact]> {
     distinct(decoded.iter().filter_map(|row| row.global.map(|access| access.slot.layout).or_else(|| row.lexical.map(|slot| slot.layout))))
 }
 
-/// The slot types the rows rely on, each once: a write of another type retires the code.
+/// The slot types the rows rely on, each once: a global object's slots, and the field slots a read takes
+/// unchecked (`Decoded::typed`). A write of another type retires the code.
 pub(super) fn held_slot_types(decoded: &[Decoded]) -> Box<[SlotDependency]> {
     let mut types: Vec<SlotDependency> = decoded
         .iter()
         .filter_map(|row| row.global)
         .filter_map(|access| access.slot.dependency)
+        .chain(decoded.iter().filter_map(|row| row.typed))
         .collect();
     types.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
     types.dedup();

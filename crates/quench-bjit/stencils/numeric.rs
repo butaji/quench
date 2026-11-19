@@ -19,7 +19,7 @@ use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, Nu
 pub(crate) use crate::words::*;
 
 pub(crate) use crate::codes::*;
-pub(crate) use crate::places::{deliver, index_of, number_word};
+pub(crate) use crate::places::{deliver, deliver_number, index_of, number_word};
 
 const fn arithmetic_of(kind: u8) -> NumberArithmetic {
     match kind {

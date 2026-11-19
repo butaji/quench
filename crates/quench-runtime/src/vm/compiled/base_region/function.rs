@@ -586,9 +586,9 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
         .map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else { row })
         .collect();
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
-    let seen = super::declared::seen(function, ending, spec.seen);
-    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), &seen);
-    proofs::prove(&span, &mut decoded, &reached, &super::declared::exact_objects(function));
+    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), spec.seen);
+    proofs::prove(&span, &mut decoded, &reached);
+    keep_typed_reads(&homes, &mut decoded);
     if ending == Ending::Region && let Some(generic) = decoded.iter().enumerate().find(|(k, row)| reached.contains(*k) && interprets(row)) {
         return Err(format!("interprets in the loop: row {} {:?}", generic.0, generic.1.step));
     }
