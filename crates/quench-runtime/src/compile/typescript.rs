@@ -81,12 +81,13 @@ fn languages(ty: &TSType<'_>, names: &TypeNames<'_>, depth: u8) -> u16 {
         TSType::TSNullKeyword(_) => language_bit(V::Null),
         TSType::TSObjectKeyword(_) => language_bit(V::Object) | language_bit(V::Function),
         TSType::TSArrayType(_) | TSType::TSTupleType(_) => bits::ARRAY,
-        TSType::TSTypeReference(reference) => match &reference.type_name {
-            TSTypeName::IdentifierReference(name) if matches!(name.name.as_str(), "Array" | "ReadonlyArray") => bits::ARRAY,
-            _ => DECLARED_ANY,
-        },
         TSType::TSTypeOperatorType(operator) if matches!(operator.operator, TSTypeOperatorOperator::Readonly) =>
-            declared_language(&operator.type_annotation),
+            languages(&operator.type_annotation, names, depth),
+        // `keyof X` is a property key: a string, a number or a symbol. `unique symbol` is a symbol.
+        TSType::TSTypeOperatorType(operator) if matches!(operator.operator, TSTypeOperatorOperator::Keyof) =>
+            language_bit(V::String) | language_bit(V::Number) | language_bit(V::Symbol),
+        TSType::TSTypeOperatorType(operator) if matches!(operator.operator, TSTypeOperatorOperator::Unique) =>
+            language_bit(V::Symbol),
         // A literal of properties and methods is a plain object's type. A call or construct signature
         // admits functions, and an empty literal admits every primitive: neither names the plain set.
         TSType::TSTypeLiteral(literal) if !literal.members.is_empty() && literal.members.iter().all(|member|
@@ -101,8 +102,57 @@ fn languages(ty: &TSType<'_>, names: &TypeNames<'_>, depth: u8) -> u16 {
         },
         TSType::TSParenthesizedType(inner) => languages(&inner.type_annotation, names, depth),
         TSType::TSUnionType(union) => union.types.iter().fold(0, |set, member| set | languages(member, names, depth)),
-        TSType::TSTypeReference(reference) => reference_languages(reference, names, depth),
+        TSType::TSIntersectionType(intersection) => intersection_languages(&intersection.types, names, depth),
+        // A conditional type is one of its branches. Its `infer` names are type-level bindings, which
+        // `TypeNames` already makes unknown wherever they appear, so a branch naming one stays open.
+        TSType::TSConditionalType(conditional) =>
+            languages(&conditional.true_type, names, depth) | languages(&conditional.false_type, names, depth),
+        // A mapped type is an object, unless it maps over `keyof T`: a homomorphic mapped type over a
+        // primitive `T` is that primitive, and a key remapping (`as`) can produce `{}`.
+        TSType::TSMappedType(mapped) if mapped.name_type.is_none() && !is_keyof(&mapped.constraint) =>
+            language_bit(V::Object),
+        TSType::TSTypeReference(reference) => match &reference.type_name {
+            TSTypeName::IdentifierReference(name) if matches!(name.name.as_str(), "Array" | "ReadonlyArray") => bits::ARRAY,
+            _ => reference_languages(reference, names, depth),
+        },
+        // `this`, `typeof x`, `T[K]`, `import()`, qualified names and the rest are DECLARED_ANY.
         _ => DECLARED_ANY,
+    }
+}
+
+/// The object-family bits: `OBJECT`, `FUNCTION`, and the exact plain object and array bits.
+const OBJECT_FAMILY: u16 = bits::OBJECT | bits::FUNCTION | bits::ARRAY | bits::OBJECT_PLAIN;
+
+/// Whether `ty` is `keyof X`.
+fn is_keyof(ty: &TSType<'_>) -> bool {
+    matches!(ty, TSType::TSTypeOperatorType(operator) if operator.operator == TSTypeOperatorOperator::Keyof)
+}
+
+/// The language types of an intersection: the members' common values. Every member must be known
+/// (an open member is `DECLARED_ANY`). An empty common set is not trusted (a brand such as
+/// `string & { __brand: 1 }` has no value this pass can name), so it is `DECLARED_ANY` too.
+///
+/// A plain object or an array is an object (`OBJECT` is set with it, as a tag sets both), so the
+/// members compare on the `OBJECT` family bit. An intersection of object types is `OBJECT`, and
+/// keeps `OBJECT_PLAIN` only when every member is plain-object-shaped.
+fn intersection_languages(members: &[TSType<'_>], names: &TypeNames<'_>, depth: u8) -> u16 {
+    let mut common = DECLARED_ANY;
+    let mut all_plain = true;
+    for member in members {
+        let set = languages(member, names, depth);
+        if set == DECLARED_ANY {
+            return DECLARED_ANY;
+        }
+        all_plain &= (set & !bits::OBJECT_PLAIN) == 0;
+        let object = if set & (bits::OBJECT_PLAIN | bits::ARRAY) != 0 { bits::OBJECT } else { 0 };
+        common &= set | object;
+    }
+    if common == 0 {
+        DECLARED_ANY
+    } else if common & (bits::OBJECT | bits::FUNCTION) == 0 || all_plain {
+        common
+    } else {
+        (common & !OBJECT_FAMILY) | bits::OBJECT | (common & bits::FUNCTION)
     }
 }
 
@@ -124,14 +174,53 @@ fn reference_languages(reference: &TSTypeReference<'_>, names: &TypeNames<'_>, d
         Some(Named::Class(_)) => language_bit(V::Object),
         Some(Named::Enum(bits)) => bits,
         Some(Named::Unknown) => DECLARED_ANY,
-        None => builtin_languages(identifier.name.as_str()),
+        None => builtin_languages(identifier.name.as_str(), reference.type_arguments.as_deref(), names, depth),
     }
 }
 
-/// The language types of a builtin global type the program does not declare: the object
+/// The language types of a builtin global type the program does not declare, with its type
+/// arguments: the library generics whose result is known from their arguments, else the builtin
+/// object globals (`builtin_object`).
+///
+/// `Partial`, `Required` and `Readonly` map their argument: a homomorphic mapped type is the
+/// argument's primitive where it is one, and an object otherwise. `Pick` keeps the argument's
+/// primitive too, and the object it names; `Pick` over non-literal keys and `Omit` (which can be
+/// `{}`, admitting every primitive) stay open. `NonNullable` removes `null` and `undefined`, and
+/// is open where nothing is left to name. `Record` over `string` keys is an object, unless its
+/// values are `any` or `unknown` (then a function admits it too).
+fn builtin_languages(name: &str, arguments: Option<&TSTypeParameterInstantiation<'_>>, names: &TypeNames<'_>, depth: u8) -> u16 {
+    use crate::ValueType as V;
+    let params: &[TSType<'_>] = match arguments {
+        Some(arguments) => arguments.params.as_slice(),
+        None => &[],
+    };
+    match (name, params) {
+        ("Partial" | "Required" | "Readonly", [target]) => languages(target, names, depth) | language_bit(V::Object),
+        ("NonNullable", [target]) => match languages(target, names, depth) & !(language_bit(V::Null) | language_bit(V::Undefined)) {
+            0 => DECLARED_ANY,
+            set => set,
+        },
+        ("Pick", [target, keys]) if string_literal_keys(keys) => languages(target, names, depth) | language_bit(V::Object),
+        ("Record", [key, value]) if (matches!(key, TSType::TSStringKeyword(_)) || string_literal_keys(key))
+            && !matches!(value, TSType::TSAnyKeyword(_) | TSType::TSUnknownKeyword(_)) => language_bit(V::Object),
+        _ => builtin_object(name),
+    }
+}
+
+/// Whether `ty` names one or more string keys: a string literal, or a union of them.
+fn string_literal_keys(ty: &TSType<'_>) -> bool {
+    match ty {
+        TSType::TSLiteralType(literal) => matches!(literal.literal, TSLiteral::StringLiteral(_)),
+        TSType::TSUnionType(union) => !union.types.is_empty() && union.types.iter().all(string_literal_keys),
+        TSType::TSParenthesizedType(inner) => string_literal_keys(&inner.type_annotation),
+        _ => false,
+    }
+}
+
+/// The language types of a builtin object global the program does not declare: the object
 /// globals, `Function` for callables. `String`, `Number` and `Boolean` admit primitives and
 /// boxes alike, and `Object` admits anything, so they stay `DECLARED_ANY`.
-fn builtin_languages(name: &str) -> u16 {
+fn builtin_object(name: &str) -> u16 {
     use crate::ValueType as V;
     match name {
         "Function" => language_bit(V::Function),
@@ -143,13 +232,18 @@ fn builtin_languages(name: &str) -> u16 {
 }
 
 /// The language types of the elements an array type holds: `T[]`, `readonly T[]`, `Array<T>` and
-/// `ReadonlyArray<T>` hold `T`s. Any other type, or an array of an open type, is `DECLARED_ANY`.
+/// `ReadonlyArray<T>` hold `T`s, and a tuple holds the union of its elements (a rest element's
+/// elements included, an optional element may be `undefined`). Any other type, an empty tuple, or
+/// an array of an open type, is `DECLARED_ANY`.
 pub(super) fn element_languages(ty: &TSType<'_>, names: &TypeNames<'_>) -> u16 {
     match ty {
         TSType::TSArrayType(array) => declared_language_in(&array.element_type, names),
+        TSType::TSParenthesizedType(inner) => element_languages(&inner.type_annotation, names),
         TSType::TSTypeOperatorType(operator) if operator.operator == TSTypeOperatorOperator::Readonly => {
             element_languages(&operator.type_annotation, names)
         }
+        TSType::TSTupleType(tuple) if !tuple.element_types.is_empty() => tuple.element_types.iter()
+            .fold(0, |set, element| set | tuple_element_languages(element, names)),
         TSType::TSTypeReference(reference) => match (&reference.type_name, reference.type_arguments.as_deref()) {
             (TSTypeName::IdentifierReference(name), Some(arguments))
                 if matches!(name.name.as_str(), "Array" | "ReadonlyArray") && arguments.params.len() == 1 =>
@@ -159,6 +253,25 @@ pub(super) fn element_languages(ty: &TSType<'_>, names: &TypeNames<'_>) -> u16 {
             _ => DECLARED_ANY,
         },
         _ => DECLARED_ANY,
+    }
+}
+
+/// The language types of one tuple element: `T`, `T?` (with `undefined`), `...T` (the elements of
+/// the array `T`), and a labelled `label: T` or `label?: T` (or `...label: T[]`).
+fn tuple_element_languages(element: &TSTupleElement<'_>, names: &TypeNames<'_>) -> u16 {
+    use crate::ValueType as V;
+    match element {
+        TSTupleElement::TSOptionalType(optional) =>
+            declared_language_in(&optional.type_annotation, names) | language_bit(V::Undefined),
+        TSTupleElement::TSRestType(rest) => element_languages(&rest.type_annotation, names),
+        _ => match element.as_ts_type() {
+            Some(TSType::TSNamedTupleMember(member)) => {
+                let set = tuple_element_languages(&member.element_type, names);
+                if member.optional { set | language_bit(V::Undefined) } else { set }
+            }
+            Some(ty) => declared_language_in(ty, names),
+            None => DECLARED_ANY,
+        },
     }
 }
 
@@ -321,6 +434,83 @@ mod tests {
         assert_eq!(declared_return("function f(): Map<string, number> { return new Map(); }"), bit(V::Object));
         assert_eq!(declared_return("function f(): Function { return () => 1; }"), bit(V::Function));
         assert_eq!(declared_return("function f(): String { return 'x'; }"), super::DECLARED_ANY);
+    }
+
+    #[test]
+    fn structural_and_library_forms_declare_their_language_sets() {
+        use crate::ValueType as V;
+        let bit = |kind: V| crate::typed_ir::Languages::of(kind).bits();
+        let (plain, array) = (crate::staged::value::language::OBJECT_PLAIN, crate::staged::value::language::ARRAY);
+        let any = super::DECLARED_ANY;
+        // Literal types and the type operators.
+        assert_eq!(declared_return("function f(): 1.5 { return 1.5; }"), bit(V::Number));
+        assert_eq!(declared_return("function f(): true { return true; }"), bit(V::Boolean));
+        assert_eq!(declared_return("function f(): 'a' { return 'a'; }"), bit(V::String));
+        assert_eq!(declared_return("function f(): `a${string}` { return 'ab'; }"), bit(V::String));
+        assert_eq!(declared_return("function f(): 10n { return 10n; }"), bit(V::BigInt));
+        assert_eq!(declared_return("function f(): keyof { a: 1 } { return 'a'; }"),
+            bit(V::String) | bit(V::Number) | bit(V::Symbol));
+        assert_eq!(declared_return("function f(): unique symbol { return null as any; }"), bit(V::Symbol));
+        assert_eq!(declared_return("function f(): readonly string[] { return []; }"), array);
+        assert_eq!(declared_return("function f(): (number | string) { return 1; }"), bit(V::Number) | bit(V::String));
+        // Intersections: all members known, a common set that is not empty.
+        assert_eq!(declared_return("function f(): string & 'a' { return 'a'; }"), bit(V::String));
+        assert_eq!(declared_return("function f(): number & string { return null as any; }"), any);
+        assert_eq!(declared_return("function f(): string & { __brand: 'id' } { return null as any; }"), any);
+        assert_eq!(declared_return("function f(): number & Unknown { return null as any; }"), any);
+        assert_eq!(declared_return("type P = { a: number } & { b: string };\nfunction f(): P { return null as any; }"),
+            plain | bit(V::Object));
+        assert_eq!(declared_return("interface I { x: number }\nfunction f(): I & { y: string } { return null as any; }"),
+            bit(V::Object));
+        // Conditional types are the union of their branches; `infer` names stay open.
+        assert_eq!(declared_return("type C = 1 extends 1 ? number : boolean;\nfunction f(): C { return 1; }"),
+            bit(V::Number) | bit(V::Boolean));
+        assert_eq!(declared_return("type U = string;\ntype C = number[] extends (infer U)[] ? U : boolean;\nfunction f(): C { return 1; }"), any);
+        // Mapped types are objects, unless they map over `keyof`.
+        assert_eq!(declared_return("function f(): { [K in 'a']: number } { return null as any; }"), bit(V::Object));
+        assert_eq!(declared_return("function f(): { [K in keyof string]: number } { return null as any; }"), any);
+        // Library generics by their arguments.
+        assert_eq!(declared_return("function f(): Partial<{ a: number }> { return {}; }"), plain | bit(V::Object));
+        assert_eq!(declared_return("function f(): Readonly<{ a: number }> { return { a: 1 }; }"), plain | bit(V::Object));
+        assert_eq!(declared_return("function f<T>(): Partial<T> { return null as any; }"), any);
+        assert_eq!(declared_return("function f(): Partial<number> { return 1; }"), bit(V::Number) | bit(V::Object));
+        assert_eq!(declared_return("function f(): NonNullable<string | null | undefined> { return 'x'; }"), bit(V::String));
+        assert_eq!(declared_return("function f(): NonNullable<null> { return null as any; }"), any);
+        assert_eq!(declared_return("function f(): Pick<{ a: number; b: string }, 'a'> { return null as any; }"),
+            plain | bit(V::Object));
+        assert_eq!(declared_return("function f(): Pick<{ a: number }, string> { return null as any; }"), any);
+        assert_eq!(declared_return("function f(): Omit<{ a: number }, 'a'> { return null as any; }"), any);
+        assert_eq!(declared_return("function f(): Record<string, number> { return null as any; }"), bit(V::Object));
+        assert_eq!(declared_return("function f(): Record<string, any> { return null as any; }"), any);
+        assert_eq!(declared_return("function f(): Promise<number> { return null as any; }"), bit(V::Object));
+        assert_eq!(declared_return("function f(): ReturnType<typeof g> { return null as any; }"), any);
+        // Qualified names and import types are not resolved here.
+        assert_eq!(declared_return("function f(): NS.T { return null as any; }"), any);
+        assert_eq!(declared_return("function f(): import('./m').T { return null as any; }"), any);
+    }
+
+    /// The language sets of the elements an array or tuple type holds, parsed from `source`.
+    #[test]
+    fn array_and_tuple_elements_declare_their_language_sets() {
+        use crate::ValueType as V;
+        let bit = |kind: V| crate::typed_ir::Languages::of(kind).bits();
+        let elements = |source: &str| -> u16 {
+            let allocator = oxc_allocator::Allocator::default();
+            let parsed = oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::mjs().with_typescript(true)).parse();
+            let oxc_ast::ast::Statement::TSTypeAliasDeclaration(alias) = &parsed.program.body[0] else {
+                panic!("a type alias: {source}");
+            };
+            super::element_languages(&alias.type_annotation, &super::TypeNames::default())
+        };
+        assert_eq!(elements("type T = number[];"), bit(V::Number));
+        assert_eq!(elements("type T = Array<string>;"), bit(V::String));
+        assert_eq!(elements("type T = readonly (number | string)[];"), bit(V::Number) | bit(V::String));
+        assert_eq!(elements("type T = [number, string];"), bit(V::Number) | bit(V::String));
+        assert_eq!(elements("type T = [number, ...string[]];"), bit(V::Number) | bit(V::String));
+        assert_eq!(elements("type T = [number, boolean?];"), bit(V::Number) | bit(V::Boolean) | bit(V::Undefined));
+        assert_eq!(elements("type T = [head: number, ...tail: string[]];"), bit(V::Number) | bit(V::String));
+        assert_eq!(elements("type T = [];"), super::DECLARED_ANY);
+        assert_eq!(elements("type T = Foo[];"), super::DECLARED_ANY);
     }
 
     #[test]
