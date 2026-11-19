@@ -9511,17 +9511,6 @@ impl<H: Host> Vm<H> {
         self.frames[frame].pc_is_resume = true;
     }
 
-    /// Running natives, innermost of the first `natives`, that recorded `depth` frames beside
-    /// activations now `added` frames above it: their caller is the innermost of those.
-    fn shift_beside_natives(&mut self, natives: usize, depth: usize, added: usize) {
-        for native in self.realm.promise.active_native[..natives].iter_mut().rev() {
-            if native.frame_depth != depth {
-                break;
-            }
-            native.frame_depth += added;
-        }
-    }
-
     /// The lane's exit (`dispatch_in_lane`'s exit record): a running leaf, whose records may
     /// leave the lane (`materialize_leaf_in_lane`), then every activation becomes a frame the
     /// general path runs. Nothing else materializes while a leaf runs: its records call
