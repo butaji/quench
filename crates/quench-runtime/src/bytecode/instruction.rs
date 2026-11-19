@@ -101,6 +101,12 @@ impl WideInstruction {
         ((self.op as u16 as u64) | (self.a as u64) << 16 | (self.b as u64) << 32 | (self.c as u64) << 48, self.imm)
     }
 
+    /// The inverse of `words`: the instruction the two words name, `None` where the first holds no opcode.
+    #[inline] pub(crate) fn from_words(first: u64, imm: u32) -> Option<Self> {
+        let op = Op::from_index((first & 0xffff) as usize)?;
+        Some(Self::new(op, (first >> 16) as u16, (first >> 32) as u16, (first >> 48) as u16, imm))
+    }
+
     #[inline] pub(crate) const fn op(self) -> Op {
         self.op
     }

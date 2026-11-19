@@ -208,9 +208,6 @@ pub(super) enum Declined {
     Window,
     /// The cell's facts do not describe the callee (not yet published, or another function's).
     Facts,
-    /// A returning call: its callee's activation under a host that makes proper tail calls must not
-    /// grow the stack, which only the helper row's own admission (`lane_returning_call_admitted`) knows.
-    Returning,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -231,8 +228,9 @@ pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice 
         (facts.construction, Declined::Construction),
         (facts.registers == 0, Declined::Window),
         (!facts.describes(shape.argc), Declined::Facts),
-        (shape.returning, Declined::Returning),
     ];
+    // A returning call is a candidate only where the helper would admit it: `lane_direct_callees` withholds
+    // returning sites under a host with proper tail calls and a strict body (`lane_returning_call_admitted`).
     declined.into_iter().find(|(declined, _)| *declined).map_or(Choice::Direct, |(_, why)| Choice::Helper(why))
 }
 

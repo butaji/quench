@@ -192,6 +192,46 @@ pub unsafe extern "rust-preserve-none" fn call_helper(frame: usize, ctx: usize, 
     }
 }
 
+/// The packed helper row's values holes after the helper's: the instruction's first word (its opcode
+/// and operands) and its immediate (`WideInstruction::from_words`).
+const HOLE_PACKED_FIRST: u8 = 2;
+const HOLE_PACKED_IMM: u8 = 3;
+/// A packed step helper (`lane_body_step_packed`): (vm, residual, lane context, call pc, first word, immediate) -> status.
+type HelperPacked = unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64;
+
+/// Helper row `call_helper_packed`: `call_helper` with the instruction its planner decoded passed as holes
+/// V2 and V3, so the helper runs it without decoding the record again. Its successors and exits are `call_helper`'s.
+#[unsafe(no_mangle)]
+pub unsafe extern "rust-preserve-none" fn call_helper_packed(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+    unsafe {
+        let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
+        let payload = payload(&s);
+        let helper: HelperPacked = transmute(hole64::<HOLE_HELPER>() as usize);
+        let status = helper(word_at(payload, JS_STEP_VM), word_at(payload, JS_STEP_RESIDUAL), word_at(payload, JS_STEP_LANE_CONTEXT), hole64::<HOLE_CALL_PC>(),
+            hole64::<HOLE_PACKED_FIRST>(), hole64::<HOLE_PACKED_IMM>());
+        match helper_outcome(status) {
+            Outcome::Next => go!(HOLE_NEXT, dead(&s)),
+            Outcome::Taken => go!(HOLE_TAKEN, dead(&s)),
+            Outcome::Missed => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT0, dead(&s))
+            }
+            Outcome::Left => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT1, leaving(&s, LaneStatus::NativeJsStopped as u32, CALLEE_EXIT))
+            }
+            Outcome::Raised => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT1, raising(&s, payload, hole64::<HOLE_CALL_PC>()))
+            }
+            Outcome::Terminated => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT1, leaving(&s, LaneStatus::Terminated as u32, 0))
+            }
+        }
+    }
+}
+
 /// How a direct call ended.
 enum Entered {
     /// Refused before any effect, or the callee's cell held the stub: the helper takes the call.

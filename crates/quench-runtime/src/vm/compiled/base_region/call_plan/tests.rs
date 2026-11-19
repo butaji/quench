@@ -30,6 +30,8 @@ fn each_call_opcode_has_its_form() {
 fn a_stable_cell_that_describes_the_callee_is_called_directly() {
     assert_eq!(choose(&SHAPE, Some(&facts(4, 2))), Choice::Direct);
     assert_eq!(choose(&SHAPE, Some(&facts(4, 5))), Choice::Direct, "fewer arguments than params");
+    let returning = CallShape { returning: true, ..SHAPE };
+    assert_eq!(choose(&returning, Some(&facts(4, 2))), Choice::Direct, "a returning candidate is direct; the host's tail-call filter decides which exist");
 }
 
 #[test]
@@ -41,8 +43,6 @@ fn every_other_call_takes_the_helper_with_its_reason() {
     assert_eq!(choose(&SHAPE, Some(&DirectFacts { construction: true, ..facts(4, 2) })), helper(Declined::Construction));
     assert_eq!(choose(&SHAPE, Some(&facts(0, 2))), helper(Declined::Window));
     assert_eq!(choose(&SHAPE, Some(&facts(4, 1))), helper(Declined::Facts), "more arguments than params");
-    let returning = CallShape { returning: true, ..SHAPE };
-    assert_eq!(choose(&returning, Some(&facts(4, 2))), helper(Declined::Returning));
     for form in [CallForm::Construct, CallForm::Stepped] {
         assert_eq!(choose(&CallShape { form, ..SHAPE }, Some(&facts(4, 2))), helper(Declined::Form));
     }
