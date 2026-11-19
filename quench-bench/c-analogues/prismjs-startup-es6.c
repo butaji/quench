@@ -1,13 +1,14 @@
 // jetstream-row: prismjs-startup-es6
 // jetstream-files: utils/StartupBenchmark.js prismjs/benchmark.js prismjs/dist/bundle.es6.min.js prismjs/data/sample.cpp prismjs/data/sample.css prismjs/data/sample.html prismjs/data/sample.js prismjs/data/sample.json prismjs/data/sample.md prismjs/data/sample.py prismjs/data/sample.sql prismjs/data/sample.ts
 // iterations: 120
+// c-sources: -lpcre2-8
 /* C analogue of JetStream's prismjs-startup-es6 row.
  *
  * The JS row re-evaluates the Prism bundle each iteration (a fresh Prism.languages, so the
  * grammars are rebuilt, and rest-merges happen again) and then highlights eight samples.
  * This analogue does the same work inside the timed loop:
- *   1. build all grammar objects: compile every grammar regex (a small backtracking regex
- *      engine that understands the JS syntax the grammars use), build the entry lists and
+ *   1. build all grammar objects: create every grammar RegExp (each is translated to PCRE2
+ *      syntax and JIT-compiled on its first exec, as V8 compiles a RegExp on first use), build the entry lists and
  *      the inside/alias links. prismjs-grammars.h holds the grammar object graph generated
  *      from the bundle's own regex sources and key order, so no regex text is retyped;
  *   2. run Prism.highlight on the eight samples: a port of Prism's tokenize/matchGrammar
@@ -19,6 +20,7 @@
  * Not included: the JS bundle's parse and eval (the C grammar data is compiled in).
  * Usage: prismjs-startup-es6 [jetstream-root] [iterations]
  *   jetstream-root defaults to ../jetstream; iterations defaults to 120. */
+#include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,417 +61,262 @@ static void *ar_alloc(size_t n) {
 }
 static void ar_reset(void) { ar_cur = ar_head; if (ar_cur) ar_cur->used = 0; }
 
-/* ---- backtracking regex engine (JS syntax subset used by the grammars) ---- */
-enum { N_SET, N_BOL, N_EOL, N_WB, N_DOT, N_BREF, N_GROUP, N_ALT, N_LOOK, N_QUANT };
-typedef struct Node Node;
-struct Node {
-  int kind, neg, multi, dotall, icase;
-  int min, max, greedy;        /* QUANT */
-  int cap;                     /* GROUP capture index (0 = non-capturing), BREF index */
-  int cap_lo, cap_hi;          /* QUANT: capture groups inside the atom */
-  uint8_t set[32];             /* SET */
-  Node *next, *child;          /* child: GROUP, LOOK, QUANT */
-  Node **alts; int nalts;      /* ALT */
-};
-typedef struct Rx { Node *root; int known; uint8_t first[32]; } Rx;
+/* ---- regular expressions: JS grammar patterns translated to PCRE2-JIT ---- */
+/* Each grammar pattern is translated from JS syntax to PCRE2 syntax with the JS meaning
+ * (JS \s and \S sets, '.' without s excludes \n and \r, ^ and $ with m match at \n or \r,
+ * $ without m only at the end, \b \w \d ASCII, a backreference to a group that did not
+ * participate matches the empty string) and compiled with pcre2_compile and
+ * pcre2_jit_compile. Prism's bundle is re-evaluated every iteration, so the patterns are
+ * compiled every iteration too (rx_release_all frees the previous iteration's code).
+ * The matcher works on bytes (8-bit PCRE2 library, no UTF): the grammars' character
+ * classes are written with code units up to ￿, and the highlighted samples are ASCII,
+ * so a class range is clipped to the bytes 0x00-0xFF, which the samples cannot tell apart. */
 
-typedef struct { const char *p, *e; int icase, multi, dotall, ncap; const char *src; } RP;
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
+
+#define JS_SPACE_BYTES "\\t\\n\\x{0b}\\f\\r \\x{a0}"
+#define NOT_JS_SPACE_BYTES "\\x{00}-\\x{08}\\x{0e}-\\x{1f}\\x{21}-\\x{9f}\\x{a1}-\\x{ff}"
+
+static void rx_fail(const char *msg, const char *src);
+
+typedef struct Rx {
+  const char *src, *flags;   /* JS source and flags, kept until the first exec */
+  pcre2_code *code;          /* compiled on first use, as V8 compiles a RegExp on first exec */
+  pcre2_match_data *md;
+  int ngroups;
+} Rx;
+
+static pcre2_match_context *rx_mctx;
+static Rx **rx_all;
+static size_t rx_n, rx_cap;
+
+typedef struct { char *s; size_t n, cap; } TBuf;
+
+static void tb_put(TBuf *b, const char *s, size_t n) {
+  if (b->n + n + 1 > b->cap) {
+    b->cap = (b->n + n + 1) * 2;
+    b->s = realloc(b->s, b->cap);
+    if (!b->s) rx_fail("out of memory", "");
+  }
+  memcpy(b->s + b->n, s, n);
+  b->n += n;
+  b->s[b->n] = '\0';
+}
+
+static void tb_str(TBuf *b, const char *s) { tb_put(b, s, strlen(s)); }
+
+static int tb_hex(const char *src, size_t n, size_t *i, int digits) {
+  int v = 0;
+  for (int k = 0; k < digits; k++) {
+    int c = *i < n ? (unsigned char)src[*i] : -1, h;
+    if (c >= '0' && c <= '9') h = c - '0';
+    else if (c >= 'a' && c <= 'f') h = c - 'a' + 10;
+    else if (c >= 'A' && c <= 'F') h = c - 'A' + 10;
+    else rx_fail("bad hex escape", src);
+    v = v * 16 + h;
+    (*i)++;
+  }
+  return v;
+}
+
+/* Writes the code unit v as a PCRE2 escape; units above 0xFF are clipped to 0xFF (see above). */
+static void tb_unit(TBuf *b, int v) {
+  char tmp[16];
+  snprintf(tmp, sizeof tmp, "\\x{%x}", v > 0xff ? 0xff : v);
+  tb_str(b, tmp);
+}
+
+/* Translates a JS pattern (flags i, m, s, g) into PCRE2 syntax for 8-bit non-UTF mode. */
+static void js_to_pcre2(const char *src, size_t n, int multi, int dotall, TBuf *out) {
+  size_t i = 0;
+  int in_class = 0;
+  while (i < n) {
+    unsigned char c = (unsigned char)src[i];
+    if (c == '\\') {
+      unsigned char e;
+      if (i + 1 >= n) rx_fail("trailing backslash", src);
+      e = (unsigned char)src[i + 1];
+      i += 2;
+      switch (e) {
+        case 's':
+          tb_str(out, in_class ? JS_SPACE_BYTES : "[" JS_SPACE_BYTES "]");
+          break;
+        case 'S':
+          if (in_class) tb_str(out, NOT_JS_SPACE_BYTES);
+          else tb_str(out, "[^" JS_SPACE_BYTES "]");
+          break;
+        case 'b': tb_str(out, in_class ? "\\x{08}" : "\\b"); break;
+        case 'B': tb_str(out, "\\B"); break;
+        case 'd': case 'D': case 'w': case 'W':
+        case 'n': case 'r': case 't': case 'f':
+          tb_put(out, "\\", 1);
+          tb_put(out, (const char *)&e, 1);
+          break;
+        case 'v': tb_str(out, "\\x{0b}"); break;
+        case '0': tb_str(out, "\\x{0}"); break;
+        case 'x': tb_unit(out, tb_hex(src, n, &i, 2)); break;
+        case 'u': tb_unit(out, tb_hex(src, n, &i, 4)); break;
+        case 'c':
+          if (i >= n || !isalpha((unsigned char)src[i])) rx_fail("bad \\c escape", src);
+          tb_unit(out, (unsigned char)src[i++] % 32);
+          break;
+        default:
+          if (e >= '1' && e <= '9') {
+            if (in_class) rx_fail("backreference in a class", src);
+            tb_put(out, "\\", 1);
+            tb_put(out, (const char *)&e, 1);
+          } else if (isalpha(e)) {
+            tb_put(out, (const char *)&e, 1); /* identity escape of a letter */
+          } else {
+            tb_put(out, "\\", 1);             /* identity escape of punctuation */
+            tb_put(out, (const char *)&e, 1);
+          }
+          break;
+      }
+      continue;
+    }
+    if (in_class) {
+      if (c == ']') {
+        in_class = 0;
+        tb_put(out, "]", 1);
+      } else if (c == '[') {
+        tb_str(out, "\\[");
+      } else {
+        tb_put(out, (const char *)&c, 1);
+      }
+      i++;
+      continue;
+    }
+    switch (c) {
+      case '[':
+        in_class = 1;
+        tb_put(out, "[", 1);
+        i++;
+        if (i < n && src[i] == '^') {
+          tb_put(out, "^", 1);
+          i++;
+        }
+        break;
+      case '.':
+        tb_str(out, dotall ? "[\\x{00}-\\x{ff}]" : "[^\\n\\r]");
+        i++;
+        break;
+      case '^':
+        tb_str(out, multi ? "(?:^|(?<=[\\n\\r]))" : "^");
+        i++;
+        break;
+      case '$':
+        tb_str(out, multi ? "(?=[\\n\\r]|\\z)" : "\\z");
+        i++;
+        break;
+      default:
+        tb_put(out, (const char *)&c, 1);
+        i++;
+        break;
+    }
+  }
+}
+
+/* Creates the RegExp object of one JS pattern for this evaluation of the bundle; the
+ * pattern is translated and JIT-compiled on its first exec (rx_build). */
+static Rx *rx_compile(const char *src, const char *flags) {
+  Rx *rx = malloc(sizeof *rx);
+  if (!rx) rx_fail("out of memory", src);
+  rx->src = src;
+  rx->flags = flags;
+  rx->code = NULL;
+  rx->md = NULL;
+  rx->ngroups = 0;
+  if (rx_n == rx_cap) {
+    rx_cap = rx_cap ? rx_cap * 2 : 1024;
+    rx_all = realloc(rx_all, rx_cap * sizeof *rx_all);
+    if (!rx_all) rx_fail("out of memory", src);
+  }
+  rx_all[rx_n++] = rx;
+  return rx;
+}
+
+static void rx_build(Rx *rx) {
+  static pcre2_jit_stack *jit_stack;
+  TBuf pat = {0, 0, 0};
+  uint32_t opts = PCRE2_MATCH_UNSET_BACKREF;
+  int multi = 0, dotall = 0, err = 0;
+  PCRE2_SIZE eoff = 0;
+  uint32_t ng = 0;
+  for (const char *f = rx->flags; *f; f++) {
+    if (*f == 'i') opts |= PCRE2_CASELESS;
+    else if (*f == 'm') multi = 1;
+    else if (*f == 's') dotall = 1;
+    else if (*f != 'g') rx_fail("regexp flag not used by the grammars", rx->src);
+  }
+  if (!rx_mctx) {
+    jit_stack = pcre2_jit_stack_create(32 * 1024, 1024 * 1024, NULL);
+    rx_mctx = pcre2_match_context_create(NULL);
+    if (!jit_stack || !rx_mctx) rx_fail("cannot create PCRE2 JIT stack", "");
+    pcre2_jit_stack_assign(rx_mctx, NULL, jit_stack);
+    pcre2_set_match_limit(rx_mctx, 0xffffffffu); /* JS has no match limit */
+  }
+  js_to_pcre2(rx->src, strlen(rx->src), multi, dotall, &pat);
+  rx->code = pcre2_compile((PCRE2_SPTR)pat.s, pat.n, opts, &err, &eoff, NULL);
+  if (!rx->code) {
+    PCRE2_UCHAR msg[256];
+    pcre2_get_error_message(err, msg, sizeof msg);
+    fprintf(stderr, "prismjs: %s at %zu in /%s/\n", (const char *)msg, (size_t)eoff, pat.s);
+    exit(1);
+  }
+  if (pcre2_jit_compile(rx->code, PCRE2_JIT_COMPLETE) < 0) rx_fail("pcre2_jit_compile failed", rx->src);
+  rx->md = pcre2_match_data_create_from_pattern(rx->code, NULL);
+  pcre2_pattern_info(rx->code, PCRE2_INFO_CAPTURECOUNT, &ng);
+  rx->ngroups = (int)ng;
+  free(pat.s);
+}
+
+/* Frees the compiled patterns of the previous evaluation of the bundle. */
+static void rx_release_all(void) {
+  for (size_t i = 0; i < rx_n; i++) {
+    if (rx_all[i]->md) pcre2_match_data_free(rx_all[i]->md);
+    if (rx_all[i]->code) pcre2_code_free(rx_all[i]->code);
+    free(rx_all[i]);
+  }
+  rx_n = 0;
+}
 
 static void rx_fail(const char *msg, const char *src) {
-  fprintf(stderr, "regex: %s in /%s/\n", msg, src);
-  exit(4);
+  fprintf(stderr, "prismjs: %s: %s\n", msg, src);
+  exit(1);
 }
-static Node *new_node(int kind) { Node *n = ar_alloc(sizeof(Node)); n->kind = kind; return n; }
-static void set_add(uint8_t *s, int c) { if (c >= 0 && c < 256) s[c >> 3] |= (uint8_t)(1u << (c & 7)); }
-static int set_has(const uint8_t *s, int c) { return c >= 0 && c < 256 && ((s[c >> 3] >> (c & 7)) & 1); }
-static void set_negate(uint8_t *s) { for (int i = 0; i < 32; i++) s[i] = (uint8_t)~s[i]; }
-static void set_or(uint8_t *d, const uint8_t *s) { for (int i = 0; i < 32; i++) d[i] |= s[i]; }
-static int is_word(int c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
-static int is_lt(int c) { return c == '\n' || c == '\r'; }
-static int lower(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
 
-/* Adds the class \d \w \s (upper-case: complement) to a bitmap. */
-static void class_escape(uint8_t *bits, int c) {
-  uint8_t t[32] = {0};
-  switch (lower(c)) {
-    case 'd': for (int k = '0'; k <= '9'; k++) set_add(t, k); break;
-    case 'w': for (int k = 0; k < 256; k++) if (is_word(k)) set_add(t, k); break;
-    case 's': for (int k = 9; k <= 13; k++) set_add(t, k); set_add(t, 32); set_add(t, 0xA0); break;
+/* First match at or after from (RegExp.prototype.exec with lastIndex = from).
+ * caps receives start and end for groups 0..MAXCAP-1 (-1 when unset). */
+static int rx_exec(const Rx *rx, const char *s, int len, int from, int *caps) {
+  PCRE2_SIZE *ov;
+  int rc;
+  if (from > len) return 0;
+  if (!rx->code) rx_build((Rx *)rx);
+  rc = pcre2_match(rx->code, (PCRE2_SPTR)s, (PCRE2_SIZE)len, (PCRE2_SIZE)from, 0, rx->md, rx_mctx);
+  if (rc == PCRE2_ERROR_NOMATCH) return 0;
+  if (rc < 0) rx_fail("pcre2_match failed", "");
+  ov = pcre2_get_ovector_pointer(rx->md);
+  for (int g = 0; g < MAXCAP; g++) {
+    if (g <= rx->ngroups && g < rc && ov[2 * g] != PCRE2_UNSET) {
+      caps[2 * g] = (int)ov[2 * g];
+      caps[2 * g + 1] = (int)ov[2 * g + 1];
+    } else {
+      caps[2 * g] = caps[2 * g + 1] = -1;
+    }
   }
-  if (c >= 'A' && c <= 'Z') set_negate(t);
-  set_or(bits, t);
+  return 1;
 }
+
+/* Character helpers of the text side (word characters, lower case, hex digits). */
+static int is_word(int c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
+static int lower(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
 static int hexdig(int c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
   if (c >= 'A' && c <= 'F') return c - 'A' + 10;
   return -1;
-}
-/* Reads the character named by an escape after the backslash (r->p points past '\'). */
-static int char_escape(RP *r) {
-  int c = *r->p++;
-  switch (c) {
-    case 'f': return 12;
-    case 'n': return 10;
-    case 'r': return 13;
-    case 't': return 9;
-    case 'v': return 11;
-    case 'b': return 8;
-    case '0': return 0;
-    case 'x': {
-      int v = hexdig(r->p[0]), w = hexdig(r->p[1]);
-      if (v < 0 || w < 0) rx_fail("bad \\x", r->src);
-      r->p += 2; return v * 16 + w;
-    }
-    case 'u': {
-      int v = 0;
-      for (int k = 0; k < 4; k++) { int d = hexdig(r->p[k]); if (d < 0) rx_fail("bad \\u", r->src); v = v * 16 + d; }
-      r->p += 4; return v;
-    }
-    case 'c': { int l = *r->p++; return l % 32; }
-    default: return c; /* identity escape */
-  }
-}
-/* One class item: returns its code, or -1 when it was a class escape added to bits. */
-static int class_atom(RP *r, uint8_t *bits) {
-  if (*r->p == '\\') {
-    r->p++;
-    int c = *r->p;
-    if (c == 'd' || c == 'D' || c == 's' || c == 'S' || c == 'w' || c == 'W') {
-      r->p++; class_escape(bits, c); return -1;
-    }
-    return char_escape(r);
-  }
-  return *r->p++;
-}
-static void fold_case(uint8_t *bits) {
-  for (int c = 'a'; c <= 'z'; c++) {
-    if (set_has(bits, c) || set_has(bits, c - 32)) { set_add(bits, c); set_add(bits, c - 32); }
-  }
-}
-static Node *parse_class(RP *r) {
-  uint8_t bits[32] = {0};
-  int neg = 0;
-  if (*r->p == '^') { neg = 1; r->p++; }
-  while (r->p < r->e && *r->p != ']') {
-    int c1 = class_atom(r, bits);
-    if (c1 >= 0 && r->p + 1 < r->e && *r->p == '-' && r->p[1] != ']') {
-      r->p++;
-      int c2 = class_atom(r, bits);
-      if (c2 < 0) { set_add(bits, c1); set_add(bits, '-'); }
-      else for (int c = c1; c <= c2 && c < 256; c++) set_add(bits, c);
-    } else if (c1 >= 0) {
-      set_add(bits, c1);
-    }
-  }
-  if (r->p >= r->e) rx_fail("unterminated class", r->src);
-  r->p++;
-  if (r->icase) fold_case(bits);
-  if (neg) set_negate(bits);
-  Node *n = new_node(N_SET);
-  memcpy(n->set, bits, 32);
-  return n;
-}
-static Node *single_char(int c, int icase) {
-  Node *n = new_node(N_SET);
-  set_add(n->set, c);
-  if (icase) fold_case(n->set);
-  return n;
-}
-/* Valid {n}, {n,}, {n,m} at r->p: returns its length, or 0 when '{' is a literal. */
-static int brace_len(const char *p, const char *e) {
-  const char *q = p + 1;
-  if (q >= e || *q < '0' || *q > '9') return 0;
-  while (q < e && *q >= '0' && *q <= '9') q++;
-  if (q < e && *q == ',') { q++; while (q < e && *q >= '0' && *q <= '9') q++; }
-  if (q < e && *q == '}') return (int)(q - p + 1);
-  return 0;
-}
-static Node *parse_disj(RP *r);
-
-/* Parses one term (an atom with an optional quantifier, or an assertion). */
-static Node *parse_term(RP *r) {
-  int c = *r->p;
-  if (c == '^') { r->p++; Node *n = new_node(N_BOL); n->multi = r->multi; return n; }
-  if (c == '$') { r->p++; Node *n = new_node(N_EOL); n->multi = r->multi; return n; }
-  if (c == '\\' && (r->p[1] == 'b' || r->p[1] == 'B')) {
-    Node *n = new_node(N_WB); n->neg = r->p[1] == 'B'; r->p += 2; return n;
-  }
-  int capbefore = r->ncap;
-  Node *atom;
-  if (c == '(') {
-    r->p++;
-    if (*r->p == '?') {
-      if (r->p[1] == ':') { r->p += 2; atom = new_node(N_GROUP); }
-      else if (r->p[1] == '=' || r->p[1] == '!') { atom = new_node(N_LOOK); atom->neg = r->p[1] == '!'; r->p += 2; }
-      else rx_fail("unsupported group", r->src);
-    } else {
-      atom = new_node(N_GROUP);
-      atom->cap = ++r->ncap;
-    }
-    atom->child = parse_disj(r);
-    if (*r->p != ')') rx_fail("missing )", r->src);
-    r->p++;
-    if (atom->kind == N_LOOK) return atom;
-  } else if (c == '.') {
-    r->p++; atom = new_node(N_DOT); atom->dotall = r->dotall;
-  } else if (c == '[') {
-    r->p++; atom = parse_class(r);
-  } else if (c == '\\') {
-    r->p++;
-    int d = *r->p;
-    if (d == 'd' || d == 'D' || d == 's' || d == 'S' || d == 'w' || d == 'W') {
-      r->p++; atom = new_node(N_SET); class_escape(atom->set, d);
-    } else if (d >= '1' && d <= '9') {
-      int v = 0;
-      while (*r->p >= '0' && *r->p <= '9') v = v * 10 + (*r->p++ - '0');
-      atom = new_node(N_BREF); atom->cap = v; atom->icase = r->icase;
-    } else {
-      int ch = char_escape(r);
-      atom = single_char(ch, r->icase);
-    }
-  } else {
-    r->p++;
-    atom = single_char(c, r->icase);
-  }
-  /* quantifier */
-  int min = -2, max = -1;
-  if (r->p < r->e) {
-    int q = *r->p;
-    if (q == '*') { min = 0; max = -1; r->p++; }
-    else if (q == '+') { min = 1; max = -1; r->p++; }
-    else if (q == '?') { min = 0; max = 1; r->p++; }
-    else if (q == '{') {
-      int len = brace_len(r->p, r->e);
-      if (len) {
-        const char *s = r->p + 1;
-        min = 0;
-        while (*s >= '0' && *s <= '9') min = min * 10 + (*s++ - '0');
-        if (*s == ',') {
-          s++;
-          if (*s == '}') max = -1;
-          else { max = 0; while (*s >= '0' && *s <= '9') max = max * 10 + (*s++ - '0'); }
-        } else max = min;
-        r->p += len;
-      }
-    }
-  }
-  if (min == -2) return atom;
-  Node *qn = new_node(N_QUANT);
-  qn->child = atom; qn->min = min; qn->max = max; qn->greedy = 1;
-  if (r->p < r->e && *r->p == '?') { qn->greedy = 0; r->p++; }
-  qn->cap_lo = capbefore + 1; qn->cap_hi = r->ncap;
-  return qn;
-}
-static Node *parse_seq(RP *r) {
-  Node *head = NULL, *tail = NULL;
-  while (r->p < r->e && *r->p != '|' && *r->p != ')') {
-    Node *t = parse_term(r);
-    if (!head) head = t; else tail->next = t;
-    tail = t;
-  }
-  return head;
-}
-static Node *parse_disj(RP *r) {
-  Node *alts[512];
-  int n = 0;
-  for (;;) {
-    if (n == 512) rx_fail("too many alternatives", r->src);
-    alts[n++] = parse_seq(r);
-    if (r->p < r->e && *r->p == '|') { r->p++; continue; }
-    break;
-  }
-  if (n == 1) return alts[0];
-  Node *a = new_node(N_ALT);
-  a->alts = ar_alloc(n * sizeof(Node *));
-  memcpy(a->alts, alts, n * sizeof(Node *));
-  a->nalts = n;
-  return a;
-}
-/* Set of possible first characters of a chain that cannot match empty. */
-static int first_of(const Node *n, uint8_t *out) {
-  if (!n) return 0;
-  switch (n->kind) {
-    case N_SET: memcpy(out, n->set, 32); return 1;
-    case N_GROUP: return first_of(n->child, out);
-    case N_ALT: {
-      memset(out, 0, 32);
-      for (int a = 0; a < n->nalts; a++) {
-        uint8_t t[32];
-        if (!first_of(n->alts[a], t)) return 0;
-        set_or(out, t);
-      }
-      return 1;
-    }
-    case N_QUANT: return n->min >= 1 ? first_of(n->child, out) : 0;
-    default: return 0;
-  }
-}
-static Rx *rx_compile(const char *src, const char *flags) {
-  RP r = {src, src + strlen(src), 0, 0, 0, 0, src};
-  for (const char *f = flags; *f; f++) {
-    if (*f == 'i') r.icase = 1;
-    else if (*f == 'm') r.multi = 1;
-    else if (*f == 's') r.dotall = 1;
-  }
-  r.p = src;
-  Rx *rx = ar_alloc(sizeof(Rx));
-  rx->root = parse_disj(&r);
-  if (r.p != r.e) rx_fail("unbalanced )", src);
-  rx->known = first_of(rx->root, rx->first);
-  return rx;
-}
-
-/* Matcher state for one exec. */
-static const char *M_s;
-static int M_len, M_mend;
-static int M_caps[2 * MAXCAP];
-
-typedef struct K K;
-enum { K_SEQ, K_GROUP, K_REP, K_LOOK, K_ACCEPT };
-struct K { int kind; const Node *n; int a, b; const K *next; };
-
-static int m_seq(const Node *n, int i, const K *k);
-
-static int m_k(const K *k, int i) {
-  switch (k->kind) {
-    case K_SEQ: return m_seq(k->n, i, k->next);
-    case K_GROUP: {
-      int idx = 2 * k->n->cap, os = M_caps[idx], oe = M_caps[idx + 1];
-      M_caps[idx] = k->a; M_caps[idx + 1] = i;
-      if (m_k(k->next, i)) return 1;
-      M_caps[idx] = os; M_caps[idx + 1] = oe;
-      return 0;
-    }
-    case K_REP: {
-      /* an iteration that matched empty is refused once the minimum is satisfied */
-      if (i == k->b && k->a - 1 >= k->n->min) return 0;
-      /* m_rep is defined below */
-      extern int m_rep_entry(const Node *q, int count, int i, const K *after);
-      return m_rep_entry(k->n, k->a, i, k->next);
-    }
-    case K_LOOK: return 1;
-    case K_ACCEPT: M_mend = i; return 1;
-  }
-  return 0;
-}
-
-static int m_rep_child(const Node *q, int count, int i, const K *after) {
-  K rk = {K_REP, q, count + 1, i, after};
-  int saved[2 * MAXCAP];
-  int lo = 2 * q->cap_lo, hi = 2 * q->cap_hi + 2;
-  if (hi > 2 * MAXCAP) hi = 2 * MAXCAP;
-  for (int x = lo; x < hi; x++) { saved[x] = M_caps[x]; M_caps[x] = -1; }
-  if (m_seq(q->child, i, &rk)) return 1;
-  for (int x = lo; x < hi; x++) M_caps[x] = saved[x];
-  return 0;
-}
-int m_rep_entry(const Node *q, int count, int i, const K *after) {
-  if (count < q->min) return m_rep_child(q, count, i, after);
-  if (q->max >= 0 && count >= q->max) return m_k(after, i);
-  if (q->greedy) {
-    if (m_rep_child(q, count, i, after)) return 1;
-    return m_k(after, i);
-  }
-  if (m_k(after, i)) return 1;
-  return m_rep_child(q, count, i, after);
-}
-static int char_ok(const Node *c, int ch) {
-  if (c->kind == N_DOT) return c->dotall || !is_lt(ch);
-  return set_has(c->set, ch);
-}
-static int m_seq(const Node *n, int i, const K *k) {
-  if (!n) return m_k(k, i);
-  switch (n->kind) {
-    case N_SET:
-      if (i < M_len && set_has(n->set, (unsigned char)M_s[i])) return m_seq(n->next, i + 1, k);
-      return 0;
-    case N_DOT:
-      if (i < M_len && char_ok(n, (unsigned char)M_s[i])) return m_seq(n->next, i + 1, k);
-      return 0;
-    case N_BOL:
-      if (i == 0 || (n->multi && is_lt((unsigned char)M_s[i - 1]))) return m_seq(n->next, i, k);
-      return 0;
-    case N_EOL:
-      if (i == M_len || (n->multi && is_lt((unsigned char)M_s[i]))) return m_seq(n->next, i, k);
-      return 0;
-    case N_WB: {
-      int a = i > 0 && is_word((unsigned char)M_s[i - 1]);
-      int b = i < M_len && is_word((unsigned char)M_s[i]);
-      int at = a != b;
-      if (n->neg ? !at : at) return m_seq(n->next, i, k);
-      return 0;
-    }
-    case N_BREF: {
-      int s0 = M_caps[2 * n->cap], e0 = M_caps[2 * n->cap + 1];
-      if (s0 < 0 || e0 < 0) return m_seq(n->next, i, k);
-      int L = e0 - s0;
-      if (i + L > M_len) return 0;
-      for (int x = 0; x < L; x++) {
-        int p = (unsigned char)M_s[s0 + x], q = (unsigned char)M_s[i + x];
-        if (n->icase ? lower(p) != lower(q) : p != q) return 0;
-      }
-      return m_seq(n->next, i + L, k);
-    }
-    case N_GROUP: {
-      K sk = {K_SEQ, n->next, 0, 0, k};
-      if (n->cap) {
-        K gk = {K_GROUP, n, i, 0, &sk};
-        return m_seq(n->child, i, &gk);
-      }
-      return m_seq(n->child, i, &sk);
-    }
-    case N_ALT:
-      for (int a = 0; a < n->nalts; a++) {
-        K sk = {K_SEQ, n->next, 0, 0, k};
-        if (m_seq(n->alts[a], i, &sk)) return 1;
-      }
-      return 0;
-    case N_LOOK: {
-      K acc = {K_LOOK, NULL, 0, 0, NULL};
-      int r = m_seq(n->child, i, &acc);
-      if (n->neg ? r : !r) return 0;
-      return m_seq(n->next, i, k);
-    }
-    case N_QUANT: {
-      K sk = {K_SEQ, n->next, 0, 0, k};
-      const Node *c = n->child;
-      if ((c->kind == N_SET || c->kind == N_DOT) && !c->next) {
-        /* single-character atom: count the run, then try continuations without recursion */
-        int run = 0;
-        while ((n->max < 0 || run < n->max) && i + run < M_len && char_ok(c, (unsigned char)M_s[i + run])) run++;
-        if (run < n->min) return 0;
-        if (n->greedy) {
-          for (int x = run; x >= n->min; x--) if (m_k(&sk, i + x)) return 1;
-        } else {
-          for (int x = n->min; x <= run; x++) if (m_k(&sk, i + x)) return 1;
-        }
-        return 0;
-      }
-      return m_rep_entry(n, 0, i, &sk);
-    }
-  }
-  return 0;
-}
-
-/* Leftmost match at or after from. caps[2g], caps[2g+1] are group g (-1 when unset). */
-static int rx_exec(const Rx *rx, const char *s, int len, int from, int *caps) {
-  if (from > len) return 0;
-  M_s = s; M_len = len;
-  for (int start = from; start <= len; start++) {
-    if (rx->known) {
-      if (start >= len || !set_has(rx->first, (unsigned char)s[start])) continue;
-    }
-    for (int x = 0; x < 2 * MAXCAP; x++) M_caps[x] = -1;
-    M_caps[0] = start;
-    K acc = {K_ACCEPT, NULL, 0, 0, NULL};
-    if (m_seq(rx->root, start, &acc)) {
-      M_caps[0] = start; M_caps[1] = M_mend;
-      memcpy(caps, M_caps, sizeof M_caps);
-      return 1;
-    }
-  }
-  return 0;
 }
 
 /* ---- grammars: built per iteration from the generated tables ---- */
@@ -936,6 +783,7 @@ int main(int argc, char **argv) {
   for (int it = 0; it < iterations && ok; it++) {
     double t0 = now_ms();
     ar_reset();
+    rx_release_all();
     build_grammars();
     {
       /* markup.tag is the pattern of the grammar "markup" entry "tag" */
