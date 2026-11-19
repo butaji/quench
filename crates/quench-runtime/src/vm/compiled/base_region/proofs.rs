@@ -84,12 +84,26 @@ fn copied(row: &Decoded) -> Option<Register> {
     (row.kind == Kind::Move && row.heap.is_none() && row.step.is_none() && !row.checked).then(|| row.a.and_then(register_of)).flatten()
 }
 
+/// Whether `row` is an inline-cache access the plan runs with its cache row (`Decoded::takes_ic_row`) whose receiver `held`
+/// proves an object of a held shape, class (`shapes`) or loop (`flats`). Such a row cannot reshape: its cache hit compares
+/// the shape the entry checked, and the site row on a miss reads or writes an existing data slot. This assumes the cache
+/// entry's shape is the held one, which the loop receivers' merged reads establish (`osr_compile::loop_shapes`).
+fn shape_hit(row: &Decoded, held: &Proved) -> bool {
+    row.takes_ic_row() && receiver(row).is_some_and(|register| held.holds(register) && (held.shapes.contains(&register) || held.flats.contains(&register)))
+}
+
 /// What holds after `row`, given what held before it.
 fn after(row: &Decoded, before: &Proved) -> Proved {
     let mut proved = before.clone();
     if may_reshape(row) {
-        proved.shapes.clear();
-        proved.flats.clear();
+        if !shape_hit(row, before) {
+            proved.shapes.clear();
+            proved.flats.clear();
+        } else if matches!(row.heap, Some(Heap::SiteStore)) {
+            // A store writes a slot a folded prototype read (`constant_read`) may hold, so the class shapes go; the
+            // loop receivers' flat shapes stay, the write changing no shape or form.
+            proved.shapes.clear();
+        }
     }
     if clears_stores(row) {
         proved.stores = false;

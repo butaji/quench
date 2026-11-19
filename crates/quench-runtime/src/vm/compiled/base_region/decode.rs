@@ -210,6 +210,13 @@ impl Decoded {
         matches!(self.step, Some(Step::Call(_))) || self.step.is_some_and(Step::runs_helper)
     }
 
+    /// Whether the plan gives the row an inline-cache row ahead of its site row (`plan::ic_plan`): a site read or store
+    /// with a cache entry, naming no second register and not completing. The proofs and the plan both ask this, so the
+    /// inline-cache row is taken exactly where the proofs credit its hit.
+    pub(super) fn takes_ic_row(&self) -> bool {
+        self.ic.is_some() && matches!(self.heap, Some(Heap::Site | Heap::SiteStore)) && self.also.is_none() && !self.completes
+    }
+
     /// The registers the row names.
     pub(super) fn registers(&self) -> impl Iterator<Item = Register> {
         [self.dst, self.also, self.a.and_then(register_of), self.b.and_then(register_of), self.base].into_iter().flatten()

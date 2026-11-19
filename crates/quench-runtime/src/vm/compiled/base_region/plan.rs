@@ -156,7 +156,9 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     let object = dst_hole | a_hole << numeric::library::SITE_OBJECT_AT;
     Some(padded_holes(match heap {
         Heap::IcGet | Heap::IcKnownGet => { let ic = decoded.ic.unwrap_or_default(); [object, upper, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
-        Heap::IcSet { .. } | Heap::IcKnownSet { .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
+        Heap::IcSet { .. } | Heap::IcKnownSet { admitted: false, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
+        // An admitted store takes no atom test, so its shape is hole 2 (`slot_store::own_flat_known`) and the offset hole 3.
+        Heap::IcKnownSet { admitted: true, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
         // The flat rows read no shape: the offset follows the atom where the store tests it (`IcKnownSetFlat`), else leads.
         Heap::IcKnownGetFlat => { let ic = decoded.ic.unwrap_or_default(); [object, upper, 0, ic >> u32::BITS, 0] }
         Heap::IcKnownSetFlat { admitted: false, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic >> u32::BITS, 0] }
@@ -234,7 +236,7 @@ fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hol
     let Some(_) = decoded.ic.filter(|_| matches!(heap, Heap::Site | Heap::SiteStore)) else { return Ok(site) };
     let receiver = if heap == Heap::Site { a_hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
     let proof = (!decoded.completes).then(|| proof_row(receiver, pc)).transpose()?;
-    if decoded.also.is_some() || decoded.completes || !site.post.is_empty() {
+    if !decoded.takes_ic_row() {
         // No inline-cache row: the site row runs, then the proof, which holds the receiver's shape for the rows after it.
         if let Some(proof) = proof {
             site.node = None;

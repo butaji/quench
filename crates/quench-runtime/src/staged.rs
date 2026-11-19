@@ -81,6 +81,7 @@ pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;
 pub(crate) mod environment;
 pub(crate) mod ic;
+pub(crate) mod ic_flat;
 pub(crate) mod object;
 mod narrow;
 pub(crate) mod store;

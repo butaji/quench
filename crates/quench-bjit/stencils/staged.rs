@@ -24,6 +24,7 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/frame.rs"] pub(crate) mod frame;
 #[path = "../../quench-runtime/src/staged/call.rs"] pub(crate) mod call;
 #[path = "../../quench-runtime/src/staged/ic.rs"] pub(crate) mod ic;
+#[path = "../../quench-runtime/src/staged/ic_flat.rs"] pub(crate) mod ic_flat;
 #[path = "../../quench-runtime/src/staged/slot_store.rs"] pub(crate) mod slot_store;
 #[path = "../../quench-runtime/src/staged/iteration.rs"] pub(crate) mod iteration;
 #[path = "../../quench-runtime/src/staged/add.rs"] pub(crate) mod add;

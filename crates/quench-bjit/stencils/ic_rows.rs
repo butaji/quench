@@ -41,6 +41,7 @@ use crate::places::{Places, finish_chained, site_object};
 use crate::places_property::{Callout, planned_frame, receiver_read, receiver_set};
 use crate::stage::StencilStage;
 use crate::staged::ic::{self, IcOp};
+use crate::staged::ic_flat::own_field_flat;
 use crate::staged::object::{Form, direct_object_record, object_record_at};
 use crate::staged::slot_store::{own_flat_known, proved_flat_store, store_admitted};
 use crate::staged::value::direct_object_id;
@@ -123,7 +124,7 @@ fn known_get<const D: u8>(s: S, payload: usize) -> Out {
 fn known_get_flat<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES + 1, payload as u64);
     let record = known_record::<GET_RECEIVER>(&s, &mut stage, payload);
-    let word = ic::own_field_flat(&mut stage, record, 0);
+    let word = own_field_flat(&mut stage, record, 0);
     finish_chained::<true>(s, Step::Value(word), |s, word| deliver::<D>(s, word))
 }
 
