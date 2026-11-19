@@ -47,6 +47,8 @@ const OWNERS = [
 // Symbol-level overrides (file, symbol) -> owner, from the owners' own triage.
 const SYMBOL_OWNERS = [
   [/vm\/dispatch_fast\/generator_windows\.rs$/, /./, "Derive"],
+  // Call protocol v2 frame fields live in LaneStack but belong to the call protocol (Derive triage).
+  [/vm\/dispatch_fast\.rs$/, /^dead:plain_frames$/, "Calls and frames"],
 ];
 export function ownerOfSymbol(rel, sym) {
   for (const [f, n, o] of SYMBOL_OWNERS) if (f.test(rel) && n.test(sym || "")) return o;
@@ -100,6 +102,11 @@ function lineOf(starts, off) { let lo = 0, hi = starts.length - 1; while (lo < h
 function matchBrace(s, open) { let depth = 0; for (let i = open; i < s.length; i++) { if (s[i] === "{") depth++; else if (s[i] === "}") { depth--; if (!depth) return i; } } return s.length; }
 
 // Ranges of `#[cfg(test)]` items.
+// The item an allow(dead_code) sits on, so the key survives line moves: dead:<name>.
+function deadName(s, at, line) {
+  const m = /^\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?(?:(?:const\s+|unsafe\s+|extern\s+"C"\s+)*fn|struct|enum|const|static|mod|type|trait|union|impl(?:<[^>]*>)?)\s+([A-Za-z_][A-Za-z0-9_]*)|^\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[:(,{]/.exec(s.slice(at, at + 400));
+  return m ? `dead:${m[1] || m[2]}` : `dead@${line}`;
+}
 function testRanges(s) {
   const r = [];
   const re = /#\[cfg\((?:(?:any|all)\()?test\b[^\]]*\]/g;
@@ -335,7 +342,7 @@ function scan(tree, branch, wantOwners) {
     for (const m of s.matchAll(/#!?\[(?:allow|expect)\((?:[a-z_]+, *)*dead_code\b[^\]]*\]/g))
       // A reasoned expect on a repr(C) ABI-layout struct: its fields exist for the C layout, and the build fails if they become live.
       if (/^#\[expect\(dead_code,\s*reason/.test(m[0]) && /#\[repr\(C/.test(s.slice(Math.max(0, m.index - 200), m.index + 300))) continue;
-      else if (!inRanges(tests, m.index) && !pathIncluded.has(rel)) add("dead-code", rel, lineOf(starts, m.index), `dead@${lineOf(starts, m.index)}`, `#[allow(dead_code)] keeps a dead path (principle 12)`);
+      else if (!inRanges(tests, m.index) && !pathIncluded.has(rel)) add("dead-code", rel, lineOf(starts, m.index), deadName(s, m.index + m[0].length, lineOf(starts, m.index)), `#[allow(dead_code)] keeps a dead path (principle 12)`);
     // One policy home: QUENCH_* switches outside vm/switches.rs.
     if (inRuntime && !/vm\/switches\.rs$/.test(rel)) for (const m of src.matchAll(/env::var(?:_os)?\(\s*"(QUENCH_[A-Z0-9_]+)"/g))
       if (!inRanges(tests, m.index)) add("policy-outside-home", rel, lineOf(starts, m.index), m[1], `${m[1]} read outside vm/switches.rs (one policy home)`, { owner: "Compile pipeline" });
