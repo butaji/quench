@@ -8,6 +8,12 @@
 #[path = "../../quench-runtime/src/staged/js_step_head.rs"]
 pub(crate) mod js_step_head;
 
+#[path = "../../quench-runtime/src/staged/record_heads.rs"]
+pub(crate) mod record_heads;
+
+#[path = "../../quench-runtime/src/staged/encodings.rs"]
+pub(crate) mod encodings;
+
 #[path = "../../quench-runtime/src/staged/layout_offsets.rs"]
 mod offsets;
 pub(crate) use offsets::*;

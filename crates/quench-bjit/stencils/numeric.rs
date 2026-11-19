@@ -11,7 +11,7 @@
 //! any write to a pinned register).
 
 use crate::bytecode::Operand;
-use crate::places::{DEST, LEFT, Places, RIGHT};
+use crate::places::{DEST, LEFT, Places, RIGHT, finish};
 use crate::typed_ir::Representation;
 use crate::staged::math::FloatUnary;
 use crate::staged::{Comparison, Concrete, Domain, Frame, NegativeZero, NumberOperation, NumericFrame, Operation, Overflow, Step, numeric, step, step_arith, step_flow, step_generic};
@@ -30,7 +30,7 @@ const fn arithmetic_of(kind: u8) -> NumberArithmetic {
     }
 }
 
-const fn relation_of(kind: u8) -> NumberRelation {
+pub(crate) const fn relation_of(kind: u8) -> NumberRelation {
     match kind {
         LT => NumberRelation::LessThan,
         LE => NumberRelation::LessEqual,
@@ -55,13 +55,6 @@ const fn bitwise_of(kind: u8) -> NumberBitwise {
 /// A row over a pinned double, other than a bitwise row (which reads a double as its ToInt32).
 const fn is_double_row<const K: u8, const D: u8, const A: u8, const B: u8>() -> bool {
     (D >= PINF || A >= PINF || B >= PINF) && K <= NE && !is_bitwise(K)
-}
-
-/// The row's outcome: continue where the row finished and every result fit its place, else
-/// leave with the state as it was.
-#[inline(always)]
-fn finish<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, done: bool) -> Out {
-    if frame.writes_fit(done) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
 }
 
 /// The outcome of a staged step that decides a branch: the taken successor where the frame took

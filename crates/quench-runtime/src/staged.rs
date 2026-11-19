@@ -23,6 +23,8 @@ pub(crate) mod numeric;
 pub(crate) mod layout_offsets;
 /// The head of the dispatch payload, which the runtime embeds and the stencils take offsets from.
 pub(crate) mod js_step_head;
+pub(crate) mod record_heads;
+pub(crate) mod encodings;
 pub(crate) mod flow;
 pub(crate) mod machine;
 #[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's composition

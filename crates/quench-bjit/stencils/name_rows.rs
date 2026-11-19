@@ -7,12 +7,12 @@
 use crate::layout::{CONTEXT_THIS, JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S};
 use crate::words::hole64;
-use crate::places::{LEFT, Places};
+use crate::places::{LEFT, Places, finish_fast};
 use crate::codes::{MEM, ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, NAME_EITHER_ROW, NAME_FUNCTION_AT};
 use crate::stage::StencilStage;
 use crate::staged::object::Form;
 use crate::staged::{Frame, Operation, Step, add, step};
-use crate::heap_rows::{context_word, finish_fast, word_at};
+use crate::heap_rows::{context_word, word_at};
 
 /// The add row of `form`: the value operand (hole 1) is added to `object` by the transition hole 0
 /// (before-shape below `ADD_AFTER_AT`, after-shape above) and hole 2 (slot, and with `CHAINED` the

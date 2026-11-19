@@ -2,9 +2,12 @@
 // rows read them. ONE source. The stencil crate `#[path]`-includes this file (`stencils/layout.rs`
 // re-exports it), and the runtime includes it as `crate::staged::layout_offsets`. The `JS_STEP_*`
 // offsets are `offset_of!` of the shared `#[repr(C)]` head `staged/js_step_head.rs`, which the
-// runtime embeds as the first field of `JsStepDispatch`. The other values are literals, because a
-// stencil is compiled before the runtime; `vm/compiled/base_rows.rs` holds `const` checks that each
-// equals the runtime's own `offset_of!` / `size_of` / const, so a drift is a build error there.
+// runtime embeds as the first field of `JsStepDispatch`. The native records' offsets are `offset_of!`
+// of the heads in `staged/record_heads.rs` (`ObjectHead`, `ArrayHeaderHead`, `NativeViewHead`), which
+// the runtime embeds as the first field of `Object`, `Header` and `NativeView`; the shared length and
+// mark encodings are `staged/encodings.rs`. Values not yet derived are literals, because a stencil is
+// compiled before the runtime; `vm/compiled/base_rows.rs` holds `const` checks that each equals the
+// runtime's own `offset_of!` / `size_of` / const, so a drift is a build error there.
 //
 // A stencil names nothing in the runtime except the frame words of `staged/frame.rs` and the entry
 // cell of `staged/call.rs`, which both builds compile.
@@ -48,12 +51,12 @@ pub(crate) struct NativeObjectLayout {
 
 pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     record_capacity: 16777216,
-    record_size: 12,
-    record_align: 4,
-    layout_offset: 8,
+    record_size: size_of::<super::record_heads::ObjectHead>(),
+    record_align: align_of::<super::record_heads::ObjectHead>(),
+    layout_offset: core::mem::offset_of!(super::record_heads::ObjectHead, layout),
     meta_offset: 4,
     auxiliary_offset: 0,
-    payload_offset: 0,
+    payload_offset: core::mem::offset_of!(super::record_heads::ObjectHead, payload),
     extras_arena_start_offset: 24,
     extras_inline_values_offset: 8,
     inline_storage_mask: 536870912,
@@ -110,15 +113,15 @@ pub(crate) struct NativeArrayLayout {
 
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     record_capacity: 16777216,
-    record_size: 12,
-    record_align: 4,
-    elements_offset: 0,
+    record_size: size_of::<super::record_heads::ObjectHead>(),
+    record_align: align_of::<super::record_heads::ObjectHead>(),
+    elements_offset: core::mem::offset_of!(super::record_heads::ObjectHead, payload),
     extras_elements_offset: 28,
     elements_header_offset: 0,
-    header_length_offset: 4,
-    header_values_offset: 16,
-    header_owners_offset: 0,
-    header_capacity_offset: 8,
+    header_length_offset: core::mem::offset_of!(super::record_heads::ArrayHeaderHead, len),
+    header_values_offset: size_of::<super::record_heads::ArrayHeaderHead>(),
+    header_owners_offset: core::mem::offset_of!(super::record_heads::ArrayHeaderHead, owners),
+    header_capacity_offset: core::mem::offset_of!(super::record_heads::ArrayHeaderHead, capacity),
     capacity_mask: 1073741823,
     object_offset: 0,
     frozen_mask: 2147483648,
@@ -139,15 +142,15 @@ pub(crate) struct NativeTypedArrayLayout {
 }
 
 pub(crate) const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLayout {
-    entry_size: 8,
+    entry_size: size_of::<usize>(),
     page_shift: 12,
     page_mask: 4095,
-    kind_offset: 20,
-    detached_offset: 21,
-    unshared_offset: 22,
-    data_offset: 0,
-    length_offset: 16,
-    stamp_offset: 8,
+    kind_offset: core::mem::offset_of!(super::record_heads::NativeViewHead, kind),
+    detached_offset: core::mem::offset_of!(super::record_heads::NativeViewHead, detached),
+    unshared_offset: core::mem::offset_of!(super::record_heads::NativeViewHead, unshared),
+    data_offset: core::mem::offset_of!(super::record_heads::NativeViewHead, data),
+    length_offset: core::mem::offset_of!(super::record_heads::NativeViewHead, length),
+    stamp_offset: core::mem::offset_of!(super::record_heads::NativeViewHead, stamp),
 };
 
 /// Where a loop entry record keeps an array's element count, after the elements' address (`LoopEntry::push_array`).
@@ -193,8 +196,8 @@ pub(crate) struct NativeEnvironmentLayout {
 
 pub(crate) const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvironmentLayout {
     header_pointer_offset: 0,
-    sparse_mark: 9223372036854775808,
-    slots_offset: 8,
+    sparse_mark: super::encodings::MARK_BIT as u64,
+    slots_offset: size_of::<usize>() as u64,
     slot_size: 8,
 };
 
@@ -221,15 +224,14 @@ pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeField
     own_holder: 4294967295,
 };
 
-pub(crate) const OTHERS_UNKNOWN: u32 = 4294967295;
+pub(crate) use super::encodings::{DOUBLE_LEN, ENCODED_LEN, NARROW_LEN, OTHERS_UNKNOWN};
 /// A string id whose bits under the mask are the base is small: it names no string record.
 pub(crate) const SMALL_STRING_ID_MASK: u32 = 4278190080;
 pub(crate) const SMALL_STRING_ID_BASE: u32 = 16777216;
-pub(crate) const NARROW_LEN: u32 = 2147483648;
-pub(crate) const DOUBLE_LEN: u32 = 1073741824;
-pub(crate) const ENCODED_LEN: u32 = 3221225472;
-pub(crate) const LENGTH_FROM_VALUES: i32 = -12;
-pub(crate) const OTHERS_FROM_VALUES: i32 = -4;
+/// The byte offsets from a backing's first value to its `len` and `others` words: the head
+/// `ArrayHeaderHead` is the backing's header, and its values follow it.
+pub(crate) const LENGTH_FROM_VALUES: i32 = core::mem::offset_of!(super::record_heads::ArrayHeaderHead, len) as i32 - size_of::<super::record_heads::ArrayHeaderHead>() as i32;
+pub(crate) const OTHERS_FROM_VALUES: i32 = core::mem::offset_of!(super::record_heads::ArrayHeaderHead, others) as i32 - size_of::<super::record_heads::ArrayHeaderHead>() as i32;
 pub(crate) const INLINE_PROPERTIES: usize = 2;
 
 /// `ValueLayout`, `Value` and `NarrowLayout` constants.

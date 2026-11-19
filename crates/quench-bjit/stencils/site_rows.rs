@@ -3,7 +3,7 @@
 //! (`staged/entry.rs`) run on `StencilStage`.
 
 use crate::bytecode::Register;
-use crate::codes::{MEM, FIELD_ROW, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW};
+use crate::codes::{MEM, FIELD_ROW, SITE_ROW, SITE_STORE_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW};
 use crate::heap_rows::{context_word, word_at};
 use crate::layout::{CONTEXT_THIS, JS_STEP_PROPERTY_BUFFER, JS_STEP_VM, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};

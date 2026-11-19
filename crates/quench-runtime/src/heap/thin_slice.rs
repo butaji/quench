@@ -11,7 +11,7 @@ static EMPTY_HEADER: [usize; MAX_PREFIX_WORDS + 1] = [0; MAX_PREFIX_WORDS + 1];
 pub(crate) const MAX_PREFIX_WORDS: usize = 2;
 /// The header's top bit: a mark its owner may set on a non-empty slice (`ThinBoxSlice::mark`)
 /// to tell two layouts of its elements apart; the length is the rest of the header.
-pub(crate) const MARK_BIT: usize = 1 << (usize::BITS - 1);
+pub(crate) use crate::staged::encodings::MARK_BIT;
 /// The mark bit and where a word-sized element run starts, for code that reads a slice header
 /// natively (`heap::NATIVE_ENVIRONMENT_LAYOUT`); `lay_out_in_place` asserts the offset.
 pub(crate) const NATIVE_MARK_BIT: u64 = MARK_BIT as u64;
