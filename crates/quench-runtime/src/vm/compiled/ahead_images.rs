@@ -90,6 +90,12 @@ fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = crate::vm::jit_backend::target_isa()?;
     let code = compile_relocatable(native, &*isa)?;
+    // The body ships too, and it is where a loop runs when it is not a region of its own (a
+    // loop holding a call is not): `aot-primitives` measures this dump for such an op.
+    #[cfg(feature = "aot")]
+    if let Some(directory) = ahead_dump_directory() {
+        let _ = std::fs::write(directory.join(format!("body-{function}.bin")), &*code.code);
+    }
     let atoms = code_atoms(&code, program);
     // A loop ships as code alone only where its lowering proved no fact (`StableFacts::is_empty`)
     // and needs no Number result: a load cannot subscribe build-time shapes or cells. Only a

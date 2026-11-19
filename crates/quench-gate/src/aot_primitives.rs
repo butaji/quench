@@ -13,6 +13,10 @@
 //! same walk `c-parity` and `aot-instructions` use — and compared with `ir_budget.txt`'s C twin
 //! and its budget (`3 x C + 6`).
 //!
+//! A loop is measured in the region the op ships for it, else in the function's body: a loop
+//! whose iteration cannot run natively as a region (one that holds a call) still runs in the
+//! body, which is what the image executes for it. The body is dumped as `body-<function>.bin`.
+//!
 //! Over budget is a report line, not a failure (as in `primitive-instructions`); the table
 //! (`aot-primitives-aarch64.txt`) is a shrink-only ratchet. A build that embeds a compiling
 //! process address fails the step: the image would fault where it runs.
@@ -81,7 +85,7 @@ pub fn run(config: &Config) -> Verdict {
     }
     let measured = rows.iter().filter(|row| row.3.is_some()).count();
     let within = rows.iter().filter(|(_, _, budget, ahead)| ahead.is_some_and(|count| count <= *budget)).count();
-    Ok(format!("{measured} of {} ops ship an ahead loop, {within} within 3 x C + 6; table {TABLE}", rows.len()))
+    Ok(format!("{measured} of {} ops measured ahead, {within} within 3 x C + 6; table {TABLE}", rows.len()))
 }
 
 /// A fresh directory of dumps: what a previous run wrote is not this run's measurement.
@@ -117,17 +121,27 @@ fn op_function(config: &Config, host: &Path, runner: &Path, op: &str) -> Result<
     Ok(best.map(|(function, _)| function))
 }
 
-/// The instructions per iteration of the hottest ahead loop `function` ships, if one does.
+/// The instructions per iteration of the hottest ahead loop `function` ships: a loop region of
+/// its own where one ships, else the body's own loop — a loop whose iteration cannot run
+/// natively as a region (one holding a call) still runs in the body, which is what the image
+/// executes for it.
 fn measure(dumps: &Path, function: u32) -> Option<u32> {
-    let prefix = format!("loop-{function}-");
+    let region = |name: &str| name.starts_with(&format!("loop-{function}-")) && name.ends_with(".bin");
+    let body = |name: &str| name == format!("body-{function}.bin");
+    hottest(dumps, function, region).or_else(|| hottest(dumps, function, body))
+}
+
+/// The hottest loop's instructions per iteration among the dumps of `function` that `wanted`
+/// names.
+fn hottest(dumps: &Path, _function: u32, wanted: impl Fn(&str) -> bool) -> Option<u32> {
     let entries = fs::read_dir(dumps).ok()?;
     let mut best: Option<u32> = None;
     for entry in entries.flatten() {
         let path = entry.path();
         let name = path.file_name()?.to_str()?;
-        if !(name.starts_with(&prefix) && name.ends_with(".bin")) { continue; }
+        if !wanted(name) { continue; }
         let code = asm::disassemble(&path).ok()?;
-        let body = flow::hottest(&code)?;
+        let Some(body) = flow::hottest(&code) else { continue };
         let count = u32::try_from(body.iter().filter(|instruction| !instruction.is_nop()).count()).unwrap_or(u32::MAX);
         best = Some(best.map_or(count, |seen| seen.max(count)));
     }
@@ -158,7 +172,7 @@ fn render(rows: &[(String, u32, u32, Option<u32>)]) -> String {
     let mut text = String::from(
         "# The ops.js primitives' ahead code: the hottest loop each op ships in a produced image,\n\
          # instructions per iteration, against `ir_budget.txt`'s C twin and budget (3 x C + 6).\n\
-         # `-` is an op whose loop the image does not lower ahead. Measured by\n\
+         # `-` is an op whose loop neither a region nor its body lowers ahead. Measured by\n\
          # `quench-gate --only aot-primitives`; counts only shrink.\n\
          # op aot c budget\n");
     for (op, c, budget, ahead) in rows {
