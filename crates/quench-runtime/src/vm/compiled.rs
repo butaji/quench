@@ -275,22 +275,16 @@ const _: () = assert!(RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 /// Compute ToBoolean for values whose truthiness is encoded without a heap
 /// lookup. Strings, BigInts, and objects take the VM path at the same PC.
 fn emit_js_tagged_truthiness(builder: &mut FunctionBuilder<'_>, bits: ir::Value, fallback: ir::Block) -> ir::Value {
-    use crate::staged::machine::Relation;
     let mut stage = object_slots::emit(builder);
     let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut stage, bits);
-    let decided = stage.raw_compare_imm(Relation::Equal, undecided, 0);
+    let decided = stage.not(undecided);
     stage.guard(decided, fallback);
     truthy
 }
 
 /// Decode an already-proved Number without repeating its semantic type check.
 fn emit_known_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
-    use crate::staged::machine::{Lane, Unary};
-    let mut stage = object_slots::emit(builder);
-    let integer = crate::staged::value::is_int(&mut stage, bits);
-    let int = crate::staged::value::int32_as_f64(&mut stage, bits);
-    let double = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
-    stage.raw_select(integer, int, double)
+    crate::staged::value::known_number_f64(&mut object_slots::emit(builder), bits)
 }
 
 /// Unbox a tagged JavaScript Number, branching to the current instruction's
@@ -301,37 +295,16 @@ fn emit_js_tagged_number(
     bits: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    use crate::staged::machine::{Lane, Relation, Unary};
-    let nan = builder.create_block();
-    let tagged = builder.create_block();
-    let integer_block = builder.create_block();
     let join = builder.create_block();
     builder.append_block_param(join, types::F64);
     let mut stage = object_slots::emit(builder);
-    let number = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
-    let unordered = stage.raw_compare(Relation::FloatUnordered, number, number);
-    stage.branch_if(unordered, (nan, &[]), (join, &[number]));
-
-    // An integer is the common NaN-space value (a double column holds its integral
-    // values tagged), so its tag is tested first.
-    stage.builder.switch_to_block(nan);
-    let integer = crate::staged::value::is_int(&mut stage, bits);
-    stage.branch_if(integer, (integer_block, &[]), (tagged, &[]));
-
-    // Any other tag leaves; an untagged NaN is the double NaN.
-    stage.builder.switch_to_block(tagged);
-    let double = crate::staged::value::is_double(&mut stage, bits);
-    stage.branch_if(double, (join, &[number]), (fallback, &[]));
-
-    stage.builder.switch_to_block(integer_block);
-    let int = crate::staged::value::int32_as_f64(&mut stage, bits);
-    stage.goto(join, &[int]);
-    builder.seal_block(nan);
-    builder.seal_block(tagged);
-    builder.seal_block(integer_block);
-    builder.seal_block(join);
-    builder.switch_to_block(join);
-    builder.block_params(join)[0]
+    // The row's test and unboxing (an int32 by its tag, a double by its bits, anything else
+    // leaves to the VM at the same PC).
+    let (decided, number) = crate::staged::value::tagged_number_f64(&mut stage, bits);
+    stage.branch_if(decided, (join, &[number]), (fallback, &[]));
+    stage.builder.switch_to_block(join);
+    stage.builder.seal_block(join);
+    stage.builder.block_params(join)[0]
 }
 
 // The boxes `emit_js_box_number` made while a lowering records them (`record_boxed_numbers`):
@@ -375,14 +348,11 @@ fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> 
 }
 
 fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    use crate::staged::machine::{Lane, Relation, Unary};
     let (cold, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(cold);
     let result = builder.append_block_param(join, types::I64);
     let mut stage = object_slots::emit(builder);
-    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
-    let truncated = stage.raw_unary(Unary::Truncate, number);
-    let whole_or_nan = stage.raw_compare(Relation::FloatUnorderedEqual, truncated, number);
+    let (whole_or_nan, bits) = crate::staged::value::number_bits_unless_whole(&mut stage, number);
     stage.branch_if(whole_or_nan, (cold, &[]), (join, &[bits]));
     stage.builder.switch_to_block(cold);
     stage.builder.seal_block(cold);
