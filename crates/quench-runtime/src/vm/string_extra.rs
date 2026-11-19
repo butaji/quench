@@ -14,7 +14,8 @@ const ESCAPE_LATIN1_MAX: u16 = 0xff;
 const ESCAPE_WIDE_MARKER: u16 = b'u' as u16;
 const ESCAPE_BYTE_HEX_DIGITS: usize = 2;
 const ESCAPE_WIDE_HEX_DIGITS: usize = 4;
-use crate::units::HEXADECIMAL_RADIX;
+use crate::units::{DECIMAL_RADIX, HEXADECIMAL_RADIX};
+use super::number_parse::{radix_digit_run, radix_digits_value, split_sign, trim_leading_space};
 /// Bits one hex digit spells.
 const HEX_DIGIT_BITS: u32 = HEXADECIMAL_RADIX.ilog2();
 /// A URI escape is `%` and two hex digits.
@@ -227,38 +228,49 @@ fn decode_uri_escape(
     Ok(end)
 }
 
-pub(super) fn parse_integer(text: &str, mut radix: i32) -> f64 {
-    let mut input = text.trim_start_matches(super::primitives::is_ecma_whitespace_character);
-    let sign = if let Some(rest) = input.strip_prefix('-') {
-        input = rest;
-        -1.0
-    } else {
-        input = input.strip_prefix('+').unwrap_or(input);
-        1.0
+/// parseInt of `text` with `radix` (0 when absent): the integer its leading digits spell.
+pub(super) fn parse_integer(text: &str, radix: i32) -> f64 {
+    let text = text.trim_start_matches(super::primitives::is_ecma_whitespace_character);
+    parse_integer_bytes(text.as_bytes(), radix)
+}
+
+/// parseInt of wide or ASCII `units` with `radix`, read in place.
+pub(super) fn parse_integer_units(units: super::wtf16::Units<'_>, radix: i32) -> f64 {
+    super::number_parse::with_ascii_units(units, |bytes| parse_integer_bytes(bytes, radix))
+}
+
+/// The lowest radix parseInt accepts.
+const MIN_PARSE_RADIX: i32 = 2;
+/// The highest radix parseInt accepts.
+const MAX_PARSE_RADIX: i32 = 36;
+/// The length of a `0x` or `0X` prefix that parseInt strips for radix 16.
+const HEX_PREFIX_LENGTH: usize = 2;
+
+/// parseInt of ASCII `bytes` with `radix`, read in place: the sign, the radix (16 when a `0x`
+/// prefix meets radix 0 or 16), then the longest run of digits valid in that radix.
+pub(super) fn parse_integer_bytes(bytes: &[u8], radix: i32) -> f64 {
+    let (negative, unsigned) = split_sign(trim_leading_space(bytes));
+    let has_hex_prefix = unsigned.starts_with(b"0x") || unsigned.starts_with(b"0X");
+    let radix = match radix {
+        0 if has_hex_prefix => HEXADECIMAL_RADIX as i32,
+        0 => DECIMAL_RADIX as i32,
+        radix => radix,
     };
-    if radix == 0 {
-        radix = if input.starts_with("0x") || input.starts_with("0X") {
-            16
-        } else {
-            10
-        };
-    }
-    if !(2..=36).contains(&radix) {
+    if !(MIN_PARSE_RADIX..=MAX_PARSE_RADIX).contains(&radix) {
         return f64::NAN;
     }
-    if radix == 16 {
-        input = input
-            .strip_prefix("0x")
-            .or_else(|| input.strip_prefix("0X"))
-            .unwrap_or(input);
-    }
-    let digits_end = input
-        .find(|character: char| !character.is_digit(radix as u32))
-        .unwrap_or(input.len());
-    if digits_end == 0 {
+    let radix = radix as u32;
+    let digits = if radix == HEXADECIMAL_RADIX && has_hex_prefix {
+        &unsigned[HEX_PREFIX_LENGTH..]
+    } else {
+        unsigned
+    };
+    let run = radix_digit_run(digits, radix);
+    if run == 0 {
         return f64::NAN;
     }
-    sign * super::number::integer_digits_value(&input[..digits_end], radix as u32)
+    let value = radix_digits_value(&digits[..run], radix);
+    if negative { -value } else { value }
 }
 
 /// The digits `Number.prototype.toString(radix)` spells, after their sign.

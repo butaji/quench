@@ -538,17 +538,22 @@ impl<H: Host> Vm<H> {
             }
             Native::ParseInt => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let text = self.to_string(p, value)?;
+                // A string argument is read in place; any other is converted by ToString first.
+                let text = if self.heap.is_string(value) { None } else { Some(self.to_string(p, value)?) };
                 let radix = match args.get(1).copied() {
                     Some(value) => crate::value::number_to_u32(self.to_number(p, value)?) as i32,
                     None => 0,
                 };
-                Ok(Value::number(super::string_extra::parse_integer(
-                    &text, radix,
-                )))
+                Ok(Value::number(match (&text, self.heap.string(value)) {
+                    (None, Some(string)) => string.read_units(|units| super::string_extra::parse_integer_units(units, radix)),
+                    _ => super::string_extra::parse_integer(text.as_deref().unwrap_or_default(), radix),
+                }))
             }
             Native::NumberParseFloat => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if let Some(string) = self.heap.string(value) {
+                    return Ok(Value::number(string.read_units(super::number::parse_float_units)));
+                }
                 let text = self.to_string(p, value)?;
                 Ok(Value::number(super::number::parse_float(&text)))
             }

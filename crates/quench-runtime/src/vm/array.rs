@@ -668,15 +668,15 @@ impl<H: Host> Vm<H> {
     pub(super) fn array_push_one(&mut self, this: Value, value: Value) -> Option<Value> {
         let object = self.heap.record_array(this)?;
         let length = object.elements().len();
+        let room = object.elements().capacity();
         if !object.holds_ordinary_elements() || length >= MAX_ARRAY_LENGTH || !self.link_chain_holds_no_index(object.proto_link())
         {
             return None;
         }
-        if let Some(grown) = self.push_in_room(this, value) {
-            return Some(grown);
+        match self.push_in_room(this, value, room) {
+            Some(grown) => Some(grown),
+            None => self.push_by_heap(this, value, length),
         }
-        self.heap.push_array_element(this, value)?;
-        Some(Value::length(length + 1))
     }
 
     /// `chain_holds_no_index` of the prototype `link` names, matched undecoded against the
@@ -688,22 +688,23 @@ impl<H: Host> Vm<H> {
     }
 
     /// The staged append (`staged::builtins::array_push_one`) of `value` to `array`, whose
-    /// backing it owns alone and has a slot for it, as a store the write barrier passes
-    /// without logging. A growth adds no payload then, so there is nothing to charge.
+    /// backing it owns alone and has `room` slots for, as a store the write barrier passes
+    /// without logging. The unlogged check is the only mutable access; the append writes
+    /// through the record base. A growth adds no payload then, so there is nothing to charge.
     #[inline(always)]
-    fn push_in_room(&mut self, array: Value, value: Value) -> Option<Value> {
+    fn push_in_room(&mut self, array: Value, value: Value, room: usize) -> Option<Value> {
         let records = self.heap.array_record_base()?;
-        let room = self.heap.record_array_store_mut_unlogged(array, value)?.elements().capacity();
+        self.heap.record_array_store_mut_unlogged(array, value)?;
         crate::staged::builtins::concrete_array_push(records, array, room, value)
     }
 
-    /// The staged removal (`staged::builtins::array_pop`) of the last element of `array`,
-    /// which retires the proofs a shorter array falsifies first.
-    #[inline(always)]
-    fn pop_in_place(&mut self, array: Value) -> Option<Value> {
-        let records = self.heap.array_record_base()?;
-        self.heap.record_array(array)?.announce_shrinking();
-        crate::staged::builtins::concrete_array_pop(records, array)
+    /// `array_push_one` past the room of the backing, or of a store the write barrier logs:
+    /// the heap appends (`Heap::push_array_element`), copying a shared backing and charging
+    /// any growth. The new length is `length` plus one.
+    #[inline(never)]
+    fn push_by_heap(&mut self, this: Value, value: Value, length: usize) -> Option<Value> {
+        self.heap.push_array_element(this, value)?;
+        Some(Value::length(length + 1))
     }
 
     /// `push` onto a dense array as one append: the single-value case is `array_push_one`,
@@ -816,13 +817,27 @@ impl<H: Host> Vm<H> {
     /// the general native and the steady call path alike.
     #[inline(always)]
     pub(super) fn array_pop_dense(&mut self, this: Value) -> Option<Value> {
-        if !self.heap.record_array(this)?.holds_ordinary_elements() {
+        let object = self.heap.record_array(this)?;
+        if !object.holds_ordinary_elements() {
             return self.array_pop_plain_elements(this);
         }
-        if let Some(popped) = self.pop_in_place(this) {
-            return Some(popped);
+        let records = self.heap.array_record_base()?;
+        // A shorter array falsifies the proofs a prototype's elements and the running lane's
+        // storage proofs hold, so they retire before the removal.
+        object.announce_shrinking();
+        match crate::staged::builtins::concrete_array_pop(records, this) {
+            Some(popped) => Some(popped),
+            None => self.array_pop_elements(this),
         }
-        match self.heap.record_array(this)?.elements().last() {
+    }
+
+    /// `array_pop_dense` past the staged removal: an empty array answers `undefined`, a hole
+    /// (which its prototypes answer) takes the general path (`None`), and otherwise the last
+    /// element leaves the backing in place.
+    #[inline(never)]
+    fn array_pop_elements(&mut self, this: Value) -> Option<Value> {
+        let object = self.heap.record_array(this)?;
+        match object.elements().last() {
             None => Some(Value::UNDEFINED),
             Some(last) if last.is_deleted() => None,
             // Removing stores no reference, which the write barrier passes.

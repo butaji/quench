@@ -7,62 +7,79 @@ const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
 const MINIMUM_POSITIVE_SUBNORMAL: f64 = f64::from_bits(MINIMUM_SUBNORMAL_BIT_PATTERN);
 const NUMBER_RADIX_PREFIX_LENGTH: usize = 2;
 use crate::float_layout::{BINARY16, BINARY64, power_of_two};
-use crate::units::{BINARY_RADIX, DECIMAL_RADIX, HEXADECIMAL_RADIX, OCTAL_RADIX};
+use crate::units::{BINARY_RADIX, HEXADECIMAL_RADIX, OCTAL_RADIX};
+use super::number_parse::{
+    INFINITY_LITERAL, decimal_value, radix_digit_run, radix_digits_value, scan_decimal, split_sign, trim_ascii_space,
+    trim_leading_space, with_ascii_units,
+};
+use super::wtf16::Units;
 const MAX_NUMBER_FORMAT_DIGITS: usize = 100;
 
-pub(super) fn parse_number_string(text: &str) -> f64 {
-    let text = text.trim_matches(super::primitives::is_ecma_whitespace_character);
+/// StringToNumber of wide or ASCII `units` (the ToNumber of a string), read in place.
+pub(super) fn string_to_number_units(units: Units<'_>) -> f64 {
+    with_ascii_units(units, string_to_number_bytes)
+}
+
+/// StringToNumber of ASCII `bytes`: the text with its whitespace trimmed, as a
+/// StringNumericLiteral. Empty text is 0; `0x`, `0o` and `0b` take no sign; Infinity takes one.
+pub(super) fn string_to_number_bytes(bytes: &[u8]) -> f64 {
+    let text = trim_ascii_space(bytes);
     if text.is_empty() {
         return 0.0;
     }
-    if matches!(text, "INFINITY" | "infinity" | "+infinity" | "-infinity") {
-        return f64::NAN;
+    if let Some(radix) = radix_prefix(text) {
+        return radix_literal_value(&text[NUMBER_RADIX_PREFIX_LENGTH..], radix);
     }
-    let Some((prefix, digits)) = text
-        .get(..NUMBER_RADIX_PREFIX_LENGTH)
-        .map(|prefix| (prefix, &text[NUMBER_RADIX_PREFIX_LENGTH..]))
-    else {
-        return text.parse().unwrap_or(f64::NAN);
-    };
-    let radix = match prefix {
-        "0b" | "0B" => Some(BINARY_RADIX),
-        "0o" | "0O" => Some(OCTAL_RADIX),
-        "0x" | "0X" => Some(HEXADECIMAL_RADIX),
-        _ => None,
-    };
-    radix.map_or_else(
-        || text.parse().unwrap_or(f64::NAN),
-        |radix| {
-            if digits.is_empty() || !digits.chars().all(|digit| digit.is_digit(radix)) {
-                f64::NAN
-            } else {
-                integer_digits_value(digits, radix)
-            }
-        },
-    )
+    match text {
+        b"Infinity" | b"+Infinity" => return f64::INFINITY,
+        b"-Infinity" => return f64::NEG_INFINITY,
+        _ => {}
+    }
+    match scan_decimal(text) {
+        Some(decimal) if decimal.len == text.len() => decimal_value(&decimal),
+        _ => f64::NAN,
+    }
 }
 
-/// The Number nearest the non-negative integer that `digits` (all valid in `radix`) spell.
-/// Values that stay at or below 2^53 accumulate exactly in binary64; larger values in
-/// radix 10 or a power of two are rounded once from the exact integer, as StringToNumber
-/// and parseInt require, and other radices keep the accumulated approximation parseInt
-/// permits (ECMA-262 19.2.5).
-pub(super) fn integer_digits_value(digits: &str, radix: u32) -> f64 {
-    let mut value = 0.0;
-    for digit in digits.chars().filter_map(|digit| digit.to_digit(radix)) {
-        value = value * f64::from(radix) + f64::from(digit);
+/// The radix a `0b`, `0o` or `0x` prefix (either case) selects, `None` for other text.
+fn radix_prefix(text: &[u8]) -> Option<u32> {
+    match text.get(..NUMBER_RADIX_PREFIX_LENGTH)? {
+        b"0b" | b"0B" => Some(BINARY_RADIX),
+        b"0o" | b"0O" => Some(OCTAL_RADIX),
+        b"0x" | b"0X" => Some(HEXADECIMAL_RADIX),
+        _ => None,
     }
-    if value <= MAX_SAFE_INTEGER + 1.0 {
-        return value;
+}
+
+/// The value of the digits after a radix prefix: NaN when there are none or one is invalid.
+fn radix_literal_value(digits: &[u8], radix: u32) -> f64 {
+    if digits.is_empty() || radix_digit_run(digits, radix) != digits.len() {
+        f64::NAN
+    } else {
+        radix_digits_value(digits, radix)
     }
-    if radix == DECIMAL_RADIX {
-        return digits.parse().unwrap_or(value);
+}
+
+/// parseFloat of `text`: the longest StrDecimalLiteral prefix after its leading whitespace.
+pub(super) fn parse_float(text: &str) -> f64 {
+    let text = text.trim_start_matches(super::primitives::is_ecma_whitespace_character);
+    parse_float_bytes(text.as_bytes())
+}
+
+/// parseFloat of wide or ASCII `units`, read in place.
+pub(super) fn parse_float_units(units: Units<'_>) -> f64 {
+    with_ascii_units(units, parse_float_bytes)
+}
+
+/// parseFloat of ASCII `bytes`: the longest StrDecimalLiteral prefix after leading whitespace,
+/// or an Infinity literal, with its sign.
+pub(super) fn parse_float_bytes(bytes: &[u8]) -> f64 {
+    let text = trim_leading_space(bytes);
+    let (negative, unsigned) = split_sign(text);
+    if unsigned.starts_with(INFINITY_LITERAL) {
+        return if negative { f64::NEG_INFINITY } else { f64::INFINITY };
     }
-    if radix.is_power_of_two() {
-        return num_bigint::BigUint::parse_bytes(digits.as_bytes(), radix)
-            .map_or(value, |exact| crate::bigint::to_f64(&BigInt::from(exact)));
-    }
-    value
+    scan_decimal(text).map_or(f64::NAN, |decimal| decimal_value(&decimal))
 }
 
 /// `fixed_decimal` when the exact product significand * 10^digits, and its shift by the
@@ -525,63 +542,6 @@ fn normalize_exponent_sign(text: &str) -> String {
         return text.to_owned();
     };
     format!("{mantissa}e{exponent:+}")
-}
-
-pub(super) fn parse_float(text: &str) -> f64 {
-    let text = text.trim_start_matches(super::primitives::is_ecma_whitespace_character);
-    if text.starts_with('+') || text.starts_with('-') {
-        if text[1..].starts_with("Infinity") {
-            return if text.starts_with('-') {
-                f64::NEG_INFINITY
-            } else {
-                f64::INFINITY
-            };
-        }
-    } else if text.starts_with("Infinity") {
-        return f64::INFINITY;
-    }
-    let bytes = text.as_bytes();
-    let mut end = usize::from(
-        bytes
-            .first()
-            .is_some_and(|byte| *byte == b'+' || *byte == b'-'),
-    );
-    let mut digits = 0;
-    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
-        end += 1;
-        digits += 1;
-    }
-    if bytes.get(end) == Some(&b'.') {
-        end += 1;
-        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
-            end += 1;
-            digits += 1;
-        }
-    }
-    if digits == 0 {
-        return f64::NAN;
-    }
-    if bytes
-        .get(end)
-        .is_some_and(|byte| *byte == b'e' || *byte == b'E')
-    {
-        let exponent_start = end;
-        end += 1;
-        if bytes
-            .get(end)
-            .is_some_and(|byte| *byte == b'+' || *byte == b'-')
-        {
-            end += 1;
-        }
-        let exponent_digits = end;
-        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
-            end += 1;
-        }
-        if exponent_digits == end {
-            end = exponent_start;
-        }
-    }
-    text[..end].parse().unwrap_or(f64::NAN)
 }
 
 // The log1p forms meet at this magnitude. Below it, retain the correction

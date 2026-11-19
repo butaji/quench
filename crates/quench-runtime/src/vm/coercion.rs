@@ -249,7 +249,7 @@ impl<H: Host> Vm<H> {
     #[inline] pub(super) fn primitive_to_number(&self, value: Value) -> Option<f64> {
         value
             .immediate_number()
-            .or_else(|| self.heap.string(value).map(|text| super::number::parse_number_string(text.host_string())))
+            .or_else(|| self.heap.string(value).map(|text| text.read_units(super::number::string_to_number_units)))
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]

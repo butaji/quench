@@ -212,6 +212,7 @@ mod method_cache;
 mod plain_equality;
 mod module;
 mod number;
+mod number_parse;
 mod object_template;
 mod object;
 mod shape_memo;
