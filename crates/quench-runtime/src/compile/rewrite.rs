@@ -1080,14 +1080,9 @@ fn apply_rule(
     let replacement = sound_replacement(first, second, replacement)?;
     if matches!(recipe, Recipe::GetSetThis)
         && let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
-            // The entry in effect at a pc, found by the table's own lookup rather than a
+            // The source offset in effect at a pc, found by the table's own lookup rather than a
             // decoded copy of the whole table.
-            let at = |pc: usize| {
-                u32::try_from(pc)
-                    .ok()
-                    .and_then(|pc| source_positions.at(pc))
-                    .map(|position| (position.line, position.column))
-            };
+            let at = |pc: usize| u32::try_from(pc).ok().and_then(|pc| source_positions.at(pc));
             let site = &mut field_sites[index];
             if site.sources[0].is_none() {
                 site.sources[0] = at(pc);
@@ -1195,10 +1190,10 @@ fn relocated_source_positions(
         {
             effective = survivors.next();
         }
-        let Some(position) = effective else {
+        let Some(entry) = effective else {
             continue;
         };
-        let location = (position.line, position.column);
+        let location = entry.offset;
         // Call anchors are observable even when their location matches a
         // preceding Move that a later pass may remove.
         if previous_location == Some(location)
@@ -1209,10 +1204,9 @@ fn relocated_source_positions(
         {
             continue;
         }
-        relocated.push(crate::bytecode::SourcePosition {
+        relocated.push(crate::bytecode::SourceOffset {
             pc: new_pc as u32,
-            line: position.line,
-            column: position.column,
+            offset: location,
         });
         previous_location = Some(location);
     }
@@ -1713,7 +1707,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
 
     #[test]
     fn source_positions_follow_compaction_and_skip_removed_instructions() {
-        use crate::bytecode::SourcePosition;
+        use crate::bytecode::SourceOffset;
 
         let mut code = vec![Instr::new(Op::Return, 0, 0, 0, 0); 2];
         let old_code = vec![
@@ -1723,21 +1717,9 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
             Instr::new(Op::Return, 0, 0, 0, 0),
         ];
         let mut source_positions: crate::bytecode::SourcePositions = vec![
-            SourcePosition {
-                pc: 0,
-                line: 1,
-                column: 1,
-            },
-            SourcePosition {
-                pc: 1,
-                line: 1,
-                column: 5,
-            },
-            SourcePosition {
-                pc: 2,
-                line: 1,
-                column: 9,
-            },
+            SourceOffset { pc: 0, offset: 0 },
+            SourceOffset { pc: 1, offset: 4 },
+            SourceOffset { pc: 2, offset: 8 },
         ]
         .into_iter()
         .collect();
@@ -1760,30 +1742,22 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         assert_eq!(
             source_positions.iter().collect::<Vec<_>>(),
             vec![
-                SourcePosition {
-                    pc: 0,
-                    line: 1,
-                    column: 1,
-                },
-                SourcePosition {
-                    pc: 1,
-                    line: 1,
-                    column: 5,
-                },
+                SourceOffset { pc: 0, offset: 0 },
+                SourceOffset { pc: 1, offset: 4 },
             ]
         );
     }
 
     #[test]
     fn wide_call_source_anchors_survive_later_argument_move_removal() {
-        use crate::bytecode::SourcePosition;
+        use crate::bytecode::SourceOffset;
         let wide = [WideInstruction::new(Op::Call, 0, 0, 0, 0)];
         let load = Instr::new(Op::LoadConst, 0, 0, 0, 0);
         let call = Instr::wide(0).unwrap();
         let mut positions = vec![
-            SourcePosition { pc: 0, line: 1, column: 74 },
-            SourcePosition { pc: 1, line: 1, column: 69 },
-            SourcePosition { pc: 2, line: 1, column: 69 },
+            SourceOffset { pc: 0, offset: 73 },
+            SourceOffset { pc: 1, offset: 68 },
+            SourceOffset { pc: 2, offset: 68 },
         ]
         .into_iter()
         .collect();
@@ -1793,8 +1767,8 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         let second = [load, Instr::new(Op::Nop, 0, 0, 0, 0), call];
         relocate_source_positions(2, &mut positions, &second, &wide, &[0, 1, 1, 2]);
         assert_eq!(positions.iter().collect::<Vec<_>>(), vec![
-            SourcePosition { pc: 0, line: 1, column: 74 },
-            SourcePosition { pc: 1, line: 1, column: 69 },
+            SourceOffset { pc: 0, offset: 73 },
+            SourceOffset { pc: 1, offset: 68 },
         ]);
     }
 }

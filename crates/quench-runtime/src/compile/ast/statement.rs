@@ -12,10 +12,7 @@ impl FunctionCompiler<'_, '_> {
     /// construct reading registers across its body holds them (`with_registers_held`). So
     /// the branches of an `if` chain share one run of registers.
     pub(super) fn statement(&mut self, statement: &Statement<'_>) {
-        let position = self.owner.source_position(statement.span().start);
-        let previous = self
-            .current_source_position
-            .replace((position.line, position.column));
+        let previous = self.current_source_position.replace(self.owner.source_offset(statement.span().start));
         self.statement_at_current_position(statement);
         self.current_source_position = previous;
         self.release_temporaries();

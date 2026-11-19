@@ -1872,9 +1872,17 @@ pub(crate) struct LocalRegister {
     pub(crate) register: Register,
 }
 
+/// A source position table entry: the instruction at `pc` came from byte `offset` of the
+/// compiled source text (`ProgramSource::position` maps it to a line and column).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SourceOffset {
+    pub(crate) pc: u32,
+    pub(crate) offset: u32,
+}
+
+/// A 1-based line and 1-based UTF-16 column of a source text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SourcePosition {
-    pub(crate) pc: u32,
     pub(crate) line: u32,
     pub(crate) column: u32,
 }
@@ -3523,10 +3531,11 @@ pub(crate) struct FieldSite {
     pub first: (Atom, u16),
     pub second: Option<(Atom, u16)>,
     pub sink: Option<(Atom, u16)>,
-    pub sources: [Option<(u32, u32)>; 3],
+    /// The compiled-source offsets the site's parts come from.
+    pub sources: [Option<u32>; 3],
 }
 impl FieldSite {
-    pub(crate) fn source(self, part: FieldPart) -> Option<(u32, u32)> {
+    pub(crate) fn source(self, part: FieldPart) -> Option<u32> {
         self.sources[match part {
             FieldPart::First => 0,
             FieldPart::Second => 1,
@@ -3804,11 +3813,76 @@ pub(crate) struct CallSiteDescription {
     pub(crate) expression: Option<SourceSpan>,
 }
 
-/// A source text's line starts and UTF-16 excess table (`compile::source_utf16_excess`).
+/// A source text's line starts and UTF-16 excess table: what maps a byte offset of the text to
+/// its line and column. Made once per text, on the first position that asks for one.
 #[derive(Debug)]
 pub(crate) struct SourceLayout {
-    pub(crate) line_starts: Box<[usize]>,
-    pub(crate) utf16_excess: Box<[(usize, usize)]>,
+    /// The byte offset of each line start (`source_line_starts`).
+    line_starts: Box<[u32]>,
+    /// The byte offset of each non-ASCII character, with the running excess of its UTF-8 bytes
+    /// over its UTF-16 units through it (`source_utf16_excess`).
+    utf16_excess: Box<[(usize, usize)]>,
+}
+
+impl SourceLayout {
+    pub(crate) fn of(text: &str) -> Self {
+        Self {
+            line_starts: source_line_starts(text).map(|start| u32::try_from(start).unwrap_or(u32::MAX)).collect(),
+            utf16_excess: source_utf16_excess(text).into(),
+        }
+    }
+
+    /// The line and UTF-16 column of byte `offset` of the text: the line holding it, and its
+    /// column counted in UTF-16 units from the line start.
+    pub(crate) fn line_column(&self, offset: usize) -> SourcePosition {
+        let starts = &self.line_starts;
+        let line_index = starts.partition_point(|start| *start as usize <= offset).saturating_sub(1);
+        let line_start = starts[line_index] as usize;
+        let excess_before = |offset: usize| {
+            self.utf16_excess
+                .partition_point(|(character, _)| *character < offset)
+                .checked_sub(1)
+                .map_or(0, |index| self.utf16_excess[index].1)
+        };
+        let column = offset - line_start - (excess_before(offset) - excess_before(line_start));
+        SourcePosition {
+            line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
+            column: u32::try_from(column.saturating_add(1)).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+/// Byte offset of each non-ASCII character of `text` with the running excess of UTF-8 bytes
+/// over UTF-16 units through it.
+pub(crate) fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut table = Vec::new();
+    let mut excess = 0;
+    let mut offset = 0;
+    while let Some(skipped) = ascii_prefix_len(&bytes[offset..]) {
+        offset += skipped;
+        let character = text[offset..].chars().next().expect("a non-ASCII byte starts a character");
+        excess += character.len_utf8() - character.len_utf16();
+        table.push((offset, excess));
+        offset += character.len_utf8();
+    }
+    table
+}
+
+/// The bytes of `bytes` before its first non-ASCII byte, `None` when every one is ASCII:
+/// a word of bytes at a time, as source text is nearly all ASCII.
+fn ascii_prefix_len(bytes: &[u8]) -> Option<usize> {
+    const WORD: usize = size_of::<u64>();
+    const HIGH_BITS: u64 = u64::from_ne_bytes([0x80; WORD]);
+    let (words, _) = bytes.as_chunks::<WORD>();
+    let mut offset = 0;
+    for word in words {
+        if u64::from_ne_bytes(*word) & HIGH_BITS != 0 {
+            break;
+        }
+        offset += WORD;
+    }
+    bytes[offset..].iter().position(|byte| !byte.is_ascii()).map(|position| offset + position)
 }
 
 /// Compiler source snapshot and wrapper origin, retained for diagnostics.
@@ -3822,14 +3896,9 @@ pub(crate) struct ProgramSource {
     pub(crate) base: u32,
     pub(crate) line_offset: u32,
     pub(crate) column_offset: u32,
-    /// `source_line_starts(text)`, indexed on the first line read: error source positions
-    /// read a line per throw, which a scan from the top would make linear in the source.
-    /// Shared, so a copy of the source (an error's captured call sites) copies no index.
-    pub(crate) line_starts: std::cell::OnceCell<std::sync::Arc<[u32]>>,
-    /// The layout tables first-call chunks compile with (`compile::first_call::source_layout`),
-    /// made on the first chunk's compile and shared by every copy of the source, the chunk
-    /// programs' included: a chunk program made its own, so each of babel-wtb's 34 scanned
-    /// the 5.6 MB text again (528M Ir of a 5.9G first iteration).
+    /// The text's line and UTF-16 layout (`SourceLayout`), made on the first position or line
+    /// that asks for one and shared by every copy of the source, so a copy (an error's captured
+    /// call sites, a first-call chunk's program) copies no index.
     pub(crate) layout: std::cell::OnceCell<std::sync::Arc<SourceLayout>>,
     /// Complete static call-printing facts for native images. An unset cell
     /// leaves the dynamic error-path renderer in charge; an empty table is final.
@@ -3842,7 +3911,6 @@ impl ProgramSource {
     pub(crate) fn retain_body(&mut self, text: SourceText, base: u32) {
         self.text = text;
         self.base = base;
-        self.line_starts.take();
         self.layout.take();
         if let Some(sites) = self.call_sites.take() {
             self.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites.iter().filter_map(|site| {
@@ -3857,9 +3925,9 @@ impl ProgramSource {
     }
 
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        // `line_starts` is a memo of `text`, made again on the first line read.
+        // `layout` is a memo of `text`, made again on the first position read.
         crate::vm::freeze_source_call_sites(self);
-        let Self { text, typescript, base, line_offset, column_offset, line_starts: _, layout: _, call_sites } = self;
+        let Self { text, typescript, base, line_offset, column_offset, layout: _, call_sites } = self;
         text.write_snapshot(writer);
         writer.bool(*typescript);
         writer.u32(*base);
@@ -3888,7 +3956,6 @@ impl ProgramSource {
             base: reader.u32()?,
             line_offset: reader.u32()?,
             column_offset: reader.u32()?,
-            line_starts: std::cell::OnceCell::new(),
             call_sites: Default::default(),
             layout: Default::default(),
         };
@@ -3969,6 +4036,34 @@ pub(crate) fn source_line_starts(text: &str) -> impl Iterator<Item = usize> + '_
 }
 
 impl ProgramSource {
+    /// The line and UTF-16 layout of the kept text.
+    pub(crate) fn layout(&self) -> &SourceLayout {
+        self.layout.get_or_init(|| std::sync::Arc::new(SourceLayout::of(&self.text)))
+    }
+
+    /// The position of compiled-source byte `offset` (a `SourceOffset`'s), in the coordinates
+    /// the program reports: a wrapper's lines and columns are removed, and a kept body that
+    /// starts at its wrapper origin already reports them.
+    pub(crate) fn position(&self, offset: u32) -> Option<SourcePosition> {
+        let index = self.text_offset(offset)? as usize;
+        let position = self.layout().line_column(index);
+        if self.base != 0 {
+            return Some(position);
+        }
+        let line = position.line.checked_sub(self.line_offset).filter(|line| *line > 0)?;
+        let column = if line == 1 {
+            position.column.checked_sub(self.column_offset).filter(|column| *column > 0)?
+        } else {
+            position.column
+        };
+        Some(SourcePosition { line, column })
+    }
+
+    /// The byte offset in the kept text of compiled-source byte `offset`, if the text holds it.
+    pub(crate) fn text_offset(&self, offset: u32) -> Option<u32> {
+        offset.checked_sub(self.base).filter(|offset| *offset as usize <= self.text.len())
+    }
+
     /// The retained text of compiled source bytes `start..end`, if it holds them.
     pub(crate) fn slice(&self, start: u32, end: u32) -> Option<&str> {
         let start = start.checked_sub(self.base)? as usize;
@@ -3984,11 +4079,7 @@ impl ProgramSource {
             (0, 0)
         };
         let compiled_line = line.checked_add(line_offset)?.checked_sub(1)? as usize;
-        let starts = self.line_starts.get_or_init(|| {
-            source_line_starts(&self.text)
-                .map(|start| u32::try_from(start).unwrap_or(u32::MAX))
-                .collect()
-        });
+        let starts = &self.layout().line_starts;
         let start = *starts.get(compiled_line)? as usize;
         let end = starts.get(compiled_line + 1).map_or(self.text.len(), |&end| end as usize);
         let text = self.text.get(start..end)?
@@ -4354,28 +4445,21 @@ impl ResidualProgram {
         Some(masks)
     }
 
-    pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
-        let position = self.function_get(function as usize)?.source_positions.at(pc)?;
-        self.adjust_source_position(position)
+    /// The byte offset in the kept source text of the entry in effect at `pc` of `function`.
+    pub(crate) fn source_offset(&self, function: u32, pc: u32) -> Option<u32> {
+        let offset = self.function_get(function as usize)?.source_positions.at(pc)?;
+        self.source.as_ref()?.text_offset(offset)
     }
 
-    pub(crate) fn adjust_source_position(
-        &self,
-        mut position: SourcePosition,
-    ) -> Option<SourcePosition> {
-        if let Some(source) = &self.source {
-            position.line = position
-                .line
-                .checked_sub(source.line_offset)
-                .filter(|line| *line > 0)?;
-            if position.line == 1 {
-                position.column = position
-                    .column
-                    .checked_sub(source.column_offset)
-                    .filter(|column| *column > 0)?;
-            }
-        }
-        Some(position)
+    /// The line and column of the entry in effect at `pc` of `function`.
+    pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
+        let offset = self.function_get(function as usize)?.source_positions.at(pc)?;
+        self.offset_position(offset)
+    }
+
+    /// The line and column of compiled-source byte `offset`, which the kept source text maps.
+    pub(crate) fn offset_position(&self, offset: u32) -> Option<SourcePosition> {
+        self.source.as_ref()?.position(offset)
     }
 
     /// Whether the entry uses module semantics, including an import-only bootstrap.

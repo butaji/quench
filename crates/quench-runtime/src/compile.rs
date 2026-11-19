@@ -2,7 +2,7 @@ use crate::bytecode::{
     Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, FunctionSlot, Instr,
     LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
     ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, REGISTER_MOVE, RETURN_OP, Register,
-    ResidualProgram, SET_THIS_REGISTER, SourcePosition, Superinstruction, Traits, WideInstruction, the_op,
+    ResidualProgram, SET_THIS_REGISTER, Superinstruction, Traits, WideInstruction, the_op,
 };
 use oxc_allocator::Allocator;
 use replay::SiteTable;
@@ -1903,21 +1903,11 @@ type NameSharedSiteMap = FxHashMap<(NamedAccess, u32), u16>;
 struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
-    source_line_starts: std::borrow::Cow<'a, [usize]>,
-    /// The line start partition `source_position` found last, which the next position,
-    /// emitted from the same or a nearby node, most often falls on.
-    last_source_line: std::cell::Cell<usize>,
-    /// The UTF-16 excess partitions `source_position` found last, at a position and at its
-    /// line's start.
-    last_utf16_excess: [std::cell::Cell<usize>; 2],
     source_comments: Vec<Span>,
     /// The TypeScript declared environment its parse admitted (`typescript::admit`).
     declared_types: crate::bytecode::DeclaredTypes,
     /// A TypeScript checker's parameter types for this text (`typescript::checked`).
     checked_parameters: Option<std::sync::Arc<typescript::CheckedParameters>>,
-    /// Byte offset of each non-ASCII character with the running excess of
-    /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
-    source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
     mode: SpecializationMode,
     root_strict: bool,
     module_goal: bool,
@@ -2074,39 +2064,6 @@ impl crate::bytecode::FactTables for LoadTables<'_, '_> {
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
-
-/// Byte offset of each non-ASCII character of `text` with the running excess of UTF-8 bytes
-/// over UTF-16 units through it.
-fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
-    let bytes = text.as_bytes();
-    let mut table = Vec::new();
-    let mut excess = 0;
-    let mut offset = 0;
-    while let Some(skipped) = ascii_prefix_len(&bytes[offset..]) {
-        offset += skipped;
-        let character = text[offset..].chars().next().expect("a non-ASCII byte starts a character");
-        excess += character.len_utf8() - character.len_utf16();
-        table.push((offset, excess));
-        offset += character.len_utf8();
-    }
-    table
-}
-
-/// The bytes of `bytes` before its first non-ASCII byte, `None` when every one is ASCII:
-/// a word of bytes at a time, as source text is nearly all ASCII.
-fn ascii_prefix_len(bytes: &[u8]) -> Option<usize> {
-    const WORD: usize = size_of::<u64>();
-    const HIGH_BITS: u64 = u64::from_ne_bytes([0x80; WORD]);
-    let (words, _) = bytes.as_chunks::<WORD>();
-    let mut offset = 0;
-    for word in words {
-        if u64::from_ne_bytes(*word) & HIGH_BITS != 0 {
-            break;
-        }
-        offset += WORD;
-    }
-    bytes[offset..].iter().position(|byte| !byte.is_ascii()).map(|position| offset + position)
-}
 
 /// The name prefix of a catch parameter's capture marker (`Compiler::capture_marker`).
 const CATCH_CAPTURE_PREFIX: &str = "\0quench:catch-capture:";
@@ -2268,25 +2225,6 @@ fn lowers_at_load() -> bool {
 #[cfg(test)]
 thread_local! {
     pub(crate) static LOWER_AT_LOAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// The index of the line of `starts` holding `offset`: the last line start at or before it, or
-/// the first line when none is. `last`, the line found before, is tried first and updated.
-fn source_line_index(starts: &[usize], last: &std::cell::Cell<usize>, offset: usize) -> usize {
-    partition_point_from(starts, last, |start| *start <= offset).saturating_sub(1)
-}
-
-/// `slice.partition_point(holds)`, trying `last`, the point found before, first and updating
-/// it: positions are asked for in nearly source order, so most fall where the last did.
-fn partition_point_from<T>(slice: &[T], last: &std::cell::Cell<usize>, holds: impl Fn(&T) -> bool) -> usize {
-    let point = last.get();
-    let before = point.checked_sub(1).is_none_or(|index| slice.get(index).is_some_and(&holds));
-    if point <= slice.len() && before && slice.get(point).is_none_or(|item| !holds(item)) {
-        return point;
-    }
-    let point = slice.partition_point(holds);
-    last.set(point);
-    point
 }
 
 /// The program tables a function's lowering reads, final once every function's rewrites
@@ -2498,38 +2436,13 @@ impl<'a> Compiler<'a> {
         atom_prefix: &'a dyn AtomPrefix,
         private_name_ids: FxHashMap<(u32, u32), u32>,
     ) -> Self {
-        Self::with_layout(
-            source,
-            text,
-            mode,
-            atom_prefix,
-            private_name_ids,
-            std::borrow::Cow::Owned(crate::bytecode::source_line_starts(text).collect()),
-            std::borrow::Cow::Owned(source_utf16_excess(text)),
-        )
-    }
-
-    /// `new`, with `text`'s line starts and UTF-16 excess table already derived.
-    fn with_layout(
-        source: &'a str,
-        text: &'a str,
-        mode: SpecializationMode,
-        atom_prefix: &'a dyn AtomPrefix,
-        private_name_ids: FxHashMap<(u32, u32), u32>,
-        source_line_starts: std::borrow::Cow<'a, [usize]>,
-        source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
-    ) -> Self {
         let atoms = CompilerAtoms::new(atom_prefix, source.len() / 32);
         Self {
             source,
             text,
-            source_line_starts,
-            last_source_line: std::cell::Cell::new(0),
-            last_utf16_excess: Default::default(),
             source_comments: Vec::new(),
             declared_types: crate::bytecode::DeclaredTypes::default(),
             checked_parameters: typescript::checked_parameters(text),
-            source_utf16_excess,
             mode,
             root_strict: false,
             module_goal: false,
@@ -3148,28 +3061,10 @@ impl<'a> Compiler<'a> {
         source_syntax::delimiter(self.text, &self.source_comments, start, end, delimiter)
     }
 
-    fn source_position(&self, offset: u32) -> SourcePosition {
-        let offset = (offset as usize).min(self.text.len());
-        let line_index = self.source_line_index(offset);
-        let line_start = self.source_line_starts[line_index];
-        let excess_before = |offset: usize, last: &std::cell::Cell<usize>| {
-            let index = partition_point_from(&self.source_utf16_excess, last, |(character, _)| *character < offset);
-            index
-                .checked_sub(1)
-                .map_or(0, |index| self.source_utf16_excess[index].1)
-        };
-        let [at_offset, at_line] = &self.last_utf16_excess;
-        let column = offset - line_start - (excess_before(offset, at_offset) - excess_before(line_start, at_line));
-        SourcePosition {
-            pc: 0,
-            line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
-            column: u32::try_from(column.saturating_add(1)).unwrap_or(u32::MAX),
-        }
-    }
-
-    /// The index of the line holding `offset` (`source_line_index`).
-    fn source_line_index(&self, offset: usize) -> usize {
-        source_line_index(&self.source_line_starts, &self.last_source_line, offset)
+    /// The source offset a position records: a byte of the text, clamped to its end. Its line
+    /// and column are derived from it only when something asks (`ProgramSource::position`).
+    fn source_offset(&self, offset: u32) -> u32 {
+        offset.min(u32::try_from(self.text.len()).unwrap_or(u32::MAX))
     }
 
     /// Emits every function of `program`: all the compiler reads of its tree. `finish` makes
@@ -3648,7 +3543,6 @@ impl<'a> Compiler<'a> {
                 base: 0,
                 line_offset: 0,
                 column_offset: 0,
-                line_starts: Default::default(),
                 call_sites: Default::default(),
                 layout: Default::default(),
             })),
