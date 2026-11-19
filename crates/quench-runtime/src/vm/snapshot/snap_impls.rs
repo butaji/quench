@@ -80,7 +80,7 @@ crate::snapshot::snap_struct!(PropertyAttributes { [writable, enumerable, config
 crate::snapshot::snap_struct!(ShapeAttributes { [writable, enumerable, configurable, accessor]; accessors });
 crate::snapshot::snap_struct!(DataAttributes { [writable, enumerable, configurable]; });
 crate::snapshot::snap_struct!(GlobalLexicalState { declarations, bindings, immutable_bindings });
-crate::snapshot::snap_struct!(ParkedRealm { global, state, prototypes });
+crate::snapshot::snap_struct!(ParkedRealm { global, state, prototypes, promise_constructor });
 crate::snapshot::snap_struct!(ArgumentsObjectTemplate { anchor, length_slot, callee_slot, iterator_slot });
 crate::snapshot::snap_struct!(IteratorRealmPrototypes { helper, wrapper, generator, async_generator });
 crate::snapshot::snap_struct!(ErrorRealmIntrinsics {

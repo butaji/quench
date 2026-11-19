@@ -176,6 +176,21 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// The promise of a settling lane call (`LaneStack::settling`) whose activation stops now,
+    /// taken off its entry `root`: the rooted one, unrooted, or one made now for a call that
+    /// deferred it to its awaiting caller, as `settling_root` makes it but never rooted.
+    ///
+    /// The root `settling_root` would push lasted only until `release_settled_call_root` popped
+    /// it again, with nothing between: making the promise without lifecycle hooks, which
+    /// settling calls exclude, runs no guest code and collects nothing, so the caller holds it
+    /// as `release_settled_call_root` would have handed it back.
+    pub(super) fn settling_promise(&mut self, root: Option<crate::heap::RootId>) -> Value {
+        match root {
+            Some(root) => self.release_settled_call_root(root),
+            None => self.promise_object().expect("a promise without lifecycle hooks runs no guest code"),
+        }
+    }
+
     /// The promise an async call pushed in place settles (`PendingGeneralCall::completion`),
     /// unrooted now that the call completes.
     pub(super) fn release_settled_call_root(&mut self, root: crate::heap::RootId) -> Value {
@@ -248,10 +263,33 @@ impl<H: Host> Vm<H> {
             | AwaitKind::AsyncGeneratorYield { generator } => Some(*generator),
         };
         let state = self.armed_await_state(kind, promise);
-        // Host lifecycle observers can run before a reaction holds the state.
-        self.with_call_roots([state, source], |vm| {
-            vm.attach_await_reactions(p, state, promise, generator, source)
-        })
+        self.attach_await(p, state, promise, generator, source)
+    }
+
+    /// `attach_await_reactions` of `state`, the await state armed for an await of `source`,
+    /// with the two call roots only a host that observes promise lifecycles needs: its
+    /// observers can run before a reaction holds the state.
+    ///
+    /// Without one, nothing between here and the installed reaction allocates on the heap,
+    /// collects or runs guest code: `attach_await_reactions` materializes no promise and goes
+    /// straight to `attach_promise_reaction`, which marks the source observed, captures the
+    /// host's job context (a host call that sees no value), and pushes the reaction onto the
+    /// source's record or enqueues its job; the error of a non-promise object source is a Rust
+    /// string. So `state` and `source`, which the caller holds, stay live and unmoved without
+    /// the push and pop of the roots.
+    #[inline(always)]
+    fn attach_await(
+        &mut self,
+        p: &ResidualProgram,
+        state: Value,
+        promise: Value,
+        generator: Option<Value>,
+        source: Value,
+    ) -> Result<(), JsError> {
+        if !self.host.observes_promise_lifecycle() {
+            return self.attach_promise_reaction(p, source, state, state, Value::UNDEFINED);
+        }
+        self.with_call_roots([state, source], |vm| vm.attach_await_reactions(p, state, promise, generator, source))
     }
 
     /// An await state armed with `kind` in the current realm, settling `promise`: the spare
@@ -315,12 +353,7 @@ impl<H: Host> Vm<H> {
         let state = self.heap.await_state_mut(spent).expect("a running await reaction keeps its state");
         debug_assert!(matches!(state, AwaitState::Spent), "an await state re-arms only once spent");
         *state = AwaitState::arm(kind, realm, resume.promise);
-        let roots = self.active_call_roots.len();
-        self.active_call_roots.push(spent);
-        self.active_call_roots.push(source);
-        let attached = self.attach_await_reactions(p, spent, resume.promise, resume.role.generator(), source);
-        self.active_call_roots.truncate(roots);
-        attached
+        self.attach_await(p, spent, resume.promise, resume.role.generator(), source)
     }
 
     fn attach_await_reactions(

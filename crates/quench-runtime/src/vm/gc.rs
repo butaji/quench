@@ -516,6 +516,8 @@ impl<H: Host> Vm<H> {
             self.realm.globals,
             self.object_proto,
             self.function_proto,
+            self.promise_proto,
+            self.promise_constructor,
             self.array_proto,
             self.array_buffer_proto,
             self.shared_array_buffer_proto,

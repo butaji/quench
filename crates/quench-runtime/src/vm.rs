@@ -567,6 +567,19 @@ impl Frame {
         }
     }
 
+    /// Makes the file `registers`, a suspending activation's whole register window, sized as
+    /// `prepare_registers_for` sizes it for `function` with every slot then the window's: one
+    /// copy, not a fill the copy overwrites.
+    #[inline(always)]
+    fn adopt_registers(&mut self, function: &crate::bytecode::Function, registers: &[Value]) {
+        debug_assert_eq!(registers.len(), usize::from(function.registers));
+        self.js_jit_skip_entry_once = false;
+        self.reserve_suspension_window(function);
+        self.registers.clear();
+        self.registers.extend_from_slice(registers);
+        self.initialized_registers = self.initialized_registers.max(registers.len());
+    }
+
     /// Makes `locals` `count` undefined values. A pooled frame usually has the capacity already,
     /// so this is one capacity check and the stores.
     #[inline(always)]
@@ -752,13 +765,15 @@ struct ParkedRealm {
     global: Value,
     state: GlobalLexicalState,
     prototypes: [Value; REALM_FOLLOWING_PROTOTYPES.len()],
+    /// The realm's `%Promise%`, which `Vm::promise_constructor` held while it was active.
+    promise_constructor: Value,
 }
 /// The natives whose prototypes VM fields follow from the active realm
 /// (`Vm::realm_prototype_field`).
 /// One `typeof` name per `bytecode::TYPEOF_NAMES` entry, indexed as `typeof_name_index` classifies values.
 const TYPEOF_NAMES: usize = crate::bytecode::TYPEOF_NAMES.len();
-const REALM_FOLLOWING_PROTOTYPES: [Native; 4] =
-    [Native::Object, Native::Function, Native::Array, Native::String];
+const REALM_FOLLOWING_PROTOTYPES: [Native; 5] =
+    [Native::Object, Native::Function, Native::Array, Native::String, Native::Promise];
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldCache {
     receiver: u32,
@@ -1957,6 +1972,12 @@ pub(crate) struct Vm<H> {
     /// %String.prototype% of the current realm; primitive string property
     /// reads use it directly, so realm switches re-derive it.
     string_proto: Value,
+    /// %Promise.prototype% of the current realm, which every promise allocation takes
+    /// (`Vm::promise_object_with_parent`); it follows the active realm as `string_proto` does.
+    promise_proto: Value,
+    /// %Promise% of the current realm (`Vm::intrinsic_promise_constructor`), kept beside the
+    /// intrinsics table's entry and following the active realm with `promise_proto`.
+    promise_constructor: Value,
     /// %Number.prototype% of the main realm: a number primitive's field read takes it
     /// through the site's cache as a string's takes `string_proto`.
     number_proto: Value,
@@ -2471,6 +2492,7 @@ impl<H: Host> Vm<H> {
                 ),
             },
             prototypes: REALM_FOLLOWING_PROTOTYPES.map(|native| *self.realm_prototype_field(native)),
+            promise_constructor: self.promise_constructor,
         };
         let parked = match self.realm.parked.replace(leaving) {
             Some(parked) if parked.global == global => Some(parked),
@@ -2483,38 +2505,70 @@ impl<H: Host> Vm<H> {
         };
         self.realm.globals = global;
         let state = match parked {
-            Some(parked) => {
-                // Natives are shared by every realm and allocate from these fields, so the
-                // fields follow the active realm: a native called from a realm builds that
-                // realm's objects.
-                for (native, prototype) in REALM_FOLLOWING_PROTOTYPES.into_iter().zip(parked.prototypes) {
-                    debug_assert!(self
-                        .realm
-                        .intrinsics
-                        .builtin_prototypes
-                        .get(&(global, native))
-                        .is_none_or(|intrinsic| *intrinsic == prototype));
-                    *self.realm_prototype_field(native) = prototype;
-                }
-                parked.state
-            }
+            Some(parked) => self.unpark_realm_fields(global, parked),
             None => {
-                for native in REALM_FOLLOWING_PROTOTYPES {
-                    if let Some(&prototype) = self
-                        .realm
-                        .intrinsics
-                        .builtin_prototypes
-                        .get(&(global, native))
-                    {
-                        *self.realm_prototype_field(native) = prototype;
-                    }
-                }
+                self.follow_realm_fields(global);
                 self.realm.global_lexical_states.remove(&global).unwrap_or_default()
             }
         };
         self.realm.global_lexical_declarations = state.declarations;
         self.realm.global_lexical_bindings = state.bindings;
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
+    }
+
+    /// Restores the realm-following fields `parked` held for `global`, which the switch makes
+    /// active again; its global lexical state.
+    ///
+    /// Natives are shared by every realm and allocate from these fields, so the fields follow
+    /// the active realm: a native called from a realm builds that realm's objects.
+    fn unpark_realm_fields(&mut self, global: Value, parked: ParkedRealm) -> GlobalLexicalState {
+        for (native, prototype) in REALM_FOLLOWING_PROTOTYPES.into_iter().zip(parked.prototypes) {
+            debug_assert!(self
+                .realm
+                .intrinsics
+                .builtin_prototypes
+                .get(&(global, native))
+                .is_none_or(|intrinsic| *intrinsic == prototype));
+            *self.realm_prototype_field(native) = prototype;
+        }
+        debug_assert!(self
+            .realm
+            .intrinsics
+            .promise_constructors
+            .get(&global)
+            .is_none_or(|intrinsic| *intrinsic == parked.promise_constructor));
+        self.promise_constructor = parked.promise_constructor;
+        parked.state
+    }
+
+    /// Points the realm-following fields at `global`'s intrinsics, read from the intrinsics
+    /// table. A realm without a `Promise` yet leaves its promise fields null, as the table's
+    /// absent entry read before; the other fields keep what they held.
+    fn follow_realm_fields(&mut self, global: Value) {
+        for native in REALM_FOLLOWING_PROTOTYPES {
+            if let Some(&prototype) = self.realm.intrinsics.builtin_prototypes.get(&(global, native)) {
+                *self.realm_prototype_field(native) = prototype;
+            } else if native == Native::Promise {
+                self.promise_proto = Value::NULL;
+            }
+        }
+        self.promise_constructor =
+            self.realm.intrinsics.promise_constructors.get(&global).copied().unwrap_or(Value::NULL);
+    }
+
+    /// Records `global`'s intrinsic `%Promise%` and `%Promise.prototype%`, which the
+    /// intrinsics table just took, in the fields that follow it: the VM's while `global` is
+    /// active, the parked realm's while it is parked; any other realm's are read from the
+    /// table when it becomes active (`follow_realm_fields`).
+    fn note_realm_promise(&mut self, global: Value, constructor: Value, prototype: Value) {
+        if global == self.realm.globals {
+            self.promise_constructor = constructor;
+            self.promise_proto = prototype;
+        } else if let Some(parked) = self.realm.parked.as_mut().filter(|parked| parked.global == global) {
+            parked.promise_constructor = constructor;
+            let index = REALM_FOLLOWING_PROTOTYPES.iter().position(|&native| native == Native::Promise);
+            parked.prototypes[index.expect("Promise follows the active realm")] = prototype;
+        }
     }
 
     /// The VM field holding the active realm's `native.prototype`.
@@ -2524,6 +2578,7 @@ impl<H: Host> Vm<H> {
             Native::Function => &mut self.function_proto,
             Native::Array => &mut self.array_proto,
             Native::String => &mut self.string_proto,
+            Native::Promise => &mut self.promise_proto,
             _ => unreachable!("only these prototypes follow the active realm"),
         }
     }

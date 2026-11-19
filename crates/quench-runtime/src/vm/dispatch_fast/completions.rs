@@ -324,18 +324,16 @@ pub(super) fn settled_then_in_lane<H: Host>(vm: &mut Vm<H>, value: Value) -> Opt
 #[inline(never)]
 pub(super) fn settle_promise_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value, then: Value) -> Value {
     let vm = unsafe { vm(cx) };
-    let root = match vm.lane_stack.settling.pop().expect("each settling activation has its entry") {
-        Some(root) => root,
+    let root = vm.lane_stack.settling.pop().expect("each settling activation has its entry");
+    if root.is_none() {
         // Only the `await` after the call reads its promise: a primitive fulfills it, and
         // awaiting a primitive takes the one job awaiting that fulfilled promise takes.
-        None if !vm.is_object_like(value) => return value,
-        None => {
-            let root = vm.settling_root(None);
-            note_allocation(vm);
-            root
+        if !vm.is_object_like(value) {
+            return value;
         }
-    };
-    let promise = vm.release_settled_call_root(root);
+        note_allocation(vm);
+    }
+    let promise = vm.settling_promise(root);
     // SAFETY: the context's program, the caller's, outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let settled = vm.resolve_promise_with_then(code, promise, value, then).is_ok();

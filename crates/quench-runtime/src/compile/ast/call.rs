@@ -193,20 +193,13 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn logical(&mut self, value: &LogicalExpression<'_>, debug_name: Option<Atom>) -> Register {
-        let dst = self.reg();
-        self.logical_into(value, debug_name, dst);
-        dst
-    }
-
-    /// A logical expression whose value ends in `dst`, allocated by the caller: the left operand
-    /// is computed into `dst` and tested there, and the right operand, when it runs, is computed
-    /// into `dst` in place of the left.
-    fn logical_into(&mut self, value: &LogicalExpression<'_>, debug_name: Option<Atom>, dst: Register) {
         if value.operator.is_coalesce() {
-            return self.coalesce_into(value, debug_name, dst);
+            return self.coalesce(value, debug_name);
         }
-        self.expression_into_named(&value.left, debug_name, dst);
-        let jump = self.emit(Op::JumpFalse, dst, 0, 0, 0);
+        let start = self.next_reg;
+        let left = self.expression_with_debug_name(&value.left, debug_name);
+        let dst = self.join_result(left, start);
+        let jump = self.emit(Op::JumpFalse, left, 0, 0, 0);
         // Past the jump only `dst` and registers allocated before the expression are live,
         // so the right operand reuses the left's temporaries.
         let after_result = self.next_reg;

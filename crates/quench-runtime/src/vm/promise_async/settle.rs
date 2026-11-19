@@ -81,9 +81,7 @@ impl<H: Host> Vm<H> {
     fn job_awaits(&mut self, code: &ResidualProgram, resume: AwaitResume, value: Value) -> Result<(), JsError> {
         match (resume.role.generator(), resume.state) {
             (Some(generator), _) => self.await_again(code, resume, AwaitKind::generator_await(generator), value),
-            (None, Some(state)) => {
-                self.with_call_roots([state, value], |vm| vm.attach_await_reactions(code, state, resume.promise, None, value))
-            }
+            (None, Some(state)) => self.attach_await(code, state, resume.promise, None, value),
             (None, None) => unreachable!("an async function resumes from the reaction of its await"),
         }
     }
@@ -260,7 +258,9 @@ impl<H: Host> Vm<H> {
         let reason = error
             .thrown_value()
             .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-        self.promise_settle(p, resume.promise, PromiseState::Rejected, reason)
+        self.promise_settle(p, resume.promise, PromiseState::Rejected, reason)?;
+        self.keep_finished_await_state(resume);
+        Ok(())
     }
 
     /// An activation of `resume` awaits `value` again from `frame`, which suspends: its
@@ -320,7 +320,28 @@ impl<H: Host> Vm<H> {
     pub(super) fn complete_resumed(&mut self, p: &ResidualProgram, resume: AwaitResume, value: Value) -> Result<(), JsError> {
         match resume.role.generator() {
             Some(generator) => self.finish_async_generator(p, generator, resume.promise, value),
-            None => self.promise_resolve_value(p, resume.promise, value),
+            None => {
+                self.promise_resolve_value(p, resume.promise, value)?;
+                self.keep_finished_await_state(resume);
+                Ok(())
+            }
+        }
+    }
+
+    /// Keeps the await state of the async function of `resume`, which ended and settled its
+    /// promise, as the spare the next await arms (`keep_spare_await_state`), instead of leaving
+    /// it to a sweep.
+    ///
+    /// Nothing names the state any more. Its last reaction, the only one its last arming
+    /// attached, is the job running now; the activation's end took its continuation
+    /// (`finish_job_window`, or `push_job_window_frame` for a run that became frames), leaving
+    /// it spent; and the job's call roots only keep it alive. The settlement above may have run
+    /// guest code (a `then` getter of the value), but the state was no spare then, so no await
+    /// could arm it; one that arms it later finds it spent, as `keep_spare_await_state` checks.
+    /// An async call's first run (`Vm::settle_async_call`) has no state.
+    fn keep_finished_await_state(&mut self, resume: AwaitResume) {
+        if let Some(state) = resume.state {
+            self.keep_spare_await_state(state);
         }
     }
 }

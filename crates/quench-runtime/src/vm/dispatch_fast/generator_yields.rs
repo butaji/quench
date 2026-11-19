@@ -180,8 +180,7 @@ fn suspend_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, (pc, destina
     note_allocation(vm);
     let frame = settling_frame(vm, code, &activation, (r, pc));
     let root = vm.lane_stack.settling.pop().expect("each settling activation has its entry");
-    let root = vm.settling_root(root);
-    let promise = vm.release_settled_call_root(root);
+    let promise = vm.settling_promise(root);
     let continuation = vm.suspend_activation(frame, super::super::activation::Completion::Await(value), Some(destination), promise);
     vm.lane_stack.pop_activation();
     let (memory, _) = restore_caller_in_lane(cx, &activation);
@@ -196,12 +195,42 @@ fn suspend_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, (pc, destina
 
 /// The frame of the settling `activation` running with registers `r`, which resumes at `pc`:
 /// its registers, receiver and environment, with the loops it opened (`LaneStack::iterators`).
-/// An environment activation's frame owns the environment its window made, or makes it now,
-/// and takes the window's locals, as its materialization would (`materialize_environment_frame`).
+/// A plain activation's frame is made off the frame stack with its window's registers moved in
+/// once (`Vm::detached_plain_frame`); an environment activation's (`pushed_settling_frame`)
+/// owns the environment its window made, or makes it now, and takes the window's locals, as
+/// its materialization would (`materialize_environment_frame`).
+///
+/// A settling activation is an async function's call, never a program's root, so no global
+/// lexical binding is published here (`Vm::persist_global_lexical_bindings`).
 fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &Activation, (r, pc): (Registers, usize)) -> Box<super::super::Frame> {
     let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
     let count = usize::from(code.function(activation.function as usize).registers);
     let argc = usize::from(script.argc);
+    // SAFETY: the activation's window holds its registers, which nothing writes until the frame takes them.
+    let window = unsafe { activation.window(count) };
+    let context = CallContext::user_function(activation.function, script.callee);
+    let detached = if script.environment {
+        None
+    } else {
+        let passed = &window[..argc.min(count)];
+        vm.detached_plain_frame(code, activation.function, (r.env(), r.this()), context, (passed, window))
+    };
+    let mut frame = detached.unwrap_or_else(|| pushed_settling_frame(vm, code, activation, r, (count, argc)));
+    frame.pc = pc;
+    frame.pc_is_resume = true;
+    let depth = vm.lane_stack.activations.len() - 1;
+    vm.lane_stack.take_iterators(depth, &mut frame.active_iterators);
+    debug_assert_ne!(frame.function, super::super::ROOT_FUNCTION_ID);
+    frame
+}
+
+/// `settling_frame`'s frame pushed as a full activation and popped again, holding the window's
+/// `count` registers and the `argc` values passed: the way any frameless activation becomes a
+/// frame (`Vm::push_script_frame_with_registers`), and an environment activation's then takes
+/// its environment and locals (`materialize_environment_frame`).
+fn pushed_settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &Activation, r: Registers,
+    (count, argc): (usize, usize)) -> Box<super::super::Frame> {
+    let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
     // SAFETY: the activation's window holds its registers, which nothing writes until the frame takes them.
     let window = unsafe { activation.window(count) };
     // SAFETY: an environment activation's window holds its kept values after its locals.
@@ -213,11 +242,7 @@ fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &
         vm.materialize_environment_frame(code, activation, (activation.caller_program, r.env(), r.this()), argc);
     }
     let mut frame = vm.frames.pop().expect("the activation pushed a frame");
-    frame.pc = pc;
-    frame.pc_is_resume = true;
     frame.with_objects = vm.with_stack.split_off(frame.with_base);
-    let depth = vm.lane_stack.activations().len() - 1;
-    vm.lane_stack.take_iterators(depth, &mut frame.active_iterators);
     frame
 }
 

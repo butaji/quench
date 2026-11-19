@@ -59,6 +59,7 @@ impl<H: Host> Vm<H> {
             heap,
             realm,
             object_proto: _, function_proto: _, array_proto: _, string_proto: _, number_proto: _,
+            promise_proto: _, promise_constructor: _,
             array_buffer_proto: _, shared_array_buffer_proto: _, array_iterator_proto: _,
             typed_array_proto: _, uint8_array_proto: _, uint8_clamped_array_proto: _,
             uint16_array_proto: _, uint32_array_proto: _, int8_array_proto: _,
@@ -418,6 +419,11 @@ impl<H: Host> Vm<H> {
             ($($field:ident),*) => { $( self.$field = reader.value()?; )* };
         }
         builtin_prototypes!(read_prototypes);
+        // The promise fields follow the restored active realm from its intrinsics.
+        let intrinsics = &self.realm.intrinsics;
+        self.promise_proto =
+            intrinsics.builtin_prototypes.get(&(self.realm.globals, Native::Promise)).copied().unwrap_or(Value::NULL);
+        self.promise_constructor = intrinsics.promise_constructors.get(&self.realm.globals).copied().unwrap_or(Value::NULL);
         self.natives = Snap::unsnap(&mut reader)?;
         Vec::<(Atom, Value)>::unsnap(&mut reader)?.into_iter().for_each(|(atom, string)| self.heap.register_string_atom(string, atom, true));
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;

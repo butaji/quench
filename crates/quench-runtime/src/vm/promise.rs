@@ -730,6 +730,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::Promise), prototype);
+        self.note_realm_promise(global, promise, prototype);
         self.set_builtin_function_name(promise, "Promise")?;
         self.set_builtin_value_named(promise, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
@@ -761,13 +762,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         parent: Option<HostExecutionContext>,
     ) -> Result<Value, JsError> {
-        let prototype = self
-            .realm
-            .intrinsics
-            .builtin_prototypes
-            .get(&(self.realm.globals, Native::Promise))
-            .copied()
-            .unwrap_or(Value::NULL);
+        // The active realm's `%Promise.prototype%`, null before its `Promise` is installed, as
+        // the intrinsics table's absent entry read (`Vm::note_realm_promise`).
+        let prototype = self.promise_proto;
         let host_context = if self.host.observes_promise_lifecycle() {
             self.host.create_promise_context(parent)
         } else {
@@ -4989,8 +4986,14 @@ impl<H: Host> Vm<H> {
             });
     }
 
+    /// The active realm's `%Promise%`, which its field follows (`Vm::note_realm_promise`)
+    /// without hashing the intrinsics table.
     pub(super) fn intrinsic_promise_constructor(&self) -> Value {
-        self.realm.intrinsics.promise_constructors[&self.realm.globals]
+        debug_assert_eq!(
+            self.realm.intrinsics.promise_constructors.get(&self.realm.globals).copied(),
+            Some(self.promise_constructor)
+        );
+        self.promise_constructor
     }
 
     pub(super) fn promise_species_constructor(
