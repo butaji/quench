@@ -68,7 +68,7 @@ impl DeclaredFact {
 
 /// Each parameter of `function` with a checkable declared fact, by the register it enters in.
 fn declared(function: &Function) -> impl Iterator<Item = (Register, DeclaredFact)> + '_ {
-    function.declared_parameters.iter().enumerate()
+    function.declared_parameters().iter().enumerate()
         .filter_map(|(index, declared)| Some((parameter_register(function, index)?, DeclaredFact::of(*declared)?)))
 }
 

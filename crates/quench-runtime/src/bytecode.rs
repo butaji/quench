@@ -4865,6 +4865,8 @@ pub use flow_view::{FlowFunction, FlowInstruction};
 #[cfg(test)]
 mod tests;
 mod validate;
+mod this_reads;
+pub(crate) use this_reads::activation_reads_this;
 mod written_once;
 
 /// Whether function `id` of `code`, an arrow, or an arrow it makes through arrows alone,

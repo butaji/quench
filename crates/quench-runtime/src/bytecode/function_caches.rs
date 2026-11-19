@@ -15,6 +15,9 @@ pub(crate) struct FunctionCaches {
     pub(crate) initializer: std::cell::OnceCell<Option<crate::heap::ThinBoxSlice<InitializerStore>>>,
     /// The live register masks, derived when a collection first finds the function running.
     pub(crate) register_masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    /// The int32 `+`/`-` PCs the facts analysis proves exact, ascending (`base_region::exact`), `None` where the
+    /// analysis declines the function.
+    pub(crate) exact_sums: std::cell::OnceCell<Option<Box<[u32]>>>,
 }
 
 /// A boolean a function derives on its first ask and keeps (`Function::lazy_flag`). Each owns a

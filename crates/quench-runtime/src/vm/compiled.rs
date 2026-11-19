@@ -1129,9 +1129,14 @@ lane_helper_inventory! { H;
     StringConcat => super::dispatch_fast::body_string_concat::<H>,
     /// A VM operation a staged row calls out for (`dispatch_fast::vm_operation_step`).
     VmStep => super::dispatch_fast::vm_operation_step::<H>,
+    /// A fixed-shape object the record defines, made by the lane's allocator (`dispatch_fast::lane_allocate_step`).
+    AllocateStep => super::dispatch_fast::lane_allocate_step::<H>,
     /// An instruction whose general step runs in place (`dispatch_fast::body_general_step`), which the b-jit's
     /// helper steps and stepped calls make (`base_region::steps`).
     Step => super::dispatch_fast::body_general_step::<H>,
+    /// `Step` for an instruction the planner decoded (`CallRow::HelperPacked`): a covered family runs it directly
+    /// (`dispatch_fast::lane_body_step_packed`).
+    StepPacked => super::dispatch_fast::lane_body_step_packed::<H>,
     /// ToBoolean of a value its cell decides (`truthy_in_lane`).
     Truthy => truthy_in_lane::<H>,
     /// The array storage proofs a shorter array falsifies (`retire_array_proofs_in_lane`).
