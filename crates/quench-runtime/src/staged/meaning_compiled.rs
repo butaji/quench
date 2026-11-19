@@ -387,3 +387,79 @@ pub(crate) fn jump_record(target: u32) -> WideInstruction {
 pub(crate) fn capture_load_record(a: u16, b: u16, c: u16, imm: u32) -> WideInstruction {
     WideInstruction::new(Op::LoadCapture, a, b, c, imm)
 }
+
+/// The record that does nothing (`Nop`): a marker a rewrite leaves or a slot a residual clears.
+#[inline(always)]
+pub(crate) fn nop_record() -> WideInstruction {
+    WideInstruction::new(Op::Nop, 0, 0, 0, 0)
+}
+
+/// The plain call record: callee in `b`, result in `a`, receiver and arguments from `c` as the
+/// immediate `imm` lays them out (`Call`).
+#[inline(always)]
+pub(crate) fn call_record(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
+    WideInstruction::new(Op::Call, a, b, c, imm)
+}
+
+/// The construct record over the same operands as the original construction (`Construct`).
+#[inline(always)]
+pub(crate) fn construct_record(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
+    WideInstruction::new(Op::Construct, a, b, c, imm)
+}
+
+/// The site-lookup field read record (`GetField`) with result flags folded into `a`.
+#[inline(always)]
+pub(crate) fn get_field_record(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
+    field_read_record(a, b, c, imm)
+}
+
+/// Whether the record is a `super(...)` construction (the catalog's own trait for it).
+#[inline(always)]
+pub(crate) fn is_super_construct(instruction: WideInstruction) -> bool {
+    instruction.is_super_construct()
+}
+
+/// Whether the record's `a` operand names a register it writes (the catalog's field layout).
+#[inline(always)]
+pub(crate) fn writes_register_a(instruction: WideInstruction) -> bool {
+    instruction.op().field_layout(crate::bytecode::InstructionField::A).is_register_field()
+}
+
+/// Whether the inline-unit rewriter replaces this opcode's records (the catalog's trait).
+#[inline(always)]
+pub(crate) fn is_unit_rewritten(op: Op) -> bool {
+    op.is_unit_rewritten()
+}
+
+/// The number of catalog opcodes: one past the last opcode index, the index a table keeps for a
+/// dynamic (non-catalog) operation.
+pub(crate) const OPCODE_COUNT: usize = Op::COUNT;
+
+const WASM_WORD: usize = u64::BITS as usize;
+
+/// The Wasm opcodes (catalog names that begin `Wasm`), by opcode index. A Wasm function has its
+/// own compiler, which owns the linear memory, tables and typed registers these opcodes read.
+const WASM_OPCODES: [u64; Op::COUNT.div_ceil(WASM_WORD)] = {
+    const PREFIX: &[u8] = b"Wasm";
+    let mut table = [0; Op::COUNT.div_ceil(WASM_WORD)];
+    let mut index = 0;
+    while index < Op::COUNT {
+        let name = Op::NAMES[index].as_bytes();
+        let mut at = 0;
+        let mut named = name.len() >= PREFIX.len();
+        while named && at < PREFIX.len() {
+            named = name[at] == PREFIX[at];
+            at += 1;
+        }
+        table[index / WASM_WORD] |= (named as u64) << (index % WASM_WORD);
+        index += 1;
+    }
+    table
+};
+
+/// Whether the record is a Wasm opcode, which no JS tier compiles.
+#[inline(always)]
+pub(crate) fn is_wasm(instruction: WideInstruction) -> bool {
+    let index = instruction.op() as usize;
+    WASM_OPCODES[index / WASM_WORD] >> (index % WASM_WORD) & 1 != 0
+}

@@ -246,15 +246,19 @@ fn throws(instruction: WideInstruction) -> bool {
 /// (`osr_loop::renamed`): its operands are registers or constants. The plan decides it, so a
 /// unit it plans always emits.
 fn renamable(instruction: WideInstruction) -> bool {
-    if Operation::<u64, ()>::is_unit_rewritten(instruction) { return true; }
-    if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::GetField { .. }))
-        && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) { return true; }
-    let plain = if super::osr_loop::inlined_returning(instruction) {
-        WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm())
-    } else {
-        instruction
-    };
-    super::osr_loop::renamed(plain, &|register| register, 0, &|target| Some(target)).is_some()
+    match instruction.op() {
+        opcode if super::meaning_compiled::is_unit_rewritten(opcode) => true,
+        _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. }))
+            && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
+        _ => {
+            let plain = if super::osr_loop::inlined_returning(instruction) {
+                WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm())
+            } else {
+                instruction
+            };
+            super::osr_loop::renamed(plain, &|register| register, 0, &|target| Some(target)).is_some()
+        }
+    }
 }
 
 /// The unit PCs an inlined callee instruction takes: a completion of the call (a `Return`, or
@@ -378,7 +382,7 @@ impl Planner<'_, '_> {
         let (base, count) = (ImmediateLayout::call_window_base(imm), ImmediateLayout::argument_count(imm));
         (Operation::<u64, ()>::is_plain_call(instruction) && count > 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
         let through = (self.targets)(function, pc).into_iter().find_map(CallTarget::through)?;
-        let call = emit::call(instruction.a(), instruction.register_c(), base,
+        let call = super::meaning_compiled::call_record(instruction.a(), instruction.register_c(), base,
             ImmediateLayout::call_immediate(base + 1, count - 1, false, false));
         Some((call, (instruction.register_b(), through)))
     }
@@ -549,7 +553,7 @@ impl Emitter {
                     // The marker: the call's guards and bindings (`Lowering::inline_call`); a
                     // callee other than this frame's goes to the next alternative, and past the
                     // last leaves at the call itself, before any of its effects.
-                    self.unit.instructions.push(emit::nop());
+                    self.unit.instructions.push(super::meaning_compiled::nop_record());
                     self.unit.origins.push(origin);
                     self.emit(&call.plan, Some(index), callee_base, frame_record.receiver, call_result, call_continuation)?;
                 }
@@ -582,23 +586,23 @@ impl Emitter {
         if super::osr_loop::inlined_returning(instruction) {
             return self.emit_returning(instruction, origin, register, receiver, result, continuation, target_of);
         }
-        let rewritten = match Operation::<u64, ()>::of(instruction) {
-            Some(Operation::Return { .. }) => {
-                self.unit.instructions.push(emit::move_register(result, register(instruction.register_a())));
+        let rewritten = match () {
+            _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) => {
+                self.unit.instructions.push(super::meaning_compiled::move_record(result, register(instruction.register_a())));
                 self.unit.origins.push(origin);
-                emit::jump(continuation)
+                super::meaning_compiled::jump_record(continuation)
             }
-            Some(Operation::LoadThis { .. }) => emit::move_register(register(instruction.result_register()), receiver),
+            _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::LoadThis { .. })) => super::meaning_compiled::move_record(register(instruction.result_register()), receiver),
             // Exit-only operations (`inlinable`): their registers, renamed for the analyses;
             // the lowering leaves at each, and recovery runs the callee's own instruction.
             _ if Operation::<u64, ()>::is_throw(instruction)
                 || matches!(Operation::<u64, ()>::decode_load_name(instruction, ()), Some(Operation::LoadName { receiver: None, .. })) =>
                 WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
-            _ if Operation::<u64, ()>::is_construction(instruction) => emit::construct(register(instruction.a()), register(instruction.b()),
+            _ if super::meaning_compiled::is_construct(instruction) => super::meaning_compiled::construct_record(register(instruction.a()), register(instruction.b()),
                 register(instruction.c()), instruction.imm()),
             Some(Operation::GetField { .. }) if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
                 let flags = instruction.result_flags();
-                emit::get_field(flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
+                super::meaning_compiled::get_field_record(flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
             }
             _ => super::osr_loop::renamed(instruction, &register, receiver, &target_of)?,
         };
@@ -620,8 +624,8 @@ impl Emitter {
             super::osr_loop::renamed(plain, &register, receiver, &target_of)?
         };
         self.unit.instructions.push(computed);
-        self.unit.instructions.push(emit::move_register(result, register(instruction.result_register())));
-        self.unit.instructions.push(emit::jump(continuation));
+        self.unit.instructions.push(super::meaning_compiled::move_record(result, register(instruction.result_register())));
+        self.unit.instructions.push(super::meaning_compiled::jump_record(continuation));
         self.unit.origins.extend([origin; 3]);
         Some(())
     }

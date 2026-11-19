@@ -31,7 +31,7 @@
 //! 4. A leave (`CallRow::Here`): the region ends at the instruction and the interpreter runs it,
 //!    for every other instruction: the suspensions `Await`, `Yield` and
 //!    `YieldStar`, whose generator or async record the lane resumes in the interpreter, so no native
-//!    code could continue past them; the Wasm opcodes (`EXCLUDED`); a call with a result flag other than the
+//!    code could continue past them; the Wasm opcodes (`meaning_compiled::is_wasm`); a call with a result flag other than the
 //!    return flag and the `this` binding; a conditional jump the helper would take backward in a loop region, which has no row that
 //!    polls the interrupt flag before it (a body has: `function::preludes`); and any instruction that
 //!
@@ -111,31 +111,9 @@ impl Step {
     }
 }
 
-/// The opcodes the b-jit does not compile, by opcode index: the Wasm opcodes (catalog names that
-/// begin `Wasm`). A Wasm function has its own compiler (`dispatch_wasm`, the Wasm tiers), which
-/// owns the linear memory, tables and typed registers these opcodes read, so a function holding
-/// one is not a b-jit body (`covers`), and a loop region holding one leaves at it.
-const EXCLUDED: [u64; Op::COUNT.div_ceil(WORD)] = {
-    const PREFIX: &[u8] = b"Wasm";
-    let mut table = [0; Op::COUNT.div_ceil(WORD)];
-    let mut index = 0;
-    while index < Op::COUNT {
-        let name = Op::NAMES[index].as_bytes();
-        let mut at = 0;
-        let mut named = name.len() >= PREFIX.len();
-        while named && at < PREFIX.len() {
-            named = name[at] == PREFIX[at];
-            at += 1;
-        }
-        table[index / WORD] |= (named as u64) << (index % WORD);
-        index += 1;
-    }
-    table
-};
-
 /// Whether the b-jit compiles a function of these instructions: none is an excluded opcode.
 pub(in crate::vm::compiled) fn covers(code: &[WideInstruction]) -> bool {
-    code.iter().all(|instruction| EXCLUDED[instruction.op() as usize / WORD] >> (instruction.op() as usize % WORD) & 1 == 0)
+    code.iter().all(|instruction| !crate::vm::compiled::meaning_compiled::is_wasm(*instruction))
 }
 
 /// The most registers a step the helper makes writes: its result, and the `this` a name call

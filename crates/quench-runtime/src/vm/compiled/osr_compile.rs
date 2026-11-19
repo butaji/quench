@@ -267,7 +267,7 @@ fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &mut Vec<lan
         _ => None,
     }).collect();
     for &(at, call) in inserted.iter().rev() {
-        instructions.insert(at, crate::staged::emit::nop());
+        instructions.insert(at, super::meaning_compiled::nop_record());
         origins.insert(at, lane_unit::Origin::Caller(call));
     }
     // A jump target lands on the marker at its own position, as the call's PC did: an

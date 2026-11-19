@@ -264,8 +264,8 @@ pub(super) fn specialize(program: &ResidualProgram, unit: &Unit, entry: usize) -
         if known.at(header).and_then(|values| test(program, values, condition)) != Some(true)
             || known.at(latch).and_then(|values| test(program, values, condition)) != Some(false) { continue; }
         let residual = residual.get_or_insert_with(|| unit.instructions.clone());
-        residual[header] = emit::nop();
-        residual[latch] = emit::jump(exit as u32);
+        residual[header] = super::meaning_compiled::nop_record();
+        residual[latch] = super::meaning_compiled::jump_record(exit as u32);
     }
     residual
 }

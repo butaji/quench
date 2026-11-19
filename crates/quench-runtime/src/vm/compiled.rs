@@ -2116,7 +2116,6 @@ const CONTEXT_INTERRUPT: i32 = std::mem::offset_of!(CallContext, interrupt) as i
 const CONTEXT_STACK_LIMIT: i32 = std::mem::offset_of!(CallContext, stack_limit) as i32;
 const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, table) as i32;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-const CONTEXT_ENTRY_STACK: u8 = std::mem::offset_of!(CallContext, entry_stack) as u8;
 const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, globals) as i32;
 const CONTEXT_TABLE_WORDS: i32 = std::mem::offset_of!(CallContext, table_words) as i32;
 const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
@@ -4837,7 +4836,7 @@ enum JsCalloutStep {
 
 /// Dynamic dispatch selects its opcode from the instruction, not a specialization.
 #[cfg(feature = "native-execution")]
-const DYNAMIC_JS_OPCODE: usize = Op::COUNT;
+const DYNAMIC_JS_OPCODE: usize = meaning_compiled::OPCODE_COUNT;
 
 #[cfg(feature = "native-execution")]
 unsafe extern "C" fn js_step_callout<H: Host>(
@@ -7598,81 +7597,65 @@ const FAULT_POLL_SUPPORTED: bool = cfg!(any(
 unsafe impl Send for GuardSupport {}
 unsafe impl Sync for GuardSupport {}
 
-/// The x86-64 System V trampoline, as machine code. Offsets of `RESUME` and
-/// `LANDING` are into this array.
+/// The status a guard fault on linear memory returns (`WasmTrap::OutOfBoundsMemory`), which the
+/// trampoline's landing loads; set once before the fault handler is installed (`guard_support`).
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-const TRAMPOLINE_CODE: [u8; 60] = [
-    0x55, // push rbp
-    0x48,
-    0x89,
-    0xe5, // mov rbp, rsp
-    0x53, // push rbx
-    0x41,
-    0x54, // push r12
-    0x41,
-    0x55, // push r13
-    0x41,
-    0x56, // push r14
-    0x41,
-    0x57, // push r15
-    0x48,
-    0x83,
-    0xec,
-    0x08, // sub rsp, 8 (keeps the call aligned)
-    0x48,
-    0x89,
-    0x67,
-    CONTEXT_ENTRY_STACK, // mov [rdi + entry_stack], rsp
-    0x41,
-    0xff,
-    0xd1, // call r9
-    // RESUME (24):
-    0x48,
-    0x83,
-    0xc4,
-    0x08, // add rsp, 8
-    0x41,
-    0x5f, // pop r15
-    0x41,
-    0x5e, // pop r14
-    0x41,
-    0x5d, // pop r13
-    0x41,
-    0x5c, // pop r12
-    0x5b, // pop rbx
-    0x5d, // pop rbp
-    0xc3, // ret
-    // LANDING (39):
-    0xb8,
-    0,
-    0,
-    0,
-    0, // mov eax, status (patched)
-    0xe9,
-    0,
-    0,
-    0,
-    0, // jmp RESUME (patched)
-    // TERMINATION (49):
-    0xb8,
-    0,
-    0,
-    0,
-    0, // mov eax, terminated status (patched)
-    0xe9,
-    0,
-    0,
-    0,
-    0,    // jmp RESUME (patched)
-    0xcc, // int3
-];
+static GUARD_OUT_OF_BOUNDS_STATUS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+// The x86-64 System V guard trampoline, assembled by the toolchain (no hand-typed machine code):
+// it saves the callee-saved registers, publishes the entry stack in the context, and calls the
+// compiled entry in `r9`. A guard fault resumes at `quench_guard_landing` (the out-of-bounds status)
+// or `quench_guard_termination` (the terminated status), which both return through the epilogue.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+std::arch::global_asm!(
+    ".pushsection .text.quench_guard_trampoline,\"ax\",@progbits",
+    ".p2align 4",
+    ".globl quench_guard_trampoline",
+    ".hidden quench_guard_trampoline",
+    ".globl quench_guard_landing",
+    ".hidden quench_guard_landing",
+    ".globl quench_guard_termination",
+    ".hidden quench_guard_termination",
+    "quench_guard_trampoline:",
+    "push rbp",
+    "mov rbp, rsp",
+    "push rbx",
+    "push r12",
+    "push r13",
+    "push r14",
+    "push r15",
+    // Keeps the call aligned.
+    "sub rsp, 8",
+    "mov qword ptr [rdi + {entry_stack}], rsp",
+    "call r9",
+    "2:",
+    "add rsp, 8",
+    "pop r15",
+    "pop r14",
+    "pop r13",
+    "pop r12",
+    "pop rbx",
+    "pop rbp",
+    "ret",
+    "quench_guard_landing:",
+    "mov eax, dword ptr [rip + {out_of_bounds}]",
+    "jmp 2b",
+    "quench_guard_termination:",
+    "mov eax, {terminated}",
+    "jmp 2b",
+    "int3",
+    ".popsection",
+    entry_stack = const std::mem::offset_of!(CallContext, entry_stack),
+    out_of_bounds = sym GUARD_OUT_OF_BOUNDS_STATUS,
+    terminated = const TERMINATED_STATUS as u32,
+);
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-const TRAMPOLINE_RESUME: usize = 24;
-#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-const TRAMPOLINE_LANDING: usize = 39;
-#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-const TRAMPOLINE_TERMINATION: usize = 49;
+unsafe extern "C" {
+    fn quench_guard_trampoline();
+    fn quench_guard_landing();
+    fn quench_guard_termination();
+}
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 static PREVIOUS_SEGV: std::sync::OnceLock<libc::sigaction> = std::sync::OnceLock::new();
@@ -7735,29 +7718,16 @@ fn guard_support() -> Option<&'static GuardSupport> {
     static SUPPORT: std::sync::OnceLock<Option<GuardSupport>> = std::sync::OnceLock::new();
     SUPPORT
         .get_or_init(|| {
-            let mut code = TRAMPOLINE_CODE;
-            // Each landing loads its status and jumps back to the epilogue.
-            for (landing, status) in [
-                (
-                    TRAMPOLINE_LANDING,
-                    trap_status(crate::WasmTrap::OutOfBoundsMemory) as u32,
-                ),
-                (TRAMPOLINE_TERMINATION, TERMINATED_STATUS as u32),
-            ] {
-                code[landing + 1..landing + 5].copy_from_slice(&status.to_le_bytes());
-                let after_jump = landing + 10;
-                let displacement = TRAMPOLINE_RESUME as i32 - after_jump as i32;
-                code[landing + 6..landing + 10].copy_from_slice(&displacement.to_le_bytes());
-            }
-            let memory = CodeMemory::new(&code)?;
-            // SAFETY: the code implements `Trampoline` for this ABI.
-            let trampoline = unsafe { std::mem::transmute::<*mut u8, Trampoline>(memory.pointer()) };
-            let landing = memory.pointer() as usize + TRAMPOLINE_LANDING;
-            let termination = memory.pointer() as usize + TRAMPOLINE_TERMINATION;
+            GUARD_OUT_OF_BOUNDS_STATUS.store(trap_status(crate::WasmTrap::OutOfBoundsMemory) as u32,
+                std::sync::atomic::Ordering::Release);
+            // SAFETY: the assembled trampoline implements `Trampoline` for this ABI.
+            let trampoline = unsafe { std::mem::transmute::<unsafe extern "C" fn(), Trampoline>(quench_guard_trampoline) };
+            let landing = quench_guard_landing as usize;
+            let termination = quench_guard_termination as usize;
             install_guard_signals(&[(libc::SIGSEGV, &PREVIOUS_SEGV)],
                 guard_fault as *const () as usize, libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_NODEFER)?;
             Some(GuardSupport {
-                _code: Some(memory),
+                _code: None,
                 trampoline,
                 landing,
                 termination,
@@ -8080,7 +8050,7 @@ impl<H: Host> Vm<H> {
             let body = program.function_get(function as usize)?;
             let last_pc = body.code.len().checked_sub(1)?;
             let terminal = body.code.get(last_pc)?.as_wide();
-            if matches!(crate::staged::Operation::<u64, ()>::of(terminal), Some(crate::staged::Operation::Return { .. })) {
+            if meaning_compiled::is_return(terminal) {
                 return Some((last_pc, terminal.register_a(), value));
             }
         }
@@ -8290,7 +8260,7 @@ impl<H: Host> Vm<H> {
         let value = compiled.call(arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
         let terminal = function.code.get(last_pc)?.as_wide();
-        (matches!(crate::staged::Operation::<u64, ()>::of(terminal), Some(crate::staged::Operation::Return { .. }))).then_some((last_pc, terminal.register_a(), value))
+        (meaning_compiled::is_return(terminal)).then_some((last_pc, terminal.register_a(), value))
     }
 
     /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
@@ -8415,7 +8385,7 @@ impl<H: Host> Vm<H> {
         (compiled.params() == params).then_some(())?;
         let return_pc = body.code.len().checked_sub(1)?;
         let terminal = body.code.get(return_pc)?.as_wide();
-        (matches!(crate::staged::Operation::<u64, ()>::of(terminal), Some(crate::staged::Operation::Return { .. }))).then_some(())?;
+        (meaning_compiled::is_return(terminal)).then_some(())?;
         Some(DirectTierEntry {
             compiled: Rc::downgrade(compiled),
             return_pc,

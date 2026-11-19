@@ -86,7 +86,7 @@ impl CallForm {
         let in_place = instruction.writes_current_this() || instruction.resolves_dynamic_scope();
         if crate::vm::compiled::meaning_compiled::is_call(instruction) && !in_place {
             Self::Plain
-        } else if crate::vm::compiled::meaning_compiled::is_construct(instruction) && !in_place && !instruction.is_super_construct()
+        } else if crate::vm::compiled::meaning_compiled::is_construct(instruction) && !in_place && !crate::vm::compiled::meaning_compiled::is_super_construct(instruction)
             && !ImmediateLayout::construct_array_arguments(instruction.imm()) {
             Self::Construct
         } else {
