@@ -173,6 +173,7 @@ pub(crate) struct NativeFieldCacheLayout {
     pub(crate) receiver_offset: usize,
     pub(crate) holder_offset: usize,
     pub(crate) slot_offset: usize,
+    pub(crate) holder_id_offset: usize,
     pub(crate) receiver_complement: u32,
     pub(crate) holder_complement: u32,
     pub(crate) slot_complement: u32,
@@ -180,10 +181,11 @@ pub(crate) struct NativeFieldCacheLayout {
 }
 
 pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
-    entry_size: 12,
+    entry_size: 16,
     receiver_offset: 0,
     holder_offset: 4,
     slot_offset: 8,
+    holder_id_offset: 12,
     receiver_complement: 4294967295,
     holder_complement: 4294967295,
     slot_complement: 0,

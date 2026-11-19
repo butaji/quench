@@ -233,6 +233,10 @@ pub(crate) struct NativeFieldLoad {
     /// proving the shape and the storage form, and reads that form's layout, a fact of the id,
     /// with no test (`IcOp::GuardLayout`).
     pub(crate) formed: Option<u32>,
+    /// For a holder read, the layout id of the holder (`FieldCache::holder_id`) where the entry
+    /// kept one: a guard of it proves the holder's whole header, which names `holder` as its
+    /// shape, so it replaces the holder's shape guard (`IcOp::GuardLayout`, `field_plans`).
+    pub(crate) holder_id: Option<u32>,
 }
 
 /// The most shape-guarded load groups one field read lowers before it calls the field cache
@@ -386,7 +390,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None };
         assert!(field.valid());
         for shape in [super::super::super::NO_FIELD_RECEIVER,
             crate::value_vec::DICTIONARY_STORAGE, crate::value_vec::DICTIONARY_STORAGE | 1] {

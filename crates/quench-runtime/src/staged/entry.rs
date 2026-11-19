@@ -332,7 +332,7 @@ pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::
 /// The interpreter's `site_read` of `object` through the stored field cache entry `entry` (at
 /// byte 0 of its table), over the heap's own tables.
 #[cfg(test)]
-fn concrete_read_entry(heap: &crate::heap::Heap, object: crate::Value, entry: &[u32; 3]) -> Option<crate::Value> {
+fn concrete_read_entry(heap: &crate::heap::Heap, object: crate::Value, entry: &[u32; 4]) -> Option<crate::Value> {
     let records = heap.object_record_base()? as u64;
     // SAFETY: a stored entry, and the heap's live record table and arena.
     unsafe { super::ic::concrete_site_read(heap.arena_values_base(), (entry.as_ptr() as u64, records), object, 0) }
@@ -346,8 +346,8 @@ mod tests {
     use crate::Value;
 
     /// A field cache entry as the site table stores it: each word complemented.
-    fn stored(shape: u32, holder: u32, slot: u32) -> [u32; 3] {
-        let mut words = [0; 3];
+    fn stored(shape: u32, holder: u32, slot: u32) -> [u32; 4] {
+        let mut words = [0; 4];
         words[ENTRY.receiver_offset / 4] = shape ^ ENTRY.receiver_complement;
         words[ENTRY.holder_offset / 4] = holder ^ ENTRY.holder_complement;
         words[ENTRY.slot_offset / 4] = slot ^ ENTRY.slot_complement;
@@ -380,7 +380,7 @@ mod tests {
             assert_eq!(by_entry, by_hint, "slot {slot}");
             assert_eq!(by_entry, Some(Value::integer(10 * (i32::from(slot) + 1))));
         }
-        let read = |entry: [u32; 3]| concrete_read_entry(&heap, object, &entry);
+        let read = |entry: [u32; 4]| concrete_read_entry(&heap, object, &entry);
         assert_eq!(read(stored(shape + 1, ENTRY.own_holder, 0)), None, "another shape");
         assert_eq!(read(stored(shape, 7, 0)), None, "a holder entry");
         assert_eq!(read([0; 3]).is_some(), shape == ENTRY.receiver_complement, "the empty entry names no shape");
@@ -407,7 +407,7 @@ mod tests {
             let receiver = heap.alloc_object(Object::new(prototype));
             let (holder_shape, receiver_shape) = (shape_of(&heap, prototype), shape_of(&heap, receiver));
             let records = heap.object_record_base().expect("object records exist") as u64;
-            let read = |object: Value, entry: [u32; 3]| {
+            let read = |object: Value, entry: [u32; 4]| {
                 let mut stage = crate::staged::Concrete::new(heap.arena_values_base());
                 site_read(&mut stage, (entry.as_ptr() as u64, records), object.to_bits(), 0u64, ()).map(Value::from_bits)
             };
@@ -452,11 +452,11 @@ mod tests {
             let mut heap = Heap::new();
             let (object, shape) = object_of(&mut heap, count);
             let records = heap.object_record_base().expect("object records exist") as u64;
-            let store = |heap: &Heap, entry: [u32; 3], value: Value| {
+            let store = |heap: &Heap, entry: [u32; 4], value: Value| {
                 let mut stage = crate::staged::Concrete::storing(heap);
                 site_store(&mut stage, (entry.as_ptr() as u64, records), object.to_bits(), 0u64, (value.to_bits(), true, None), ()).is_some()
             };
-            let read = |heap: &Heap, entry: [u32; 3]| concrete_read_entry(heap, object, &entry);
+            let read = |heap: &Heap, entry: [u32; 4]| concrete_read_entry(heap, object, &entry);
             for slot in 0..count as u32 {
                 let entry = stored(shape, ENTRY.own_holder, slot);
                 assert!(store(&heap, entry, Value::integer(-7)), "{count} values, slot {slot}");

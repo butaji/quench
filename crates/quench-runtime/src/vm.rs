@@ -763,13 +763,17 @@ struct FieldCache {
     receiver: u32,
     holder: u32,
     slot: u16,
+    /// The layout id of the holder (`Object::layout_id`) where the holder object was at hand when
+    /// the entry was recorded, else `NO_HOLDER_LAYOUT`. It names the holder's exact shape `holder`
+    /// (`layouts::auxiliary`), so a read may guard the holder's whole header in one compare.
+    holder_id: u32,
 }
 
 impl FieldCache {
     /// The entry of an own data field at `slot` of receivers of exact shape `receiver`.
     #[inline(always)]
     const fn own(receiver: u32, slot: u16) -> Self {
-        Self { receiver, holder: NO_FIELD_HOLDER, slot }
+        Self { receiver, holder: NO_FIELD_HOLDER, slot, holder_id: field_cache_layout::NO_HOLDER_LAYOUT }
     }
 }
 /// The internal keys of a bound function's environment object.
@@ -777,6 +781,8 @@ const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = field_cache_layout::NO_HOLDER;
+/// The holder layout id an entry holds where no holder object was at hand (`FieldCache::holder_id`).
+const NO_FIELD_HOLDER_LAYOUT: u32 = field_cache_layout::NO_HOLDER_LAYOUT;
 use crate::staged::field_cache_layout::{self, FieldCacheWords};
 /// Where an accessor field cache's holder keeps its getter (`AccessorFieldCache::slot_accessor`):
 /// in the slot itself (`ShapeAttributes::slot_getter`), in the slot's pair cell
@@ -853,21 +859,22 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     receiver: field_cache_layout::EMPTY.receiver,
     holder: field_cache_layout::EMPTY.holder,
     slot: field_cache_layout::EMPTY.slot as u16,
+    holder_id: field_cache_layout::EMPTY.holder_id,
 };
 /// Stored as its `FieldCacheWords`, which complement the entry against `EMPTY`, so the empty entry is zero words.
 impl site_table::SiteEntry for FieldCache {
     type Stored = FieldCacheWords;
     #[inline(always)]
     fn store(self) -> FieldCacheWords {
-        FieldCacheWords::encode(self.receiver, self.holder, u32::from(self.slot))
+        FieldCacheWords::encode(self.receiver, self.holder, u32::from(self.slot), self.holder_id)
     }
     #[inline(always)]
     fn load(stored: FieldCacheWords) -> Self {
-        let (receiver, holder, slot) = stored.decode();
-        Self { receiver, holder, slot: slot as u16 }
+        let (receiver, holder, slot, holder_id) = stored.decode();
+        Self { receiver, holder, slot: slot as u16, holder_id }
     }
 }
-// SAFETY: three `u32` words, with no padding, and every bit pattern valid.
+// SAFETY: four `u32` words, with no padding, and every bit pattern valid.
 unsafe impl site_table::StoredWords for FieldCacheWords {}
 /// The layout generated code reads a field cache entry by (`staged::layout_offsets`).
 pub(crate) use crate::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
