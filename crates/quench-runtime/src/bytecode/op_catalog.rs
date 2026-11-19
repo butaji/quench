@@ -239,6 +239,7 @@ pub(crate) enum OwnedStep {
     LoadLocal,
     StoreVarBinding,
     StoreLocal,
+    InitializeTdz,
     StoreEnvLocal,
     LoadCapture,
     StoreCapture,

@@ -359,9 +359,7 @@ vm/dispatch.rs op:CallThisMethod 1
 vm/dispatch.rs op:Construct 1
 vm/dispatch.rs op:GetField 1
 vm/dispatch.rs op:GetIndex 1
-vm/dispatch.rs op:InitializeTdz 1
 vm/dispatch.rs op:JumpBinaryFalse 1
-vm/dispatch.rs op:LoadConst 1
 vm/dispatch.rs op:NumericAdd 1
 vm/dispatch.rs op:NumericMultiply 1
 vm/dispatch.rs op:SetField 1

@@ -10,12 +10,10 @@
 // `allocate_value` and element definer answer it), and the Names, Generic, Property and Value call-outs
 // (`staged_value_step`).
 // What is left, and why:
-// - Constant load: LoadConst. Its constant is the VM's own (`active_constant`), which a program's decode
-//   context does not hold, so its row cannot decode it there.
 // - Hand semantics with no staged row: CallFirstChunk (the first-call stub, `call_first_chunk`).
 // - Superinstruction: SuperConstArrayObject2 makes a constant array, runs two binary operations, then makes an
 //   object pair. No single `Allocation` decodes it, and its return is its own.
-// - Row, then a per-opcode miss: Binary, NumericAdd, NumericMultiply, Unary, JumpBinaryFalse, InitializeTdz. Each
+// - Row, then a per-opcode miss: Binary, NumericAdd, NumericMultiply, Unary, JumpBinaryFalse. Each
 //   miss is that opcode's own semantics, not a staged row's. What keeps each from its arm alone:
 //   - Binary, NumericAdd, NumericMultiply: `decode_binary` declines an operand that is neither a register nor
 //     a constant, and under `stencil_build` every operator that is no Number's.
@@ -23,7 +21,6 @@
 //     frame, and any operator outside the unary family. A non-int32 operand is `CallOut::Unary`.
 //   - JumpBinaryFalse: a bitwise test of a constant operand whose word is no int32 has no call-out, since `Decide`
 //     takes registers and a `Binary` yields a Number whose truth a word cannot tell (a BigInt's zero is no int32 zero).
-//   - InitializeTdz: the row leaves for a slot it does not hold plainly, and the miss writes the TDZ marker there.
 // - Field stores to `this`: SetThisField, SetThisFieldStrict. The interpreter frame's property plans are
 //   `NoPlans`, so its store row always leaves; the miss must read `this` by `checked_this_binding`, which
 //   the named store's call-out (`CallOut::StoreField`, reading register B) does not.
@@ -598,18 +595,6 @@ impl<H: Host> Vm<H> {
         allow_inline_calls: bool,
     ) -> Result<StepResult, JsError> {
         match i.op() {
-            Op::LoadConst => {
-                // The constant the instruction names: an index outside the program is a validation error.
-                let constant = self.active_constant(i.constant_index())
-                    .ok_or_else(|| JsError::validation("constant index is outside program".into()))?;
-                let operation = crate::staged::Operation::<u64, ()>::LoadConst {
-                    destination: i.result_register(), constant: crate::staged::Constant::untyped(constant) };
-                match self.run_row(p, f, i, pc, allow_inline_calls, operation) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every constant load"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
             Op::CallFirstChunk => self.call_first_chunk(p, f, i, *pc)?,
             Op::SuperConstArrayObject2 => {
                 if let Some(value) = self.execute_const_array_object2(p, f, i)? {
@@ -627,19 +612,6 @@ impl<H: Host> Vm<H> {
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
                     RowRun::Declined => unreachable!("the interpreter frame answers every indexed read"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            // The TDZ opening runs its staged row first; a row that leaves (a slot it does not hold plainly) is the hand write.
-            Op::InitializeTdz => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        let slot = i.local_slot();
-                        *self
-                            .owner_binding_mut(p, VarOwner::Frame(f), slot)
-                            .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
-                    }
                     RowRun::Stop(stop) => return stop,
                 }
             }
@@ -1300,6 +1272,24 @@ impl<H: Host> Vm<H> {
             let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
             self.staged_value_step(p, site, i)?;
             return Ok(StepResult::Continue);
+        }
+        // A flow row that reads the program's constants (`LoadConst`) decodes over the active program's constants
+        // (`DecodeContext::constant_at`), then runs as its row on the frame, which answers every constant load. Only
+        // that row needs a constant; a flow row that decodes to another row is a Wasm step, below.
+        if i.op().staged() == Some(crate::bytecode::Decoder::Flow) {
+            let constant_at = |index: usize| self.active_constant(index).map(crate::staged::Constant::untyped);
+            let context = crate::staged::DecodeContext { constant_at: Some(&constant_at), ..crate::staged::DecodeContext::EMPTY };
+            match crate::staged::Operation::<u64, ()>::decode(i, context) {
+                Some(operation @ crate::staged::Operation::LoadConst { .. }) => {
+                    return match self.run_row(p, f, i, pc, allow_inline_calls, operation) {
+                        RowRun::Done(_) => Ok(StepResult::Continue),
+                        RowRun::Stop(stop) => stop,
+                        RowRun::Declined => unreachable!("the interpreter frame answers every constant load"),
+                    };
+                }
+                Some(_) => {}
+                None => return Err(JsError::validation("constant index is outside program".into())),
+            }
         }
         self.step_wasm(p, f, i, pc)
     }
