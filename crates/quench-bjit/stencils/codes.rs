@@ -146,6 +146,12 @@ pub const LEXICAL_WRITE_ROW: u8 = 50;
 pub const CALLEE_CAPTURE_ROW: u8 = 25;
 /// The destination takes the tagged word of hole 1.
 pub const CONSTANT_ROW: u8 = 31;
+/// An empty ordinary object (`EMPTY_OBJECT_ROW`) or a zero-length array (`EMPTY_ARRAY_ROW`), allocated by the
+/// object or array space's cursor (`NATIVE_RECORD_CURSOR_LAYOUT`) and the template words the dispatch payload
+/// holds (`JS_STEP_EMPTY_*`): the destination (hole 0) takes the direct reference of the bumped id. A spent run,
+/// an absent template or a non-memory destination leaves through EXIT0 with nothing written.
+pub const EMPTY_OBJECT_ROW: u8 = 80;
+pub const EMPTY_ARRAY_ROW: u8 = 81;
 /// Leaves through the taken successor unless the VM's active realm (the word at the byte offset of
 /// hole 1 behind the payload's VM) names the global object word of hole 2: the proof once at entry.
 pub const REALM_ROW: u8 = 28;

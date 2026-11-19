@@ -78,7 +78,7 @@ pub(crate) struct NativeFunctionLayout {
 }
 
 pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
-    record_size: 40,
+    record_size: 32,
     object_offset: 0,
 };
 
@@ -111,7 +111,7 @@ pub(crate) struct NativeRecordCursorLayout {
 }
 
 /// The runtime's `records::RecordCursor`: two `u32` words, `next` then `limit`. Read by the
-/// runtime's `stencil_layout_matches` test; no stencil allocates inline yet.
+/// runtime's `stencil_layout_matches` test and by the empty-allocation rows (`heap_rows::empty_row`).
 #[allow(dead_code)]
 pub(crate) const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
     size: 8,
@@ -329,6 +329,20 @@ pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = 376;
 pub(crate) const JS_STEP_FUNCTION_MARK_BLOCKS: usize = 416;
 pub(crate) const JS_STEP_FUNCTION_MARK_BLOCK_COUNT: usize = 424;
 pub(crate) const JS_STEP_EMPTY_STRING: usize = 432;
+/// The allocation words `JsStepDispatch` declares after `environment_storage` (440, 8 bytes) and before `outcome`,
+/// each 8 bytes and 8-aligned, so at 440 + 8k in declaration order: the object cursor (448), the empty object's
+/// template layout (456), payload (464) and prototype (472); then the array cursor (480) and the empty array's
+/// template layout (488), payload (496) and prototype (504). `outcome` follows at 512. Checked by `stencil_layout_matches`.
+pub(crate) const JS_STEP_OBJECT_CURSOR: usize = 448;
+pub(crate) const JS_STEP_EMPTY_OBJECT_LAYOUT: usize = 456;
+pub(crate) const JS_STEP_EMPTY_OBJECT_PAYLOAD: usize = 464;
+#[allow(dead_code)]
+pub(crate) const JS_STEP_EMPTY_OBJECT_PROTO: usize = 472;
+pub(crate) const JS_STEP_ARRAY_CURSOR: usize = 480;
+pub(crate) const JS_STEP_EMPTY_ARRAY_LAYOUT: usize = 488;
+pub(crate) const JS_STEP_EMPTY_ARRAY_PAYLOAD: usize = 496;
+#[allow(dead_code)]
+pub(crate) const JS_STEP_EMPTY_ARRAY_PROTO: usize = 504;
 /// The function record reservation's base (`JsStepDispatch::function_record_base`).
 pub(crate) const JS_STEP_FUNCTION_RECORD_BASE: usize = 120;
 pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 152;

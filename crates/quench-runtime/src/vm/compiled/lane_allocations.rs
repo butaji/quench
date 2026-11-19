@@ -68,6 +68,8 @@ pub(super) unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64,
     let array = if elements == 0 { vm.hole_array(length as usize) } else { vm.literal_array(length as usize, |index| Value::from_bits(unsafe { *(elements as *const u64).add(index) })) };
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
+    // The empty array (no elements, so `hole_array`'s static empty header) is the inline template's source.
+    if length == 0 && elements == 0 { dispatch.capture_empty_array(vm, array); }
     array.to_bits()
 }
 
