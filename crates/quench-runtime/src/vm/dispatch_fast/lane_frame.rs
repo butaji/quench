@@ -3302,6 +3302,42 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// The lane handler of a returning `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
+    /// value) on a register and a constant, at leaf form `LEAF`, whose RETURN parameter is `MISS`
+    /// (`protocol_misses::operator_return_code`). The operator is static, so the row builds the staged
+    /// `Binary` operation directly, as its decoder does (`numeric::binary_operation`): the left operand is
+    /// the record's register, the right one its constant, which the record's immediate (the operator
+    /// field) no longer holds, so the frame's reads answer it from the record's own constant word. It
+    /// runs over the frame `returning_row` runs over, and completes the activation with its value. Any
+    /// other step, and a record whose flags are not exactly the return, takes the record's protocol miss
+    /// (`protocol_miss`), which completes the value itself.
+    pub(super) fn returning_operator_row<OP: u16, OPERATOR: u8, LEAF: u8, MISS: u16>(cx, r, ip, i, view) {
+        if i.a & !crate::bytecode::REGISTER_MASK != crate::bytecode::RETURN_REGISTER {
+            sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
+        }
+        let destination = i.a & crate::bytecode::REGISTER_MASK;
+        let Some(number) = crate::staged::numeric::binary_operation(OPERATOR as u32, destination, Operand::register(i.b), Operand(i.c)) else {
+            sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
+        };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = LaneFrame::<ACC_NONE> { reads: Reads::of_jump::<H>(cx, Some(i.constant())),
+            ..row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view) };
+        match crate::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
+            Step::Value(value) => {
+                // An integral Number is made as the integer it is (`Value::number`), as the integer operator makes it.
+                let value = Value::from_bits(value);
+                let value = value.as_number().map_or(value, Value::number);
+                if let Some(resumed) = by_leaf!(LEAF, |L| super::complete_plain_activation_in_lane::<H, L>(cx, value)) {
+                    resume!(cx, resumed)
+                }
+                resume!(cx, super::return_value_general_in_lane(cx, ip, value));
+            }
+            Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
+        }
+    }
+}
+
 /// Whether `handler` is opcode `OP`'s plain row in any direction: its value row with no
 /// accumulator field, or its jump row.
 pub(in crate::vm::dispatch_fast) fn plain_row<H: Host, const OP: u16>(handler: *const ()) -> bool {

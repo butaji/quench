@@ -50,6 +50,15 @@ macro_rules! returning_row_of {
     };
 }
 
+/// The lane handler of a returning constant-right `Binary` of arithmetic operator `$op` at leaf form
+/// `$leaf` (`returning_operator_row`): its RETURN parameter is `operator_return_code($op, $leaf)`, which
+/// its miss body (`returning_operator_miss_of`) completes.
+macro_rules! returning_operator_row_of {
+    ($op:expr, $leaf:expr) => {
+        returning_operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $op as u8 }, { $leaf }, { operator_return_code($op as u8, $leaf) }> as Handler
+    };
+}
+
 
 use crate::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
 use super::compiled::tier_policy::Tiers;
@@ -540,11 +549,11 @@ impl LaneView {
         macro_rules! forms {
             ($leaf:expr) => {{
                 // A constant right operand's record keeps its operator in the operand (`specialize_returning_operator`),
-                // so only its operator's miss decodes it; a register right operand is a `returning_row`.
+                // so its operator's row decodes it; a register right operand is a `returning_row`.
                 macro_rules! pick {
                     ($op:expr) => {
                         [
-                            (returning_operator_miss::<H, { $op }, true, NOT_LEAF> as Handler, returning_operator_miss::<H, { $op }, true, { $leaf }> as Handler),
+                            (returning_operator_row_of!($op, NOT_LEAF), returning_operator_row_of!($op, $leaf)),
                         ]
                     };
                 }
@@ -3720,7 +3729,7 @@ mod lane_reads;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{protocol_row, returning_row, protocol_miss, protocol_family, is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{protocol_row, returning_row, returning_operator_row, protocol_miss, protocol_family, is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 mod capture_append;
@@ -15768,6 +15777,18 @@ script_handler! {
     }
 }
 
+/// The protocol miss body of a returning constant-right `Binary` of operator `operator` (a
+/// `BinaryOperator`'s value) at leaf form `LEAF` (`protocol_misses::returns`): `returning_operator_miss`
+/// of that operator; `None` for a value no arithmetic operator has.
+const fn returning_operator_miss_of<H: Host, const LEAF: u8>(operator: u8) -> Option<Handler> {
+    macro_rules! pick {
+        ($op:expr) => {
+            returning_operator_miss::<H, { $op }, true, LEAF> as Handler
+        };
+    }
+    arithmetic_operators!(operator as u32, pick)
+}
+
 script_handler! {
     /// `returning_operator_miss` of operands other than two integers: other Numbers, then the
     /// concatenation and BigInt values `binary_value` decides; any other takes the
@@ -18340,10 +18361,10 @@ fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInst
 
 
 /// Gives a returning `Binary` record of an arithmetic operator on a register and a constant its
-/// operator's `returning_operator_miss`, its fields resolved as `specialize_register_operands`
+/// operator's `returning_operator_row`, its fields resolved as `specialize_register_operands`
 /// resolves a non-returning one's. A record whose right operand is a register, and any other,
 /// keeps its `returning_row`: a constant operand replaces the record's operator field (the
-/// operand is one union with it), so only that operator's miss can decode the record.
+/// operand is one union with it), so the row's operator is its static parameter instead.
 fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constants: &[Value], record: &mut LaneInstruction) {
     use crate::bytecode::OperandKind::{Constant, Register};
     let (left, right) = (instruction.operand_b(), instruction.operand_c());
@@ -18359,7 +18380,7 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
     };
     macro_rules! pick {
         ($op:expr) => {
-            returning_operator_miss::<H, { $op }, true, NOT_LEAF> as Handler
+            returning_operator_row_of!($op, NOT_LEAF)
         };
     }
     let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) else {
