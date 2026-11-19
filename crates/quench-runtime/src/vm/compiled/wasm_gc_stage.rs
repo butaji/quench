@@ -75,9 +75,24 @@ unsafe extern "C" fn gc_field_count<H: Host>(context: *mut CallContext, referenc
     HeapStage { vm: unsafe { machine::<H>(context) } }.field_count(reference)
 }
 
+/// The stored bytes of `field` at `slot`, a `field_slot` address: a 64-bit number's raw bits are
+/// read and written in place, without a cell.
+///
+/// # Safety
+/// `slot` is a nonzero `field_slot` answer for an object's field of `field`'s storage, taken with
+/// nothing allocated since.
+unsafe fn slot_bytes<'a>(slot: u64, field: GcField) -> &'a mut [u8] {
+    // SAFETY: as the caller guarantees, the field's `size()` bytes are live in the object's payload.
+    unsafe { std::slice::from_raw_parts_mut(slot as usize as *mut u8, field.size()) }
+}
+
 unsafe extern "C" fn gc_read_slot<H: Host>(context: *mut CallContext, slot: u64, tag: u64) -> u64 {
     let vm = unsafe { machine::<H>(context) };
     let field = field_of_tag(tag);
+    if field.value() == GcFieldValue::Wide {
+        // SAFETY: `slot` is the callout's `field_slot` answer, as the rules pass it.
+        return field.load(unsafe { slot_bytes(slot, field) });
+    }
     let stored = HeapStage { vm: &mut *vm }.read_slot(slot, field);
     stored_bits(vm, field, stored)
 }
@@ -85,6 +100,11 @@ unsafe extern "C" fn gc_read_slot<H: Host>(context: *mut CallContext, slot: u64,
 unsafe extern "C" fn gc_write_slot<H: Host>(context: *mut CallContext, slot: u64, tag: u64, bits: u64) -> u64 {
     let vm = unsafe { machine::<H>(context) };
     let field = field_of_tag(tag);
+    if field.value() == GcFieldValue::Wide {
+        // SAFETY: as `gc_read_slot`.
+        field.store(unsafe { slot_bytes(slot, field) }, bits);
+        return 0;
+    }
     let value = value_of_bits(vm, field.value(), bits);
     HeapStage { vm: &mut *vm }.write_slot(slot, field, value.to_bits());
     0

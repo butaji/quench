@@ -278,7 +278,22 @@ impl<H: Host> Emitter<'_, '_, H> {
         let mine = self.operate(Binary::Equal, Width::I64, instance, running);
         self.branch_if(mine, (local, &[]), (foreign, &[]));
         self.enter(local);
-        self.local_call(entry, signature, arguments, (slow, done));
+        let window = instruction.call_window();
+        let arguments: Vec<ir::Value> = signature
+            .params
+            .iter()
+            .enumerate()
+            .map(|(offset, ty)| self.read(window.base + offset as u16, Kind::of(*ty).expect("planned")))
+            .collect();
+        if native_tail {
+            let length = self.passed_length();
+            self.tail_body_values(body, signature, &arguments, (self.base, length));
+        } else {
+            let length = self.passed_length();
+            let (status, bits) = self.call_body_values(body, signature, &arguments, (self.base, length));
+            self.goto(done, &[status, bits]);
+        }
+        self.body.core.builder.set_cold_block(foreign);
         self.enter(foreign);
         self.foreign_call(instance, entry, signature, arguments, (slow, done));
     }

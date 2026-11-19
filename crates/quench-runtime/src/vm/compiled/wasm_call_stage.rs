@@ -106,7 +106,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         if self.memory.base {
             arguments.push(self.base);
         }
-        arguments.extend(self.length);
+        arguments.extend(self.passed_length());
         for (offset, ty) in plan.params.iter().enumerate() {
             let kind = Kind::of(*ty).expect("planned");
             arguments.push(self.read(window.base + offset as u16, kind));

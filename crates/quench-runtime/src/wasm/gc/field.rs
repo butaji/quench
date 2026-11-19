@@ -1,5 +1,4 @@
 //! A GC field access's operand, resolved by lowering.
-use super::GcFieldAccess;
 use crate::Value;
 use wasmparser::{StorageType, ValType};
 
@@ -83,25 +82,41 @@ impl GcField {
         self.mask().map(i32::count_ones)
     }
 
-    /// What the field stores for `value`: a packed field keeps its low bits, so an unsigned
-    /// read returns what is stored.
+    /// The bytes the field's storage takes in a payload (`ObjectLayout`'s rule): a packed field its
+    /// width, a 32-bit word four, anything else a word.
     #[inline(always)]
-    pub(crate) fn store(self, value: Value) -> Value {
-        match self.mask() {
-            Some(mask) => Value::integer(value.as_int().expect("validated packed Wasm field") & mask),
-            None => value,
+    pub(crate) fn size(self) -> usize {
+        match self.packed_bits() {
+            Some(bits) => bits as usize / 8,
+            None if self.value() == GcFieldValue::Narrow => 4,
+            None => 8,
         }
     }
 
-    /// What `access` reads of `stored`; a signed read sign-extends the packed bits.
+    /// The bits `bytes` hold for the field, zero-extended; `bytes` is the field's `size()` long.
     #[inline(always)]
-    pub(crate) fn load(self, access: GcFieldAccess, stored: Value) -> Value {
-        match (access, self.mask()) {
-            (GcFieldAccess::ReadSigned, Some(mask)) => {
-                let shift = mask.leading_zeros();
-                Value::integer(((stored.as_int().expect("packed Wasm field") & mask) << shift) >> shift)
-            }
-            _ => stored,
+    pub(crate) fn load(self, bytes: &[u8]) -> u64 {
+        let mut word = [0u8; 8];
+        word[..bytes.len()].copy_from_slice(bytes);
+        u64::from_le_bytes(word)
+    }
+
+    /// Stores the low bits of `bits` in `bytes`, the field's storage: a packed field keeps its
+    /// low bits, so an unsigned read returns what is stored.
+    #[inline(always)]
+    pub(crate) fn store(self, bytes: &mut [u8], bits: u64) {
+        let length = bytes.len();
+        bytes.copy_from_slice(&bits.to_le_bytes()[..length]);
+    }
+
+    /// The bits a value stores in a field of this storage: an integer's bits for a narrow field,
+    /// the value's own bits otherwise. A 64-bit number is not a `GcField` concern (its bits are the
+    /// cell's), so the caller resolves it first.
+    #[inline(always)]
+    pub(crate) fn raw_of(self, value: Value) -> u64 {
+        match self.value() {
+            GcFieldValue::Narrow => u64::from(value.as_int().expect("validated Wasm integer field") as u32),
+            _ => value.to_bits(),
         }
     }
 }

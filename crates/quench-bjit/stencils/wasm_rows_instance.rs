@@ -18,7 +18,7 @@
 //! - HOLE_B: the offset of `memory_grow` in `CallContext`.
 //! - HOLE_FOURTH: the offset of `memory_length` in `CallContext`.
 //!
-//! The row's name is `call_w_20_0_1_0` (kind `MEMORY_GROW`) (`wasm_library.rs` makes a `call_` name for it), since it
+//! The row's name is `call_w_21_0_1_0` (kind `MEMORY_GROW`) (`wasm_library.rs` makes a `call_` name for it), since it
 //! calls through a function pointer, which `build/checks.rs` requires of a `call_` row.
 
 use super::wasm_frame::{read, reload_memory, write};

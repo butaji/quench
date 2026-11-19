@@ -3,7 +3,9 @@ use crate::staged::wasm_gc::{Aggregate, ArrayConstruction, GcStep};
 use wasmparser::{FieldType, StorageType};
 
 mod field;
+mod layout;
 pub(crate) use field::{GcField, GcFieldValue};
+pub(crate) use layout::ObjectLayout;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GcFieldAccess {

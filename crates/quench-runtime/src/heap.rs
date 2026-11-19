@@ -4935,7 +4935,11 @@ impl Heap {
                 object(value);
                 work.extend(elements.iter().copied());
             }
-            Cell::WasmGc { fields, .. } => work.extend(fields.edges().iter().copied()),
+            Cell::WasmGc { declarations, ty, fields } => {
+                if let Some(layout) = declarations.layout(*ty) {
+                    fields.for_each_reference(layout, |value| work.push(value));
+                }
+            }
             Cell::WasmExtern(value) => work.push(*value),
             Cell::AccessorPair { getter, setter } => {
                 work.push(*getter);

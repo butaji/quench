@@ -214,6 +214,11 @@ impl WasmCall for CallStage<'_> {
     }
 
     #[inline(always)]
+    fn restore_memory(&mut self) {
+        unsafe { super::wasm_frame::restore_memory(self.s) }
+    }
+
+    #[inline(always)]
     fn status_leaves(&mut self, status: u64) -> Result<(), Leave> {
         if status == 0 { Ok(()) } else { Err(Leave::Status(status)) }
     }

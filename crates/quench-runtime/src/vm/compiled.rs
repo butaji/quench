@@ -156,6 +156,7 @@ pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 mod static_loops;
 #[path = "compiled/wasm_callable.rs"]
 mod wasm_callable;
+mod wasm_growth;
 #[path = "compiled/wasm_stage.rs"]
 mod wasm_stage;
 mod wasm_instance_stage;
@@ -2731,7 +2732,7 @@ fn stitched_entry<H: Host>(
     program: ProgramId,
     code: &crate::bytecode::ResidualProgram,
     index: usize,
-    (plans, cells, callable): (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]),
+    (plans, cells, callable, grows_memory): (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool], &crate::bitset::BitSet),
     memory_slot: Option<u32>,
     (full_plan, sites, env): (&Plan, &[(usize, usize)], Value),
 ) -> Option<Vec<u8>> {
@@ -2796,6 +2797,7 @@ fn stitched_entry<H: Host>(
         memory_slot,
         memory_stable,
         callee: &callee,
+        grows_memory,
         vm_call: wasm_call_vm::vm_call_callout::<H> as *const () as u64,
         global: &global,
         globals_offset: CONTEXT_GLOBALS as u64,
@@ -2814,7 +2816,7 @@ fn stitched_entry<H: Host>(
 }
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]), _: Option<u32>, _: (&Plan, &[(usize, usize)], Value)) -> Option<Vec<u8>> {
+fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool], &crate::bitset::BitSet), _: Option<u32>, _: (&Plan, &[(usize, usize)], Value)) -> Option<Vec<u8>> {
     None
 }
 
@@ -5676,6 +5678,8 @@ struct Analysis<'a, H: Host> {
     /// Whether bodies unroll their innermost loops (`program_unrolls`), decided once the
     /// plans have read every record and before any body is built.
     unrolls: bool,
+    /// The defined functions that may grow the memory (`wasm_growth`); empty until the module's
+    /// memory is known, and a function past its bound is taken to grow it.
 }
 
 impl<H: Host> Analysis<'_, H> {
@@ -6708,6 +6712,9 @@ struct Emitter<'a, 'b, H: Host> {
     base: ir::Value,
     /// The memory's exact length for checked accesses and bulk operations.
     length: Option<ir::Value>,
+    /// Whether this function may grow the memory (`wasm_growth`): if not, `length` holds for its
+    /// whole activation even where callouts may refresh the context's length.
+    grows: bool,
     memory: MemoryArguments,
     trap_blocks: [Option<ir::Block>; TRAPS.len()],
     /// Per callee, its imported name in this function.
@@ -7397,6 +7404,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         let length = memory
             .length
             .then(|| passed.next().expect("a passed length"));
+        let grows = index >= self.grows_memory.len() || self.grows_memory.contains(index);
         let wasm_parameters = &parameters[1 + memory.count()..];
         let regions = Region::ALL.map(|region| {
             builder.func.dfg.alias_regions.insert(ir::AliasRegionData {
@@ -7433,6 +7441,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             diagnostics_enabled,
             base,
             length,
+            grows,
             memory,
             trap_blocks: [None; TRAPS.len()],
             callees: vec![None; plans.len()],
@@ -8684,6 +8693,7 @@ impl<H: Host> Vm<H> {
             root_only,
             compile_rejections: compile_rejections.as_ref(),
             unrolls: false,
+            grows_memory: crate::bitset::BitSet::default(),
         };
         // The callable set is the greatest fixpoint: assume every function
         // compiles, drop those that cannot, until nothing changes.
@@ -8712,6 +8722,13 @@ impl<H: Host> Vm<H> {
             }
             analysis.callouts = false;
         }
+        let memory_shared = memory_slot.is_some_and(|slot| {
+            self.heap
+                .environment_slot(env, slot as usize)
+                .and_then(|binding| self.heap.get(binding))
+                .is_some_and(|cell| matches!(cell, Cell::WasmMemory { bytes, .. } if matches!(**bytes, crate::wasm::memory::MemoryStorage::Shared(_))))
+        });
+        analysis.grows_memory = wasm_growth::growing_functions(&code, count, memory_shared);
         if plans.iter().all(Option::is_none) {
             return None;
         }
@@ -8838,7 +8855,7 @@ impl<H: Host> Vm<H> {
                         if !callable[index] {
                             return None;
                         }
-                        stitched_entry(self, program, &code, index, (&plans, &entry_cells, &callable), memory_slot, (full_plans[index].as_ref()?, &reference_site_ids[index], env))
+                        stitched_entry(self, program, &code, index, (&plans, &entry_cells, &callable, &analysis.grows_memory), memory_slot, (full_plans[index].as_ref()?, &reference_site_ids[index], env))
                     })
                     .collect();
                 let kept: Vec<bool> = codes.iter().map(Option::is_some).collect();

@@ -20,6 +20,18 @@ use crate::wasm::INDEX_GROW_FAILURE;
 use crate::wasm::memory::WASM_PAGE_BITS;
 use cranelift_codegen::ir::{self, MemFlagsData};
 
+impl<H: Host> Emitter<'_, '_, H> {
+    /// The length a call passes after the context when the memory is unguarded (`length` is
+    /// passed): the current one (`memory_length`), so a callee sees a length a growing callee
+    /// refreshed. `None` where the length is not passed.
+    pub(super) fn passed_length(&mut self) -> Option<ir::Value> {
+        match self.length {
+            Some(_) => Some(self.memory_length()),
+            None => None,
+        }
+    }
+}
+
 impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
     type Vector = ir::Value;
 
@@ -27,11 +39,12 @@ impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
         self.guarded
     }
 
-    /// The length the function received, while no callout can grow the memory; else the
-    /// context's, which a callout refreshes.
+    /// The length the function received, while no callout can grow the memory, or the function
+    /// itself cannot grow it (`grows`: no callee it reaches may); else the context's, which a
+    /// callout refreshes.
     fn memory_length(&mut self) -> ir::Value {
         match self.length {
-            Some(length) if !self.analysis.callouts => length,
+            Some(length) if !self.analysis.callouts || !self.grows => length,
             _ => {
                 let context = self.body.core.context;
                 self.load_word(Width::I64, MemFlagsData::trusted(), context, CONTEXT_MEMORY_LENGTH)

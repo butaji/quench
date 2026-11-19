@@ -145,6 +145,9 @@ pub(crate) trait WasmCall: WasmStage {
     /// After a call that may have run the VM: the frame's memory length and pins are the
     /// context's, the length read at `length_at`.
     fn reload_memory(&mut self, length_at: usize);
+    /// After a call that cannot have grown the memory: the frame's pins are its header's, as
+    /// `reload_memory` leaves them, with the length the header already holds.
+    fn restore_memory(&mut self);
     /// Leaves with `status` where it is nonzero.
     fn status_leaves(&mut self, status: Self::Word) -> Result<(), Self::Exit>;
     /// The word a callee wrote at `at`.
@@ -162,10 +165,12 @@ pub(crate) fn finish_call<S: WasmCall>(stage: &mut S, status: S::Word, length_at
     stage.status_leaves(status)
 }
 
-/// A compiled Wasm function's call (`call` row): its entry, then `finish_call`.
+/// A compiled Wasm function's call (`call` row, or `call_keep` when `RELOAD` is false): its entry,
+/// then the memory's reload (`finish_call`), or its restore where the callee cannot have grown the
+/// memory (`restore_memory`), then the status check. `length_at` is read only when reloading.
 #[inline(always)]
 #[cfg(stencil_build)]
-pub(crate) fn call_entry<S: WasmCall>(
+pub(crate) fn call_entry<S: WasmCall, const RELOAD: bool>(
     stage: &mut S,
     entry: usize,
     window: usize,
@@ -173,7 +178,12 @@ pub(crate) fn call_entry<S: WasmCall>(
     length_at: usize,
 ) -> Result<(), S::Exit> {
     let status = stage.enter(entry, window, destination);
-    finish_call(stage, status, length_at)
+    if RELOAD {
+        finish_call(stage, status, length_at)
+    } else {
+        stage.restore_memory();
+        stage.status_leaves(status)
+    }
 }
 
 /// A call of a defined function through the VM (`call_vm` row), then `finish_call`.

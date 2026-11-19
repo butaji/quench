@@ -3,59 +3,113 @@
 
 use crate::value::Value;
 use crate::wasm::CanonicalSignature;
+use crate::wasm::gc::{GcField, ObjectLayout};
 use std::ops::Range;
 
-/// A Wasm GC object's field values in one allocation behind one word. A struct with a
-/// descriptor keeps it after its fields and marks the slice; `Deref` reads the fields.
+/// A Wasm GC object's payload: its bytes in one allocation behind one word, laid out by the
+/// object's type (`ObjectLayout`). A struct with a descriptor keeps it in its last word and marks
+/// the slice. The accessors take the layout the object's declarations give; the collector follows
+/// only the reference words (`for_each_reference`).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct WasmGcFields(crate::heap::thin_slice::ThinBoxSlice<Value>);
+pub(crate) struct WasmGcFields(crate::heap::thin_slice::ThinBoxSlice<u8>);
+
+/// The bytes of a word: an array's length and a descriptor take one.
+const WORD: usize = 8;
+
+/// The word at byte `at` of `bytes`, little-endian.
+fn read_word(bytes: &[u8], at: usize) -> u64 {
+    u64::from_le_bytes(bytes[at..at + WORD].try_into().expect("a whole word"))
+}
+
+/// Writes `bits` as the word at byte `at` of `bytes`, little-endian.
+fn write_word(bytes: &mut [u8], at: usize, bits: u64) {
+    bytes[at..at + WORD].copy_from_slice(&bits.to_le_bytes());
+}
 
 impl WasmGcFields {
-    /// `len` fields made by `field(index)`, then `descriptor`; `None` when one is missing
-    /// or no room is left for them.
-    pub(crate) fn try_new(len: usize, descriptor: Option<Value>, mut field: impl FnMut(usize) -> Option<Value>) -> Option<Self> {
-        let total = len.checked_add(usize::from(descriptor.is_some()))?;
-        let mut values = crate::heap::thin_slice::ThinBoxSlice::try_from_fn(total, |index| if index < len { field(index) } else { descriptor })?;
-        if descriptor.is_some() {
-            values.mark();
+    /// A zeroed payload for an object of `layout`: `length` elements for an array, and for a struct
+    /// its `descriptor` (`Some`) in the last word, marked. `None` where no room is left for it.
+    pub(crate) fn new(layout: &ObjectLayout, length: usize, descriptor: Option<Value>) -> Option<Self> {
+        let bytes = layout.bytes(length)?;
+        let mut payload = crate::heap::thin_slice::ThinBoxSlice::<u8>::try_zeroed(bytes)?;
+        if let ObjectLayout::Array { .. } = layout {
+            write_word(&mut payload, 0, length as u64);
         }
-        Some(Self(values))
+        if let Some(value) = descriptor {
+            write_word(&mut payload, bytes.checked_sub(WORD)?, value.to_bits());
+            payload.mark();
+        }
+        Some(Self(payload))
     }
 
+    /// The descriptor of a struct that has one: its last word.
     pub(crate) fn descriptor(&self) -> Option<Value> {
-        self.0.marked().then(|| self.0[self.0.len() - 1])
+        self.0.marked().then(|| Value::from_bits(read_word(&self.0, self.0.len() - WORD)))
     }
 
-    /// Every value the object holds, its descriptor included: the edges a trace follows.
-    pub(crate) fn edges(&self) -> &[Value] {
-        &self.0
+    /// The number of fields of a struct, or the length of an array.
+    pub(crate) fn count(&self, layout: &ObjectLayout) -> usize {
+        match layout {
+            ObjectLayout::Struct { offsets, .. } => offsets.len(),
+            ObjectLayout::Array { .. } => read_word(&self.0, 0) as usize,
+        }
+    }
+
+    /// The address of field `index` of a struct, or element `index` of an array; `None` past the
+    /// end. Valid until the payload is dropped or replaced.
+    pub(crate) fn slot(&mut self, layout: &ObjectLayout, index: usize) -> Option<*mut u8> {
+        if index >= self.count(layout) {
+            return None;
+        }
+        let offset = layout.offset(index)?;
+        Some(self.0.as_mut_ptr().wrapping_add(offset))
+    }
+
+    /// Stores the bits `bits` (the stored form of the value, `GcField::raw_of`) at field or element
+    /// `index` of `layout`, which the caller has checked against the layout.
+    pub(crate) fn put(&mut self, layout: &ObjectLayout, index: usize, field: GcField, bits: u64) {
+        let offset = layout.offset(index).expect("a field the layout holds");
+        field.store(&mut self.0[offset..offset + field.size()], bits);
+    }
+
+    /// Stores `bits` in `extent` elements of the array `layout` from element `start`.
+    pub(crate) fn fill(&mut self, layout: &ObjectLayout, field: GcField, start: usize, extent: usize, bits: u64) {
+        for index in start..start + extent {
+            self.put(layout, index, field, bits);
+        }
+    }
+
+    /// Copies the bytes `input` of this payload to `output..`, which may overlap.
+    pub(crate) fn copy_within(&mut self, input: Range<usize>, output: usize) {
+        self.0.copy_within(input, output);
+    }
+
+    /// Copies the bytes `input` of `source` to `output` of this payload.
+    pub(crate) fn copy_from(&mut self, output: Range<usize>, source: &Self, input: Range<usize>) {
+        self.0[output].copy_from_slice(&source.0[input]);
+    }
+
+    /// Calls `visit` on each reference word the object holds: a struct's reference fields and its
+    /// descriptor, or an array's elements when they are references. No other word is followed.
+    pub(crate) fn for_each_reference(&self, layout: &ObjectLayout, mut visit: impl FnMut(Value)) {
+        match layout {
+            ObjectLayout::Struct { references, .. } => {
+                for &at in references.iter() {
+                    visit(Value::from_bits(read_word(&self.0, at)));
+                }
+            }
+            ObjectLayout::Array { reference: true, .. } => {
+                for index in 0..self.count(layout) {
+                    let at = layout.offset(index).expect("an element of the array");
+                    visit(Value::from_bits(read_word(&self.0, at)));
+                }
+            }
+            ObjectLayout::Array { reference: false, .. } => {}
+        }
     }
 
     pub(crate) fn allocated_bytes(&self) -> usize {
         self.0.allocated_bytes()
-    }
-}
-
-impl From<Vec<Value>> for WasmGcFields {
-    fn from(values: Vec<Value>) -> Self {
-        Self(values.into())
-    }
-}
-
-impl std::ops::Deref for WasmGcFields {
-    type Target = [Value];
-    #[inline(always)]
-    fn deref(&self) -> &[Value] {
-        let values = &*self.0;
-        &values[..values.len() - usize::from(self.0.marked())]
-    }
-}
-
-impl std::ops::DerefMut for WasmGcFields {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut [Value] {
-        let fields = self.len();
-        &mut self.0[..fields]
     }
 }
 
