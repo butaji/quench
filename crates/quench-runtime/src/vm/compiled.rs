@@ -2144,7 +2144,7 @@ impl CallContext {
 }
 
 /// An error, or a panic to resume once compiled frames are gone.
-enum Raised {
+pub(super) enum Raised {
     Error(JsError),
     Panic(Box<dyn std::any::Any + Send>),
 }
@@ -2315,7 +2315,7 @@ struct ReferenceCallTargetCounts {
     same_artifact_native: u64,
 }
 
-struct ReferenceCallSiteDiagnostics {
+pub(super) struct ReferenceCallSiteDiagnostics {
     function: usize,
     pc: usize,
     counts: std::cell::Cell<ReferenceCallSiteCounts>,

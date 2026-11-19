@@ -25,7 +25,6 @@
 //! The rules are the ones the interpreter runs (`staged::wasm_gc`, on `HeapStage`), so both tiers
 //! share the checks, their order and their traps.
 
-use super::wasm_gc_stage::{stored_bits, value_of_bits};
 use super::{CallContext, Host, JsError, ProgramId, Vm, finish_callout};
 use crate::staged::wasm_gc::{Aggregate, WasmGc, array_length, field_read, field_write, non_null, reference_cast};
 use crate::wasm::gc::{GcField, GcFieldAccess, GcFieldValue};
@@ -85,12 +84,11 @@ fn field_of(imm: u32) -> Result<GcField, JsError> {
     GcField::from_tag(imm).ok_or_else(|| JsError::validation("invalid Wasm field operand".into()))
 }
 
-/// The Wasm bits of a stored field word `word` that `field_read` returned: a narrow field's i32
+/// The Wasm bits of the field word `word` that `field_read` returned: a narrow field's i32
 /// zero-extended (a packed one's sign-extended integer is truncated to its 32 bits), else the
-/// value's bits as `stored_bits` gives them.
-fn read_bits<H: Host>(vm: &Vm<H>, field: GcField, word: u64) -> u64 {
-    let bits = stored_bits(vm, field, word);
-    if field.value() == GcFieldValue::Narrow { bits as u32 as u64 } else { bits }
+/// word itself, the field's bits as stored.
+fn read_bits(field: GcField, word: u64) -> u64 {
+    if field.value() == GcFieldValue::Narrow { word as u32 as u64 } else { word }
 }
 
 /// The result word of `call` over its operands, which the rules check (a trap or validation error
@@ -130,7 +128,7 @@ fn run<H: Host>(vm: &mut Vm<H>, program: ProgramId, call: GcCall, imm: u32, a: u
             };
             let access = if signed { GcFieldAccess::ReadSigned } else { GcFieldAccess::Read };
             let word = field_read(&mut HeapStage { vm: &mut *vm }, aggregate, a, index, field, access)?;
-            Ok(read_bits(vm, field, word))
+            Ok(read_bits(field, word))
         }
         GcCall::StructSet | GcCall::ArraySet => {
             let field = field_of(imm)?;
@@ -139,8 +137,7 @@ fn run<H: Host>(vm: &mut Vm<H>, program: ProgramId, call: GcCall, imm: u32, a: u
             } else {
                 (Aggregate::Array, b)
             };
-            let value = value_of_bits(vm, field.value(), c).to_bits();
-            field_write(&mut HeapStage { vm: &mut *vm }, aggregate, a, index, field, value)?;
+            field_write(&mut HeapStage { vm: &mut *vm }, aggregate, a, index, field, c)?;
             Ok(0)
         }
     }

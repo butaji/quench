@@ -908,7 +908,7 @@ mod math_function_tests {
         }
         for native in (0..Native::COUNT).filter_map(Native::from_discriminant).filter(|native| native.is_math_function()) {
             assert!(
-                MATH_FUNCTIONS.iter().any(|(_, listed)| listed == native),
+                MATH_FUNCTIONS.iter().any(|(_, listed)| *listed == native),
                 "{native:?} is a Math function"
             );
         }

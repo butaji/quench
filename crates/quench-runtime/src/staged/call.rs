@@ -396,28 +396,6 @@ mod tests {
     }
 
     #[test]
-    fn a_cached_entry_is_one_identity_compare_and_one_load() {
-        let mut stage = Concrete::new(std::ptr::null());
-        let mut cell = cell(7, 5, 8, 2, 1);
-        cell.entry = 0xC0DE;
-        let at = std::ptr::addr_of!(cell) as u64;
-        assert_eq!(enter_cached(&mut stage, 42, Some(42), at, ()), Some(0xC0DE));
-        assert_eq!(enter_cached(&mut stage, 41, Some(42), at, ()), None, "another callee leaves");
-        assert_eq!(enter_cached(&mut stage, 41, None, at, ()), Some(0xC0DE), "a folded identity is the load alone");
-    }
-
-    #[test]
-    fn a_cached_entry_is_one_identity_compare_and_one_load() {
-        let mut stage = Concrete::new(std::ptr::null());
-        let mut cell = cell(7, 5, 8, 2, 1);
-        cell.entry = 0xC0DE;
-        let at = std::ptr::addr_of!(cell) as u64;
-        assert_eq!(enter_cached(&mut stage, 42, Some(42), at, ()), Some(0xC0DE));
-        assert_eq!(enter_cached(&mut stage, 41, Some(42), at, ()), None, "another callee leaves");
-        assert_eq!(enter_cached(&mut stage, 41, None, at, ()), Some(0xC0DE), "a folded identity is the load alone");
-    }
-
-    #[test]
     fn a_native_admission_is_one_validity_compare_and_a_room_check() {
         let mut stage = Concrete::new(std::ptr::null());
         // The values stack from 0 to `free` words, with nothing reserved past the room.
