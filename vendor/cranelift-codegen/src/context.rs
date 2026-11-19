@@ -409,11 +409,11 @@ impl Context {
         if crate::poll_unswitch::run(&mut self.func, (&self.cfg, &self.domtree, &self.loop_analysis)) {
             self.compute_cfg();
             self.compute_domtree();
+            // Eliminating unreachable blocks keeps the CFG (`recompute_block` per removed block) and
+            // leaves the dominator tree of the reachable ones; phi repair changes no edge.
             self.eliminate_unreachable_code(fisa)?;
             self.remove_constant_phis(fisa)?;
             self.func.dfg.resolve_all_aliases();
-            self.compute_cfg();
-            self.compute_domtree();
             self.compute_loop_analysis();
             // Splitting and phi repair expose additional induction proofs.
             // Retain the pre-split conversion above: coupled-loop bounds can
