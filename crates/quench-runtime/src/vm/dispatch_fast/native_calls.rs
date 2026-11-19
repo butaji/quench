@@ -100,30 +100,331 @@ const fn math_row_call(row: u8) -> crate::staged::call_native::MathCall {
 /// `lane_native_value` match, no activation, root or stack guard: an in-place body runs no guest
 /// code, raises nothing and observes no frame (`Vm::in_place_native_value`). Any other callee or
 /// case takes `native_call_miss`, which makes the same in-place attempt first.
-macro_rules! in_place_rows {
-    ($($row:literal => $native:ident),* $(,)?) => {
-        const fn in_place_row_native(row: u8) -> Native {
-            match row { $($row => Native::$native,)* _ => unreachable!() }
+///
+/// The rows are derived from the catalog, not listed: every native with an in-place family
+/// (`in_place_natives::runs_no_guest_code`, the fact `IN_PLACE_FAMILIES` keeps per native) gets
+/// one, in discriminant order, so a native that gains an in-place body gains its row.
+const MAX_IN_PLACE_ROWS: usize = 256;
+
+/// No row (`IN_PLACE_ROW_OF`).
+const NO_IN_PLACE_ROW: u16 = u16::MAX;
+
+/// The rows' natives by discriminant, and how many there are.
+const IN_PLACE_ROW_NATIVES: ([u16; MAX_IN_PLACE_ROWS], usize) = {
+    let mut natives = [0; MAX_IN_PLACE_ROWS];
+    let (mut index, mut rows) = (0, 0);
+    while index < Native::COUNT {
+        if super::in_place_natives::runs_no_guest_code(Native::from_discriminant(index).unwrap()) {
+            natives[rows] = index;
+            rows += 1;
         }
-        fn in_place_handler<H: Host>(native: Native) -> Option<Handler> {
-            match native { $(Native::$native => Some(lane_call_in_place::<H, $row>),)* _ => None }
+        index += 1;
+    }
+    (natives, rows)
+};
+
+/// The lean rows, whose identity slots follow the Math rows' (`NativeIdentities`).
+const IN_PLACE_ROWS: usize = IN_PLACE_ROW_NATIVES.1;
+const _: () = assert!(IN_PLACE_ROWS <= MAX_IN_PLACE_ROWS, "raise MAX_IN_PLACE_ROWS and the handler arms");
+
+/// Each native's lean row, `NO_IN_PLACE_ROW` for one that runs guest code.
+const IN_PLACE_ROW_OF: [u16; Native::COUNT as usize] = {
+    let mut rows = [NO_IN_PLACE_ROW; Native::COUNT as usize];
+    let mut row = 0;
+    while row < IN_PLACE_ROWS {
+        rows[IN_PLACE_ROW_NATIVES.0[row] as usize] = row as u16;
+        row += 1;
+    }
+    rows
+};
+
+/// The native of lean row `row`. A row past the derived ones names a native with no in-place
+/// family, whose handler is never installed and folds to its miss.
+const fn in_place_row_native(row: u8) -> Native {
+    if (row as usize) < IN_PLACE_ROWS {
+        match Native::from_discriminant(IN_PLACE_ROW_NATIVES.0[row as usize]) {
+            Some(native) => native,
+            None => Native::MathInitialize,
         }
-        /// The lean rows, whose identity slots follow the Math rows' (`NativeIdentities`).
-        const IN_PLACE_ROWS: usize = [$($row),*].len();
-    };
+    } else {
+        Native::MathInitialize
+    }
 }
-in_place_rows!(
-    0 => DataViewGetFloat64, 1 => DataViewSetFloat64, 2 => StringIndexOf, 3 => StringIncludes,
-    4 => StringSlice, 5 => StringPadStart, 6 => StringPadEnd, 7 => ParseInt,
-);
+
+/// The lean row handler of `native`, where it runs no guest code.
+fn in_place_handler<H: Host>(native: Native) -> Option<Handler> {
+    let row = IN_PLACE_ROW_OF[native as usize];
+    if row == NO_IN_PLACE_ROW {
+        return None;
+    }
+    Some(match row as u8 {
+            0 => lane_call_in_place::<H, 0>,
+            1 => lane_call_in_place::<H, 1>,
+            2 => lane_call_in_place::<H, 2>,
+            3 => lane_call_in_place::<H, 3>,
+            4 => lane_call_in_place::<H, 4>,
+            5 => lane_call_in_place::<H, 5>,
+            6 => lane_call_in_place::<H, 6>,
+            7 => lane_call_in_place::<H, 7>,
+            8 => lane_call_in_place::<H, 8>,
+            9 => lane_call_in_place::<H, 9>,
+            10 => lane_call_in_place::<H, 10>,
+            11 => lane_call_in_place::<H, 11>,
+            12 => lane_call_in_place::<H, 12>,
+            13 => lane_call_in_place::<H, 13>,
+            14 => lane_call_in_place::<H, 14>,
+            15 => lane_call_in_place::<H, 15>,
+            16 => lane_call_in_place::<H, 16>,
+            17 => lane_call_in_place::<H, 17>,
+            18 => lane_call_in_place::<H, 18>,
+            19 => lane_call_in_place::<H, 19>,
+            20 => lane_call_in_place::<H, 20>,
+            21 => lane_call_in_place::<H, 21>,
+            22 => lane_call_in_place::<H, 22>,
+            23 => lane_call_in_place::<H, 23>,
+            24 => lane_call_in_place::<H, 24>,
+            25 => lane_call_in_place::<H, 25>,
+            26 => lane_call_in_place::<H, 26>,
+            27 => lane_call_in_place::<H, 27>,
+            28 => lane_call_in_place::<H, 28>,
+            29 => lane_call_in_place::<H, 29>,
+            30 => lane_call_in_place::<H, 30>,
+            31 => lane_call_in_place::<H, 31>,
+            32 => lane_call_in_place::<H, 32>,
+            33 => lane_call_in_place::<H, 33>,
+            34 => lane_call_in_place::<H, 34>,
+            35 => lane_call_in_place::<H, 35>,
+            36 => lane_call_in_place::<H, 36>,
+            37 => lane_call_in_place::<H, 37>,
+            38 => lane_call_in_place::<H, 38>,
+            39 => lane_call_in_place::<H, 39>,
+            40 => lane_call_in_place::<H, 40>,
+            41 => lane_call_in_place::<H, 41>,
+            42 => lane_call_in_place::<H, 42>,
+            43 => lane_call_in_place::<H, 43>,
+            44 => lane_call_in_place::<H, 44>,
+            45 => lane_call_in_place::<H, 45>,
+            46 => lane_call_in_place::<H, 46>,
+            47 => lane_call_in_place::<H, 47>,
+            48 => lane_call_in_place::<H, 48>,
+            49 => lane_call_in_place::<H, 49>,
+            50 => lane_call_in_place::<H, 50>,
+            51 => lane_call_in_place::<H, 51>,
+            52 => lane_call_in_place::<H, 52>,
+            53 => lane_call_in_place::<H, 53>,
+            54 => lane_call_in_place::<H, 54>,
+            55 => lane_call_in_place::<H, 55>,
+            56 => lane_call_in_place::<H, 56>,
+            57 => lane_call_in_place::<H, 57>,
+            58 => lane_call_in_place::<H, 58>,
+            59 => lane_call_in_place::<H, 59>,
+            60 => lane_call_in_place::<H, 60>,
+            61 => lane_call_in_place::<H, 61>,
+            62 => lane_call_in_place::<H, 62>,
+            63 => lane_call_in_place::<H, 63>,
+            64 => lane_call_in_place::<H, 64>,
+            65 => lane_call_in_place::<H, 65>,
+            66 => lane_call_in_place::<H, 66>,
+            67 => lane_call_in_place::<H, 67>,
+            68 => lane_call_in_place::<H, 68>,
+            69 => lane_call_in_place::<H, 69>,
+            70 => lane_call_in_place::<H, 70>,
+            71 => lane_call_in_place::<H, 71>,
+            72 => lane_call_in_place::<H, 72>,
+            73 => lane_call_in_place::<H, 73>,
+            74 => lane_call_in_place::<H, 74>,
+            75 => lane_call_in_place::<H, 75>,
+            76 => lane_call_in_place::<H, 76>,
+            77 => lane_call_in_place::<H, 77>,
+            78 => lane_call_in_place::<H, 78>,
+            79 => lane_call_in_place::<H, 79>,
+            80 => lane_call_in_place::<H, 80>,
+            81 => lane_call_in_place::<H, 81>,
+            82 => lane_call_in_place::<H, 82>,
+            83 => lane_call_in_place::<H, 83>,
+            84 => lane_call_in_place::<H, 84>,
+            85 => lane_call_in_place::<H, 85>,
+            86 => lane_call_in_place::<H, 86>,
+            87 => lane_call_in_place::<H, 87>,
+            88 => lane_call_in_place::<H, 88>,
+            89 => lane_call_in_place::<H, 89>,
+            90 => lane_call_in_place::<H, 90>,
+            91 => lane_call_in_place::<H, 91>,
+            92 => lane_call_in_place::<H, 92>,
+            93 => lane_call_in_place::<H, 93>,
+            94 => lane_call_in_place::<H, 94>,
+            95 => lane_call_in_place::<H, 95>,
+            96 => lane_call_in_place::<H, 96>,
+            97 => lane_call_in_place::<H, 97>,
+            98 => lane_call_in_place::<H, 98>,
+            99 => lane_call_in_place::<H, 99>,
+            100 => lane_call_in_place::<H, 100>,
+            101 => lane_call_in_place::<H, 101>,
+            102 => lane_call_in_place::<H, 102>,
+            103 => lane_call_in_place::<H, 103>,
+            104 => lane_call_in_place::<H, 104>,
+            105 => lane_call_in_place::<H, 105>,
+            106 => lane_call_in_place::<H, 106>,
+            107 => lane_call_in_place::<H, 107>,
+            108 => lane_call_in_place::<H, 108>,
+            109 => lane_call_in_place::<H, 109>,
+            110 => lane_call_in_place::<H, 110>,
+            111 => lane_call_in_place::<H, 111>,
+            112 => lane_call_in_place::<H, 112>,
+            113 => lane_call_in_place::<H, 113>,
+            114 => lane_call_in_place::<H, 114>,
+            115 => lane_call_in_place::<H, 115>,
+            116 => lane_call_in_place::<H, 116>,
+            117 => lane_call_in_place::<H, 117>,
+            118 => lane_call_in_place::<H, 118>,
+            119 => lane_call_in_place::<H, 119>,
+            120 => lane_call_in_place::<H, 120>,
+            121 => lane_call_in_place::<H, 121>,
+            122 => lane_call_in_place::<H, 122>,
+            123 => lane_call_in_place::<H, 123>,
+            124 => lane_call_in_place::<H, 124>,
+            125 => lane_call_in_place::<H, 125>,
+            126 => lane_call_in_place::<H, 126>,
+            127 => lane_call_in_place::<H, 127>,
+            128 => lane_call_in_place::<H, 128>,
+            129 => lane_call_in_place::<H, 129>,
+            130 => lane_call_in_place::<H, 130>,
+            131 => lane_call_in_place::<H, 131>,
+            132 => lane_call_in_place::<H, 132>,
+            133 => lane_call_in_place::<H, 133>,
+            134 => lane_call_in_place::<H, 134>,
+            135 => lane_call_in_place::<H, 135>,
+            136 => lane_call_in_place::<H, 136>,
+            137 => lane_call_in_place::<H, 137>,
+            138 => lane_call_in_place::<H, 138>,
+            139 => lane_call_in_place::<H, 139>,
+            140 => lane_call_in_place::<H, 140>,
+            141 => lane_call_in_place::<H, 141>,
+            142 => lane_call_in_place::<H, 142>,
+            143 => lane_call_in_place::<H, 143>,
+            144 => lane_call_in_place::<H, 144>,
+            145 => lane_call_in_place::<H, 145>,
+            146 => lane_call_in_place::<H, 146>,
+            147 => lane_call_in_place::<H, 147>,
+            148 => lane_call_in_place::<H, 148>,
+            149 => lane_call_in_place::<H, 149>,
+            150 => lane_call_in_place::<H, 150>,
+            151 => lane_call_in_place::<H, 151>,
+            152 => lane_call_in_place::<H, 152>,
+            153 => lane_call_in_place::<H, 153>,
+            154 => lane_call_in_place::<H, 154>,
+            155 => lane_call_in_place::<H, 155>,
+            156 => lane_call_in_place::<H, 156>,
+            157 => lane_call_in_place::<H, 157>,
+            158 => lane_call_in_place::<H, 158>,
+            159 => lane_call_in_place::<H, 159>,
+            160 => lane_call_in_place::<H, 160>,
+            161 => lane_call_in_place::<H, 161>,
+            162 => lane_call_in_place::<H, 162>,
+            163 => lane_call_in_place::<H, 163>,
+            164 => lane_call_in_place::<H, 164>,
+            165 => lane_call_in_place::<H, 165>,
+            166 => lane_call_in_place::<H, 166>,
+            167 => lane_call_in_place::<H, 167>,
+            168 => lane_call_in_place::<H, 168>,
+            169 => lane_call_in_place::<H, 169>,
+            170 => lane_call_in_place::<H, 170>,
+            171 => lane_call_in_place::<H, 171>,
+            172 => lane_call_in_place::<H, 172>,
+            173 => lane_call_in_place::<H, 173>,
+            174 => lane_call_in_place::<H, 174>,
+            175 => lane_call_in_place::<H, 175>,
+            176 => lane_call_in_place::<H, 176>,
+            177 => lane_call_in_place::<H, 177>,
+            178 => lane_call_in_place::<H, 178>,
+            179 => lane_call_in_place::<H, 179>,
+            180 => lane_call_in_place::<H, 180>,
+            181 => lane_call_in_place::<H, 181>,
+            182 => lane_call_in_place::<H, 182>,
+            183 => lane_call_in_place::<H, 183>,
+            184 => lane_call_in_place::<H, 184>,
+            185 => lane_call_in_place::<H, 185>,
+            186 => lane_call_in_place::<H, 186>,
+            187 => lane_call_in_place::<H, 187>,
+            188 => lane_call_in_place::<H, 188>,
+            189 => lane_call_in_place::<H, 189>,
+            190 => lane_call_in_place::<H, 190>,
+            191 => lane_call_in_place::<H, 191>,
+            192 => lane_call_in_place::<H, 192>,
+            193 => lane_call_in_place::<H, 193>,
+            194 => lane_call_in_place::<H, 194>,
+            195 => lane_call_in_place::<H, 195>,
+            196 => lane_call_in_place::<H, 196>,
+            197 => lane_call_in_place::<H, 197>,
+            198 => lane_call_in_place::<H, 198>,
+            199 => lane_call_in_place::<H, 199>,
+            200 => lane_call_in_place::<H, 200>,
+            201 => lane_call_in_place::<H, 201>,
+            202 => lane_call_in_place::<H, 202>,
+            203 => lane_call_in_place::<H, 203>,
+            204 => lane_call_in_place::<H, 204>,
+            205 => lane_call_in_place::<H, 205>,
+            206 => lane_call_in_place::<H, 206>,
+            207 => lane_call_in_place::<H, 207>,
+            208 => lane_call_in_place::<H, 208>,
+            209 => lane_call_in_place::<H, 209>,
+            210 => lane_call_in_place::<H, 210>,
+            211 => lane_call_in_place::<H, 211>,
+            212 => lane_call_in_place::<H, 212>,
+            213 => lane_call_in_place::<H, 213>,
+            214 => lane_call_in_place::<H, 214>,
+            215 => lane_call_in_place::<H, 215>,
+            216 => lane_call_in_place::<H, 216>,
+            217 => lane_call_in_place::<H, 217>,
+            218 => lane_call_in_place::<H, 218>,
+            219 => lane_call_in_place::<H, 219>,
+            220 => lane_call_in_place::<H, 220>,
+            221 => lane_call_in_place::<H, 221>,
+            222 => lane_call_in_place::<H, 222>,
+            223 => lane_call_in_place::<H, 223>,
+            224 => lane_call_in_place::<H, 224>,
+            225 => lane_call_in_place::<H, 225>,
+            226 => lane_call_in_place::<H, 226>,
+            227 => lane_call_in_place::<H, 227>,
+            228 => lane_call_in_place::<H, 228>,
+            229 => lane_call_in_place::<H, 229>,
+            230 => lane_call_in_place::<H, 230>,
+            231 => lane_call_in_place::<H, 231>,
+            232 => lane_call_in_place::<H, 232>,
+            233 => lane_call_in_place::<H, 233>,
+            234 => lane_call_in_place::<H, 234>,
+            235 => lane_call_in_place::<H, 235>,
+            236 => lane_call_in_place::<H, 236>,
+            237 => lane_call_in_place::<H, 237>,
+            238 => lane_call_in_place::<H, 238>,
+            239 => lane_call_in_place::<H, 239>,
+            240 => lane_call_in_place::<H, 240>,
+            241 => lane_call_in_place::<H, 241>,
+            242 => lane_call_in_place::<H, 242>,
+            243 => lane_call_in_place::<H, 243>,
+            244 => lane_call_in_place::<H, 244>,
+            245 => lane_call_in_place::<H, 245>,
+            246 => lane_call_in_place::<H, 246>,
+            247 => lane_call_in_place::<H, 247>,
+            248 => lane_call_in_place::<H, 248>,
+            249 => lane_call_in_place::<H, 249>,
+            250 => lane_call_in_place::<H, 250>,
+            251 => lane_call_in_place::<H, 251>,
+            252 => lane_call_in_place::<H, 252>,
+            253 => lane_call_in_place::<H, 253>,
+            254 => lane_call_in_place::<H, 254>,
+            255 => lane_call_in_place::<H, 255>
+        })
+}
 
 /// The identity slots of the in-place native rows: one per builtin row, then one per Math row,
 /// then one per lean row.
 const IDENTITY_SLOTS: usize = BUILTIN_ROWS + MATH_ROWS + IN_PLACE_ROWS;
 
-/// The identity slot of lean row `row`.
+/// The identity slot of lean row `row`. A row past the derived ones (`in_place_row_native`),
+/// never installed, reads the first slot, so its handler stays in bounds.
 const fn in_place_slot(row: u8) -> usize {
-    BUILTIN_ROWS + MATH_ROWS + row as usize
+    if (row as usize) < IN_PLACE_ROWS { BUILTIN_ROWS + MATH_ROWS + row as usize } else { 0 }
 }
 
 /// The identity slot of Math row `row`.
