@@ -158,7 +158,7 @@ fn truthiness(places: &Places, rows: &mut BTreeSet<Code>) {
     }
     let dsts: Vec<u8> = places.ints_dst.iter().chain(&places.floats_dst).copied().collect();
     let srcs: Vec<u8> = places.ints_src.iter().copied().chain(double_pins()).collect();
-    product(rows, &[NEG, SQRT, FLOOR, CEIL, TRUNC, ABS, ROUND], &dsts, &srcs, &[true]);
+    product(rows, &[NEG, SQRT, FLOOR, CEIL, TRUNC, ABS, ROUND, FROUND, SIGN], &dsts, &srcs, &[true]);
     // `Math.clz32` writes an int32 (0..=32) to an int destination, from an int32 or a Number.
     for &dst in &places.ints_dst {
         rows.extend(srcs.iter().map(|&a| canonical((CLZ32, dst, a, MEM, true))));

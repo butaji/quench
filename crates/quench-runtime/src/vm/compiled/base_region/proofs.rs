@@ -62,15 +62,16 @@ impl Proved {
 fn may_reshape(row: &Decoded) -> bool {
     let reads_alone = row.heap.is_some_and(|heap| matches!(heap, Heap::Held | Heap::ThisHeld | Heap::Declared | Heap::Prototype | Heap::Realm
         | Heap::TypedLength | Heap::TypedIndex(_) | Heap::TypedStore(_)));
-    (row.heap.is_some() && !reads_alone) || row.step.is_some_and(|step| !matches!(step, Step::Guard(_) | Step::Leave))
+    (row.heap.is_some() && !reads_alone) || row.step.is_some_and(|step| !matches!(step, Step::Guard(_) | Step::Leave | Step::Allocate))
         || row.add.is_some() || row.name.is_some() || row.instanceof.is_some() || row.holder.is_some() || row.global.is_some()
         || row.declined.is_some() || row.checked
 }
 
 /// Whether `row` may rewrite the run's stores word: code that may run in a nested run (a call, a helper, an `instanceof`,
-/// a checked conversion, a declined store's step).
+/// a checked conversion, a declined store's step). An allocation runs no guest code and rewrites no object, so it clears
+/// nothing.
 fn clears_stores(row: &Decoded) -> bool {
-    row.makes_calls() || row.instanceof.is_some() || row.checked || row.declined.is_some()
+    (row.makes_calls() && row.step != Some(Step::Allocate)) || row.instanceof.is_some() || row.checked || row.declined.is_some()
 }
 
 /// The receiver register an inline-cache access names.
@@ -128,6 +129,12 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
         if !proved.established.contains(&root) {
             proved.established.push(root);
         }
+    }
+    // A fresh object the allocation made is a direct object, as the record it defines is (`Step::Allocate`): the rows after
+    // it test no family for it.
+    if let Some(dst) = row.dst.filter(|_| row.step == Some(Step::Allocate)) {
+        proved.objects.push(dst);
+        proved.established.push(dst);
     }
     let source = copied(row).map(|source| proved.root(source));
     for written in [row.dst, row.also].into_iter().flatten() {

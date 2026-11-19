@@ -352,12 +352,17 @@ impl LaneView {
         matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Compiling { .. })
     }
 
+    /// The body epoch: how many specialization attempts the view has made (`specialize_lane_body`).
+    pub(super) fn body_epoch(&self) -> u32 { self.tier().body_epoch.get() }
+
     /// Counts an entry toward the frameless body and specializes it at the warm-up; whether
     /// the body is still warming or specialized, so its prologue stays. A specialized body is
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
     /// tests nothing the specialization proved (`lane_body_entry`).
     pub(super) fn specialize_lane_body(&self, entry: Handler, work: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) -> bool {
         if self.declined_by_mode() { return false; }
+        let epochs = &self.tier().body_epoch;
+        epochs.set(epochs.get().wrapping_add(1));
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };

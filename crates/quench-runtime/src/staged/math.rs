@@ -97,6 +97,8 @@ pub(crate) enum FloatUnary {
     Fround,
     /// The nearest integer, halves toward `+Infinity`, `-0` for a negative that rounds to zero.
     Round,
+    /// `Math.sign`: the sign of a Number, with NaN and the zeros returned as they are.
+    Sign,
 }
 
 /// The value of `operation` on `value`.
@@ -110,6 +112,19 @@ pub(crate) fn float_unary(operation: FloatUnary, value: f64) -> f64 {
         FloatUnary::Sqrt => machine::sqrt(value),
         FloatUnary::Fround => f64::from(value as f32),
         FloatUnary::Round => round_half_up(value),
+        FloatUnary::Sign => sign(value),
+    }
+}
+
+/// `Math.sign`: `-1` or `1` by the sign bit, NaN and both zeros as they are.
+#[inline(always)]
+fn sign(value: f64) -> f64 {
+    if value.is_nan() || value == machine::constant(0.0) {
+        value
+    } else if value.is_sign_negative() {
+        machine::constant(-1.0)
+    } else {
+        machine::constant(1.0)
     }
 }
 

@@ -722,15 +722,7 @@ fn math_unary_operation(native: Native) -> Option<fn(f64) -> f64> {
         Native::MathTanh => f64::tanh,
         Native::MathClz32 => |value| f64::from(crate::staged::math::leading_zeros(crate::value::number_to_u32(value))),
         Native::MathF16Round => f16_round,
-        Native::MathSign => |value| {
-            if value.is_nan() || value == 0.0 {
-                value
-            } else if value.is_sign_negative() {
-                -1.0
-            } else {
-                1.0
-            }
-        },
+        Native::MathSign => |value| crate::staged::math::float_unary(FloatUnary::Sign, value),
         _ => return None,
     })
 }
