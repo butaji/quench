@@ -1269,7 +1269,7 @@ struct NullishComparison {
 /// Resolve the constant operand and equality denotation before execution.
 fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: WideInstruction,
     register_type: impl Fn(Register) -> typed_ir::Type) -> Option<NullishComparison> {
-    if !instruction.op().class().eq(Class::JumpBinaryFalse) { return None; }
+    if !meaning_compiled::is_jump_binary_false(instruction) { return None; }
     let nullish = |operand: Operand| {
         let ty = facts::operand_type(constants, operand, &register_type);
         if ty == typed_ir::Type::language(crate::ValueType::Null) { Some(Value::NULL) }
@@ -4768,8 +4768,8 @@ const JS_NO_STOP_PC: usize = usize::MAX;
 
 #[cfg(feature = "profile-native-ops")]
 fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction: WideInstruction) -> &'static str {
-    if instruction.op().class().eq(Class::JumpBinaryFalse) {
-        let Some((strict, _)) = super::operations::equality_operator(instruction.binary_operator_field()) else {
+    if meaning_compiled::is_jump_binary_false(instruction) {
+        let Some((strict, _))= super::operations::equality_operator(instruction.binary_operator_field()) else {
             return "branch-relation";
         };
         let registers = &vm.frames[frame].registers;
@@ -4816,7 +4816,7 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
             None => "capture-slot-miss",
         };
     }
-    if !instruction.op().class().eq(Class::GetField) {
+    if !meaning_compiled::is_get_field(instruction) {
         return "other";
     }
     if vm.frames[frame].function == 0 {
@@ -5118,7 +5118,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let is_call = current_instruction.op().is_ordinary_call();
+            let is_call = meaning_compiled::is_ordinary_call(current_instruction);
             let diagnostics_enabled = is_call && vm.programs.js_jit_diagnostics_enabled();
             let direct_call_target = if diagnostics_enabled && is_call {
                 vm.frames[dispatch.frame]
@@ -5190,7 +5190,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 )
             };
             // A construction the operation pushed completes as a pushed call does.
-            let step = if current_instruction.op().class().eq(Class::Construct) && dispatch.allow_inline_calls {
+            let step = if meaning_compiled::is_construct(current_instruction) && dispatch.allow_inline_calls {
                 vm.complete_pushed_call(program, dispatch.frame, current_instruction, step)
             } else { step };
             if is_call && diagnostics_enabled {

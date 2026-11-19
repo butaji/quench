@@ -67,6 +67,7 @@ pub(crate) fn is_call_known(instruction: WideInstruction) -> bool {
 }
 
 /// A `JumpBinaryFalse`: a branch where the comparison of its two operands fails.
+#[inline(always)]
 pub(crate) fn is_jump_binary_false(instruction: WideInstruction) -> bool {
     match decoded(instruction) {
         Some(Operation::CompareJump { .. }) => true,
@@ -90,6 +91,7 @@ pub(crate) fn loads_name(instruction: WideInstruction) -> bool {
 }
 
 /// An ordinary call: a plain call or a call of a spread array (`Call`, `CallArray`).
+#[inline(always)]
 pub(crate) fn is_ordinary_call(instruction: WideInstruction) -> bool {
     match call_form(instruction) {
         Some(form) => matches!(form, CallForm::Plain | CallForm::Array),
@@ -106,6 +108,7 @@ pub(crate) fn is_call_array(instruction: WideInstruction) -> bool {
 }
 
 /// A construction, plain or `super(...)`.
+#[inline(always)]
 pub(crate) fn is_construct(instruction: WideInstruction) -> bool {
     match call_form(instruction) {
         Some(form) => matches!(form, CallForm::Construct | CallForm::Super),
@@ -179,6 +182,7 @@ pub(crate) fn is_set_index(instruction: WideInstruction) -> bool {
 }
 
 /// A named property read (`GetField`).
+#[inline(always)]
 pub(crate) fn is_get_field(instruction: WideInstruction) -> bool {
     match decoded(instruction) {
         Some(Operation::GetField { .. }) => true,
