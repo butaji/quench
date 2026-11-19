@@ -229,6 +229,7 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::EnvironmentCloneIndex
         | ImmediateRole::AtomIndex
         | ImmediateRole::LocalSlot
+        | ImmediateRole::GlobalLexicalIndex
         | ImmediateRole::TemplateSiteIndex
         | ImmediateRole::RegExpLiteralSiteIndex
         | ImmediateRole::LiteralTemplateIndex
@@ -319,6 +320,7 @@ fn write_index_immediate(output: &mut String, instruction: WideInstruction) -> f
                 instruction.superinstruction_index()
             )
         }
+        ImmediateRole::GlobalLexicalIndex => write!(output, " global-lexical={}", instruction.imm()),
         _ => Ok(()),
     }
 }

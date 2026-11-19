@@ -2503,6 +2503,7 @@ impl<H: Host> Vm<H> {
                 },
             )?;
         }
+        self.map_global_lexical_slots(program);
         Ok(())
     }
     pub(in crate::vm) fn mirror_global_lexical_binding(

@@ -595,7 +595,7 @@ impl<H: Host> Vm<H> {
             }
             Op::LoadLocal | Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreLocal | Op::StoreEnvLocal
             | Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-            | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
+            | Op::StoreName | Op::LoadGlobalLexical | Op::StoreGlobalLexical => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
             Op::StoreLocalPlain => {
                 let value = self.read(f, i.register_a());
                 // SAFETY: validated bytecode bounds the slot by Function.locals,

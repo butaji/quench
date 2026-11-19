@@ -87,6 +87,9 @@ pub(crate) const SHARED_UNCACHED_SITE: u16 = u16::MAX - 1;
 pub(crate) const NAME_SHARED_CACHE_SITES: u16 = 8192;
 /// The sites a program numbers one per instruction, below the name-shared ones.
 pub(crate) const UNIQUE_CACHE_SITES: u16 = SHARED_UNCACHED_SITE - NAME_SHARED_CACHE_SITES;
+/// The realm index a global lexical declaration's slot holds while the active realm binds no
+/// binding of its name there (`GlobalDeclarations::slots`).
+pub(crate) const NO_REALM_BINDING: u16 = u16::MAX;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
@@ -411,6 +414,7 @@ pub(crate) enum ImmediateRole {
     ArrayLength,
     AtomIndex,
     LocalSlot,
+    GlobalLexicalIndex,
     FunctionNamePrefix,
     PropertyDefinitionMode,
     BooleanFlag,
@@ -845,6 +849,11 @@ opcodes!($;
     LoadResolvedName => READ_THROW; layout Scalar; meaning AtomIndex; step Body; traits NAME_OPERATION, @ Register, @ fields(ResultRegister, Register, BooleanFlag),
     DeleteName => READ_THROW; layout Scalar; meaning AtomIndex; step Body; traits NAME_OPERATION, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex; class StoreName; staged Names; step Body; owned StoreName; traits NAME_OPERATION GLOBAL_NAME_ACCESS, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
+    // `imm` is the declaration index of a script-top-level lexical in the root's
+    // `global_declarations.lexical`, read through its realm index slot (`Function::global_lexical_declaration`).
+    // Each falls back to the by-name operation of its atom, which settles TDZ and const rules.
+    LoadGlobalLexical => READ_THROW; layout Scalar; meaning GlobalLexicalIndex; step Body; owned LoadGlobalLexical; traits BOXED_RESULT UNIT_REWRITTEN, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
+    StoreGlobalLexical => WRITE_THROW; layout Scalar; meaning GlobalLexicalIndex; step Body; owned StoreGlobalLexical, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
     StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex; step Body; traits NAME_OPERATION, @ Register, @ fields(Register, Register, BooleanFlag),
     LoadThis => READ_THROW; layout Scalar; meaning Unused; class LoadThis; staged Value; traits UNIT_REWRITTEN THIS_LEAF ROW_HANDLER, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCallee => Effect::PURE; layout Scalar; meaning Unused; class LoadCallee; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -1337,9 +1346,26 @@ pub struct GlobalDeclarations {
     pub function: Vec<Atom>,
     pub annex_b_var: Vec<Atom>,
     pub immutable: Vec<Atom>,
+    /// The realm index each lexical's binding holds, parallel to `lexical`. The declaration
+    /// index a `LoadGlobalLexical` or `StoreGlobalLexical` op carries names it. Mapped at each
+    /// instantiation (`Vm::map_global_lexical_slots`) and refreshed on a by-name fallback; a
+    /// stale index is caught by the atom check of the read and costs only the by-name path.
+    pub(crate) slots: Box<[std::cell::Cell<u16>]>,
 }
 
 impl GlobalDeclarations {
+    /// The declarations, with no lexical mapped to a realm binding yet.
+    pub fn new(
+        lexical: Vec<Atom>,
+        var: Vec<Atom>,
+        function: Vec<Atom>,
+        annex_b_var: Vec<Atom>,
+        immutable: Vec<Atom>,
+    ) -> Self {
+        let slots: Box<[std::cell::Cell<u16>]> = lexical.iter().map(|_| std::cell::Cell::new(NO_REALM_BINDING)).collect();
+        Self { lexical, var, function, annex_b_var, immutable, slots }
+    }
+
     /// The declarations, boxed only when there are any.
     pub fn boxed(self) -> Option<Box<Self>> {
         let empty = self.lexical.is_empty()
@@ -1966,6 +1992,20 @@ impl Function {
 
     pub fn global_lexical_atoms(&self) -> &[Atom] {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.lexical)
+    }
+
+    /// Each declared global lexical with its realm index slot (`GlobalDeclarations::slots`).
+    pub(crate) fn global_lexical_slots(&self) -> impl Iterator<Item = (Atom, &std::cell::Cell<u16>)> {
+        self.global_declarations_or_none().into_iter().flat_map(|declarations| {
+            declarations.lexical.iter().copied().zip(declarations.slots.iter())
+        })
+    }
+
+    /// The atom and realm index slot of the global lexical declaration `index`.
+    pub(crate) fn global_lexical_declaration(&self, index: u32) -> Option<(Atom, &std::cell::Cell<u16>)> {
+        let declarations = self.global_declarations_or_none()?;
+        let index = index as usize;
+        Some((*declarations.lexical.get(index)?, declarations.slots.get(index)?))
     }
 
     pub fn global_var_atoms(&self) -> &[Atom] {
@@ -4460,7 +4500,8 @@ pub(crate) fn arrow_chain_reads_implicit_bindings(code: &ResidualProgram, id: u3
                 || match op {
                     Op::LoadThis | Op::InitializeThis | Op::SuperCallCheck | Op::LoadCallee | Op::LoadName
                     | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName
-                    | Op::StoreName | Op::StoreResolvedName | Op::StoreVarBinding => true,
+                    | Op::StoreName | Op::StoreResolvedName | Op::StoreVarBinding
+                    | Op::LoadGlobalLexical | Op::StoreGlobalLexical => true,
                     Op::MakeClosure => reads(code, instruction.closure_function_index(), depth),
                     _ => reads_this_field(code, instruction),
                 }
