@@ -295,22 +295,35 @@ fn comparison_boolean_proofs_survive_branch_joins() {
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);
-    frame.dispatch.receiver = Value::UNDEFINED.to_bits();
+    const FRAME: usize = crate::vm::register_file::FRAME_CONTEXT;
+    // A window with its header (the receiver `UNDEFINED`, no captures) below register 0, as a body's entry reads it.
+    fn framed(registers: usize) -> Vec<Value> {
+        let mut words = vec![Value::UNDEFINED; FRAME + registers];
+        let window = unsafe { words.as_mut_ptr().add(FRAME) };
+        // SAFETY: the header words lie below the window's register 0, in `words`.
+        unsafe {
+            crate::vm::dispatch_fast::set_frame_word(window, crate::staged::frame::CONTEXT_THIS, Value::UNDEFINED.to_bits());
+            crate::vm::dispatch_fast::set_frame_word(window, crate::staged::frame::CONTEXT_BODY, 0);
+        }
+        words
+    }
     frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
     for input in [-2.0, -1.0, 0.0, 1.0, 2.0] {
-        let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
-        registers[0] = Value::number(input);
-        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
+        let mut registers = framed(usize::from(unit.caller_registers));
+        registers[FRAME] = Value::number(input);
+        let window = unsafe { registers.as_mut_ptr().add(FRAME) };
+        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, window.cast()) };
         assert_eq!(status, LANE_BODY_RETURNED, "comparison result must continue natively: {input}, stopped at {word}");
         assert_eq!(Value::from_bits(word), Value::number(if input == -1.0 || input == 1.0 { 7.0 } else { 9.0 }));
     }
     // This region selects an int32 entry view. Other Number representations
     // must recover before any guest operation, preserving their exact bits.
     for input in [-0.0, f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
-        let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
-        registers[0] = Value::number(input);
+        let mut registers = framed(usize::from(unit.caller_registers));
+        registers[FRAME] = Value::number(input);
         let before = registers.clone();
-        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
+        let window = unsafe { registers.as_mut_ptr().add(FRAME) };
+        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, window.cast()) };
         // The entry's proof failed: the leave names it (`LaneExit::Entry`, which resumes
         // at the first record), not a PC the code would continue at.
         assert_eq!((status, word), (NATIVE_JS_STOPPED, super::super::LaneExit::Entry.word()));

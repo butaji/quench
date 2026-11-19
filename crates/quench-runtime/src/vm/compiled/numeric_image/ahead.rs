@@ -31,12 +31,17 @@ fn run_pick(linked: &[u8], registers: usize) {
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);
-    frame.dispatch.receiver = Value::UNDEFINED.to_bits();
     frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
     for (input, expected) in PICKS {
-        let mut words = vec![Value::UNDEFINED; registers];
-        words[0] = Value::number(input);
-        let super::super::BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, words.as_mut_ptr().cast()) };
+        let mut words = vec![Value::UNDEFINED; crate::vm::register_file::FRAME_CONTEXT + registers];
+        let window = words[crate::vm::register_file::FRAME_CONTEXT..].as_mut_ptr();
+        // SAFETY: the window's header words lie below its register 0, in `words`.
+        unsafe {
+            crate::vm::dispatch_fast::set_frame_word(window, crate::staged::frame::CONTEXT_THIS, Value::UNDEFINED.to_bits());
+            crate::vm::dispatch_fast::set_frame_word(window, crate::staged::frame::CONTEXT_BODY, 0);
+        }
+        words[crate::vm::register_file::FRAME_CONTEXT] = Value::number(input);
+        let super::super::BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, window.cast()) };
         assert_eq!(status, super::super::LANE_BODY_RETURNED, "{input}");
         assert_eq!(Value::from_bits(word), Value::number(expected), "{input}");
     }

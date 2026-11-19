@@ -4,7 +4,7 @@
 //! give, and runs it on `StencilStage` over the row's places. The payload reads of the records and the
 //! empty string are `Places` methods (`places_names.rs`).
 
-use crate::layout::{JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, PROPERTY_BUFFER_BASE};
+use crate::layout::{CONTEXT_THIS, JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S};
 use crate::words::hole64;
 use crate::places::{LEFT, Places};
@@ -12,7 +12,7 @@ use crate::codes::{MEM, ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT
 use crate::stage::StencilStage;
 use crate::staged::object::Form;
 use crate::staged::{Frame, Operation, Step, add, step};
-use crate::heap_rows::{finish_fast, word_at};
+use crate::heap_rows::{context_word, finish_fast, word_at};
 
 /// The add row of `form`: the value operand (hole 1) is added to `object` by the transition hole 0
 /// (before-shape below `ADD_AFTER_AT`, after-shape above) and hole 2 (slot, and with `CHAINED` the
@@ -39,10 +39,11 @@ fn register_add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form
     add_row::<A, CHAINED>(s, payload, form, |offset| word_at(frame, offset as usize))
 }
 
-/// The add row of `form` to the activation's receiver, which the payload holds.
+/// The add row of `form` to the activation's receiver, which its window's header holds.
 #[inline(always)]
 fn this_add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form) -> Out {
-    add_row::<A, CHAINED>(s, payload, form, |_| word_at(payload, JS_STEP_RECEIVER))
+    let receiver = context_word(s.frame, CONTEXT_THIS);
+    add_row::<A, CHAINED>(s, payload, form, |_| receiver)
 }
 
 /// The naming row of `form`: the function in the frame slot hole 2 names takes the name word hole 1 holds

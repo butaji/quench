@@ -25,7 +25,7 @@ enum Access {
 impl Lowering<'_, '_> {
     /// The payload's environment storage word.
     pub(super) fn environment_word(&mut self) -> ir::Value {
-        emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, environment_storage))
+        emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.environment_storage))
     }
 
     /// The storage word again, after an operation that made the environment.

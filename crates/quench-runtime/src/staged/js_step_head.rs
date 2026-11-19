@@ -1,0 +1,72 @@
+// The head of the dispatch payload (`JsStepDispatch`) that generated code reads by field offset.
+// ONE source: the runtime embeds it as the first field of `JsStepDispatch` (`head`), and the stencil
+// crate includes this file (`stencils/layout.rs` mounts it) and takes its `offset_of!` values as the
+// `JS_STEP_*` constants. Only word-sized fields, `#[repr(C)]`, so the offsets are the same in both
+// builds. The pointee type of the two pointers is a parameter: the runtime uses `Value`, the
+// stencils `u8`; a pointer is one word either way.
+#![allow(dead_code)]
+
+#[repr(C)]
+pub(crate) struct JsStepHead<V> {
+    /// The loop entry record whose counter a region's backward edges bump; first, as a `Crossing::Bare` payload is this word alone.
+    pub(crate) loop_entry: usize,
+    /// Stable base of this VM's direct-array record reservation. The field is
+    /// refreshed after VM callouts because the reservation may be lazy.
+    pub(crate) array_record_base: usize,
+    /// The activation's local slots and their count (`native_locals`, `local_count`).
+    pub(crate) native_locals: *mut V,
+    pub(crate) local_count: usize,
+    /// The heap facts generated field reads use (`emit_js_own_field_get`): the object
+    /// record reservation, the property value arena and its length, and the field cache
+    /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
+    /// of them, so each is read again after one (`refresh_heap_bases`).
+    pub(crate) object_record_base: usize,
+    /// The function record reservation, whose records' own fields reads take
+    /// (`ObjectHeader::prove_readable`); zero where absent.
+    pub(crate) function_record_base: usize,
+    pub(crate) object_mark_blocks: usize,
+    pub(crate) object_mark_block_count: usize,
+    /// Canonical allocator header in this entry's live VM. Its address is fixed
+    /// through callouts; growth/compaction update its base/length in place.
+    pub(crate) property_buffer: usize,
+    pub(crate) field_entries: usize,
+    /// The names method caches hold (`Vm::method_caches_may_name`), one bit each, and its
+    /// length in words; and whether the VM and program run specialized, which a cached store
+    /// requires (`Vm::cached_field_store_hit`).
+    pub(crate) method_cache_atoms: usize,
+    pub(crate) method_cache_atom_words: usize,
+    pub(crate) stores_specialized: usize,
+    /// Whether the property arena records its slots' value classes (`Heap::tracks_slot_values`), which the store gate reads.
+    pub(crate) slots_tracked: usize,
+    /// A lane body's VM and running residual, which its semantic helpers take.
+    pub(crate) vm: usize,
+    pub(crate) residual: usize,
+    /// A lane body's running lane context, which its native calls make activations in.
+    pub(crate) lane_context: usize,
+    /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
+    pub(crate) returned_pc: usize,
+    /// A lane run's lane stack, where a direct call places its callee's registers and its
+    /// native frame (`DirectCallee`): the words that hold the values' and the activations'
+    /// tops, which the VM's `LaneStack` owns (`Vm::lane_stack_words`), the end of the values'
+    /// capacity, and the end of the frames the run nests (`SHADOW_FRAMES`).
+    pub(crate) lane_values_top: usize,
+    pub(crate) lane_values_end: usize,
+    pub(crate) lane_activations_top: usize,
+    pub(crate) lane_frames_end: usize,
+    /// The heap's collection epoch as of the last refresh, which a for-in step compares to the
+    /// epoch its state's snapshot was listed in (`staged::iteration::for_in_next`).
+    pub(crate) epoch: u64,
+    /// The string record reservation, whose records' flat units a string row reads in place
+    /// (`staged::strings::flat_string`); zero where absent. A callout may reserve it, so it is
+    /// read again after one (`refresh_object_bases`).
+    pub(crate) string_record_base: usize,
+    /// The function records' mark blocks and their count, which a store into a function's own
+    /// properties reads as the object records' are (`RecordSpace::Function`).
+    pub(crate) function_mark_blocks: usize,
+    pub(crate) function_mark_block_count: usize,
+    /// The empty string's word, which a function's inferred name replaces (`staged::naming`).
+    pub(crate) empty_string: u64,
+    /// The word of the storage the running lane body's environment-owned locals live in, which its
+    /// environment rows read through (`staged::environment::environment_slot`).
+    pub(crate) environment_storage: u64,
+}

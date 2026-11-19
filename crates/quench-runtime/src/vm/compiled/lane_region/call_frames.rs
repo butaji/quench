@@ -65,7 +65,7 @@ impl ReturnSite {
     /// dispatch (`LANE_BODY_RETURNED`).
     pub(super) fn complete(self, builder: &mut FunctionBuilder<'_>, payload: ir::Value, value: ir::Value) {
         let record = emit(builder).raw_const(Lane::I64, i64::from(self.record));
-        emit(builder).store_u64(Region::Dispatch.mutable(), payload, field(std::mem::offset_of!(JsStepDispatch, returned_pc)), record);
+        emit(builder).store_u64(Region::Dispatch.mutable(), payload, field(std::mem::offset_of!(JsStepDispatch, head.returned_pc)), record);
         let returned = emit(builder).raw_const(Lane::I32, i64::from(LANE_BODY_RETURNED));
         self.leave.with(builder, returned, Some(value));
     }
@@ -111,15 +111,15 @@ impl EmitFrame<'_> {
     /// The lane stack's two tops, each read through the word that holds it (the values' and the
     /// activations'): the callee's window and its frame begin there.
     fn stack_tops(&self, stage: &mut Emit<'_, '_>) -> (ir::Value, ir::Value) {
-        let values = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_values_top));
-        let activations = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_activations_top));
+        let values = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_values_top));
+        let activations = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_activations_top));
         (stage.load_u64(DISPATCH, values, 0), stage.load_u64(DISPATCH, activations, 0))
     }
 
     /// Writes `top` and `frame` back through the tops' words: the call's window and its frame pop.
     fn set_stack_tops(&self, stage: &mut Emit<'_, '_>, (top, frame): (ir::Value, ir::Value)) {
-        let values = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_values_top));
-        let activations = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_activations_top));
+        let values = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_values_top));
+        let activations = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_activations_top));
         stage.store_u64(DISPATCH, values, 0, top);
         stage.store_u64(DISPATCH, activations, 0, frame);
     }
@@ -129,7 +129,7 @@ impl EmitFrame<'_> {
     fn admit_stacks(&self, stage: &mut Emit<'_, '_>, callee: &DirectCallee, cell: ir::Value, miss: ir::Block) -> Option<Room<ir::Value>> {
         let word = std::mem::size_of::<Value>() as u64;
         let (top, frame) = self.stack_tops(stage);
-        let end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_values_end));
+        let end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_values_end));
         // The next window's context words follow the callee's registers (`lane_values::CONTEXT`).
         let next = stage.add_imm(top, (u64::from(callee.registers) + crate::vm::register_file::FRAME_CONTEXT as u64) * word);
         let recovery = stage.load_u64(ENTRY_CELL, cell, field(std::mem::offset_of!(EntryCell, recovery)));
@@ -137,7 +137,7 @@ impl EmitFrame<'_> {
         let bytes = stage.mul_imm(recovered_values, word);
         let reserved = stage.add(next, bytes);
         admit_room(stage, end, reserved, miss)?;
-        let frames_end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, lane_frames_end));
+        let frames_end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_frames_end));
         let activations = stage.load_u64(ENTRY_CELL, recovery, field(std::mem::offset_of!(LaneRecoverySpace, activations)));
         let frames = stage.add_imm(activations, 1_u64);
         let frame_bytes = stage.mul_imm(frames, super::super::FRAME_BYTES as u64);
@@ -264,7 +264,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         }
         stage.builder.switch_to_block(helper);
         let which = if site.constructs() { LaneHelper::ConstructCall } else { LaneHelper::Call };
-        let context = emit_js_payload_word(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+        let context = emit_js_payload_word(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.lane_context));
         let record = stage.raw_const(Lane::I64, i64::from(call.record));
         let address = self.helpers.address(&mut stage.builder, which);
         let status = emit_lane_helper_call(stage.builder, self.payload, address, &[context, record]);

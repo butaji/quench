@@ -7,6 +7,7 @@
 use crate::layout::{
     words::{HEAP_TAG, TAG_MASK},
     JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_SLOTS_TRACKED,
+    JS_STEP_STORES_SPECIALIZED,
     LAYOUT_TABLE_BASE, NATIVE_OBJECT_LAYOUT as OBJECT, PROPERTY_BUFFER_BASE,
 };
 use crate::staged::{RecordSpace, Stage, Table};
@@ -78,6 +79,22 @@ impl StencilStage {
     pub(crate) fn new(_property_values: *const crate::Value) -> Self {
         Self { sites: 0, values: 0, payload: 0 }
     }
+}
+
+impl StencilStage {
+    /// The dispatch word that says the run stores specialized (`JS_STEP_STORES_SPECIALIZED`), read from `payload`;
+    /// `slot_store::store_admitted` tests it.
+    #[inline(always)]
+    pub(crate) fn stores_specialized(&mut self, payload: u64) -> u64 {
+        self.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_STORES_SPECIALIZED as i32)
+    }
+}
+
+/// The per-site operand of the row's stage: the address of its next value hole (`Stage::site`), which the
+/// stitcher patches into the instruction that uses it.
+#[inline(always)]
+pub(crate) fn stage_site(stage: &mut StencilStage) -> u64 {
+    stage.site(0)
 }
 
 impl Stage for StencilStage {

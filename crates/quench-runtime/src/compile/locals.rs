@@ -25,6 +25,21 @@ impl Compiler<'_> {
         function_scope
     }
 
+    /// The local slots of the function declarations a body declares at its top level, which hoist into its scope. A
+    /// parameter's slot is none: an `arguments` object aliases it, and a write through that is no store to the slot.
+    pub(super) fn declared_function_slots(&mut self, body: &[Statement<'_>], locals: &[Atom], params: usize) -> Vec<u16> {
+        let mut slots = Vec::new();
+        for statement in body {
+            let Statement::FunctionDeclaration(function) = statement else { continue };
+            let Some(identifier) = function.id.as_ref() else { continue };
+            let atom = self.atom(identifier.name.as_str());
+            if let Some(slot) = locals.iter().position(|local| *local == atom).filter(|slot| *slot >= params) {
+                slots.extend(u16::try_from(slot).ok());
+            }
+        }
+        slots
+    }
+
     fn collect_locals_into(
         &mut self,
         body: &[Statement<'_>],

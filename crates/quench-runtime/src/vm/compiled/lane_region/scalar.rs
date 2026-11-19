@@ -349,6 +349,11 @@ impl Lowering<'_, '_> {
     /// The dense capture slots (address, count) in the entry's captures word (`entry_cell::capture_word`).
     pub(super) fn entry_capture_slots(&mut self) -> (ir::Value, ir::Value) {
         let word = self.entry_words.1;
+        self.capture_slots_of(word)
+    }
+
+    /// The dense capture slots (address, count) a captures word names (`entry_cell::capture_word`).
+    pub(super) fn capture_slots_of(&mut self, word: ir::Value) -> (ir::Value, ir::Value) {
         let mask = self.raw_const(Lane::I64, super::super::entry_cell::CAPTURE_ADDRESS_MASK);
         let values = self.raw_binary(Binary::And, word, mask);
         (values, self.raw_binary_imm(Binary::ShiftRightUnsigned, word, i64::from(super::super::entry_cell::CAPTURE_ADDRESS_BITS)))

@@ -2,22 +2,10 @@
 
 use super::Native;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TypedArrayKind {
-    Uint8,
-    Uint8Clamped,
-    Uint16,
-    Uint32,
-    Int8,
-    Int16,
-    Int32,
-    BigInt64,
-    BigUint64,
-    Float16,
-    Float32,
-    Float64,
-}
+#[path = "typed_array_catalog.rs"]
+mod catalog;
 
+pub(crate) use catalog::TypedArrayKind;
 
 /// What one typed-array kind is: its constructor intrinsic, that constructor's name and the
 /// element width in bytes.
@@ -53,8 +41,6 @@ const _: () = {
 };
 
 impl TypedArrayKind {
-    pub(crate) const COUNT: usize = Self::Float64 as usize + 1;
-
     #[inline(always)]
     pub(crate) const fn is_bigint(self) -> bool {
         matches!(self, Self::BigInt64 | Self::BigUint64)

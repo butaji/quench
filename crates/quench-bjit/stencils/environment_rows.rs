@@ -4,7 +4,7 @@
 //! `staged::step_names` over the stencil frame `Places` (`places.rs`, `places_environment.rs`). The
 //! lexical rows run the same names over `PlannedPlaces` with the binding's address (`run_lexical`).
 
-use crate::heap_rows::{hop, word_at};
+use crate::words::{hop, word_at};
 use crate::layout::{JS_STEP_PROPERTY_BUFFER, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
 use crate::places::{DEST, LEFT, Places, settle, tagged_place};

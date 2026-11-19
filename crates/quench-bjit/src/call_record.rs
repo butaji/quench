@@ -9,6 +9,10 @@
 /// with more takes the helper row.
 pub const MAX_DIRECT_ARGC: usize = 3;
 
+/// The leading arguments a direct-call row may take from a pinned register rather than the caller's
+/// window slot (`CallRecord::argument_places`); the rest are always read from the window.
+pub const PLACED_ARGUMENTS: usize = 2;
+
 /// Bytes of one register slot of the frame window (`size_of::<Value>()`).
 pub const REGISTER_BYTES: usize = 8;
 
@@ -46,12 +50,14 @@ pub const CALLEE_EXIT: u64 = 1 << 63;
 /// One past the runtime's raised status, which follows its Wasm trap codes (`vm::compiled::TRAPS`, asserted there).
 pub const TERMINATED_STATUS: u32 = 11;
 
-/// The per-site record of a direct-call row, one cache line, patched into the row as the one
+/// The per-site record of a direct-call row, two cache lines, patched into the row as the one
 /// 64-bit value hole 0 (its address). Everything a site knows that does not fit the three value
 /// holes: the callee's identity and cell, the cell's validity word the call was planned under,
 /// the descriptor the shadow frame names, the callee's capture word, the global object a sloppy
-/// callee binds an `undefined` or `null` receiver to, the stride of shadow frames, and the
-/// caller registers the call names. The plan owns the record and must outlive the code.
+/// callee binds an `undefined` or `null` receiver to, the stride of shadow frames, the caller
+/// registers the call names, and where each leading argument's word is (`argument_places`: a place
+/// code, `MEM` for the caller's window slot, else the pinned register holding the value). The plan
+/// owns the record and must outlive the code.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(C, align(64))]
 pub struct CallRecord {
@@ -66,7 +72,8 @@ pub struct CallRecord {
     pub this_register: u16,
     pub args_register: u16,
     pub result_register: u16,
+    pub argument_places: [u8; PLACED_ARGUMENTS],
 }
 
-const CALL_RECORD_BYTES: usize = 64;
+const CALL_RECORD_BYTES: usize = 128;
 const _: () = assert!(core::mem::size_of::<CallRecord>() == CALL_RECORD_BYTES);

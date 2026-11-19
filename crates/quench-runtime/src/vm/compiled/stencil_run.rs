@@ -4,7 +4,7 @@ use super::{enter_body, BodyEntry, BodyReturn, CallContext, LaneExit, LoopEntry,
 
 
 /// A bare run's payload is the entry record's address alone, where the dispatch holds it.
-const _: () = assert!(std::mem::offset_of!(super::JsStepDispatch, loop_entry) == 0);
+const _: () = assert!(std::mem::offset_of!(super::JsStepDispatch, head.loop_entry) == 0);
 
 /// What a run of a region builds around its code.
 #[derive(Clone, Copy, PartialEq, Eq)]

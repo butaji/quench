@@ -265,7 +265,7 @@ fn record_base_loads_after_optimizing(isa: &dyn cranelift_codegen::isa::TargetIs
     let more = builder.ins().icmp(IntCC::UnsignedLessThan, index, count);
     builder.ins().brif(more, body, &[], exit, &[sum.into()]);
     builder.switch_to_block(body);
-    let base = super::super::emit_js_record_base(&mut builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, object_record_base));
+    let base = super::super::emit_js_record_base(&mut builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.object_record_base));
     let record = builder.ins().iadd(base, index);
     let field = Emit { builder: &mut builder, property_values: None, gate: None }.load_u64(Region::ObjectSlots.mutable(), record, 8);
     let sum_next = builder.ins().iadd(sum, field);

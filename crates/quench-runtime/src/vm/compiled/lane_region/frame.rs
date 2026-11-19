@@ -90,7 +90,7 @@ pub(super) struct EmitFrame<'a> {
 /// instruction or a handler's entry reads or writes.
 pub(super) fn local_slot_address(builder: &mut FunctionBuilder<'_>, payload: ir::Value, slot: u16) -> ir::Value {
     let locals = super::super::emit_js_payload_word(builder, payload,
-        std::mem::offset_of!(super::super::JsStepDispatch, native_locals));
+        std::mem::offset_of!(super::super::JsStepDispatch, head.native_locals));
     emit(builder).raw_binary_imm(Binary::Add, locals, i64::from(slot) * std::mem::size_of::<Value>() as i64)
 }
 

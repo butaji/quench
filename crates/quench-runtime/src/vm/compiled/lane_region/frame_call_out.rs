@@ -115,7 +115,7 @@ fn call_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, site: &CallO
         let bits = super::register_tagged(stage.builder, frame.registers, &mut scratch, *register);
         stage.store_u64(FRAME, site.registers, register_offset(*register), bits);
     }
-    let context = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+    let context = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.lane_context));
     let record = stage.constant(u64::from(site.record));
     let helper = frame.helpers.address(&mut stage.builder, LaneHelper::VmStep);
     emit_lane_helper_call(stage.builder, frame.payload, helper, &[context, record])
@@ -149,7 +149,7 @@ fn leave(stage: &mut Emit<'_, '_>, miss: ir::Block) -> (ir::Value, RegisterFact)
 /// word: its record by id, the realm and the layout proved by dependencies the lowering took.
 fn global_layout(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, cell: GlobalSlot, miss: ir::Block)
     -> Option<(CheckedObject, ir::Value)> {
-    let records = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+    let records = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
     let bits = stage.constant(cell.global.to_bits());
     let address = ObjectRecord::prove(stage.builder, bits, records, None, miss).address(stage.builder);
     let inline = inline_storage(stage.builder, address);

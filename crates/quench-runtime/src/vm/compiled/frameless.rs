@@ -176,7 +176,7 @@ fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir:
     let cached = emit(builder).raw_binary(Binary::Add, cache, offset);
     let named = emit(builder).raw_load(Lane::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, callee) as i32);
     let epoch = emit(builder).raw_load(Lane::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, epoch) as i32);
-    let current = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, epoch));
+    let current = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.epoch));
     let same = emit(builder).raw_compare(Relation::Equal, named, callee);
     let fresh = emit(builder).raw_compare(Relation::Equal, epoch, current);
     let hit = emit(builder).raw_binary(Binary::And, same, fresh);

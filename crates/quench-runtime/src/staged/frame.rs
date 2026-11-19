@@ -15,10 +15,12 @@ pub(crate) const PREFIX_BYTES: usize = 32;
 
 /// The context words below every window's register 0 (call protocol v2): the runtime's
 /// `register_file::FRAME_CONTEXT` and the b-jit's `FRAME_CONTEXT_WORDS` are this.
-pub(crate) const CONTEXT_WORDS: usize = 8;
+pub(crate) const CONTEXT_WORDS: usize = 9;
 /// Each context word, counted down from register 0: the receiver, environment, captures,
 /// then a plain activation's header (the caller's call record, registers and records, the
-/// packed word, the callee).
+/// packed word, the callee), then a body's captures word. A body's receiver and captures
+/// are written into its own window by whoever enters it, so each frame carries its own
+/// and a call saves and restores nothing.
 pub(crate) const CONTEXT_THIS: usize = 1;
 pub(crate) const CONTEXT_ENV: usize = 2;
 pub(crate) const CONTEXT_CAPTURE: usize = 3;
@@ -27,7 +29,11 @@ pub(crate) const CONTEXT_CALLER_REGISTERS: usize = 5;
 pub(crate) const CONTEXT_CALLER_BASE: usize = 6;
 pub(crate) const CONTEXT_PACKED: usize = 7;
 pub(crate) const CONTEXT_CALLEE: usize = 8;
-const _: () = assert!(CONTEXT_CALLEE == CONTEXT_WORDS);
+/// A body's captures word (`entry_cell::capture_word`): the dense slots' address, whether they
+/// admit every direct store, and their count (`shared_words::capture_values`, `capture_stores`,
+/// `capture_len` read it).
+pub(crate) const CONTEXT_BODY: usize = 9;
+const _: () = assert!(CONTEXT_CALLEE + 1 == CONTEXT_BODY && CONTEXT_BODY == CONTEXT_WORDS);
 /// The packed word: function in bits 0-31, flags in 32-47, argc from `ARGC_SHIFT`.
 pub(crate) const PLAIN_FLAG: u64 = 1 << 32;
 /// A plain frame whose callee runs a compiled body (b-jit direct calls).

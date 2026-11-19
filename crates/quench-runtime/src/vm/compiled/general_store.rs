@@ -56,8 +56,8 @@ pub(super) fn record_store_class<H: Host>(vm: &mut Vm<H>, site: u16, value: Valu
 /// atom bits; an atom past them is unnamed.
 pub(super) fn emit_atom_unnamed(builder: &mut FunctionBuilder<'_>, payload: ir::Value, atom: Atom) -> ir::Value {
     let word_index = atom / u64::BITS;
-    let words = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
-    let words_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
+    let words = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.method_cache_atoms));
+    let words_len = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.method_cache_atom_words));
     let covered = emit(builder).raw_compare_imm(Relation::UnsignedGreater, words_len, i64::from(word_index));
     let (present, join) = (builder.create_block(), builder.create_block());
     let free = builder.append_block_param(join, types::I8);

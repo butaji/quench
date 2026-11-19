@@ -50,7 +50,7 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 
     fn array_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {
         let at = if self.arrays_fixed { Region::RecordBases.readonly() } else { Region::RecordBases.mutable() };
-        Some(stage.load_u64(at, self.payload, std::mem::offset_of!(JsStepDispatch, array_record_base) as i32))
+        Some(stage.load_u64(at, self.payload, std::mem::offset_of!(JsStepDispatch, head.array_record_base) as i32))
     }
 
     /// A register's tagged view, or an immediate constant's bits.

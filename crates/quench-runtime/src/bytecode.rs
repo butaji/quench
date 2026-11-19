@@ -1414,6 +1414,12 @@ pub struct Function {
     /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
     /// selective layout, including an empty set for closure-only activations.
     pub(crate) selective_capture_slots: Option<crate::heap::ThinBoxSlice<u16>>,
+    /// The local slots of the function declarations this nested function's body declares at its top level, which
+    /// no store writes (`capture_layout::inputs`): a closure that captures one holds its identity fixed.
+    pub(crate) declared_functions: crate::heap::ThinBoxSlice<u16>,
+    /// The depth-0 capture slots of this function whose value is a never-written declaration of its parent
+    /// (`declared_functions` of the parent): a body that calls one by its identity checks it once at entry.
+    pub(crate) declared_captures: crate::heap::ThinBoxSlice<u16>,
     /// Binding slots assigned stable frame registers by lowering.
     pub(crate) local_registers: crate::heap::ThinBoxSlice<LocalRegister>,
     /// The function was created while an enclosing `with` scope was active,

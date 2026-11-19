@@ -3,17 +3,18 @@
 //! (`CompiledOsrRegion::run_lane`).
 use super::*;
 
-/// The loop's own words: its receiver, the entry's counter and the scratch a leave inside an
-/// inlined callee writes the callee's live registers to.
+/// The loop's own words: its receiver (in its window's header, `registers`), the entry's counter and the
+/// scratch a leave inside an inlined callee writes the callee's live registers to.
 pub(super) fn bind_loop<H: Host>(
-    dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize,
+    dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize, registers: *mut crate::value::Value,
 ) {
     dispatch.lane_context = lane_context;
     // A region's `THIS`-based reads take the running activation's receiver, as a lane
     // body's do (`lane_loop_body`); `with` leaves it `DELETED`. A frameless activation's
     // receiver is the lane context's: `frame` is then the VM frame beneath it, its caller's.
-    // SAFETY: `lane_context` is the running lane's context for `H`.
-    dispatch.receiver = unsafe { super::dispatch_fast::lane_context_this::<H>(lane_context) }.to_bits();
+    // SAFETY: `lane_context` is the running lane's context for `H`; `registers` is the live window.
+    let this = unsafe { super::dispatch_fast::lane_context_this::<H>(lane_context) }.to_bits();
+    unsafe { super::dispatch_fast::set_frame_word(registers, crate::staged::frame::CONTEXT_THIS, this) };
     // The counter is the `words` field's first word, not the struct's offset 0:
     // `LoopEntry` is not `repr(C)`.
     dispatch.loop_entry = entry.words_mut() as usize;
@@ -40,7 +41,7 @@ fn dense_captures(region: &LoopRegion, entry: &LoopEntry) -> Vec<crate::Value> {
 /// # Safety
 /// `lane_context` is the running lane's context for `H`.
 pub(super) unsafe fn bind_captures<H: Host>(
-    dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &LoopEntry, lane_context: usize,
+    dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &LoopEntry, lane_context: usize, registers: *mut crate::value::Value,
 ) -> Vec<crate::Value> {
     // A region that reads and stores no capture binds no view.
     if region.captures.is_empty() && region.stored_captures.is_empty() { return Vec::new(); }
@@ -52,11 +53,13 @@ pub(super) unsafe fn bind_captures<H: Host>(
         .then(|| unsafe { super::dispatch_fast::lane_context_captures::<H>(lane_context) }).flatten();
     let none = region.captures.is_empty() && region.stored_captures.is_empty();
     let captures = if live.is_some() || none { Vec::new() } else { dense_captures(region, entry) };
+    // The window's captures word: the live slots, else the copy's (which admit no direct store).
     if let Some(((values, len), stores)) = live {
-        (dispatch.capture_values, dispatch.capture_len, dispatch.capture_stores) = (values, len, usize::from(stores));
+        // SAFETY: `registers` is the live window the dispatch runs in, whose header is its own.
+        unsafe { super::dispatch_fast::set_frame_word(registers, crate::staged::frame::CONTEXT_BODY, super::entry_cell::capture_word(values, len, stores)) };
     } else if !captures.is_empty() {
-        dispatch.capture_values = captures.as_ptr();
-        dispatch.capture_len = captures.len();
+        // SAFETY: as above; the caller keeps the copy alive for the run.
+        unsafe { super::dispatch_fast::set_frame_word(registers, crate::staged::frame::CONTEXT_BODY, super::entry_cell::capture_word(captures.as_ptr(), captures.len(), false)) };
     }
     captures
 }

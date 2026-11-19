@@ -2324,20 +2324,27 @@ impl Lowering<'_, '_> {
     }
 
     /// The receiver bits a run starts with: a lane body's caller passes them as the entry's
-    /// word, a loop region reads the payload's.
+    /// word, a loop region reads its window's header.
     fn entry_receiver_bits(&mut self) -> ir::Value {
         if self.body_entry() { return self.entry_words.0; }
-        emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, receiver))
+        let window = self.loop_window();
+        emit_frame_word(&mut self.builder, window, crate::staged::frame::CONTEXT_THIS)
     }
 
     /// The running activation's dense capture slots (address, count): a lane body's caller
-    /// packs them in the entry's word (`entry_cell::capture_word`), a loop region reads the payload's.
+    /// packs them in the entry's word (`entry_cell::capture_word`), a loop region reads its window's header.
     fn entry_capture_words(&mut self) -> (ir::Value, ir::Value) {
         if !self.body_entry() {
-            let values = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_values));
-            return (values, emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_len)));
+            let window = self.loop_window();
+            let word = emit_frame_word(&mut self.builder, window, crate::staged::frame::CONTEXT_BODY);
+            return self.capture_slots_of(word);
         }
         self.entry_capture_slots()
+    }
+
+    /// The window a loop region runs in: its payload's register file, whose header holds its receiver and captures word.
+    fn loop_window(&mut self) -> ir::Value {
+        emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, native_registers))
     }
 
     /// Whether this run is a lane body, whose callers pass its receiver and captures as the
@@ -2375,7 +2382,7 @@ impl Lowering<'_, '_> {
         let object_table = accesses_fields
             .then(|| {
                 let base = emit_js_record_base(&mut self.builder, self.payload,
-                    std::mem::offset_of!(JsStepDispatch, object_record_base));
+                    std::mem::offset_of!(JsStepDispatch, head.object_record_base));
                 let exit = *miss.get_or_insert_with(|| self.builder.create_block());
                 CheckedObjectTable::prove(&mut self.builder, base, exit)
             });
@@ -2624,7 +2631,7 @@ impl Lowering<'_, '_> {
                 let records = match object_table {
                     Some(table) => ObjectTable::Checked(table),
                     None => ObjectTable::Unchecked(*records.get_or_insert_with(|| emit_js_record_base(&mut self.builder,
-                        self.payload, std::mem::offset_of!(JsStepDispatch, object_record_base)))),
+                        self.payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base)))),
                 };
                 // An unwritten register holds its entry value at either start, in the file.
                 let base = self.registers_base;
@@ -2677,7 +2684,7 @@ impl Lowering<'_, '_> {
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
         if let Some(held) = self.loop_held_atom(atom) { return held; }
-        let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
+        let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.stores_specialized));
         let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
         if let Some(held) = self.store_held_unnamed(atom, specialized) { return held; }
         let free = self.atom_unnamed(atom);
@@ -3211,7 +3218,7 @@ impl Lowering<'_, '_> {
         let [records, short, compare] = std::array::from_fn(|_| self.builder.create_block());
         self.branch_if(string, (records, &[]), (compare, &[]));
         self.builder.switch_to_block(records);
-        let base = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, string_record_base));
+        let base = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.string_record_base));
         let mut decided = self.raw_compare_imm(Relation::NotEqual, base, 0);
         let mut addresses = [base; 2];
         for (address, bits) in addresses.iter_mut().zip([left, right]) {

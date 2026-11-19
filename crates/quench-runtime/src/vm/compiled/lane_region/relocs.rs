@@ -61,8 +61,8 @@ impl Lowering<'_, '_> {
     /// Whether no method cache names `atom`, from the payload's atom bits.
     pub(super) fn atom_unnamed(&mut self, atom: u32) -> ir::Value {
         if !self.helpers.links() { return super::super::general_store::emit_atom_unnamed(&mut self.builder, self.payload, atom); }
-        let words = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, method_cache_atoms));
-        let length = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, method_cache_atom_words));
+        let words = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.method_cache_atoms));
+        let length = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.method_cache_atom_words));
         let atom = self.atom_word(atom);
         crate::vm::jit_backend::symbol_words::atom_unnamed(&mut self.builder, (words, length), atom)
     }

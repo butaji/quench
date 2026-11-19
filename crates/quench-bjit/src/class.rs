@@ -5,23 +5,23 @@
 /// A 32-bit absolute immediate (x86-64 `R_X86_64_32`/`32S`).
 pub const ABS32: u8 = 0;
 /// A 32-bit pc-relative displacement to a successor (x86-64 `jmp`/`jcc rel32`).
-pub const REL32: u8 = 1;
+pub const REL32: u8 = ABS32 + 1;
 /// A 64-bit absolute word: an x86-64 `movabs` immediate or an AArch64 literal word.
-pub const ABS64: u8 = 2;
+pub const ABS64: u8 = REL32 + 1;
 /// AArch64 `b`/`bl`: a 26-bit word displacement.
-pub const BRANCH26: u8 = 3;
+pub const BRANCH26: u8 = ABS64 + 1;
 /// AArch64 `b.cond`/`cbz`/`cbnz`: a 19-bit word displacement.
-pub const BRANCH19: u8 = 4;
+pub const BRANCH19: u8 = BRANCH26 + 1;
 /// AArch64 `tbz`/`tbnz`: a 14-bit word displacement.
-pub const BRANCH14: u8 = 5;
+pub const BRANCH14: u8 = BRANCH19 + 1;
 /// AArch64 `movz`/`movk`: the 16-bit group `class - MOVW` of a 64-bit value; a hole is four
 /// consecutive groups, each its own relocation.
-pub const MOVW: u8 = 6;
+pub const MOVW: u8 = BRANCH14 + 1;
 /// Groups of 16 bits in a 64-bit value.
-pub const MOVW_GROUPS: u8 = 4;
+pub const MOVW_GROUPS: u8 = (u64::BITS / u16::BITS) as u8;
 
 /// Bytes of a rel32 field.
-pub const REL32_BYTES: usize = 4;
+pub const REL32_BYTES: usize = (i32::BITS / u8::BITS) as usize;
 /// `jmp rel32`.
 pub const JMP_REL32: u8 = 0xe9;
 
@@ -32,10 +32,10 @@ pub const fn is_successor(class: u8) -> bool {
 
 /// Successor hole indexes.
 pub const NEXT: u32 = 0;
-pub const TAKEN: u32 = 1;
+pub const TAKEN: u32 = NEXT + 1;
 /// Exit hole indexes start here: exit `kind` is hole `EXIT + kind`, so each guard kind reaches
 /// its own exit stub (an `ExitSite` id), not one shared hole.
-pub const EXIT: u32 = 2;
+pub const EXIT: u32 = TAKEN + 1;
 /// The successor hole index of a relocation to the row's own code: its addend is the target's
 /// offset in the stencil's `code` (`build/layout.rs`).
 pub const LOCAL: u32 = u8::MAX as u32;

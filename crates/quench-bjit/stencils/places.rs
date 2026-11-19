@@ -10,8 +10,8 @@
 
 use crate::bytecode::{Operand, Register};
 use crate::codes::*;
-use crate::heap_rows::{payload, word_at};
-use crate::layout::{JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_RECEIVER};
+use crate::heap_rows::{context_word, payload, word_at};
+use crate::layout::{CONTEXT_THIS, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS};
 use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, value};
 use crate::typed_ir::Representation;
 use crate::words::*;
@@ -183,6 +183,26 @@ pub(crate) fn settle<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, 
     }
 }
 
+/// The row's outcome: continue where the staged work was done and every result fit its place, else leave with
+/// the registers as they were.
+#[inline(always)]
+pub(crate) fn finish<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, done: bool) -> Out {
+    if frame.writes_fit(done) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
+}
+
+/// `finish` for a fast arm: where it continues it hops past the helper step laid out after the row (`hop`).
+#[inline(always)]
+pub(crate) fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
+    hop(finish(frame, done))
+}
+
+/// The object register a site row names: the word at its frame offset, which sits above the destination's in hole 0
+/// (`SITE_OBJECT_AT`).
+#[inline(always)]
+pub(crate) fn site_object(s: &S) -> u64 {
+    word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize)
+}
+
 /// Writes `value`, held in `rep`, to the destination; false where the place cannot hold it.
 #[inline(always)]
 fn put<const D: u8>(s: &mut S, value: u64, rep: Representation) -> bool {
@@ -293,7 +313,7 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
 
     #[inline(always)]
     fn this(&mut self, _stage: &mut Concrete) -> u64 {
-        word_at(payload(&self.s), JS_STEP_RECEIVER)
+        context_word(self.s.frame, CONTEXT_THIS)
     }
     #[inline(always)]
     fn define_this(&mut self, _stage: &mut Concrete, _destination: Register, this: u64) {

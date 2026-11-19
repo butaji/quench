@@ -164,7 +164,7 @@ impl Stage for Emit<'_, '_> {
         let (logged, join) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(logged);
         let open = self.builder.append_block_param(join, types::I8);
-        let tracked = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, slots_tracked));
+        let tracked = super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.slots_tracked));
         let untracked = self.raw_compare_imm(Relation::Equal, tracked, 0);
         super::super::emit_js_guard(self.builder, untracked, logged);
         super::super::emit_unlogged_property_store_guard(self.builder, space, payload, record_id, value, logged);

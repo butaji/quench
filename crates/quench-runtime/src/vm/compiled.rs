@@ -24,7 +24,8 @@
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
 use tier_policy::Tiers;
-use super::dispatch_fast::Activation;
+use super::dispatch_fast::{frame_word, set_frame_word, Activation};
+use crate::staged::frame::{CONTEXT_BODY, CONTEXT_THIS};
 use super::*;
 use crate::bytecode::{Class, Traits,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
@@ -45,6 +46,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
+use crate::staged::js_step_head::JsStepHead;
 
 /// The staged operation a record decodes to, with no constants or sites resolved: what a
 /// tier's analysis asks of a record instead of naming its opcode (`Operation::decode`).
@@ -433,7 +435,7 @@ fn emit_js_guard(
 fn emit_array_record_base(stage: &mut object_slots::Emit<'_, '_>, payload: ir::Value) -> ir::Value {
     use crate::staged::machine::Lane;
     stage.raw_load(Lane::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32)
+        std::mem::offset_of!(JsStepDispatch, head.array_record_base) as i32)
 }
 
 /// The `length` of the direct array `base`, tagged, as an int32: its dense elements' count,
@@ -646,9 +648,9 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
 {
     use crate::staged::machine::{Binary, Lane, Relation};
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
-    let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
+    let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.field_entries));
     let records = table.map(|table| table.base()).unwrap_or_else(||
-        emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base)));
+        emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base)));
     let (values, length) = emit_js_property_values(builder, payload);
     let mut stage = object_slots::emit(builder);
     // ObjectHeader owns record-base admission, including reused region proofs.
@@ -805,6 +807,13 @@ fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, o
     object_slots::emit(builder).load_u64(Region::Dispatch.mutable(), payload, offset)
 }
 
+/// A header word (`staged::frame`'s `CONTEXT_*`, counted down from register 0) of the window at `window`.
+fn emit_frame_word(builder: &mut FunctionBuilder<'_>, window: ir::Value, index: usize) -> ir::Value {
+    use crate::staged::region::Region;
+    let offset = -i32::try_from(8 * index).expect("frame context offset fits i32");
+    object_slots::emit(builder).load_u64(Region::Frame.mutable(), window, offset)
+}
+
 /// A payload word fixed for a whole native run (`JsStepDispatch::vm`, `residual`): a nested
 /// run that rebinds it restores it before its caller's code continues
 /// (`Vm::run_nested_lane_method`), so the caller's code reads it once, and every helper call
@@ -827,7 +836,7 @@ fn emit_js_property_values(builder: &mut FunctionBuilder<'_>, payload: ir::Value
     use crate::staged::{machine::Lane, region::Region};
     let mut stage = object_slots::emit(builder);
     let header = stage.raw_load(Lane::I64, invariant(), payload,
-        std::mem::offset_of!(JsStepDispatch, property_buffer) as i32);
+        std::mem::offset_of!(JsStepDispatch, head.property_buffer) as i32);
     let layout = crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT;
     let values = stage.load_u64(Region::HeapMeta.mutable(), header, layout.base as i32);
     let length = stage.load_u64(Region::HeapMeta.mutable(), header, layout.length as i32);
@@ -845,8 +854,8 @@ fn emit_lane_helper_call(
     helper: ir::Value,
     arguments: &[ir::Value],
 ) -> ir::Value {
-    let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
-    let residual = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, residual));
+    let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.vm));
+    let residual = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.residual));
     // All current helpers fit inline; larger future ABIs spill without a limit.
     let mut values = smallvec::SmallVec::<[ir::Value; 8]>::from_slice(&[vm, residual]);
     values.extend_from_slice(arguments);
@@ -865,12 +874,12 @@ fn emit_unlogged_property_store_guard(
     // barrier is a no-op. Marks and block bases are refreshed after each callout.
     let list = match space {
         crate::staged::RecordSpace::Object => MarkList {
-            blocks: std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
-            count: std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
+            blocks: std::mem::offset_of!(JsStepDispatch, head.object_mark_blocks),
+            count: std::mem::offset_of!(JsStepDispatch, head.object_mark_block_count),
         },
         crate::staged::RecordSpace::Function => MarkList {
-            blocks: std::mem::offset_of!(JsStepDispatch, function_mark_blocks),
-            count: std::mem::offset_of!(JsStepDispatch, function_mark_block_count),
+            blocks: std::mem::offset_of!(JsStepDispatch, head.function_mark_blocks),
+            count: std::mem::offset_of!(JsStepDispatch, head.function_mark_block_count),
         },
     };
     unlogged_store(&mut object_slots::emit(builder), (regions::dispatch(), MemFlagsData::trusted()), payload, list,
@@ -953,7 +962,7 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
         inline: builder.declare_var(types::I8),
         properties: builder.declare_var(types::I64),
     };
-    let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+    let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
     let (found, done) = (builder.create_block(), builder.create_block());
@@ -3266,9 +3275,9 @@ impl CompiledOsrRegion {
     ) -> RegionRun {
         let lend = self.calls.enters_callees().then_some(direct_calls);
         let mut bind = |dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm<H>| {
-            osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context);
+            osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context, registers);
             // SAFETY: the caller's contract covers the context and `registers`.
-            let captures = unsafe { osr_lane::bind_captures::<H>(dispatch, region, entry, lane_context) };
+            let captures = unsafe { osr_lane::bind_captures::<H>(dispatch, region, entry, lane_context, registers) };
             unsafe { osr_lane::bind_frame(dispatch, residual, vm, (program, function, lane_context), registers) };
             captures
         };
@@ -3280,7 +3289,7 @@ impl CompiledOsrRegion {
                 let vm = &mut *vm;
                 match vm.programs.get(program) {
                     Some(residual) => {
-                        dispatch.rebind_region(vm, program, &residual, frame);
+                        dispatch.rebind_region(vm, program, &residual, frame, registers);
                         let _captures = bind(&mut dispatch, &residual, vm);
                         let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
                         self.parked.set(Some(dispatch));
@@ -3472,56 +3481,19 @@ pub(super) struct JsNativeStep {
 /// different build than the runtime it links: the layout is declared, not left to the compiler.
 #[repr(C)]
 struct JsStepDispatch {
-    /// The loop entry record whose counter a region's backward edges bump; first, as a `Crossing::Bare` payload is this word alone.
-    loop_entry: usize,
+    /// The word-sized fields generated code reads by offset (`staged::js_step_head`); the stencils take
+    /// their `JS_STEP_*` offsets from the same struct, and it is first so its offsets are the payload's.
+    head: JsStepHead<Value>,
     program_id: ProgramId,
     frame: usize,
     allow_inline_calls: bool,
     start_pc: usize,
     native_registers: *mut Value,
     register_count: usize,
-    native_locals: *mut Value,
-    local_count: usize,
     /// Canonical receiver slot when `this` has already been initialized. Callouts
     /// may move frames or initialize a derived constructor, so refresh this before
     /// returning to generated code. Direct field reads do not cross a safepoint.
     fixed_this_slot: *const Value,
-    /// Dense, function-owned capture slots for this frame and collection epoch. Refresh
-    /// after every semantic callout; generated reads do not cross a safepoint.
-    capture_values: *const Value,
-    capture_len: usize,
-    /// Whether those slots admit every direct store (`dispatch_fast::capture_stores`): the b-jit's capture write rows.
-    capture_stores: usize,
-    /// Stable base of this VM's direct-array record reservation. The field is
-    /// refreshed after VM callouts because the reservation may be lazy.
-    array_record_base: usize,
-    /// The heap facts generated field reads use (`emit_js_own_field_get`): the object
-    /// record reservation, the property value arena and its length, and the field cache
-    /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
-    /// of them, so each is read again after one (`refresh_heap_bases`).
-    object_record_base: usize,
-    /// The function record reservation, whose records' own fields reads take
-    /// (`ObjectHeader::prove_readable`); zero where absent.
-    function_record_base: usize,
-    object_mark_blocks: usize,
-    object_mark_block_count: usize,
-    /// Canonical allocator header in this entry's live VM. Its address is fixed
-    /// through callouts; growth/compaction update its base/length in place.
-    property_buffer: usize,
-    field_entries: usize,
-    /// The names method caches hold (`Vm::method_caches_may_name`), one bit each, and its
-    /// length in words; and whether the VM and program run specialized, which a cached store
-    /// requires (`Vm::cached_field_store_hit`).
-    method_cache_atoms: usize,
-    method_cache_atom_words: usize,
-    stores_specialized: usize,
-    /// Whether the property arena records its slots' value classes (`Heap::tracks_slot_values`), which the store gate reads.
-    slots_tracked: usize,
-    /// A lane body's receiver; `DELETED` elsewhere.
-    receiver: u64,
-    /// A lane body's VM and running residual, which its semantic helpers take.
-    vm: usize,
-    residual: usize,
     /// Immutable function admitted with `residual` by `JsNativeActivation`.
     body: *const crate::bytecode::Function,
     /// A lane body's scratch window (`BodyRunContext::scratch`), where a leave inside an inlined
@@ -3530,30 +3502,17 @@ struct JsStepDispatch {
     /// The lowering line of the guard a lane body last left at, where its code was compiled
     /// for diagnostics (`VmFacts::diagnostics`); zero otherwise.
     exit_line: u64,
-    /// A lane body's running lane context, which its native calls make activations in.
-    lane_context: usize,
-    /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
-    returned_pc: usize,
     /// A frameless entry's free windows and shadow records (`frameless`): the next and the end
     /// of each stack.
     native_top: usize,
     native_end: usize,
     shadow_top: usize,
     shadow_end: usize,
-    /// A lane run's lane stack, where a direct call places its callee's registers and its
-    /// native frame (`DirectCallee`): the words that hold the values' and the activations'
-    /// tops, which the VM's `LaneStack` owns (`Vm::lane_stack_words`), the end of the values'
-    /// capacity, and the end of the frames the run nests (`SHADOW_FRAMES`).
-    lane_values_top: usize,
-    lane_values_end: usize,
-    lane_activations_top: usize,
-    lane_frames_end: usize,
     /// The element read past a present dense element (`general_elements`).
     element_get: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
     /// `epoch`, and the admission a site whose entry misses asks.
     call_cache: usize,
-    epoch: u64,
     layout_seen: u64, // `Heap::native_layout_epoch` at the last reread of the bases (`refresh_object_bases`); `u64::MAX`: never
     frameless: usize,
     /// The VM's in-loop call targets (`Vm::in_loop_call_target`), which an inlined body's
@@ -3562,11 +3521,6 @@ struct JsStepDispatch {
     /// Whether the host makes a strict function's terminal calls proper tail calls
     /// (`Host::proper_tail_calls`), which leaves its returning calls to their exact step.
     proper_tail_calls: u64,
-    /// The string record reservation, whose records' flat units a string row reads in place
-    /// (`staged::strings::flat_string`), and the table of one-unit ASCII strings (`charAt`'s
-    /// results); zero where absent. A callout may reserve or empty either, so each is read
-    /// again after one (`refresh_object_bases`).
-    string_record_base: usize,
     ascii_unit_strings: usize,
     /// The typed arrays' view record directory and its page count (`Heap::typed_view_directory`),
     /// refreshed with the other record bases, and the address of the process's buffer-relocation count
@@ -3575,20 +3529,19 @@ struct JsStepDispatch {
     typed_view_directory: usize,
     typed_view_pages: usize,
     buffer_relocations: usize,
-    /// The function records' mark blocks and their count, which a store into a function's own
-    /// properties reads as the object records' are (`RecordSpace::Function`); and the empty
-    /// string's word, which a function's inferred name replaces (`staged::naming`).
-    function_mark_blocks: usize,
-    function_mark_block_count: usize,
-    empty_string: u64,
-    /// The word of the storage the running lane body's environment-owned locals live in, which its environment rows
-    /// read through (`staged::environment::environment_slot`): its activation's window, or storage that holds no
-    /// slot where it runs in a frame (`heap::absent_environment_storage`).
-    environment_storage: u64,
     outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
     stop_pc: usize,
+}
+
+/// Reads and writes of the head's fields go through the head (`JsStepDispatch::head`).
+impl Deref for JsStepDispatch {
+    type Target = JsStepHead<Value>;
+    fn deref(&self) -> &JsStepHead<Value> { &self.head }
+}
+impl DerefMut for JsStepDispatch {
+    fn deref_mut(&mut self) -> &mut JsStepHead<Value> { &mut self.head }
 }
 
 pub(super) struct LaneMethod {
@@ -4245,12 +4198,12 @@ impl<H: Host> Vm<H> {
         unsafe { (*lane).dispatch.refresh_object_bases(self) };
     }
 
-    /// Publishes `receiver`, a `this` the running body's frame has just bound (`InitializeThis`), as the
-    /// payload's receiver the body's rows read: the frame's own and the payload's are written by the one step.
+    /// Publishes `receiver`, a `this` the running body's frame has just bound (`InitializeThis`), in the
+    /// window's header the body's rows read: the frame's own and the header's are written by the one step.
     pub(super) fn publish_body_receiver(&self, receiver: Value) {
         let frame = lane_frame();
-        // SAFETY: as `refresh_body_bases`.
-        unsafe { (*frame).dispatch.receiver = receiver.to_bits() }
+        // SAFETY: as `refresh_body_bases`; the running body's window is the dispatch's registers.
+        unsafe { set_frame_word((*frame).dispatch.native_registers, CONTEXT_THIS, receiver.to_bits()) }
     }
 
     /// Reloads the heap bases of the payload of the native loop region the lane entered, whose address the
@@ -4515,20 +4468,25 @@ impl JsNativeActivation {
         let body = program.function_get(function as usize)? as *const _;
         let activation = &mut vm.frames[frame];
         let mut native = Self { dispatch: JsStepDispatch {
+            head: JsStepHead {
+                native_locals: activation.locals.as_mut_ptr(),
+                local_count: activation.locals.len(),
+                vm: vm as *mut Vm<H> as usize,
+                residual: Rc::as_ptr(&program) as usize,
+                ..JsStepDispatch::idle().head
+            },
             program_id, frame, allow_inline_calls, start_pc,
             native_registers: activation.registers.as_mut_ptr(),
             register_count: activation.registers.len(),
-            native_locals: activation.locals.as_mut_ptr(),
-            local_count: activation.locals.len(),
-            vm: vm as *mut Vm<H> as usize,
-            residual: Rc::as_ptr(&program) as usize,
             body,
             ..JsStepDispatch::idle()
         }, _program: program };
         // The prologue already coerced `this` (`Vm::call_this_value`); a frame that has not
         // initialized it leaves the receiver `DELETED`, at which a body's `LoadThis` leaves.
         let frame = &vm.frames[frame];
-        if frame.fixed_this { native.dispatch.receiver = frame.this.to_bits(); }
+        let this = if frame.fixed_this { frame.this } else { Value::DELETED };
+        // SAFETY: the activation's register file is live for this run, and its header is its own.
+        unsafe { set_frame_word(native.dispatch.native_registers, CONTEXT_THIS, this.to_bits()) };
         if views { native.dispatch.refresh_heap_bases(vm, &native._program); }
         Some(run(&mut native, vm))
     }
@@ -4538,23 +4496,26 @@ impl JsStepDispatch {
     /// The payload of no activation: no frame, registers, locals or VM, every base word unbound.
     fn idle() -> Self {
         Self {
+            head: JsStepHead {
+                loop_entry: 0,
+                array_record_base: 0, string_record_base: 0, object_record_base: 0, function_record_base: 0,
+                object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
+                property_buffer: 0, field_entries: 0, native_locals: std::ptr::null_mut(), local_count: 0,
+                epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
+                empty_string: Value::DELETED.to_bits(),
+                environment_storage: crate::heap::absent_environment_storage(),
+                vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
+                lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
+            },
             program_id: ProgramId::MAIN, frame: usize::MAX, allow_inline_calls: false, start_pc: 0,
             #[cfg(feature = "native-execution")]
             stop_pc: JS_NO_STOP_PC,
-            native_registers: std::ptr::null_mut(), register_count: 0, native_locals: std::ptr::null_mut(), local_count: 0,
+            native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
-            capture_values: std::ptr::null(), capture_len: 0, capture_stores: 0,
-            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0,
-            object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
-            property_buffer: 0, field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
-            call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
-            loop_entry: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
-            empty_string: Value::DELETED.to_bits(),
-            environment_storage: crate::heap::absent_environment_storage(),
-            receiver: Value::DELETED.to_bits(),
-            vm: 0, residual: 0, body: std::ptr::null(), inlined: 0, exit_line: 0, lane_context: 0, returned_pc: 0,
+            ascii_unit_strings: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
+            call_cache: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
+            body: std::ptr::null(), inlined: 0, exit_line: 0,
             native_top: 0, native_end: 0, shadow_top: 0, shadow_end: 0,
-            lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
             outcome: None,
         }
     }
@@ -4624,10 +4585,11 @@ impl JsStepDispatch {
     /// `bind_native_storage` bind, the run state the last run left reset to `idle`'s, and the
     /// bases refreshed (`refresh_heap_bases`), which reread only what moved since the last run.
     /// The words the run's binds set (`osr_lane`) are theirs.
-    fn rebind_region<H: Host>(&mut self, vm: &mut Vm<H>, program_id: ProgramId, program: &ResidualProgram, frame: usize) {
+    fn rebind_region<H: Host>(&mut self, vm: &mut Vm<H>, program_id: ProgramId, program: &ResidualProgram, frame: usize, registers: *mut Value) {
         self.bind_lane_storage(std::ptr::from_mut(vm));
         (self.program_id, self.frame) = (program_id, frame);
-        (self.capture_values, self.capture_len, self.capture_stores) = (std::ptr::null(), 0, 0);
+        self.native_registers = registers;
+        self.set_captures_word(0);
         (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
         (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
         self.environment_storage = crate::heap::absent_environment_storage();
@@ -4647,12 +4609,24 @@ impl JsStepDispatch {
         self.stores_specialized = usize::from(vm.specialized && program.specialized);
     }
 
-    /// The frame's dense capture slots, which generated reads index (`capture_values`): none
+    /// The window's captures word (`CONTEXT_BODY`): the frame's dense capture slots, which generated reads
+    /// index (their address, count, and whether they admit every direct store), held in the window's header.
+    fn captures_word(&self) -> u64 {
+        // SAFETY: `native_registers` is the bound window, whose header is its own.
+        unsafe { frame_word(self.native_registers, CONTEXT_BODY) }
+    }
+
+    fn set_captures_word(&self, word: u64) {
+        // SAFETY: as `captures_word`; the dispatch owns the header of the window it runs in.
+        unsafe { set_frame_word(self.native_registers, CONTEXT_BODY, word) }
+    }
+
+    /// The frame's dense capture slots, which generated reads index (the window's captures word): none
     /// while its slot memo is missing or stale, or its storage is not dense, and a read then
     /// leaves at its record.
     fn refresh_capture_view<H: Host>(&mut self, vm: &Vm<H>) {
-        let held = self.capture_values;
-        (self.capture_values, self.capture_len) = vm.frames.get(self.frame)
+        let held = self.captures_word();
+        let (values, len) = vm.frames.get(self.frame)
             .and_then(|_| vm.current_capture_slots(self.frame))
             .and_then(|(slots, root)| {
                 if root.is_some() { return None; }
@@ -4661,7 +4635,9 @@ impl JsStepDispatch {
                 unsafe { &*slots }.native_dense_view()
             })
             .unwrap_or((std::ptr::null(), 0));
-        self.capture_stores &= usize::from(self.capture_values == held);
+        // The stores bit holds only while the slots are the ones it was admitted for.
+        let stores = quench_bjit::shared_words::capture_stores(held) != 0 && values.addr() as u64 == quench_bjit::shared_words::capture_values(held);
+        self.set_captures_word(entry_cell::capture_word(values, len, stores));
     }
 
     /// Binds the frame's capture slots once per activation. Only a lane entry makes the slot
@@ -10641,11 +10617,11 @@ mod tests {
         };
         JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
             assert_eq!(activation.dispatch.fixed_this_slot, &vm.frames[0].this as *const Value);
-            assert!(!activation.dispatch.capture_values.is_null());
+            assert!(quench_bjit::shared_words::capture_values(activation.dispatch.captures_word()) != 0);
         }).unwrap();
         vm.frames[0].capture_cache.root = Some(Some(ProgramId::MAIN.raw()));
         JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
-            assert!(activation.dispatch.capture_values.is_null());
+            assert_eq!(quench_bjit::shared_words::capture_values(activation.dispatch.captures_word()), 0);
         }).unwrap();
     }
 

@@ -1618,6 +1618,8 @@ impl ModuleBindings<'_> {
             local_atoms: vec![].into(),
             environment_atoms: vec![].into(),
             selective_capture_slots: None,
+            declared_functions: Default::default(),
+            declared_captures: Default::default(),
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),

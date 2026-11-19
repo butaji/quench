@@ -14,17 +14,15 @@
 //!
 //! Region entry ABI (`entry_thunk`): (x0 = context, x3 = the frame record, x4 = result pointer),
 //! status in w0. Body entry ABI (`entry_body`, `entry_resume`, `lane_body_abi.rs`): (x0 = context,
-//! x1 = receiver, x2 = captures, x3 = the register file) -> (w0 = status, x1 = word).
+//! x1 = receiver, x2 = captures, x3 = the register file) -> (w0 = status, x1 = word). The receiver
+//! and captures words are the window's header already (`CONTEXT_THIS`, `CONTEXT_BODY`), written by
+//! whoever enters the body, so the entries save none of the dispatch payload.
 //!
 //! Holes in assembly: ELF patches four `movz`/`movk` groups (`R_AARCH64_MOVW_UABS_G*`), Mach-O a
 //! literal word the code loads and branches over (`words.rs` `hole_word!`, the same two forms).
 
-use crate::layout::{
-    CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_PAD, CAPTURE_STORES_BIT, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES,
-    JS_STEP_RECEIVER, JS_STEP_RETURNED_PC,
-};
+use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_RETURNED_PC};
 use crate::layout::call_record::NATIVE_JS_STOPPED;
-use crate::layout::shared_words::CAPTURE_ADDRESS_BITS;
 use crate::staged::frame;
 use crate::words::{HOLE_V0, hole64};
 use crate::Row;
@@ -120,89 +118,30 @@ pub unsafe extern "C" fn entry_resume() {
     body_thunk!(["mov x16, x2"], "blr x16", [])
 }
 
-/// The body entry: saves the payload's capture and receiver words (those of the body that entered this
-/// one, if a body did), publishes its captures word (the dense slots' address below
-/// `CAPTURE_ADDRESS_BITS`, the low bit saying they admit every direct store, their count above) and its
-/// receiver (x1), calls the first row and puts the saved words back. 32 bytes below the saved registers
-/// hold the four words.
+/// The body entry (the lane body ABI): calls the first row. The receiver and captures words it is
+/// entered with are in the window's header already (`CONTEXT_THIS`, `CONTEXT_BODY`), written by the
+/// caller, so nothing is saved or restored here.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_body() {
-    body_thunk!(
-        [
-            "ldr x9, [x0, #{payload}]",
-            "ldr x10, [x9, #{stores}]",
-            "ldr x11, [x9, #{values}]",
-            "stp x10, x11, [sp, #-32]!",
-            "ldr x10, [x9, #{len}]",
-            "ldr x11, [x9, #{receiver}]",
-            "stp x10, x11, [sp, #16]",
-            "str x1, [x9, #{receiver}]",
-            "lsl x10, x2, #{pad}",
-            "lsr x10, x10, #{pad}",
-            "and x11, x10, #{stores_bit}",
-            "str x11, [x9, #{stores}]",
-            "eor x10, x10, x11",
-            "str x10, [x9, #{values}]",
-            "lsr x10, x2, #{bits}",
-            "str x10, [x9, #{len}]"
-        ],
-        concat!(hole_into!("x16", "first"), "\nblr x16"),
-        [
-            "ldr x9, [x21, #{payload}]",
-            "ldp x10, x11, [sp, #16]",
-            "str x10, [x9, #{len}]",
-            "str x11, [x9, #{receiver}]",
-            "ldp x10, x11, [sp], #32",
-            "str x10, [x9, #{stores}]",
-            "str x11, [x9, #{values}]"
-        ],
-        first = sym HOLE_NEXT, payload = const CALL_CONTEXT_ADAPTER_PAYLOAD, values = const JS_STEP_CAPTURE_VALUES,
-        len = const JS_STEP_CAPTURE_LEN, stores = const JS_STEP_CAPTURE_STORES, stores_bit = const CAPTURE_STORES_BIT,
-        receiver = const JS_STEP_RECEIVER, bits = const CAPTURE_ADDRESS_BITS, pad = const CAPTURE_ADDRESS_PAD
-    )
+    body_thunk!([], concat!(hole_into!("x16", "first"), "\nblr x16"), [], first = sym HOLE_NEXT)
 }
 
-/// The body's row entry (`EntryCell::rows`): `entry_body` for a caller of the row ABI, a b-jit direct
-/// call row (`rust-preserve-none`: window x20, context x21, receiver x22, captures x23), which keeps
-/// nothing live across the call, so only the frame record (x29, x30) is saved. Returns the leave
-/// routine's (x0 word, x1 status) as they are.
+/// The body's row entry (`EntryCell::rows`): a b-jit direct call row (`rust-preserve-none`: window x20,
+/// context x21, receiver x22, captures x23), which keeps nothing live across the call, so only the frame
+/// record (x29, x30) is saved. The window's header already holds the receiver and captures (the call row's
+/// push). Returns the leave routine's (x0 word, x1 status) as they are.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_rows() {
     core::arch::naked_asm!(
-        "stp x29, x30, [sp, #-48]!",
+        "stp x29, x30, [sp, #-16]!",
         "mov x29, sp",
-        "ldr x9, [x21, #{payload}]",
-        "ldr x10, [x9, #{stores}]",
-        "ldr x11, [x9, #{values}]",
-        "stp x10, x11, [sp, #16]",
-        "ldr x10, [x9, #{len}]",
-        "ldr x11, [x9, #{receiver}]",
-        "stp x10, x11, [sp, #32]",
-        "str x22, [x9, #{receiver}]",
-        "lsl x10, x23, #{pad}",
-        "lsr x10, x10, #{pad}",
-        "and x11, x10, #{stores_bit}",
-        "str x11, [x9, #{stores}]",
-        "eor x10, x10, x11",
-        "str x10, [x9, #{values}]",
-        "lsr x10, x23, #{bits}",
-        "str x10, [x9, #{len}]",
         hole_into!("x16", "first"),
         "blr x16",
-        "ldr x9, [x21, #{payload}]",
-        "ldp x10, x11, [sp, #32]",
-        "str x10, [x9, #{len}]",
-        "str x11, [x9, #{receiver}]",
-        "ldp x10, x11, [sp, #16]",
-        "str x10, [x9, #{stores}]",
-        "str x11, [x9, #{values}]",
-        "ldp x29, x30, [sp], #48",
+        "ldp x29, x30, [sp], #16",
         "ret",
-        first = sym HOLE_NEXT, payload = const CALL_CONTEXT_ADAPTER_PAYLOAD, values = const JS_STEP_CAPTURE_VALUES,
-        len = const JS_STEP_CAPTURE_LEN, stores = const JS_STEP_CAPTURE_STORES, stores_bit = const CAPTURE_STORES_BIT,
-        receiver = const JS_STEP_RECEIVER, bits = const CAPTURE_ADDRESS_BITS, pad = const CAPTURE_ADDRESS_PAD
+        first = sym HOLE_NEXT,
     )
 }
 

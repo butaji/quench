@@ -4,12 +4,12 @@
 
 use crate::bytecode::Register;
 use crate::codes::{MEM, FIELD_ROW, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW};
-use crate::heap_rows::{word_at};
-use crate::layout::{JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_VM, PROPERTY_BUFFER_BASE};
+use crate::heap_rows::{context_word, word_at};
+use crate::layout::{CONTEXT_THIS, JS_STEP_PROPERTY_BUFFER, JS_STEP_VM, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
 use crate::words::{hole, hole64, is_int, FIRST_TAG, HOLE_FOURTH};
 use crate::layout::words::TAG_SHIFT;
-use crate::places::{DEST, Places, settle, tagged_place};
+use crate::places::{DEST, Places, settle, site_object, tagged_place};
 use crate::places_property::{Callout, HeldRead, receiver_read, run_held, run_planned};
 use crate::stage::StencilStage;
 use crate::staged::{Constant, Operation, Step, step};
@@ -60,18 +60,12 @@ fn site_store_row<const A: u8, const GATED: bool>(s: S, payload: usize, base: Op
     Out::Next(places.s)
 }
 
-/// The object register a site row names: its frame offset sits above the destination's in hole 0.
-#[inline(always)]
-fn register_object(s: &S) -> u64 {
-    word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize)
-}
-
 /// A prototype-held field folded to its value (hole 2): the object, the activation's receiver for an `ENTRY` row and else
 /// the register the site names, is read as the staged `GetField` of its exact shape and prototype link (hole 1's low and
 /// high halves), which leaves the row otherwise (`PrototypeProof::Linked`, `places_property::run_held`).
 #[inline(always)]
 fn held_row<const D: u8, const ENTRY: bool>(s: S, payload: usize) -> Out {
-    let object = if ENTRY { word_at(payload, JS_STEP_RECEIVER) } else { register_object(&s) };
+    let object = if ENTRY { context_word(s.frame, CONTEXT_THIS) } else { site_object(&s) };
     let receiver = hole64::<HOLE_A>();
     let link = (receiver >> HELD_LINK_AT) as u32;
     let held = HeldRead { object, shape: receiver as u32, link, constant: [(link, hole64::<HOLE_B>())] };
@@ -116,9 +110,9 @@ fn constant_row<const D: u8>(s: S) -> Out {
 pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8>(s: S, payload: usize) -> Out {
     match KIND {
         FIELD_ROW => field_row::<D>(s, payload),
-        SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),
+        SITE_ROW => site_row::<D, ENTRY>(s, payload, site_object(&s)),
         SITE_STORE_ROW => site_store_row::<A, ENTRY>(s, payload, Some(DEST)),
-        THIS_SITE_ROW => site_row::<D, ENTRY>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
+        THIS_SITE_ROW => site_row::<D, ENTRY>(s, payload, context_word(s.frame, CONTEXT_THIS)),
         THIS_STORE_ROW => site_store_row::<A, ENTRY>(s, payload, None),
         HELD_ROW => held_row::<D, ENTRY>(s, payload),
         LIVE_ROW => live_row(s),

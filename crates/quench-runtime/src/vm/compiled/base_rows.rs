@@ -15,6 +15,103 @@ use quench_bjit::Stencil;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+/// The stencil layout numbers (`staged/layout_offsets.rs`, shared with the stencils by `#[path]`) are the
+/// runtime's own: each is a `const` check against the runtime's `offset_of!`, `size_of` or layout const.
+/// The stencils are x86-64 only, so the checks are too.
+#[cfg(target_arch = "x86_64")]
+mod layout_checks {
+    use super::super::{CallContext, JsStepDispatch};
+    use crate::staged::layout_offsets as L;
+    use std::mem::offset_of;
+
+    const _: () = assert!(offset_of!(CallContext, adapter_payload) == L::CALL_CONTEXT_ADAPTER_PAYLOAD);
+    const _: () = assert!(L::CAPTURE_ADDRESS_PAD == u64::BITS - quench_bjit::shared_words::CAPTURE_ADDRESS_BITS);
+
+    // The dispatch record's head is its first field, so the stencil's `JS_STEP_*` offsets (`js_step_head`) are its own.
+    const _: () = assert!(offset_of!(JsStepDispatch, head) == 0);
+
+    // The layout structs: every field of each is the runtime's.
+    // NATIVE_OBJECT_LAYOUT
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_capacity == L::NATIVE_OBJECT_LAYOUT.record_capacity);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_size == L::NATIVE_OBJECT_LAYOUT.record_size);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_align == L::NATIVE_OBJECT_LAYOUT.record_align);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset == L::NATIVE_OBJECT_LAYOUT.layout_offset);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.meta_offset == L::NATIVE_OBJECT_LAYOUT.meta_offset);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset == L::NATIVE_OBJECT_LAYOUT.auxiliary_offset);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.payload_offset == L::NATIVE_OBJECT_LAYOUT.payload_offset);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.extras_arena_start_offset == L::NATIVE_OBJECT_LAYOUT.extras_arena_start_offset);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.extras_inline_values_offset == L::NATIVE_OBJECT_LAYOUT.extras_inline_values_offset);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.inline_storage_mask == L::NATIVE_OBJECT_LAYOUT.inline_storage_mask);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.array_mask == L::NATIVE_OBJECT_LAYOUT.array_mask);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.storage_start_mask == L::NATIVE_OBJECT_LAYOUT.storage_start_mask);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.dictionary_mask == L::NATIVE_OBJECT_LAYOUT.dictionary_mask);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.inline_form == L::NATIVE_OBJECT_LAYOUT.inline_form);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.extras_form == L::NATIVE_OBJECT_LAYOUT.extras_form);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.narrow_form == L::NATIVE_OBJECT_LAYOUT.narrow_form);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.narrow_run_tag == L::NATIVE_OBJECT_LAYOUT.narrow_run_tag);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.integrity_mask == L::NATIVE_OBJECT_LAYOUT.integrity_mask);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count == L::NATIVE_OBJECT_LAYOUT.inline_property_count);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.extras_tag == L::NATIVE_OBJECT_LAYOUT.extras_tag);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.extras_tag_mask == L::NATIVE_OBJECT_LAYOUT.extras_tag_mask);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.proto_mask == L::NATIVE_OBJECT_LAYOUT.proto_mask);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.proto_record_base == L::NATIVE_OBJECT_LAYOUT.proto_record_base);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.proto_record_end == L::NATIVE_OBJECT_LAYOUT.proto_record_end);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.mark_records_per_block == L::NATIVE_OBJECT_LAYOUT.mark_records_per_block);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.mark_word_bits == L::NATIVE_OBJECT_LAYOUT.mark_word_bits);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.mark_block_size == L::NATIVE_OBJECT_LAYOUT.mark_block_size);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.mark_offset == L::NATIVE_OBJECT_LAYOUT.mark_offset);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size == L::NATIVE_OBJECT_LAYOUT.property_value_size);
+    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.property_value_align == L::NATIVE_OBJECT_LAYOUT.property_value_align);
+
+    // NATIVE_FUNCTION_LAYOUT
+    const _: () = assert!(crate::heap::NATIVE_FUNCTION_LAYOUT.record_size == L::NATIVE_FUNCTION_LAYOUT.record_size);
+    const _: () = assert!(crate::heap::NATIVE_FUNCTION_LAYOUT.object_offset == L::NATIVE_FUNCTION_LAYOUT.object_offset);
+
+    // NATIVE_ARRAY_LAYOUT
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.record_capacity == L::NATIVE_ARRAY_LAYOUT.record_capacity);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.record_size == L::NATIVE_ARRAY_LAYOUT.record_size);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.record_align == L::NATIVE_ARRAY_LAYOUT.record_align);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.elements_offset == L::NATIVE_ARRAY_LAYOUT.elements_offset);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.extras_elements_offset == L::NATIVE_ARRAY_LAYOUT.extras_elements_offset);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.elements_header_offset == L::NATIVE_ARRAY_LAYOUT.elements_header_offset);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.header_length_offset == L::NATIVE_ARRAY_LAYOUT.header_length_offset);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.header_values_offset == L::NATIVE_ARRAY_LAYOUT.header_values_offset);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.header_owners_offset == L::NATIVE_ARRAY_LAYOUT.header_owners_offset);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.header_capacity_offset == L::NATIVE_ARRAY_LAYOUT.header_capacity_offset);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.capacity_mask == L::NATIVE_ARRAY_LAYOUT.capacity_mask);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.object_offset == L::NATIVE_ARRAY_LAYOUT.object_offset);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.frozen_mask == L::NATIVE_ARRAY_LAYOUT.frozen_mask);
+    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.integrity_mask == L::NATIVE_ARRAY_LAYOUT.integrity_mask);
+
+    // NATIVE_TYPED_ARRAY_LAYOUT
+    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.entry_size == L::NATIVE_TYPED_ARRAY_LAYOUT.entry_size);
+    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.page_shift == L::NATIVE_TYPED_ARRAY_LAYOUT.page_shift);
+    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.page_mask == L::NATIVE_TYPED_ARRAY_LAYOUT.page_mask);
+    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.kind_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.kind_offset);
+    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.detached_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.detached_offset);
+    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.unshared_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.unshared_offset);
+    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.data_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.data_offset);
+    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.length_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.length_offset);
+    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.stamp_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.stamp_offset);
+
+    // NATIVE_ENVIRONMENT_LAYOUT
+    const _: () = assert!(crate::heap::NATIVE_ENVIRONMENT_LAYOUT.header_pointer_offset == L::NATIVE_ENVIRONMENT_LAYOUT.header_pointer_offset);
+    const _: () = assert!(crate::heap::NATIVE_ENVIRONMENT_LAYOUT.sparse_mark == L::NATIVE_ENVIRONMENT_LAYOUT.sparse_mark);
+    const _: () = assert!(crate::heap::NATIVE_ENVIRONMENT_LAYOUT.slots_offset == L::NATIVE_ENVIRONMENT_LAYOUT.slots_offset);
+    const _: () = assert!(crate::heap::NATIVE_ENVIRONMENT_LAYOUT.slot_size == L::NATIVE_ENVIRONMENT_LAYOUT.slot_size);
+
+    // NATIVE_FIELD_CACHE_LAYOUT
+    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size == L::NATIVE_FIELD_CACHE_LAYOUT.entry_size);
+    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.receiver_offset == L::NATIVE_FIELD_CACHE_LAYOUT.receiver_offset);
+    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_offset == L::NATIVE_FIELD_CACHE_LAYOUT.holder_offset);
+    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.slot_offset == L::NATIVE_FIELD_CACHE_LAYOUT.slot_offset);
+    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.receiver_complement == L::NATIVE_FIELD_CACHE_LAYOUT.receiver_complement);
+    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_complement == L::NATIVE_FIELD_CACHE_LAYOUT.holder_complement);
+    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.slot_complement == L::NATIVE_FIELD_CACHE_LAYOUT.slot_complement);
+    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.own_holder == L::NATIVE_FIELD_CACHE_LAYOUT.own_holder);
+
+}
+
 /// What a heap row does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Heap {
@@ -107,6 +204,9 @@ pub(super) enum Heap {
     /// The entry test of a declared parameter (`base_region::declared`): the register at hole 0 holds a word whose
     /// tag-decided languages meet the declared mask at hole 1, else the entry leaves with nothing written.
     Declared,
+    /// The entry test of a captured declaration a body calls by its identity (`base_region::link::entry_rows`): the
+    /// depth-0 capture at the slot of hole 0 holds the word of hole 1, else the entry leaves with nothing written.
+    CaptureIdentity,
     /// The entry test of a class-typed parameter (`base_region::link::entry_rows`): the register at hole 0 holds a direct
     /// object whose exact shape and prototype link are the pair in hole 1 (`entry::shape_link_matches`), else the entry
     /// leaves with nothing written.
@@ -274,6 +374,7 @@ impl Heap {
         Some(match self {
             Heap::Identity => library::IDENTITY_ROW,
             Heap::Declared => library::DECLARED_ROW,
+            Heap::CaptureIdentity => library::CAPTURE_IDENTITY_ROW,
             Heap::Prototype => library::PROTOTYPE_ROW,
             Heap::TypeofIndex => library::TYPEOF_INDEX_ROW,
             Heap::TypeofString => library::TYPEOF_STRING_ROW,
@@ -366,7 +467,7 @@ mod tests {
 
     /// The numbers the stencil rows are compiled with (`quench-bjit/stencils/layout.rs`) are
     /// the runtime's own.
-    use super::super::{CallContext, JsStepDispatch};
+    use super::super::CallContext;
     use crate::vm::wtf16::native_string as form;
     #[allow(dead_code)]
     mod stencil_layout {
@@ -377,46 +478,6 @@ mod tests {
     }
 
 
-    /// The dispatch record's fields a stencil row reads, as (name, the runtime's offset, the stencil layout's).
-    fn dispatch_offsets() -> Vec<(&'static str, usize, usize)> {
-        use stencil_layout as m;
-        use std::mem::offset_of as at;
-        vec![
-            ("loop_entry", at!(JsStepDispatch, loop_entry), m::JS_STEP_LOOP_ENTRY),
-            ("capture_values", at!(JsStepDispatch, capture_values), m::JS_STEP_CAPTURE_VALUES),
-            ("capture_len", at!(JsStepDispatch, capture_len), m::JS_STEP_CAPTURE_LEN),
-            ("capture_stores", at!(JsStepDispatch, capture_stores), m::JS_STEP_CAPTURE_STORES),
-            ("array_record_base", at!(JsStepDispatch, array_record_base), m::JS_STEP_ARRAY_RECORD_BASE),
-            ("object_record_base", at!(JsStepDispatch, object_record_base), m::JS_STEP_OBJECT_RECORD_BASE),
-            ("function_record_base", at!(JsStepDispatch, function_record_base), m::JS_STEP_FUNCTION_RECORD_BASE),
-            ("object_mark_blocks", at!(JsStepDispatch, object_mark_blocks), m::JS_STEP_OBJECT_MARK_BLOCKS),
-            ("object_mark_block_count", at!(JsStepDispatch, object_mark_block_count), m::JS_STEP_OBJECT_MARK_BLOCK_COUNT),
-            ("property_buffer", at!(JsStepDispatch, property_buffer), m::JS_STEP_PROPERTY_BUFFER),
-            ("field_entries", at!(JsStepDispatch, field_entries), m::JS_STEP_FIELD_ENTRIES),
-            ("method_cache_atoms", at!(JsStepDispatch, method_cache_atoms), m::JS_STEP_METHOD_CACHE_ATOMS),
-            ("method_cache_atom_words", at!(JsStepDispatch, method_cache_atom_words), m::JS_STEP_METHOD_CACHE_ATOM_WORDS),
-            ("stores_specialized", at!(JsStepDispatch, stores_specialized), m::JS_STEP_STORES_SPECIALIZED),
-            ("slots_tracked", at!(JsStepDispatch, slots_tracked), m::JS_STEP_SLOTS_TRACKED),
-            ("receiver", at!(JsStepDispatch, receiver), m::JS_STEP_RECEIVER),
-            ("vm", at!(JsStepDispatch, vm), m::JS_STEP_VM),
-            ("residual", at!(JsStepDispatch, residual), m::JS_STEP_RESIDUAL),
-            ("lane_context", at!(JsStepDispatch, lane_context), m::JS_STEP_LANE_CONTEXT),
-            ("returned_pc", at!(JsStepDispatch, returned_pc), m::JS_STEP_RETURNED_PC),
-            ("lane_values_top", at!(JsStepDispatch, lane_values_top), m::JS_STEP_LANE_VALUES_TOP),
-            ("lane_values_end", at!(JsStepDispatch, lane_values_end), m::JS_STEP_LANE_VALUES_END),
-            ("lane_activations_top", at!(JsStepDispatch, lane_activations_top), m::JS_STEP_LANE_ACTIVATIONS_TOP),
-            ("lane_frames_end", at!(JsStepDispatch, lane_frames_end), m::JS_STEP_LANE_FRAMES_END),
-            ("native_locals", at!(JsStepDispatch, native_locals), m::JS_STEP_NATIVE_LOCALS),
-            ("local_count", at!(JsStepDispatch, local_count), m::JS_STEP_LOCAL_COUNT),
-            ("epoch", at!(JsStepDispatch, epoch), m::JS_STEP_EPOCH),
-            ("string_record_base", at!(JsStepDispatch, string_record_base), m::JS_STEP_STRING_RECORD_BASE),
-            ("function_mark_blocks", at!(JsStepDispatch, function_mark_blocks), m::JS_STEP_FUNCTION_MARK_BLOCKS),
-            ("function_mark_block_count", at!(JsStepDispatch, function_mark_block_count), m::JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
-            ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),
-            ("environment_storage", at!(JsStepDispatch, environment_storage), m::JS_STEP_ENV_STORAGE),
-        ]
-    }
-
     /// Every payload field a stencil row reads, as (name, the runtime's offset, the stencil layout's).
     fn payload_offsets() -> Vec<(&'static str, usize, usize)> {
         use stencil_layout as m;
@@ -424,7 +485,6 @@ mod tests {
         let own = vec![
             ("adapter_payload", at!(CallContext, adapter_payload), m::CALL_CONTEXT_ADAPTER_PAYLOAD),
             ("property_buffer_base", crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, m::PROPERTY_BUFFER_BASE),
-            ("capture_stores_bit", super::super::super::dispatch_fast::CAPTURE_STORES, m::CAPTURE_STORES_BIT as usize),
             ("activation_kind", crate::vm::dispatch_fast::KIND_OFFSET, m::ACTIVATION_KIND_OFFSET),
             ("cell_entry", at!(super::super::entry_cell::EntryCell, entry), m::CELL_ENTRY_AT),
             ("cell_recovery", at!(super::super::entry_cell::EntryCell, recovery), m::CELL_RECOVERY_AT),
@@ -437,7 +497,7 @@ mod tests {
             ("shared_pointer", form::SHARED_POINTER_OFFSET as usize, m::string_form::SHARED_POINTER_OFFSET as usize),
             ("shared_units", form::shared_units_offset() as usize, m::string_form::shared_units_offset() as usize),
         ];
-        [own, dispatch_offsets()].concat()
+        own
     }
 
     /// The value and narrow-value words the stencils are compiled with are the runtime's own.

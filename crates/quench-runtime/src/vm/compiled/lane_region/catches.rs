@@ -271,7 +271,7 @@ impl Lowering<'_, '_> {
                 self.store_word(regions::frame(), value, address, 0);
             }
             Bind::Frame(register) => {
-                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.lane_context));
                 let record = self.raw_const(Lane::I64, pc as i64);
                 self.helper_call(LaneHelper::HandlerEdge, &[context, record, value]);
                 self.allocated(state);
@@ -288,7 +288,7 @@ impl Lowering<'_, '_> {
         let record = self.raw_const(Lane::I64, i64::from(record));
         let payload = self.payload;
         emit(&mut self.builder).store_u64(Region::Dispatch.mutable(), payload,
-            i32::try_from(std::mem::offset_of!(JsStepDispatch, returned_pc)).expect("dispatch offset fits i32"), record);
+            i32::try_from(std::mem::offset_of!(JsStepDispatch, head.returned_pc)).expect("dispatch offset fits i32"), record);
         let status = self.raw_const(Lane::I32, i64::from(status));
         self.leave_with(status, value);
     }

@@ -193,6 +193,8 @@ impl Compiler<'_> {
             local_atoms: function.locals.clone().into(),
             environment_atoms,
             selective_capture_slots: None,
+            declared_functions: Default::default(),
+            declared_captures: Default::default(),
             local_registers: function.promoted_local_layout().into(),
             inherited_with_scope: with_depth != 0,
             lexical_atoms: lexical_atoms.into(),
