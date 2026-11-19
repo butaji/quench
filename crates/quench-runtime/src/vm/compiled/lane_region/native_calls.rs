@@ -73,6 +73,12 @@ impl Inline {
         matches!(self, Self::Builtin(Builtin::Push))
     }
 
+    /// Whether the operation searches an array's elements (`includes`, `indexOf`): its
+    /// receiver's view is hoisted around a loop like a store's (`Lowering::element_search`).
+    const fn searches(self) -> bool {
+        matches!(self, Self::Builtin(Builtin::Includes | Builtin::IndexOf))
+    }
+
     /// The operation on `numbers`: a Float64 value; `Imul` is lowered by the caller.
     fn emit(self, builder: &mut FunctionBuilder<'_>, numbers: &[ir::Value]) -> ir::Value {
         let mut stage = super::super::object_slots::emit(builder);
@@ -111,6 +117,12 @@ pub(super) fn appends(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.appends())
 }
 
+/// Whether the call at `pc` searches an array's elements (`searches`): its receiver's view is
+/// hoisted around the loop that holds the call (`loop_arrays`).
+pub(super) fn searches(intrinsics: &Intrinsics, pc: usize) -> bool {
+    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.searches())
+}
+
 /// The calls of `unit` that run inline, by PC: a call's callee register was defined by a field
 /// read that was a native function when the body was compiled (`GlobalRead::NativeMember`: a
 /// member of a Stable global, or a method of the string or array prototype), the call passes
@@ -137,6 +149,10 @@ impl Lowering<'_, '_> {
     /// dense array). False where the call is not one.
     pub(super) fn intrinsic_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(&Some((callee, inline, holder))) = self.intrinsics.get(pc) else { return false };
+        // An element search scans for an int32 word (`element_search`): a search value not proved
+        // int32 takes the call's generic path, which compares it by the array's own steps.
+        if let Inline::Builtin(Builtin::Includes | Builtin::IndexOf) = inline
+            && !state.values[usize::from(crate::bytecode::ImmediateLayout::call_window_base(instruction.imm()))].value.ty.is_subtype(Type::INT32) { return false; }
         // The callee's identity is held by its holder, a dependency that retires this code
         // before the function can die and its id be reused.
         if !self.holds_holders() { return false; }

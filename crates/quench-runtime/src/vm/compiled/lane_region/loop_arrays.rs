@@ -65,7 +65,8 @@ fn array_source(unit: &super::super::lane_unit::Unit, leaders: &CompoundBitSet, 
 /// loop around another proves too is proved there alone: its view is proved once for the whole nest,
 /// where the base is invariant (`loops` hold only native operations, which cannot change a view).
 /// The receiver of an append (`push`) is a writable view too, where the region's arrays are dense:
-/// the append stores within the view's room (`Lowering::hoisted_push`).
+/// the append stores within the view's room (`Lowering::hoisted_push`). A search's receiver
+/// (`includes`, `indexOf`) is a read-only view, scanned in place (`Lowering::element_search`).
 pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &CompoundBitSet,
     captured: impl Fn(usize, usize) -> bool, views: ElementViews, typed_captures: &[u16],
     intrinsics: &super::native_calls::Intrinsics, lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {
@@ -79,6 +80,7 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
                 _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => (instruction.operand_b().register_index(), false),
                 _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementWrite { .. })) => (Some(instruction.register_b()), true),
                 _ if super::native_calls::appends(intrinsics, pc) => (Some(instruction.register_c()), true),
+                _ if super::native_calls::searches(intrinsics, pc) => (Some(instruction.register_c()), false),
                 _ => continue,
             };
             let Some(source) = base.and_then(|base| array_source(unit, leaders, &written, |at| captured(header, at),
@@ -88,6 +90,8 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             if views == ElementViews::Double && matches!(source, ArraySource::Capture(_)) { continue; }
             // An append's array is a dense register's: the view of any other kind leaves the append to its helper.
             if super::native_calls::appends(intrinsics, pc) && (views != ElementViews::Dense || matches!(source, ArraySource::Capture(_))) { continue; }
+            // A search's array is a dense register's too: its scan reads the words a dense view holds.
+            if super::native_calls::searches(intrinsics, pc) && (views != ElementViews::Dense || matches!(source, ArraySource::Capture(_))) { continue; }
             match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.source == source) {
                 Some(array) => array.writable |= stores,
                 None => {

@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::bytecode::ImmediateLayout;
+use crate::staged::region::Region;
 use crate::staged::{Domain, builtins, elements, strings};
 use crate::vm::Native;
 
@@ -22,6 +23,10 @@ pub(super) enum Builtin {
     Pop,
     /// `Number.isInteger` of a Number.
     IsInteger,
+    /// `Array.prototype.includes` of one int32 over a dense array (`element_search`).
+    Includes,
+    /// `Array.prototype.indexOf` of one int32 over a dense array (`element_search`).
+    IndexOf,
 }
 
 impl Builtin {
@@ -33,13 +38,15 @@ impl Builtin {
             Native::ArrayPush => Self::Push,
             Native::ArrayPop => Self::Pop,
             Native::NumberIsInteger => Self::IsInteger,
+            Native::ArrayIncludes => Self::Includes,
+            Native::ArrayIndexOf => Self::IndexOf,
             _ => return None,
         })
     }
 
     /// The arguments the builtin reads; a call passing another count takes the native.
     pub(super) const fn arguments(self) -> u16 {
-        match self { Self::Pop => 0, Self::CharCodeAt | Self::CharAt | Self::Push | Self::IsInteger => 1 }
+        match self { Self::Pop => 0, Self::CharCodeAt | Self::CharAt | Self::Push | Self::IsInteger | Self::Includes | Self::IndexOf => 1 }
     }
 
     /// Whether the builtin changes an array's elements.
@@ -82,6 +89,16 @@ impl Lowering<'_, '_> {
                 let integral = builtins::is_integral(&mut stage, Domain::Float64, number);
                 let boolean = self.boolean(integral);
                 self.set_boolean(state, result, boolean);
+            }
+            Builtin::Includes => {
+                let position = self.element_search(state, pc, receiver, argument, exit);
+                let found = self.raw_compare_imm(Relation::NotEqual, position, -1);
+                let boolean = self.boolean(found);
+                self.set_boolean(state, result, boolean);
+            }
+            Builtin::IndexOf => {
+                let position = self.element_search(state, pc, receiver, argument, exit);
+                self.set_int(state, result, position);
             }
         }
     }
@@ -164,6 +181,86 @@ impl Lowering<'_, '_> {
         self.builder.seal_block(done);
         let variables = self.array_variables(array);
         self.builder.use_var(variables.length)
+    }
+
+    /// The position of the first element of the dense array in `receiver` equal to the int32 in
+    /// `argument`, as an int32, or -1. Strict equality and SameValueZero agree on a non-NaN
+    /// search, so `includes` and `indexOf` share the scan. The scan reads the array's view (the
+    /// loop's hoisted one, else proved here) and changes nothing, so it leaves at `exit`, before
+    /// any result is defined, for a receiver the view does not prove, an empty view (an encoded
+    /// backing reads as empty), and a hole: a prototype may hold the hole's index, which the
+    /// generic algorithm reads.
+    fn element_search(&mut self, state: &mut State, pc: usize, receiver: Register, argument: Register, exit: ir::Block) -> ir::Value {
+        let (values, length) = match self.loop_array(pc, Some(receiver)).filter(|hoisted| hoisted.views == ElementViews::Dense) {
+            Some(hoisted) => self.hoisted_view(hoisted),
+            None => {
+                let base = self.tagged(state, receiver);
+                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, exit);
+                (view.values, view.length)
+            }
+        };
+        let populated = self.raw_compare_imm(Relation::NotEqual, length, 0);
+        emit_js_guard(&mut self.builder, populated, exit);
+        let int = self.int(state, argument, exit);
+        let key = self.tagged(state, argument);
+        let search = self.raw_unary(Unary::FromSigned(Lane::F64), int);
+        let (header, body, next, found, missing, done) = (self.builder.create_block(), self.builder.create_block(),
+            self.builder.create_block(), self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        self.builder.append_block_param(header, ir::types::I64);
+        self.builder.append_block_param(found, ir::types::I64);
+        self.builder.append_block_param(done, ir::types::I32);
+        // The scan walks the backing's words from its first to its end, one 8-byte element a step.
+        let end = {
+            let length = self.raw_unary(Unary::ZeroExtend(Lane::I64), length);
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let bytes = stage.mul_imm(length, size_of::<crate::Value>() as u64);
+            stage.add(values, bytes)
+        };
+        self.goto(header, &[values]);
+        self.builder.switch_to_block(header);
+        let cursor = self.builder.block_params(header)[0];
+        let at_end = self.raw_compare(Relation::Equal, cursor, end);
+        self.branch_if(at_end, (missing, &[]), (body, &[]));
+        self.builder.switch_to_block(body);
+        self.builder.seal_block(body);
+        let word = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            stage.load_u64(Region::Elements.mutable(), cursor, 0)
+        };
+        let present = self.raw_compare_imm(Relation::NotEqual, word, crate::Value::DELETED.to_bits() as i64);
+        emit_js_guard(&mut self.builder, present, exit);
+        // A word equal to the int's tagged word, or a double word of its value: any other word
+        // is a NaN-space tag or a NaN, which no Number compares equal to.
+        let same = self.raw_compare(Relation::Equal, word, key);
+        let number = self.raw_unary(Unary::Bitcast(Lane::F64), word);
+        let equal = self.raw_compare(Relation::FloatEqual, number, search);
+        let hit = self.raw_binary(Binary::Or, same, equal);
+        self.branch_if(hit, (found, &[cursor]), (next, &[]));
+        self.builder.switch_to_block(next);
+        self.builder.seal_block(next);
+        let advanced = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            stage.add_imm(cursor, size_of::<crate::Value>() as u64)
+        };
+        self.goto(header, &[advanced]);
+        self.builder.seal_block(header);
+        self.builder.switch_to_block(found);
+        self.builder.seal_block(found);
+        let at = self.builder.block_params(found)[0];
+        let position = {
+            let offset = self.raw_binary(Binary::Sub, at, values);
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let index = stage.shr_imm(offset, size_of::<crate::Value>().trailing_zeros());
+            self.raw_unary(Unary::Narrow(Lane::I32), index)
+        };
+        self.goto(done, &[position]);
+        self.builder.switch_to_block(missing);
+        self.builder.seal_block(missing);
+        let none = self.raw_const(Lane::I32, -1);
+        self.goto(done, &[none]);
+        self.builder.switch_to_block(done);
+        self.builder.seal_block(done);
+        self.builder.block_params(done)[0]
     }
 
     /// `pop` of the array in `receiver`: its last element, which the backing no longer holds,

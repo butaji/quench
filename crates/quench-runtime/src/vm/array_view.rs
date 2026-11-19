@@ -92,7 +92,8 @@ impl<H: Host> Vm<H> {
                 break;
             };
             let index = range.start + offset;
-            if let Some(settled) = self.settle_search_stop(array, index, slice[offset].is_deleted(), search, mode) {
+            let hole = elements.get(index).is_some_and(Value::is_deleted);
+            if let Some(settled) = self.settle_search_stop(array, index, hole, search, mode) {
                 return settled;
             }
             range = if reverse { range.start..index } else { index + 1..range.end };
