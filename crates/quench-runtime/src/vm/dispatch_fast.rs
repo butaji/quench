@@ -18068,10 +18068,9 @@ script_handler! {
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)
             .expect("a lane body entry runs in its view");
         // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
-        // The activation just pushed is this entry's: its caller runs this function's records
+        // The activation just pushed is this entry's: its callers run this function's records
         // where it is a recursive call.
-        let recursive = vm.lane_stack.activations().last().is_some_and(|activation| activation.caller_base() == base);
-        if own.audit_entry(true, recursive) {
+        if own.audit_entry(true, || lane_reentered(vm, base, 0)) {
             next!(cx, r, base, Carried::script_in(cx, view))
         }
         // A body a lifecycle edge retired gives its prologue back and warms again.
@@ -18098,6 +18097,14 @@ script_handler! {
         drop(method);
         resume!(cx, resumed)
     }
+}
+
+/// Whether an activation of the function whose records start at `records` calls the newest
+/// activation, within `RECURSION_DEPTH` calls of it less `nearer` (those the caller already
+/// looked at): each activation's caller base is its caller's records.
+fn lane_reentered<H: Host>(vm: &Vm<H>, records: Ip, nearer: usize) -> bool {
+    use super::compiled::tier_policy::RECURSION_DEPTH;
+    vm.lane_stack.activations().iter().rev().take(RECURSION_DEPTH - nearer).any(|activation| activation.caller_base() == records)
 }
 
 /// The receiver word a body is entered with: the running activation's `this` where the
@@ -18948,7 +18955,7 @@ fn lane_enter_cell_body<H: Host>(
     // Most entries of a published body come through its cell: one of the audit's interpreted
     // epoch activates the call as the lane's own would (`lane_body_audit`).
     // SAFETY: the running context; its records are the caller's.
-    if own.audit_entry(false, unsafe { (*cx).base } == own.records()) {
+    if own.audit_entry(false, || unsafe { (*cx).base } == own.records() || lane_reentered(vm, own.records(), 1)) {
         return None;
     }
     let window = lane_fill_window(vm, target, passed, argc);

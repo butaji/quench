@@ -83,9 +83,7 @@ pub(super) fn entry_repays(tiers: &Tiers, unit: &lane_unit::Unit, function: u32,
     closes_loop(&unit.instructions) || calls_itself(direct, function) || straight_line_repays(&tiers.priors, unit.instructions.len())
 }
 
-/// The call depth `recursion_cycle` follows: a cycle through more functions than this is weighed as
-/// straight-line code.
-const RECURSION_DEPTH: usize = 4;
+use tier_policy::RECURSION_DEPTH;
 
 /// The functions that call `function` back through the targets their call sites linked
 /// (`targets`), each within `RECURSION_DEPTH` calls of it: `function` itself where it recurses

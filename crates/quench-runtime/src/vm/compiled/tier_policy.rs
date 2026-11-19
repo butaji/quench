@@ -729,6 +729,11 @@ mod tests {
     }
 }
 
+/// The call depth a recursion is followed to: `lane_facts::recursion_cycle` weighs a cycle through
+/// more functions than this as straight-line code, and the audit counts an entry made within this
+/// many activations of another of its function as a recursive one (`LaneView::audit_entry`).
+pub(in crate::vm) const RECURSION_DEPTH: usize = 4;
+
 /// The uncounted entries other bodies make while one body's audit runs, after which that audit,
 /// if its body is no longer entered, gives way (`lane_body_audit`): a few audit epochs' worth.
 pub(in crate::vm) const AUDIT_LEASE_ENTRIES: u32 = 1 << 16;
