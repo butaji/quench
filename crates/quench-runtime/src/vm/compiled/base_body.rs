@@ -8,7 +8,7 @@
 use super::*;
 use super::base_region::callees::{Callees, InlineBody};
 use super::base_region::function::{build_body, Body, BodySpec, ClassProto};
-use super::base_region::{Known, RealmProof};
+use super::base_region::{Known, RealmProof, SymbolSite};
 use super::lane_facts::bind_callees;
 use crate::code_dependencies::{InstanceofFact, Invalidation};
 use crate::vm::global_facts::GlobalTable;
@@ -166,7 +166,7 @@ impl<H: Host> Vm<H> {
             shapes: &[],
         };
         let speculated = widened(generic);
-        let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: &seen, kinds: &[] };
+        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &speculated, seen: &seen, kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers::<H>()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (&code, invalidation), caller)
@@ -218,6 +218,35 @@ impl<H: Host> Vm<H> {
         let slot = self.shape_slot(data.shape(), atom)?;
         self.heap.property_get(data, slot).map(|value| value.to_bits())
     }
+}
+
+/// A function's base body built for an AOT image (`aot_image::base`): no profile, no callee and no folded
+/// fact, so the only run-time addresses it names are its helpers', as symbols (`LaneHelpers::Ahead`).
+pub(in crate::vm) struct ImageBody {
+    pub(in crate::vm) code: Vec<u8>,
+    pub(in crate::vm) symbols: Box<[SymbolSite]>,
+    /// The code offset of each PC's first row, ascending by PC (`Body::entries`).
+    pub(in crate::vm) entries: Box<[(u32, usize)]>,
+    /// The PCs that take the generic row (`Body::generic`).
+    pub(in crate::vm) generic: Box<[u32]>,
+}
+
+/// The base body of `function` for an AOT image, over the program alone.
+pub(in crate::vm) fn image_body(program: &ResidualProgram, function: u32) -> Result<ImageBody, String> {
+    let body = program.function_get(function as usize).ok_or("no such function")?;
+    let code: Vec<WideInstruction> = body.instructions().collect();
+    if !super::base_region::covers(&code) {
+        return Err("a wasm instruction has no base row".into());
+    }
+    let region = LoopRegion::of_function(code, &[], program.shared_register_root_masks(function)).ok_or("no loop region")?;
+    let known = Known {
+        program, stitch: &super::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None,
+        invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: None, classes: &[], shapes: &[],
+    };
+    let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[] };
+    // SAFETY: no call site records a callee, so no entry cell is named.
+    let built = unsafe { build_body(&region, &spec, &Callees::default(), LaneHelpers::Ahead) }?;
+    Ok(ImageBody { code: built.code, symbols: built.symbols, entries: built.entries, generic: built.generic })
 }
 
 #[cfg(test)]

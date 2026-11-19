@@ -284,7 +284,7 @@ impl Planned {
     /// The row of a chain part, its exits and no rows of its own; a part's successor is a part of
     /// the chain it belongs to.
     fn of_part(part: CallPart) -> Self {
-        Self { branch: part.taken.map(Branch::Part), exits: part.exits, ..Self::single(part.stencil, part.holes, None, None) }
+        Self { branch: part.taken.map(Branch::Part), exits: part.exits, symbolic: part.symbol, ..Self::single(part.stencil, part.holes, None, None) }
     }
 }
 
@@ -304,7 +304,7 @@ fn chained(parts: Vec<CallPart>, spills: usize, owned: Vec<Box<quench_bjit::call
 /// the activation or the call's chain.
 pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
     match decoded.step.ok_or("plan_step: no step")? {
-        Step::Leave => leave(pc),
+        Step::Leave => generic_row(pc).map_or_else(|| leave(pc), Ok),
         Step::Helper => plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers)),
         Step::CallOut => plan_helper(layout, pc, decoded, (LaneHelper::VmStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
@@ -339,6 +339,13 @@ fn plan_guarded(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, chain: 
 /// The row that ends the region at row `pc`, where the interpreter runs the instruction.
 pub(super) fn leave(pc: u32) -> Result<Planned, String> {
     Ok(Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, Some(pc)))
+}
+
+/// The generic semantic row of record `pc`, which has no stencil row of its own: none yet, so the
+/// record leaves to the interpreter (`leave`). The generic row replaces this seam, and each record
+/// that takes it is listed in the image's `generic` table (`Body::generic`).
+fn generic_row(_pc: u32) -> Option<Planned> {
+    None
 }
 
 /// The chain of `helper` at row `pc`, which names the caller's record it makes: the spills, the helper row and the `reloads` after it. The step helper answers
