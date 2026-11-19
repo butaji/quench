@@ -235,11 +235,9 @@ fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
         matches!(Operation::<u64, ()>::of(code[*pc]), Some(Operation::Return { .. })) && code[*pc].result_flags() == 0)
 }
 
-/// Whether the staged decode makes `instruction` a throw of its first operand (`Throw`, the owned
-/// variable step `ThrowValue`).
+/// Whether the staged decode makes `instruction` a throw of its first operand (`Throw`).
 fn throws(instruction: WideInstruction) -> bool {
-    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Protocol {
-        step: crate::staged::Protocol::Owned(crate::staged::protocol_owned::OwnedVarStep::ThrowValue), .. }))
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Throw { .. }))
 }
 
 /// Whether an inlined callee's `instruction` renames to the unit's registers

@@ -18,8 +18,6 @@ pub(crate) enum OwnedVarStep {
     InitializeTdz { slot: usize },
     /// The element of the `arguments` binding of local `slot` at the second operand's key (`ArgumentGet`).
     ArgumentGet { slot: usize },
-    /// Throw the first operand, the thrown register (`Throw`); defines nothing.
-    ThrowValue,
 }
 
 /// The step `instruction` denotes among these opcodes, with the register it defines and its (at
@@ -51,7 +49,6 @@ pub(super) fn decode(instruction: WideInstruction) -> Option<(Protocol, Option<R
             Some(instruction.result_register()),
             [None, Some(instruction.register_b())],
         ),
-        Op::Throw => (OwnedVarStep::ThrowValue, None, [Some(instruction.register_a()), None]),
         _ => return None,
     };
     Some((Protocol::Owned(step), destination, operands))

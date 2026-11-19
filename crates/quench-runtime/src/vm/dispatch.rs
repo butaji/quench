@@ -570,7 +570,6 @@ impl<H: Host> Vm<H> {
         allow_inline_calls: bool,
     ) -> Result<StepResult, JsError> {
         match i.op() {
-            Op::Nop => {}
             Op::CloneEnv => {
                 let clones = &p.function(self.frames[f].function as usize).environment_clones;
                 let plan = &clones[i.environment_clone_index()];
@@ -1639,7 +1638,8 @@ impl<H: Host> Vm<H> {
         // on the running frame (`InterpreterFrame`). A jump on a heap value's truthiness is the
         // VM's, which runs no guest code; any other row that leaves is unreachable on validated bytecode.
         if let Some(operation @ (crate::staged::Operation::Move { .. } | crate::staged::Operation::LoadLocalPlain { .. }
-            | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. })) =
+            | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. }
+            | crate::staged::Operation::Nop)) =
             crate::staged::Operation::<u64, ()>::of(i)
         {
             match self.run_row(p, f, i, pc, operation) {
