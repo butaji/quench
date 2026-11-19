@@ -74,14 +74,14 @@ const MAX_ALIAS_DEPTH: u8 = 8;
 fn languages(ty: &TSType<'_>, names: &TypeNames<'_>, depth: u8) -> u16 {
     use crate::ValueType as V;
     match ty {
-        TSType::TSNumberKeyword(_) => language(V::Number),
-        TSType::TSStringKeyword(_) | TSType::TSTemplateLiteralType(_) => language(V::String),
-        TSType::TSBooleanKeyword(_) => language(V::Boolean),
-        TSType::TSBigIntKeyword(_) => language(V::BigInt),
-        TSType::TSSymbolKeyword(_) => language(V::Symbol),
-        TSType::TSUndefinedKeyword(_) | TSType::TSVoidKeyword(_) => language(V::Undefined),
-        TSType::TSNullKeyword(_) => language(V::Null),
-        TSType::TSObjectKeyword(_) => language(V::Object) | language(V::Function),
+        TSType::TSNumberKeyword(_) => language_bit(V::Number),
+        TSType::TSStringKeyword(_) | TSType::TSTemplateLiteralType(_) => language_bit(V::String),
+        TSType::TSBooleanKeyword(_) => language_bit(V::Boolean),
+        TSType::TSBigIntKeyword(_) => language_bit(V::BigInt),
+        TSType::TSSymbolKeyword(_) => language_bit(V::Symbol),
+        TSType::TSUndefinedKeyword(_) | TSType::TSVoidKeyword(_) => language_bit(V::Undefined),
+        TSType::TSNullKeyword(_) => language_bit(V::Null),
+        TSType::TSObjectKeyword(_) => language_bit(V::Object) | language_bit(V::Function),
         TSType::TSArrayType(_) | TSType::TSTupleType(_) => bits::ARRAY,
         TSType::TSTypeReference(reference) => match &reference.type_name {
             TSTypeName::IdentifierReference(name) if matches!(name.name.as_str(), "Array" | "ReadonlyArray") => bits::ARRAY,
@@ -93,7 +93,7 @@ fn languages(ty: &TSType<'_>, names: &TypeNames<'_>, depth: u8) -> u16 {
         // admits functions, and an empty literal admits every primitive: neither names the plain set.
         TSType::TSTypeLiteral(literal) if !literal.members.is_empty() && literal.members.iter().all(|member|
             !matches!(member, TSSignature::TSCallSignatureDeclaration(_) | TSSignature::TSConstructSignatureDeclaration(_))) => bits::OBJECT_PLAIN,
-        TSType::TSFunctionType(_) | TSType::TSConstructorType(_) => language(V::Function),
+        TSType::TSFunctionType(_) | TSType::TSConstructorType(_) => language_bit(V::Function),
         TSType::TSLiteralType(literal) => match &literal.literal {
             TSLiteral::NumericLiteral(_) => language_bit(V::Number),
             TSLiteral::StringLiteral(_) | TSLiteral::TemplateLiteral(_) => language_bit(V::String),

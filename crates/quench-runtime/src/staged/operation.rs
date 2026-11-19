@@ -47,6 +47,21 @@ pub(crate) enum Operation<W, P> {
     Allocate { destination: Register, allocation: Allocation, proof: P },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
     Safepoint { proof: P },
+    /// Continue where the word `source` holds exactly `expected`, bit for bit (`guard::identity`).
+    #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
+    GuardIdentity { source: W, expected: u64 },
+    /// Continue where the code's invalidation word is zero (`guard::live`, `Frame::invalidation`).
+    #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
+    GuardLive,
+    /// Continue where the active realm's global object word is `expected` (`guard::realm`).
+    #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
+    GuardRealm { expected: u64 },
+    /// Continue where the language bits the tag of `source` decides meet `mask` (`guard::declared`).
+    #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
+    GuardDeclared { source: W, mask: u64 },
+    /// A taken backward edge: poll under `proof`, then count it (`guard::back_edge`).
+    #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
+    BackEdge { proof: P },
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
     /// miss edge takes a failed store.
     IndexSetHelper { base: W, key: W, value: W, proof: P },
@@ -227,6 +242,14 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_a(), taken: true },
             _ => Self::Return { source: instruction.register_a() },
         })
+    }
+
+    /// The destination and constant index of an instruction `decode_flow` reads as `LoadConst`,
+    /// for a tier that holds its constants in a table of its own (the b-jit's Numbers): the
+    /// same decode, with the constant left for the tier to look up.
+    #[inline(always)]
+    pub(crate) fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
+        (instruction.op() == Op::LoadConst).then(|| (instruction.result_register(), instruction.constant_index()))
     }
 
     /// The call operations of `decode`: a call or construction through its forms (`Invocation`),

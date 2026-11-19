@@ -249,7 +249,7 @@ fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &
     frame.pc = pc;
     frame.pc_is_resume = true;
     frame.with_objects = vm.with_stack.split_off(frame.with_base);
-    let depth = vm.lane_stack.activation_count() - 1;
+    let depth = vm.lane_stack.activations().len() - 1;
     vm.lane_stack.take_iterators(depth, &mut frame.active_iterators);
     vm.persist_global_lexical_bindings(code, &frame);
     frame

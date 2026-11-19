@@ -13,6 +13,7 @@ use crate::codes::*;
 use crate::heap_rows::{payload, word_at};
 use crate::layout::{JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_RECEIVER};
 use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, value};
+use crate::typed_ir::Representation;
 use crate::words::*;
 
 pub(crate) const DEST: Register = 0;
@@ -296,8 +297,8 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     /// A program constant as its tagged word (`Constant::value`, the runtime's `Value` bits): the staged rows read
     /// `void`'s `undefined` this way, where a Number row's constants are its places.
     #[inline(always)]
-    fn constant(&mut self, _stage: &mut Concrete, constant: Constant) -> (u64, Rep) {
-        (constant.value.to_bits(), Rep::Tagged)
+    fn constant(&mut self, _stage: &mut Concrete, constant: Constant) -> (u64, Representation) {
+        (constant.value.to_bits(), Representation::Tagged)
     }
     #[inline(always)]
     fn truthiness(&mut self, _stage: &mut Concrete, register: Register) -> Option<bool> {
@@ -314,26 +315,26 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     fn direct_array(&mut self, stage: &mut Concrete, source: Register) -> Option<()> { self.heap_direct_array(stage, source) }
 
     #[inline(always)]
-    fn array_length(&mut self, stage: &mut Concrete, source: Register) -> Option<(u64, Rep)> { self.heap_array_length(stage, source) }
+    fn array_length(&mut self, stage: &mut Concrete, source: Register) -> Option<(u64, Representation)> { self.heap_array_length(stage, source) }
 
     #[inline(always)]
-    fn typed_length(&mut self, stage: &mut Concrete, source: Register) -> Option<(u64, Rep)> { self.heap_typed_length(stage, source) }
+    fn typed_length(&mut self, stage: &mut Concrete, source: Register) -> Option<(u64, Representation)> { self.heap_typed_length(stage, source) }
 
     #[inline(always)]
     fn array_append(&mut self, stage: &mut Concrete, array: Register, value: u64) -> Option<()> { self.heap_array_append(stage, array, value) }
 
     /// ForInNext's fast arm (`places_names`).
     #[inline(always)]
-    fn vm_step(&mut self, stage: &mut Concrete, operation: crate::staged::CallOut, _result: Option<Register>) -> Option<(u64, Rep)> {
+    fn vm_step(&mut self, stage: &mut Concrete, operation: crate::staged::CallOut, _result: Option<Register>) -> Option<(u64, Representation)> {
         self.call_out_fast(stage, operation)
     }
 
     /// The typeof string table at hole 2 (`places_names`).
     #[inline(always)]
-    fn typeof_string(&mut self, stage: &mut Concrete, name: u64) -> Option<(u64, Rep)> { self.typeof_entry(stage, name) }
+    fn typeof_string(&mut self, stage: &mut Concrete, name: u64) -> Option<(u64, Representation)> { self.typeof_entry(stage, name) }
 
     #[inline(always)]
-    fn capture_slot(&mut self, stage: &mut Concrete, depth: u16, slot: u16, root: bool) -> Option<(u64, Rep)> {
+    fn capture_slot(&mut self, stage: &mut Concrete, depth: u16, slot: u16, root: bool) -> Option<(u64, Representation)> {
         self.capture_read(stage, depth, slot, root)
     }
 
@@ -343,7 +344,7 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     }
 
     #[inline(always)]
-    fn environment(&mut self, _stage: &mut Concrete) -> Option<(u64, Rep)> { self.environment_storage() }
+    fn environment(&mut self, _stage: &mut Concrete) -> Option<(u64, Representation)> { self.environment_storage() }
 
     #[inline(always)]
     fn environment_write(&mut self, stage: &mut Concrete, slot: u16, value: u64, initialize: bool) -> Option<()> {
@@ -354,6 +355,19 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     #[inline(always)]
     fn safepoint(&mut self, _stage: &mut Concrete, _proof: ()) -> Option<()> {
         (!crate::numeric::interrupted(&self.s)).then_some(())
+    }
+    #[inline(always)]
+    fn invalidation(&mut self, _stage: &mut Concrete) -> Option<u64> {
+        Some(crate::places_guard::invalidation(&self.s))
+    }
+    #[inline(always)]
+    fn realm_globals(&mut self, _stage: &mut Concrete) -> Option<u64> {
+        Some(crate::places_guard::realm_globals(&self.s))
+    }
+    #[inline(always)]
+    fn count_edge(&mut self, _stage: &mut Concrete) -> Option<()> {
+        crate::places_guard::count_edge(&self.s);
+        Some(())
     }
     #[inline(always)]
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Representation) {

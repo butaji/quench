@@ -25,10 +25,29 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. } | Operation::ArgumentGet { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. }
-            | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } | Operation::CloneEnv { .. }
-            | Operation::IteratorCleanupPush { .. } | Operation::IteratorCleanupPop | Operation::SetFunctionName { .. }
-            => super::names::step(stage, frame, operation),
+            | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } => super::names::step(stage, frame, operation),
+        guard @ (Operation::GuardIdentity { .. } | Operation::GuardLive | Operation::GuardRealm { .. } | Operation::GuardDeclared { .. }
+            | Operation::BackEdge { .. }) => guard_step(stage, frame, guard),
         value => value_step(stage, frame, value),
+    }
+}
+
+/// A tier guard, or a taken back edge's poll and count (`step`): `Step::Value` where the proof holds,
+/// `Step::Unresolved` where the row leaves.
+#[inline(always)]
+fn guard_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let held = match operation {
+        Operation::GuardIdentity { source, expected } => super::guard::identity(stage, source, expected, miss),
+        Operation::GuardLive => super::guard::live(stage, frame, miss),
+        Operation::GuardRealm { expected } => super::guard::realm(stage, frame, expected, miss),
+        Operation::GuardDeclared { source, mask } => super::guard::declared(stage, source, mask, miss),
+        Operation::BackEdge { proof } => super::guard::back_edge(stage, frame, proof),
+        _ => unreachable!("`guard_step` sends only guards and back edges"),
+    };
+    match held {
+        Some(()) => Step::Value(stage.constant(0)),
+        None => Step::Unresolved,
     }
 }
 

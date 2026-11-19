@@ -259,15 +259,10 @@ pub(super) fn relation_jump(numbers: Numbers, instruction: WideInstruction, comp
     Ok(Decoded::number(kind, None, Some(source(numbers, left)?), Some(source(numbers, right)?), Some(instruction.jump_target())))
 }
 
-pub(super) fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
-    let decrement = instruction.boolean_flag().ok_or("IncDec")?;
-    Ok(Decoded::number(
-        if decrement { Kind::Sub } else { Kind::Add },
-        Some(instruction.result_register()),
-        Some(Source::Register(instruction.register_b())),
-        Some(Source::Constant(Value::integer(1).to_bits())),
-        None,
-    ))
+pub(super) fn load_const(numbers: Numbers, destination: Register, index: usize) -> Result<Decoded, String> {
+    let number = numbers(index).ok_or_else(|| "LoadConst: not a Number".to_string())?;
+    let word = Source::Constant(Value::number(number).to_bits());
+    Ok(Decoded::number(Kind::Move, Some(destination), Some(word), None, None))
 }
 
 /// Whether `instruction` stores to a depth-0 capture and nothing else (`general_capture::lower_capture`'s
@@ -357,19 +352,13 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32,
 /// The heap instructions that name a field or a global: a recorded or cached field read or store, a
 /// membership test, and a global name's access (`globals`).
 fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
-    use crate::staged::Operation;
-    match crate::vm::compiled::decoded(instruction) {
-        Some(Operation::GetField { .. }) if !instruction.returns_from_frame() && !instruction.writes_current_this() =>
-            return field_row(region, facts, known, pc, instruction),
-        Some(Operation::SetField { .. }) => return field_store_row(known, instruction),
-        _ => {}
-    }
-    if super::super::meaning_compiled::is_binary(instruction) {
-        membership_row(known, pc, instruction, instruction.result_register())
-    } else if instruction.op().traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS) {
-        global_row(known, pc, instruction)
-    } else {
-        None
+    match staged_of(instruction) {
+        Some(Operation::GetField { .. }) if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
+        // derivation debt: no staged::Operation for a Binary with a Number constant operand (`Operation::Binary` takes registers only)
+        _ if instruction.op().class() == Class::Binary => membership_row(known, pc, instruction, instruction.result_register()),
+        _ if instruction.op().traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS) => global_row(known, pc, instruction),
+        _ if instruction.op().is_field_store() => field_store_row(known, instruction),
+        _ => None,
     }
 }
 
@@ -410,10 +399,9 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
     use crate::staged::{NumberOperation, Operation};
     let copy = || Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Register(instruction.register_b())), None, None);
     let plain = instruction.result_flags() == 0;
-    let number = |index: usize| numbers(index).map(|number| Constant::untyped(Value::number(number)));
-    let context = DecodeContext { constant_at: Some(&number), ..DecodeContext::EMPTY };
-    Some(match Operation::<(), ()>::decode(instruction, context) {
-        Some(Operation::Move { .. }) => plain.then(copy),
+    // The moves and jumps by the staged operation the instruction denotes (`Operation::decode`).
+    match Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::EMPTY) {
+        Some(Operation::Move { .. }) => return Some(plain.then(copy)),
         // A Number operand is its own numeric value: the loop's entry guards and its own rows prove
         // it, and a function's row proves it itself (`checked`).
         Some(Operation::Number(NumberOperation::ToNumeric { .. })) => return Some(plain.then(|| Decoded { checked: true, ..copy() })),
@@ -438,16 +426,16 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
     if let Some((destination, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
         return Some(load_const(numbers, destination, index).ok().filter(|_| plain));
     }
-    if !super::super::meaning_compiled::is_binary_arithmetic(instruction) {
-        return None;
-    }
-    Some(binary(numbers, instruction).ok().filter(|_| plain))
+    Some(match instruction.op().class() {
+        Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
+        _ => return None,
+    })
 }
 
-/// A jump on a register's truthiness: taken where it is truthy (`JumpTrue`) or falsy.
-fn truthiness_jump(instruction: WideInstruction) -> Decoded {
-    let kind = if matches!(staged_of(instruction), Some(Operation::JumpIf { taken: true, .. })) { Kind::JumpTrue } else { Kind::JumpFalse };
-    Decoded::number(kind, None, Some(Source::Register(instruction.register_a())), None, Some(instruction.jump_target()))
+/// A jump on `register`'s truthiness: taken where it is truthy (`taken`, `JumpTrue`) or falsy.
+fn truthiness_jump(instruction: WideInstruction, register: crate::bytecode::Register, taken: bool) -> Decoded {
+    let kind = if taken { Kind::JumpTrue } else { Kind::JumpFalse };
+    Decoded::number(kind, None, Some(Source::Register(register)), None, Some(instruction.jump_target()))
 }
 
 /// The row of a Number unary over a register: `-` the negation of a Number, `+` a Number as it

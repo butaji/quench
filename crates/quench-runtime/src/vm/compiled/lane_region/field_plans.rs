@@ -6,7 +6,7 @@
 use super::*;
 use super::super::object_slots::{field_load_groups, NativeFieldLoad};
 use crate::staged::ic::IcOp;
-use crate::staged::property::{Arm, FieldPlan, PlanSource, StorePlan};
+use crate::staged::property::{Arm, FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use crate::staged::Form;
 use crate::typed_ir::Representation;
 
@@ -128,7 +128,8 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<
 /// prototype constant is its own plan.
 fn single_plan<'a>(load: &NativeFieldLoad, ops: &'a [IcOp<'a>], pairs: &'a [(u32, u64)]) -> FieldPlan<'a> {
     match load.holder {
-        Some(holder) if !pairs.is_empty() => FieldPlan::Inherited { shape: load.shape, holder, constants: pairs },
+        Some(holder) if !pairs.is_empty() => FieldPlan::Inherited { shape: load.shape, constants: pairs,
+            proof: PrototypeProof::Watched { holder } },
         _ => FieldPlan::Ops(ops),
     }
 }

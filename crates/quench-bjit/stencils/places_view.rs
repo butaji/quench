@@ -18,7 +18,8 @@ use crate::codes::MEM;
 use crate::heap_rows::{stage_site, word_at};
 use crate::layout::{JS_STEP_LOOP_ENTRY, LOOP_ENTRY_ARRAY_COUNT_AT, TypedArrayKind};
 use crate::numeric::{Out, S, deliver};
-use crate::places::{DEST, LEFT, Places, RIGHT, Rep};
+use crate::typed_ir::Representation;
+use crate::places::{DEST, LEFT, Places, RIGHT};
 use crate::stage::StencilStage;
 use crate::staged::element_rows::ElementView;
 use crate::staged::elements::DenseView;
@@ -42,11 +43,11 @@ pub(crate) struct PlacesView<'a, const D: u8, const A: u8, const B: u8> {
 }
 
 impl<'a, const D: u8, const A: u8, const B: u8> Frame<Concrete> for PlacesView<'a, D, A, B> {
-    type Fact = Rep;
+    type Fact = Representation;
     type Control = ();
 
     #[inline(always)]
-    fn fact(&self, register: Register) -> Rep { self.places.fact(register) }
+    fn fact(&self, register: Register) -> Representation { self.places.fact(register) }
 
     #[inline(always)]
     fn read(&mut self, stage: &mut Concrete, register: Register) -> u64 { self.places.read(stage, register) }
@@ -58,7 +59,7 @@ impl<'a, const D: u8, const A: u8, const B: u8> Frame<Concrete> for PlacesView<'
     }
 
     #[inline(always)]
-    fn write(&mut self, stage: &mut Concrete, register: Register, value: u64, fact: Rep) {
+    fn write(&mut self, stage: &mut Concrete, register: Register, value: u64, fact: Representation) {
         self.places.write(stage, register, value, fact)
     }
 
@@ -71,7 +72,7 @@ impl<'a, const D: u8, const A: u8, const B: u8> Frame<Concrete> for PlacesView<'
     }
 
     #[inline(always)]
-    fn constant(&mut self, stage: &mut Concrete, constant: Constant) -> (u64, Rep) { self.places.constant(stage, constant) }
+    fn constant(&mut self, stage: &mut Concrete, constant: Constant) -> (u64, Representation) { self.places.constant(stage, constant) }
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> { self.places.truthiness(stage, register) }
@@ -83,10 +84,10 @@ impl<'a, const D: u8, const A: u8, const B: u8> Frame<Concrete> for PlacesView<'
     fn jump(&mut self, stage: &mut Concrete) { self.places.jump(stage) }
 
     #[inline(always)]
-    fn boolean(&mut self, stage: &mut Concrete, condition: bool) -> (u64, Rep) { self.places.boolean(stage, condition) }
+    fn boolean(&mut self, stage: &mut Concrete, condition: bool) -> (u64, Representation) { self.places.boolean(stage, condition) }
 
     #[inline(always)]
-    fn load_local(&mut self, stage: &mut Concrete, slot: u16, miss: Option<()>) -> Option<(u64, Rep)> {
+    fn load_local(&mut self, stage: &mut Concrete, slot: u16, miss: Option<()>) -> Option<(u64, Representation)> {
         self.places.load_local(stage, slot, miss)
     }
 
@@ -124,10 +125,10 @@ impl<'a, const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Place
     fn miss(&self) {}
 
     #[inline(always)]
-    fn int_fact(&self) -> Rep { self.places.int_fact() }
+    fn int_fact(&self) -> Representation { self.places.int_fact() }
 
     #[inline(always)]
-    fn number_fact(&self) -> Rep { self.places.number_fact() }
+    fn number_fact(&self) -> Representation { self.places.number_fact() }
 }
 
 impl<'a, const D: u8, const A: u8, const B: u8> GlobalFrame<Concrete> for PlacesView<'a, D, A, B> {}

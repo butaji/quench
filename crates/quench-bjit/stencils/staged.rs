@@ -11,6 +11,7 @@ pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 #[path = "../../quench-runtime/src/staged/numeric.rs"] pub(crate) mod numeric;
 pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 #[path = "../../quench-runtime/src/staged/value.rs"] pub(crate) mod value;
+#[path = "../../quench-runtime/src/staged/guard.rs"] mod guard;
 #[path = "../../quench-runtime/src/staged/object.rs"] pub(crate) mod object;
 #[path = "../../quench-runtime/src/staged/narrow.rs"] mod narrow;
 #[path = "../../quench-runtime/src/staged/elements.rs"] pub(crate) mod elements;

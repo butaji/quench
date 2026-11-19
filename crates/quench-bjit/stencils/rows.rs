@@ -42,6 +42,7 @@ mod layout;
 mod numeric;
 mod places;
 mod places_call;
+mod places_guard;
 mod places_property;
 mod places_environment;
 mod places_heap;

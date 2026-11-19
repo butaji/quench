@@ -228,7 +228,7 @@ pub(super) fn resume_generator_in_lane<H: Host>(
     let code = unsafe { &*(*cx).code };
     let (record, frame) = resumable_generator_frame(vm, generator)?;
     let (program, function, this, pc, size) = (frame.program, frame.function, frame.this(), frame.pc, frame.registers.len());
-    let depth = Some(vm.lane_stack.activation_count()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
+    let depth = Some(vm.lane_stack.activations().len()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
     let cached = cached_window_plan(vm, code, frame)?;
     let WindowPlan { view, parent, locals, capture, environment, .. } = cached.0;
     let frame = vm.resume_generator_window((generator, record), method, sent, depth)?;

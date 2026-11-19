@@ -5,14 +5,14 @@
 use crate::bytecode::Register;
 use crate::codes::{MEM, FIELD_ROW, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW};
 use crate::heap_rows::{word_at};
-use crate::layout::{JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_VM, PROPERTY_BUFFER_BASE};
+use crate::layout::{JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_VM, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
 use crate::words::{hole, hole64, is_int, FIRST_TAG, HOLE_FOURTH};
 use crate::layout::words::TAG_SHIFT;
 use crate::places::{DEST, Places, settle, tagged_place};
-use crate::places_property::{Callout, receiver_read, run_planned};
+use crate::places_property::{Callout, HeldRead, receiver_read, run_held, run_planned};
 use crate::stage::StencilStage;
-use crate::staged::{Constant, Operation, entry, step};
+use crate::staged::{Constant, Operation, Step, step};
 use crate::typed_ir::Type;
 
 /// A field read of the loop entry's record (`FIELD_ROW`): the entry record's word, its byte offset
@@ -66,31 +66,39 @@ fn register_object(s: &S) -> u64 {
     word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize)
 }
 
-/// A prototype-held field folded to its value (hole 2): the object, the activation's receiver for an `ENTRY` row and else the register the site names, is a direct object of the exact shape in
-/// hole 1's low half whose prototype link is its high half (`entry::held_receiver`), else the row leaves.
+/// A prototype-held field folded to its value (hole 2): the object, the activation's receiver for an `ENTRY` row and else
+/// the register the site names, is read as the staged `GetField` of its exact shape and prototype link (hole 1's low and
+/// high halves), which leaves the row otherwise (`PrototypeProof::Linked`, `places_property::run_held`).
 #[inline(always)]
 fn held_row<const D: u8, const ENTRY: bool>(s: S, payload: usize) -> Out {
     let object = if ENTRY { word_at(payload, JS_STEP_RECEIVER) } else { register_object(&s) };
-    let mut stage = StencilStage::from_hole(HOLE_B);
-    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
     let receiver = hole64::<HOLE_A>();
-    need!(s, entry::held_receiver(&mut stage, records, object, (receiver & u64::from(u32::MAX), receiver >> HELD_LINK_AT), ()));
-    deliver::<D>(s, hole64::<HOLE_B>())
+    let link = (receiver >> HELD_LINK_AT) as u32;
+    let held = HeldRead { object, shape: receiver as u32, link, constant: [(link, hole64::<HOLE_B>())] };
+    let mut stage = StencilStage::from_hole(HOLE_B);
+    let mut places = Places::<D, MEM, MEM>::new(s);
+    let word = run_held(&mut stage, &mut places, held);
+    deliver::<D>(places.s, need!(places.s, word))
 }
 
-/// Continues while the invalidation word at the address in hole 1 is zero: a Stable fact the code holds
-/// changed where it is set (`code_dependencies::Invalidation`).
+/// Continues while the invalidation word is zero: a Stable fact the code holds changed where it is set
+/// (`guard::live`, whose frame reads the word at the address in hole 1).
 #[inline(always)]
 fn live_row(s: S) -> Out {
-    if word_at(hole64::<HOLE_A>() as usize, 0) == 0 { Out::Next(s) } else { Out::Exit(s) }
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let held = matches!(step(&mut StencilStage::from_hole(0), &mut frame, Operation::GuardLive), Step::Value(_));
+    if held { Out::Next(frame.s) } else { Out::Exit(frame.s) }
 }
 
 /// Continues while the active realm's global object (the word at hole 1's byte offset in the VM the
-/// payload names) is the one in hole 2, which the code folded facts of (`Vm::realm_globals_offset`);
-/// else the taken successor, the entry's failure.
+/// payload names) is the one in hole 2, which the code folded facts of (`guard::realm`); else the taken
+/// successor, the entry's failure.
 #[inline(always)]
-fn realm_row(s: S, payload: usize) -> Out {
-    if word_at(word_at(payload, JS_STEP_VM) as usize, hole::<HOLE_A>()) == hole64::<HOLE_B>() { Out::Next(s) } else { Out::Taken(s) }
+fn realm_row(s: S) -> Out {
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let guard = Operation::GuardRealm { expected: hole64::<HOLE_B>() };
+    let held = matches!(step(&mut StencilStage::from_hole(0), &mut frame, guard), Step::Value(_));
+    if held { Out::Next(frame.s) } else { Out::Taken(frame.s) }
 }
 
 /// The destination takes the word of hole 1: the staged `LoadConst` of that untyped constant.
@@ -114,7 +122,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8>(s
         THIS_STORE_ROW => site_store_row::<A, ENTRY>(s, payload, None),
         HELD_ROW => held_row::<D, ENTRY>(s, payload),
         LIVE_ROW => live_row(s),
-        REALM_ROW => realm_row(s, payload),
+        REALM_ROW => realm_row(s),
         _ => constant_row::<D>(s),
     }
 }

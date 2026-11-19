@@ -103,14 +103,14 @@ fn read_doubles(row: &Decoded) -> bool {
 /// nothing written and the leave widens the row, whose next compile writes a double (`-0`, NaN, a value past
 /// int32, `Math.abs(-2**31)`). The result then stays an unboxed int32 for the rows that use it (an index, a
 /// bitwise operand, an int32 sum), as the interpreter's own Math handlers answer an int word for one.
-fn kind_repr(kind: Kind, operands: Repr, widened: bool) -> Repr {
+fn kind_repr(kind: Kind, operands: Option<Representation>, widened: bool) -> Option<Representation> {
     match kind {
-        Kind::Not => Repr::Tagged,
-        _ if operands == Repr::Tagged => Repr::Tagged,
-        Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Round if !widened && operands >= Repr::Int => Repr::Int,
-        Kind::Abs if !widened && operands == Repr::Int => Repr::Int,
-        Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round | Kind::Min | Kind::Max => Repr::Double,
-        Kind::Imul | Kind::Clz32 => Repr::Int,
+        Kind::Not => Some(Representation::Tagged),
+        _ if operands == Some(Representation::Tagged) => Some(Representation::Tagged),
+        Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Round if !widened && operands >= Some(Representation::Int32) => Some(Representation::Int32),
+        Kind::Abs if !widened && operands == Some(Representation::Int32) => Some(Representation::Int32),
+        Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round | Kind::Min | Kind::Max => Some(Representation::Float64),
+        Kind::Imul | Kind::Clz32 => Some(Representation::Int32),
         Kind::Move | Kind::Const => operands,
         Kind::Div => Some(Representation::Float64),
         Kind::Add | Kind::Sub | Kind::Mul | Kind::Rem => if widened || operands == Some(Representation::Float64) { Some(Representation::Float64) } else { Some(Representation::Int32) },

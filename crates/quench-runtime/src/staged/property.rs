@@ -48,19 +48,15 @@ pub(crate) struct Arm<'a> {
     pub(crate) holds: Option<u32>,
 }
 
-/// Which of the VM's entry lookups a read takes where its plan has no op for the receiver: the
-/// VM's polymorphic entries, its hashed entries, a prototype holder's entry, or an inherited
-/// entry's chain walk. Each is one frame host call (`PropertyFrame::field_entry`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum EntryKind {
-    /// The site's inline megamorphic entries, own or of the immediate prototype.
-    Polymorphic,
-    /// The site's hashed entries past the inline ones (`Vm::polymorphic_field_hit`).
-    Hashed,
-    /// The site's primary holder entry, for a direct object or any other receiver.
-    Holder,
-    /// The site's inherited entry, walked past the immediate prototype.
-    Inherited,
+/// What holds an inherited read's receiver to the prototype its constants fold against.
+#[derive(Clone, Copy)]
+pub(crate) enum PrototypeProof {
+    /// The holder is subscribed (`PropertyFrame::hold_prototype`): a change of its values retires the
+    /// constant, and the read checks the link only through `IcOp::PrototypeConstants`.
+    Watched { holder: u32 },
+    /// The receiver's prototype link is `expected_link`, checked on each read (`entry::held_constant`)
+    /// for a Stable fact a code's live check holds rather than a holder subscription.
+    Linked { expected_link: u32 },
 }
 
 /// How a `GetField` site reads, as the proof its tier holds of the site.
@@ -77,9 +73,9 @@ pub(crate) enum FieldPlan<'a> {
     Hinted { ops: &'a [IcOp<'a>], entry: EntryKind },
     /// The first arm whose shape set holds the receiver's exact shape reads; none leaves.
     Arms(&'a [Arm<'a>]),
-    /// A receiver of exact `shape` whose prototype `holder` holds the values `constants` pair
-    /// with the receiver's prototype link, folded under a code dependency on the holder.
-    Inherited { shape: u32, holder: u32, constants: &'a [(u32, u64)] },
+    /// A receiver of exact `shape` whose prototype holds the values `constants` pair with the
+    /// receiver's prototype link; `proof` says what holds that link to the folded holder.
+    Inherited { shape: u32, constants: &'a [(u32, u64)], proof: PrototypeProof },
     /// The plan, whose receiver may be a function's record: its own fields answer too, and
     /// no direct object is proved of the receiver.
     Readable(&'a FieldPlan<'a>),
@@ -501,12 +497,19 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
             let shape = ic::shape_word(stage, &at);
             arms(stage, list, Reached { shape: Some(shape), ..at }, records, miss)
         }
-        FieldPlan::Inherited { shape, holder, constants } => {
+        FieldPlan::Inherited { shape, constants, proof } => {
             let at = frame.receiver_record(stage, owner, object, readable, miss)?;
-            guard_receiver_shape(stage, frame, (owner, !readable), &at, shape, miss)?;
-            frame.hold_prototype(stage, holder, miss)?;
-            let from = Reached::bare(at.record);
-            ic::run(stage, &[IcOp::PrototypeConstants(constants)], from, None, miss)
+            match proof {
+                PrototypeProof::Watched { holder } => {
+                    guard_receiver_shape(stage, frame, (owner, !readable), &at, shape, miss)?;
+                    frame.hold_prototype(stage, holder, miss)?;
+                    ic::run(stage, &[IcOp::PrototypeConstants(constants)], Reached::bare(at.record), None, miss)
+                }
+                PrototypeProof::Linked { expected_link } => {
+                    let &[(_, value)] = constants else { return None };
+                    super::entry::held_constant(stage, at.record, (shape, expected_link), value, miss)
+                }
+            }
         }
         FieldPlan::Readable(inner) => read_with(stage, frame, (owner, true), object, *inner, miss),
         FieldPlan::Probed { fast, atom, site } => frame.probed(stage, owner, object, (atom, site), miss,
