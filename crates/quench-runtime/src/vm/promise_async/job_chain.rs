@@ -90,10 +90,12 @@ impl<H: Host> Vm<H> {
     /// (`Host::enter_unobserved_job` answering a context) runs it as an observed job, which ends
     /// the chain.
     fn chain_next_job(&mut self, p: &ResidualProgram, program: ProgramId, ended: AwaitResume) -> ChainStep {
-        let Some((reaction, role, promise)) = self.chained_front(program, ended) else {
+        let Some((role, promise)) = self.chained_front(program, ended) else {
             return ChainStep::Ends;
         };
-        self.realm.jobs.pop_front();
+        let Some(PendingJob::Reaction(reaction)) = self.realm.jobs.pop_front() else {
+            unreachable!("the front job `chained_front` read leaves the queue");
+        };
         self.end_unobserved_job();
         self.root_chained_job(&reaction, promise);
         if let Some(context) = self.host.enter_unobserved_job(true) {
@@ -119,8 +121,8 @@ impl<H: Host> Vm<H> {
     /// queue's unobserved jobs share the host's context, and `ended`'s call roots lie on top
     /// (`chain_roots_hold`); and the job is the reaction of a pending await of an async function
     /// of `program`, with no host context of its own nor derived promise, in the current realm,
-    /// where its function awaited too. The reaction, its await's role and the promise it settles.
-    fn chained_front(&self, program: ProgramId, ended: AwaitResume) -> Option<(PromiseJob, AwaitRole, Value)> {
+    /// where its function awaited too. Its await's role and the promise it settles.
+    fn chained_front(&self, program: ProgramId, ended: AwaitResume) -> Option<(AwaitRole, Value)> {
         if self.host.observes_promise_lifecycle()
             || !self.unobserved_jobs_entered
             || self.check_execution_interrupt().is_err()
@@ -142,7 +144,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let frame = self.job_frame(role.job(reaction.handler))?;
-        (frame.program == program).then_some((*reaction, role, promise))
+        (frame.program == program).then_some((role, promise))
     }
 
     /// Whether the call roots of the await job of `ended` lie on top of the call root stack, as
