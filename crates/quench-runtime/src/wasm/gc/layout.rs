@@ -29,7 +29,7 @@ impl ObjectLayout {
     pub(crate) fn structure(fields: impl IntoIterator<Item = StorageType>, descriptor: bool) -> Self {
         let mut offsets = Vec::new();
         let mut references = Vec::new();
-        let mut end = 0;
+        let mut end: usize = 0;
         for storage in fields {
             let width = storage_bytes(storage);
             let offset = end.next_multiple_of(width);

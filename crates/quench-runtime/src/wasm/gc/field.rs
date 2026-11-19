@@ -96,7 +96,7 @@ impl GcField {
     /// The bits `bytes` hold for the field, zero-extended; `bytes` is the field's `size()` long.
     #[inline(always)]
     pub(crate) fn load(self, bytes: &[u8]) -> u64 {
-        let mut word = [0; 8];
+        let mut word = [0u8; 8];
         word[..bytes.len()].copy_from_slice(bytes);
         u64::from_le_bytes(word)
     }

@@ -31,7 +31,7 @@ impl WasmGcFields {
     /// its `descriptor` (`Some`) in the last word, marked. `None` where no room is left for it.
     pub(crate) fn new(layout: &ObjectLayout, length: usize, descriptor: Option<Value>) -> Option<Self> {
         let bytes = layout.bytes(length)?;
-        let mut payload = crate::heap::thin_slice::ThinBoxSlice::<u8>::try_from_fn(bytes, |_| Some(0))?;
+        let mut payload = crate::heap::thin_slice::ThinBoxSlice::<u8>::try_zeroed(bytes)?;
         if let ObjectLayout::Array { .. } = layout {
             write_word(&mut payload, 0, length as u64);
         }

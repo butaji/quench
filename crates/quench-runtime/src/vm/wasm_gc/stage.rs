@@ -6,7 +6,7 @@ use super::super::*;
 use crate::WasmTypes;
 use crate::staged::machine::{Machine, MachineStage};
 use crate::staged::wasm_gc::WasmGc;
-use crate::wasm::gc::GcField;
+use crate::wasm::gc::{GcField, GcFieldValue};
 use crate::wasm::reference::{ReferenceTarget, TargetHeap};
 
 /// The VM's heap, as a stage the GC rules run on.
@@ -37,38 +37,55 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
         u64::from(matches!(self.vm.heap.get(Value::from_bits(reference)), Some(Cell::WasmGc { .. })))
     }
 
-    /// One heap lookup: the address of the field's `Value` in the object's fields, 0 for a miss.
-    /// The rules read or write it at once, before anything allocates.
+    /// One heap lookup: the address of the field's stored bytes in the object's payload, at the
+    /// offset its layout gives; 0 for a miss. The rules read or write it at once, before anything
+    /// allocates.
     fn field_slot(&mut self, reference: u64, index: u64) -> u64 {
+        let index = usize::try_from(index).unwrap_or(usize::MAX);
         match self.vm.heap.get_mut(Value::from_bits(reference)) {
-            Some(Cell::WasmGc { fields, .. }) => fields
-                .get_mut(usize::try_from(index).unwrap_or(usize::MAX))
-                .map_or(0, |slot| std::ptr::from_mut(slot) as usize as u64),
+            Some(Cell::WasmGc { declarations, ty, fields }) => match declarations.layout(*ty) {
+                Some(layout) => fields.slot(layout, index).map_or(0, |slot| slot as usize as u64),
+                None => 0,
+            },
             _ => 0,
         }
     }
 
     fn field_count(&mut self, reference: u64) -> u64 {
         match self.vm.heap.get(Value::from_bits(reference)) {
-            Some(Cell::WasmGc { fields, .. }) => fields.len() as u64,
+            Some(Cell::WasmGc { declarations, ty, fields }) => {
+                let layout = declarations.layout(*ty).expect("the rules count the fields of an object they checked");
+                fields.count(layout) as u64
+            }
             _ => unreachable!("the rules count the fields of an object they checked"),
         }
     }
 
+    /// The word a read of `field` gives: a packed field's integer; an `i32` or `f32` as a `Value`
+    /// integer; a 64-bit number as a `Value` (boxed where its bits are not in place); a reference's
+    /// `Value` bits.
     fn read_slot(&mut self, slot: u64, field: GcField) -> u64 {
         // SAFETY: `slot` is a nonzero `field_slot` answer, taken just before with nothing
-        // allocated since, so it addresses a live field of the object.
-        let stored = unsafe { *(slot as usize as *const Value) };
+        // allocated since, so it addresses the field's `size()` bytes of a live payload.
+        let bytes = unsafe { std::slice::from_raw_parts(slot as usize as *const u8, field.size()) };
+        let stored = field.load(bytes);
         if field.packed_bits().is_some() {
-            stored.as_int().expect("packed Wasm field") as u32 as u64
-        } else {
-            stored.to_bits()
+            return stored;
+        }
+        match field.value() {
+            GcFieldValue::Narrow => Value::integer(stored as u32 as i32).to_bits(),
+            GcFieldValue::Wide => self.vm.encode_bits64(stored).to_bits(),
+            GcFieldValue::Reference | GcFieldValue::Vector => stored,
         }
     }
 
+    /// Stores the `Value` bits `value` in the field: its stored form, the raw bits a 64-bit number
+    /// keeps in place of its cell.
     fn write_slot(&mut self, slot: u64, field: GcField, value: u64) {
+        let bits = self.vm.wasm_stored_bits(field, Value::from_bits(value));
         // SAFETY: as `read_slot`: a fresh nonzero `field_slot` answer.
-        unsafe { *(slot as usize as *mut Value) = field.store(Value::from_bits(value)) };
+        let bytes = unsafe { std::slice::from_raw_parts_mut(slot as usize as *mut u8, field.size()) };
+        field.store(bytes, bits);
     }
 
     fn array_mutable(&mut self, reference: u64) -> u64 {
@@ -95,30 +112,34 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
     }
 
     fn fill_fields(&mut self, reference: u64, index: u64, extent: u64, value: u64) {
-        let Some(Cell::WasmGc { declarations, ty, fields, .. }) = self.vm.heap.get_mut(Value::from_bits(reference)) else {
+        let element = self.array_element(reference).expect("the rules fill an array they checked");
+        let field = GcField::new(0, element).expect("index 0 fits");
+        let bits = self.vm.wasm_stored_bits(field, Value::from_bits(value));
+        let Some(Cell::WasmGc { declarations, ty, fields }) = self.vm.heap.get_mut(Value::from_bits(reference)) else {
             unreachable!("the rules fill an array they checked")
         };
-        let element = declarations.array_field(*ty).expect("a validated array").element_type;
-        let stored = GcField::new(0, element).expect("index 0 fits").store(Value::from_bits(value));
-        let start = index as usize;
-        fields[start..start + extent as usize].fill(stored);
+        let layout = declarations.layout(*ty).expect("a validated array");
+        fields.fill(layout, field, index as usize, extent as usize, bits);
     }
 
     fn copy_fields(&mut self, destination: u64, output: u64, source: u64, input: u64, extent: u64) {
         let (output, input, extent) = (output as usize, input as usize, extent as usize);
-        let Some(Cell::WasmGc { fields, .. }) = self.vm.heap.get_mut(Value::from_bits(destination)) else {
+        let Some(Cell::WasmGc { declarations, ty, fields }) = self.vm.heap.get_mut(Value::from_bits(destination)) else {
             unreachable!("the rules copy into an array they checked")
         };
+        let layout = declarations.layout(*ty).expect("a validated array");
+        let output = layout.element_range(output, extent).expect("a checked array range");
+        let input = layout.element_range(input, extent).expect("a checked array range");
         if destination == source {
-            fields.copy_within(input..input + extent, output);
+            fields.copy_within(input, output.start);
             return;
         }
-        // Distinct arrays cannot alias: the destination's fields leave their cell for one pass.
+        // Distinct arrays cannot alias: the destination's payload leaves its cell for one pass.
         let mut to = std::mem::take(fields);
         let Some(Cell::WasmGc { fields: from, .. }) = self.vm.heap.get(Value::from_bits(source)) else {
             unreachable!("the rules copy from an array they checked")
         };
-        to[output..output + extent].copy_from_slice(&from[input..input + extent]);
+        to.copy_from(output, from, input);
         if let Some(Cell::WasmGc { fields, .. }) = self.vm.heap.get_mut(Value::from_bits(destination)) {
             *fields = to;
         }
