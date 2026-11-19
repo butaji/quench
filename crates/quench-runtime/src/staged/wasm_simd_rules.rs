@@ -7,7 +7,7 @@
 //! Cranelift vector instructions. The bytecode-facing `Simd` steps are `wasm_simd`.
 
 use super::wasm_simd_lanes::{SimdOperator, lane, replace};
-use crate::WasmType;
+use crate::{WasmType, WasmValue};
 use crate::wasm::V128_BYTES;
 
 pub(crate) const SELECTOR_LANE_BITS: u32 = u8::BITS;
@@ -345,6 +345,42 @@ pub(crate) fn native_bits(native: Native, left: u128, right: u128) -> u128 {
 pub(crate) fn kernel_bits(selector: u32, left: u128, right: Option<u128>) -> u128 {
     let (kernel, lane) = SimdKernel::of(selector).expect("an admitted selector");
     kernel.apply_bits(left, right.unwrap_or(0), lane)
+}
+
+/// The value of type `ty` that `bits` hold: a vector whole, a scalar in the low bits.
+#[inline(always)]
+pub(crate) fn value_of(ty: WasmType, bits: u128) -> WasmValue {
+    match ty {
+        WasmType::V128 => WasmValue::V128(bits),
+        ty => WasmValue::from_bits(ty, bits as u64),
+    }
+}
+
+/// The bits of `value`: a vector whole, a scalar in the low bits (the inverse of `value_of`).
+#[inline(always)]
+pub(crate) fn bits_of(value: WasmValue) -> u128 {
+    match value {
+        WasmValue::V128(bits) => bits,
+        WasmValue::I32(value) => u128::from(value as u32),
+        WasmValue::F32(bits) => u128::from(bits),
+        WasmValue::I64(value) => u128::from(value as u64),
+        WasmValue::F64(bits) => u128::from(bits),
+        _ => unreachable!("a scalar or vector value"),
+    }
+}
+
+/// The operand of static type `ty` as the SIMD rules take it, from the representation the caller
+/// holds: a v128 from its `bytes` (little-endian), any other type from its `decoded` scalar.
+#[inline(always)]
+pub(crate) fn simd_operand(
+    ty: WasmType,
+    bytes: impl FnOnce() -> Option<[u8; V128_BYTES]>,
+    decoded: impl FnOnce() -> Option<WasmValue>,
+) -> Option<WasmValue> {
+    match ty {
+        WasmType::V128 => bytes().map(|bytes| WasmValue::V128(u128::from_le_bytes(bytes))),
+        _ => decoded(),
+    }
 }
 
 /// The byte shuffle of `left` and `right` (the operands' bytes, `left` first) by `lanes`.

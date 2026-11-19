@@ -73,8 +73,6 @@ pub(crate) trait WasmActivation: WasmStage {
     fn values_room(&mut self, registers: usize) -> bool;
     /// Pushes the activation of `function` with its arguments, and enters it.
     fn push_activation(&mut self, function: u32, shape: Self::Shape) -> Self::Resume;
-    /// Makes the call a frame, which the general loop then runs (the lane has no room).
-    fn frame_call(&mut self) -> Self::Resume;
     /// Activates the JavaScript import the call names, where the lane can (`None` otherwise).
     fn activate_import(&mut self) -> Option<Self::Resume>;
     /// Calls the import the call names through its native boundary.
@@ -83,6 +81,48 @@ pub(crate) trait WasmActivation: WasmStage {
     fn left(&mut self) -> Self::Resume;
     /// Completes the call with the word of its result, in the caller.
     fn complete_call(&mut self, word: u64) -> Self::Resume;
+    /// Which of the lane stack's arrays lack room for a frame call's window.
+    type Full;
+    /// The guard of a callee's frame.
+    type Guard;
+    /// The room a frame call's window takes: the callee's registers, in the lane's fill blocks.
+    fn frame_window_room(&mut self) -> usize;
+    /// Which arrays of the lane stack lack room for a window of `room` values and one activation.
+    fn stack_full(&mut self, room: usize) -> Self::Full;
+    /// Makes the lane's activations frames, which the general loop runs.
+    fn materialize_activations(&mut self);
+    /// Grows the arrays `full` names for a window of `room`.
+    fn grow_stack(&mut self, full: Self::Full, room: usize);
+    /// The frame that makes the call, before its frame is pushed.
+    fn caller_frame(&mut self) -> usize;
+    /// Pushes the callee's frame for `caller`'s call, or `None` where the call cannot.
+    fn push_callee_frame(&mut self, caller: usize) -> Option<Self::Guard>;
+    /// Records the call as `caller`'s pending general call, which resumes past the call.
+    fn push_pending_call(&mut self, caller: usize, guard: Self::Guard);
+    /// Refreshes the activations the thread admits, after a frame is pushed.
+    fn refresh_activation_limit(&mut self);
+    /// Enters `frame` at its first record.
+    fn enter_frame(&mut self, frame: usize) -> Self::Resume;
+}
+
+/// The general frame push of a call the lane has no room to activate: the activations become
+/// frames, the stack grows so later calls fit, and the call's frame is pushed for the general loop
+/// to run. The order is the lane's; a call whose frame cannot be pushed leaves the lane. Out of
+/// line, so the activation path saves no registers for it.
+#[cold]
+#[inline(never)]
+pub(crate) fn push_frame<S: WasmActivation>(stage: &mut S) -> S::Resume {
+    let room = stage.frame_window_room();
+    let full = stage.stack_full(room);
+    stage.materialize_activations();
+    stage.grow_stack(full, room);
+    let caller = stage.caller_frame();
+    let Some(guard) = stage.push_callee_frame(caller) else {
+        return stage.left();
+    };
+    stage.push_pending_call(caller, guard);
+    stage.refresh_activation_limit();
+    stage.enter_frame(caller + 1)
 }
 
 /// Enters `function` as a Wasm call: out of the lane when inline calls are off, through native
@@ -130,7 +170,7 @@ fn enter_activation<S: WasmActivation>(stage: &mut S, function: u32) -> CallOutc
 pub(crate) fn call_known<S: WasmActivation>(stage: &mut S, function: u32) -> Option<S::Resume> {
     match enter_function(stage, function) {
         CallOutcome::Resume(resumed) => Some(resumed),
-        CallOutcome::NoRoom => Some(stage.frame_call()),
+        CallOutcome::NoRoom => Some(push_frame(stage)),
         CallOutcome::Exit => None,
     }
 }

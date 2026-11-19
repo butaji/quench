@@ -20716,7 +20716,7 @@ fn lane_push_frame_call<H: Host>(
 /// A JavaScript `Call` of an exported Wasm function that `Vm::wasm_export_frame_call`
 /// admits: its frame, over the instance environment, pushed with the pending call that
 /// converts its result (`CallCompletion::WasmExport`) and entered in this lane, as a Wasm
-/// call's frame is (`wasm_calls::lane_call_frame`), so the call nests no native frame and no
+/// call's frame is (`wasm_calls`'s `push_frame`), so the call nests no native frame and no
 /// run of the general loop. Lane activations become frames first, as for any frame call.
 /// `None` leaves the call to the native: a run that is not a frame's own JavaScript run
 /// (`LaneContext::script_calls`), a callee native code may run, a call completing a caller

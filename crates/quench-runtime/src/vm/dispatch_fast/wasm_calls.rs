@@ -3,7 +3,8 @@
 //! (`LaneCall`) and the lane's own steps.
 use super::*;
 use crate::staged::machine::{Machine, MachineStage};
-use crate::staged::wasm_activation::{self as activation, CallTarget, NativeCall, WasmActivation};
+use crate::staged::wasm_activation::{self as activation, CallTarget, NativeCall, WasmActivation, push_frame};
+use super::lane_stack_growth::LaneStackFull;
 use crate::vm::JsError;
 
 /// The known call's handler, for the shared handler table.
@@ -43,6 +44,8 @@ impl<H: Host> MachineStage for LaneCall<'_, H> {
 impl<H: Host> WasmActivation for LaneCall<'_, H> {
     type Resume = Resumed;
     type Shape = (ActivationShape, Ip);
+    type Full = LaneStackFull;
+    type Guard = crate::stack::GuestCallGuard;
 
     #[inline(always)]
     fn reference(&mut self) -> CallTarget {
@@ -182,8 +185,69 @@ impl<H: Host> WasmActivation for LaneCall<'_, H> {
     }
 
     #[inline(always)]
-    fn frame_call(&mut self) -> Resumed {
-        lane_call_frame::<H>(self.ip)
+    fn frame_window_room(&mut self) -> usize {
+        // SAFETY: the context's code outlives the lane run.
+        let code = unsafe { &*(*self.cx).code };
+        let count = usize::from(code.function(usize::from(self.i.b)).registers);
+        fill_room::<ACTIVATION_FILL_BLOCK>(count)
+    }
+
+    #[inline(always)]
+    fn stack_full(&mut self, room: usize) -> LaneStackFull {
+        let vm = unsafe { vm(self.cx) };
+        vm.lane_stack.full(room)
+    }
+
+    fn materialize_activations(&mut self) {
+        let vm = unsafe { vm(self.cx) };
+        vm.materialize_lane_activations(self.cx);
+    }
+
+    fn grow_stack(&mut self, full: LaneStackFull, room: usize) {
+        let vm = unsafe { vm(self.cx) };
+        vm.lane_stack.grow(full, room);
+    }
+
+    #[inline(always)]
+    fn caller_frame(&mut self) -> usize {
+        unsafe { (*self.cx).frame() }
+    }
+
+    fn push_callee_frame(&mut self, caller: usize) -> Option<crate::stack::GuestCallGuard> {
+        let vm = unsafe { vm(self.cx) };
+        let code = unsafe { &*(*self.cx).code };
+        let window = crate::bytecode::RegisterWindow {
+            base: ImmediateLayout::call_window_base(self.i.imm()),
+            count: ImmediateLayout::argument_count(self.i.imm()),
+        };
+        vm.push_wasm_frame(code, caller, u32::from(self.i.b), window).ok()
+    }
+
+    fn push_pending_call(&mut self, caller: usize, guard: crate::stack::GuestCallGuard) {
+        // SAFETY: `ip` is a record of the active view.
+        let call_pc = unsafe { self.ip.offset_from((*self.cx).base) } as usize;
+        let vm = unsafe { vm(self.cx) };
+        vm.frames[caller].pc = call_pc + 1;
+        vm.frames[caller].pc_is_resume = true;
+        unsafe { &mut *(*self.cx).pending }.push(PendingGeneralCall {
+            caller,
+            caller_cursor: None,
+            call_pc: call_pc as u32,
+            destination: self.i.a,
+            completion: CallCompletion::Value,
+            returns: false,
+            call_guard: Some(guard),
+            caller_program: None,
+        });
+    }
+
+    fn refresh_activation_limit(&mut self) {
+        let vm = unsafe { vm(self.cx) };
+        vm.lane_stack.refresh_activation_limit();
+    }
+
+    fn enter_frame(&mut self, frame: usize) -> Resumed {
+        lane_enter_frame::<H>(self.cx, frame, 0)
     }
 
     #[inline(always)]
@@ -301,53 +365,6 @@ fn fill_callee_window<H: Host>(vm: &mut Vm<H>, r: Registers, i: &LaneInstruction
         Registers(registers).set_capture(r.capture());
         Registers(registers)
     }
-}
-
-/// A lane call without room for an activation, or to a function whose lane
-/// view is not yet derived: the activations
-/// become frames and the call pushes one, as the general loop would; the
-/// emptied stack then grows so that later calls fit. Out of line so the
-/// activation path saves no registers.
-#[cold]
-#[inline(never)]
-fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
-    let cx = lane_context::<H>();
-    // SAFETY: called only while a lane runs, from its call handler.
-    let i = unsafe { &*ip };
-    let vm = unsafe { vm(cx) };
-    let code = unsafe { &*(*cx).code };
-    let callee = u32::from(i.b);
-    let count = usize::from(code.function(usize::from(i.b)).registers);
-    let window = fill_room::<ACTIVATION_FILL_BLOCK>(count);
-    let stack = &vm.lane_stack;
-    let full = stack.full(window);
-    vm.materialize_lane_activations(cx);
-    vm.lane_stack.grow(full, window);
-    let caller = unsafe { (*cx).frame() };
-    // SAFETY: `ip` is a record of the active view.
-    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
-    let window = crate::bytecode::RegisterWindow {
-        base: ImmediateLayout::call_window_base(i.imm()),
-        count: ImmediateLayout::argument_count(i.imm()),
-    };
-    let Ok(call_guard) = vm.push_wasm_frame(code, caller, callee, window) else {
-        return Resumed::Exit(exit(ip));
-    };
-    vm.frames[caller].pc = call_pc + 1;
-    vm.frames[caller].pc_is_resume = true;
-    unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
-        caller,
-        caller_cursor: None,
-        call_pc: call_pc as u32,
-        destination: i.a,
-        completion: CallCompletion::Value,
-        returns: false,
-        call_guard: Some(call_guard),
-        caller_program: None,
-    });
-    // The pushed frame's guard narrows the activations the thread admits.
-    vm.lane_stack.refresh_activation_limit();
-    lane_enter_frame(cx, caller + 1, 0)
 }
 
 /// The arguments' scalar kind of a JavaScript import's plan (`JS_IMPORT_I32`, `_F32`, `_F64`) as

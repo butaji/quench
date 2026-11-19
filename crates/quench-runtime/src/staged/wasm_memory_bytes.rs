@@ -14,14 +14,7 @@ impl MemoryLoad {
     /// the staged lane (`load_lane`).
     #[inline(always)]
     pub(crate) fn read(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
-        if matches!(self, Self::V128Load) {
-            return load_vector(&mut ConcreteBytes { memory: bytes }, address, 0, false).map(WasmValue::V128);
-        }
-        let Some(access) = Access::of_load(self) else {
-            let word = load_lane(&mut ConcreteBytes { memory: bytes }, self.width(), address, 0, false)?;
-            return Ok(self.vector_of_word(word));
-        };
-        access.read(bytes, address)
+        read_memory(bytes, self, address)
     }
 
     /// The value at `at`, unchecked.
@@ -41,16 +34,40 @@ impl MemoryLoad {
     }
 }
 
+/// The value at `address` of `bytes` as `operator` loads it: out of bounds traps. A scalar load is
+/// the staged access (`Access::read`); a v128 load is `load_vector`; the other vector loads widen,
+/// splat or zero the staged lane (`load_lane`). The one body of `MemoryLoad::read`, which the lane
+/// handlers also call.
+#[inline(always)]
+pub(crate) fn read_memory(bytes: &[u8], operator: MemoryLoad, address: u64) -> Result<WasmValue, WasmTrap> {
+    if matches!(operator, MemoryLoad::V128Load) {
+        return load_vector(&mut ConcreteBytes { memory: bytes }, address, 0, false).map(WasmValue::V128);
+    }
+    let Some(access) = Access::of_load(operator) else {
+        let word = load_lane(&mut ConcreteBytes { memory: bytes }, operator.width(), address, 0, false)?;
+        return Ok(operator.vector_of_word(word));
+    };
+    access.read(bytes, address)
+}
+
+/// Write `value` at `address` of `bytes` as `operator` stores it: out of bounds traps before any
+/// byte changes. A scalar store is the staged access (`Access::write`); a v128 store is
+/// `store_vector`. The one body of `MemoryStore::write`, which the lane handlers also call.
+#[inline(always)]
+pub(crate) fn write_memory(bytes: &mut [u8], operator: MemoryStore, address: u64, value: WasmValue) -> Result<(), WasmTrap> {
+    if operator.value_type() == WasmType::V128 {
+        let WasmValue::V128(word) = value else { unreachable!("decoded store type") };
+        return store_vector(&mut ConcreteMemory { memory: bytes }, address, 0, word, false);
+    }
+    Access::of_store(operator).write(bytes, address, value)
+}
+
 impl MemoryStore {
     /// Write `value` at `address` of `bytes`: out of bounds traps before any byte changes. A scalar
     /// store is the staged access (`Access::write`); a v128 store is `store_vector`.
     #[inline(always)]
     pub(crate) fn write(self, bytes: &mut [u8], address: u64, value: WasmValue) -> Result<(), WasmTrap> {
-        if self.value_type() == WasmType::V128 {
-            let WasmValue::V128(word) = value else { unreachable!("decoded store type") };
-            return store_vector(&mut ConcreteMemory { memory: bytes }, address, 0, word, false);
-        }
-        Access::of_store(self).write(bytes, address, value)
+        write_memory(bytes, self, address, value)
     }
 
     /// Write `value` at `at`, unchecked.

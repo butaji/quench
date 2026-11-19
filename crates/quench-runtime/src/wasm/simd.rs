@@ -8,8 +8,7 @@ use crate::staged::wasm_emit;
 pub(crate) use crate::staged::wasm_simd_lanes::{SimdOperator, lane, lane_mask, replace};
 pub(crate) use crate::staged::wasm_simd_rules::SimdKernel;
 
-mod bits;
-pub(crate) use bits::{bits_of, value_of};
+pub(crate) use crate::staged::wasm_simd_rules::{bits_of, value_of};
 
 /// The wasmparser operator of each SIMD operator, generated from the operator list: a lane
 /// operator's lane immediate is read from the instruction.

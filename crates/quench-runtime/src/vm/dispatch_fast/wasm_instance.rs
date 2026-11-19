@@ -2,10 +2,10 @@
 //! globals.
 use super::*;
 use crate::staged::wasm_instance::{Storage, binding_get, global_get, global_set};
-use crate::staged::wasm_machine::{ConcreteBytes, ConcreteInstance};
-use crate::staged::wasm_memory::{Access, load, scalar_address};
-use crate::staged::wasm_memory_vector::{load_lane, load_vector};
-use crate::staged::wasm_simd_rules::shuffle_bits;
+use crate::staged::wasm_machine::ConcreteInstance;
+use crate::staged::wasm_memory::scalar_address;
+use crate::staged::wasm_memory_bytes::{read_memory, write_memory};
+use crate::staged::wasm_simd_rules::{shuffle_bits, simd_operand};
 use crate::staged::ConcreteWasm;
 use crate::vm::wasm_global::InstanceBindings;
 
@@ -61,21 +61,6 @@ lane_handler! {
     }
 }
 
-/// `MemoryLoad::read`'s staged rules over the bytes of a memory: `load` for a scalar access,
-/// `load_vector` for a v128, `load_lane` for the widening and splat loads. Each checks its access
-/// before it reads, so an out-of-bounds read traps and writes nothing.
-#[inline(always)]
-fn lane_memory_read(memory: &[u8], operator: crate::wasm::memory::MemoryLoad, address: u64) -> Result<crate::WasmValue, crate::WasmTrap> {
-    let mut stage = ConcreteBytes { memory };
-    match Access::of_load(operator) {
-        Some(access) => load(&mut stage, access, address, 0, false).map(|word| crate::WasmValue::from_bits(access.ty, word)),
-        None if matches!(operator, crate::wasm::memory::MemoryLoad::V128Load) => {
-            load_vector(&mut stage, address, 0, false).map(crate::WasmValue::V128)
-        }
-        None => load_lane(&mut stage, operator.width(), address, 0, false).map(|word| operator.vector_of_word(word)),
-    }
-}
-
 lane_handler! {
     /// A generic Wasm memory load (`crate::wasm::memory::MemoryLoad`), as vectors and the
     /// accesses no direct op names take: in place when it reads in bounds; a trap, or an
@@ -89,7 +74,7 @@ lane_handler! {
             return exit(ip);
         };
         let loaded = match vm.wasm_memory_bytes(r.get(i.b)) {
-            Ok(bytes) => lane_memory_read(&bytes, operator, address as u64),
+            Ok(bytes) => read_memory(&bytes, operator, address as u64),
             Err(_) => return exit(ip),
         };
         let Ok(value) = loaded else {
@@ -104,8 +89,9 @@ lane_handler! {
 
 lane_handler! {
     /// A generic Wasm memory store (`crate::wasm::memory::MemoryStore`), in place as
-    /// `lane_wasm_memory_load` reads; a store checks its bounds before writing, so one that
-    /// traps leaves memory as it was for the general path to raise.
+    /// `lane_wasm_memory_load` reads: the staged `write_memory` over the memory's bytes. A store
+    /// checks its bounds before writing, so one that traps leaves memory as it was for the general
+    /// path to raise. The memory's lock is released before the next record runs.
     pub(super) fn lane_wasm_memory_store<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(operator) = crate::wasm::memory::MemoryStore::from_tag(i.imm()) else {
@@ -114,22 +100,33 @@ lane_handler! {
         let Ok(address) = vm.wasm_i64_operand(r.get(i.c)) else {
             return exit(ip);
         };
-        if vm.wasm_memory_store(r.get(i.b), address as u64, operator, r.get(i.a)).is_err() {
+        let Ok(value) = vm.decode_wasm_value(r.get(i.a), operator.value_type()) else {
+            return exit(ip);
+        };
+        let stored = match vm.heap.get(r.get(i.b)) {
+            Some(Cell::WasmMemory { bytes, .. }) => write_memory(&mut bytes.lock(), operator, address as u64, value),
+            _ => return exit(ip),
+        };
+        if stored.is_err() {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
     }
 }
 
-/// A SIMD operand of static type `ty`: a vector or an i32 read from its slot directly, any
-/// other scalar as `Vm::decode_wasm_value` reads it. `None` for another representation.
+/// A SIMD operand of static type `ty`, decoded by the staged `simd_operand` rule: a vector from its
+/// bytes, an i32 from its payload, any other scalar as `Vm::decode_wasm_value` reads it. `None` for
+/// another representation.
 #[inline(always)]
 fn lane_simd_operand<H: Host>(vm: &Vm<H>, value: Value, ty: crate::WasmType) -> Option<crate::WasmValue> {
-    match ty {
-        crate::WasmType::V128 => Some(crate::WasmValue::V128(u128::from_le_bytes(vm.heap.v128(value)?))),
-        crate::WasmType::I32 => Some(crate::WasmValue::I32(value.as_int()?)),
-        _ => vm.decode_wasm_value(value, ty).ok(),
-    }
+    simd_operand(
+        ty,
+        || vm.heap.v128(value),
+        || match ty {
+            crate::WasmType::I32 => value.as_int().map(crate::WasmValue::I32),
+            _ => vm.decode_wasm_value(value, ty).ok(),
+        },
+    )
 }
 
 lane_handler! {
