@@ -141,4 +141,8 @@ natives! {
     (GlobalObject, "parseFloat", NumberParseFloat, 1),
     (GlobalObject, "isNaN", GlobalIsNaN, 1),
     (GlobalObject, "isFinite", GlobalIsFinite, 1),
+    // The `String` constructor's statics, in installation order.
+    (StringConstructor, "fromCharCode", StringFromCharCode, 1),
+    (StringConstructor, "fromCodePoint", StringFromCodePoint, 1),
+    (StringConstructor, "raw", StringRaw, 1),
 }
