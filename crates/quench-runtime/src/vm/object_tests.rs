@@ -127,6 +127,7 @@ fn third_receiver_promotes_field_site_to_megamorphic() {
                 receiver,
                 holder: NO_FIELD_HOLDER,
                 slot: 0,
+                holder_id: NO_FIELD_HOLDER_LAYOUT,
             },
         );
     }
@@ -180,6 +181,7 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
         receiver: vm.heap.object(child).unwrap().exact_shape(),
         holder: hint.receiver,
         slot: hint.slot,
+        holder_id: NO_FIELD_HOLDER_LAYOUT,
     };
     assert_eq!(vm.record_field_entry_hit(holder_hint, child), Some(Value::integer(0)));
     assert_eq!(vm.record_field_entry_hit(holder_hint, other), None);
@@ -282,7 +284,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     let shape = vm.heap.object(receiver).unwrap().shape();
     let slot = vm.shape_slot(shape, atom).unwrap();
     vm.record_field_cache(vm.field_cache_index(site), FieldCache {
-        receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16,
+        receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16, holder_id: NO_FIELD_HOLDER_LAYOUT,
     });
     vm.heap.track_slot_representations(&vm.shape_layouts());
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::INT32);
@@ -1371,7 +1373,7 @@ fn field_cache_invalidation_resets_every_written_site() {
     vm.field_cache_writes = Some(Vec::new());
     let record = |vm: &mut Vm<TestHost>, site: usize| {
         for receiver in 1..=3 {
-            vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0 });
+            vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0, holder_id: NO_FIELD_HOLDER_LAYOUT });
         }
     };
     let all_empty = |vm: &Vm<TestHost>| {

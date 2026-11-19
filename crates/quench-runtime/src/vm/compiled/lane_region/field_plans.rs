@@ -110,6 +110,15 @@ fn formed_id(load: &NativeFieldLoad) -> Option<u32> {
         && crate::staged::ic::layout_shape(id) == load.shape)
 }
 
+/// The layout id a holder read guards its prototype by (`NativeFieldLoad::holder_id`), where it is
+/// a real id of the holder's exact shape: one compare of the prototype's own word then proves that
+/// shape and the storage form, as `formed_id` does for a receiver. Id 0 names no holder.
+fn holder_id(load: &NativeFieldLoad) -> Option<u32> {
+    let holder = load.holder?;
+    load.holder_id.filter(|&id| id != 0 && (id as usize) < crate::heap::layouts::LAYOUT_CAPACITY
+        && crate::staged::ic::layout_shape(id) == holder)
+}
+
 /// The ops that read `load` once the receiver's shape is proved: its own slot, a prototype's
 /// constant, or the slot of the prototype whose exact shape the load names. `formed` is the
 /// layout id a single-shape load was guarded by (`formed_id`), whose form the slot is read in;
@@ -120,7 +129,15 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<
             form: formed.map_or_else(|| Form::of(load.storage, load.storage_len), crate::staged::ic::form_of_layout),
             storage_len: load.storage_len, rep: if load.raw_double { Representation::Float64 } else { Representation::Tagged } }],
         Some(_) if !pairs.is_empty() => vec![IcOp::PrototypeConstants(pairs)],
-        Some(holder) => vec![IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(load.slot)],
+        Some(holder) => {
+            // The prototype's layout id proves its shape (and storage form) in one compare where
+            // the entry kept it (`holder_id`); else its shape alone is compared.
+            let guard = match holder_id(load) {
+                Some(id) => IcOp::GuardLayout(id),
+                None => IcOp::GuardShape(holder),
+            };
+            vec![IcOp::Prototype, guard, IcOp::LoadPrototypeSlot(load.slot)]
+        }
     }
 }
 
