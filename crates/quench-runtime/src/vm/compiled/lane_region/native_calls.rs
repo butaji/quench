@@ -32,6 +32,8 @@ pub(super) enum Inline {
     Unary(FloatUnary),
     /// `Math.max` (true) or `Math.min` of two Numbers.
     Extreme(bool),
+    /// `Math.clz32` of a Number: its ToUint32's leading zeros, an int32 (`staged::math::count_leading_zeros`).
+    LeadingZeros,
     Builtin(Builtin),
     /// A scalar native (`global_facts::scalar_native`), called in place by its helper (`Lowering::scalar_call`).
     Scalar,
@@ -49,6 +51,7 @@ impl Inline {
             Some(MathFunction::Row(operation)) => Some(Self::Unary(operation)),
             Some(MathFunction::Extreme(maximum)) => Some(Self::Extreme(maximum)),
             Some(MathFunction::Imul) => Some(Self::Imul),
+            _ if matches!(native, Native::MathClz32) => Some(Self::LeadingZeros),
             _ => None,
         }
         .or_else(|| Builtin::of(native).map(Self::Builtin))
@@ -57,7 +60,7 @@ impl Inline {
 
     /// The arguments the inline operation reads; a call passing another count takes the native.
     const fn arguments(self) -> u16 {
-        match self { Self::Imul | Self::Extreme(_) | Self::Scalar => BINARY_ARGUMENTS, Self::Unary(_) => UNARY_ARGUMENTS, Self::Builtin(builtin) => builtin.arguments() }
+        match self { Self::Imul | Self::Extreme(_) | Self::Scalar => BINARY_ARGUMENTS, Self::Unary(_) | Self::LeadingZeros => UNARY_ARGUMENTS, Self::Builtin(builtin) => builtin.arguments() }
     }
 
     /// Whether a call passing `count` arguments runs the operation inline: a scalar native takes one or two (`parseInt(s)`,
@@ -249,6 +252,11 @@ impl Lowering<'_, '_> {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
             let product = crate::staged::math::multiply(&mut stage, left, right);
             self.set_int(state, result, product);
+        } else if let Inline::LeadingZeros = inline {
+            let word = self.number_to_int32(numbers[0], exit);
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let count = crate::staged::math::count_leading_zeros(&mut stage, word);
+            self.set_int(state, result, count);
         } else {
             let number = inline.emit(&mut self.builder, &numbers);
             self.set_number(state, result, number);

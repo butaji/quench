@@ -136,7 +136,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{binary_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
+use lane_allocations::{binary_in_lane, concat_pair_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
@@ -1131,24 +1131,23 @@ lane_helper_inventory! { H;
     VmStep => super::dispatch_fast::vm_operation_step::<H>,
     /// An instruction whose general step runs in place (`dispatch_fast::body_general_step`), which the b-jit's
     /// helper steps and stepped calls make (`base_region::steps`).
-    Step => super::dispatch_fast::lane_body_step::<H>,
-    /// `Step` for an instruction the planner decoded (`CallRow::HelperPacked`): a covered family runs it directly
-    /// (`dispatch_fast::lane_body_step_packed`).
-    StepPacked => super::dispatch_fast::lane_body_step_packed::<H>,
-    /// ToBoolean of a value its cell decides (`lane_truthy`).
-    Truthy => lane_truthy::<H>,
-    /// The array storage proofs a shorter array falsifies (`lane_retire_array_proofs`).
-    RetireArrayProofs => lane_retire_array_proofs,
-    /// An object literal over a register window (`lane_new_object_literal`).
-    NewObjectLiteral => lane_new_object_literal::<H>,
-    /// A closure over the frame's environment (`lane_new_closure`).
-    NewClosure => lane_new_closure::<H>,
-    /// A literal template's value (`lane_new_template`).
-    NewTemplate => lane_new_template::<H>,
-    /// A string concatenation of pure parts (`lane_new_concat`).
-    NewConcat => lane_new_concat::<H>,
-    /// A regexp literal's fresh object of its site's template (`lane_new_regexp`).
-    NewRegExp => lane_new_regexp::<H>,
+    Step => super::dispatch_fast::body_general_step::<H>,
+    /// ToBoolean of a value its cell decides (`truthy_in_lane`).
+    Truthy => truthy_in_lane::<H>,
+    /// The array storage proofs a shorter array falsifies (`retire_array_proofs_in_lane`).
+    RetireArrayProofs => retire_array_proofs_in_lane,
+    /// An object literal over a register window (`new_object_literal_in_lane`).
+    NewObjectLiteral => new_object_literal_in_lane::<H>,
+    /// A closure over the frame's environment (`new_closure_in_lane`).
+    NewClosure => new_closure_in_lane::<H>,
+    /// A literal template's value (`new_template_in_lane`).
+    NewTemplate => new_template_in_lane::<H>,
+    /// A string concatenation of pure parts (`new_concat_in_lane`).
+    NewConcat => new_concat_in_lane::<H>,
+    /// `+` of two operands that become strings without guest code (`concat_pair_in_lane`).
+    ConcatPair => concat_pair_in_lane::<H>,
+    /// A regexp literal's fresh object of its site's template (`new_regexp_in_lane`).
+    NewRegExp => new_regexp_in_lane::<H>,
     /// A decision of two words the call-out carries, which needs no VM record
     /// (`dispatch_fast::decide_comparison`).
     Decide => super::dispatch_fast::decide_comparison::<H>,
