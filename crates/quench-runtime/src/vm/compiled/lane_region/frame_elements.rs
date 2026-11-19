@@ -82,7 +82,8 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         };
         let (view, (packed, within)) = held.or_else(|| self.state.proofs.arrays.iter()
             .find(|(known, view)| *known == base && (view.writable || !writable)).map(|(_, view)| (*view, (false, false))))?;
-        Some(ElementView::Dense(DenseView { values: view.values, length: stage.uextend32(view.length), packed, within, double: view.double }))
+        Some(ElementView::Dense(DenseView { values: view.values, length: stage.uextend32(view.length), packed, within, double: view.double,
+            uncounted: view.uncounted }))
     }
 
     fn keep_view(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, writable: bool, view: DenseView<ir::Value>) {

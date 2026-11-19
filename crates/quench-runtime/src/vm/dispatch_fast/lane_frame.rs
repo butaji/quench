@@ -1786,7 +1786,7 @@ impl<const ACC: u8> crate::staged::ElementFrame<Concrete> for LaneFrame<ACC> {
         let object = Value::from_bits(self.read(stage, base));
         // SAFETY: the context and its proofs are the running lane's, live for the row.
         let (values, length) = unsafe { span(context, base, object, writable) }?;
-        Some(crate::staged::elements::DenseView { values: values.as_ptr() as u64, length: length as u64, packed: false, within: false })
+        Some(crate::staged::elements::DenseView { values: values.as_ptr() as u64, length: length as u64, packed: false, within: false, double: None, uncounted: false })
     }
 
     /// The typed view of `base` for the element kind the site observed (`TYPED_SITE`): the view

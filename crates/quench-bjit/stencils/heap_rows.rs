@@ -352,7 +352,7 @@ fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) 
     }
     let (values, length, _) = need!(s, backing::<ENTRY, HOLE_A, false>(&s, payload));
     let mut stage = StencilStage::from_hole(ELEMENT_SITES);
-    let word = need!(s, elements::read_element(&mut stage, elements::DenseView { values, length, packed: false, within: false, double: None }, u64::from(index as u32), ()));
+    let word = need!(s, elements::read_element(&mut stage, elements::DenseView { values, length, packed: false, within: false, double: None, uncounted: false }, u64::from(index as u32), ()));
     deliver::<D>(s, word)
 }
 
