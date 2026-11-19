@@ -755,9 +755,11 @@ fn emit_at<'a, 'b>(builder: &'a mut FunctionBuilder<'b>, payload: ir::Value) -> 
 }
 
 /// The base of the running process's object layout table (`JsStepDispatch::object_layouts`):
-/// a static of that process, which code built elsewhere cannot name.
+/// a static of that process, which code built elsewhere cannot name. The table never moves, so
+/// the load is invariant: the e-graph hoists and shares it like the constant it replaces.
 pub(super) fn emit_js_object_layouts(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> ir::Value {
-    emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_layouts))
+    let offset = i32::try_from(std::mem::offset_of!(JsStepDispatch, object_layouts)).expect("JS dispatch offset fits i32");
+    object_slots::emit(builder).raw_load(crate::staged::machine::Lane::I64, invariant(), payload, offset)
 }
 
 fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
