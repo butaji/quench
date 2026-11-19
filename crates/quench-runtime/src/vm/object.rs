@@ -114,7 +114,7 @@ impl AtomClass {
 /// The shape of an object without properties, where every literal shape starts.
 const EMPTY_SHAPE: u32 = 0;
 /// Transitions a shape lookup may walk before the walk counts as long.
-const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
+pub(super) const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
 /// Long walks from one shape after which that shape gets a lookup index.
 pub(super) const SHAPE_INDEX_LONG_WALKS: u8 = 8;
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
@@ -419,7 +419,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn shape_keys(&self, shape: u32) -> Vec<PropertyKey> {
         self.shape_entries(shape)
-            .map(|(key, _)| *key)
+            .map(|(key, _)| key)
             .collect()
     }
     /// Moves `parent`'s lookup index to `child`, a cached transition of it the object took, as

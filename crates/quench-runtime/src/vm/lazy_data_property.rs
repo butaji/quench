@@ -317,7 +317,7 @@ impl<H: Host> Vm<H> {
         let named = object
             .into_iter()
             .flat_map(|object| self.shape_entries(object.shape()))
-            .map(|(key, _)| *key);
+            .map(|(key, _)| key);
         let indexed = object
             .filter(|object| object.has_indexed_descriptors())
             .into_iter()
