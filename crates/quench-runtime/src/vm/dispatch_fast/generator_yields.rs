@@ -49,10 +49,47 @@ script_handler! {
     /// a job's run suspends into its record and ends the run (`lane_suspend_at`). Any other
     /// `yield` takes the general path.
     #[inline(never)]
-    pub(super) fn yield_miss<>(cx, r, ip, i, view) {
-        // merge: theirs' generator branch (`lane_yield_in_window`) is served by `yield_in_lane` before this miss.
-        if running_request(unsafe { vm(cx) }) {
-            resume!(cx, super::async_requests::suspend_request_in_lane(cx, r, ip, i, true))
+    fn lane_yield<>(cx, r, ip, i, view) {
+        // A generator's window, the common case, runs the row with its suspender known.
+        if super::generator_windows::running_generator(unsafe { vm(cx) }) {
+            resume!(cx, lane_suspension(cx, r, ip, i, (LANE_YIELD, Suspender::Window)))
+        }
+        let Some(suspender) = Suspender::of_yield(cx) else {
+            return exit(ip);
+        };
+        resume!(cx, lane_suspension(cx, r, ip, i, (LANE_YIELD, suspender)))
+    }
+}
+
+/// The pc of the record at `ip` in the running view.
+#[inline(always)]
+fn record_pc<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> usize {
+    // SAFETY: the record lies in the running view.
+    unsafe { ip.offset_from((*cx).base) as usize }
+}
+
+/// Where a frame stopping at the `yield` or `await` record `i` at `ip` resumes: the pc after
+/// the record, and the register that takes the value it is resumed with (`lane_await`).
+#[inline(always)]
+fn resume_point<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction) -> (usize, crate::bytecode::Register) {
+    (record_pc(cx, ip) + 1, i.a & crate::bytecode::REGISTER_MASK)
+}
+
+/// The suspension a row on the lane's frame makes of the record at `ip` (`suspending`), in place
+/// as `suspender` says: the frame resumes at this record (a `yield*` step,
+/// `Suspending::again`) or after it, with the value it is resumed with in the row's
+/// destination. A window's frame suspends into its generator and its caller takes the step's
+/// result (`generator_windows::lane_suspend_generator`); a request's parks
+/// (`async_requests::lane_suspend_request`); a job root's suspends into its owner and the run
+/// ends (`suspend_job_root`).
+#[inline(always)]
+pub(super) fn lane_suspend_at<H: Host>(cx: *mut LaneContext<H>, ip: Ip, suspender: Suspender, suspending: Suspending<u64>) -> Resumed {
+    let at = (record_pc(cx, ip) + usize::from(!suspending.again), suspending.destination);
+    let (value, yielded) = (Value::from_bits(suspending.value), suspending.effect == SuspendEffect::Yield);
+    match suspender {
+        Suspender::Window => {
+            let delegated = suspending.delegated.map(Value::from_bits);
+            super::generator_windows::lane_suspend_generator(cx, at.0, at.1, value, delegated)
         }
         Suspender::Request => super::async_requests::lane_suspend_request(cx, at, yielded, value),
         Suspender::JobRoot(job) => {
