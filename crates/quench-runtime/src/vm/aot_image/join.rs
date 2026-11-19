@@ -11,12 +11,13 @@
 use super::{ImageTarget, LaneImage, base::BaseImage, symbols::SymbolTable};
 use crate::bytecode::ResidualProgram;
 use crate::compile::aot_facts::AotFacts;
+use crate::vm::compiled::ClosedFrozen;
 
 /// The lane body of function `id` with its leaves entering `base`, or `None` where the lane
 /// lowering gives no native record (the base body is then the entry).
 pub(crate) fn lower_lane(
     program: &ResidualProgram,
-    facts: &AotFacts,
+    (facts, frozen): (&AotFacts, &ClosedFrozen),
     target: &ImageTarget,
     id: u32,
     base: &BaseImage,
@@ -24,5 +25,5 @@ pub(crate) fn lower_lane(
 ) -> Result<Option<LaneImage>, String> {
     // TODO: lower for `target.isa`; the host's ISA until `IsaBaseline` selects the compile target.
     let _ = target;
-    Ok(super::super::compiled::closed_lane_image(program, id, facts, base, symbols))
+    Ok(super::super::compiled::closed_lane_image(program, id, (facts, frozen), base, symbols))
 }

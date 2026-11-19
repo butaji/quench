@@ -93,8 +93,9 @@ pub(crate) use super::jit_backend::NativeTarget as ImageTarget;
 /// Lowers every function of `program` under `facts` for `target`.
 pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageTarget) -> Result<AotImage, String> {
     let mut symbols = symbols::SymbolTable::new(program);
+    let frozen = super::compiled::ClosedFrozen::of(program);
     let functions = (0..program.function_count() as u32)
-        .map(|id| lower_function(program, facts, target, id, &mut symbols))
+        .map(|id| lower_function(program, (facts, &frozen), target, id, &mut symbols))
         .collect::<Result<Vec<_>, String>>()?;
     let symbols::Finished { shapes, heap_values, atoms, labels, operands } = symbols.finish();
     Ok(AotImage {
@@ -113,13 +114,13 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
 /// lane's leaves bound to the base body's PC entries.
 fn lower_function(
     program: &ResidualProgram,
-    facts: &AotFacts,
+    (facts, frozen): (&AotFacts, &super::compiled::ClosedFrozen),
     target: &ImageTarget,
     id: u32,
     symbols: &mut symbols::SymbolTable,
 ) -> Result<AotFunction, String> {
     let base = base::lower(program, facts, target, id, symbols)?;
-    let lane = join::lower_lane(program, facts, target, id, &base, symbols)?;
+    let lane = join::lower_lane(program, (facts, frozen), target, id, &base, symbols)?;
     Ok(AotFunction { id, base, lane })
 }
 

@@ -47,9 +47,10 @@ fn unit_of(program: &ResidualProgram, function: u32, facts: &AotFacts) -> Option
 
 /// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
 /// it polls for faults; `None` where it gives no native record.
-fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, facts: VmFacts<'_>) -> Option<(RelocatableCode, bool)> {
+fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &crate::vm::global_facts::GlobalReads))
+    -> Option<(RelocatableCode, bool)> {
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
-        &Default::default(), facts, &[], &BTreeMap::new(), &[], None, &[])?;
+        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[])?;
     if lowered.region.native == 0 { return None; }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = crate::vm::jit_backend::target_isa()?;
@@ -59,18 +60,21 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
     Some((code, lowered.region.fault_poll))
 }
 
-/// The image of `function`, or `None` where it lowers to nothing a lane body may run.
 /// The lane body of `function` for an AOT image under the closed-world `facts`, its leaves
-/// continuing at `base`'s entries (`join`): every leave's target is interned in `symbols`.
+/// continuing at `base`'s entries (`join`): every leave's target is interned in `symbols`. The
+/// whole-program values of `frozen` fold at their reads, each read checked where it is made
+/// (`GlobalRead::Frozen`, `VmFacts::frozen_fields`), as the JIT's frozen division folds them.
 /// `None` where it gives no native record, or polls for faults: the lowering does not report
 /// the poll's offset, so the base body runs such a function.
-pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32, facts: &AotFacts, base: &BaseImage,
-    symbols: &mut SymbolTable,
+pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen),
+    base: &BaseImage, symbols: &mut SymbolTable,
 ) -> Option<LaneImage> {
     let unit = unit_of(program, function, facts)?;
     let targets = leave_targets(&unit, function, base, symbols);
-    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { targets: &targets }), closed: Some(facts), ..VmFacts::STATIC };
-    let (code, fault_poll) = lowered_code(program, &unit, function, facts)?;
+    let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
+    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { targets: &targets }), closed: Some(facts),
+        frozen_fields: Some(&frozen.fields), ..VmFacts::STATIC };
+    let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
     (!fault_poll).then_some(LaneImage { code, fault_poll: None })
 }
 
@@ -188,7 +192,7 @@ impl<H: Host> Vm<H> {
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll, hoists_arrays: false, stable: Default::default() };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None }, fields: Vec::new(),
-            direct: Box::new([]), closed: false, function, invalidation: crate::code_dependencies::Invalidation::default(), budget: 0, tiers: self.programs.tiers() };
+            direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
         let method = plan.finish(&linked, None)?;
         self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())
     }

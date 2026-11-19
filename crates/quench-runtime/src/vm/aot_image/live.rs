@@ -21,8 +21,10 @@ const CODE_ALIGNMENT: usize = 16;
 pub(crate) struct LiveImage {
     /// Every base and lane body, placed once; the addresses below point into it.
     _code: CodeMemory,
-    /// The word the code's invalidation points read; it lives as long as the code.
-    _invalidation: Invalidation,
+    /// The image's one invalidation word, which every body's invalidation points read; it lives
+    /// as long as the code, and every lane body published from the image retires through it
+    /// (`Vm::install_ahead_body`), so a broken fact of any one stops every fold.
+    pub(crate) invalidation: Invalidation,
     /// The operand records the generic rows pass their semantic entries; they live as long as the code.
     operands: Box<[[u64; 2]]>,
     /// Each function's entry: its lane body where it has one, else its base body.
@@ -62,7 +64,7 @@ pub(crate) fn install<H: Host>(image: &AotImage, vm: &mut Vm<H>) -> Result<LiveI
     let bases: Box<[usize]> = layout.bases.iter().map(|at| start + at).collect();
     let lanes: Box<[Option<usize>]> = layout.lanes.iter().map(|lane| lane.map(|at| start + at)).collect();
     let entries = bases.iter().zip(lanes.iter()).map(|(base, lane)| lane.unwrap_or(*base)).collect();
-    Ok(LiveImage { _code: code, _invalidation: invalidation, operands, entries, bases, lanes })
+    Ok(LiveImage { _code: code, invalidation, operands, entries, bases, lanes })
 }
 
 /// The lane body of `function` linked against `live`, at address 0 for a copy into a new body
@@ -70,7 +72,7 @@ pub(crate) fn install<H: Host>(image: &AotImage, vm: &mut Vm<H>) -> Result<LiveI
 pub(crate) fn link_lane<H: Host>(image: &AotImage, vm: &mut Vm<H>, live: &LiveImage, function: u32) -> Option<Vec<u8>> {
     let lane = image.functions.get(function as usize)?.lane.as_ref()?;
     let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
-    let places = Places { bases: &bases, invalidation: live._invalidation.address(), operands: &live.operands };
+    let places = Places { bases: &bases, invalidation: live.invalidation.address(), operands: &live.operands };
     lane.code.link(0, |namespace, key| resolve(image, vm, &places, namespace, key)).ok()
 }
 
