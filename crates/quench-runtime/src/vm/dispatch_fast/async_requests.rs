@@ -76,8 +76,7 @@ fn lane_resume_request<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i
 /// The promise of the innermost in-place request, unrooted as its activation stops.
 fn take_request_promise<H: Host>(vm: &mut Vm<H>) -> Value {
     let root = vm.lane_stack.settling.pop().expect("each request activation has its entry");
-    let root = vm.settling_root(root);
-    vm.release_settled_call_root(root)
+    vm.settling_promise(root)
 }
 
 /// `await` (or, where `yielded`, `yield`) of the in-place request's activation on `value`, the

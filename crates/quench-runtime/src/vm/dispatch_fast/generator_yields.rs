@@ -179,8 +179,7 @@ fn suspend_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, (pc, destina
     note_allocation(vm);
     let frame = settling_frame(vm, code, &activation, (r, pc));
     let root = vm.lane_stack.settling.pop().expect("each settling activation has its entry");
-    let root = vm.settling_root(root);
-    let promise = vm.release_settled_call_root(root);
+    let promise = vm.settling_promise(root);
     let continuation = vm.suspend_activation(frame, super::super::activation::Completion::Await(value), Some(destination), promise);
     vm.lane_stack.pop_activation();
     let (memory, _) = lane_restore_caller(cx, &activation);
