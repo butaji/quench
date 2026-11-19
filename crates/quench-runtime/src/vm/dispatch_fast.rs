@@ -7098,50 +7098,38 @@ pub(super) unsafe fn lane_context_this<H: Host>(context: usize) -> Value {
 }
 
 script_handler! {
-    /// `CreateRegExpLiteral` (`Vm::regexp_literal`), which allocates and runs no guest code; a
-    /// callee-argument site (field B names the callee) may answer its shared object
-    /// (`regexp_argument_in_lane`).
+    /// `CreateRegExpLiteral` (`Vm::regexp_literal`), which allocates and runs no guest code: the
+    /// staged row, whose callee-argument site (field B names the callee) may answer its shared
+    /// object (`lane_regexp_argument_value`).
     fn lane_regexp_literal<>(cx, r, ip, i, view) {
-        if i.b != crate::bytecode::NO_OPTIONAL_REGISTER {
-            if !regexp_argument_in_lane(cx, r, [i.a, i.b], i.imm()) {
-                return exit(ip);
-            }
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
-        if !staged_allocate(cx, r, i.a, Allocation::RegExp { site: i.imm() }) {
+        let callee = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS);
+        if !staged_allocate(cx, r, i.a, Allocation::RegExp { site: i.imm(), callee }) {
             return exit(ip);
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
 
-/// The object a callee-argument regexp literal record (`[destination, encoded callee]`, of
-/// literal `site`) makes in a frame's own lane run, written to its destination: the general
-/// loop's (`Vm::regexp_literal_argument_of`), keyed by the frame. False, writing nothing, inside
-/// a lane activation, which the general path makes it for, and where the site raises, which
-/// `Vm::lane_raised` reports at the record.
+/// The object a callee-argument regexp literal record of literal `site`, whose call's callee
+/// is `callee`, makes in a frame's own lane run: the general loop's
+/// (`Vm::regexp_literal_argument_of`), keyed by the frame. `None` inside a lane activation,
+/// which the general path makes it for, and where the site raises, which `Vm::lane_raised`
+/// reports at the record.
 #[inline(never)]
-fn regexp_argument_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, [destination, callee]: [u16; 2], site: u32) -> bool {
+fn lane_regexp_argument_value<H: Host>(cx: *mut LaneContext<H>, callee: Value, site: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     if !vm.lane_stack.activations.is_empty() || !unsafe { (*cx).has_frame() } {
-        return false;
+        return None;
     }
-    let Some(callee) = callee.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) else {
-        return false;
-    };
     // SAFETY: the context's program outlives the lane run.
     let (code, program, frame) = unsafe { (&*(*cx).code, (*cx).program, (*cx).frame()) };
-    let callee = r.get(callee);
     let result = vm.regexp_literal_argument_of(code, program, frame, site as usize, callee);
     note_allocation(vm);
     match result {
-        Ok(value) => {
-            r.set(destination, value);
-            true
-        }
+        Ok(value) => Some(value),
         Err(error) => {
             vm.lane_completion.raise(error);
-            false
+            None
         }
     }
 }

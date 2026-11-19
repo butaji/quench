@@ -21543,6 +21543,34 @@ fn lane_loops_make_regexp_literals_natively_with_fresh_state() {
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn compiled_loops_answer_regexp_argument_literals_as_the_interpreter_does() {
+    // A literal argument of `replace` in a loop the compiled tiers run (`Allocation::RegExp`
+    // with its callee, `lane_new_regexp`) answers through `Vm::regexp_literal_argument_of`:
+    // shared while the callee is the realm's String method, a fresh object for any other
+    // callee, which may keep and change it. Expected value is Node's.
+    let source = r#"
+      function run(n, s) {
+        var t = 0, last;
+        for (var i = 0; i < n; i++) {
+          last = s.replace(/a/g, '');
+          t = (t + i) | 0;
+        }
+        return [last, t];
+      }
+      var total = 0, made;
+      for (var k = 0; k < 200; k++) { made = run(300, 'banana'); total = (total + made[1]) | 0; }
+      var holder = { replace: function (re) { return re; } };
+      var first = run(300, holder)[0], second = run(300, holder)[0];
+      first.lastIndex = 3;
+      print([made[0], total, first !== second, second.lastIndex, run(5, 'qaqa')[0]].join(" "));
+    "#;
+    // Only the answer is checked: whether the loop's call of `replace` stays native is the
+    // call tiers' concern.
+    let _ = compiled_loop_diagnostics(source, "lane-regexp-argument-loop.js", "run", &["bnn 8970000 true 0 qq"]);
+}
+
+#[test]
 fn lane_bodies_construct_empty_arrays() {
     // `new Array()` of the realm's `Array` in a lane body is an empty array
     // (`dispatch_fast::lane_body_construct`); a function named `Array` constructs as itself,

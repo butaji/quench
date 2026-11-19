@@ -136,6 +136,12 @@ impl Frameless {
         dispatch.shadow_top != self.stacks().shadow.as_ptr() as usize
     }
 
+    /// The count of the frameless activations the payload runs inside, its innermost's depth:
+    /// distinct for every one live at once in one native entry (`lane_allocations::regexp_argument_key`).
+    pub(super) fn depth(&self, dispatch: &JsStepDispatch) -> usize {
+        dispatch.shadow_top.saturating_sub(self.stacks().shadow.as_ptr() as usize) / size_of::<ShadowRecord>()
+    }
+
     /// Forgets every admission (`Vm::clear_call_targets`).
     pub(in crate::vm) fn clear(&mut self) {
         if let Some(stacks) = self.stacks.get_mut() {

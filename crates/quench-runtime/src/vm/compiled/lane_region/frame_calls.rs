@@ -123,7 +123,15 @@ pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>
             let words = register_words(frame, stage, registers.iter().copied());
             (LaneHelper::NewArray, vec![stage.raw_const(Lane::I64, registers.len() as i64), words])
         }
-        Allocation::RegExp { site } => (LaneHelper::NewRegExp, vec![stage.raw_const(Lane::I64, i64::from(site))]),
+        Allocation::RegExp { site, callee } => {
+            // A callee-argument site passes its call's callee as the register holds it; any other
+            // passes `DELETED`, which is no String method, so the allocator makes a fresh object.
+            let callee = match callee {
+                Some(callee) => <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, callee),
+                None => stage.raw_const(Lane::I64, Value::DELETED.to_bits() as i64),
+            };
+            (LaneHelper::NewRegExp, vec![stage.raw_const(Lane::I64, i64::from(site)), callee])
+        }
         Allocation::ConstArray { constant, count } =>
             (LaneHelper::NewConstArray, vec![stage.raw_const(Lane::I64, i64::from(constant)), stage.raw_const(Lane::I64, i64::from(count))]),
         Allocation::ObjectPair { site, first, second } => {

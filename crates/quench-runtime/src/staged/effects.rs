@@ -105,7 +105,13 @@ impl<W, P> Operation<W, P> {
             Self::Allocate { allocation: Allocation::Closure { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Frame)
                 .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
-            Self::Allocate { allocation: Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::ConstArray { .. }, .. } => Effects {
+            // A callee-argument regexp literal reads its callee register, and its shared object's
+            // `lastIndex` and the proofs it is kept under (`Vm::regexp_literal_argument_of`).
+            Self::Allocate { allocation: Allocation::RegExp { callee: Some(_), .. }, .. } => Effects {
+                reads: RegionSet::of(Region::Frame).with(Region::ObjectSlots).with(Region::ShapeWord).with(Region::Records),
+                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            Self::Allocate { allocation: Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { callee: None, .. } | Allocation::ConstArray { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
                 .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
             Self::Allocate { allocation: Allocation::ObjectLiteral { .. } | Allocation::ObjectPair { .. } | Allocation::ArrayOf { .. } | Allocation::Template { .. }, .. } => Effects {

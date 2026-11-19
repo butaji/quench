@@ -71,15 +71,62 @@ pub(super) unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64,
 
 /// A lane body's regexp literal at `site`, as the lane makes it (`dispatch_fast::lane_regexp_literal_value`):
 /// a fresh object of the site's compiled template; `DELETED` where a collection is due or the pattern
-/// fails to compile, which the interpreter raises at the instruction.
-pub(super) unsafe extern "C" fn lane_new_regexp<H: Host>(vm: u64, residual: u64, payload: u64, site: u64) -> u64 {
+/// fails to compile, which the interpreter raises at the instruction. A callee-argument site passes
+/// its call's callee (`DELETED` for any other site, which is no String method): where the activation
+/// has a key (`regexp_argument_key`) the site answers as the interpreter's does
+/// (`Vm::regexp_literal_argument_of`), its one shared object while the callee is the realm's
+/// String method and the object unobservable.
+pub(super) unsafe extern "C" fn lane_new_regexp<H: Host>(vm: u64, residual: u64, payload: u64, site: u64, callee: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program.
     let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
-    let Ok(object) = vm.regexp_literal_of(residual, dispatch.program_id, site as usize) else { return Value::DELETED.to_bits() };
+    let callee = Value::from_bits(callee);
+    let made = match regexp_argument_key(vm, dispatch).filter(|_| !callee.is_deleted()) {
+        Some(key) => vm.regexp_literal_argument_of(residual, dispatch.program_id, key, site as usize, callee),
+        None => vm.regexp_literal_of(residual, dispatch.program_id, site as usize),
+    };
+    let Ok(object) = made else { return Value::DELETED.to_bits() };
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
     object.to_bits()
+}
+
+/// The key a callee-argument regexp literal evaluated by the payload's activation shares its
+/// object under (`RegExpArgumentShare::frame`): the payload's frame index where the code runs as
+/// that frame (a loop region or body of it, and any callee inlined into it), the interpreter's own
+/// key for it; inside a frameless activation, the payload's frame and the activation's depth on
+/// the frameless stack, tagged with the top bit, which no frame index has; `None` inside a lane
+/// activation, which then makes a fresh object.
+///
+/// Sound because no two activations live at once with a use of the object in flight hold one key,
+/// which is all `Vm::regexp_literal_argument_of` asks of a frame index: a use runs builtins alone
+/// unless guest code runs, and guest code never runs inside a frameless activation, whose chain
+/// becomes frames first (`frameless`, `materialize_chain`) and stops its native callers. So any
+/// evaluation overlapping a use runs in a frame above the use's (an index above the payload's),
+/// or in a frameless activation of a native entry made on such a frame (another payload frame);
+/// and the payload's frame continues natively, making a frameless activation at that depth again,
+/// only once those frames returned and the use completed. An inlined callee shares its caller's
+/// key, so it may answer the caller's object, but only to an evaluation that completes its own
+/// use before the caller's starts (between the literal and the call nothing suspends), the same
+/// sequential reuse as two evaluations of one frame. A lane activation (`lane_context`) has no
+/// frame and its records are reused across lane runs this helper cannot tell apart.
+fn regexp_argument_key<H: Host>(vm: &Vm<H>, dispatch: &JsStepDispatch) -> Option<usize> {
+    /// The top bit, which marks a frameless activation's key.
+    const FRAMELESS: usize = 1 << (usize::BITS - 1);
+    /// The bits of a frameless key that hold the depth: more than the shadow records number.
+    const DEPTH_BITS: u32 = u16::BITS;
+    if dispatch.lane_context != 0 {
+        return None;
+    }
+    if !vm.frameless.inside(dispatch) {
+        return Some(dispatch.frame);
+    }
+    let depth = vm.frameless.depth(dispatch);
+    // A frame or depth past the key's fields has no key: the site makes a fresh object.
+    if dispatch.frame >> (usize::BITS - 1 - DEPTH_BITS) != 0 || depth >> DEPTH_BITS != 0 {
+        return None;
+    }
+    Some(FRAMELESS | dispatch.frame << DEPTH_BITS | depth)
 }
 
 /// A lane body's object literal of literal `site`'s shape over the `count` values at `parts`,

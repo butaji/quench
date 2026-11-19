@@ -8,6 +8,7 @@ fn window_values(allocation: Allocation) -> i32 {
     match allocation {
         Allocation::ObjectLiteral { window, .. } | Allocation::Concat { window } => i32::from(window.count),
         Allocation::ObjectPair { .. } => 2,
+        Allocation::RegExp { callee: Some(_), .. } => 1,
         Allocation::ArrayOf { elements } => elements.registers().len() as i32,
         Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::ConstArray { .. } | Allocation::Closure { .. } | Allocation::Template { .. } => 0,
     }
@@ -346,7 +347,8 @@ fn an_allocation_row_defines_its_destination_through_the_frame_or_declines() {
         (Allocation::Template { template: 0 }, 0),
         (Allocation::Empty, 0),
         (Allocation::Array { length: 3, numbers: false }, 0),
-        (Allocation::RegExp { site: 0 }, 0),
+        (Allocation::RegExp { site: 0, callee: None }, 0),
+        (Allocation::RegExp { site: 0, callee: Some(1) }, 1),
         (Allocation::ConstArray { constant: 0, count: 2 }, 0),
         (Allocation::ObjectPair { site: 1, first: 1, second: 2 }, 2),
         (Allocation::ArrayOf { elements: RegisterList::collect(2, |index| 2 - index as u16).expect("two fit") }, 2),
