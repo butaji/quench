@@ -103,8 +103,8 @@ macro_rules! record_families_fns {
 /// lookup names them.
 macro_rules! record_space_ids {
     (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
-        /// A record space's family, named by its row in `for_each_record_space!`.
-        #[allow(dead_code)]
+        /// A record space's family, named by its row in `for_each_record_space!`. Every variant
+        /// is constructed by `RECORD_FAMILIES`.
         #[derive(Clone, Copy, PartialEq, Eq)]
         pub(super) enum RecordSpaceId {
             $($family,)*
@@ -179,7 +179,6 @@ mod string_alloc;
 mod string_atoms;
 mod native_layout;
 mod record_layouts;
-#[allow(unused_imports)] // `NATIVE_RECORD_CURSOR_LAYOUT` is read by the stencil layout check (tests) and generated code.
 pub(crate) use record_layouts::{
     NATIVE_ARRAY_LAYOUT, NATIVE_ENVIRONMENT_LAYOUT, NATIVE_FUNCTION_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT,
     PropertyStoreLayout, absent_environment_storage,
