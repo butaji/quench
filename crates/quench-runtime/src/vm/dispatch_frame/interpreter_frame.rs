@@ -351,6 +351,58 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
         Some((Value::integer(index as i32).to_bits(), InterpreterFact::Value))
     }
 
+    /// `RequireIteratorResult`'s object test: the VM's own check, which raises the iterator-result TypeError.
+    #[inline(always)]
+    fn object_like(&mut self, _stage: &mut Concrete, word: u64) -> Option<()> {
+        let program = self.program;
+        let vm = self.vm();
+        match vm.require_iterator_result(program, Value::from_bits(word)) {
+            Ok(()) => Some(()),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
+    /// `RequireObjectCoercible`'s miss: the VM's own check, which raises for a `null` or `undefined` word.
+    #[inline(always)]
+    fn object_coercion_failed(&mut self, _stage: &mut Concrete, word: u64) {
+        let program = self.program;
+        let vm = self.vm();
+        if let Err(error) = vm.require_object_coercible(program, Value::from_bits(word)) {
+            self.raised = Some(error);
+        }
+    }
+
+    /// `SetFunctionName` of `function` to the program atom `name` at cache `site`: the VM's naming.
+    #[inline(always)]
+    fn set_function_name(&mut self, _stage: &mut Concrete, function: u64, name: u32, site: u16) -> Option<()> {
+        let program = self.program;
+        let vm = self.vm();
+        match vm.set_function_name(program, Value::from_bits(function), (name, site)) {
+            Ok(()) => Some(()),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
+    /// An array literal's element definition: the VM's definition into the fresh hole (`define_array_literal_element`).
+    #[inline(always)]
+    fn define_element(&mut self, _stage: &mut Concrete, array: u64, index: u32, value: u64) -> Option<()> {
+        let program = self.program;
+        let vm = self.vm();
+        match vm.define_array_literal_element(program, Value::from_bits(array), index as usize, Value::from_bits(value)) {
+            Ok(()) => Some(()),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
     /// `IteratorCleanupPush`: the running frame's cleanup stack takes `iterator` with its `done` register.
     #[inline(always)]
     fn iterator_push(&mut self, _stage: &mut Concrete, iterator: Register, done: Register) -> Option<()> {

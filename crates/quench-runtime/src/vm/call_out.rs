@@ -348,6 +348,35 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
         (Value::boolean(condition).to_bits(), ())
     }
 
+    /// `RequireIteratorResult`'s object test: the VM's own check, which raises the iterator-result TypeError.
+    fn object_like(&mut self, _stage: &mut Concrete, word: u64) -> Option<()> {
+        match self.vm.require_iterator_result(self.program, Value::from_bits(word)) {
+            Ok(()) => Some(()),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
+    /// `RequireObjectCoercible`'s miss: the VM's own check, which raises for a `null` or `undefined` word.
+    fn object_coercion_failed(&mut self, _stage: &mut Concrete, word: u64) {
+        if let Err(error) = self.vm.require_object_coercible(self.program, Value::from_bits(word)) {
+            self.raised = Some(error);
+        }
+    }
+
+    /// `SetFunctionName` of `function` to the program atom `name` at cache `site`: the VM's naming.
+    fn set_function_name(&mut self, _stage: &mut Concrete, function: u64, name: u32, site: u16) -> Option<()> {
+        match self.vm.set_function_name(self.program, Value::from_bits(function), (name, site)) {
+            Ok(()) => Some(()),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, ())> {
         let (vm, owner) = (&*self.vm, self.site.owner);
         let operands = operation.operands().read(&self.program.method_arguments, |operand| match operand.register_index() {

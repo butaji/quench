@@ -104,6 +104,12 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn object_like(&mut self, _stage: &mut S, _word: S::Word) -> Option<()> { None }
 
+    /// `RequireObjectCoercible`'s miss on a `null` or `undefined` word: the frame raises the TypeError the
+    /// VM's `require_object_coercible` raises, where it has a host. The default raises nothing, and the
+    /// row's miss is the caller's.
+    #[inline(always)]
+    fn object_coercion_failed(&mut self, _stage: &mut S, _word: S::Word) {}
+
     /// The heap value `allocation` makes, defined into `destination`; `None` where the frame
     /// has no allocator for it or the value is the general path's (a due collection).
     #[inline(always)]

@@ -1,18 +1,19 @@
-// Hand arms left: the arms of `Vm::step` that still name an opcode, and why none is a family arm.
+// Hand arms left: the arms of `Vm::step` that still name an opcode, and why none is a fallback's.
 // `step` carries `#[quench_macros::operation_semantics]`, which rejects match guards ("semantic dispatch
-// guards must live inside the operation"), so a family arm such as `op if op.owned_step().is_some()` or
-// `op if op.generic_step() == Some(GenericStep::LaneResult)` cannot be written here. Until that macro
-// accepts a family guard (or the family moves into the operation), these stay named:
-// - Owned-step rows, run first, then `owner_step` (`Op::owned_step`): LoadLocal, StoreLocal, LoadCapture,
-//   StoreCapture, LoadName, LoadNameCall, LoadNameTypeof. (LoadEnvLocal, StoreVarBinding, StoreEnvLocal and
-//   StoreName take `owner_step` alone, with no row first, and must keep that.)
-// - Lane-result call-outs (`GenericStep::LaneResult`): ToPropertyKey, GetIterator, IteratorClose,
-//   AppendArray, ForInStart; and Delete, which takes the same `staged_value_step` call-out, as do CloneEnv,
-//   LoadThis, LoadCallee, LoadImportMeta, InitializeThis, ResolveName, LoadResolvedName, StoreResolvedName,
-//   DeleteName, ArgumentsLength and ArgumentGet.
+// guards must live inside the operation"), so no family arm can be written here. `step_unlisted` takes
+// the rest by the catalog instead: an opcode with an owned step (`Op::owned_step`) runs its staged row
+// first where the catalog marks it `ROW_HANDLER` or `staged`, then `owner_step`; a `Names`, `Generic`,
+// `Property` or `Value` decoder runs its staged call-out (`staged_value_step`); a `Literal` decoder runs
+// its element definition (`decode_literal`, `DefineArrayElement`).
+// What is left, and why:
+// - Owned steps that take `owner_step` alone, with no row first: LoadEnvLocal, StoreEnvLocal, StoreName.
+//   Their staged rows decode, and these steps have never tried a row first.
+// - Field stores to `this`: SetThisField, SetThisFieldStrict. The interpreter frame's property plans are
+//   `NoPlans`, so its store row always leaves; the miss must read `this` by `checked_this_binding`, which
+//   `set_field_miss` (it reads register B) does not.
 // - Row, then a per-opcode miss: GetField, GetIndex, SetField, SetFieldStrict, SetIndex, Binary, NumericAdd,
-//   NumericMultiply, Unary, JumpBinaryFalse. Each miss is that opcode's own semantics, not a staged row's.
-//   What keeps each from its arm alone:
+//   NumericMultiply, Unary, JumpBinaryFalse, InitializeTdz. Each miss is that opcode's own semantics, not a
+//   staged row's. What keeps each from its arm alone:
 //   - GetField, GetIndex: the interpreter's record has no read plan (`NoPlans`), and an accessor needs the
 //     inline getter (`try_inline_getter`), which takes `pc` and `allow_inline_calls` from `step`.
 //   - SetField, SetFieldStrict, SetIndex: the stores have no call-out (`CallOut`) yet.
@@ -22,20 +23,21 @@
 //     update has no call-out.
 //   - JumpBinaryFalse: a constant operand, a nullish test, and a bitwise test have no call-out (`Decide` takes
 //     registers, and the nullish and bitwise decisions are not calls).
-// - Run-only (`Declined` is unreachable): LoadConst, ToNumeric, IncDec.
-// - Row that stops the run: Return, Throw.
+//   - InitializeTdz: the row leaves for a slot it does not hold plainly, and the miss writes the TDZ marker there.
+// - Run-only (`Declined` is unreachable): LoadConst, ToNumeric, IncDec, StringCaseIndex, GetAsyncIterator,
+//   ForInNext, IteratorCleanupPush, IteratorCleanupPop, CacheTemplateObject, LoadCachedTemplateObject.
+// - Row that stops the run: Return, Throw (the frame's completion).
+// - Hand semantics with no staged row: CallFirstChunk (the first-call stub, `call_first_chunk`).
+// - WasmBranchTable: its row's edge is a branch-table entry (`Edge::Entry`), which the interpreter frame's
+//   `step_row` refuses, so its case stays the hand body.
+// - Literal allocation, which needs the tier's proof of the allocation (`decode_literal` under
+//   `allocate_value`, which the interpreter frame does not answer): MakeClosure, MakeObject, MakeObject2,
+//   MakeObjectLiteral, SuperConstArrayObject2, MakeArray, MakeConstArray, MakeLiteralTemplate,
+//   CreateRegExpLiteral, StringConcat.
 // - Call forms with their own convention (spread, forwarded arguments, inline and known targets, per-form
 //   misses): Call, CallArray, CallSpread, CallForwardingArguments, CallKnown, CallMethod, CallThisMethod,
 //   Construct.
 // - Suspension and no-op: Await, Yield, YieldStar (`staged_suspend`), Nop (must not reach `step_wasm`), Wide.
-// - Literal allocation under the tier's proof (`Decoder::Literal`, `Operation::decode_literal`): MakeClosure,
-//   MakeObject, MakeObject2, MakeObjectLiteral, SuperConstArrayObject2, MakeArray, MakeConstArray,
-//   MakeLiteralTemplate, CreateRegExpLiteral, StringConcat.
-// - Hand semantics with no staged row yet: CallFirstChunk,
-//   RequireObjectCoercible, RequireIteratorResult, SetFunctionName (these three need frame methods the
-//   host frame does not implement), SetThisField, SetThisFieldStrict (the frame holds no `this` for a row),
-//   DefineArrayElement (its element definer is the interpreter frame's, not a call-out),
-//   WasmBranchTable.
 
 use super::*;
 use super::dispatch_frame::{InterpreterFrame, RowRun};
@@ -627,28 +629,8 @@ impl<H: Host> Vm<H> {
                 let value = self.regexp_literal(p, f, i.regexp_literal_site_index())?;
                 self.write(f, i.result_register(), value);
             }
-            // Checked local reads and writes run their staged rows first; a row that leaves (a binding in
-            // its temporal dead zone, a root or mirrored binding) is the owner's step.
-            Op::LoadLocal | Op::StoreLocal => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
-                    }
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreEnvLocal | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
-            // Captures and name loads run their staged rows first; a row that leaves is the owner's step.
-            Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
-                    }
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
+            // The owner's steps that take no row first (`step_unlisted` runs the others, row first).
+            Op::LoadEnvLocal | Op::StoreEnvLocal | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
             Op::CallFirstChunk => self.call_first_chunk(p, f, i, *pc)?,
             // The template object cache: a literal-site call-out row (`protocol_literals`), which the frame answers.
             Op::CacheTemplateObject | Op::LoadCachedTemplateObject => {
@@ -747,15 +729,6 @@ impl<H: Host> Vm<H> {
                     RowRun::Stop(stop) => return stop,
                 }
             }
-            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart | Op::Delete
-            | Op::CloneEnv | Op::LoadThis | Op::LoadCallee | Op::LoadImportMeta | Op::InitializeThis | Op::ResolveName
-            | Op::LoadResolvedName | Op::StoreResolvedName | Op::DeleteName | Op::ArgumentsLength | Op::ArgumentGet => {
-                self.staged_value_step(p, super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc }, i)?;
-            }
-            Op::RequireObjectCoercible => {
-                self.require_object_coercible(p, self.read(f, i.register_b()))?;
-            }
-            Op::RequireIteratorResult => self.require_iterator_result(p, self.read(f, i.register_b()))?,
             // The running frame's iterator cleanup stack, as its staged rows (`Frame::iterator_push`, `iterator_pop`).
             Op::IteratorCleanupPush | Op::IteratorCleanupPop => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
@@ -763,9 +736,6 @@ impl<H: Host> Vm<H> {
                     RowRun::Declined => unreachable!("the interpreter frame answers every iterator cleanup step"),
                     RowRun::Stop(stop) => return stop,
                 }
-            }
-            Op::SetFunctionName => {
-                self.set_function_name(p, self.read(f, i.register_a()), (i.atom_index(), i.cache_site_index()))?;
             }
             // The TDZ opening runs its staged row first; a row that leaves (a slot it does not hold plainly) is the hand write.
             Op::InitializeTdz => {
@@ -819,10 +789,6 @@ impl<H: Host> Vm<H> {
                     }
                     RowRun::Stop(stop) => return stop,
                 }
-            }
-            Op::DefineArrayElement => {
-                let (array, value) = (self.read(f, i.register_b()), self.read(f, i.register_a()));
-                self.define_array_literal_element(p, array, i.array_index() as usize, value)?;
             }
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
@@ -1499,12 +1465,37 @@ impl<H: Host> Vm<H> {
             }
             return Ok(StepResult::Continue);
         }
-        if !matches!(i.op().staged(), Some(crate::bytecode::Decoder::Names)) {
-            return self.step_wasm(p, f, i, pc);
+        // An owner's step (`Op::owned_step`): its staged row first where the catalog marks one (`ROW_HANDLER`
+        // or a `staged` decoder), then the owner's own step on a miss.
+        if i.op().owned_step().is_some() {
+            if i.op().staged().is_some() || i.op().traits().has(crate::bytecode::Traits::ROW_HANDLER) {
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => return Ok(StepResult::Continue),
+                    RowRun::Declined => {}
+                    RowRun::Stop(stop) => return stop,
+                }
+            }
+            self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
+            return Ok(StepResult::Continue);
         }
-        let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
-        self.staged_value_step(p, site, i)?;
-        Ok(StepResult::Continue)
+        // A literal's element definition: its staged row (`decode_literal`), which the frame's definer answers.
+        if i.op().staged() == Some(crate::bytecode::Decoder::Literal) {
+            let operation = crate::staged::Operation::<u64, ()>::decode_literal(i, ()).expect("a literal row decodes");
+            return match self.run_row(p, f, i, pc, operation) {
+                RowRun::Done(_) => Ok(StepResult::Continue),
+                RowRun::Stop(stop) => stop,
+                RowRun::Declined => unreachable!("the interpreter frame defines every array literal element"),
+            };
+        }
+        // A call-out row the interpreter's stage answers in place (`staged_value_step`): the lane's result
+        // calls (`GenericStep::LaneResult`), and the names, iteration and value rows the words do not decide.
+        if matches!(i.op().staged(), Some(crate::bytecode::Decoder::Names | crate::bytecode::Decoder::Generic
+            | crate::bytecode::Decoder::Property | crate::bytecode::Decoder::Value)) {
+            let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
+            self.staged_value_step(p, site, i)?;
+            return Ok(StepResult::Continue);
+        }
+        self.step_wasm(p, f, i, pc)
     }
 
     #[inline(always)]

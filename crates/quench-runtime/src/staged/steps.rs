@@ -250,7 +250,10 @@ fn require_object_coercible<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
     let nullish = stage.either(null, undefined);
     match stage.guard_false(nullish, miss) {
         Some(()) => Step::Value(value),
-        None => Step::Unresolved,
+        None => {
+            frame.object_coercion_failed(stage, value);
+            Step::Unresolved
+        }
     }
 }
 
