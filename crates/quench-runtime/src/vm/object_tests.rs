@@ -1423,3 +1423,33 @@ fn an_empty_field_cache_stores_as_zero_words() {
     assert_eq!(NO_FIELD_ADD_SET.store(), 0);
     assert_eq!(NO_INHERITED_FIELD.store(), 0);
 }
+
+#[test]
+fn assign_shape_adoption_yields_to_prototype_setters_read_only_keys_and_proto() {
+    // `Object.assign` copies with [[Set]]: the target adopts a source's shape only when no
+    // prototype of the target has a source key as an accessor or a read-only data property.
+    let cases = [
+        ("", "{ a: 1, b: 2 }", true),
+        ("Object.defineProperty(Object.prototype, 'a', { set(v) {}, configurable: true });", "{ a: 1, b: 2 }", false),
+        ("Object.defineProperty(Object.prototype, 'b', { value: 0, writable: false, configurable: true });", "{ a: 1, b: 2 }", false),
+        ("", "Object.defineProperty({}, '__proto__', { value: 1, writable: true, enumerable: true, configurable: true })", false),
+    ];
+    for (setup, source_expr, expected) in cases {
+        let program_source = format!("{setup}\nvar src = {source_expr}; var target = {{}};");
+        let program = Engine::specialize(&program_source, "assign-shape-set.js").unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let globals = vm.realm.globals;
+        let src_name = vm.intern_atom("src");
+        let target_name = vm.intern_atom("target");
+        let src = vm.own_property(globals, src_name).unwrap();
+        let target = vm.own_property(globals, target_name).unwrap();
+        assert_eq!(vm.adopt_source_shape_for_set(target, src), expected, "{source_expr} after {setup:?}");
+        if expected {
+            let src_shape = vm.object_data(src).unwrap().shape();
+            assert_eq!(vm.object_data(target).unwrap().shape(), src_shape);
+        } else {
+            assert!(vm.own_named_keys(target).is_empty(), "a refused adoption has no effect");
+        }
+    }
+}
