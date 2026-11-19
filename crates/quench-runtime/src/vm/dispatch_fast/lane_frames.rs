@@ -73,6 +73,7 @@ pub(super) enum WasmReturn {
 #[derive(Clone, Copy)]
 pub(super) struct FrameReturn {
     /// The function it ran.
+    #[allow(dead_code)] // read by the frame tests and the activations bench
     pub(super) function: u32,
     /// The caller's call record, which the return completes.
     pub(super) call: Ip,
@@ -161,6 +162,17 @@ impl Side {
             environment: script.environment,
             caller_program,
         })
+    }
+
+    /// The side-record flags its header carries (`flags_of` of the activation it describes).
+    #[inline(always)]
+    pub(super) fn flags(&self) -> u64 {
+        crate::staged::call_complete::concrete_side_flags(
+            self.forwards || self.kept != 0,
+            self.environment,
+            self.completion.crosses(),
+            !matches!(self.completion, Completion::Plain | Completion::Cross),
+        )
     }
 
     /// The side-record flags a script activation's header carries (`frame::SIDE_FLAGS`): 0 for
@@ -355,6 +367,44 @@ impl LaneStack {
             self.plain.program.set(side.caller_program);
         }
         returned
+    }
+
+    /// Give the innermost activation, a script one, `completion` after its push (a setter's
+    /// store, a proxy trap, a native's callback, a Wasm import's callee), where it is
+    /// (one-frame-one-call.md F4): a plain header's side record and its flags
+    /// (`staged::call_complete::write_side_flags`), a side record pushed for a header that had
+    /// none (the innermost's is the top of the side records) or dropped where the flags come to
+    /// none; else the innermost record. No spill, but for a trampoline's header (a native's
+    /// callback, an array step's), whose completion its trampoline names: it becomes a record.
+    pub(super) fn recomplete_top(&mut self, completion: Completion) {
+        if self.plain.depth.get() != 0 {
+            let window = Registers(self.plain.registers.get());
+            let sided = header_sided(window);
+            let call = window.plain_caller().0;
+            let trampolined = !sided && (self.callback_return.returns(call).is_some() || self.callback_return.steps_return(call));
+            if !trampolined {
+                let caller_program = self.plain.program.get();
+                let mut side = if sided {
+                    *self.sides.get_mut().last().expect("a sided header has its side record")
+                } else {
+                    Side { completion: Completion::Plain, forwards: false, kept: 0, environment: false, caller_program }
+                };
+                side.completion = completion;
+                let flags = side.flags();
+                crate::staged::call_complete::concrete_write_side_flags(window.0.expose_provenance() as u64, flags);
+                let sides = self.sides.get_mut();
+                match (sided, flags != 0) {
+                    (true, true) => *sides.last_mut().expect("a sided header has its side record") = side,
+                    (true, false) => { sides.pop(); }
+                    (false, true) => sides.push(side),
+                    (false, false) => {}
+                }
+                return;
+            }
+        }
+        if let Some(ActivationKind::Script(script)) = self.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
+            script.completion = completion;
+        }
     }
 
     /// Drop the innermost activation where it is: a plain one's header and side record

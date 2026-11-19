@@ -61,9 +61,7 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
     Some(match lane_activate_kept::<H, false>(cx, r, ip, &target, stored, this) {
         Ok((registers, next)) => {
-            if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
-                script.completion = Completion::Assigns;
-            }
+            vm.lane_stack.recomplete_top(Completion::Assigns);
             Resumed::At(registers, next, Carried::script(cx))
         }
         Err(next) => Resumed::Exit(next),

@@ -56,9 +56,30 @@ pub(crate) fn concrete_activation(activates: bool, forwards: bool, fixed: bool, 
     activation(&mut super::Concrete::new(std::ptr::null()), activates, forwards, fixed, environment)
 }
 
+/// Whether a lane body's call admits a target the VM resolved (`resolve_script_call_target`):
+/// a callee of the running program, whose records the body's view reads; another program's
+/// callee takes the crossing call instead. Reads the two program words; writes nothing.
+#[inline(always)]
+pub(crate) fn admits_target_program<S: Stage>(stage: &mut S, target_program: S::Word, running_program: S::Word) -> S::Cond {
+    let differs = stage.sub(target_program, running_program);
+    stage.eq_imm(differs, 0u64)
+}
+
+/// `admits_target_program` on machine words.
+#[inline(always)]
+pub(crate) fn concrete_admits_target_program(target_program: u32, running_program: u32) -> bool {
+    admits_target_program(&mut super::Concrete::new(std::ptr::null()), u64::from(target_program), u64::from(running_program))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_body_call_admits_a_target_of_its_own_program() {
+        assert!(concrete_admits_target_program(3, 3));
+        assert!(!concrete_admits_target_program(3, 4));
+    }
 
     #[test]
     fn a_lexical_or_marked_this_is_the_deleted_marker() {

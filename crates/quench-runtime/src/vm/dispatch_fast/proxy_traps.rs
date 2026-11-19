@@ -166,9 +166,7 @@ fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value
     let layout = if by_layout { vm.object_data(target).map_or(0, |data| data.layout_id()) } else { 0 };
     let check = TrapCheck { target, atom, access, layout };
     let depth = vm.lane_stack.activation_count() - 1;
-    if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
-        script.completion = completion;
-    }
+    vm.lane_stack.recomplete_top(completion);
     vm.lane_stack.trap_checks.push((depth, check));
 }
 

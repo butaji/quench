@@ -1637,15 +1637,6 @@ impl Activation {
         (!matches!(self.kind, ActivationKind::Native)).then(|| unsafe { self.call.offset_from(self.caller_base) } as usize)
     }
 
-    /// The memory view its caller runs with: a JavaScript activation's caller is JavaScript,
-    /// whose view carries the context (`MemoryView::script`).
-    fn caller_memory<H: Host>(&self, cx: *mut LaneContext<H>) -> MemoryView {
-        match self.kind {
-            ActivationKind::Native | ActivationKind::Script(_) | ActivationKind::WasmEntry { .. } => MemoryView::script(cx),
-            ActivationKind::Wasm { memory, .. } => memory,
-        }
-    }
-
     #[inline] fn frame_storage_bytes(&self) -> usize {
         match self.kind {
             ActivationKind::Native | ActivationKind::Script(_) => 0,
@@ -19783,9 +19774,8 @@ fn lane_push_callback<H: Host>(
         lane_activate_keeping::<H, false>(cx, r, call, target, arguments, this, false, None).ok()?
     };
     let vm = unsafe { vm(cx) };
-    if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
-        script.completion = Completion::ReturnsToNative;
-    }
+    // Given its completion where it is, a header's side record or the record (no spill).
+    vm.lane_stack.recomplete_top(Completion::ReturnsToNative);
     Some(start)
 }
 
