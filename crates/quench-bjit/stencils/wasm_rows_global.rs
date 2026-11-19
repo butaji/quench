@@ -21,7 +21,7 @@
 
 use super::wasm_frame::{global_area, storage_of};
 use super::wasm_stage::GlobalStage;
-use crate::staged::wasm_instance::WasmInstance;
+use crate::staged::wasm_instance::{global_get as get_rule, global_set as set_rule};
 use crate::words::{HOLE_A, HOLE_B, Out, S, hole64, slot};
 
 /// `D = global`: the word of the global, narrowed to its storage.
@@ -29,7 +29,7 @@ use crate::words::{HOLE_A, HOLE_B, Out, S, hole64, slot};
 pub(crate) unsafe fn global_get<const OP: u32>(s: S) -> Out {
     let storage = const { storage_of(OP) };
     let mut instance = GlobalStage { area: global_area(&s) };
-    let word = instance.global_load(hole64::<HOLE_B>() as u32, storage);
+    let word = get_rule(&mut instance, hole64::<HOLE_B>() as u32, storage);
     unsafe {
         *(slot::<0>(&s) as *mut u64) = word;
     }
@@ -42,6 +42,6 @@ pub(crate) unsafe fn global_set<const OP: u32>(s: S) -> Out {
     let storage = const { storage_of(OP) };
     let mut instance = GlobalStage { area: global_area(&s) };
     let value = unsafe { *(slot::<HOLE_A>(&s) as *const u64) };
-    instance.global_store(hole64::<HOLE_B>() as u32, storage, value);
+    set_rule(&mut instance, hole64::<HOLE_B>() as u32, storage, value);
     Out::Next(s)
 }

@@ -191,6 +191,16 @@ pub(crate) fn lane_extract(scalar: Register, vector: Register, selector: u32) ->
     Emission::new(Op::WasmSimd, scalar, vector, 0, selector)
 }
 
+/// `result = left op right` for the SIMD operator `selector` names (lane in its high bits).
+pub(crate) fn simd(result: Register, left: Register, right: Register, selector: u32) -> Emission {
+    Emission::new(Op::WasmSimd, result, left, right, selector)
+}
+
+/// `result = shuffle(left, right)` by the 16 lane indices in constant slot `constant`.
+pub(crate) fn simd_shuffle(result: Register, left: Register, right: Register, constant: u32) -> Emission {
+    Emission::new(Op::WasmSimdShuffle, result, left, right, constant)
+}
+
 /// `result = memory.grow(delta)`.
 pub(crate) fn memory_grow(result: Register, memory: Register, delta: Register) -> Emission {
     Emission::new(Op::WasmMemoryGrow, result, memory, delta, 0)

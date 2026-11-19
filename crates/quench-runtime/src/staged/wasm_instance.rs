@@ -94,3 +94,16 @@ pub(crate) trait WasmInstance: WasmStage {
     fn global_load(&mut self, slot: u32, storage: Storage) -> Self::Word;
     fn global_store(&mut self, slot: u32, storage: Storage, value: Self::Word);
 }
+
+/// `global.get`: the word of the global bound at `slot`, as its storage holds it. Every tier's
+/// global read is this rule over its own stage.
+#[inline(always)]
+pub(crate) fn global_get<S: WasmInstance>(stage: &mut S, slot: u32, storage: Storage) -> S::Word {
+    stage.global_load(slot, storage)
+}
+
+/// `global.set`: `value` into the global bound at `slot`, narrowed by its storage.
+#[inline(always)]
+pub(crate) fn global_set<S: WasmInstance>(stage: &mut S, slot: u32, storage: Storage, value: S::Word) {
+    stage.global_store(slot, storage, value);
+}

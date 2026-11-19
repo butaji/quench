@@ -15,6 +15,54 @@
 
 #![allow(dead_code)]
 
+// The operator lists, expanded here and by the runtime from the one file (`staged/wasm_lists.rs`, which
+// has no `use` and no item, so the stencil build, the lib and the build script compile it alike).
+#[macro_use]
+#[path = "../../quench-runtime/src/staged/wasm_lists.rs"]
+mod wasm_lists;
+
+/// A SIMD operator's family, the list's column: the row kind its operator runs in.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum SimdFamily {
+    Unary, Binary, Splat, Extract, Replace, MoreBinary, MoreCompare, MoreFloat, MoreShift, MoreTest, MoreUnary, MoreWiden, MoreWide, MoreConvert,
+}
+
+/// A vector load's family: a scalar access, the whole vector, or a vector load that splats, widens or zeroes.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum LoadFamily {
+    Scalar, Plain, Vector,
+}
+
+/// How many of `table`'s entries hold `code`.
+const fn count_of(table: &[u8], code: u8) -> usize {
+    let mut count = 0;
+    let mut index = 0;
+    while index < table.len() {
+        if table[index] == code {
+            count += 1;
+        }
+        index += 1;
+    }
+    count
+}
+
+/// The indices of `table`'s entries that hold `code`, in order: the tags of one family.
+const fn tags_of<const N: usize>(table: &[u8], code: u8) -> [u32; N] {
+    let mut tags = [0u32; N];
+    let mut index = 0;
+    let mut filled = 0;
+    while index < table.len() {
+        if table[index] == code {
+            tags[filled] = index as u32;
+            filled += 1;
+        }
+        index += 1;
+    }
+    tags
+}
+
 /// One row family: operators at one width, each at every shape.
 #[derive(Clone, Copy)]
 pub struct RowFamily {
@@ -61,38 +109,65 @@ macro_rules! wasm_row_kinds {
     };
 }
 
-/// The value types of an access.
-pub const T_I32: u8 = 0;
-pub const T_I64: u8 = 1;
-pub const T_F32: u8 = 2;
-pub const T_F64: u8 = 3;
+/// The value types of an access, the codes `T_*` name.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum AccessType {
+    I32, I64, F32, F64,
+}
+pub const T_I32: u8 = AccessType::I32 as u8;
+pub const T_I64: u8 = AccessType::I64 as u8;
+pub const T_F32: u8 = AccessType::F32 as u8;
+pub const T_F64: u8 = AccessType::F64 as u8;
 
-/// The scalar accesses (`staged::wasm_memory::Access`): type, bytes, sign-extending. Every load
-/// is one; a store is one that does not sign-extend.
-pub const ACCESSES: [(u8, usize, bool); 14] = [
-    (T_I32, 4, false), (T_I32, 1, true), (T_I32, 1, false), (T_I32, 2, true), (T_I32, 2, false),
-    (T_I64, 8, false), (T_I64, 1, true), (T_I64, 1, false), (T_I64, 2, true), (T_I64, 2, false),
-    (T_I64, 4, true), (T_I64, 4, false), (T_F32, 4, false), (T_F64, 8, false),
-];
+/// The scalar accesses (`staged::wasm_memory::Access`): type, bytes, sign-extending, in the order
+/// `wasm_lists.rs` lists them. Every load is one; a store is one that does not sign-extend.
+macro_rules! access_table {
+    ($($load:ident: $ty:ident, $bytes:expr, $signed:expr;)*) => {
+        pub const ACCESSES: &[(u8, usize, bool)] = &[$((AccessType::$ty as u8, $bytes, $signed),)*];
+    };
+}
+scalar_access_list!(access_table);
 
 /// The width an integer row runs at.
-pub const W32: u8 = 0;
-pub const W64: u8 = 1;
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum IntWidth {
+    W32, W64,
+}
+pub const W32: u8 = IntWidth::W32 as u8;
+pub const W64: u8 = IntWidth::W64 as u8;
 
 /// The shape of a row's second operand: a register, or an immediate in the row's hole.
-pub const REGISTER: u8 = 0;
-pub const IMMEDIATE: u8 = 1;
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum OperandShape {
+    Register, Immediate,
+}
+pub const REGISTER: u8 = OperandShape::Register as u8;
+pub const IMMEDIATE: u8 = OperandShape::Immediate as u8;
 
 /// A callout's OP bits: the callout writes a result word to the destination, and that word is an
 /// i32 to be zero-extended from its low 32 bits.
-pub const CALLOUT_RESULT: u32 = 1;
-pub const CALLOUT_WRAP: u32 = 2;
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub enum CalloutBit {
+    Result = 1,
+    Wrap = 2,
+}
+pub const CALLOUT_RESULT: u32 = CalloutBit::Result as u32;
+pub const CALLOUT_WRAP: u32 = CalloutBit::Wrap as u32;
 /// The frame offset a callout's absent operand names: the row passes the zero word.
 pub const CALLOUT_ABSENT: u32 = u32::MAX;
 
 /// A global's storage operator codes: a 32-bit payload, a 64-bit payload.
-pub const STORAGE_BITS32: u32 = 0;
-pub const STORAGE_BITS64: u32 = 1;
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub enum StorageCode {
+    Bits32, Bits64,
+}
+pub const STORAGE_BITS32: u32 = StorageCode::Bits32 as u32;
+pub const STORAGE_BITS64: u32 = StorageCode::Bits64 as u32;
 
 /// The float operators, the conversions. `FLOAT_BINARY_COUNT` is `F64BinaryOperator`'s selectors
 /// (13: `Add` through `GreaterEqual`); the runtime asserts it.
@@ -108,10 +183,17 @@ pub const FLOAT_BINARY_NEEDS_CONSTANTS: [u32; 0] = [];
 
 /// The frame's header words, before the registers. `wasm_entry.rs` writes them and the rows read
 /// the memory base and length from them. `FRAME_HEADER_WORDS` is one past the last header word.
-pub const FRAME_RESULT_WORD: usize = 0;
-pub const FRAME_BASE_WORD: usize = 1;
-pub const FRAME_LENGTH_WORD: usize = 2;
-pub const FRAME_HEADER_WORDS: u64 = (FRAME_LENGTH_WORD + 1) as u64;
+#[derive(Clone, Copy)]
+#[repr(usize)]
+enum FrameWord {
+    Result,
+    Base,
+    Length,
+}
+pub const FRAME_RESULT_WORD: usize = FrameWord::Result as usize;
+pub const FRAME_BASE_WORD: usize = FrameWord::Base as usize;
+pub const FRAME_LENGTH_WORD: usize = FrameWord::Length as usize;
+pub const FRAME_HEADER_WORDS: u64 = (FrameWord::Length as usize + 1) as u64;
 
 /// The log2 of a Wasm page. The stencil build cannot see `crate::wasm::memory`, so the runtime
 /// asserts it equals `WASM_PAGE_BITS` (`wasm_codes_check.rs`).
@@ -127,13 +209,30 @@ pub const CONTEXT_INSTANCE_AT: usize = 0x100;
 /// `TableTarget`'s size and the offsets of its fields (`SIGNATURE`, `ENTRY`, `INSTANCE`, `BODY`),
 /// and `TableWords`' (`BASE`, `LENGTH`). Asserted against the runtime's types in
 /// `wasm_codes_check.rs`.
-pub const TARGET_BYTES: usize = 24;
-pub const TARGET_SIGNATURE_AT: usize = 0;
-pub const TARGET_ENTRY_AT: usize = 4;
-pub const TARGET_INSTANCE_AT: usize = 8;
-pub const TARGET_BODY_AT: usize = 16;
-pub const TABLE_WORDS_BASE_AT: usize = 0;
-pub const TABLE_WORDS_LENGTH_AT: usize = 8;
+/// `TableTarget`'s layout as a row reads it: `#[repr(C)]` with the runtime struct's fields
+/// (`heap/cell/wasm_fields.rs`), the signature one word. The runtime asserts each offset and the size.
+#[repr(C)]
+#[allow(dead_code)]
+struct TableTargetLayout {
+    signature: u32,
+    entry: u32,
+    instance: u64,
+    body: usize,
+}
+pub const TARGET_BYTES: usize = core::mem::size_of::<TableTargetLayout>();
+pub const TARGET_SIGNATURE_AT: usize = core::mem::offset_of!(TableTargetLayout, signature);
+pub const TARGET_ENTRY_AT: usize = core::mem::offset_of!(TableTargetLayout, entry);
+pub const TARGET_INSTANCE_AT: usize = core::mem::offset_of!(TableTargetLayout, instance);
+pub const TARGET_BODY_AT: usize = core::mem::offset_of!(TableTargetLayout, body);
+/// `TableWords`' layout as a row reads it: `#[repr(C)]`, the base then the length.
+#[repr(C)]
+#[allow(dead_code)]
+struct TableWordsLayout {
+    base: usize,
+    length: u64,
+}
+pub const TABLE_WORDS_BASE_AT: usize = core::mem::offset_of!(TableWordsLayout, base);
+pub const TABLE_WORDS_LENGTH_AT: usize = core::mem::offset_of!(TableWordsLayout, length);
 /// `TableTarget::NO_ENTRY`: an element that is no module function's body.
 pub const NO_ENTRY: u32 = u32::MAX;
 
@@ -252,248 +351,333 @@ wasm_row_kinds! {
     SIMD_MORE_LOAD => [row_family(RowOps::List(SIMD_MORE_LOAD_OPS), W64, &[REGISTER])],
 }
 
-/// Vector operator tags: each is the runtime's `SimdOperator` (or `MemoryLoad`) discriminant,
-/// asserted in `wasm_codes_check.rs` and in `wasm_stitch_simd*.rs`.
-pub const SIMD_V128_NOT: u32 = 0;
-pub const SIMD_V128_AND: u32 = 1;
-pub const SIMD_V128_ANDNOT: u32 = 2;
-pub const SIMD_V128_OR: u32 = 3;
-pub const SIMD_V128_XOR: u32 = 4;
-pub const SIMD_I8X16_SWIZZLE: u32 = 6;
-pub const SIMD_I8X16_SPLAT: u32 = 7;
-pub const SIMD_I16X8_SPLAT: u32 = 8;
-pub const SIMD_I32X4_SPLAT: u32 = 9;
-pub const SIMD_I64X2_SPLAT: u32 = 10;
-pub const SIMD_F32X4_SPLAT: u32 = 11;
-pub const SIMD_F64X2_SPLAT: u32 = 12;
-pub const SIMD_I8X16_EXTRACT_S: u32 = 13;
-pub const SIMD_I8X16_EXTRACT_U: u32 = 14;
-pub const SIMD_I16X8_EXTRACT_S: u32 = 15;
-pub const SIMD_I16X8_EXTRACT_U: u32 = 16;
-pub const SIMD_I32X4_EXTRACT: u32 = 17;
-pub const SIMD_I64X2_EXTRACT: u32 = 18;
-pub const SIMD_F32X4_EXTRACT: u32 = 19;
-pub const SIMD_F64X2_EXTRACT: u32 = 20;
-pub const SIMD_I8X16_REPLACE: u32 = 21;
-pub const SIMD_I16X8_REPLACE: u32 = 22;
-pub const SIMD_I32X4_REPLACE: u32 = 23;
-pub const SIMD_I64X2_REPLACE: u32 = 24;
-pub const SIMD_F32X4_REPLACE: u32 = 25;
-pub const SIMD_F64X2_REPLACE: u32 = 26;
-pub const SIMD_F32X4_ADD: u32 = 27;
-pub const SIMD_F32X4_SUB: u32 = 28;
-pub const SIMD_F32X4_MUL: u32 = 29;
-pub const SIMD_F32X4_DIV: u32 = 30;
-pub const SIMD_F32X4_EQ: u32 = 33;
-pub const SIMD_F32X4_NE: u32 = 34;
-pub const SIMD_F32X4_LT: u32 = 35;
-pub const SIMD_F32X4_GT: u32 = 36;
-pub const SIMD_F32X4_LE: u32 = 37;
-pub const SIMD_F32X4_GE: u32 = 38;
-pub const SIMD_F32X4_ABS: u32 = 41;
-pub const SIMD_F32X4_NEG: u32 = 42;
-pub const SIMD_F64X2_ADD: u32 = 48;
-pub const SIMD_F64X2_SUB: u32 = 49;
-pub const SIMD_F64X2_MUL: u32 = 50;
-pub const SIMD_F64X2_DIV: u32 = 51;
-pub const SIMD_F64X2_EQ: u32 = 54;
-pub const SIMD_F64X2_NE: u32 = 55;
-pub const SIMD_F64X2_LT: u32 = 56;
-pub const SIMD_F64X2_GT: u32 = 57;
-pub const SIMD_F64X2_LE: u32 = 58;
-pub const SIMD_F64X2_GE: u32 = 59;
-pub const SIMD_F64X2_ABS: u32 = 62;
-pub const SIMD_F64X2_NEG: u32 = 63;
-pub const SIMD_I8X16_EQ: u32 = 69;
-pub const SIMD_I8X16_NE: u32 = 70;
-pub const SIMD_I8X16_LT_S: u32 = 71;
-pub const SIMD_I8X16_GT_S: u32 = 72;
-pub const SIMD_I8X16_LE_S: u32 = 73;
-pub const SIMD_I8X16_GE_S: u32 = 74;
-pub const SIMD_I8X16_LT_U: u32 = 75;
-pub const SIMD_I8X16_GT_U: u32 = 76;
-pub const SIMD_I8X16_LE_U: u32 = 77;
-pub const SIMD_I8X16_GE_U: u32 = 78;
-pub const SIMD_I8X16_ADD: u32 = 79;
-pub const SIMD_I8X16_SUB: u32 = 80;
-pub const SIMD_I8X16_ABS: u32 = 81;
-pub const SIMD_I8X16_NEG: u32 = 82;
-pub const SIMD_I16X8_EQ: u32 = 99;
-pub const SIMD_I16X8_NE: u32 = 100;
-pub const SIMD_I16X8_ADD: u32 = 109;
-pub const SIMD_I16X8_SUB: u32 = 110;
-pub const SIMD_I16X8_MUL: u32 = 111;
-pub const SIMD_I32X4_EQ: u32 = 140;
-pub const SIMD_I32X4_NE: u32 = 141;
-pub const SIMD_I32X4_ADD: u32 = 150;
-pub const SIMD_I32X4_SUB: u32 = 151;
-pub const SIMD_I32X4_MUL: u32 = 152;
-pub const SIMD_I64X2_ADD: u32 = 180;
-pub const SIMD_I64X2_SUB: u32 = 181;
-pub const SIMD_I64X2_MUL: u32 = 182;
+/// The SIMD operators, from the list (`wasm_lists.rs`): each family's code, in tag order, and every
+/// operator's tag as the enum `SimdTag` (the runtime's `SimdOperator` has the same order). The b-jit
+/// names its operators by these constants.
+macro_rules! simd_tags {
+    ($($name:ident $([$lane:ident])? : $width:expr, $left:ident, $right:expr, $result:ident, $family:ident => |$a:ident, $b:ident, $l:ident| $body:expr;)*) => {
+        /// A SIMD operator's tag: its position in the list.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(u32)]
+        pub enum SimdTag {
+            $($name,)*
+        }
+        /// Each SIMD operator's family code, by tag.
+        pub const SIMD_FAMILY_OF: &[u8] = &[$(SimdFamily::$family as u8,)*];
+    };
+}
+simd_operator_list!(simd_tags);
 
-pub const SIMD_UNARY_OPS: &[u32] = &[SIMD_V128_NOT, SIMD_I8X16_ABS, SIMD_I8X16_NEG, SIMD_F32X4_ABS, SIMD_F32X4_NEG, SIMD_F64X2_ABS, SIMD_F64X2_NEG];
-pub const SIMD_BINARY_OPS: &[u32] = &[
-    SIMD_V128_AND, SIMD_V128_ANDNOT, SIMD_V128_OR, SIMD_V128_XOR, SIMD_I8X16_SWIZZLE,
-    SIMD_I8X16_EQ, SIMD_I8X16_NE, SIMD_I8X16_LT_S, SIMD_I8X16_GT_S, SIMD_I8X16_LE_S, SIMD_I8X16_GE_S,
-    SIMD_I8X16_LT_U, SIMD_I8X16_GT_U, SIMD_I8X16_LE_U, SIMD_I8X16_GE_U, SIMD_I8X16_ADD, SIMD_I8X16_SUB,
-    SIMD_I16X8_EQ, SIMD_I16X8_NE, SIMD_I16X8_ADD, SIMD_I16X8_SUB, SIMD_I16X8_MUL,
-    SIMD_I32X4_EQ, SIMD_I32X4_NE, SIMD_I32X4_ADD, SIMD_I32X4_SUB, SIMD_I32X4_MUL,
-    SIMD_I64X2_ADD, SIMD_I64X2_SUB, SIMD_I64X2_MUL,
-    SIMD_F32X4_ADD, SIMD_F32X4_SUB, SIMD_F32X4_MUL, SIMD_F32X4_DIV, SIMD_F32X4_EQ, SIMD_F32X4_NE,
-    SIMD_F32X4_LT, SIMD_F32X4_GT, SIMD_F32X4_LE, SIMD_F32X4_GE,
-    SIMD_F64X2_ADD, SIMD_F64X2_SUB, SIMD_F64X2_MUL, SIMD_F64X2_DIV, SIMD_F64X2_EQ, SIMD_F64X2_NE,
-    SIMD_F64X2_LT, SIMD_F64X2_GT, SIMD_F64X2_LE, SIMD_F64X2_GE,
-];
-pub const SIMD_SPLAT_OPS: &[u32] = &[SIMD_I8X16_SPLAT, SIMD_I16X8_SPLAT, SIMD_I32X4_SPLAT, SIMD_I64X2_SPLAT, SIMD_F32X4_SPLAT, SIMD_F64X2_SPLAT];
-pub const SIMD_EXTRACT_OPS: &[u32] = &[SIMD_I8X16_EXTRACT_S, SIMD_I8X16_EXTRACT_U, SIMD_I16X8_EXTRACT_S, SIMD_I16X8_EXTRACT_U, SIMD_I32X4_EXTRACT, SIMD_I64X2_EXTRACT, SIMD_F32X4_EXTRACT, SIMD_F64X2_EXTRACT];
-pub const SIMD_REPLACE_OPS: &[u32] = &[SIMD_I8X16_REPLACE, SIMD_I16X8_REPLACE, SIMD_I32X4_REPLACE, SIMD_I64X2_REPLACE, SIMD_F32X4_REPLACE, SIMD_F64X2_REPLACE];
+/// The number of SIMD operators, which the runtime asserts equals `SimdOperator::ALL`.
+pub const SIMD_OPERATOR_COUNT: u32 = SIMD_FAMILY_OF.len() as u32;
 
-pub const SIMD_I8X16_MIN_S: u32 = 88; pub const SIMD_I8X16_MIN_U: u32 = 89;
-pub const SIMD_I8X16_MAX_S: u32 = 90; pub const SIMD_I8X16_MAX_U: u32 = 91;
-pub const SIMD_I16X8_MIN_S: u32 = 119; pub const SIMD_I16X8_MIN_U: u32 = 120;
-pub const SIMD_I16X8_MAX_S: u32 = 121; pub const SIMD_I16X8_MAX_U: u32 = 122;
-pub const SIMD_I32X4_MIN_S: u32 = 160; pub const SIMD_I32X4_MIN_U: u32 = 161;
-pub const SIMD_I32X4_MAX_S: u32 = 162; pub const SIMD_I32X4_MAX_U: u32 = 163;
-pub const SIMD_I8X16_ADD_SAT_S: u32 = 92; pub const SIMD_I8X16_ADD_SAT_U: u32 = 93;
-pub const SIMD_I8X16_SUB_SAT_S: u32 = 94; pub const SIMD_I8X16_SUB_SAT_U: u32 = 95;
-pub const SIMD_I16X8_ADD_SAT_S: u32 = 123; pub const SIMD_I16X8_ADD_SAT_U: u32 = 124;
-pub const SIMD_I16X8_SUB_SAT_S: u32 = 125; pub const SIMD_I16X8_SUB_SAT_U: u32 = 126;
-pub const SIMD_I8X16_AVGR_U: u32 = 96; pub const SIMD_I16X8_AVGR_U: u32 = 127;
-pub const SIMD_I16X8_Q15_MULR_SAT_S: u32 = 199; pub const SIMD_I16X8_RELAXED_Q15MULR_S: u32 = 220;
-pub const SIMD_I8X16_RELAXED_SWIZZLE: u32 = 211; pub const SIMD_I16X8_LT_S: u32 = 101;
-pub const SIMD_I16X8_GT_S: u32 = 102; pub const SIMD_I16X8_LE_S: u32 = 103;
-pub const SIMD_I16X8_GE_S: u32 = 104; pub const SIMD_I16X8_LT_U: u32 = 105;
-pub const SIMD_I16X8_GT_U: u32 = 106; pub const SIMD_I16X8_LE_U: u32 = 107;
-pub const SIMD_I16X8_GE_U: u32 = 108; pub const SIMD_I32X4_LT_S: u32 = 142;
-pub const SIMD_I32X4_GT_S: u32 = 143; pub const SIMD_I32X4_LE_S: u32 = 144;
-pub const SIMD_I32X4_GE_S: u32 = 145; pub const SIMD_I32X4_LT_U: u32 = 146;
-pub const SIMD_I32X4_GT_U: u32 = 147; pub const SIMD_I32X4_LE_U: u32 = 148;
-pub const SIMD_I32X4_GE_U: u32 = 149; pub const SIMD_I64X2_EQ: u32 = 174;
-pub const SIMD_I64X2_NE: u32 = 175; pub const SIMD_I64X2_LT_S: u32 = 176;
-pub const SIMD_I64X2_GT_S: u32 = 177; pub const SIMD_I64X2_LE_S: u32 = 178;
-pub const SIMD_I64X2_GE_S: u32 = 179; pub const SIMD_F32X4_MIN: u32 = 31;
-pub const SIMD_F32X4_MAX: u32 = 32; pub const SIMD_F32X4_PMIN: u32 = 39;
-pub const SIMD_F32X4_PMAX: u32 = 40; pub const SIMD_F32X4_RELAXED_MIN: u32 = 216;
-pub const SIMD_F32X4_RELAXED_MAX: u32 = 217; pub const SIMD_F64X2_MIN: u32 = 52;
-pub const SIMD_F64X2_MAX: u32 = 53; pub const SIMD_F64X2_PMIN: u32 = 60;
-pub const SIMD_F64X2_PMAX: u32 = 61; pub const SIMD_F64X2_RELAXED_MIN: u32 = 218;
-pub const SIMD_F64X2_RELAXED_MAX: u32 = 219; pub const SIMD_I8X16_SHL: u32 = 85;
-pub const SIMD_I8X16_SHR_S: u32 = 86; pub const SIMD_I8X16_SHR_U: u32 = 87;
-pub const SIMD_I16X8_SHL: u32 = 116; pub const SIMD_I16X8_SHR_S: u32 = 117;
-pub const SIMD_I16X8_SHR_U: u32 = 118; pub const SIMD_I32X4_SHL: u32 = 157;
-pub const SIMD_I32X4_SHR_S: u32 = 158; pub const SIMD_I32X4_SHR_U: u32 = 159;
-pub const SIMD_I64X2_SHL: u32 = 187; pub const SIMD_I64X2_SHR_S: u32 = 188;
-pub const SIMD_I64X2_SHR_U: u32 = 189; pub const SIMD_V128_ANY_TRUE: u32 = 5;
-pub const SIMD_I8X16_ALL_TRUE: u32 = 83; pub const SIMD_I8X16_BITMASK: u32 = 84;
-pub const SIMD_I16X8_ALL_TRUE: u32 = 114; pub const SIMD_I16X8_BITMASK: u32 = 115;
-pub const SIMD_I32X4_ALL_TRUE: u32 = 155; pub const SIMD_I32X4_BITMASK: u32 = 156;
-pub const SIMD_I64X2_ALL_TRUE: u32 = 185; pub const SIMD_I64X2_BITMASK: u32 = 186;
-pub const SIMD_I8X16_POPCNT: u32 = 198; pub const SIMD_I16X8_ABS: u32 = 112;
-pub const SIMD_I16X8_NEG: u32 = 113; pub const SIMD_I32X4_ABS: u32 = 153;
-pub const SIMD_I32X4_NEG: u32 = 154; pub const SIMD_I64X2_ABS: u32 = 183;
-pub const SIMD_I64X2_NEG: u32 = 184; pub const SIMD_F32X4_SQRT: u32 = 43;
-pub const SIMD_F32X4_CEIL: u32 = 44; pub const SIMD_F32X4_FLOOR: u32 = 45;
-pub const SIMD_F32X4_TRUNC: u32 = 46; pub const SIMD_F32X4_NEAREST: u32 = 47;
-pub const SIMD_F64X2_SQRT: u32 = 64; pub const SIMD_F64X2_CEIL: u32 = 65;
-pub const SIMD_F64X2_FLOOR: u32 = 66; pub const SIMD_F64X2_TRUNC: u32 = 67;
-pub const SIMD_F64X2_NEAREST: u32 = 68; pub const SIMD_I16X8_EXTEND_LOW_I8X16_S: u32 = 128;
-pub const SIMD_I16X8_EXTEND_LOW_I8X16_U: u32 = 130; pub const SIMD_I16X8_EXTEND_HIGH_I8X16_S:
-    u32 = 132;
-pub const SIMD_I16X8_EXTEND_HIGH_I8X16_U: u32 = 134; pub const SIMD_I32X4_EXTEND_LOW_I16X8_S:
-    u32 = 164;
-pub const SIMD_I32X4_EXTEND_LOW_I16X8_U: u32 = 166; pub const SIMD_I32X4_EXTEND_HIGH_I16X8_S:
-    u32 = 168;
-pub const SIMD_I32X4_EXTEND_HIGH_I16X8_U: u32 = 170; pub const SIMD_I64X2_EXTEND_LOW_I32X4_S:
-    u32 = 190;
-pub const SIMD_I64X2_EXTEND_LOW_I32X4_U: u32 = 192; pub const SIMD_I64X2_EXTEND_HIGH_I32X4_S:
-    u32 = 194;
-pub const SIMD_I64X2_EXTEND_HIGH_I32X4_U: u32 = 196; pub const
-    SIMD_I16X8_EXT_ADD_PAIRWISE_I8X16_S: u32 = 136;
-pub const SIMD_I16X8_EXT_ADD_PAIRWISE_I8X16_U: u32 = 137; pub const
-    SIMD_I32X4_EXT_ADD_PAIRWISE_I16X8_S: u32 = 172;
-pub const SIMD_I32X4_EXT_ADD_PAIRWISE_I16X8_U: u32 = 173; pub const SIMD_I8X16_NARROW_I16X8_S:
-    u32 = 97;
-pub const SIMD_I8X16_NARROW_I16X8_U: u32 = 98; pub const SIMD_I16X8_NARROW_I32X4_S: u32 = 138;
-pub const SIMD_I16X8_NARROW_I32X4_U: u32 = 139; pub const SIMD_I16X8_EXT_MUL_LOW_I8X16_S: u32 = 129;
-pub const SIMD_I16X8_EXT_MUL_LOW_I8X16_U: u32 = 131; pub const SIMD_I16X8_EXT_MUL_HIGH_I8X16_S:
-    u32 = 133;
-pub const SIMD_I16X8_EXT_MUL_HIGH_I8X16_U: u32 = 135; pub const SIMD_I32X4_EXT_MUL_LOW_I16X8_S:
-    u32 = 165;
-pub const SIMD_I32X4_EXT_MUL_LOW_I16X8_U: u32 = 167; pub const SIMD_I32X4_EXT_MUL_HIGH_I16X8_S:
-    u32 = 169;
-pub const SIMD_I32X4_EXT_MUL_HIGH_I16X8_U: u32 = 171; pub const SIMD_I64X2_EXT_MUL_LOW_I32X4_S:
-    u32 = 191;
-pub const SIMD_I64X2_EXT_MUL_LOW_I32X4_U: u32 = 193; pub const SIMD_I64X2_EXT_MUL_HIGH_I32X4_S:
-    u32 = 195;
-pub const SIMD_I64X2_EXT_MUL_HIGH_I32X4_U: u32 = 197; pub const SIMD_I32X4_DOT_I16X8_S: u32 = 200;
-pub const SIMD_I16X8_RELAXED_DOT_I8X16_I7X16_S: u32 = 221; pub const
-    SIMD_I32X4_TRUNC_SAT_F32X4_S: u32 = 201;
-pub const SIMD_I32X4_TRUNC_SAT_F32X4_U: u32 = 202; pub const SIMD_F32X4_CONVERT_I32X4_S: u32 = 203;
-pub const SIMD_F32X4_CONVERT_I32X4_U: u32 = 204; pub const SIMD_I32X4_TRUNC_SAT_F64X2_SZERO: u32
-    = 205;
-pub const SIMD_I32X4_TRUNC_SAT_F64X2_UZERO: u32 = 206; pub const SIMD_F64X2_CONVERT_LOW_I32X4_S:
-    u32 = 207;
-pub const SIMD_F64X2_CONVERT_LOW_I32X4_U: u32 = 208; pub const SIMD_F32X4_DEMOTE_F64X2_ZERO: u32
-    = 209;
-pub const SIMD_F64X2_PROMOTE_LOW_F32X4: u32 = 210; pub const SIMD_I32X4_RELAXED_TRUNC_F32X4_S:
-    u32 = 212;
-pub const SIMD_I32X4_RELAXED_TRUNC_F32X4_U: u32 = 213; pub const
-    SIMD_I32X4_RELAXED_TRUNC_F64X2_SZERO: u32 = 214;
-pub const SIMD_I32X4_RELAXED_TRUNC_F64X2_UZERO: u32 = 215; pub const SIMD_V128_LOAD8X8_S: u32 = 15;
-pub const SIMD_V128_LOAD8X8_U: u32 = 16; pub const SIMD_V128_LOAD16X4_S: u32 = 17;
-pub const SIMD_V128_LOAD16X4_U: u32 = 18; pub const SIMD_V128_LOAD32X2_S: u32 = 19;
-pub const SIMD_V128_LOAD32X2_U: u32 = 20; pub const SIMD_V128_LOAD8_SPLAT: u32 = 21;
-pub const SIMD_V128_LOAD16_SPLAT: u32 = 22; pub const SIMD_V128_LOAD32_SPLAT: u32 = 23;
-pub const SIMD_V128_LOAD64_SPLAT: u32 = 24; pub const SIMD_V128_LOAD32_ZERO: u32 = 25;
-pub const SIMD_V128_LOAD64_ZERO: u32 = 26;
-pub const SIMD_MORE_BINARY_OPS: &[u32] = &[SIMD_I8X16_MIN_S, SIMD_I8X16_MIN_U, SIMD_I8X16_MAX_S,
-    SIMD_I8X16_MAX_U, SIMD_I16X8_MIN_S, SIMD_I16X8_MIN_U, SIMD_I16X8_MAX_S, SIMD_I16X8_MAX_U,
-    SIMD_I32X4_MIN_S, SIMD_I32X4_MIN_U, SIMD_I32X4_MAX_S, SIMD_I32X4_MAX_U, SIMD_I8X16_ADD_SAT_S,
-    SIMD_I8X16_ADD_SAT_U, SIMD_I8X16_SUB_SAT_S, SIMD_I8X16_SUB_SAT_U, SIMD_I16X8_ADD_SAT_S,
-    SIMD_I16X8_ADD_SAT_U, SIMD_I16X8_SUB_SAT_S, SIMD_I16X8_SUB_SAT_U, SIMD_I8X16_AVGR_U,
-    SIMD_I16X8_AVGR_U, SIMD_I16X8_Q15_MULR_SAT_S, SIMD_I16X8_RELAXED_Q15MULR_S,
-    SIMD_I8X16_RELAXED_SWIZZLE];
-pub const SIMD_MORE_COMPARE_OPS: &[u32] = &[SIMD_I16X8_LT_S, SIMD_I16X8_GT_S, SIMD_I16X8_LE_S,
-    SIMD_I16X8_GE_S, SIMD_I16X8_LT_U, SIMD_I16X8_GT_U, SIMD_I16X8_LE_U, SIMD_I16X8_GE_U,
-    SIMD_I32X4_LT_S, SIMD_I32X4_GT_S, SIMD_I32X4_LE_S, SIMD_I32X4_GE_S, SIMD_I32X4_LT_U,
-    SIMD_I32X4_GT_U, SIMD_I32X4_LE_U, SIMD_I32X4_GE_U, SIMD_I64X2_EQ, SIMD_I64X2_NE,
-    SIMD_I64X2_LT_S, SIMD_I64X2_GT_S, SIMD_I64X2_LE_S, SIMD_I64X2_GE_S];
-pub const SIMD_MORE_FLOAT_OPS: &[u32] = &[SIMD_F32X4_MIN, SIMD_F32X4_MAX, SIMD_F32X4_PMIN,
-    SIMD_F32X4_PMAX, SIMD_F32X4_RELAXED_MIN, SIMD_F32X4_RELAXED_MAX, SIMD_F64X2_MIN, SIMD_F64X2_MAX,
-    SIMD_F64X2_PMIN, SIMD_F64X2_PMAX, SIMD_F64X2_RELAXED_MIN, SIMD_F64X2_RELAXED_MAX];
-pub const SIMD_MORE_SHIFT_OPS: &[u32] = &[SIMD_I8X16_SHL, SIMD_I8X16_SHR_S, SIMD_I8X16_SHR_U,
-    SIMD_I16X8_SHL, SIMD_I16X8_SHR_S, SIMD_I16X8_SHR_U, SIMD_I32X4_SHL, SIMD_I32X4_SHR_S,
-    SIMD_I32X4_SHR_U, SIMD_I64X2_SHL, SIMD_I64X2_SHR_S, SIMD_I64X2_SHR_U];
-pub const SIMD_MORE_TEST_OPS: &[u32] = &[SIMD_V128_ANY_TRUE, SIMD_I8X16_ALL_TRUE,
-    SIMD_I8X16_BITMASK, SIMD_I16X8_ALL_TRUE, SIMD_I16X8_BITMASK, SIMD_I32X4_ALL_TRUE,
-    SIMD_I32X4_BITMASK, SIMD_I64X2_ALL_TRUE, SIMD_I64X2_BITMASK];
-pub const SIMD_MORE_UNARY_OPS: &[u32] = &[SIMD_I8X16_POPCNT, SIMD_I16X8_ABS, SIMD_I16X8_NEG,
-    SIMD_I32X4_ABS, SIMD_I32X4_NEG, SIMD_I64X2_ABS, SIMD_I64X2_NEG, SIMD_F32X4_SQRT,
-    SIMD_F32X4_CEIL, SIMD_F32X4_FLOOR, SIMD_F32X4_TRUNC, SIMD_F32X4_NEAREST, SIMD_F64X2_SQRT,
-    SIMD_F64X2_CEIL, SIMD_F64X2_FLOOR, SIMD_F64X2_TRUNC, SIMD_F64X2_NEAREST];
-pub const SIMD_MORE_WIDEN_OPS: &[u32] = &[SIMD_I16X8_EXTEND_LOW_I8X16_S,
-    SIMD_I16X8_EXTEND_LOW_I8X16_U, SIMD_I16X8_EXTEND_HIGH_I8X16_S, SIMD_I16X8_EXTEND_HIGH_I8X16_U,
-    SIMD_I32X4_EXTEND_LOW_I16X8_S, SIMD_I32X4_EXTEND_LOW_I16X8_U, SIMD_I32X4_EXTEND_HIGH_I16X8_S,
-    SIMD_I32X4_EXTEND_HIGH_I16X8_U, SIMD_I64X2_EXTEND_LOW_I32X4_S, SIMD_I64X2_EXTEND_LOW_I32X4_U,
-    SIMD_I64X2_EXTEND_HIGH_I32X4_S, SIMD_I64X2_EXTEND_HIGH_I32X4_U,
-    SIMD_I16X8_EXT_ADD_PAIRWISE_I8X16_S, SIMD_I16X8_EXT_ADD_PAIRWISE_I8X16_U,
-    SIMD_I32X4_EXT_ADD_PAIRWISE_I16X8_S, SIMD_I32X4_EXT_ADD_PAIRWISE_I16X8_U];
-pub const SIMD_MORE_WIDE_OPS: &[u32] = &[SIMD_I8X16_NARROW_I16X8_S, SIMD_I8X16_NARROW_I16X8_U,
-    SIMD_I16X8_NARROW_I32X4_S, SIMD_I16X8_NARROW_I32X4_U, SIMD_I16X8_EXT_MUL_LOW_I8X16_S,
-    SIMD_I16X8_EXT_MUL_LOW_I8X16_U, SIMD_I16X8_EXT_MUL_HIGH_I8X16_S,
-    SIMD_I16X8_EXT_MUL_HIGH_I8X16_U, SIMD_I32X4_EXT_MUL_LOW_I16X8_S, SIMD_I32X4_EXT_MUL_LOW_I16X8_U,
-    SIMD_I32X4_EXT_MUL_HIGH_I16X8_S, SIMD_I32X4_EXT_MUL_HIGH_I16X8_U,
-    SIMD_I64X2_EXT_MUL_LOW_I32X4_S, SIMD_I64X2_EXT_MUL_LOW_I32X4_U, SIMD_I64X2_EXT_MUL_HIGH_I32X4_S,
-    SIMD_I64X2_EXT_MUL_HIGH_I32X4_U, SIMD_I32X4_DOT_I16X8_S, SIMD_I16X8_RELAXED_DOT_I8X16_I7X16_S];
-pub const SIMD_MORE_CONVERT_OPS: &[u32] = &[SIMD_I32X4_TRUNC_SAT_F32X4_S,
-    SIMD_I32X4_TRUNC_SAT_F32X4_U, SIMD_F32X4_CONVERT_I32X4_S, SIMD_F32X4_CONVERT_I32X4_U,
-    SIMD_I32X4_TRUNC_SAT_F64X2_SZERO, SIMD_I32X4_TRUNC_SAT_F64X2_UZERO,
-    SIMD_F64X2_CONVERT_LOW_I32X4_S, SIMD_F64X2_CONVERT_LOW_I32X4_U, SIMD_F32X4_DEMOTE_F64X2_ZERO,
-    SIMD_F64X2_PROMOTE_LOW_F32X4, SIMD_I32X4_RELAXED_TRUNC_F32X4_S,
-    SIMD_I32X4_RELAXED_TRUNC_F32X4_U, SIMD_I32X4_RELAXED_TRUNC_F64X2_SZERO,
-    SIMD_I32X4_RELAXED_TRUNC_F64X2_UZERO];
-pub const SIMD_MORE_LOAD_OPS: &[u32] = &[SIMD_V128_LOAD8X8_S, SIMD_V128_LOAD8X8_U,
-    SIMD_V128_LOAD16X4_S, SIMD_V128_LOAD16X4_U, SIMD_V128_LOAD32X2_S, SIMD_V128_LOAD32X2_U,
-    SIMD_V128_LOAD8_SPLAT, SIMD_V128_LOAD16_SPLAT, SIMD_V128_LOAD32_SPLAT, SIMD_V128_LOAD64_SPLAT,
-    SIMD_V128_LOAD32_ZERO, SIMD_V128_LOAD64_ZERO];
+/// The row kind of an operator in a `SIMD_MORE_*` family, `None` for any other operator.
+pub const fn simd_more_kind(tag: u32) -> Option<u8> {
+    if (tag as usize) >= SIMD_FAMILY_OF.len() {
+        return None;
+    }
+    let family = SIMD_FAMILY_OF[tag as usize];
+    if family == SimdFamily::MoreBinary as u8 {
+        Some(SIMD_MORE_BINARY)
+    } else if family == SimdFamily::MoreCompare as u8 {
+        Some(SIMD_MORE_COMPARE)
+    } else if family == SimdFamily::MoreFloat as u8 {
+        Some(SIMD_MORE_FLOAT)
+    } else if family == SimdFamily::MoreShift as u8 {
+        Some(SIMD_MORE_SHIFT)
+    } else if family == SimdFamily::MoreTest as u8 {
+        Some(SIMD_MORE_TEST)
+    } else if family == SimdFamily::MoreUnary as u8 {
+        Some(SIMD_MORE_UNARY)
+    } else if family == SimdFamily::MoreWiden as u8 {
+        Some(SIMD_MORE_WIDEN)
+    } else if family == SimdFamily::MoreWide as u8 {
+        Some(SIMD_MORE_WIDE)
+    } else if family == SimdFamily::MoreConvert as u8 {
+        Some(SIMD_MORE_CONVERT)
+    } else {
+        None
+    }
+}
+
+/// The `Unary` family's operator tags, in tag order.
+pub const SIMD_UNARY_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::Unary as u8) }>(SIMD_FAMILY_OF, SimdFamily::Unary as u8);
+/// The `Binary` family's operator tags, in tag order.
+pub const SIMD_BINARY_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::Binary as u8) }>(SIMD_FAMILY_OF, SimdFamily::Binary as u8);
+/// The `Splat` family's operator tags, in tag order.
+pub const SIMD_SPLAT_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::Splat as u8) }>(SIMD_FAMILY_OF, SimdFamily::Splat as u8);
+/// The `Extract` family's operator tags, in tag order.
+pub const SIMD_EXTRACT_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::Extract as u8) }>(SIMD_FAMILY_OF, SimdFamily::Extract as u8);
+/// The `Replace` family's operator tags, in tag order.
+pub const SIMD_REPLACE_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::Replace as u8) }>(SIMD_FAMILY_OF, SimdFamily::Replace as u8);
+/// The `MoreBinary` family's operator tags, in tag order.
+pub const SIMD_MORE_BINARY_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::MoreBinary as u8) }>(SIMD_FAMILY_OF, SimdFamily::MoreBinary as u8);
+/// The `MoreCompare` family's operator tags, in tag order.
+pub const SIMD_MORE_COMPARE_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::MoreCompare as u8) }>(SIMD_FAMILY_OF, SimdFamily::MoreCompare as u8);
+/// The `MoreFloat` family's operator tags, in tag order.
+pub const SIMD_MORE_FLOAT_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::MoreFloat as u8) }>(SIMD_FAMILY_OF, SimdFamily::MoreFloat as u8);
+/// The `MoreShift` family's operator tags, in tag order.
+pub const SIMD_MORE_SHIFT_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::MoreShift as u8) }>(SIMD_FAMILY_OF, SimdFamily::MoreShift as u8);
+/// The `MoreTest` family's operator tags, in tag order.
+pub const SIMD_MORE_TEST_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::MoreTest as u8) }>(SIMD_FAMILY_OF, SimdFamily::MoreTest as u8);
+/// The `MoreUnary` family's operator tags, in tag order.
+pub const SIMD_MORE_UNARY_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::MoreUnary as u8) }>(SIMD_FAMILY_OF, SimdFamily::MoreUnary as u8);
+/// The `MoreWiden` family's operator tags, in tag order.
+pub const SIMD_MORE_WIDEN_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::MoreWiden as u8) }>(SIMD_FAMILY_OF, SimdFamily::MoreWiden as u8);
+/// The `MoreWide` family's operator tags, in tag order.
+pub const SIMD_MORE_WIDE_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::MoreWide as u8) }>(SIMD_FAMILY_OF, SimdFamily::MoreWide as u8);
+/// The `MoreConvert` family's operator tags, in tag order.
+pub const SIMD_MORE_CONVERT_OPS: &[u32] = &tags_of::<{ count_of(SIMD_FAMILY_OF, SimdFamily::MoreConvert as u8) }>(SIMD_FAMILY_OF, SimdFamily::MoreConvert as u8);
+
+/// The memory loads, from the list: each load's tag as `MemoryLoadTag`, and each one's family.
+macro_rules! memory_load_tags {
+    ($($name:ident $family:ident),* $(,)?) => {
+        /// A memory load's tag: its position in the list (the runtime's `MemoryLoad` has the same order).
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(u32)]
+        pub enum MemoryLoadTag {
+            $($name,)*
+        }
+        /// Each memory load's family code, by tag.
+        pub const MEMORY_LOAD_FAMILY_OF: &[u8] = &[$(LoadFamily::$family as u8,)*];
+    };
+}
+memory_load_list!(memory_load_tags);
+
+/// The vector loads a `SIMD_MORE_LOAD` row computes (the splatting, widening and zeroing loads), by tag.
+pub const SIMD_MORE_LOAD_OPS: &[u32] = &tags_of::<{ count_of(MEMORY_LOAD_FAMILY_OF, LoadFamily::Vector as u8) }>(MEMORY_LOAD_FAMILY_OF, LoadFamily::Vector as u8);
+
+pub const SIMD_V128_NOT: u32 = SimdTag::V128Not as u32;
+pub const SIMD_V128_AND: u32 = SimdTag::V128And as u32;
+pub const SIMD_V128_ANDNOT: u32 = SimdTag::V128AndNot as u32;
+pub const SIMD_V128_OR: u32 = SimdTag::V128Or as u32;
+pub const SIMD_V128_XOR: u32 = SimdTag::V128Xor as u32;
+pub const SIMD_I8X16_SWIZZLE: u32 = SimdTag::I8x16Swizzle as u32;
+pub const SIMD_I8X16_SPLAT: u32 = SimdTag::I8x16Splat as u32;
+pub const SIMD_I16X8_SPLAT: u32 = SimdTag::I16x8Splat as u32;
+pub const SIMD_I32X4_SPLAT: u32 = SimdTag::I32x4Splat as u32;
+pub const SIMD_I64X2_SPLAT: u32 = SimdTag::I64x2Splat as u32;
+pub const SIMD_F32X4_SPLAT: u32 = SimdTag::F32x4Splat as u32;
+pub const SIMD_F64X2_SPLAT: u32 = SimdTag::F64x2Splat as u32;
+pub const SIMD_I8X16_EXTRACT_S: u32 = SimdTag::I8x16ExtractLaneS as u32;
+pub const SIMD_I8X16_EXTRACT_U: u32 = SimdTag::I8x16ExtractLaneU as u32;
+pub const SIMD_I16X8_EXTRACT_S: u32 = SimdTag::I16x8ExtractLaneS as u32;
+pub const SIMD_I16X8_EXTRACT_U: u32 = SimdTag::I16x8ExtractLaneU as u32;
+pub const SIMD_I32X4_EXTRACT: u32 = SimdTag::I32x4ExtractLane as u32;
+pub const SIMD_I64X2_EXTRACT: u32 = SimdTag::I64x2ExtractLane as u32;
+pub const SIMD_F32X4_EXTRACT: u32 = SimdTag::F32x4ExtractLane as u32;
+pub const SIMD_F64X2_EXTRACT: u32 = SimdTag::F64x2ExtractLane as u32;
+pub const SIMD_I8X16_REPLACE: u32 = SimdTag::I8x16ReplaceLane as u32;
+pub const SIMD_I16X8_REPLACE: u32 = SimdTag::I16x8ReplaceLane as u32;
+pub const SIMD_I32X4_REPLACE: u32 = SimdTag::I32x4ReplaceLane as u32;
+pub const SIMD_I64X2_REPLACE: u32 = SimdTag::I64x2ReplaceLane as u32;
+pub const SIMD_F32X4_REPLACE: u32 = SimdTag::F32x4ReplaceLane as u32;
+pub const SIMD_F64X2_REPLACE: u32 = SimdTag::F64x2ReplaceLane as u32;
+pub const SIMD_F32X4_ADD: u32 = SimdTag::F32x4Add as u32;
+pub const SIMD_F32X4_SUB: u32 = SimdTag::F32x4Sub as u32;
+pub const SIMD_F32X4_MUL: u32 = SimdTag::F32x4Mul as u32;
+pub const SIMD_F32X4_DIV: u32 = SimdTag::F32x4Div as u32;
+pub const SIMD_F32X4_EQ: u32 = SimdTag::F32x4Eq as u32;
+pub const SIMD_F32X4_NE: u32 = SimdTag::F32x4Ne as u32;
+pub const SIMD_F32X4_LT: u32 = SimdTag::F32x4Lt as u32;
+pub const SIMD_F32X4_GT: u32 = SimdTag::F32x4Gt as u32;
+pub const SIMD_F32X4_LE: u32 = SimdTag::F32x4Le as u32;
+pub const SIMD_F32X4_GE: u32 = SimdTag::F32x4Ge as u32;
+pub const SIMD_F32X4_ABS: u32 = SimdTag::F32x4Abs as u32;
+pub const SIMD_F32X4_NEG: u32 = SimdTag::F32x4Neg as u32;
+pub const SIMD_F64X2_ADD: u32 = SimdTag::F64x2Add as u32;
+pub const SIMD_F64X2_SUB: u32 = SimdTag::F64x2Sub as u32;
+pub const SIMD_F64X2_MUL: u32 = SimdTag::F64x2Mul as u32;
+pub const SIMD_F64X2_DIV: u32 = SimdTag::F64x2Div as u32;
+pub const SIMD_F64X2_EQ: u32 = SimdTag::F64x2Eq as u32;
+pub const SIMD_F64X2_NE: u32 = SimdTag::F64x2Ne as u32;
+pub const SIMD_F64X2_LT: u32 = SimdTag::F64x2Lt as u32;
+pub const SIMD_F64X2_GT: u32 = SimdTag::F64x2Gt as u32;
+pub const SIMD_F64X2_LE: u32 = SimdTag::F64x2Le as u32;
+pub const SIMD_F64X2_GE: u32 = SimdTag::F64x2Ge as u32;
+pub const SIMD_F64X2_ABS: u32 = SimdTag::F64x2Abs as u32;
+pub const SIMD_F64X2_NEG: u32 = SimdTag::F64x2Neg as u32;
+pub const SIMD_I8X16_EQ: u32 = SimdTag::I8x16Eq as u32;
+pub const SIMD_I8X16_NE: u32 = SimdTag::I8x16Ne as u32;
+pub const SIMD_I8X16_LT_S: u32 = SimdTag::I8x16LtS as u32;
+pub const SIMD_I8X16_GT_S: u32 = SimdTag::I8x16GtS as u32;
+pub const SIMD_I8X16_LE_S: u32 = SimdTag::I8x16LeS as u32;
+pub const SIMD_I8X16_GE_S: u32 = SimdTag::I8x16GeS as u32;
+pub const SIMD_I8X16_LT_U: u32 = SimdTag::I8x16LtU as u32;
+pub const SIMD_I8X16_GT_U: u32 = SimdTag::I8x16GtU as u32;
+pub const SIMD_I8X16_LE_U: u32 = SimdTag::I8x16LeU as u32;
+pub const SIMD_I8X16_GE_U: u32 = SimdTag::I8x16GeU as u32;
+pub const SIMD_I8X16_ADD: u32 = SimdTag::I8x16Add as u32;
+pub const SIMD_I8X16_SUB: u32 = SimdTag::I8x16Sub as u32;
+pub const SIMD_I8X16_ABS: u32 = SimdTag::I8x16Abs as u32;
+pub const SIMD_I8X16_NEG: u32 = SimdTag::I8x16Neg as u32;
+pub const SIMD_I16X8_EQ: u32 = SimdTag::I16x8Eq as u32;
+pub const SIMD_I16X8_NE: u32 = SimdTag::I16x8Ne as u32;
+pub const SIMD_I16X8_ADD: u32 = SimdTag::I16x8Add as u32;
+pub const SIMD_I16X8_SUB: u32 = SimdTag::I16x8Sub as u32;
+pub const SIMD_I16X8_MUL: u32 = SimdTag::I16x8Mul as u32;
+pub const SIMD_I32X4_EQ: u32 = SimdTag::I32x4Eq as u32;
+pub const SIMD_I32X4_NE: u32 = SimdTag::I32x4Ne as u32;
+pub const SIMD_I32X4_ADD: u32 = SimdTag::I32x4Add as u32;
+pub const SIMD_I32X4_SUB: u32 = SimdTag::I32x4Sub as u32;
+pub const SIMD_I32X4_MUL: u32 = SimdTag::I32x4Mul as u32;
+pub const SIMD_I64X2_ADD: u32 = SimdTag::I64x2Add as u32;
+pub const SIMD_I64X2_SUB: u32 = SimdTag::I64x2Sub as u32;
+pub const SIMD_I64X2_MUL: u32 = SimdTag::I64x2Mul as u32;
+pub const SIMD_I8X16_MIN_S: u32 = SimdTag::I8x16MinS as u32;
+pub const SIMD_I8X16_MIN_U: u32 = SimdTag::I8x16MinU as u32;
+pub const SIMD_I8X16_MAX_S: u32 = SimdTag::I8x16MaxS as u32;
+pub const SIMD_I8X16_MAX_U: u32 = SimdTag::I8x16MaxU as u32;
+pub const SIMD_I16X8_MIN_S: u32 = SimdTag::I16x8MinS as u32;
+pub const SIMD_I16X8_MIN_U: u32 = SimdTag::I16x8MinU as u32;
+pub const SIMD_I16X8_MAX_S: u32 = SimdTag::I16x8MaxS as u32;
+pub const SIMD_I16X8_MAX_U: u32 = SimdTag::I16x8MaxU as u32;
+pub const SIMD_I32X4_MIN_S: u32 = SimdTag::I32x4MinS as u32;
+pub const SIMD_I32X4_MIN_U: u32 = SimdTag::I32x4MinU as u32;
+pub const SIMD_I32X4_MAX_S: u32 = SimdTag::I32x4MaxS as u32;
+pub const SIMD_I32X4_MAX_U: u32 = SimdTag::I32x4MaxU as u32;
+pub const SIMD_I8X16_ADD_SAT_S: u32 = SimdTag::I8x16AddSatS as u32;
+pub const SIMD_I8X16_ADD_SAT_U: u32 = SimdTag::I8x16AddSatU as u32;
+pub const SIMD_I8X16_SUB_SAT_S: u32 = SimdTag::I8x16SubSatS as u32;
+pub const SIMD_I8X16_SUB_SAT_U: u32 = SimdTag::I8x16SubSatU as u32;
+pub const SIMD_I16X8_ADD_SAT_S: u32 = SimdTag::I16x8AddSatS as u32;
+pub const SIMD_I16X8_ADD_SAT_U: u32 = SimdTag::I16x8AddSatU as u32;
+pub const SIMD_I16X8_SUB_SAT_S: u32 = SimdTag::I16x8SubSatS as u32;
+pub const SIMD_I16X8_SUB_SAT_U: u32 = SimdTag::I16x8SubSatU as u32;
+pub const SIMD_I8X16_AVGR_U: u32 = SimdTag::I8x16AvgrU as u32;
+pub const SIMD_I16X8_AVGR_U: u32 = SimdTag::I16x8AvgrU as u32;
+pub const SIMD_I16X8_Q15_MULR_SAT_S: u32 = SimdTag::I16x8Q15MulrSatS as u32;
+pub const SIMD_I16X8_RELAXED_Q15MULR_S: u32 = SimdTag::I16x8RelaxedQ15mulrS as u32;
+pub const SIMD_I8X16_RELAXED_SWIZZLE: u32 = SimdTag::I8x16RelaxedSwizzle as u32;
+pub const SIMD_I16X8_LT_S: u32 = SimdTag::I16x8LtS as u32;
+pub const SIMD_I16X8_GT_S: u32 = SimdTag::I16x8GtS as u32;
+pub const SIMD_I16X8_LE_S: u32 = SimdTag::I16x8LeS as u32;
+pub const SIMD_I16X8_GE_S: u32 = SimdTag::I16x8GeS as u32;
+pub const SIMD_I16X8_LT_U: u32 = SimdTag::I16x8LtU as u32;
+pub const SIMD_I16X8_GT_U: u32 = SimdTag::I16x8GtU as u32;
+pub const SIMD_I16X8_LE_U: u32 = SimdTag::I16x8LeU as u32;
+pub const SIMD_I16X8_GE_U: u32 = SimdTag::I16x8GeU as u32;
+pub const SIMD_I32X4_LT_S: u32 = SimdTag::I32x4LtS as u32;
+pub const SIMD_I32X4_GT_S: u32 = SimdTag::I32x4GtS as u32;
+pub const SIMD_I32X4_LE_S: u32 = SimdTag::I32x4LeS as u32;
+pub const SIMD_I32X4_GE_S: u32 = SimdTag::I32x4GeS as u32;
+pub const SIMD_I32X4_LT_U: u32 = SimdTag::I32x4LtU as u32;
+pub const SIMD_I32X4_GT_U: u32 = SimdTag::I32x4GtU as u32;
+pub const SIMD_I32X4_LE_U: u32 = SimdTag::I32x4LeU as u32;
+pub const SIMD_I32X4_GE_U: u32 = SimdTag::I32x4GeU as u32;
+pub const SIMD_I64X2_EQ: u32 = SimdTag::I64x2Eq as u32;
+pub const SIMD_I64X2_NE: u32 = SimdTag::I64x2Ne as u32;
+pub const SIMD_I64X2_LT_S: u32 = SimdTag::I64x2LtS as u32;
+pub const SIMD_I64X2_GT_S: u32 = SimdTag::I64x2GtS as u32;
+pub const SIMD_I64X2_LE_S: u32 = SimdTag::I64x2LeS as u32;
+pub const SIMD_I64X2_GE_S: u32 = SimdTag::I64x2GeS as u32;
+pub const SIMD_F32X4_MIN: u32 = SimdTag::F32x4Min as u32;
+pub const SIMD_F32X4_MAX: u32 = SimdTag::F32x4Max as u32;
+pub const SIMD_F32X4_PMIN: u32 = SimdTag::F32x4PMin as u32;
+pub const SIMD_F32X4_PMAX: u32 = SimdTag::F32x4PMax as u32;
+pub const SIMD_F32X4_RELAXED_MIN: u32 = SimdTag::F32x4RelaxedMin as u32;
+pub const SIMD_F32X4_RELAXED_MAX: u32 = SimdTag::F32x4RelaxedMax as u32;
+pub const SIMD_F64X2_MIN: u32 = SimdTag::F64x2Min as u32;
+pub const SIMD_F64X2_MAX: u32 = SimdTag::F64x2Max as u32;
+pub const SIMD_F64X2_PMIN: u32 = SimdTag::F64x2PMin as u32;
+pub const SIMD_F64X2_PMAX: u32 = SimdTag::F64x2PMax as u32;
+pub const SIMD_F64X2_RELAXED_MIN: u32 = SimdTag::F64x2RelaxedMin as u32;
+pub const SIMD_F64X2_RELAXED_MAX: u32 = SimdTag::F64x2RelaxedMax as u32;
+pub const SIMD_I8X16_SHL: u32 = SimdTag::I8x16Shl as u32;
+pub const SIMD_I8X16_SHR_S: u32 = SimdTag::I8x16ShrS as u32;
+pub const SIMD_I8X16_SHR_U: u32 = SimdTag::I8x16ShrU as u32;
+pub const SIMD_I16X8_SHL: u32 = SimdTag::I16x8Shl as u32;
+pub const SIMD_I16X8_SHR_S: u32 = SimdTag::I16x8ShrS as u32;
+pub const SIMD_I16X8_SHR_U: u32 = SimdTag::I16x8ShrU as u32;
+pub const SIMD_I32X4_SHL: u32 = SimdTag::I32x4Shl as u32;
+pub const SIMD_I32X4_SHR_S: u32 = SimdTag::I32x4ShrS as u32;
+pub const SIMD_I32X4_SHR_U: u32 = SimdTag::I32x4ShrU as u32;
+pub const SIMD_I64X2_SHL: u32 = SimdTag::I64x2Shl as u32;
+pub const SIMD_I64X2_SHR_S: u32 = SimdTag::I64x2ShrS as u32;
+pub const SIMD_I64X2_SHR_U: u32 = SimdTag::I64x2ShrU as u32;
+pub const SIMD_V128_ANY_TRUE: u32 = SimdTag::V128AnyTrue as u32;
+pub const SIMD_I8X16_ALL_TRUE: u32 = SimdTag::I8x16AllTrue as u32;
+pub const SIMD_I8X16_BITMASK: u32 = SimdTag::I8x16Bitmask as u32;
+pub const SIMD_I16X8_ALL_TRUE: u32 = SimdTag::I16x8AllTrue as u32;
+pub const SIMD_I16X8_BITMASK: u32 = SimdTag::I16x8Bitmask as u32;
+pub const SIMD_I32X4_ALL_TRUE: u32 = SimdTag::I32x4AllTrue as u32;
+pub const SIMD_I32X4_BITMASK: u32 = SimdTag::I32x4Bitmask as u32;
+pub const SIMD_I64X2_ALL_TRUE: u32 = SimdTag::I64x2AllTrue as u32;
+pub const SIMD_I64X2_BITMASK: u32 = SimdTag::I64x2Bitmask as u32;
+pub const SIMD_I8X16_POPCNT: u32 = SimdTag::I8x16Popcnt as u32;
+pub const SIMD_I16X8_ABS: u32 = SimdTag::I16x8Abs as u32;
+pub const SIMD_I16X8_NEG: u32 = SimdTag::I16x8Neg as u32;
+pub const SIMD_I32X4_ABS: u32 = SimdTag::I32x4Abs as u32;
+pub const SIMD_I32X4_NEG: u32 = SimdTag::I32x4Neg as u32;
+pub const SIMD_I64X2_ABS: u32 = SimdTag::I64x2Abs as u32;
+pub const SIMD_I64X2_NEG: u32 = SimdTag::I64x2Neg as u32;
+pub const SIMD_F32X4_SQRT: u32 = SimdTag::F32x4Sqrt as u32;
+pub const SIMD_F32X4_CEIL: u32 = SimdTag::F32x4Ceil as u32;
+pub const SIMD_F32X4_FLOOR: u32 = SimdTag::F32x4Floor as u32;
+pub const SIMD_F32X4_TRUNC: u32 = SimdTag::F32x4Trunc as u32;
+pub const SIMD_F32X4_NEAREST: u32 = SimdTag::F32x4Nearest as u32;
+pub const SIMD_F64X2_SQRT: u32 = SimdTag::F64x2Sqrt as u32;
+pub const SIMD_F64X2_CEIL: u32 = SimdTag::F64x2Ceil as u32;
+pub const SIMD_F64X2_FLOOR: u32 = SimdTag::F64x2Floor as u32;
+pub const SIMD_F64X2_TRUNC: u32 = SimdTag::F64x2Trunc as u32;
+pub const SIMD_F64X2_NEAREST: u32 = SimdTag::F64x2Nearest as u32;
+pub const SIMD_I16X8_EXTEND_LOW_I8X16_S: u32 = SimdTag::I16x8ExtendLowI8x16S as u32;
+pub const SIMD_I16X8_EXTEND_LOW_I8X16_U: u32 = SimdTag::I16x8ExtendLowI8x16U as u32;
+pub const SIMD_I16X8_EXTEND_HIGH_I8X16_S: u32 = SimdTag::I16x8ExtendHighI8x16S as u32;
+pub const SIMD_I16X8_EXTEND_HIGH_I8X16_U: u32 = SimdTag::I16x8ExtendHighI8x16U as u32;
+pub const SIMD_I32X4_EXTEND_LOW_I16X8_S: u32 = SimdTag::I32x4ExtendLowI16x8S as u32;
+pub const SIMD_I32X4_EXTEND_LOW_I16X8_U: u32 = SimdTag::I32x4ExtendLowI16x8U as u32;
+pub const SIMD_I32X4_EXTEND_HIGH_I16X8_S: u32 = SimdTag::I32x4ExtendHighI16x8S as u32;
+pub const SIMD_I32X4_EXTEND_HIGH_I16X8_U: u32 = SimdTag::I32x4ExtendHighI16x8U as u32;
+pub const SIMD_I64X2_EXTEND_LOW_I32X4_S: u32 = SimdTag::I64x2ExtendLowI32x4S as u32;
+pub const SIMD_I64X2_EXTEND_LOW_I32X4_U: u32 = SimdTag::I64x2ExtendLowI32x4U as u32;
+pub const SIMD_I64X2_EXTEND_HIGH_I32X4_S: u32 = SimdTag::I64x2ExtendHighI32x4S as u32;
+pub const SIMD_I64X2_EXTEND_HIGH_I32X4_U: u32 = SimdTag::I64x2ExtendHighI32x4U as u32;
+pub const SIMD_I16X8_EXT_ADD_PAIRWISE_I8X16_S: u32 = SimdTag::I16x8ExtAddPairwiseI8x16S as u32;
+pub const SIMD_I16X8_EXT_ADD_PAIRWISE_I8X16_U: u32 = SimdTag::I16x8ExtAddPairwiseI8x16U as u32;
+pub const SIMD_I32X4_EXT_ADD_PAIRWISE_I16X8_S: u32 = SimdTag::I32x4ExtAddPairwiseI16x8S as u32;
+pub const SIMD_I32X4_EXT_ADD_PAIRWISE_I16X8_U: u32 = SimdTag::I32x4ExtAddPairwiseI16x8U as u32;
+pub const SIMD_I8X16_NARROW_I16X8_S: u32 = SimdTag::I8x16NarrowI16x8S as u32;
+pub const SIMD_I8X16_NARROW_I16X8_U: u32 = SimdTag::I8x16NarrowI16x8U as u32;
+pub const SIMD_I16X8_NARROW_I32X4_S: u32 = SimdTag::I16x8NarrowI32x4S as u32;
+pub const SIMD_I16X8_NARROW_I32X4_U: u32 = SimdTag::I16x8NarrowI32x4U as u32;
+pub const SIMD_I16X8_EXT_MUL_LOW_I8X16_S: u32 = SimdTag::I16x8ExtMulLowI8x16S as u32;
+pub const SIMD_I16X8_EXT_MUL_LOW_I8X16_U: u32 = SimdTag::I16x8ExtMulLowI8x16U as u32;
+pub const SIMD_I16X8_EXT_MUL_HIGH_I8X16_S: u32 = SimdTag::I16x8ExtMulHighI8x16S as u32;
+pub const SIMD_I16X8_EXT_MUL_HIGH_I8X16_U: u32 = SimdTag::I16x8ExtMulHighI8x16U as u32;
+pub const SIMD_I32X4_EXT_MUL_LOW_I16X8_S: u32 = SimdTag::I32x4ExtMulLowI16x8S as u32;
+pub const SIMD_I32X4_EXT_MUL_LOW_I16X8_U: u32 = SimdTag::I32x4ExtMulLowI16x8U as u32;
+pub const SIMD_I32X4_EXT_MUL_HIGH_I16X8_S: u32 = SimdTag::I32x4ExtMulHighI16x8S as u32;
+pub const SIMD_I32X4_EXT_MUL_HIGH_I16X8_U: u32 = SimdTag::I32x4ExtMulHighI16x8U as u32;
+pub const SIMD_I64X2_EXT_MUL_LOW_I32X4_S: u32 = SimdTag::I64x2ExtMulLowI32x4S as u32;
+pub const SIMD_I64X2_EXT_MUL_LOW_I32X4_U: u32 = SimdTag::I64x2ExtMulLowI32x4U as u32;
+pub const SIMD_I64X2_EXT_MUL_HIGH_I32X4_S: u32 = SimdTag::I64x2ExtMulHighI32x4S as u32;
+pub const SIMD_I64X2_EXT_MUL_HIGH_I32X4_U: u32 = SimdTag::I64x2ExtMulHighI32x4U as u32;
+pub const SIMD_I32X4_DOT_I16X8_S: u32 = SimdTag::I32x4DotI16x8S as u32;
+pub const SIMD_I16X8_RELAXED_DOT_I8X16_I7X16_S: u32 = SimdTag::I16x8RelaxedDotI8x16I7x16S as u32;
+pub const SIMD_I32X4_TRUNC_SAT_F32X4_S: u32 = SimdTag::I32x4TruncSatF32x4S as u32;
+pub const SIMD_I32X4_TRUNC_SAT_F32X4_U: u32 = SimdTag::I32x4TruncSatF32x4U as u32;
+pub const SIMD_F32X4_CONVERT_I32X4_S: u32 = SimdTag::F32x4ConvertI32x4S as u32;
+pub const SIMD_F32X4_CONVERT_I32X4_U: u32 = SimdTag::F32x4ConvertI32x4U as u32;
+pub const SIMD_I32X4_TRUNC_SAT_F64X2_SZERO: u32 = SimdTag::I32x4TruncSatF64x2SZero as u32;
+pub const SIMD_I32X4_TRUNC_SAT_F64X2_UZERO: u32 = SimdTag::I32x4TruncSatF64x2UZero as u32;
+pub const SIMD_F64X2_CONVERT_LOW_I32X4_S: u32 = SimdTag::F64x2ConvertLowI32x4S as u32;
+pub const SIMD_F64X2_CONVERT_LOW_I32X4_U: u32 = SimdTag::F64x2ConvertLowI32x4U as u32;
+pub const SIMD_F32X4_DEMOTE_F64X2_ZERO: u32 = SimdTag::F32x4DemoteF64x2Zero as u32;
+pub const SIMD_F64X2_PROMOTE_LOW_F32X4: u32 = SimdTag::F64x2PromoteLowF32x4 as u32;
+pub const SIMD_I32X4_RELAXED_TRUNC_F32X4_S: u32 = SimdTag::I32x4RelaxedTruncF32x4S as u32;
+pub const SIMD_I32X4_RELAXED_TRUNC_F32X4_U: u32 = SimdTag::I32x4RelaxedTruncF32x4U as u32;
+pub const SIMD_I32X4_RELAXED_TRUNC_F64X2_SZERO: u32 = SimdTag::I32x4RelaxedTruncF64x2SZero as u32;
+pub const SIMD_I32X4_RELAXED_TRUNC_F64X2_UZERO: u32 = SimdTag::I32x4RelaxedTruncF64x2UZero as u32;
+pub const SIMD_V128_LOAD8X8_S: u32 = MemoryLoadTag::V128Load8x8S as u32;
+pub const SIMD_V128_LOAD8X8_U: u32 = MemoryLoadTag::V128Load8x8U as u32;
+pub const SIMD_V128_LOAD16X4_S: u32 = MemoryLoadTag::V128Load16x4S as u32;
+pub const SIMD_V128_LOAD16X4_U: u32 = MemoryLoadTag::V128Load16x4U as u32;
+pub const SIMD_V128_LOAD32X2_S: u32 = MemoryLoadTag::V128Load32x2S as u32;
+pub const SIMD_V128_LOAD32X2_U: u32 = MemoryLoadTag::V128Load32x2U as u32;
+pub const SIMD_V128_LOAD8_SPLAT: u32 = MemoryLoadTag::V128Load8Splat as u32;
+pub const SIMD_V128_LOAD16_SPLAT: u32 = MemoryLoadTag::V128Load16Splat as u32;
+pub const SIMD_V128_LOAD32_SPLAT: u32 = MemoryLoadTag::V128Load32Splat as u32;
+pub const SIMD_V128_LOAD64_SPLAT: u32 = MemoryLoadTag::V128Load64Splat as u32;
+pub const SIMD_V128_LOAD32_ZERO: u32 = MemoryLoadTag::V128Load32Zero as u32;
+pub const SIMD_V128_LOAD64_ZERO: u32 = MemoryLoadTag::V128Load64Zero as u32;

@@ -28,3 +28,6 @@ const _: () = assert!(ScalarConversionOperator::COUNT == codes::CONVERT_COUNT as
 
 // The page size the bulk rows shift by.
 const _: () = assert!(WASM_PAGE_BITS == codes::WASM_PAGE_BITS);
+
+// The SIMD operators: the list the b-jit's codes derive from has one tag per runtime operator.
+const _: () = assert!(codes::SIMD_OPERATOR_COUNT as usize == crate::staged::wasm_simd_lanes::SimdOperator::ALL.len());

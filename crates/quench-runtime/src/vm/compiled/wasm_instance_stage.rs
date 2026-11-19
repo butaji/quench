@@ -5,7 +5,7 @@ use super::{Analysis, AnalysisState, Emitter, Host, Kind, Region, Slot};
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineAccess, MachineStage, MachineVector};
 use crate::staged::wasm::Width;
-use crate::staged::wasm_instance::{Instance, Storage, WasmInstance};
+use crate::staged::wasm_instance::{Instance, Storage, WasmInstance, global_get, global_set};
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use cranelift_codegen::ir;
 
@@ -64,13 +64,15 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Instance::GlobalGet => {
                 let (slot, kind) = self.global_access(pc);
-                let value = self.global_load(slot, self.global_storage(slot));
+                let storage = self.global_storage(slot);
+                let value = global_get(self, slot, storage);
                 self.write(a, kind, value);
             }
             Instance::GlobalSet => {
                 let (slot, kind) = self.global_access(pc);
                 let value = self.read(a, kind);
-                self.global_store(slot, self.global_storage(slot), value);
+                let storage = self.global_storage(slot);
+                global_set(self, slot, storage, value);
             }
             // A binding is known statically per instruction; the globals it names are reached
             // through the context. Constants were defined above.

@@ -90,22 +90,8 @@ load_tags! {
     V128Load32Zero = SIMD_V128_LOAD32_ZERO; V128Load64Zero = SIMD_V128_LOAD64_ZERO;
 }
 
-/// Each operator kind with the tags it holds, the lists `wasm_codes.rs` names. The vector loads have
-/// their own kind (`load`), not a list here.
-const KINDS: &[(u8, &[u32])] = &[
-    (codes::SIMD_MORE_BINARY, codes::SIMD_MORE_BINARY_OPS),
-    (codes::SIMD_MORE_COMPARE, codes::SIMD_MORE_COMPARE_OPS),
-    (codes::SIMD_MORE_FLOAT, codes::SIMD_MORE_FLOAT_OPS),
-    (codes::SIMD_MORE_SHIFT, codes::SIMD_MORE_SHIFT_OPS),
-    (codes::SIMD_MORE_TEST, codes::SIMD_MORE_TEST_OPS),
-    (codes::SIMD_MORE_UNARY, codes::SIMD_MORE_UNARY_OPS),
-    (codes::SIMD_MORE_WIDEN, codes::SIMD_MORE_WIDEN_OPS),
-    (codes::SIMD_MORE_WIDE, codes::SIMD_MORE_WIDE_OPS),
-    (codes::SIMD_MORE_CONVERT, codes::SIMD_MORE_CONVERT_OPS),
-];
-
 /// The rows of the step at `instruction` if these rows compute it, else `None`: an operator in one of
-/// `KINDS`' lists, or a V128 splat, extend or zero load. `_pc` is unused: the rows need no position.
+/// the `SIMD_MORE_*` families, or a V128 splat, extend or zero load. `_pc` is unused: the rows need no position.
 pub(super) fn simd_more(_pc: usize, instruction: WideInstruction, world: &World<'_>) -> Option<Vec<Planned>> {
     match Step::of(instruction.op(), instruction.imm()) {
         Some(Step::Simd(Simd::Operator { selector })) => operator(instruction, selector, world),
@@ -114,9 +100,10 @@ pub(super) fn simd_more(_pc: usize, instruction: WideInstruction, world: &World<
     }
 }
 
-/// The kind whose list holds `tag`, `None` for an operator these rows do not compute.
+/// The kind of the `SIMD_MORE_*` family `tag` is in, `None` for an operator these rows do not compute
+/// (`wasm_codes.rs` derives it from the list's family column).
 fn kind_of(tag: u32) -> Option<u8> {
-    KINDS.iter().find(|(_, operators)| operators.contains(&tag)).map(|&(kind, _)| kind)
+    codes::simd_more_kind(tag)
 }
 
 /// The row of an operator `kind_of` admits, its holes by the kind's shape: a scalar destination for

@@ -364,13 +364,26 @@ pub(crate) fn checked_range(
 
 /// The loads of the scalar rows run `staged::wasm_memory`'s access (`Access::of_load`); the
 /// vector rows, whose widening and splatting are SIMD semantics, decode their own bytes.
-macro_rules! loads {
-    ($value:ident; scalar { $($scalar:ident, $swidth:ty;)+ } vector { $($name:ident, $word:ty => $result:expr;)+ }) => {
+#[macro_use]
+#[path = "../staged/wasm_lists.rs"]
+mod wasm_lists;
+
+/// The `MemoryLoad` enum, its discriminants the list's order (`wasm_lists.rs`).
+macro_rules! define_memory_loads {
+    ($($name:ident $family:ident),* $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u32)]
-        pub(crate) enum MemoryLoad { $($scalar,)+ $($name,)+ }
+        pub(crate) enum MemoryLoad { $($name,)* }
         impl MemoryLoad {
-            const ALL: &'static [Self] = &[$(Self::$scalar,)+ $(Self::$name,)+];
+            const ALL: &'static [Self] = &[$(Self::$name,)*];
+        }
+    };
+}
+memory_load_list!(define_memory_loads);
+
+macro_rules! loads {
+    ($value:ident; scalar { $($scalar:ident, $swidth:ty;)+ } vector { $($name:ident, $word:ty => $result:expr;)+ }) => {
+        impl MemoryLoad {
             pub(crate) const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
                 match op { $(wasmparser::Operator::$scalar { memarg } => Some((Self::$scalar, *memarg)),)+ $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
