@@ -12,7 +12,71 @@ pub(super) fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fram
         allocate @ Operation::Allocate { .. } => allocation_step(stage, frame, allocate),
         define @ Operation::DefineElement { .. } => element_define_step(stage, frame, define),
         helper @ (Operation::IndexSetHelper { .. } | Operation::FieldStoreMiss { .. }) => helper_step(stage, frame, helper),
+        site @ (Operation::AddSite { .. } | Operation::NamingSite { .. } | Operation::InstanceOf { .. }) => site_step(stage, frame, site),
+        array @ (Operation::DirectArray { .. } | Operation::ArrayLength { .. } | Operation::TypedLength { .. }
+            | Operation::ArrayAppend { .. }) => array_step(stage, frame, array),
         index => index_step(stage, frame, index),
+    }
+}
+
+/// The property-add and naming sites over the frame's miss edge: a hit defines the written word, a
+/// decline leaves the record to the VM (`add::site_add`, `naming::site_name`).
+#[inline(always)]
+fn site_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    let (word, done) = match operation {
+        Operation::AddSite { records, object, edge, link, form, value } =>
+            (value, add::site_add(stage, records, object, (edge, link), form, value, frame.miss())),
+        Operation::NamingSite { records, function, naming, form, name } =>
+            (name, naming::site_name(stage, records, function, naming, form, name, frame.miss())),
+        Operation::InstanceOf { destination, value, constructor } => {
+            let (value, constructor) = (frame.tagged(stage, value), frame.tagged(stage, constructor));
+            let Some(holds) = frame.instance_of(stage, value, constructor) else { return Step::Unresolved };
+            let (boolean, fact) = frame.boolean(stage, holds);
+            frame.write(stage, destination, boolean, fact);
+            (boolean, Some(()))
+        }
+        _ => return Step::Unresolved,
+    };
+    match done {
+        Some(()) => Step::Value(word),
+        None => Step::Unresolved,
+    }
+}
+
+/// The array and typed-array operations over a frame's heap: each answer is the frame's
+/// (`Frame::direct_array`, `array_length`, `typed_length`, `array_append`), and the default leaves
+/// the row to the VM.
+#[inline(always)]
+fn array_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
+        Operation::DirectArray { source } => match frame.direct_array(stage, source) {
+            Some(()) => Step::Value(stage.constant(0)),
+            None => Step::Unresolved,
+        },
+        Operation::ArrayLength { destination, source } => match frame.array_length(stage, source) {
+            Some((value, fact)) => {
+                frame.write(stage, destination, value, fact);
+                Step::Value(value)
+            }
+            None => Step::Unresolved,
+        },
+        Operation::TypedLength { destination, source } => match frame.typed_length(stage, source) {
+            Some((value, fact)) => {
+                frame.write(stage, destination, value, fact);
+                Step::Value(value)
+            }
+            None => Step::Unresolved,
+        },
+        Operation::ArrayAppend { array, value } => {
+            let word = frame.tagged(stage, value);
+            match frame.array_append(stage, array, word) {
+                Some(()) => Step::Value(word),
+                None => Step::Unresolved,
+            }
+        }
+        _ => Step::Unresolved,
     }
 }
 

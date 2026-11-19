@@ -3,8 +3,8 @@ pub(crate) use stage::{StagedRecordSpace, Stage, Table, word_bytes, word_offset,
 pub(crate) type Concrete = crate::stage::StencilStage;
 #[path = "../../quench-runtime/src/staged/region.rs"] pub(crate) mod region;
 #[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
-pub(crate) use crate::bytecode::Register;
+pub(crate) use register_frame::{Constant, Frame, Step, jump_if, read_arguments_binding, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use crate::bytecode::{Operand, Register};
 #[path = "../../quench-runtime/src/staged/global.rs"] mod global;
 pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 #[path = "../../quench-runtime/src/staged/math.rs"] pub(crate) mod math;
@@ -56,7 +56,7 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/operation.rs"] mod operation;
 pub(crate) use operation::Operation;
 #[path = "../../quench-runtime/src/staged/steps.rs"] mod steps;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_arith};
+pub(crate) use steps::{step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_arith};
 #[path = "../../quench-runtime/src/staged/names.rs"] mod names;
 pub(crate) use names::Protocol;
 #[path = "../../quench-runtime/src/staged/captures.rs"] mod captures;
