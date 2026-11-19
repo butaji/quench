@@ -1,5 +1,5 @@
 //! The stores of a constructor body that only initializes `this` (`Function::initializer_stores`).
-use super::{Constant, FieldLookup, Op, OperandKind, Register, WideInstruction};
+use super::{Constant, FieldLookup, JsDenotation, OperandKind, Register, Traits, WideInstruction};
 use smallvec::SmallVec;
 
 /// A store of an initializing body (`Function::initializer_stores`): the field `atom`, at
@@ -115,13 +115,15 @@ impl Temporaries {
     /// Records `instruction` when it writes a temporary these model, which writes nothing
     /// else; `false` for any other instruction. `fallbacks` are the parameters' defaults.
     pub(super) fn write(&mut self, instruction: &WideInstruction, params: u16, fallbacks: &[Option<f64>], constants: &[Constant]) -> bool {
-        if !matches!(instruction.op(), Op::LoadConst | Op::Binary) || instruction.result_flags() != 0 || instruction.result_register() < params {
+        let op = instruction.op();
+        let writes_constant = op.traits().has(Traits::CONSTANT_LOAD);
+        if !(writes_constant || op.traits().has(Traits::BINARY_RESULT)) || instruction.result_flags() != 0 || instruction.result_register() < params {
             return false;
         }
-        let value = match instruction.op() {
-            Op::LoadConst => InitializerConstant::of(constants, instruction.constant_index()).map(InitializerValue::Constant),
-            Op::Binary => Self::numeric(instruction, params, fallbacks, constants),
-            _ => None,
+        let value = if writes_constant {
+            InitializerConstant::of(constants, instruction.constant_index()).map(InitializerValue::Constant)
+        } else {
+            Self::numeric(instruction, params, fallbacks, constants)
         };
         value.map(|value| self.0.push((instruction.result_register(), value))).is_some()
     }
@@ -147,13 +149,13 @@ impl Temporaries {
 /// instructions they take. The registers they write are the body's temporaries, above its
 /// parameters, which nothing else reads.
 fn nested_store(instructions: &[WideInstruction], at: usize, params: u16, constants: &[Constant]) -> Option<(InitializerStore, usize)> {
-    let load = instructions.get(at).filter(|load| load.op() == Op::LoadCapture && temporary(load, params))?;
+    let load = instructions.get(at).filter(|load| matches!(load.op().js_denotation(), JsDenotation::CapturedValue) && temporary(load, params))?;
     let (chain, depth, register) = constructor_chain(instructions, at + 1, load.result_register(), params);
     (depth > 0).then_some(())?;
     let pc = at + 1 + depth;
     let (arguments, loaded) = constant_arguments(instructions, pc, params, constants)?;
     let pc = pc + loaded.len();
-    let construct = instructions.get(pc).filter(|construct| construct.op() == Op::Construct && construct.register_b() == register
+    let construct = instructions.get(pc).filter(|construct| construct.op().traits().has(Traits::CONSTRUCTION) && construct.register_b() == register
         && construct.result_flags() == 0 && !construct.returns_from_frame())?;
     let super::ConstructArguments::Registers(window) = construct.construct_arguments() else { return None };
     // The window is the constants just loaded, in order.
@@ -176,7 +178,7 @@ fn temporary(instruction: &WideInstruction, params: u16) -> bool {
 fn constructor_chain(instructions: &[WideInstruction], at: usize, mut register: Register, params: u16) -> ([u32; NESTED_CHAIN], usize, Register) {
     let mut chain = [0; NESTED_CHAIN];
     let mut depth = 0;
-    while let Some((read, atom)) = instructions.get(at + depth).filter(|read| read.op() == Op::GetField && temporary(read, params) && depth < NESTED_CHAIN)
+    while let Some((read, atom)) = instructions.get(at + depth).filter(|read| read.op().traits().has(Traits::FIELD_LEAF) && temporary(read, params) && depth < NESTED_CHAIN)
         .and_then(|read| match read.field_lookup() {
             Some(FieldLookup::Atom { atom, base, .. }) if base.register_index() == Some(register) => Some((read, atom)),
             _ => None,
@@ -192,7 +194,7 @@ fn constructor_chain(instructions: &[WideInstruction], at: usize, mut register: 
 fn constant_arguments(instructions: &[WideInstruction], at: usize, params: u16, constants: &[Constant]) -> Option<([InitializerConstant; NESTED_ARGUMENTS], SmallVec<[Register; NESTED_ARGUMENTS]>)> {
     let mut arguments = [InitializerConstant::Undefined; NESTED_ARGUMENTS];
     let mut loaded = SmallVec::new();
-    while let Some(constant) = instructions.get(at + loaded.len()).filter(|constant| constant.op() == Op::LoadConst && temporary(constant, params)) {
+    while let Some(constant) = instructions.get(at + loaded.len()).filter(|constant| constant.op().traits().has(Traits::CONSTANT_LOAD) && temporary(constant, params)) {
         *arguments.get_mut(loaded.len())? = InitializerConstant::of(constants, constant.constant_index())?;
         loaded.push(constant.result_register());
     }

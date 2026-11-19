@@ -6,8 +6,8 @@
 use crate::bitset::BitSet;
 
 use super::{
-    ControlEdge, Function, ImmediateRole, InstructionField, Op, Operand,
-    OperandKind, Superinstruction, WideInstruction,
+    ControlEdge, Function, ImmediateRole, InstructionField, JsDenotation, Operand,
+    OperandKind, Superinstruction, Traits, WideInstruction,
 };
 
 /// How one instruction member touches a local slot.
@@ -212,24 +212,27 @@ fn accesses(instruction: WideInstruction, uninitialized_at_entry: &BitSet, mut a
     }
     if instruction.op().immediate_role() == ImmediateRole::LocalSlot {
         let slot = instruction.local_slot();
-        match instruction.op() {
-            Op::InitializeTdz => access(slot, Access::Uninitialize),
-            Op::LoadLocal | Op::LoadLocalPlain => access(slot, Access::Read),
-            // For a slot uninitialized at entry the question is only whether a value was
-            // written: a plain slot's assigning store never meets a dead zone
-            // (`plain_local_slots`).
-            Op::StoreLocalPlain if uninitialized_at_entry.contains(slot) => {
-                access(slot, Access::Initialize)
-            }
-            Op::StoreLocal | Op::StoreLocalPlain => access(
+        let op = instruction.op();
+        if op.traits().has(Traits::TDZ_INITIALIZE) {
+            access(slot, Access::Uninitialize);
+        } else if op.traits().has(Traits::FRAME_LOCAL_LOAD) {
+            access(slot, Access::Read);
+        // For a slot uninitialized at entry the question is only whether a value was
+        // written: a plain slot's assigning store never meets a dead zone
+        // (`plain_local_slots`).
+        } else if matches!(op.js_denotation(), JsDenotation::PlainLocalStore) && uninitialized_at_entry.contains(slot) {
+            access(slot, Access::Initialize);
+        } else if op.traits().has(Traits::FRAME_LOCAL_STORE) {
+            access(
                 slot,
                 if instruction.boolean_field(InstructionField::C) == Some(true) {
                     Access::Initialize
                 } else {
                     Access::Read
                 },
-            ),
-            _ => access(slot, Access::Opaque),
+            );
+        } else {
+            access(slot, Access::Opaque);
         }
     }
     if let Some(target) = instruction.numeric_local_target() {

@@ -425,6 +425,39 @@ impl Traits {
     pub(crate) const STRING_CONCAT: Self = Self(1 << 109);
     /// The op that runs a first-call stub's function body as its compiled chunk. Tagged: `CallFirstChunk`.
     pub(crate) const FIRST_CALL_CHUNK: Self = Self(1 << 110);
+    /// A suspension point of an activation: `await`, `yield` and `yield*`. Tagged: `Await`, `Yield`, `YieldStar`.
+    pub(crate) const SUSPENSION_POINT: Self = Self(1 << 51);
+    /// An access that reads its object register as an indexed receiver. Tagged: `GetIndex`, `SetIndex`, `RequireObjectCoercible`.
+    pub(crate) const INDEXED_RECEIVER: Self = Self(1 << 52);
+    /// A store to a binding by name. Tagged: `StoreName`.
+    pub(crate) const NAME_STORE: Self = Self(1 << 54);
+    /// A load of a binding by name, throwing or `typeof`. Tagged: `LoadName`, `LoadNameCall`, `LoadNameTypeof`.
+    pub(crate) const NAME_LOAD: Self = Self(1 << 55);
+    /// A read of the activation's passed arguments. Tagged: `ArgumentsLength`, `ArgumentGet`.
+    pub(crate) const ARGUMENTS_READ: Self = Self(1 << 56);
+    /// A call through a callee register, with a window or a spread array. Tagged: `Call`, `CallArray`.
+    pub(crate) const ORDINARY_CALL: Self = Self(1 << 57);
+    /// An op that captures the current environment: a closure or an environment clone. Tagged: `MakeClosure`, `CloneEnv`.
+    pub(crate) const ENVIRONMENT_CAPTURE: Self = Self(1 << 59);
+    /// A load or store of an environment-resident local. Tagged: `LoadEnvLocal`, `StoreEnvLocal`.
+    pub(crate) const ENV_LOCAL_ACCESS: Self = Self(1 << 60);
+    /// A frame local access that a capture layout can move into the environment. Tagged: `LoadLocal`, `StoreLocal`.
+    pub(crate) const RELOCATABLE_LOCAL: Self = Self(1 << 61);
+    /// A load or store of a captured slot. Tagged: `LoadCapture`, `StoreCapture`.
+    pub(crate) const CAPTURE_ACCESS: Self = Self(1 << 62);
+    /// A store of register A to a `this` field, through a named field site. Tagged: `SetThisField`, `SetThisFieldStrict`.
+    pub(crate) const THIS_FIELD_STORE: Self = Self(1 << 63);
+    /// A store of register A into a frame or environment local slot its immediate names, not a plain one. Tagged: `StoreLocal`, `StoreEnvLocal`.
+    pub(crate) const LOCAL_SLOT_STORE: Self = Self(1 << 65);
+    /// An op that reads or binds the implicit bindings an environment holds, by their form. Tagged: `ResolveName`,
+    /// `LoadResolvedName`, `DeleteName`, `StoreResolvedName`, `StoreVarBinding`, `InitializeThis`, `SuperCallCheck`.
+    pub(crate) const BINDING_FORM: Self = Self(1 << 66);
+    /// An op that defines an instance element of a class constructor. Tagged: `DefineField`, `DefinePrivateField`, `DefineComputedField`, `MarkPrivateName`.
+    pub(crate) const INSTANCE_ELEMENT_DEFINE: Self = Self(1 << 67);
+    /// The check a `super(...)` construction makes of the parent's result. Tagged: `SuperCallCheck`.
+    pub(crate) const SUPER_CALL_CHECK: Self = Self(1 << 69);
+    /// An op that constructs a value from a callee and a register window or array. Tagged: `Construct`.
+    pub(crate) const CONSTRUCTION: Self = Self(1 << 70);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }

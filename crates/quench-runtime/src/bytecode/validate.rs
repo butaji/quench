@@ -1,8 +1,8 @@
 #[path = "activation_layout.rs"] mod activation_layout;
 use super::control_flow::instruction_at;
 use super::{
-    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Op, Operand, OperandKind,
-    REGISTER_MASK, Register, ResidualProgram,
+    FieldBase, FieldLayout, ImmediateLayout, InstructionField, JsDenotation, Op, Operand, OperandKind,
+    REGISTER_MASK, Register, ResidualProgram, Traits,
 };
 use rustc_hash::FxHashSet;
 
@@ -164,8 +164,8 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
                 function.local_atoms.get(usize::from(entry.local)) == Some(&instruction.imm())
             })
         });
-    let makes_closures = function.code.iter().any(|instruction| instruction.op() == Op::MakeClosure)
-        || function.wide.iter().any(|instruction| instruction.op() == Op::MakeClosure);
+    let makes_closures = function.code.iter().any(|instruction| instruction.op().makes_closure())
+        || function.wide.iter().any(|instruction| instruction.op().makes_closure());
     let eligible_function = function.parent.is_some()
         // A suspension saves the frame's registers, so async and generator bodies promote too.
         && !function.derived_constructor
@@ -490,10 +490,10 @@ fn object_site_instruction_valid(
     registers: u16,
 ) -> bool {
     match instruction.op() {
-        Op::MakeObject2 => object_sites
+        op if op.traits().has(Traits::RETURNING_OBJECT) => object_sites
             .get(instruction.object_site_index())
             .is_some_and(|site| site.atoms.len() == super::INLINE_OBJECT_SITE_ATOMS),
-        Op::MakeObjectLiteral => {
+        op if op.traits().has(Traits::RETURNING_OBJECT_LITERAL) => {
             let Some(site) = object_sites.get(instruction.object_site_index()) else {
                 return false;
             };
@@ -775,8 +775,8 @@ function.plain_local_slots(&self.superinstructions)
                     ));
                 }
                 if matches!(
-                    instruction.op(),
-                    super::Op::LoadLocalPlain | super::Op::StoreLocalPlain
+                    instruction.op().js_denotation(),
+                    JsDenotation::PlainLocalLoad | JsDenotation::PlainLocalStore
                 ) && !plain_local_slots.contains(instruction.local_slot())
                 {
                     return Err(format!(
@@ -784,23 +784,15 @@ function.plain_local_slots(&self.superinstructions)
                     ));
                 }
                 if let Some(captured) = &function.selective_capture_slots {
-                    let local_slot = matches!(
-                        instruction.op(),
-                        super::Op::LoadLocal
-                            | super::Op::StoreLocal
-                            | super::Op::LoadLocalPlain
-                            | super::Op::StoreLocalPlain
-                            | super::Op::LoadEnvLocal
-                            | super::Op::StoreEnvLocal
-                    )
+                    let op = instruction.op();
+                    let local_slot = (op.traits().has(Traits::FRAME_LOCAL_LOAD)
+                        || op.traits().has(Traits::FRAME_LOCAL_STORE)
+                        || op.addresses_env_local())
                     .then(|| instruction.local_slot());
                     let slot_is_captured = local_slot.is_some_and(|slot| {
                         u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
                     });
-                    let environment_op = matches!(
-                        instruction.op(),
-                        super::Op::LoadEnvLocal | super::Op::StoreEnvLocal
-                    );
+                    let environment_op = op.addresses_env_local();
                     if environment_op && !slot_is_captured {
                         return Err(format!(
                             "function {index} has an environment-local operation for an uncaptured slot"
@@ -810,12 +802,12 @@ function.plain_local_slots(&self.superinstructions)
                         .numeric_local_target()
                         .is_some_and(|target| captured.binary_search(&target).is_ok())
                         || function.dispatch == super::DispatchClass::Numeric
-                            && ((instruction.op() == super::Op::StoreLocal && slot_is_captured)
-                                || instruction.op() == super::Op::LoadLocal
+                            && ((op.is_relocatable_local_access() && op.traits().has(Traits::LOCAL_SLOT_STORE) && slot_is_captured)
+                                || op.is_relocatable_local_access() && !op.traits().has(Traits::LOCAL_SLOT_STORE)
                                     && instruction.numeric_local_store_target().is_some()
                                     && slot_is_captured)
                         || function.dispatch == super::DispatchClass::Numeric
-                            && instruction.op() == super::Op::GetIndex
+                            && op.traits().has(Traits::ELEMENT_ACCESS) && !op.traits().has(Traits::ELEMENT_STORE)
                             && [instruction.operand_b(), instruction.operand_c()]
                                 .into_iter()
                                 .any(|operand| {
@@ -828,7 +820,7 @@ function.plain_local_slots(&self.superinstructions)
                         ));
                     }
                 }
-                if instruction.op() == super::Op::Binary
+                if instruction.op().traits().has(Traits::BINARY_RESULT)
                     && instruction.numeric_local_target().is_some_and(|slot| {
                         function.dispatch != super::DispatchClass::Numeric
                             && !plain_local_slots.contains(usize::from(slot))
@@ -1010,10 +1002,7 @@ function.plain_local_slots(&self.superinstructions)
                 .filter_map(|packed| instruction_at(function, *packed))
                 .chain(function.wide.iter().copied())
             {
-                if !matches!(
-                    instruction.op(),
-                    super::Op::LoadCapture | super::Op::StoreCapture
-                ) {
+                if !instruction.op().addresses_capture() {
                     continue;
                 }
                 let mut owner = function_id;
@@ -1096,7 +1085,7 @@ fn selective_capture_layout_is_eligible(
         .iter()
         .filter_map(|packed| instruction_at(function, *packed))
         .chain(function.wide.iter().copied())
-        .any(|instruction| instruction.op() == super::Op::MakeClosure);
+        .any(|instruction| instruction.op().makes_closure());
     let captured = function
         .selective_capture_slots
         .as_deref()

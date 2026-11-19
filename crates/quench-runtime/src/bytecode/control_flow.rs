@@ -84,7 +84,7 @@ pub(super) fn is_bounded(function: &Function) -> bool {
                     else {
                         return false;
                     };
-                    if entry_instruction.op() != super::Op::Jump {
+                    if !entry_instruction.op().traits().has(super::Traits::UNCONDITIONAL_JUMP) {
                         return false;
                     }
                     work.push(entry);
