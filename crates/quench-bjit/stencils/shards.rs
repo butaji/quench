@@ -4,15 +4,17 @@
 
 /// The compile weight one shard holds at most, in row units. rustc holds every monomorphized
 /// row of its crate in memory at once, and a row's cost is its kind's (`NUMBER_WEIGHT` and after): a shard of
-/// 4096 number rows peaked near 4.6 GB, one of 4000 other heap rows near 9.3 GB, and one with 960
-/// element rows (or 720 typed element rows) near 10 to 14 GB. At this budget a shard stays near 3 to 4 GB beside the fixed cost of
-/// the shared row definitions.
+/// 4096 number rows peaked near 4.6 GB, 219 typed element rows near 4.3 GB, and 626 other heap rows (weighed
+/// at 2 each) with 88 element rows near 9.6 GB, as did 360 supernodes of an index row (weighed at 2). At this
+/// budget a shard stays near 3 to 5 GB beside the fixed cost of the shared row definitions.
 pub const SHARD_WEIGHT: usize = 3072;
 
 /// The weights of a row's kind, in units of a number row's cost: a heap row inlines its staged
-/// step, and an element row (an index read or store, plain or typed) the whole element family's.
+/// step (7 to 11 units measured for the property, site, IC and environment rows; the build weighs a
+/// supernode as its rows together), and an element row (an index read or store, plain or typed) the whole
+/// element family's.
 pub const NUMBER_WEIGHT: usize = 1;
-pub const HEAP_WEIGHT: usize = 2;
+pub const HEAP_WEIGHT: usize = 8;
 pub const ELEMENT_WEIGHT: usize = 14;
 
 /// Most shard compilations running at once: two shards of `SHARD_WEIGHT` fit a 16 GB machine

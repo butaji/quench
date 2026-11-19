@@ -162,6 +162,9 @@ pub struct Row {
     pub speculate: bool,
 }
 
+// The lib reads a subset of the shared codes: the generated `PLACE_CODE_COUNT` and the runtime's
+// `TypedArrayKind::width` serve the stencil crate and the runtime only.
+#[allow(dead_code)]
 #[path = "../stencils/library.rs"]
 pub mod library;
 #[path = "../stencils/site_bits.rs"]
