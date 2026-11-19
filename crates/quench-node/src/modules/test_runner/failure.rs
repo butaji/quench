@@ -117,7 +117,7 @@ pub(super) fn capture(c: &mut Context<'_>, kind: FailureType, cause: Cause, insp
     };
     let inspected = inspect(c, &Value::Root(shown), false)?;
     let inspected_colored = if inspection.colored { Some(inspect(c, &Value::Root(shown), true)?) } else { None };
-    Ok(Failure { failure_type: kind.tag().to_owned(), fields, inspected, inspected_colored })
+    Ok(Failure { failure_type: kind.tag().to_owned(), message: wrapper_message, fields, inspected, inspected_colored })
 }
 
 /// `ERR_TEST_FAILURE`'s message: the error's message, or the value, inspected unless a string.

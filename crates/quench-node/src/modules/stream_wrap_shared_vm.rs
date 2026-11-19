@@ -53,17 +53,32 @@ pub(crate) fn module(c: &mut Context<'_>) -> Outcome {
     })
 }
 
+/// The arguments of `_write(chunk, encoding, callback)`, the callback last.
+const WRITE_ARGUMENTS: usize = 3;
+/// The arguments of `_destroy(error, callback)`.
+const DESTROY_ARGUMENTS: usize = 2;
+/// The captures of a stream listener: the socket, then the stream.
+const LISTENER_CAPTURES: usize = 2;
+
 /// Dispatches a call of any `Member` function: the constructor, a prototype method, or a
 /// stream listener (whose captures are the socket and the stream).
 pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outcome {
     match current::<Member>(c)? {
         Member::Construct => construct(c, args),
+        listener @ (Member::Data | Member::End | Member::Error | Member::Close) => listener_call(c, listener, args),
+        method => prototype_method(c, method, this, args),
+    }
+}
+
+/// `_read`, `_write`, `_final` and `_destroy` on the socket, `this`, over the wrapped stream.
+fn prototype_method(c: &mut Context<'_>, method: Member, this: RootId, args: &[RootId]) -> Outcome {
+    match method {
         Member::Read => {
             let stream = get(c, this, "stream")?;
             call(c, stream, "resume", &[])
         }
         Member::Write => {
-            let ([chunk, encoding, callback], _) = leading::<3>(c, args);
+            let ([chunk, encoding, callback], _) = leading::<WRITE_ARGUMENTS>(c, args);
             let stream = get(c, this, "stream")?;
             call(c, stream, "write", &[chunk, encoding, callback])
         }
@@ -74,7 +89,7 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             settle(c, callback, &[])
         }
         Member::Destroy => {
-            let ([error, callback], _) = leading::<2>(c, args);
+            let ([error, callback], _) = leading::<DESTROY_ARGUMENTS>(c, args);
             let stream = get(c, this, "stream")?;
             call(c, stream, "destroy", &[])?;
             let base = socket_base(c)?;
@@ -82,8 +97,15 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             let parent = get(c, prototype, "_destroy")?;
             c.call_rooted(parent, this, &[error, callback])
         }
+        _ => unreachable!("not a prototype method"),
+    }
+}
+
+/// The stream's 'data', 'end', 'error' and 'close' listeners, over the socket and the stream.
+fn listener_call(c: &mut Context<'_>, listener: Member, args: &[RootId]) -> Outcome {
+    match listener {
         Member::Data => {
-            let [socket, stream] = captured::<2>(c)?;
+            let [socket, stream] = captured::<LISTENER_CAPTURES>(c)?;
             let ([chunk], _) = leading::<1>(c, args);
             let pushed = call(c, socket, "push", &[chunk])?;
             if !c.truthy_rooted(pushed)? {
@@ -92,21 +114,22 @@ pub(crate) fn member(c: &mut Context<'_>, this: RootId, args: &[RootId]) -> Outc
             Ok(c.undefined())
         }
         Member::End => {
-            let [socket, _] = captured::<2>(c)?;
+            let [socket, _] = captured::<LISTENER_CAPTURES>(c)?;
             let null = c.null();
             call(c, socket, "push", &[null])?;
             Ok(c.undefined())
         }
         Member::Error => {
-            let [socket, _] = captured::<2>(c)?;
+            let [socket, _] = captured::<LISTENER_CAPTURES>(c)?;
             let ([error], _) = leading::<1>(c, args);
             call(c, socket, "destroy", &[error])?;
             Ok(c.undefined())
         }
         Member::Close => {
-            let [socket, _] = captured::<2>(c)?;
+            let [socket, _] = captured::<LISTENER_CAPTURES>(c)?;
             call(c, socket, "destroy", &[])
         }
+        _ => unreachable!("not a stream listener"),
     }
 }
 

@@ -8,6 +8,7 @@ pub(crate) mod cli;
 mod failure;
 pub(crate) mod mock;
 pub(crate) mod report;
+pub(crate) mod reporters;
 pub(crate) mod run;
 pub(crate) mod wait_for;
 

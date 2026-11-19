@@ -3,6 +3,11 @@
 //! `--test` coordinator reads it back from each file's child process.
 use serde::{Deserialize, Serialize};
 
+#[path = "report_events.rs"]
+mod events;
+#[path = "report_junit.rs"]
+mod junit;
+
 /// Node's `kSubtestsFailed`: a parent failing only through its children.
 pub(crate) const SUBTESTS_FAILED: &str = "subtestsFailed";
 /// Number::toString switches from integer digits to exponent form from 10^21.
@@ -10,6 +15,8 @@ const EXPONENT_FORM_FROM: f64 = 1e21;
 const TAP_VERSION: u32 = 13;
 const TAP_INDENT: &str = "    ";
 const SPEC_INDENT: &str = "  ";
+/// The XML prologue Node's junit reporter starts with.
+const JUNIT_PROLOGUE: &str = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<testsuites>\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Kind {
@@ -55,6 +62,8 @@ pub(crate) enum Yaml {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Failure {
     pub(crate) failure_type: String,
+    /// The error wrapper's own `message` (junit's failure attribute).
+    pub(crate) message: String,
     pub(crate) fields: Vec<(String, Yaml)>,
     pub(crate) inspected: String,
     pub(crate) inspected_colored: Option<String>,
@@ -135,6 +144,8 @@ impl Counters {
 pub(crate) enum Style {
     Tap,
     Spec { colors: bool },
+    Dot,
+    Junit,
 }
 
 impl Style {
@@ -143,6 +154,8 @@ impl Style {
             None if terminal => Ok(Self::Spec { colors: true }),
             None | Some("tap") => Ok(Self::Tap),
             Some("spec") => Ok(Self::Spec { colors: terminal }),
+            Some("dot") => Ok(Self::Dot),
+            Some("junit") => Ok(Self::Junit),
             Some(other) => Err(other.to_owned()),
         }
     }
@@ -181,11 +194,23 @@ pub(crate) struct Reporter {
     started: bool,
     failing: Vec<TestReport>,
     cwd: String,
+    /// Results printed on the current dot line.
+    dot_column: usize,
+    /// junit's tree of suites and cases, serialised when the stream ends.
+    junit: junit::Junit,
 }
 
 impl Reporter {
     pub(crate) fn new(style: Style, cwd: String) -> Self {
-        Self { style, counters: Counters::default(), started: false, failing: Vec::new(), cwd }
+        Self {
+            style,
+            counters: Counters::default(),
+            started: false,
+            failing: Vec::new(),
+            cwd,
+            dot_column: 0,
+            junit: junit::Junit::default(),
+        }
     }
 
     pub(crate) fn style(&self) -> Style {
@@ -197,8 +222,13 @@ impl Reporter {
     }
 
     fn header(&mut self, out: &mut String) {
-        if !std::mem::replace(&mut self.started, true) && self.style == Style::Tap {
-            out.push_str(&format!("TAP version {TAP_VERSION}\n"));
+        if std::mem::replace(&mut self.started, true) {
+            return;
+        }
+        match self.style {
+            Style::Tap => out.push_str(&format!("TAP version {TAP_VERSION}\n")),
+            Style::Junit => out.push_str(JUNIT_PROLOGUE),
+            Style::Spec { .. } | Style::Dot => {}
         }
     }
 
@@ -212,6 +242,7 @@ impl Reporter {
                 spec_test(report, colors, &mut out);
                 collect_failing(report, &mut self.failing);
             }
+            Style::Dot | Style::Junit => self.flat_tree(report, &mut out),
         }
         out
     }
@@ -226,7 +257,8 @@ impl Reporter {
                     out.push_str(&format!("# {}\n", tap_escape(line)));
                 }
             }
-            Style::Spec { .. } => out.push_str(text),
+            Style::Spec { .. } | Style::Dot => out.push_str(text),
+            Style::Junit => {}
         }
         out
     }
@@ -250,6 +282,7 @@ impl Reporter {
                 }
                 out.push_str(&self.failing_section(colors));
             }
+            Style::Dot | Style::Junit => out.push_str(&self.finish()),
         }
         out
     }
@@ -313,7 +346,16 @@ fn tap_test(report: &TestReport, out: &mut String) {
     if !report.children.is_empty() {
         out.push_str(&format!("{indent}{TAP_INDENT}1..{}\n", report.children.len()));
     }
-    let status = if report.passed { "ok" } else { "not ok" };
+    tap_result(report, out);
+    for diagnostic in &report.diagnostics {
+        out.push_str(&format!("{indent}# {}\n", tap_escape(diagnostic)));
+    }
+}
+
+/// One test's result line and YAML block, without its subtest header or diagnostics.
+fn tap_result(report: &TestReport, out: &mut String) {
+    let indent = TAP_INDENT.repeat(report.nesting);
+    let status =if report.passed { "ok" } else { "not ok" };
     let mut line = format!("{indent}{status} {} {}", report.number, tap_escape(&format!("- {}", report.name)));
     match &report.directive {
         Some(Directive::Skip(message)) => line.push_str(&directive_suffix("SKIP", message)),
@@ -337,9 +379,6 @@ fn tap_test(report: &TestReport, out: &mut String) {
         }
     }
     out.push_str(&format!("{indent}  ...\n"));
-    for diagnostic in &report.diagnostics {
-        out.push_str(&format!("{indent}# {}\n", tap_escape(diagnostic)));
-    }
 }
 
 fn directive_suffix(label: &str, message: &str) -> String {

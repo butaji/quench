@@ -1014,6 +1014,7 @@ fn require_for_module_inner(
             | BuiltinModule::InternalTimers
             | BuiltinModule::TimersPromises
             | BuiltinModule::NodeTest
+            | BuiltinModule::NodeTestReporters
             | BuiltinModule::StringDecoder
             | BuiltinModule::WorkerThreads
             | BuiltinModule::Util
@@ -1028,6 +1029,7 @@ fn require_for_module_inner(
             | BuiltinModule::Inspector
             | BuiltinModule::Repl
             | BuiltinModule::Sea
+            | BuiltinModule::Sqlite
             | BuiltinModule::Cluster
             | BuiltinModule::Wasi
             | BuiltinModule::TraceEvents),
@@ -1272,6 +1274,7 @@ enum BuiltinModule {
     Timers,
     TimersPromises,
     NodeTest,
+    NodeTestReporters,
     ChildProcess,
     InternalChildProcess,
     Url,
@@ -1304,6 +1307,7 @@ enum BuiltinModule {
     Inspector,
     Repl,
     Sea,
+    Sqlite,
     Cluster,
     Wasi,
     TraceEvents,
@@ -1347,6 +1351,7 @@ impl BuiltinModule {
             Self::InternalTimers => Some("internal/timers"),
             Self::TimersPromises => Some("timers/promises"),
             Self::NodeTest => Some("node:test"),
+            Self::NodeTestReporters => Some("node:test/reporters"),
             Self::ChildProcess => Some("child_process"),
             Self::InternalChildProcess => Some("internal/child_process"),
             Self::Url => Some("url"),
@@ -1372,21 +1377,15 @@ impl BuiltinModule {
             Self::Inspector => Some("inspector"),
             Self::Repl => Some("repl"),
             Self::Sea => Some("sea"),
+            Self::Sqlite => Some("sqlite"),
             Self::Cluster => Some("cluster"),
             Self::Wasi => Some("wasi"),
             Self::TraceEvents => Some("trace_events"),
             Self::PerfHooks => Some("perf_hooks"),
             Self::Zlib => Some("zlib"),
-            Self::AsyncHooks | Self::DiagnosticsChannel => None,
-            Self::Process
-            | Self::Assert
-            | Self::AssertStrict
-            | Self::Path
-            | Self::PathPosix
-            | Self::PathWin32 => None,
             Self::InternalUrl => Some("internal/url"),
-            Self::InternalDgram
-            | Self::InternalBlockList
+            Self::AsyncHooks | Self::DiagnosticsChannel | Self::Process | Self::Assert | Self::AssertStrict
+            | Self::Path | Self::PathPosix | Self::PathWin32 | Self::InternalDgram | Self::InternalBlockList
             | Self::InternalSocketAddress => None,
         }
     }
@@ -1504,6 +1503,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/timers", BuiltinModule::InternalTimers),
     ("timers/promises", BuiltinModule::TimersPromises),
     ("node:test", BuiltinModule::NodeTest),
+    ("node:test/reporters", BuiltinModule::NodeTestReporters),
     ("string_decoder", BuiltinModule::StringDecoder),
     ("worker_threads", BuiltinModule::WorkerThreads),
     ("util", BuiltinModule::Util),
@@ -1544,6 +1544,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("inspector", BuiltinModule::Inspector),
     ("repl", BuiltinModule::Repl),
     ("node:sea", BuiltinModule::Sea),
+    ("node:sqlite", BuiltinModule::Sqlite),
     ("cluster", BuiltinModule::Cluster),
     ("wasi", BuiltinModule::Wasi),
     ("trace_events", BuiltinModule::TraceEvents),
@@ -2056,8 +2057,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Internal("readline/promises") => crate::modules::readline_shared_vm::promises_module(context),
         BuiltinModule::Internal("constants") => constants_module(context),
         // Quench has no inspector; its promise API is as empty as `inspector`.
-        BuiltinModule::Internal("inspector/promises") => context.object_rooted(),
-        BuiltinModule::Internal("_stream_wrap") => crate::modules::stream_wrap_shared_vm::module(context),
+        BuiltinModule::Internal("inspector/promises") | BuiltinModule::Inspector | BuiltinModule::Wasi => context.object_rooted(),
+        builtin @ (BuiltinModule::Sqlite | BuiltinModule::NodeTestReporters | BuiltinModule::Internal("_stream_wrap")) => node_only_module(context, builtin),
         BuiltinModule::Internal(name) => Err(RootedError::host(format!("node:{name} has no builder"))),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => crate::modules::url_shared_vm::internal_module(context),
@@ -2135,7 +2136,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Http2Binding => crate::modules::http2_shared_vm::binding(context),
         BuiltinModule::Cluster => crate::modules::cluster::module(context),
         BuiltinModule::Repl => crate::modules::repl::module(context),
-        BuiltinModule::Inspector | BuiltinModule::Wasi => context.object_rooted(),
         BuiltinModule::Sea => crate::modules::sea_shared_vm::module(context),
         BuiltinModule::Process
         | BuiltinModule::Assert
@@ -2148,6 +2148,16 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         | BuiltinModule::InternalSocketAddress => Err(RootedError::host(
             "special builtin passed to generic shared module builder",
         )),
+    }
+}
+
+/// The builders of the modules Quench adds beyond Node's public set, each in its own module.
+fn node_only_module(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
+    match builtin {
+        BuiltinModule::Sqlite => crate::modules::sqlite_shared_vm::module(context),
+        BuiltinModule::NodeTestReporters => crate::modules::test_runner::reporters::module(context),
+        BuiltinModule::Internal("_stream_wrap") => crate::modules::stream_wrap_shared_vm::module(context),
+        _ => unreachable!("not a node-only builtin"),
     }
 }
 
@@ -3307,7 +3317,7 @@ mod builtin_table_tests {
     /// Builtins of the targeted Node release the export table knows and Quench does not load,
     /// so does not list either.
     const NOT_LISTED: &[&str] =
-        &["bench", "bench/reporters", "sqlite", "stream/iter", "test/reporters", "zlib/iter"];
+        &["bench", "bench/reporters", "stream/iter", "zlib/iter"];
 
     #[test]
     fn every_public_builtin_loads_bare_and_with_the_node_prefix() {

@@ -141,6 +141,7 @@ pub(crate) mod string_decoder_codec;
 pub(crate) mod readline_shared_vm;
 pub(crate) mod bootstrap_realm_shared_vm;
 pub(crate) mod sea_shared_vm;
+pub(crate) mod sqlite_shared_vm;
 pub(crate) mod source_map_shared_vm;
 pub(crate) mod keys;
 pub(crate) mod stream_shared_vm;

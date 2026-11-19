@@ -59,6 +59,7 @@ impl SharedNodeState {
             fs,
             fs_watch,
             tls_contexts,
+            sqlite,
             #[cfg(quench_icu)]
             icu_converters,
             fs_classes,
@@ -143,6 +144,7 @@ impl SharedNodeState {
         require_quiescent(scheduler.snapshot_quiescent(), "scheduled callbacks")?;
         require_quiescent(fs.snapshot_quiescent(), "open file descriptors")?;
         require_quiescent(process_signals.snapshot_quiescent(), "signal listeners")?;
+        require_quiescent(sqlite.snapshot_quiescent(), "open sqlite handles")?;
         require_quiescent(active_esm_requires.is_empty(), "an ESM require")?;
         require_quiescent(
             net_sockets.is_empty()
