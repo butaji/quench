@@ -59,7 +59,7 @@ impl<H: Host> Vm<H> {
         if plan.is_class_constructor {
             self.note_class_evaluation(id, function, parts.prototype);
         }
-        self.record_top_level_closure(plan, id, function);
+        self.record_top_level_closure(p, plan, id, function);
         let Some(shapes) = recorded_shapes else {
             self.define_closure_properties(function, plan, &parts)?;
             return Ok(function);

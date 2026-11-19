@@ -18,7 +18,7 @@ use super::object_encoding::{
     DICTIONARY_STORAGE, EXTRAS_FORM, EXTRAS_TAG, EXTRAS_TAG_MASK, HEADER_CAPACITY_MASK, INLINE_FORM,
     INLINE_PROPERTY_COUNT, META_OFFSET, NARROW_FORM, NARROW_RUN_TAG, OBJECT_ARRAY, OBJECT_INLINE_STORAGE,
     OCCUPANCY_WORD_BITS, PROTO_ARRAY_RECORD_BASE, PROTO_INDEX_BITS, PROTO_OBJECT_RECORD_BASE,
-    RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordBlock, START_MASK, VALUE_VEC_FROZEN,
+    OBJECT_RECORD_CAPACITY, ARRAY_RECORD_CAPACITY, RECORDS_PER_BLOCK, RecordBlock, START_MASK, VALUE_VEC_FROZEN,
     VALUE_VEC_INTEGRITY_BITS,
 };
 use super::object_extras::ObjectExtrasWords;
@@ -58,7 +58,7 @@ pub(crate) struct NativeObjectLayout {
 }
 
 pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: RECORD_SPACE_CAPACITY,
+    record_capacity: OBJECT_RECORD_CAPACITY,
     record_size: size_of::<super::record_heads::ObjectHead>(),
     record_align: align_of::<super::record_heads::ObjectHead>(),
     layout_offset: core::mem::offset_of!(super::record_heads::ObjectHead, layout),
@@ -125,7 +125,7 @@ pub(crate) struct NativeArrayLayout {
 }
 
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
-    record_capacity: RECORD_SPACE_CAPACITY,
+    record_capacity: ARRAY_RECORD_CAPACITY,
     record_size: size_of::<super::record_heads::ObjectHead>(),
     record_align: align_of::<super::record_heads::ObjectHead>(),
     elements_offset: core::mem::offset_of!(super::record_heads::ObjectHead, payload),

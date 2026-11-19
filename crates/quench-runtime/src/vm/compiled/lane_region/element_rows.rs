@@ -58,7 +58,7 @@ impl Lowering<'_, '_> {
             // A base no loop array holds, read by a register key: a string's unit (`string_or_row`).
             (None, Some(index)) => {
                 let string_within = self.ranges.string_in_bounds(pc);
-                self.string_or_row(state, (base, index, key, destination), string_within, exit)
+                self.string_or_row(state, (destination, base, index, key), string_within, exit)
             }
             _ => {
                 let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key, destination })
@@ -83,7 +83,7 @@ impl Lowering<'_, '_> {
     /// (`strings::string_char_at`), joined with the element row otherwise. A string the row does
     /// not read (a rope, a wide unit, a unit with no string yet, an index outside the string)
     /// leaves at `exit`, as the row leaves for a value that is no array.
-    fn string_or_row(&mut self, state: &mut State, (base, index, key, destination): (Register, Register, crate::bytecode::Operand, Register),
+    fn string_or_row(&mut self, state: &mut State, (destination, base, index, key): (Register, Register, Register, crate::bytecode::Operand),
         within: bool, exit: ir::Block) -> ir::Value {
         let bits = self.tagged(state, base);
         let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); crate::staged::value::is_direct_string(&mut stage, bits) };
@@ -180,7 +180,7 @@ impl Lowering<'_, '_> {
                 self.dense_element_write(state, array, pc as u32, instruction, number, exit),
             held => {
                 self.held_view = held.map(|array| self.held_array(array, (false, self.ranges.in_bounds(pc))));
-                self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key, strict: element_write_strict(instruction) });
+                self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key, strict: instruction.boolean_flag().unwrap_or(false) });
                 // A store through a held view leaves where it misses (`index_set_host`) and calls no
                 // helper, so no backing moved and no view is read again. Only the general row may
                 // call the VM's store, which may move any backing.

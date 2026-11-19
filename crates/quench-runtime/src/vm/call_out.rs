@@ -344,6 +344,10 @@ impl<H: Host> Vm<H> {
             Protocol::Value(step) => self.value_step(p, site, step, array, operand),
             Protocol::Owned(step) => self.owned_var_step(p, site, step, array, operand),
             Protocol::Wasm(step) => self.wasm_host_step(p, site, step, array, operand),
+            Protocol::Literal(step) => self.literal_step(p, site, step, array, operand),
+            Protocol::Class(step) => self.class_step(p, site, step, array, operand),
+            Protocol::Value(step) => self.value_step(p, site, step, array, operand),
+            Protocol::Owned(step) => self.owned_var_step(p, site, step, array, operand),
             Protocol::AppendArray { length, spread } => {
                 let array = array.expect("AppendArray names its array");
                 self.append_array_literal_holes(array, length)?;

@@ -42,11 +42,26 @@ pub(crate) const NARROW_RUN_TAG: u64 = 1 << u32::BITS;
 pub(crate) const PROTO_INDEX_BITS: u32 = (1 << 28) - 1;
 /// The object records a heap holds, by legacy slot (`heap::cell::MAX_HEAP_CELLS`).
 pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
-/// The records one record space holds (`heap::records::RECORD_SPACE_CAPACITY`).
-pub(crate) const RECORD_SPACE_CAPACITY: usize = 1 << 24;
-/// The prototype index of the first object record, and of each record space after it.
+/// The prototype links one record family's window holds (`heap::cell::*_PROTO_WINDOW`). A record
+/// space grows past its window (the capacities below); a record past it that becomes a prototype
+/// takes an overflow link (`heap::prototypes`).
+pub(crate) const PROTO_RECORD_WINDOW: usize = 1 << 24;
+/// The prototype index of the first object record, and of each family's window after it.
 pub(crate) const PROTO_OBJECT_RECORD_BASE: u32 = MAX_HEAP_CELLS as u32;
-pub(crate) const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+pub(crate) const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + PROTO_RECORD_WINDOW as u32;
+/// The records each record space holds (`heap::records`), the one source the heap's spaces and the
+/// layouts generated code reads (`layout_offsets`) take. The spaces reserve address space only
+/// (`MAP_NORESERVE`), so a large capacity costs no memory until records are used. Every capacity is
+/// a power of two and a multiple of `RECORDS_PER_BLOCK`.
+pub(crate) const OBJECT_RECORD_CAPACITY: usize = 1 << 30;
+pub(crate) const ARRAY_RECORD_CAPACITY: usize = 1 << 30;
+pub(crate) const FUNCTION_RECORD_CAPACITY: usize = 1 << 30;
+pub(crate) const PROMISE_RECORD_CAPACITY: usize = 1 << 28;
+pub(crate) const ITERATOR_RECORD_CAPACITY: usize = 1 << 28;
+pub(crate) const COLLECTION_RECORD_CAPACITY: usize = 1 << 28;
+/// Await states and Wasm vectors are never prototypes.
+pub(crate) const AWAIT_RECORD_CAPACITY: usize = 1 << 28;
+pub(crate) const V128_RECORD_CAPACITY: usize = 1 << 28;
 
 /// Where an object record keeps its `meta` word: the layout's entry holds `auxiliary` low and `meta` high.
 pub(crate) const META_OFFSET: usize = size_of::<u32>();

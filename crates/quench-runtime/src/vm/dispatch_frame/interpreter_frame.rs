@@ -13,7 +13,7 @@ use crate::staged::CallFrame as _;
 use crate::staged::invoke::CallForm;
 use crate::vm::call_out::{CallSite, Loaded};
 use crate::vm::var_owner::VarOwner;
-use crate::vm::{StepResult, Vm};
+use crate::vm::{StepResult, Suspended, Vm};
 use crate::{JsError, Value};
 
 /// The fact the interpreter keeps about a register: how its word becomes a `Value`. A staged
@@ -153,15 +153,15 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
             Step::Control(InterpreterControl::Edge(edge)) => RowRun::Done(edge),
             Step::Control(InterpreterControl::Return(value)) => RowRun::Stop(Ok(StepResult::Return(value))),
             Step::Control(InterpreterControl::Throw(value)) => RowRun::Stop(Err(Self::thrown(vm, value))),
-            Step::Control(InterpreterControl::Await) => RowRun::Stop(Ok(StepResult::Await {
+            Step::Control(InterpreterControl::Await) => RowRun::Stop(Ok(StepResult::Suspend(Suspended::Await {
                 value: interpreted.stashed,
                 destination: interpreted.resume.expect("an await resumes into its destination"),
-            })),
-            Step::Control(InterpreterControl::Yield) => RowRun::Stop(Ok(StepResult::Yield {
+            }))),
+            Step::Control(InterpreterControl::Yield) => RowRun::Stop(Ok(StepResult::Suspend(Suspended::Yield {
                 value: interpreted.stashed,
                 destination: instruction.result_register(),
                 delegated_result: None,
-            })),
+            }))),
         }
     }
 
@@ -537,10 +537,13 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
         let program_id = vm.frames[frame].program;
         let made: Result<Value, JsError> = match allocation {
             Allocation::Empty => Ok(vm.object()),
-            Allocation::Array { length } => Ok(vm.hole_array(length as usize)),
+            Allocation::Array { length, numbers: false } => Ok(vm.hole_array(length as usize)),
+            // A Number-element array and a regexp literal that may answer a shared argument
+            // object are made by the general step, which knows their element kind and callee.
+            Allocation::Array { numbers: true, .. } | Allocation::RegExp { callee: Some(_), .. } => return None,
             // An array literal's elements are defined after it (`DefineElement`), so `decode_literal` never makes it whole.
             Allocation::ArrayOf { .. } => return None,
-            Allocation::RegExp { site } => vm.regexp_literal(program, frame, site as usize),
+            Allocation::RegExp { site, callee: None } => vm.regexp_literal(program, frame, site as usize),
             Allocation::ConstArray { constant, count } => vm
                 .const_array_value(program_id, constant as usize, usize::from(count))
                 .ok_or_else(|| JsError::validation("constant array is outside program".into())),

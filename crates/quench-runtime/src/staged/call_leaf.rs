@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn a_strict_receiver_always_binds_and_a_sloppy_primitive_never_does() {
         let mut heap = crate::heap::Heap::new();
-        let object = heap.alloc(crate::heap::Cell::Object(crate::heap::Object::new(Value::NULL)));
+        let object = heap.alloc_object(crate::heap::Object::new(Value::NULL));
         let binds = |receiver: Value, sloppy| guard_receiver_binds(&mut concrete(), receiver.to_bits(), sloppy, ()).is_some();
         for value in [object, Value::UNDEFINED, Value::NULL, Value::integer(1)] {
             assert!(binds(value, false), "{value:?}");

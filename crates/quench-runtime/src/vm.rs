@@ -2098,6 +2098,9 @@ pub(crate) struct Vm<H> {
     native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,
     active_call_roots: Vec<Value>,
+    /// The frame index of each root activation this Vm's entry points are running (`call_root`,
+    /// `call_eval_closure`), innermost last. Global var paths walk them rather than every frame.
+    active_roots: Vec<usize>,
     /// The roots of prepared callbacks' proofs (`CallbackProof::Lane`): each proof's callee,
     /// receiver and argument slots, innermost proof last. Apart from `active_call_roots`, so a
     /// native's own nested call roots (`with_call_roots`) neither drop nor displace them.
