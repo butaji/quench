@@ -1873,8 +1873,10 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         if let Some(int) = value.as_int() {
             return Some(u64::from(int as u32));
         }
+        // A double takes the staged row's own ToInt32 (`NumericStage::to_int32`), so the lane
+        // computes no conversion of its own.
         let number = value.as_number()?;
-        Some(u64::from(crate::value::number_to_u32(number)))
+        crate::staged::NumericStage::to_int32(stage, number.to_bits(), ())
     }
 
     #[inline(always)]
