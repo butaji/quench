@@ -231,7 +231,13 @@ static Ast *rx_visit(RX *x, Ast *n) {
     /* Rewriter.visitGenericLiteral: an IntLiteral with the same value (a float literal holds its double) */
     if (!n->type) fatal_unsupported("literal without a type", n);
     Ast *t = mk_from(A_INTLITERAL, n);
-    t->type = lit_type_new(n->type->tag, t);
+    /* the literal type: the same node under AutoWrapper (visitGenericLiteralType returns it), else a new one whose
+     * type is the rewritten committed type (result.type = Node.visit(node.type, this)) */
+    if (x->aw) t->type = n->type;
+    else {
+      t->type = lit_type_new(n->type->tag, t);
+      if (n->type->type) t->type->type = rx_visit(x, n->type->type);
+    }
     if (n->tag == A_INTLITERAL || n->tag == A_UINTLITERAL) {
       t->u.intLit.value = n->u.intLit.value;
       t->u.intLit.dbl = n->u.intLit.dbl;
@@ -246,6 +252,9 @@ static Ast *rx_visit(RX *x, Ast *n) {
   case A_NULLLITERAL: {
     Ast *t = lit_expr_new(A_NULLLITERAL, n->origin);
     t->native = n->native;
+    /* visitNullLiteral: result.type = node.type.visit(this); AutoWrapper returns the NullType as it is */
+    if (x->aw) t->type = n->type;
+    else t->type->type = rx_visit(x, n->type->type);
     return t;
   }
   case A_ENUMLITERAL: {
@@ -479,6 +488,12 @@ static Ast *fi_get_unique(Ast *func, Ast **targs, int nt) {
     inst->u.func.returnType = ret;
     inst->u.func.parameters = params;
     inst->u.func.orig = func;
+    /* NativeFunc.instantiateImplementation of a synthesized accessor: implementationData = {type, fieldName}, where
+     * type is the struct instantiated with the type arguments (the layout data is not part of this port yet) */
+    if (func->u.func.implStruct) {
+      inst->u.func.implType = struct_instantiate(func->u.func.implStruct, targs, nt);
+      inst->u.func.implField = func->u.func.implField;
+    }
   } else {
     fatal_unsupported("getUnique of a non-function", func);
     return NULL;

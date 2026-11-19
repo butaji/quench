@@ -320,6 +320,13 @@ static Ast *field_type(const Ast *st, const Ast *field, const AstList *tps) {
   return rw(&r, field->u.named.type);
 }
 
+/* setupImplementationData: the accessor's struct and field (the instance's type is made in fi_get_unique) */
+static Ast *synth_accessor(Ast *st, const char *fname, Ast *f) {
+  f->u.func.implStruct = st;
+  f->u.func.implField = fname;
+  return f;
+}
+
 static void synth_struct_accessors(Program *p, NameCtx *global, int count) {
   static const char *spaces[] = {"thread", "threadgroup", "device", "constant"};
   for (int s = 0; s < count; s++) {
@@ -334,14 +341,14 @@ static void synth_struct_accessors(Program *p, NameCtx *global, int count) {
       Ast *ret = field_type(st, field, &tps);
       AstList params = {0};
       list_push(&params, mk_param(field, struct_typeref(st, &tps)));
-      add_synth(p, global, mk_native(field, concat3("operator.", fname, ""), ret, &tps, &params));
+      add_synth(p, global, synth_accessor(st, fname, mk_native(field, concat3("operator.", fname, ""), ret, &tps, &params)));
       /* the setter: operator.field= */
       tp_rewrite_list(&st->u.structType.typeParameters, &tps);
       AstList setParams = {0};
       Ast *setRet = struct_typeref(st, &tps);
       list_push(&setParams, mk_param(field, struct_typeref(st, &tps)));
       list_push(&setParams, mk_param(field, field_type(st, field, &tps)));
-      add_synth(p, global, mk_native(field, concat3("operator.", fname, "="), setRet, &tps, &setParams));
+      add_synth(p, global, synth_accessor(st, fname, mk_native(field, concat3("operator.", fname, "="), setRet, &tps, &setParams)));
       /* the anders: operator&.field, once per address space */
       for (int k = 0; k < 4; k++) {
         tp_rewrite_list(&st->u.structType.typeParameters, &tps);
@@ -353,7 +360,7 @@ static void synth_struct_accessors(Program *p, NameCtx *global, int count) {
         ptrParam->u.ref.addressSpace = spaces[k];
         ptrParam->u.ref.elementType = struct_typeref(st, &tps);
         list_push(&andParams, mk_param(field, ptrParam));
-        add_synth(p, global, mk_native(field, concat3("operator&.", fname, ""), ptrRet, &tps, &andParams));
+        add_synth(p, global, synth_accessor(st, fname, mk_native(field, concat3("operator&.", fname, ""), ptrRet, &tps, &andParams)));
       }
     }
   }

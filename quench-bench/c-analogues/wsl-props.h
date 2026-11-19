@@ -149,6 +149,7 @@ static Ast *nu_visit(NuCx *c, Ast *n) {
   case A_NULLLITERAL: {
     Ast *r = lit_expr_new(A_NULLLITERAL, n->origin);
     r->native = n->native;
+    r->type->type = nu_visit(c, n->type->type);   /* Rewriter.visitNullType: result.type = Node.visit(node.type, this) */
     return r;
   }
   case A_INTLITERAL: case A_UINTLITERAL: {
@@ -156,6 +157,7 @@ static Ast *nu_visit(NuCx *c, Ast *n) {
     if (!n->type) fatal_unsupported("literal without a type", n);
     Ast *t = mk_from(A_INTLITERAL, n);
     t->type = lit_type_new(n->type->tag, t);
+    if (n->type->type) t->type->type = nu_visit(c, n->type->type);   /* visitGenericLiteralType: result.type = Node.visit(node.type, this) */
     t->u.intLit.value = n->u.intLit.value;
     t->u.intLit.dbl = n->u.intLit.dbl;
     t->u.intLit.isDbl = n->u.intLit.isDbl;
@@ -168,11 +170,23 @@ static Ast *nu_visit(NuCx *c, Ast *n) {
     if (!n->type) fatal_unsupported("literal without a type", n);
     Ast *t = mk_from(A_INTLITERAL, n);
     t->type = lit_type_new(n->type->tag, t);
+    if (n->type->type) t->type->type = nu_visit(c, n->type->type);
     t->u.intLit.isDbl = 1;
     t->u.intLit.dbl = n->u.fltLit.value;
     t->u.intLit.value = 0;
     t->u.intLit.preferred = rw_plain(literal_preferred(n));
     return t;
+  }
+  case A_NATIVETYPE: case A_STRUCTTYPE: case A_TYPEDEF: case A_ENUMTYPE: case A_TYPEVARIABLE:
+  case A_CONSTEXPRTYPEPARAM: case A_PROTOCOLDECL: case A_FUNCDEF: case A_NATIVEFUNC: case A_NATIVEFUNCINST:
+  case A_INTLITERALTYPE: case A_UINTLITERALTYPE: case A_FLOATLITERALTYPE: case A_DOUBLELITERALTYPE: case A_NULLTYPE:
+    return n;   /* Rewriter's identity visits (visitNativeType, visitStructType, visitTypeVariable, ...) */
+  case A_TYPEREF: {   /* Rewriter.visitTypeRef: a new TypeRef, its arguments and its target visited */
+    Ast *r = mk_from(A_TYPEREF, n);
+    r->u.typeRef.name = n->u.typeRef.name;
+    r->u.typeRef.typeArguments = nu_list(c, &n->u.typeRef.typeArguments);
+    r->u.typeRef.type = nu_visit(c, n->u.typeRef.type);
+    return r;
   }
   case A_ENUMLITERAL: {
     Ast *r = mk_from(A_ENUMLITERAL, n);

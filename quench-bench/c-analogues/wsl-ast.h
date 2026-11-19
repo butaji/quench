@@ -52,7 +52,9 @@ struct Ast {
     struct { const char *name; int isCast; const char *shaderType; int isRestricted;
              Ast *returnType; AstList typeParameters; AstList parameters; Ast *body;
              int hasOv; AstList *ov; Ast *protocolDecl;   /* ov: possibleOverloads (ProtocolFuncDecl), live; protocolDecl: ProtocolFuncDecl.protocolDecl */
-             Ast *orig; Ast *uninstRet; int inlined; } func;   /* orig: the generic function of an instance; uninstRet: uninstantiatedReturnType; inlined: Func.inlined */
+             Ast *orig; Ast *uninstRet; int inlined;   /* orig: the generic function of an instance; uninstRet: uninstantiatedReturnType; inlined: Func.inlined */
+             Ast *implStruct; const char *implField;   /* a synthesized struct accessor (SynthesizeStructAccessors): its struct and field */
+             Ast *implType; } func;   /* implType: an instance's implementationData.type (the struct instance of its type arguments) */
     /* TypeRef */
     struct { const char *name; AstList typeArguments; Ast *type; } typeRef;   /* type: resolved target */
     /* PtrType, ArrayRefType */

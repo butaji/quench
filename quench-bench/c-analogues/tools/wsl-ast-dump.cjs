@@ -435,7 +435,27 @@ const propsMode = process.argv.includes("--props");   // --props: check, the lit
 const postMode = process.argv.includes("--post");   // --post: the checker and the post-check passes, status only
 const instantiateMode = process.argv.includes("--instantiate");   // --instantiate: the post-check passes, then the instances
 const checkMode = process.argv.includes("--check") || postMode;
-if (postMode || instantiateMode) run(`function __postHarness(p) {
+const visitMode = process.argv.includes("--visit");   // --visit: the post-check passes, the instances, then the Visitor.js trace (one line per Node.visit)
+if (visitMode) run(`function __visitHarness(p) {
+    const NL = String.fromCharCode(10);
+    const lines = [];
+    // the instances are made before the trace starts: getUnique's own rewrites are not part of it
+    for (const funcList of p.functions.values())
+        for (const f of funcList)
+            if (!f.typeParameters.length) p.funcInstantiator.getUnique(f, []);
+    const orig = Node.prototype.visit;
+    Node.prototype.visit = function(visitor) {
+        lines.push(this.constructor.name);
+        return orig.call(this, visitor);
+    };
+    try {
+        p.visit(new Visitor());
+        for (const [, list] of p.funcInstantiator._instances)
+            for (const inst of list) inst.func.visit(new Visitor());
+    } finally { Node.prototype.visit = orig; }
+    return lines.join(NL);
+}`);
+if (postMode || instantiateMode || visitMode) run(`function __postHarness(p) {
     check(p);
     checkLiteralTypes(p);
     resolveProperties(p);
@@ -472,7 +492,9 @@ const rows = inputs.map((input, i) => {
     let dump = "";
     let nodes = 0;
     try {
-        if (instantiateMode) {
+        if (visitMode) {
+            if (input.kind !== "doLex") { anonRoles.clear(); resolveInput(input, 6); run("__postHarness(__p)"); dump = run("__visitHarness(__p)"); nodes = dump.split("\n").length; }
+        } else if (instantiateMode) {
             if (input.kind !== "doLex") { anonRoles.clear(); resolveInput(input, 6); run("__postHarness(__p)"); dump = instanceDump(ctx.__p); nodes = dump.split("\n").length - 1; }
         } else if (checkMode) {
             if (input.kind !== "doLex") { anonRoles.clear(); resolveInput(input, 6); dump = run(postMode ? "__postHarness(__p)" : "__checkHarness(__p)"); }

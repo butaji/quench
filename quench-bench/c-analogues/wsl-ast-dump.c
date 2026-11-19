@@ -19,6 +19,7 @@
 #include "wsl-check.h"
 #include "wsl-props.h"
 #include "wsl-inline.h"
+#include "wsl-visit.h"
 
 static uint32_t fnv_bytes(uint32_t h, const char *s, size_t n) {
   for (size_t i = 0; i < n; i++) {
@@ -127,6 +128,7 @@ static int UNIFY_MODE = 0;   /* --unify (1): the pairwise unification harness; -
 static int PROPS_MODE = 0;   /* --props: check, the literal check and resolveProperties, then the stage-6 dump */
 static int POST_MODE = 0;    /* --post: check, then the post-check passes; status lines only */
 static int CHECK_MODE = 0;   /* --check: the checker on the stage-6 state, with its expression trace */
+static int VISIT_MODE = 0;   /* --visit: the post-check state, the instances, then the Visitor.js traversal trace (wsl-visit.h) */
 static int INSTANTIATE_MODE = 0;   /* --instantiate: the post-check state, then the instances of inline()'s first loop */
 static Program STD_PROG, PREP_IN, PREP_OUT;
 static size_t STD_MARK;
@@ -212,11 +214,12 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
     if (STAGE >= 5) resolve_typedefs_in_functions(&PREP_OUT);
     if (STAGE >= 6) flatten_protocol_extends(&PREP_OUT);
   }
-  if (INSTANTIATE_MODE) {
+  if (INSTANTIATE_MODE || VISIT_MODE) {
     check_program(&PREP_OUT);
     post_check_passes(&PREP_OUT);
     fi_instantiate_top(&PREP_OUT);
     WSL_NH = 0;
+    if (VISIT_MODE) return visit_trace(b, &PREP_OUT);
     instance_dump(b);
     long nodes = -1;   /* the row's dump has no trailing newline: its lines are the newlines but the last */
     for (size_t c = 0; c < b->n; c++) if (b->s[c] == '\n') nodes++;
@@ -266,6 +269,7 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[i], "--post") == 0) { CHECK_MODE = 1; POST_MODE = 1; }
     else if (strcmp(argv[i], "--props") == 0) { PROPS_MODE = 1; DUMP_NO_ROLES = 1; }
     else if (strcmp(argv[i], "--instantiate") == 0) { INSTANTIATE_MODE = 1; DUMP_NO_ROLES = 1; }
+    else if (strcmp(argv[i], "--visit") == 0) { VISIT_MODE = 1; DUMP_NO_ROLES = 1; }
     else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
     else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc) benchIterations = atoi(argv[++i]);
     else root = argv[i];
@@ -308,7 +312,7 @@ int main(int argc, char **argv) {
     if (i > 0 && in->native) {
       /* doLex: the token list (no "program" line) */
       /* --instantiate skips the doLex inputs, as tools/wsl-ast-dump.cjs does (an empty dump) */
-      int count = INSTANTIATE_MODE ? 0 : dump_lex_input(in, &b, status, sizeof status);
+      int count = INSTANTIATE_MODE || VISIT_MODE ? 0 : dump_lex_input(in, &b, status, sizeof status);
       nodes = count;
       if (strcmp(status, "ok") != 0) { b.n = 0; nodes = 0; }
     } else if (STAGE >= 1) {

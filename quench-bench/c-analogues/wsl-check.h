@@ -369,6 +369,7 @@ static Ast *resolve_to_overload(Ast *call, Overload *ov) {
     list_push(&actual, is_jstype(t) ? rw_aw(t) : t);
   }
   call->u.call.actualTA = actual;
+  call->u.call.instTA = actual;   /* CallExpression.resolveToOverload: instantiatedActualTypeArguments = actualTypeArguments */
   Ast *r = subst_unif(ov->func->u.func.returnType, ov->func->u.func.typeParameters.v,
                       ov->func->u.func.typeParameters.n, ov->ctx);
   r = rw_aw(r);
