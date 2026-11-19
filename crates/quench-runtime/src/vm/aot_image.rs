@@ -146,8 +146,8 @@ fn lower_function(
     (symbols, sites): (&mut symbols::SymbolTable, &mut std::collections::BTreeMap<(u32, u32), CallSite>),
 ) -> Result<AotFunction, String> {
     let (base, calls) = base::lower(program, facts, target, id, symbols)?;
+    let lane = join::lower_lane(program, (facts, frozen), target, id, (&base, &calls), symbols)?;
     sites.extend(calls.into_iter().map(|call| ((call.function, call.pc), call)));
-    let lane = join::lower_lane(program, (facts, frozen), target, id, &base, symbols)?;
     Ok(AotFunction { id, base, lane })
 }
 

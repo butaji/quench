@@ -94,6 +94,7 @@ use captures::RootedRead;
 #[path = "lane_region/call_frames.rs"] mod call_frames;
 #[path = "lane_region/declared.rs"] mod declared;
 use call_frames::{CallSite, Leave, ReturnSite, Site};
+pub(super) use call_frames::ProvenCall;
 #[path = "lane_region/call_outs.rs"] mod call_outs;
 #[path = "lane_region/jumps.rs"] mod jumps;
 #[path = "lane_region/call_rows.rs"] mod call_rows;
@@ -1668,6 +1669,8 @@ pub(super) fn lower_body(
 #[derive(Clone, Copy)]
 pub(super) struct AheadLeaves<'a> {
     pub(super) targets: &'a [Option<(u32, u32)>],
+    /// By unit PC, the calls the closed world proves whose records the body reads (`call_frames::ProvenCall`).
+    pub(super) calls: &'a BTreeMap<usize, call_frames::ProvenCall>,
 }
 
 /// The position a failed entry contract takes in a lane body's leave set
@@ -3471,16 +3474,19 @@ impl Lowering<'_, '_> {
         self.raised_call(state, pc, record, raised);
         self.builder.switch_to_block(entered);
         // SAFETY: the body owns the callee for as long as its code runs.
-        let callee = self.direct.get(&pc).map(|callee| unsafe { &**callee });
+        let owned = self.direct.get(&pc).map(|callee| unsafe { &**callee });
         // A construction of a stores-only constructor, whose arguments are a window of the caller's
         // registers (`CallSite::initializing`): its receiver is allocated finished and its body not entered.
-        let initializing = match (site.arguments, callee) {
+        let initializing = match (site.arguments, owned) {
             // A forwarding site's target is the forwarded initializer, whose receiver its forwarder's plan
             // allocates (`DirectCallee::forwarder`): that path keeps its body.
             (crate::staged::Arguments::Window { first, count }, Some(callee))
                 if site.constructs() && callee.forwarder.is_none() && self.initializes_on_construction(callee.target.function) => Some((first, count)),
             _ => None,
         };
+        // An image's call the closed world proves reads its callee's words from the site's record (`ProvenCall`).
+        let proven = self.vm.ahead.and_then(|ahead| ahead.calls.get(&pc).copied()).filter(|_| !site.constructs());
+        let callee = owned.map(call_frames::DirectSite::Owned).or(proven.map(call_frames::DirectSite::Proven));
         let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed, raised,
             stop: self.call_out_stop(), leave: self.leave_site(), initializing };
         self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });

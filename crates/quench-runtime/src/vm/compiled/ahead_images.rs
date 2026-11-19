@@ -67,15 +67,32 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
 /// `None` where it gives no native record, or polls for faults: the lowering does not report
 /// the poll's offset, so the base body runs such a function.
 pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen),
-    base: &BaseImage, symbols: &mut SymbolTable,
+    (base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
 ) -> Option<LaneImage> {
     let unit = unit_of(program, function, facts)?;
     let targets = leave_targets(&unit, function, base, symbols);
+    let calls = proven_calls(program, &unit, calls, symbols);
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
-    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { targets: &targets }), closed: Some(facts),
+    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { targets: &targets, calls: &calls }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), ..VmFacts::STATIC };
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
     (!fault_poll).then_some(LaneImage { code, fault_poll: None })
+}
+
+/// By unit PC, the caller calls the closed world proves that the base body planned a record for
+/// (`calls`, its `AotImage::calls`): the lane body calls each through the same record. An arrow is
+/// left to the VM's call, as the JIT's lane leaves it (`direct_callee_in_lane`): it binds no receiver.
+fn proven_calls(program: &ResidualProgram, unit: &lane_unit::Unit, calls: &[aot_image::CallSite], symbols: &mut SymbolTable)
+    -> BTreeMap<usize, lane_region::ProvenCall> {
+    unit.origins.iter().enumerate().filter_map(|(pc, origin)| {
+        let Origin::Caller(record) = *origin else { return None };
+        let site = calls.iter().find(|site| site.pc == record)?;
+        let callee = program.function_get(site.callee as usize)?;
+        let this = super::base_region::callees::ThisForm::of(callee);
+        if this.lexical { return None; }
+        let record = symbols.intern(Symbol::CallRecord { function: site.function, pc: site.pc });
+        Some((pc, lane_region::ProvenCall { registers: callee.registers, sloppy: this.sloppy, record }))
+    }).collect()
 }
 
 /// Each unit PC's leave target as the base body's `Symbol::BasePc`, where the base body enters it: a
