@@ -45,14 +45,10 @@ impl OperandKinds {
     pub(crate) const OTHER: Self = Self(1 << 4);
     /// Two int32 operands whose int32 step declined: the result left the int32 range.
     pub(crate) const WIDENED: Self = Self(1 << 5);
-
-    /// A element access (`GetIndex`, `SetIndex`) met a present dense element of an array.
+    /// An element access met a present dense element (`GetIndex`, `SetIndex`).
     pub(crate) const DENSE: Self = Self(1 << 6);
-
-    /// A element read met a number of a non-BigInt typed array.
+    /// An element read met a number of a typed array.
     pub(crate) const TYPED: Self = Self(1 << 7);
-
-    /// The element kinds: the bits of an element site (`DENSE`, `TYPED`), never of an arithmetic one.
     const ELEMENTS: Self = Self(Self::DENSE.0 | Self::TYPED.0);
     /// The kinds past Numbers.
     const BEYOND_NUMBER: Self = Self(Self::STRING.0 | Self::BIGINT.0 | Self::OTHER.0);
@@ -91,7 +87,7 @@ impl OperandKinds {
         self.contains(Self::STRING)
     }
 
-    /// Whether an element site met a dense or typed element, so its direct arm (`family_helpers`) pays off.
+    /// Whether an element site met a dense or typed element.
     pub(crate) const fn element_admitted(self) -> bool {
         self.intersects(Self::ELEMENTS)
     }
@@ -302,32 +298,24 @@ impl LaneView {
         // SAFETY: `pc` names a record of this view, which holds feedback bytes.
         OperandKinds(unsafe { feedback_cell(base, base.add(pc)) }.get())
     }
-}
 
-impl LaneView {
-    /// Adds `kind` (`DENSE`, `TYPED`) to the feedback byte of the element record at `pc`, where the view holds
-    /// feedback bytes; a byte already holding the bit is not written.
+    /// Adds `kind` to the feedback byte of the element record at `pc` (`note_element_kind`), unless it holds it.
     pub(crate) fn note_element(&self, pc: usize, kind: OperandKinds) {
-        if !self.records.has_feedback() || pc >= self.records.len() {
-            return;
-        }
-        let base = self.records.base();
-        // SAFETY: `pc` names a record of this view, which holds feedback bytes.
-        let cell = unsafe { feedback_cell(base, base.add(pc)) };
-        if cell.get() & kind.0 == 0 {
-            cell.set(cell.get() | kind.0);
+        if self.records.has_feedback() && pc < self.records.len() {
+            let base = self.records.base();
+            // SAFETY: `pc` names a record of this view, which holds feedback bytes.
+            let cell = unsafe { feedback_cell(base, base.add(pc)) };
+            cell.set(cell.get() | (kind.0 & !cell.get()));
         }
     }
 }
 
 impl<H: Host> Vm<H> {
-    /// Notes an element access of frame `f` at `pc` (the record's own) met `kind`, in the lane view of the
-    /// frame's function, where `site_operand_kinds` reads it back for the planner.
+    /// Notes that the element access at `pc` of frame `f` met `kind`, in the frame function's lane view.
     pub(crate) fn note_element_kind(&self, f: usize, pc: usize, kind: OperandKinds) {
         let function = self.frames[f].function as usize;
-        if let Some(view) = self.programs.lane_views(self.active_program).and_then(|views| views.get(function))
-            .and_then(super::super::program_store::derived_lane_view)
-        {
+        let view = self.programs.lane_views(self.active_program).and_then(|views| views.get(function));
+        if let Some(view) = view.and_then(super::super::program_store::derived_lane_view) {
             view.note_element(pc, kind);
         }
     }

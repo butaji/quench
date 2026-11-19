@@ -107,12 +107,12 @@ pub(super) fn interprets(row: &Decoded) -> bool {
 
 /// The plan of row `pc`: nothing where control never reaches it, a leave row, or the row with the
 /// rows before it its kind needs.
-pub(super) fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), reached: bool, pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
+pub(super) fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), rows: &[Decoded], reached: bool, pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
     if !reached {
         return Ok(skipped());
     }
     if row.step == Some(Step::Switch) {
-        return super::switch::switch_run(layout, (reprs, kinds), pc, row, helpers);
+        return super::switch::switch_run(layout, (reprs, kinds), rows, pc, row, helpers);
     }
     if leaves(layout, row) {
         return plan_step(&Decoded::step(Step::Leave, None), layout, pc, helpers);

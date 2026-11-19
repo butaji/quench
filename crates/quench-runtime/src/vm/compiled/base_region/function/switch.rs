@@ -17,9 +17,14 @@ enum Node {
 }
 
 /// Appends the nodes of the subtree over slots `low..high` (its first node first, the right half directly after a split,
-/// the left half last) and returns the subtree's first node. A split's `taken` is the index of its left half.
-fn build(nodes: &mut Vec<(Node, Option<usize>)>, low: usize, high: usize) -> usize {
+/// the left half last) and returns the subtree's first node. A split's `taken` is the index of its left half. A subtree
+/// whose slots all enter one target is a single `Jump` to its first slot's entry, which the others share.
+fn build(nodes: &mut Vec<(Node, Option<usize>)>, targets: &[Option<u32>], low: usize, high: usize) -> usize {
     let first = nodes.len();
+    if targets[low].is_some() && targets[low..high].iter().all(|target| *target == targets[low]) {
+        nodes.push((Node::Jump(low), None));
+        return first;
+    }
     if high - low <= LINEAR {
         nodes.extend((low..high - 1).map(|slot| (Node::Leaf(slot), None)));
         nodes.push((Node::Jump(high - 1), None));
@@ -28,18 +33,19 @@ fn build(nodes: &mut Vec<(Node, Option<usize>)>, low: usize, high: usize) -> usi
     let middle = (low + high) / 2;
     let split = nodes.len();
     nodes.push((Node::Split(middle as i32), None));
-    build(nodes, middle, high);
-    let left = build(nodes, low, middle);
+    build(nodes, targets, middle, high);
+    let left = build(nodes, targets, low, middle);
     nodes[split].1 = Some(left);
     first
 }
 
 /// The plan of the switch row `row` at `pc` (its selector in `a`, its slot count in `hole`): the tree's root, with the
 /// rest of its nodes as the run's later parts. The entry of slot `k` is the `Jump` at `pc + 1 + k`.
-pub(super) fn switch_run(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
+pub(super) fn switch_run(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), rows: &[Decoded], pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
     let selector = row.a.ok_or("switch: no selector")?;
+    let targets: Vec<Option<u32>> = (0..=row.hole as usize).map(|slot| rows.get(pc as usize + 1 + slot).and_then(|entry| entry.target)).collect();
     let mut nodes = Vec::new();
-    build(&mut nodes, 0, row.hole as usize + 1);
+    build(&mut nodes, &targets, 0, row.hole as usize + 1);
     let entry = |slot: usize| pc + 1 + slot as u32;
     let constant = |value: i64| Source::Constant(crate::Value::integer(value as i32).to_bits());
     let mut parts = Vec::with_capacity(nodes.len());
@@ -49,7 +55,7 @@ pub(super) fn switch_run(layout: &Layout, (reprs, kinds): (&Reprs, Option<&Opera
             Node::Leaf(slot) => (Decoded::number(Kind::Ne, None, Some(selector), Some(constant(slot as i64)), Some(entry(slot))), None),
             Node::Jump(slot) => (Decoded::number(Kind::Jump, None, None, None, Some(entry(slot))), None),
         };
-        let mut part = plan_row(layout, (reprs, kinds), true, pc, &decoded, helpers)?;
+        let mut part = plan_row(layout, (reprs, kinds), rows, true, pc, &decoded, helpers)?;
         if taken.is_some() {
             part.branch = taken;
         }
