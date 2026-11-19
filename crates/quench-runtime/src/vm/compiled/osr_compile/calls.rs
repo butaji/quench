@@ -17,7 +17,7 @@ use quench_bjit::call_record::CallRecord;
 pub(in crate::vm) struct RegionCalls {
     pub(in crate::vm::compiled) callees: Callees,
     pub(in crate::vm::compiled) realm: RealmProof,
-    /// By PC, the callees each call site reached (`lane_direct_callees`): what a Cranelift
+    /// By PC, the callees each call site reached (`direct_callees_in_lane`): what a Cranelift
     /// region calls by their entries, as a lane body does (`unit_direct_calls`).
     pub(in crate::vm::compiled) direct: Vec<DirectCandidates>,
 }

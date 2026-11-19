@@ -1537,7 +1537,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether the general loop enters `view` at `pc`: where a lane run pays, or at the first instruction of
     /// the callee a due collection's lane stop left to it (`after_lane_exit`), as a native's call would.
-    fn lane_enters(view: *const dispatch_fast::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::runs_in_lane(view, pc) || after_lane_exit && pc == 0 && Self::runs_call_in_lane(view) }
+    fn enters_in_lane(view: *const dispatch_fast::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::runs_in_lane(view, pc) || after_lane_exit && pc == 0 && Self::runs_call_in_lane(view) }
 
     /// Whether a frame entry may run the lane: execution-only support never
     /// interprets, and instruction profiling must observe every PC.
@@ -1595,7 +1595,7 @@ impl<H: Host> Vm<H> {
 
     /// The outcome of frame `frame`, whose lane run stopped in it at `instruction` at `pc`
     /// with no call pending, where the general loop's step there would end its run: the
-    /// frame's return, or the completion a call it made returned from it (`Vm::lane_returned`),
+    /// frame's return, or the completion a call it made returned from it (`Vm::returned_in_lane`),
     /// a generator's plain `yield`, or an async function's observation-free `await`
     /// (`stop_awaits_in_lane`). `None` leaves the instruction to the general loop.
     #[inline(always)]
@@ -1716,7 +1716,7 @@ impl<H: Host> Vm<H> {
         let mut frame = frame;
         // The completion a call the lane made returned from the frame it left in, taken once
         // per lane exit (`LaneCompletion::Returned`) and returned at that instruction.
-        let mut lane_returned = self.lane_completion.take_returned();
+        let mut returned_in_lane = self.lane_completion.take_returned();
         // The initial Wasm activation is allocated before the dispatch loop and has no
         // caller guard. Account it here so root and reentrant Wasm entries obey the same
         // frame-payload limit as Wasm calls pushed by the loop.
@@ -1786,7 +1786,7 @@ impl<H: Host> Vm<H> {
         // A lane exit resumes at its record, which the general path executes, or raises there
         // the error of the call the lane made, as after the loop's own lane run.
         let mut resumes_lane_exit = false;
-        // The last step followed a lane run a due collection stopped, or a lane exit (`Vm::lane_enters`).
+        // The last step followed a lane run a due collection stopped, or a lane exit (`Vm::enters_in_lane`).
         let mut after_lane_exit = false;
         match raised {
             Some(Some(error)) => {
@@ -1838,10 +1838,10 @@ impl<H: Host> Vm<H> {
                 pc = return_pc;
                 continue;
             }
-            if !resumed && native_step.is_none() && Self::lane_enters(cursor.lane, pc, entering_after_lane_exit) {
+            if !resumed && native_step.is_none() && Self::enters_in_lane(cursor.lane, pc, entering_after_lane_exit) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut frame, pc, pending_calls, &mut executing, allow_inline_calls);
-                lane_returned = self.lane_completion.take_returned();
+                returned_in_lane = self.lane_completion.take_returned();
                 crate::clock::note_lane_run();
                 after_lane_exit = self.heap.should_collect();
                 // The lane may leave in a frame of another program, its activations' calls
@@ -1906,7 +1906,7 @@ impl<H: Host> Vm<H> {
                     if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CloneEnv { .. } | crate::staged::Operation::Return { .. }
                             | crate::staged::Operation::ElementRead { .. } | crate::staged::Operation::ElementWrite { .. } | crate::staged::Operation::CompareJump { .. }))
                         || crate::staged::Operation::<u64, ()>::decode_load_name(instruction, ()).is_some() || crate::staged::Operation::<u64, ()>::is_field_read(instruction)
-                        || instruction.op().is_binary() || crate::staged::private_in_family(instruction.op()) || instruction.op().is_field_store() {
+                        || instruction.op().traits().has(crate::bytecode::Traits::BINARY_RESULT) || crate::staged::private_in_family(instruction.op()) || instruction.op().is_field_store() {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
@@ -2382,7 +2382,7 @@ impl<H: Host> Vm<H> {
             // general `step` dispatch.
             match crate::staged::frame_arm::arm(ins.op()) {
                 // A call the lane made returned its callee's completion from this frame.
-                _ if let Some(value) = lane_returned.take() => Ok(StepResult::Return(value)),
+                _ if let Some(value) = returned_in_lane.take() => Ok(StepResult::Return(value)),
                 FrameArm::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
                 FrameArm::Call if allow_inline_calls => {
                     match self.try_inline_reflect_apply(p, frame, ins, pc) {

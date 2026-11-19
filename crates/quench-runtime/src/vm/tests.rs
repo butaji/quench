@@ -221,7 +221,7 @@ fn default_osr_keeps_self_contained_loop_regions() {
                 .and_then(super::program_store::derived_lane_view).unwrap();
             let osr = view.osr_diagnostics();
             assert!(osr.currently_compiled_sites > 0 && osr.native_region_runs > 0, "loop region must run: {osr:?}");
-            assert!(view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
+            assert!(view.tier().body_stats.report(0, view.body_state_in_lane(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
         }
     }
     assert_eq!(answers[0], answers[1]);
@@ -287,7 +287,7 @@ fn lane_body_returns_ssa_values_from_a_vm_owned_frame() {
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap().get(2)
                 .and_then(super::program_store::derived_lane_view).unwrap();
-            let report = view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None).expect("the return must run in the lane body");
+            let report = view.tier().body_stats.report(0, view.body_state_in_lane(), &|_, _| None).expect("the return must run in the lane body");
             assert!(!report.contains("\"completed\":0,"), "SSA returns must complete: {report}");
         }
     }
@@ -798,7 +798,7 @@ fn strict_terminal_calls_preserve_catch_and_finally_handlers() {
 #[test]
 fn lane_generator_iteration_steps_keep_generator_semantics() {
     // A for-of step of an intrinsic generator `next` resumes the generator in place with a
-    // reused result (`lane_generator_step`): delegation passes its inner result on, a throw
+    // reused result (`generator_step_miss`): delegation passes its inner result on, a throw
     // and a break close as before, a patched `next`, a running generator and a done one take
     // the general step, and nested and repeated loops see their own values.
     let source = r#"
@@ -1248,7 +1248,7 @@ fn shape_compaction_clears_own_field_hints() {
 #[test]
 fn nested_reads_follow_their_first_steps_hint_across_shapes() {
     // A nested read's record keeps the own entry its first step last hit as its hint
-    // (`lane_nested_own_value`): bases of two layouts holding the first field at different
+    // (`nested_own_value_in_lane`): bases of two layouts holding the first field at different
     // slots, alternating and in runs, a prototype-held first field, and a parser whose `this`
     // gains a field mid-run each read the field the layout in hand holds. Expected value is
     // Node's (v26).
@@ -1528,7 +1528,7 @@ fn string_method_reads_follow_the_prototype_values() {
 #[test]
 fn lane_array_callback_sites_keep_iteration_semantics() {
     // A call site of an array's callback method calls the native straight from the lane
-    // (`lane_call_array_callback`), whose callbacks run in that lane from their first call
+    // (`call_array_callback_miss`), whose callbacks run in that lane from their first call
     // (`Vm::call_prepared`): the arguments and thisArg passed, holes skipped and the length
     // read once, a throwing and a non-callable callback, an inherited index seen mid-loop, map
     // and some, a strict callback's this, a redefined forEach, an array-like receiver, a native
@@ -13045,7 +13045,7 @@ fn js_jit_compiles_straight_line_plain_local_temporaries() {
 }
 
 /// A function the tier claims stays a frameless lane target: its activations start at the
-/// tier prologue (`lane_tier_prologue`), which enters the compiled body and completes the
+/// tier prologue (`tier_prologue_in_lane`), which enters the compiled body and completes the
 /// activation at its `Return`.
 #[test]
 #[cfg(not(quench_profiled))]
@@ -20717,7 +20717,7 @@ fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
         let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
         let mut targets = vec![None; body.code.len()];
         targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
-        let callee_captures = vm.lane_callee_captures(callee);
+        let callee_captures = vm.callee_capture_slots(callee);
         let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| callee_captures, Vec::new(), &[])
             .expect("legacy-observable inlined unit");
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
@@ -20882,7 +20882,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         let mut targets = vec![None; body.code.len()];
         let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
         targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
-        let callee_captures = vm.lane_callee_captures(callee);
+        let callee_captures = vm.callee_capture_slots(callee);
         let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| callee_captures, Vec::new(), &[])
             .expect("closure capture unit compiles");
         assert_eq!(method.inlined.len(), 1, "callee captures must not retain a guest call");
@@ -20967,7 +20967,7 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
     assert!(run.events.count(Event::Published) > 0, "a declined method runs as a lane body");
 }
 
-/// Lane bodies call the callees they do not inline natively (`dispatch_fast::lane_body_call`):
+/// Lane bodies call the callees they do not inline natively (`dispatch_fast::body_call_helper`):
 /// a callee that completes in its own body returns its value to the caller's native code; one
 /// that leaves continues in the lane in its own activation; a callee with no body, a host
 /// function or a throwing one leaves the caller at the call. Every result must equal the
@@ -21055,7 +21055,7 @@ fn assert_drive_leaves_no_method_call(vm: &Vm<TestHost>, program: &crate::Residu
         .and_then(super::program_store::derived_lane_view).unwrap();
     let op_at = |function: u32, pc: u32| program.function(function as usize).instructions().nth(pc as usize)
         .map(|instruction| format!("{:?}", instruction.op()));
-    if let Some(report) = view.tier().body_stats.report(0, view.lane_body_state(), &op_at) {
+    if let Some(report) = view.tier().body_stats.report(0, view.body_state_in_lane(), &op_at) {
         assert!(!report.contains("CallMethod") && !report.contains("CallThisMethod"), "no leave at a method call: {report}");
     }
 }
@@ -21473,7 +21473,7 @@ fn lane_loose_equality_decides_records_and_nullish_only() {
 fn lane_bodies_construct_by_activation() {
     // A lane body's `new` whose constructor does more than store fields (an array literal,
     // a nested construction and call, a returned object) runs the constructor's activation
-    // (`dispatch_fast::lane_body_construct`); a planned one and a returned one by the plan.
+    // (`dispatch_fast::body_construct_helper`); a planned one and a returned one by the plan.
     let source = r#"
      (function () {
       function OC() { this.elms = []; }
@@ -21595,7 +21595,7 @@ fn lane_loops_make_regexp_literals_natively_with_fresh_state() {
 #[test]
 fn lane_bodies_construct_empty_arrays() {
     // `new Array()` of the realm's `Array` in a lane body is an empty array
-    // (`dispatch_fast::lane_body_construct`); a function named `Array` constructs as itself,
+    // (`dispatch_fast::body_construct_helper`); a function named `Array` constructs as itself,
     // and a constructor only lane bodies construct gets a body of its own.
     let source = r#"
      (function () {
@@ -23136,7 +23136,7 @@ fn lane_leaf_calls_that_throw_keep_their_frames() {
 
 #[test]
 fn lane_leaf_calls_reach_the_recursion_limit_as_activations() {
-    // A leaf call takes the room its activation would (`lane_activation_room`), so recursion
+    // A leaf call takes the room its activation would (`activation_room_in_lane`), so recursion
     // through leaf calls overflows as it would without them, and recovers.
     let source = r#"
       function leafInc(x) { return (x + 1) | 0; }
@@ -23172,7 +23172,7 @@ fn lane_leaf_calls_keep_legacy_caller_and_arguments() {
 #[test]
 fn lane_leaf_calls_survive_collections_their_getters_make() {
     // A leaf's field read that meets a getter makes the leaf an activation before the
-    // getter's (`lane_getter_activation`), so the object in the leaf's register survives the
+    // getter's (`getter_activation_in_lane`), so the object in the leaf's register survives the
     // collections the getter's allocations make; a leaf's concatenation allocates too.
     let source = r#"
       var holder = { get x() { var a = []; for (var k = 0; k < 64; k++) a.push({ k: k }); return a.length; } };
@@ -23362,7 +23362,7 @@ fn lane_leaf_calls_bind_receivers_as_activations() {
 
 #[test]
 fn lane_leaf_calls_make_operations_in_place_as_activations() {
-    // A leaf's operation made in place (`lane_in_place`: a `valueOf` a binary reaches, a
+    // A leaf's operation made in place (`in_place_in_lane`: a `valueOf` a binary reaches, a
     // proxy's read) makes the leaf an activation first, from an activation or from the
     // frame, so the guest code runs above the leaf's frame (expected values from Node).
     let source = r#"
@@ -23524,7 +23524,7 @@ fn lane_leaf_calls_share_captures_and_store_their_own_receiver() {
 
 #[test]
 fn lane_leaf_calls_return_field_reads_as_activations() {
-    // A leaf's returning field read (`lane_returning`) keeps its leaf form through every kind
+    // A leaf's returning field read (`returning_miss`) keeps its leaf form through every kind
     // its site takes, and a getter, a proxy or a throw it meets after warm-up makes the leaf an
     // activation first (expected values from Node).
     let source = r#"
@@ -23567,7 +23567,7 @@ fn lane_leaf_calls_return_field_reads_as_activations() {
 
 #[test]
 fn lane_returning_operators_keep_binary_semantics() {
-    // A returning arithmetic `Binary` decided per operator (`lane_returning_operator`) gives
+    // A returning arithmetic `Binary` decided per operator (`returning_operator_miss`) gives
     // integers, other Numbers, concatenations, BigInts and a `valueOf` the values the general
     // `Binary` gives (expected values from Node).
     let source = r#"

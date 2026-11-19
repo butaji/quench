@@ -1044,14 +1044,14 @@ lane_helper_inventory! { H;
     /// A leave's boxing of an unboxed double (`box_number_in_lane`): out of line, as leaves are cold.
     BoxNumber => box_number_in_lane,
     FieldGet => field_get_in_lane::<H>,
-    /// The count of the entry function's `arguments` (`lane_body_arguments_length`).
-    ArgumentsLength => super::dispatch_fast::lane_body_arguments_length::<H>,
-    /// One kept `arguments` element (`lane_body_argument_get`).
-    ArgumentGet => super::dispatch_fast::lane_body_argument_get::<H>,
+    /// The count of the entry function's `arguments` (`body_arguments_length_in_lane`).
+    ArgumentsLength => super::dispatch_fast::body_arguments_length_in_lane::<H>,
+    /// One kept `arguments` element (`body_argument_get_in_lane`).
+    ArgumentGet => super::dispatch_fast::body_argument_get_in_lane::<H>,
     FieldSet => field_set_in_lane::<H>,
-    Call => super::dispatch_fast::lane_body_call::<H>,
-    /// A loop region's call (`dispatch_fast::lane_region_call`).
-    RegionCall => super::dispatch_fast::lane_region_call::<H>,
+    Call => super::dispatch_fast::body_call_helper::<H>,
+    /// A loop region's call (`dispatch_fast::region_call_in_lane`).
+    RegionCall => super::dispatch_fast::region_call_in_lane::<H>,
     IndexSet => index_set_in_lane::<H>,
     /// Room for a loop's append to a dense array (`array_append_room_in_lane`).
     AppendRoom => array_append_room_in_lane::<H>,
@@ -1061,10 +1061,10 @@ lane_helper_inventory! { H;
     FieldWriteAdmission => field_write_admission_in_lane::<H>,
     CallBudget => call_budget_in_lane,
     AdmittedFunctionBinding => admitted_function_binding_in_lane::<H>,
-    /// An outer capture's read (`dispatch_fast::lane_body_capture`).
-    CaptureGet => super::dispatch_fast::lane_body_capture::<H>,
-    /// A capture's store (`dispatch_fast::lane_body_capture_store`).
-    CaptureSet => super::dispatch_fast::lane_body_capture_store::<H>,
+    /// An outer capture's read (`dispatch_fast::body_capture_in_lane`).
+    CaptureGet => super::dispatch_fast::body_capture_in_lane::<H>,
+    /// A capture's store (`dispatch_fast::body_capture_store_in_lane`).
+    CaptureSet => super::dispatch_fast::body_capture_store_in_lane::<H>,
     /// Strict equality of two distinct strings or BigInts (`strict_equal_cells_in_lane`).
     StrictEqual => strict_equal_cells_in_lane::<H>,
     /// `instanceof` by its steady case (`instance_of_in_lane`).
@@ -1076,8 +1076,8 @@ lane_helper_inventory! { H;
     ConstructReceiver => constructions::construct_receiver_in_lane::<H>,
     /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
     ConstructPlanHolds => constructions::construct_plan_holds_in_lane::<H>,
-    /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
-    ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
+    /// A construction of the body's own, by the call protocol (`dispatch_fast::body_construct_helper`).
+    ConstructCall => super::dispatch_fast::body_construct_helper::<H>,
     /// A body's uncaught `throw`, stashed for its native callers and the lane (`lane_raise`).
     Raise => lane_raise::<H>,
     /// The exception a callee left in `Vm::lane_raised`, for a handler of the caller's own (`take_raised_in_lane`).
@@ -3692,7 +3692,7 @@ pub(super) struct LaneMethod {
     /// The callees it calls by their compiled entries, which its code names.
     pub(in crate::vm) direct: Box<[DirectCallee]>,
     /// Whether every call of it that has run is inlined or direct: under a direct caller's native
-    /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
+    /// frames the lane's helper call misses (`dispatch_fast::body_call_helper`), so only such
     /// a body is called directly.
     closed: bool,
     /// The call records its code reads (`CallRecord`), by address: the code must not outlive them.
@@ -3762,14 +3762,14 @@ impl LaneMethod {
 pub(super) type PublishedLaneMethod = crate::code_dependencies::PublishedCode<LaneMethod>;
 
 /// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
-/// whose activation the lane then makes (`Vm::lane_body_inlined_activation`).
+/// whose activation the lane then makes (`Vm::body_inlined_activation_in_lane`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneExit {
     At(usize),
     Inlined { frame: usize, pc: u32 },
     Terminated,
     /// A native call made its callee's activation and the lane continues in it
-    /// (`dispatch_fast::lane_body_call`).
+    /// (`dispatch_fast::body_call_helper`).
     Callee,
     /// The activation completes with `value`, by the `Return` or the returning call at `pc`.
     Returned { pc: usize, value: Value },
@@ -3794,7 +3794,7 @@ pub(super) enum LaneExit {
 /// record that raised it (`LaneExit::Threw`), which native callers unwind through.
 pub(super) use quench_bjit::call_record::{LANE_BODY_RETURNED, LANE_BODY_THREW};
 
-/// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
+/// What a lane body's native call (`dispatch_fast::body_call_helper`) did: completed, with its
 /// result in the call's register; missed before any effect, so the body leaves at the call;
 /// or left the lane in the callee's activation it made.
 /// Termination is terminal: the outer native body must not reconstruct or replay a call.
@@ -3947,7 +3947,7 @@ pub(super) fn raise_site_parts(site: u64) -> (u32, u32) {
 /// A lane body's `throw` of `value` that no handler of its function takes: the exception in
 /// `Vm::lane_raised`, with where it was thrown, for native callers and then the lane to find.
 /// The interpreter's `Throw` makes the same error; its source location is captured only if it
-/// escapes native code (`dispatch_fast::lane_raised_exit`).
+/// escapes native code (`dispatch_fast::raised_exit_in_lane`).
 unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, site: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`; the message of a value reads no guest code.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
@@ -4223,7 +4223,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `run_lane_method` from inside a running body (`dispatch_fast::lane_body_call`): the
+    /// `run_lane_method` from inside a running body (`dispatch_fast::body_call_helper`): the
     /// caller's body continues with the per-entry words it entered with. Its callee runs in
     /// the same program (`crosses_in_lane`) and allocates nothing, so the program's bases stand.
     #[allow(clippy::too_many_arguments)]
@@ -4303,7 +4303,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Reloads the heap bases of the payload of the native loop region the lane entered, whose address the
-    /// lane context holds (`dispatch_fast::lane_region_payload`; zero where none runs), as
+    /// lane context holds (`dispatch_fast::region_payload_in_lane`; zero where none runs), as
     /// `refresh_body_bases` does the body frame's, and the lane stack's room the call may have moved
     /// (`region_lend::bind_stacks`, `direct_calls` as the region was entered with).
     pub(super) fn refresh_region_bases(&mut self, payload: usize, direct_calls: bool) {
@@ -8156,7 +8156,7 @@ impl<H: Host> Vm<H> {
 
     /// The JavaScript tier at the entry of `frame`, an initialized frame at PC zero, made
     /// wherever a frame is entered: the general loop, and the lane's in-place frame calls
-    /// (`lane_frame_call`). With the native result written to its return register, the PC
+    /// (`frame_call_in_lane`). With the native result written to its return register, the PC
     /// of the `Return` that completes the frame; else `None`, the entry counted as an
     /// interpreter fallback, and the untouched frame runs from its entry.
     pub(super) fn js_tier_frame_entry(&mut self, program: &ResidualProgram, frame: usize) -> Option<usize> {
@@ -8330,7 +8330,7 @@ impl<H: Host> Vm<H> {
 
     /// The JavaScript tier's direct entry of a plain call of a same-program user function,
     /// before any callee frame is pushed: the general loop's in-loop and known calls and the
-    /// lane's frame calls (`lane_frame_call`) make it. Only an already-promoted function
+    /// lane's frame calls (`frame_call_in_lane`) make it. Only an already-promoted function
     /// enters; its native subset is pure and has a guarded Number ABI. A call that returns
     /// its callee's completion (`returns`) completes its caller, so it and every guard miss
     /// stay on the ordinary frame path.
@@ -10929,7 +10929,7 @@ mod tests {
     fn static_lane_call_helper_declines_without_dynamic_context() {
         // Execution-only images lend no interpreter lane, so even a null context
         // must decline before inspecting it or publishing a dynamic continuation.
-        let status = unsafe { super::super::dispatch_fast::lane_body_call::<crate::test_host::TestHost>(0, 0, 0, 0) };
+        let status = unsafe { super::super::dispatch_fast::body_call_helper::<crate::test_host::TestHost>(0, 0, 0, 0) };
         assert_eq!(status, LANE_CALL_MISSED);
     }
 

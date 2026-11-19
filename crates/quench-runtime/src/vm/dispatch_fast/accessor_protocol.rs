@@ -77,7 +77,7 @@ impl<H: Host> AccessorCall<H> {
         if let Some(value) = (unsafe { vm(self.cx) }).pure_native_getter_value(getter, object) {
             return Some(value);
         }
-        let target = lane_script_target(self.cx, getter)?;
+        let target = script_target_in_lane(self.cx, getter)?;
         unsafe { self.script_getter_answer(&target, object) }
     }
 
@@ -105,10 +105,10 @@ impl<H: Host> AccessorCall<H> {
 
     /// A lane read of `base` at the record `i` (at `ip`) that met `getter`: its value where a read
     /// answers the getter's call (`getter_answer`), else the getter's activation
-    /// (`lane_activate_getter`), whose completion is the read's value. Only a read that writes its
+    /// (`activate_getter_in_lane`), whose completion is the read's value. Only a read that writes its
     /// register is answered in place: a returning read (`RETURN_REGISTER`) completes its
     /// activation, which only the getter's activation does. A native getter is called in place
-    /// (`lane_call_native`); `Err` after such a call that raised leaves the error in
+    /// (`call_native_in_lane`); `Err` after such a call that raised leaves the error in
     /// `Vm::lane_raised`. The answer's read may have made the activations frames, so the
     /// registers are the context's again.
     pub(super) fn read_getter(&self, r: Registers, ip: Ip, i: &LaneInstruction, getter: Value, base: Value) -> Result<(Registers, Ip), Ip> {
@@ -125,9 +125,9 @@ impl<H: Host> AccessorCall<H> {
                 }
                 return self.native_getter(ip, i, native, getter, base);
             }
-            return lane_activate_getter(self.cx, r, ip, getter, base, None);
+            return activate_getter_in_lane(self.cx, r, ip, getter, base, None);
         }
-        let target = lane_script_target(self.cx, getter);
+        let target = script_target_in_lane(self.cx, getter);
         if reads
             && let Some(target) = &target
             && let Some(value) = unsafe { self.script_getter_answer(target, base) }
@@ -140,7 +140,7 @@ impl<H: Host> AccessorCall<H> {
             r.set(i.a, value);
             return Ok((r, following(ip)));
         }
-        lane_activate_getter(self.cx, r, ip, getter, base, target)
+        activate_getter_in_lane(self.cx, r, ip, getter, base, target)
     }
 
     /// `read_getter` of a native getter: called as a lane `Call` of it with no arguments is.
@@ -148,7 +148,7 @@ impl<H: Host> AccessorCall<H> {
     #[cold]
     #[inline(never)]
     fn native_getter(&self, ip: Ip, i: &LaneInstruction, native: Native, getter: Value, base: Value) -> Result<(Registers, Ip), Ip> {
-        match lane_native_complete(self.cx, ip, i, lane_call_native(self.cx, ip, native, getter, base, &[])) {
+        match native_complete_in_lane(self.cx, ip, i, call_native_in_lane(self.cx, ip, native, getter, base, &[])) {
             Resumed::At(r, next, _) => Ok((r, next)),
             Resumed::Exit(next) => Err(next),
         }
@@ -156,7 +156,7 @@ impl<H: Host> AccessorCall<H> {
 
     /// What the getter the site cached answers for `base` (`getter_answer`), made the record's
     /// hint where the getter returns an own field of its receiver; any other getter moves the record
-    /// to `lane_get_field_getter` for good.
+    /// to `get_field_getter_miss` for good.
     ///
     /// # Safety
     /// `self.cx` is the running lane's context and `ip` the `GetField` record `i`.
@@ -169,7 +169,7 @@ impl<H: Host> AccessorCall<H> {
             .getter_field_slot(getter, base)
             .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
         if !slot.is_some_and(|slot| set_getter_hint(vm, ip, i.imm(), base, slot)) {
-            requicken::<H>(ip, lane_get_field_getter::<H>);
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>);
         }
         Some(value)
     }
@@ -177,7 +177,7 @@ impl<H: Host> AccessorCall<H> {
     /// The own slot of `base` that `getter`, a frameless read body, returns (`return this.field`),
     /// by the field cache entry its record answers with.
     fn getter_field_slot(&self, getter: Value, base: Value) -> Option<u16> {
-        let target = lane_script_target(self.cx, getter).filter(|target| target.entry == CallEntry::Reads)?;
+        let target = script_target_in_lane(self.cx, getter).filter(|target| target.entry == CallEntry::Reads)?;
         let vm = unsafe { vm(self.cx) };
         (direct_call_this_in_lane(vm, &target, base)? == base).then_some(())?;
         // SAFETY: a `CallEntry::Reads` target of the running program.
@@ -215,7 +215,7 @@ impl<H: Host> AccessorCall<H> {
         match vm.ordinary_chain_read_proved(target, atom) {
             Some(ChainRead::Value(value)) => Self::complete_read(r, ip, i, value),
             Some(ChainRead::Absent) => Self::complete_read(r, ip, i, Value::UNDEFINED),
-            Some(ChainRead::Getter(Some(getter))) if !getter.is_undefined() => lane_activate_getter(self.cx, r, ip, getter, base, None),
+            Some(ChainRead::Getter(Some(getter))) if !getter.is_undefined() => activate_getter_in_lane(self.cx, r, ip, getter, base, None),
             _ => Err(exit(ip)),
         }
     }
@@ -265,19 +265,19 @@ impl<H: Host> AccessorCall<H> {
     /// a library loaded as its own script, as Vue's and MobX's handlers are, activates as one of
     /// the running program's does. `None` for a trap the lane does not activate.
     pub(super) fn trap_target(&self, trap: Value) -> Option<(ScriptCallTarget, bool)> {
-        if let Some(target) = lane_script_target(self.cx, trap) {
+        if let Some(target) = script_target_in_lane(self.cx, trap) {
             return (!target.forwards()).then_some((target, false));
         }
         let vm = unsafe { vm(self.cx) };
         // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
         let target = vm.cross_call_entry(trap).map(|target| unsafe { *target })?;
-        (target.entry.activates() && !target.forwards() && !lane_constructing(vm, trap)).then_some((target, true))
+        (target.entry.activates() && !target.forwards() && !constructing_in_lane(vm, trap)).then_some((target, true))
     }
 
     /// The activation of the trap `target` (`trap_target`) called on `handler` with
     /// `arguments` for the access record at `ip`. `Err` carries the record to continue at.
     fn activate_trap<const N: usize>(&self, r: Registers, ip: Ip, (target, crosses): (ScriptCallTarget, bool), handler: Value, arguments: &[Value; N]) -> Result<(Registers, Ip), Ip> {
-        let Some(this) = lane_call_this(unsafe { vm(self.cx) }, &target, handler) else {
+        let Some(this) = call_this_in_lane(unsafe { vm(self.cx) }, &target, handler) else {
             return Err(exit(ip));
         };
         let passed = ActivationArguments::Kept(arguments.as_ptr(), N);
@@ -341,7 +341,7 @@ impl<H: Host> AccessorCall<H> {
             return self.store_forwarded(r, ip, object, atom, value);
         };
         let target = self.trap_target(trap)?;
-        lane_call_this(vm, &target.0, handler)?;
+        call_this_in_lane(vm, &target.0, handler)?;
         Some(match self.activate_trap(r, ip, target, handler, &arguments) {
             Ok((registers, next)) => {
                 let access = if strict { TrapAccess::StrictStore } else { TrapAccess::Store };
@@ -365,8 +365,8 @@ impl<H: Host> AccessorCall<H> {
             return None;
         }
         let setter = stored_setter(vm, object, i.imm(), site)?;
-        let target = lane_script_target(self.cx, setter).filter(|target| !target.forwards())?;
-        let this = lane_call_this(vm, &target, object)?;
+        let target = script_target_in_lane(self.cx, setter).filter(|target| !target.forwards())?;
+        let this = call_this_in_lane(vm, &target, object)?;
         // SAFETY: the record's value register is one of the running function's.
         let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
         Some(match activate_kept_in_lane::<H, false>(self.cx, r, ip, &target, stored, this) {

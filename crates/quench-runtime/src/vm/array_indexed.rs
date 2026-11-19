@@ -477,7 +477,7 @@ impl<H: Host> Vm<H> {
 /// setup (the receiver made an object, its length read once, the callback tested and the
 /// result made): the state V8's `ArrayForEachLoopContinuation` resumes from. The native's own
 /// loop runs it (`Vm::array_iteration_run`); a lane steps it one callback activation at a
-/// time (`lane_call_array_callback`), and a frame of such a callback, once materialized,
+/// time (`call_array_callback_miss`), and a frame of such a callback, once materialized,
 /// finishes it on the general path (`CallCompletion::ArrayStep`).
 #[derive(Clone, Copy)]
 pub(crate) struct ArrayIteration {

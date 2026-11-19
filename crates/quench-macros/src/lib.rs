@@ -82,10 +82,10 @@ fn derive_native_exports(
         export_arms.push(quote! { (@operation $host:ty, #symbol) => { #export }; });
         exports.push(export);
     }
-    let lane_helpers = format!("{}LaneHelpers_v{version}", prefix.value());
+    let lane_helpers_symbol = format!("{}LaneHelpers_v{version}", prefix.value());
     let lane_helpers_export = quote! {
-        #[unsafe(export_name = #lane_helpers)]
-        pub extern "C" fn lane_helpers() -> *const () {
+        #[unsafe(export_name = #lane_helpers_symbol)]
+        pub extern "C" fn native_js_lane_helpers_export() -> *const () {
             $crate::native_js_lane_helpers::<$host>()
         }
     };
@@ -97,7 +97,7 @@ fn derive_native_exports(
         #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_ABI_SYMBOL: &str = #marker;
         #[cfg(feature = "native-execution")]
-        pub const NATIVE_JS_LANE_HELPERS_SYMBOL: &str = #lane_helpers;
+        pub const NATIVE_JS_LANE_HELPERS_SYMBOL: &str = #lane_helpers_symbol;
         /// The header contains the ABI marker.
         #[cfg(feature = "native-execution")]
         pub const NATIVE_JS_IMAGE_HEADER_WORDS: usize = 1;
@@ -130,7 +130,7 @@ fn derive_native_exports(
                 #[unsafe(export_name = #marker)]
                 pub extern "C" fn abi_marker() {}
             };
-            (@operation $host:ty, #lane_helpers) => { #lane_helpers_export };
+            (@operation $host:ty, #lane_helpers_symbol) => { #lane_helpers_export };
             #(#export_arms)*
         }
     })

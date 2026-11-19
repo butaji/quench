@@ -197,16 +197,6 @@ pub(crate) enum Miss {
     /// lane's comparison chain decides the relations it can without guest code, and keeps the
     /// operands' feedback (`binary_false_chain_miss`).
     CompareChain,
-    /// A `yield` the frame does not suspend in place (no generator runs the lane): the job root's
-    /// suspension, or the general step (`yield_miss`).
-    Yield,
-    /// An `await` the frame does not suspend in place (the activation is not a promise job's root,
-    /// or the awaited conversion could run guest code): the job's suspension or the general step
-    /// (`await_miss`).
-    Await,
-    /// A `yield*` the frame does not suspend in place: the general path (`lane_exit`), since the
-    /// general step of a suspending operation does not continue in place.
-    YieldStar,
     /// A by-name load the frame does not answer: its first run resolves the name, and a later
     /// run whose binding misses takes that binding's residual (`NameLoad`).
     NameLoad(NameLoad),
@@ -238,9 +228,6 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::LoadCapture => Miss::WalkScopes,
         Op::StoreName => Miss::StoreNameFirst,
         Op::JumpBinaryFalse => Miss::CompareChain,
-        Op::Yield => Miss::Yield,
-        Op::Await => Miss::Await,
-        Op::YieldStar => Miss::YieldStar,
         _ => match name_load(op) {
             Some(load) => Miss::NameLoad(load),
             None => Miss::General,
@@ -253,7 +240,8 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// lane meets back to back in loops: a local store or a move then the loop's back jump, a local
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
-/// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
+/// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below: a table mode that
+/// `fuse_rows` realizes as the record's settings bits (`MODE_DEAD_FIRST`, `raw_bit(0)`), not as an instance.
 pub(crate) const FUSED_ROWS: [(u16, u16, u8); 92] = [
     // An i32 add of a constant then the direct load at its sum (the load reads the register).
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
@@ -399,7 +387,7 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 92] = [
 /// entry's links in record order, `NO_LINK` padding a three-link chain. Only the last link may
 /// be a jump. A chain at a record wins over a `FUSED_ROWS` pair there. A link whose result only the
 /// next link reads, and dies there, keeps its double result raw where `chain_raw_links` allows it
-/// (`chain_mode`'s raw mask).
+/// (the record's raw mask, `staged::raw_bit`).
 pub(crate) const FUSED_CHAINS: [[u16; 4]; 42] = [
     // A local or capture read, then a register comparison, then its branch. Subsumes the value
     // jump of `specialize_value_jumps` (`lane_value_jump`) after a read.
@@ -504,40 +492,45 @@ const fn fused_links_share_representation() -> bool {
 }
 const _: () = assert!(fused_links_share_representation(), "a fused pair or chain mixes raw and boxed rows");
 
-/// The mode of a `FUSED_CHAINS` record (`chain_rows`' `MODE`): the chain's staged mode (`FUSED_PLAIN`
-/// or `FUSED_WINDOW`) in the low `CHAIN_RAW_SHIFT` bits, and above them the raw mask: bit `k` set
-/// when link `k`'s double result stays raw (`LaneFrame::raw_result`). `fuse_chains` picks the raw mask
-/// per record, from liveness, among the bits `chain_raw_links` names for the chain.
-pub(crate) const CHAIN_RAW_SHIFT: u8 = 4;
-/// The `MODE` of a chain record in `mode` with raw mask `raw`.
-pub(crate) const fn chain_mode(mode: u8, raw: u8) -> u8 { mode | (raw << CHAIN_RAW_SHIFT) }
-/// The staged mode (`FUSED_PLAIN`, `FUSED_WINDOW`) of a chain `MODE`, without its raw mask.
-pub(crate) const fn chain_base(mode: u8) -> u8 { mode & ((1 << CHAIN_RAW_SHIFT) - 1) }
-/// The raw mask of a chain `MODE`: bit `k` for link `k`.
-pub(crate) const fn chain_raw(mode: u8) -> u8 { mode >> CHAIN_RAW_SHIFT }
-/// The raw-mask bit of a chain's last link: its double result stays raw into the record after the chain,
-/// or past the plain records between that name neither its register (`raw_out_link`), where a Number binary
-/// row reads it (`fuse_chains`, `number_binary_row`). No in-chain link names it
+/// The runtime settings word of a fused record, `LaneInstruction::mode`. The fusion passes
+/// (`fuse_rows`, `fuse_chains`, `fuse_target_backedges`, `update_fusion`) write it with the record's
+/// handler, and the handler reads it at run time. A fused handler's const parameters are its step
+/// family only (`FUSED_PLAIN`, `FUSED_WINDOW`, `FUSED_TARGET`) and its rows; the bits below are the
+/// settings of one record of that family.
+///
+/// Bit 0 (`MODE_DEAD_FIRST`): a pair's `A` register write is skipped, which liveness proves.
+pub(crate) const MODE_DEAD_FIRST: u64 = 1 << 0;
+/// Bit 1 (`MODE_BACKWARD`): the record's jump is backward (its distance is not positive). A branch
+/// table's direction is a const of its handler instead, so only other jumps read this bit.
+pub(crate) const MODE_BACKWARD: u64 = 1 << 1;
+/// Where the raw mask starts. Bit `RAW_SHIFT + k` set means link `k`'s double result stays raw
+/// (`LaneFrame::raw_result`): a pair's `A` is link 0, and a pair's `B` or a chain's last link is
+/// `CHAIN_RAW_OUT`. A raw result is read by the next link (or the next record) as a Number operand.
+pub(crate) const RAW_SHIFT: u32 = 8;
+/// The raw-mask bit `link` of a record's `mode`.
+pub(crate) const fn raw_bit(link: u8) -> u64 { 1 << (RAW_SHIFT + link as u32) }
+/// The raw-mask bit of a chain's last link (a pair's `B`): its double result stays raw into the record
+/// after the chain, or past the plain records between that name neither its register (`raw_out_link`),
+/// where a Number binary row reads it (`fuse_chains`, `number_binary_row`). No in-chain link names it
 /// (`chain_raw_links` names only links with a next link in the chain), so it is free at either length.
 pub(crate) const CHAIN_RAW_OUT: u8 = 3;
-/// The `MODE` bit that keeps a fused record's last link's double result raw into the next record (the
-/// raw-out bit). A pair's `MODE` carries it above its staged mode; a chain's carries it as `chain_mode`'s
-/// raw mask bit `CHAIN_RAW_OUT`, which is the same bit. Only a Number operator's last link takes it.
-pub(crate) const FUSED_RAW_OUT: u8 = 1 << (CHAIN_RAW_SHIFT + CHAIN_RAW_OUT);
-/// A pair's staged mode without its raw-out bit (`FUSED_RAW_OUT`).
-pub(crate) const fn fused_base(mode: u8) -> u8 { mode & !FUSED_RAW_OUT }
-/// `FUSED_RAW_OUT` where the last row `op` of a pair may keep its double result raw (a Number operator),
-/// else 0: the raw-out bit `fuse_rows` ORs into the pair's `MODE`.
-pub(crate) const fn raw_out_bit(op: Op) -> u8 { if number_operator(op) { FUSED_RAW_OUT } else { 0 } }
-/// The raw mask bits `fuse_chains` may set for `chain`: `chain_raw_links`, plus `CHAIN_RAW_OUT` where the
+/// The raw-out bit of a record: its last link's double result stays raw for the record after it. Only a
+/// Number operator's last link takes it.
+pub(crate) const MODE_RAW_OUT: u64 = raw_bit(CHAIN_RAW_OUT);
+/// The raw mask of a chain record, the bits of its `mode` from `RAW_SHIFT`, for links `raw` (bit `k`).
+pub(crate) const fn raw_mask_word(raw: u8) -> u64 { (raw as u64) << RAW_SHIFT }
+/// The row of a chain's last link (its last entry that is not `NO_LINK`).
+pub(crate) const fn chain_last_row(chain: [u16; 4]) -> u16 {
+    if chain[3] == NO_LINK { chain[2] } else { chain[3] }
+}
+/// The raw-mask bits `fuse_chains` may set for `chain`: `chain_raw_links`, plus `CHAIN_RAW_OUT` where the
 /// chain's last link is a Number operator (its raw result may feed the record after the chain).
 pub(crate) const fn chain_raw_eligible(chain: [u16; 4]) -> u8 {
-    let last = if chain[3] == NO_LINK { chain[2] } else { chain[3] };
-    chain_raw_links(chain) | (if number_operator(row_op(last)) { 1 << CHAIN_RAW_OUT } else { 0 })
+    chain_raw_links(chain) | (if number_operator(row_op(chain_last_row(chain))) { 1 << CHAIN_RAW_OUT } else { 0 })
 }
 /// The row of a Number binary operator (`JsDenotation::NumericBinary`): `Binary`, `NumericAdd`, `NumericMultiply`.
 /// Its operands are read as Numbers (`numeric::binary_operation`), so a raw double operand is one. These
-/// are the only rows a raw result (`FUSED_RAW_OUT`) may feed: a Unary's operand reads as an int32 first.
+/// are the only rows a raw result (`MODE_RAW_OUT`) may feed: a Unary's operand reads as an int32 first.
 pub(crate) const BINARY_ROW: u16 = Op::Binary as u16;
 /// The row of `NumericAdd`, a Number binary operator (see `BINARY_ROW`).
 pub(crate) const NUMERIC_ADD_ROW: u16 = Op::NumericAdd as u16;
@@ -578,15 +571,15 @@ pub(crate) const NO_LINK_OP: Op = Op::Nop;
 /// `FUSED_ROWS` mode: both rows run in full, `A`'s result is written to its register.
 pub(crate) const FUSED_PLAIN: u8 = 0;
 /// `FUSED_ROWS` mode: `A`'s result register is dead after the pair, and `B` does not name it, so
-/// the fused record skips `A`'s register write. `fuse_rows` installs it only where liveness
-/// proves that; otherwise the pair runs as `FUSED_PLAIN`. `B` must be a value row: a jump's
-/// target liveness is not checked, so no jump pair names this mode.
+/// the fused record skips `A`'s register write. A table mode, realized as the record's `MODE_DEAD_FIRST`
+/// bit where liveness proves that (`fuse_rows`); otherwise the bit is clear. `B` must be a value row: a
+/// jump's target liveness is not checked, so no jump pair names this mode.
 pub(crate) const FUSED_DEAD_FIRST: u8 = 1;
 /// `FUSED_ROWS` mode: `A` is a Number operator (`number_operator`) whose double result is written as
 /// its raw double bits, not canonicalized to an int32 where integral (`LaneFrame::raw_result`). `B`
 /// is a Number operator that reads `A`'s register, so it takes the raw double as its Number; `A`'s
-/// register is dead after the pair, or `B` writes it. `fuse_rows` installs it only where those hold;
-/// otherwise the pair runs as `FUSED_PLAIN`. A raw register never reaches a store, a key or a jump.
+/// register is dead after the pair, or `B` writes it. A table mode, realized as `raw_bit(0)` where
+/// those hold (`fuse_rows`); otherwise the bit is clear. A raw register never reaches a store, a key or a jump.
 pub(crate) const FUSED_RAW: u8 = 2;
 /// The mode of a window pair or chain `fuse_rows` installs for a window local's (`FLAG_WINDOW`) first row: both
 /// rows run at the window's flag, reading the window's locals. Not a table mode; `fuse_rows` names it.
@@ -1122,6 +1115,8 @@ pub(crate) const fn wasm_setup_family(op: Op) -> bool {
 // Row constants of the opcodes the lane's tables name by index.
 /// The opcode whose row increments or decrements a Number (`IncDec`).
 pub(crate) const INC_DEC_ROW: u16 = Op::IncDec as u16;
+/// The opcode whose row reads an element by index (`GetIndex`).
+pub(crate) const ELEMENT_READ_ROW: u16 = Op::GetIndex as u16;
 /// The opcode whose row writes a capture (`StoreCapture`).
 pub(crate) const STORE_CAPTURE_ROW: u16 = Op::StoreCapture as u16;
 

@@ -183,7 +183,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The running function's own frame, for the steps that read state only a frame has (its
-    /// `arguments` object). A step made beside frameless activations (`lane_in_place`) has the
+    /// `arguments` object). A step made beside frameless activations (`in_place_in_lane`) has the
     /// caller's frame innermost: the activations become frames first, as guest code would make them.
     pub(super) fn own_frame(&mut self) -> usize {
         self.materialize_deferred_lane();
@@ -277,10 +277,10 @@ pub(super) struct HostFrame<'a, H: Host> {
     pub(super) raised: Option<JsError>,
 }
 
-/// Where a row on the interpreter's frame sends control: an edge, which no call-out row takes
-/// (its runner reads none), or a suspension of the running activation (`Vm::staged_suspend`).
+/// Where a row on the interpreter's frame sends control: an edge, or a suspension of the running
+/// activation (`Vm::staged_suspend`).
 pub(super) enum HostControl {
-    Edge,
+    Edge(Edge),
     Suspend(crate::staged::Suspending<u64>),
 }
 
@@ -308,9 +308,11 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 
     fn truthiness(&mut self, _stage: &mut Concrete, _register: Register) -> Option<bool> { None }
 
-    fn branch(&mut self, _stage: &mut Concrete, _condition: bool) -> HostControl { HostControl::Edge }
+    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> HostControl {
+        HostControl::Edge(if condition { Edge::Target } else { Edge::Following })
+    }
 
-    fn jump(&mut self, _stage: &mut Concrete) -> HostControl { HostControl::Edge }
+    fn jump(&mut self, _stage: &mut Concrete) -> HostControl { HostControl::Edge(Edge::Target) }
 
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) {
         (Value::boolean(condition).to_bits(), ())

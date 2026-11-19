@@ -241,6 +241,7 @@ impl<W, P> Operation<W, P> {
     #[inline(always)]
     pub(crate) fn decode_flow<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         Some(match instruction.op() {
+            Op::Await | Op::Yield | Op::YieldStar => return Self::decode_suspend(instruction.wide()),
             Op::Move => Self::Move {
                 destination: instruction.result_register(), source: instruction.register_b() },
             Op::LoadConst => Self::LoadConst {
@@ -358,5 +359,126 @@ impl<W, P> Operation<W, P> {
                 result: instruction.optional_register_b() },
             _ => return None,
         })
+    }
+}
+
+impl<W, P> Operation<W, P> {
+    /// The operation as a root read where it is a `LoadCapture` (`root`), else unchanged: a row whose
+    /// record a walk settled on a root binding decodes its read so (`FLAG_ROOT`).
+    pub(crate) fn rooted(self) -> Self {
+        match self {
+            Self::LoadCapture { destination, depth, slot, .. } => Self::LoadCapture { destination, depth, slot, root: true },
+            other => other,
+        }
+    }
+}
+
+impl Operation<u64, ()> {
+    /// The operation `instruction` denotes, decoded with no tables (`DecodeContext::EMPTY`): what a
+    /// tier asks an instruction's meaning by, where the row's operands need no table.
+    pub(crate) fn of(instruction: WideInstruction) -> Option<Self> {
+        Self::decode(instruction, DecodeContext::EMPTY)
+    }
+
+    /// The lane's own rows (`Decoder::Lane`): a string-case index over the constants the record names, and an
+    /// `await` the lane's frame suspends.
+    pub(crate) fn decode_lane(instruction: WideInstruction) -> Option<Self> {
+        Some(match instruction.op() {
+            Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
+                source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
+            _ => return None,
+        })
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// Whether `instruction` is the named store `SetField` itself (not a store to `this`).
+    pub(crate) fn is_set_field(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::SetField
+    }
+
+    /// Whether `instruction` does nothing: a marker that defines and writes nothing.
+    pub(crate) fn is_nop(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::Nop
+    }
+
+    /// Whether `instruction` is a Number binary operation (`NumericBinary`): its operator is the
+    /// Number arithmetic, relation or bitwise operation the tier reads from its operands.
+    pub(crate) fn is_number_binary(instruction: WideInstruction) -> bool {
+        instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+    }
+
+    /// Whether `instruction` is a Number unary operation (`NumericUnary`), whose operator the tier
+    /// reads from the instruction's unary operator field.
+    pub(crate) fn is_number_unary(instruction: WideInstruction) -> bool {
+        instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericUnary
+    }
+
+    /// Whether `instruction` is a call through its callee register (`Call`, including the eval
+    /// forms that decode to no operation), which an inlined unit plans and admits as a call.
+    pub(crate) fn is_plain_call(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::Call
+    }
+
+    /// Whether `instruction` is an ordinary call through its callee register, with a window or a
+    /// spread array of arguments (`Call`, `CallArray`).
+    pub(crate) fn is_ordinary_call(instruction: WideInstruction) -> bool {
+        instruction.op().is_ordinary_call()
+    }
+
+    /// Whether `instruction` constructs (`Construct`), with its callee and arguments in registers.
+    pub(crate) fn is_construction(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::Construct
+    }
+
+    /// Whether `instruction` throws: its decoded operation is `Throw`, which leaves at the miss edge.
+    pub(crate) fn is_throw(instruction: WideInstruction) -> bool {
+        matches!(Self::of(instruction), Some(Self::Throw { .. }))
+    }
+
+    /// Whether `instruction` yields a value from a generator (`Yield`, a lane row). The interpreter
+    /// frame answers no suspension (`Frame::suspend_yield`), so its yield is the general loop's step.
+    pub(crate) fn is_yield(instruction: WideInstruction) -> bool {
+        matches!(Self::decode_lane(instruction), Some(Self::Suspend { kind: super::Suspension::Yield { .. }, .. }))
+    }
+
+    /// Whether `instruction` awaits a value (`Await`, a lane row). The interpreter frame answers no
+    /// suspension (`Frame::suspend_await`), so an async frame's await is the general loop's step.
+    pub(crate) fn is_await(instruction: WideInstruction) -> bool {
+        matches!(Self::decode_lane(instruction), Some(Self::Suspend { kind: super::Suspension::Await, .. }))
+    }
+
+    /// Whether `instruction` is a named field read (`GetField`), whatever its result flags.
+    pub(crate) fn is_field_read(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::GetField
+    }
+
+    /// Whether `instruction` is a named field store (`SetField`, `SetThisField`, or a store of a
+    /// field of `this`), whatever its operand.
+    pub(crate) fn is_field_store(instruction: WideInstruction) -> bool {
+        instruction.op().is_field_store()
+    }
+
+    /// The field cache sites `instruction` reads (`true`) or stores through (`false`), as the
+    /// program's field sites name them: a named read's lookup (its site, or the sites of a
+    /// nested lookup), and a field store's cache site.
+    #[cfg(not(stencil_build))]
+    pub(crate) fn field_cache_sites(instruction: WideInstruction, field_sites: &[crate::bytecode::FieldSite]) -> Vec<(u16, bool)> {
+        if Self::is_field_read(instruction) {
+            return match instruction.field_lookup() {
+                Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
+                Some(FieldLookup::Site(index)) => field_sites.get(index).map_or_else(Vec::new, |site| {
+                    let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
+                    reads.chain(site.sink.map(|(_, cache)| (cache, false))).collect()
+                }),
+                None => Vec::new(),
+            };
+        }
+        if Self::is_field_store(instruction) { vec![(instruction.cache_site_index(), false)] } else { Vec::new() }
+    }
+
+    /// Whether a unit holds `instruction` by its own rewrite or an exit rather than by renaming
+    /// (the catalog's `UNIT_REWRITTEN` trait).
+    pub(crate) fn is_unit_rewritten(instruction: WideInstruction) -> bool {
+        instruction.op().is_unit_rewritten()
     }
 }

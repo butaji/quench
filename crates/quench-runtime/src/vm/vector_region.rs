@@ -835,7 +835,7 @@ mod tests {
     /// Straight-line i64x2 arithmetic, shifts past the lane width (folded and dynamic),
     /// rotations by 0, 64 and 24 in their shift-or form, and the shuffled extending
     /// multiply: `lanes(source, target, count)`, the source vectors in locals 3 and 4.
-    fn lane_body() -> Vec<Operator<'static>> {
+    fn region_body_in_lane() -> Vec<Operator<'static>> {
         let (v, w) = (|| local(3), || local(4));
         let rotation = |left: i32, right: i32| {
             vec![v(), constant(left), Operator::I64x2Shl, v(), constant(right), Operator::I64x2ShrU, Operator::V128Or]
@@ -878,7 +878,7 @@ mod tests {
         body
     }
 
-    /// What `lane_body` stores, slot by slot, for shift count `count`.
+    /// What `region_body_in_lane` stores, slot by slot, for shift count `count`.
     fn expected_lanes(count: i32) -> Vec<u128> {
         let map = |operation: &dyn Fn(u64, u64) -> u64| {
             lanes([operation(LEFT[0], RIGHT[0]), operation(LEFT[1], RIGHT[1])])
@@ -973,7 +973,7 @@ mod tests {
         let module = crate::Engine::lower_wasm_module_with_state(
             "vector-regions",
             [
-                body(3, vec![ValType::V128, ValType::V128], false, lane_body()),
+                body(3, vec![ValType::V128, ValType::V128], false, region_body_in_lane()),
                 body(2, vec![], false, vec![local(0), local(1), Operator::I32Store { memarg: word(0) }, Operator::End]),
                 body(1, vec![], true, vec![local(0), Operator::I32Load { memarg: word(0) }, Operator::End]),
                 body(3, vec![ValType::V128, ValType::I32], false, division_body()),

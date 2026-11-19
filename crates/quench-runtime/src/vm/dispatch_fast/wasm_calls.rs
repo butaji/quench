@@ -133,7 +133,7 @@ lane_handler! {
     /// callee. Validation proved the callee's type. Any other callee leaves for the general loop.
     fn lane_call_wasm_reference<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let running = (unsafe { (*cx).program }, Some(lane_instance_env(cx)));
+        let running = (unsafe { (*cx).program }, Some(instance_env_in_lane(cx)));
         let callee = match vm.heap.function(r.get(i.b)) {
             Some(FunctionRecord { kind: FunctionKind::User(program, function), env, .. })
                 if (*program, Some(*env)) == running => u16::try_from(*function).ok(),
@@ -158,7 +158,7 @@ lane_handler! {
 #[cold]
 #[inline(never)]
 fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
-    let cx = lane_context::<H>();
+    let cx = context_in_lane::<H>();
     // SAFETY: called only while a lane runs, from its call handler.
     let i = unsafe { &*ip };
     let vm = unsafe { vm(cx) };
@@ -194,13 +194,13 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
     });
     // The pushed frame's guard narrows the activations the thread admits.
     vm.lane_stack.refresh_activation_limit();
-    lane_enter_frame(cx, caller + 1, 0)
+    enter_frame_in_lane(cx, caller + 1, 0)
 }
 
 /// A Wasm call of `function`, which native code holds, made from the lane beside its
-/// activations (`lane_in_place`), so the callers stay activations unless guest code the
+/// activations (`in_place_in_lane`), so the callers stay activations unless guest code the
 /// callee reaches makes them frames. The caller resumes after the call as a returning
-/// activation's does (`lane_resume_after_call`), its memory view read again: the callee may
+/// activation's does (`resume_after_call_in_lane`), its memory view read again: the callee may
 /// have grown the memory. `None` when native code declines the call, which then enters as
 /// an activation.
 #[cold]
@@ -210,10 +210,10 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
     let i = unsafe { &*ip };
     // SAFETY: the window is the caller's registers, read into raw words before native code
     // runs, so before guest code could make the activations frames.
-    let args = unsafe { lane_call_window(r, i) };
+    let args = unsafe { call_window_in_lane(r, i) };
     let vm = unsafe { vm(cx) };
-    let (program, env) = (unsafe { (*cx).program }, lane_instance_env(cx));
-    let Some(called) = lane_in_place(cx, ip, |vm, _| vm.run_compiled(program, env, function, args).transpose()) else {
+    let (program, env) = (unsafe { (*cx).program }, instance_env_in_lane(cx));
+    let Some(called) = in_place_in_lane(cx, ip, |vm, _| vm.run_compiled(program, env, function, args).transpose()) else {
         return Some(Resumed::Exit(exit(ip)));
     };
     let value = called?;
@@ -237,7 +237,7 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
 }
 
 /// A Wasm reference call of a JavaScript-backed import, made from the lane beside its
-/// activations (`lane_in_place`) through the import's shared conversion path
+/// activations (`in_place_in_lane`) through the import's shared conversion path
 /// (`Vm::call_compiled_js_wasm_import`), so the Wasm callers stay activations unless the
 /// JavaScript callee makes them frames. The caller resumes as `lane_call_compiled`'s does.
 /// `None` for a host-backed import, which leaves for the general loop.
@@ -263,12 +263,12 @@ fn lane_call_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, m
         _ => return None,
     };
     // SAFETY: the window is the caller's registers, copied before guest code runs.
-    let args: smallvec::SmallVec<[Value; 8]> = unsafe { lane_call_window(r, i) }.iter().copied().collect();
+    let args: smallvec::SmallVec<[Value; 8]> = unsafe { call_window_in_lane(r, i) }.iter().copied().collect();
     if args.len() != signature.params.len() {
         return None;
     }
     let program = unsafe { (*cx).program };
-    let Some(called) = lane_in_place(cx, ip, |vm, code| {
+    let Some(called) = in_place_in_lane(cx, ip, |vm, code| {
         vm.call_compiled_js_wasm_import(
             program, code, callee, target, capture, &signature, Value::UNDEFINED, &args,
             Value::UNDEFINED, std::ptr::null_mut(),
@@ -326,7 +326,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     }
     let (callee, result) = (plan.callee, plan.result);
     // SAFETY: the window is the caller's registers.
-    let window = unsafe { lane_call_window(r, i) };
+    let window = unsafe { call_window_in_lane(r, i) };
     if window.len() != usize::from(plan.argc) {
         return None;
     }
@@ -348,7 +348,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     } else {
         return None;
     };
-    if lane_constructing(vm, callee) || vm.with_scope_entered {
+    if constructing_in_lane(vm, callee) || vm.with_scope_entered {
         return None;
     }
     let target = match vm.cross_call_entry(callee) {
@@ -361,11 +361,11 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
         || !target.entry.activates_across()
         || target.forwards()
         || !(argc16 <= target.params || target.drops_extra_arguments())
-        || !lane_activation_room(vm, &target)
+        || !activation_room_in_lane(vm, &target)
     {
         return None;
     }
-    let this = lane_call_this(vm, &target, Value::UNDEFINED)?;
+    let this = call_this_in_lane(vm, &target, Value::UNDEFINED)?;
     let instance = unsafe { (*cx).instance };
     let (registers, start) = push_passed_in_lane::<H, true, false>(cx, r, ip, &target, args.as_ptr(), argc16.min(target.params), this, false);
     if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
@@ -374,7 +374,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     vm.lane_stack.to_wasm.push(ToWasmCall { instance, memory: memory_binding, result });
     unsafe {
         (*cx).inline_calls = false;
-        lane_set_script_calls(cx, true);
+        set_script_calls_in_lane(cx, true);
         (*cx).instance = Value::DELETED;
     }
     let view = Carried::script(cx);

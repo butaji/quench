@@ -461,7 +461,7 @@ impl JobWindow {
 
     /// Enters the window as `enter` does, to raise `error` at the instruction the frame
     /// suspended at, the one before its resume point: a handler of its function covering that
-    /// record catches the error, else the activation ends in its owner (`lane_raised_exit`).
+    /// record catches the error, else the activation ends in its owner (`raised_exit_in_lane`).
     /// The record the lane exits at.
     fn enter_raising<H: Host>(&self, cx: *mut LaneContext<H>, error: JsError) -> Ip {
         self.enter(cx);
@@ -471,7 +471,7 @@ impl JobWindow {
         vm.lane_completion.raise(error);
         vm.lane_raise_site = super::super::compiled::raise_site(self.entry.function, suspended as u32);
         // SAFETY: the suspended instruction's record lies in its function's view, which `base` starts.
-        lane_raised_exit(cx, unsafe { self.base.add(suspended) })
+        raised_exit_in_lane(cx, unsafe { self.base.add(suspended) })
     }
 }
 

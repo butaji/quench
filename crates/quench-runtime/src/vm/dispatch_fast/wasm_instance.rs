@@ -11,7 +11,7 @@ lane_handler! {
     /// the row answers the value, but the carried view and the lane context's memory are this
     /// handler's to update, so the memory binding keeps its own body.
     pub(super) fn lane_instance_binding_memory<>(cx, r, ip, i, view) {
-        let env = lane_instance_env(cx);
+        let env = instance_env_in_lane(cx);
         let (known, storage) = unsafe { (*cx).instance_slots };
         let slot = i.imm();
         // SAFETY: `storage` is the dense storage of `known`, found this run, which no
@@ -62,7 +62,7 @@ pub(super) unsafe fn wasm_global_store<H: Host>(context: *mut (), binding: Value
 /// `context` is the running lane's context.
 pub(super) unsafe fn wasm_instance_slot<H: Host>(context: *mut (), slot: u32) -> Option<Value> {
     let cx = context.cast::<LaneContext<H>>();
-    let env = lane_instance_env(cx);
+    let env = instance_env_in_lane(cx);
     let (known, storage) = unsafe { (*cx).instance_slots };
     // SAFETY: `storage` is the dense storage of `known`, found this run, which no collection has run
     // since (`after_nested_collection_in_lane` drops it).

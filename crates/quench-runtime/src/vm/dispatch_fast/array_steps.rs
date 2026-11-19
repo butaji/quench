@@ -62,7 +62,7 @@ fn array_callback_activation_in_lane<H: Host>(
 ) -> Option<(PreparedShape, PreparedEntry)> {
     let mut resolved = None;
     let target = callback_target_in_lane(cx, ip, callback, &mut resolved)?;
-    let this = lane_call_this(unsafe { vm(cx) }, target, this_arg)?;
+    let this = call_this_in_lane(unsafe { vm(cx) }, target, this_arg)?;
     // SAFETY: the running lane's context, which nothing else accesses.
     let mut shape = PreparedShape::of(unsafe { &*cx }, ip, target, array_callback_argument_count(native))?;
     if let ActivationKind::Script(script) = shape.activation.kind_mut() {
@@ -72,11 +72,11 @@ fn array_callback_activation_in_lane<H: Host>(
     Some((shape, entry))
 }
 
-/// `lane_script_target_in` of an array callback method's `callback` at its call record `ip`,
+/// `script_target_in_in_lane` of an array callback method's `callback` at its call record `ip`,
 /// whose read memo slot (`CallOperand::memo`), which no native's call reads, links the
 /// callback's cache entry as a script call's `call_link` links its callee's: the link, tested
 /// first, skips the set's hash. The record's `call_link` stays its own callee's, which a lane
-/// body reads (`lane_site_targets`); a read memo the slot named once is another site's or
+/// body reads (`site_targets_in_lane`); a read memo the slot named once is another site's or
 /// this one's, as `site_read_memo` tells.
 #[inline(always)]
 fn callback_target_in_lane<H: Host>(
@@ -88,13 +88,13 @@ fn callback_target_in_lane<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: a call record's operand is `call`.
     let link = unsafe { (*ip).operand.call.memo } as usize;
-    if vm.script_call_holds(link, callback) && !lane_constructing(vm, callback) {
+    if vm.script_call_holds(link, callback) && !constructing_in_lane(vm, callback) {
         // SAFETY: `script_call_holds` found the entry within the cache, which nothing
         // resolves into before the caller reads it.
         let target = unsafe { &*std::ptr::from_ref(vm.lane_stack.script_targets.entries.get_unchecked(link)) };
         return admits_activation_in_lane(target).then_some(target);
     }
-    let target = lane_script_target_in(cx, callback, resolved)?;
+    let target = script_target_in_in_lane(cx, callback, resolved)?;
     if let Some(index) = vm.script_call_index(callback) {
         // SAFETY: as `requicken`: the record's operand is the call's, written in place.
         unsafe { (*ip.cast_mut()).operand.call.memo = index as u32 };
@@ -103,7 +103,7 @@ fn callback_target_in_lane<H: Host>(
 }
 
 /// Whether a target of the running program activates in the lane from a path besides a
-/// plain call (`lane_script_target_in`): not a frame, an environment or a settling one.
+/// plain call (`script_target_in_in_lane`): not a frame, an environment or a settling one.
 #[inline(always)]
 pub(super) fn admits_activation_in_lane(target: &ScriptCallTarget) -> bool {
     !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles)
@@ -155,7 +155,7 @@ pub(super) fn begin_array_iteration_in_lane<H: Host>(
     let vm = unsafe { vm(cx) };
     let Some(index) = iteration.advance() else {
         // SAFETY: `ip` is the call record of the running function's view.
-        return Some(lane_native_complete(cx, ip, unsafe { &*ip }, Some(iteration.completion())));
+        return Some(native_complete_in_lane(cx, ip, unsafe { &*ip }, Some(iteration.completion())));
     };
     if let Some(element) = dense_element_in_lane(vm, receiver, index)
         && let Some(window) = admit_prepared_in_lane(cx, &shape.activation, shape.room)
@@ -246,7 +246,7 @@ fn array_complete_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, to_body: boo
     // SAFETY: `ip` is the call record of the running function's view.
     let i = unsafe { &*ip };
     if !to_body {
-        return lane_native_complete(cx, ip, i, value);
+        return native_complete_in_lane(cx, ip, i, value);
     }
     let Some(value) = value else { return Resumed::Exit(exit(ip)) };
     unsafe { (*cx).registers }.set(i.a, value);
@@ -262,11 +262,11 @@ fn run_array_iteration_from_frame_in_lane<H: Host>(
     mut iteration: super::super::array_indexed::ArrayIteration,
     to_body: bool,
 ) -> Resumed {
-    let value = lane_call_from_frame(cx, ip, |vm, code| vm.array_iteration_run(code, &mut iteration));
+    let value = call_from_frame_in_lane(cx, ip, |vm, code| vm.array_iteration_run(code, &mut iteration));
     // SAFETY: `ip` is the call record of the running function's view.
     let i = unsafe { &*ip };
     if !to_body {
-        return lane_native_complete(cx, ip, i, value);
+        return native_complete_in_lane(cx, ip, i, value);
     }
     // The loop made the body's activations frames, which the general path continues after
     // the call.

@@ -12,9 +12,8 @@ pub(super) fn bind_loop<H: Host>(
     // A region's `THIS`-based reads take the running activation's receiver, as a lane
     // body's do (`run_loop_body`); `with` leaves it `DELETED`. A frameless activation's
     // receiver is the lane context's: `frame` is then the VM frame beneath it, its caller's.
-    // SAFETY: `lane_context` is the running lane's context for `H`; `registers` is the live window.
-    let this = unsafe { super::dispatch_fast::lane_context_this::<H>(lane_context) }.to_bits();
-    unsafe { super::dispatch_fast::set_frame_word(registers, crate::staged::frame::CONTEXT_THIS, this) };
+    // SAFETY: `lane_context` is the running lane's context for `H`.
+    dispatch.receiver = unsafe { super::dispatch_fast::context_this_in_lane::<H>(lane_context) }.to_bits();
     // The counter is the `words` field's first word, not the struct's offset 0:
     // `LoopEntry` is not `repr(C)`.
     dispatch.loop_entry = entry.words_mut() as usize;
@@ -69,7 +68,7 @@ pub(super) unsafe fn bind_captures<H: Host>(
 }
 
 /// The lane activation's own registers, locals, body and field cache entries. Its locals are where a lane body's
-/// are (`dispatch_fast::lane_body_locals`): the VM frame may name the caller.
+/// are (`dispatch_fast::body_locals_in_lane`): the VM frame may name the caller.
 ///
 /// # Safety
 /// `registers` is the activation's live register file; `lane_context` the running lane's
@@ -83,7 +82,7 @@ pub(super) unsafe fn bind_frame<H: Host>(
         && let Some(body) = residual.function_get(function as usize) {
         dispatch.native_registers = registers;
         dispatch.register_count = usize::from(body.registers);
-        dispatch.native_locals = super::dispatch_fast::lane_body_locals::<H>(lane_context as *mut (), registers, false);
+        dispatch.native_locals = super::dispatch_fast::body_locals_in_lane::<H>(lane_context as *mut (), registers, false);
         dispatch.local_count = usize::from(body.locals);
         dispatch.body = body as *const _;
         dispatch.residual = Rc::as_ptr(residual) as usize;
@@ -114,7 +113,7 @@ unsafe fn payload_for<H: Host>(vm: &mut Vm<H>, dispatch: &mut JsStepDispatch, le
 
 /// Enters the region's body over the activation's dispatch and maps its exit. A region that calls
 /// callees by their entries (`lend`: whether the lane may make their activations) runs on the lane
-/// frame's payload, which is named to the lane's helpers for the run (`dispatch_fast::lane_region_payload`):
+/// frame's payload, which is named to the lane's helpers for the run (`dispatch_fast::region_payload_in_lane`):
 /// a leave inside a callee stays on the lane stack as its native frames (`RegionRun::nested`).
 ///
 /// # Safety
@@ -132,17 +131,14 @@ pub(super) unsafe fn enter<H: Host>(
     // SAFETY: the region runs on the lane's activation at the lane stack's top, and `reclaim` follows the run.
     let payload = unsafe { payload_for(vm, dispatch, lend) };
     context.adapter_payload = payload.cast();
-    // The region's call rows reload its payload's heap bases after the callee ran (`lane_region_call`).
+    // The region's call rows reload its payload's heap bases after the callee ran (`region_call_in_lane`).
     // SAFETY: `lane_context` is the running lane's.
-    let outer = unsafe { super::dispatch_fast::lane_region_payload::<H>(lane_context, payload.addr()) };
-    let descriptor = super::entry_protocol::EntryDescriptor {
-        kind: super::entry_protocol::EntryKind::Region { header_pc }, receiver: 0, captures: resume, registers: registers.cast::<u64>().cast_const(), entry: code,
-    };
+    let outer = unsafe { super::dispatch_fast::region_payload_in_lane::<H>(lane_context, payload.addr()) };
     // SAFETY: as the caller promises; the code reads the register file and returns
     // its status and result word.
     let returned = unsafe { super::entry_protocol::enter(&mut context, &descriptor) };
     // SAFETY: as above.
-    unsafe { super::dispatch_fast::lane_region_payload::<H>(lane_context, outer) };
+    unsafe { super::dispatch_fast::region_payload_in_lane::<H>(lane_context, outer) };
     if lend.is_some() {
         // SAFETY: `payload` is the one `lend` was given, and the run it lent for is over.
         unsafe { region_lend::reclaim(dispatch) };

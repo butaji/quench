@@ -135,7 +135,7 @@ impl Lowering<'_, '_> {
 
     /// Each register of the frame and the frames around it, at its unit register past the
     /// caller's (`LaneMethod::scratch_width`). Only the live ones: the activation reads no
-    /// other (`dispatch_fast::lane_body_inlined_activation`).
+    /// other (`dispatch_fast::body_inlined_activation_in_lane`).
     fn store_inlined_registers(&mut self, pc: usize, frame: usize) {
         let scratch = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, inlined));
         for index in self.unit.chain(frame) {

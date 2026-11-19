@@ -16,7 +16,7 @@ pub(super) fn apply_activation_in_lane<H: Host>(
     native: Native,
 ) -> Option<Result<(Registers, Ip), Ip>> {
     // SAFETY: the call's window is registers of the running function.
-    let args = unsafe { lane_call_window(r, i) };
+    let args = unsafe { call_window_in_lane(r, i) };
     let argument = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
     let (callee, receiver, list) = match native {
         Native::FunctionApply => (r.get(i.c), argument(0), argument(1)),
@@ -82,7 +82,7 @@ pub(super) fn list_activation_in_lane<H: Host>(
         let Some(activated) = passed_target_in_lane(cx, target, args.len()) else {
             return Some(Err(passed_frame_call_in_lane(cx, r, ip, i, target, receiver, FrameCallArguments::List(args)).into_loop()));
         };
-        let Some(this) = lane_call_this(vm, &activated, receiver) else {
+        let Some(this) = call_this_in_lane(vm, &activated, receiver) else {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::record_detail("applied forwarding this declined".into());
             return Some(Err(exit(ip)));
@@ -99,7 +99,7 @@ pub(super) fn list_activation_in_lane<H: Host>(
             vm.heap.array_elements(list).map_or_else(smallvec::SmallVec::new, |elements| elements.range(0..length).collect());
         return Some(Err(passed_frame_call_in_lane(cx, r, ip, i, callee, receiver, FrameCallArguments::List(&elements)).into_loop()));
     };
-    let Some(this) = lane_call_this(vm, &target, receiver) else {
+    let Some(this) = call_this_in_lane(vm, &target, receiver) else {
         return Some(Err(exit(ip)));
     };
     // Read after the resolution above, which runs no guest code but may allocate.
@@ -108,7 +108,7 @@ pub(super) fn list_activation_in_lane<H: Host>(
     Some(activate_passed_in_lane(cx, r, ip, &target, elements, this))
 }
 
-/// `lane_call_spread` of a native other than a forwarding one or `eval`: the native's call
+/// `call_spread_miss` of a native other than a forwarding one or `eval`: the native's call
 /// in place with the array's elements, copied out first, as a forwarded call passes its
 /// values (`native_value_in_lane`). A lane call record carries no eval flag (`call_fits_in_lane`),
 /// so one whose result is unused (`ImmediateLayout::call_result_used_in_lane`) is made too: the
@@ -129,7 +129,7 @@ pub(super) fn spread_native_call_in_lane<H: Host>(
     }
     let args = vm.heap.array_elements(list)?.iter().collect::<smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]>>();
     let value = native_value_in_lane(cx, ip, i, native, callee, receiver, &args);
-    Some(lane_native_complete(cx, ip, i, value))
+    Some(native_complete_in_lane(cx, ip, i, value))
 }
 
 /// The native `spread_native_call_in_lane` calls in place: any but a forwarding one or `eval`.
@@ -167,5 +167,5 @@ pub(super) fn spread_set_native_call_in_lane<H: Host>(
     }
     let args = vm.heap.set_entries(list)?.to_vec();
     let value = native_value_in_lane(cx, ip, i, native, callee, receiver, &args);
-    Some(lane_native_complete(cx, ip, i, value))
+    Some(native_complete_in_lane(cx, ip, i, value))
 }

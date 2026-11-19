@@ -26,7 +26,7 @@ pub(super) fn async_generator_next_in_lane<H: Host>(cx: *mut LaneContext<H>, r: 
         return None;
     }
     // SAFETY: the call's window is registers of the running function.
-    let sent = unsafe { lane_call_window(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
+    let sent = unsafe { call_window_in_lane(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
     let (registers, start) = resume_request_in_lane(cx, r, ip, i, generator, sent)?;
     Some(Resumed::At(registers, start, Carried::script(cx)))
 }
@@ -45,14 +45,14 @@ pub(super) fn async_generator_throw_in_lane<H: Host>(cx: *mut LaneContext<H>, r:
     }
     let (function, pc) = vm.throws_in_place(generator)?;
     // SAFETY: the call's window is registers of the running function.
-    let thrown = unsafe { lane_call_window(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
+    let thrown = unsafe { call_window_in_lane(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
     resume_request_in_lane(cx, r, ip, i, generator, Value::UNDEFINED)?;
     // The error raises at the `yield` the frame suspended at, the record before its resume point.
     let suspended = pc.saturating_sub(1);
     vm.lane_completion.raise(JsError::thrown(thrown, "async generator throw".into()));
     vm.lane_raise_site = super::super::compiled::raise_site(function, suspended as u32);
     // SAFETY: the resumed function's view is the running one, whose records start at `base`.
-    Some(Resumed::Exit(lane_raised_exit(cx, unsafe { (*cx).base.add(suspended) })))
+    Some(Resumed::Exit(raised_exit_in_lane(cx, unsafe { (*cx).base.add(suspended) })))
 }
 
 /// The request of `generator`, whose `next` or `throw` the call at `ip` with registers `r`
@@ -85,7 +85,8 @@ fn take_request_promise<H: Host>(vm: &mut Vm<H>) -> Value {
 /// into the generator's record, resuming at `pc` with the value it is resumed with in
 /// `destination`, the activation pops, and the caller goes on with the request's promise.
 #[inline(never)]
-pub(super) fn suspend_request_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, yielded: bool) -> Resumed {
+pub(super) fn lane_suspend_request<H: Host>(cx: *mut LaneContext<H>, (pc, destination): (usize, crate::bytecode::Register),
+    yielded: bool, value: Value) -> Resumed {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -118,7 +119,7 @@ pub(super) fn request_returned_in_lane<H: Host>(cx: *mut LaneContext<H>, activat
 /// the call the error its settlement threw.
 fn request_settled<H: Host>(vm: &mut Vm<H>, activation: &Activation, memory: MemoryView, promise: Value, settled: Result<(), JsError>) -> Resumed {
     match settled {
-        Ok(()) => lane_resume_after_call(activation, memory, promise),
+        Ok(()) => resume_after_call_in_lane(activation, memory, promise),
         Err(error) => {
             vm.lane_completion.raise(error);
             Resumed::Exit(exit(activation.call))

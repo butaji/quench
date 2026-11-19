@@ -482,7 +482,7 @@ fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copi
 #[test]
 fn getters_that_make_closures_run_as_environment_activations() {
     // A getter whose body makes closures runs as an environment activation of its read
-    // (`lane_activate_getter`), as its plain call would: its closures see its captures and
+    // (`activate_getter_in_lane`), as its plain call would: its closures see its captures and
     // locals, a closure it returns outlives it, and a throw leaves through the read.
     let source = r#"
 const out = [];
@@ -589,7 +589,7 @@ print(out.join("|"));
 
 #[test]
 fn string_index_sites_read_units_before_array_probes() {
-    // A `GetIndex` that reads a string takes its unit inside the length (`lane_string_element`),
+    // A `GetIndex` that reads a string takes its unit inside the length (`string_element_in_lane`),
     // an ASCII unit's string shared as `charAt`'s is; past the length, or at a key that is
     // no index, the read still finds `String.prototype`'s index property.
     let source = r#"
@@ -1088,7 +1088,7 @@ print(out.length + " " + h + " " + out[out.length - 3].slice(0, 60));
 #[test]
 fn nested_reads_past_their_primary_entries_keep_their_values() {
     // A nested `GetField` whose steps miss their primary own entries reads the polymorphic
-    // entries and a string's own `length` (`lane_nested_polymorphic_value`): strings of
+    // entries and a string's own `length` (`nested_polymorphic_value_in_lane`): strings of
     // astral and accented code points, arrays and an object with its own `length`, a middle
     // step over many shapes, an inherited one, then a getter installed on its prototype and
     // a primitive in its place. Node 26 prints the same. A semantics check: the iteration
@@ -1156,7 +1156,7 @@ print(out.join(" "));
 fn forwarding_constructors_keep_their_initializers_constant_fields() {
     // Two closures of one forwarding constructor (`this.initialize.apply(this, arguments)`)
     // whose initializers differ: the plan a forwarded construction records keeps which of
-    // its fields are constants (`lane_record_forwarded_fields`), so C's `this.w = 1` stays 1
+    // its fields are constants (`record_forwarded_fields_in_lane`), so C's `this.w = 1` stays 1
     // beside a defaulted parameter field. In a function, whose loops run in the lane. Node
     // prints the same.
     let source = r#"
@@ -1380,7 +1380,7 @@ print(rounds[0] === rounds[299] ? rounds[0] : "unsteady");
 #[test]
 fn for_of_steps_that_read_done_and_value_in_place_keep_iteration_semantics() {
     // A for-of step over a plain array writes its `done` and `value` registers itself
-    // (`lane_iterator_step_reads`): arrays with holes, growing and shrinking under the loop,
+    // (`iterator_step_reads_miss`): arrays with holes, growing and shrinking under the loop,
     // `break` and `continue`, destructuring, typed arrays and strings, generators, a patched
     // `%ArrayIteratorPrototype%.next`, an own `Symbol.iterator`, a throw out of the body and
     // a binding that outlives the loop. Node 26 prints the same.

@@ -1,9 +1,18 @@
-//! The suspensions of an activation (`Await`, `Yield`, `YieldStar`) as staged rows: the row names
-//! what suspends and the registers it reads and resumes into, and its step is the frame's
-//! (`CallFrame::suspend`). A frame that cannot suspend in place leaves the row unresolved, so the
-//! tier exits at its exact PC and the interpreter's own suspension runs it: the lane's
-//! `await_miss`, `lane_yield` and `lane_yield_star` (`dispatch_fast::generator_yields`), or the
-//! general step's `StepResult::Await` and `StepResult::Yield` (`Vm::step`).
+//! The suspensions of an activation (`Await`, `Yield`, `YieldStar`) as staged rows, each split
+//! into its value conversion and its control effect. The conversion is the row's: `await` resolves
+//! an object to a promise (`await_source`) and passes any other value as it is; `yield` in an async
+//! generator resolves its value to a promise; `yield*` drives its delegate (`delegation`). The
+//! effect is the frame's (`CallFrame::suspend`), given the value, the register the activation
+//! resumes into and, for `yield*`, the delegate's result and that it resumes at this instruction.
+//!
+//! The interpreter's frame (`Vm::staged_suspend`) answers every call-out and the effect, so the
+//! general step runs these rows. The lane runs the `yield` and `yield*` rows on its own frame
+//! (`dispatch_fast::lane_frame::lane_suspension`), which answers the effect with its in-place
+//! suspension and declines, before any effect, a step it cannot finish; it converts an `await`'s
+//! source by the same `await_source` over its own PromiseResolve, which observes nothing
+//! (`dispatch_fast::lane_await_source`). The emit and stencil
+//! frames answer none of the call-outs yet, so the row stays unresolved there and the tier exits at
+//! its exact PC for the interpreter to suspend.
 use super::{CallFrame, Operation, Register, Stage, Step};
 use crate::bytecode::{Op, WideInstruction};
 
@@ -133,6 +142,6 @@ fn yield_value<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, (destina
 /// the frame cannot tell an object or resolve it, or the resolution raised.
 #[inline(always)]
 pub(crate) fn await_source<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, awaited: S::Word) -> Option<S::Word> {
-    let object = frame.object_like(stage, awaited)?;
+    let object = frame.object_test(stage, awaited)?;
     stage.choose_leaving(object, |stage| frame.promise_resolve(stage, awaited), |_| Some(awaited))
 }

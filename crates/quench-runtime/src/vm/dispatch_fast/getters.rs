@@ -5,13 +5,13 @@ use super::*;
 script_handler! {
     /// The generated getter read (`GETTER_THIS`, `GETTER_REGISTER`) past its hint: the read the
     /// getter's answer makes (`AccessorCall::getter_answer`), whose getter's own field becomes the
-    /// hint (`AccessorCall::hold_getter_hint`). A getter the answer declines takes `lane_get_field_getter`.
+    /// hint (`AccessorCall::hold_getter_hint`). A getter the answer declines takes `get_field_getter_miss`.
     #[inline(never)]
     pub(super) fn row_get_field_getter_refresh<>(cx, r, ip, i, view) {
         let base = unsafe { field_base_in_lane(cx, r, crate::bytecode::FieldBase(i.b)) };
         let Some(value) = base.and_then(|base| unsafe { AccessorCall::of(cx).hold_getter_hint(ip, i, base) }) else {
-            requicken::<H>(ip, lane_get_field_getter::<H>);
-            sibling!(lane_get_field_getter::<H>, r, ip, Carried::script(cx))
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>);
+            sibling!(get_field_getter_miss::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))

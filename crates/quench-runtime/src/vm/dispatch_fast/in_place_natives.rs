@@ -10,8 +10,14 @@ impl<H: Host> Vm<H> {
     /// and arrays, and primitives. `None` leaves the call to the native itself.
     pub(in crate::vm) fn in_place_native_value(&mut self, code: &ResidualProgram, native: Native, callee: Value,
         receiver: Value, args: &[Value]) -> Option<Value> {
-        // A new attempt clears any flag a previous attempt left for its general native.
-        self.declined_fast = None;
+        self.in_place_native_value_inline(code, native, callee, receiver, args)
+    }
+
+    /// `in_place_native_value` inlined into its caller: the lane's native call
+    /// (`string_or_native_call_in_lane`) enters the family function from its own frame.
+    #[inline(always)]
+    pub(in crate::vm) fn in_place_native_value_inline(&mut self, code: &ResidualProgram, native: Native, callee: Value,
+        receiver: Value, args: &[Value]) -> Option<Value> {
         // One table read selects the families that can answer `native` (`IN_PLACE_FAMILIES`),
         // tried in the same order the cascade of all eight tried them.
         let families = IN_PLACE_FAMILIES[native as usize];

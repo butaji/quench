@@ -20,7 +20,7 @@ pub(super) unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64
 }
 
 /// A two-property object literal of literal `site`'s shape holding `first` and `second`, as
-/// the lane makes it (`dispatch_fast::lane_object_pair`); `DELETED` where a collection is due.
+/// the lane makes it (`dispatch_fast::object_pair_in_lane`); `DELETED` where a collection is due.
 pub(super) unsafe extern "C" fn new_object_pair_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, site: u64,
     first: u64, second: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program.
@@ -73,7 +73,7 @@ pub(super) unsafe extern "C" fn new_array_in_lane<H: Host>(vm: u64, _residual: u
     array.to_bits()
 }
 
-/// A lane body's regexp literal at `site`, as the lane makes it (`dispatch_fast::lane_regexp_literal_value`):
+/// A lane body's regexp literal at `site`, as the lane makes it (`dispatch_fast::regexp_literal_value_in_lane`):
 /// a fresh object of the site's compiled template; `DELETED` where a collection is due or the pattern
 /// fails to compile, which the interpreter raises at the instruction.
 pub(super) unsafe extern "C" fn new_regexp_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, site: u64) -> u64 {
@@ -103,7 +103,7 @@ pub(super) unsafe extern "C" fn new_object_literal_in_lane<H: Host>(vm: u64, res
 }
 
 /// A lane body's closure of function `id` over the frame's own environment, as the lane makes
-/// it (`dispatch_fast::lane_closure_value_of`): only a function that is not a module's root and
+/// it (`dispatch_fast::closure_value_of_in_lane`): only a function that is not a module's root and
 /// has no binding sites, whose closures share the frame's environment; `DELETED` for any other,
 /// inside a frameless or lane activation, or with a collection due, which the exact step makes.
 /// Promotion moves the frame's captured locals into its environment, so the dispatch takes its

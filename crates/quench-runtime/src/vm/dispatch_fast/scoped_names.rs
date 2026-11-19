@@ -212,7 +212,7 @@ pub(super) unsafe fn scoped_local_store_into<H: Host>(cx: *mut (), r: Registers,
 pub(super) unsafe fn scoped_closure_into<H: Host>(cx: *mut (), r: Registers, ip: Ip, function: u32, window: u16) -> Option<Value> {
     let cx = cx.cast::<LaneContext<H>>();
     if unsafe { (*cx).registers }.env().is_deleted() {
-        return lane_closure_value_of(cx, function);
+        return closure_value_of_in_lane(cx, function);
     }
     scoped_closure_value(cx, r, ip, function, window)
 }

@@ -26,7 +26,7 @@ pub enum Event {
     LeftInCallee,
     /// A run was irreversibly terminated.
     Terminated,
-    /// A body's entry the lane could not make the activations of a leave for (`lane_body_admits`).
+    /// A body's entry the lane could not make the activations of a leave for (`body_admits_in_lane`).
     Refused,
     /// A lane body entered through its entry cell before any activation.
     CellCrossed,

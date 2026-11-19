@@ -62,7 +62,7 @@ fn indexed_composition<const DEPENDENT: bool, const STEPS: usize>(b: &mut Benche
             // SAFETY: the untimed call ended; live records and their held headers belong
             // to this view, and no VM execution mutates them during this inspection.
             let handler = unsafe {
-                if (*ip).handler == lane_loop_header::<TestHost> as Handler as *const () {
+                if (*ip).handler == loop_header_miss::<TestHost> as Handler as *const () {
                     (*header_site_in_lane(ip)).header_handler.get()
                 } else { (*ip).handler }
             };
@@ -264,7 +264,7 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
             // SAFETY: validation has returned; the view owns these live records and
             // their loop headers. No VM execution runs during this inspection.
             let handler = unsafe {
-                if (*ip).handler == lane_loop_header::<TestHost> as Handler as *const () {
+                if (*ip).handler == loop_header_miss::<TestHost> as Handler as *const () {
                     (*header_site_in_lane(ip)).header_handler.get()
                 } else { (*ip).handler }
             };

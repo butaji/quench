@@ -201,62 +201,6 @@ fn load_capture_with<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carri
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::LoadCapture { destination, depth, slot, root }), Step::Value(_))
 }
 
-/// `LoadLocal` and `LoadEnvLocal` of `slot` into `destination` by `staged::read_initialized_local`, over the binding
-/// the frame owns (`Vm::owner_binding_mut`: its environment's slot once the environment is captured, else its local)
-/// as a one-slot window; false, writing nothing, for a root body's frame, a slot outside the frame or a binding in
-/// its temporal dead zone, which the general path raises. A slot a mapped `arguments` aliases reads the argument.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_load_local_checked<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
-    r: Registers, view: Carried, destination: u16, slot: usize) -> bool {
-    let vm = unsafe { vm(cx) };
-    let (code, frame) = (unsafe { &*(*cx).code }, unsafe { (*cx).frame() });
-    let function = code.function(vm.frames[frame].function as usize);
-    if vm.frames[frame].function == super::super::ROOT_FUNCTION_ID {
-        return false;
-    }
-    let Some(binding) = vm.owner_binding_mut(code, VarOwner::Frame(frame), slot).map(std::ptr::from_mut) else { return false };
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut window = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, binding, 1);
-    let Some(word) = read_initialized_local(&mut stage, &mut window, destination, 0, ()) else { return false };
-    if crate::vm::arguments::mapped_arguments_slot(function, slot).is_some() {
-        r.set(destination, vm.mapped_argument_load(code, VarOwner::Frame(frame), slot, Value::from_bits(word)));
-    }
-    true
-}
-
-/// `StoreLocal` and `StoreEnvLocal` of `source` to `slot` over the binding the frame owns, by
-/// `staged::write_initialized_local` (`staged::write_local` for the store that initializes its binding), mirrored
-/// into a mapped `arguments` (`Vm::mapped_argument_store`); false, writing nothing, for a root
-/// body's frame, a self binding, a slot outside the frame or an assignment to a binding in its temporal dead zone.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_store_local_checked<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
-    r: Registers, view: Carried, (source, slot): (u16, usize), initializing: bool) -> bool {
-    let vm = unsafe { vm(cx) };
-    let (code, frame) = (unsafe { &*(*cx).code }, unsafe { (*cx).frame() });
-    let function = code.function(vm.frames[frame].function as usize);
-    if vm.frames[frame].function == super::super::ROOT_FUNCTION_ID || function.is_self_binding_slot(slot) {
-        return false;
-    }
-    let Some(binding) = vm.owner_binding_mut(code, VarOwner::Frame(frame), slot).map(std::ptr::from_mut) else { return false };
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut window = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, binding, 1);
-    let stored = if initializing { write_local(&mut stage, &mut window, source, 0, Some(())) } else { write_initialized_local(&mut stage, &mut window, source, 0, ()) };
-    let Some(word) = stored else { return false };
-    vm.mapped_argument_store(code, VarOwner::Frame(frame), slot, Value::from_bits(word));
-    true
-}
-
-/// The edge a staged unconditional jump takes.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_jump(r: Registers, view: Carried) -> Edge {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match crate::staged::step(&mut stage, &mut frame, Operation::Jump) {
-        Step::Control(LaneControl::Edge(edge)) => edge,
-        _ => unreachable!("a jump produces no value"),
-    }
-}
-
 /// What the staged `await` conversion (`staged::await_source`) asks the lane context, erased of
 /// its host so the frame names no `H`: whether a value is an object, and PromiseResolve where it
 /// observes nothing (`Vm::lane_promise_resolve`).
@@ -276,7 +220,7 @@ impl AwaitSource {
                 let vm = unsafe { vm(cx) };
                 let promise = vm.intrinsic_promise_constructor();
                 // SAFETY: the context's program outlives the lane run.
-                vm.lane_promise_resolve(unsafe { &*(*cx).code }, promise, value)
+                vm.promise_resolve_in_lane(unsafe { &*(*cx).code }, promise, value)
             },
         }
     }
@@ -284,7 +228,7 @@ impl AwaitSource {
 
 impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
     /// Whether `value` is an object, by the lane context's VM; `None` without a context.
-    fn object_like(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
+    fn object_test(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
         let host = self.host?;
         Some((host.awaits.object_like)(host.cx, Value::from_bits(value)))
     }

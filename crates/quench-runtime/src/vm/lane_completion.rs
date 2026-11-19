@@ -19,7 +19,7 @@ pub(crate) enum LaneCompletion {
     /// `dispatch_fast::lane_yield`): its run hands it to the await's reactions, or to the native
     /// `next` that stepped a sync generator.
     Suspended(Value),
-    /// A call the lane made in place raised this error (`dispatch_fast::lane_call_native`): the
+    /// A call the lane made in place raised this error (`dispatch_fast::call_native_in_lane`): the
     /// general loop raises it at that call's instruction.
     Raised(JsError),
 }

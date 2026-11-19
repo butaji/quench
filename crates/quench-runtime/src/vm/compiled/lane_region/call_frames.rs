@@ -250,7 +250,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     /// `completed`. A callee that never entered (the cell held the stub) takes the VM's call; one
     /// that ended by an exception (`LANE_BODY_THREW`, in `Vm::lane_raised`) has its frame popped and
     /// is counted in its cell, and the call continues at `raised`; any other status is a leave in
-    /// the callee, which stops the caller with it (`dispatch_fast::lane_body_left`).
+    /// the callee, which stops the caller with it (`dispatch_fast::body_left_in_lane`).
     fn call_settle(&mut self, stage: &mut Emit<'_, '_>, site: &Invocation, entered: Entered<ir::Value, ir::Block>, room: Room<ir::Value>,
         value: ir::Value) -> Option<()> {
         let call = self.call_site()?;

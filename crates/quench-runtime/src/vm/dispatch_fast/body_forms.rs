@@ -161,7 +161,7 @@ impl<'a> BodyCall<'a> {
 
     /// The plain activation of `target` this call makes: its window of registers filled with the
     /// arguments, then `undefined`. The call passes at most `target`'s parameters and the lane stack
-    /// has room (`lane_activation_room`).
+    /// has room (`activation_room_in_lane`).
     pub(super) fn push_plain<H: Host>(&self, cx: *mut LaneContext<H>, target: &ScriptCallTarget, this: Value, constructs: bool) -> Registers {
         match self.site.arguments {
             Arguments::Window { first, count } => {

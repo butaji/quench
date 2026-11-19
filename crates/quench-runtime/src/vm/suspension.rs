@@ -20,7 +20,7 @@ impl<H: Host> Vm<H> {
         match crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut frame, row) {
             Step::Value(_) => Ok(StepResult::Continue),
             Step::Control(HostControl::Suspend(suspending)) => Ok(suspended_step(suspending, pc)),
-            Step::Control(HostControl::Edge) => unreachable!("a suspension row takes no edge"),
+            Step::Control(HostControl::Edge(_)) => unreachable!("a suspension row takes no edge"),
             Step::Unresolved => Err(frame.raised.expect("a suspension left to the VM raised")),
         }
     }
@@ -99,7 +99,7 @@ impl<H: Host> CallFrame<Concrete> for HostFrame<'_, H> {
         Some(self.program.function(self.site.function as usize).is_async)
     }
 
-    fn object_like(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
+    fn object_test(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
         Some(self.vm.is_object_like(Value::from_bits(value)))
     }
 

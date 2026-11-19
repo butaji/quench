@@ -4,7 +4,7 @@ use super::*;
 
 impl<H: Host> Vm<H> {
     /// `LaneStack::note_site_callee` while a lane body may read the history: only the
-    /// JavaScript tiers inline a site's callees (`lane_site_targets`), so interpreted
+    /// JavaScript tiers inline a site's callees (`site_targets_in_lane`), so interpreted
     /// execution keeps no history, as V8's jitless mode allocates no feedback for an
     /// optimizing compiler it never runs (mandreel: 12.5 MB of history at its peak).
     pub(super) fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: super::super::compiled::CallTarget) {
@@ -66,7 +66,7 @@ pub(super) fn record_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target:
     let Some(caller) = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view) else { return };
     if !caller.owns_record(ip) { return; }
     if caller.note_late_call() {
-        if lane_direct_callee(vm, caller, function, 0, argc, *target).is_some() { caller.respecialize(); }
+        if direct_callee_in_lane(vm, caller, function, 0, argc, *target).is_some() { caller.respecialize(); }
     } else if caller.late_calls_settled() {
         unsafe { (*cx).late_settled = ip };
     }

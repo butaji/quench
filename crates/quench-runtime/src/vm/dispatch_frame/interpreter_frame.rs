@@ -52,7 +52,7 @@ pub(in crate::vm) fn runs_row(operation: Operation<u64, ()>) -> bool {
             | Operation::ElementRead { .. } | Operation::ElementWrite { .. } | Operation::GetField { .. }
             | Operation::SetField { .. } | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. }
             | Operation::LoadName { .. } | Operation::GlobalTypeof { .. } | Operation::Void { .. }
-            | Operation::Return { .. } | Operation::Throw { .. } | Operation::Suspend { kind: crate::staged::Suspension::Await | crate::staged::Suspension::Yield, .. })
+            | Operation::Return { .. } | Operation::Throw { .. } | Operation::Suspend { kind: crate::staged::Suspension::Await | crate::staged::Suspension::Yield { .. }, .. })
 }
 
 /// The running frame's register file and local slots, and the VM the row's calls answer through,
@@ -284,49 +284,6 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
     #[inline(always)]
     fn raise(&mut self, stage: &mut Concrete, source: Register) -> Option<InterpreterControl> {
         Some(InterpreterControl::Throw(Value::from_bits(self.read(stage, source))))
-    }
-
-    /// `Await` of `source` (a promise for an object, as the general step makes it), suspending the
-    /// run to resume into `destination`. A raise is stashed for the runner.
-    #[inline(always)]
-    fn suspend_await(&mut self, stage: &mut Concrete, destination: Register, source: Register) -> Option<InterpreterControl> {
-        let awaited = Value::from_bits(self.read(stage, source));
-        let (program, vm) = (self.program, self.vm());
-        let value = if vm.is_object_like(awaited) {
-            match vm.promise_for_value(program, awaited) {
-                Ok(value) => value,
-                Err(error) => {
-                    self.raised = Some(error);
-                    return None;
-                }
-            }
-        } else {
-            awaited
-        };
-        self.stashed = value;
-        self.resume = Some(destination);
-        Some(InterpreterControl::Await)
-    }
-
-    /// `Yield` of `value`: a promise for it in an async function, as the general step makes it.
-    /// A raise is stashed for the runner.
-    #[inline(always)]
-    fn suspend_yield(&mut self, stage: &mut Concrete, value: Register) -> Option<InterpreterControl> {
-        let yielded = Value::from_bits(self.read(stage, value));
-        let (program, function, vm) = (self.program, self.site.function, self.vm());
-        let value = if program.function(function as usize).is_async {
-            match vm.promise_for_value(program, yielded) {
-                Ok(value) => value,
-                Err(error) => {
-                    self.raised = Some(error);
-                    return None;
-                }
-            }
-        } else {
-            yielded
-        };
-        self.stashed = value;
-        Some(InterpreterControl::Yield)
     }
 }
 

@@ -1,6 +1,6 @@
 //! A function's BaseJIT body (`--b-jit`): the whole function stitched from stencils
 //! (`base_region::function`) and published as a lane body, so the tier prologue enters it and
-//! its leaves resume the interpreter as a Cranelift body's do (`lane_body_entry`,
+//! its leaves resume the interpreter as a Cranelift body's do (`body_entry_in_lane`,
 //! `LaneExit`). A call site that recorded a stable callee calls its entry cell (the direct row,
 //! the callee's descriptor owned by the method like a Cranelift body's `direct`), any other call
 //! takes the helper row, and an instruction with no row leaves the body at its PC.
@@ -91,7 +91,7 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm::compiled) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
         let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates));
         // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
-        // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`lane_call_this`).
+        // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`call_this_in_lane`).
         let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
         let natives = self.native_callees(program, function, code);
         Callees::of(code, candidates, &inline_body, stable, natives)

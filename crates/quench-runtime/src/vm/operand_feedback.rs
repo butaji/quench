@@ -174,6 +174,7 @@ impl Records {
             b: 0,
             c: 0,
             call_link: std::cell::Cell::new(0),
+            mode: 0,
         }
     }
 

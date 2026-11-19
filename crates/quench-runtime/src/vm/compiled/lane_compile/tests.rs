@@ -74,7 +74,7 @@ fn a_recursive_numeric_function_lowers_a_frameless_scalar_entry() {
     let view = unsafe { &*target.view };
     let mut direct = vec![DirectCandidates::new(); program.function(function as usize).code.len()];
     for pc in program.function(function as usize).instructions().enumerate().filter(|(_, instruction)| instruction.op().is_call()).map(|(pc, _)| pc) {
-        let site = crate::vm::dispatch_fast::lane_direct_callee(&vm, view, function, pc, 1, target).expect("fib calls itself directly");
+        let site = crate::vm::dispatch_fast::direct_callee_in_lane(&vm, view, function, pc, 1, target).expect("fib calls itself directly");
         direct[pc].push(site);
     }
     let (plan, _) = vm.plan_lane_method(&program, function, &|_, _| Vec::new(), &|_, _| None, &|_| (0, 0), &direct, &[],

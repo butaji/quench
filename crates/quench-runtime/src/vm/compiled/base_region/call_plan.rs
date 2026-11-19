@@ -14,9 +14,8 @@
 //!    that only the refusal path reads (its pinned value dead after the call, `refusal_only`) waits
 //!    for the direct rows' refusal, the direct row reading the pin itself (`CallRecord::argument_places`);
 //! 2. when the target's entry cell is stable (`Choice::Direct`), the direct row for the call's
-//!    argument count and receiver binding (checked, or unchecked where a Stable fact holds the callee),
-//!    whose record (`CallRecord`) the chain owns;
-//! 3. the refusal spills, the helper row (`lane_body_call`), the direct row's refusal path and the whole call
+//!    argument count and receiver binding, whose record (`CallRecord`) the chain owns;
+//! 3. the helper row (`body_call_helper`), the direct row's refusal path and the whole call
 //!    otherwise;
 //! 4. one `reload_*` row per pinned register live after the call (every pinned register is dead
 //!    across a call row).
@@ -54,9 +53,9 @@ use quench_bjit::{HOLES, Stencil, padded_holes};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CallForm {
     /// `Call`, through its callee register and argument window: direct through the callee's entry
-    /// cell where its site recorded a stable callee, else the call helper (`lane_body_call`).
+    /// cell where its site recorded a stable callee, else the call helper (`body_call_helper`).
     Plain,
-    /// `Construct` over registers: the construct helper (`lane_body_construct`), which plans the
+    /// `Construct` over registers: the construct helper (`body_construct_helper`), which plans the
     /// receiver's fields or activates the constructor as the lane's own construction does.
     Construct,
     /// Every other form (method, this-method, array, spread and forwarding calls; a `super`
@@ -208,7 +207,7 @@ pub(super) enum Declined {
     NoTarget,
     /// More arguments than the direct rows pass (`MAX_DIRECT_ARGC`).
     Arguments,
-    /// A construction, which the helper row's `lane_body_call` does not make either: the
+    /// A construction, which the helper row's `body_call_helper` does not make either: the
     /// planner for `Construct` chooses.
     Construction,
     /// The call is not a plain `Call`: no direct row makes it (`CallForm`).
@@ -267,7 +266,7 @@ pub(super) struct CallPlan<'a> {
     pub(super) shape: CallShape,
     /// Each callee the site reached, latest first (`Layout::callees`).
     pub(super) direct: &'a [DirectFacts],
-    /// The address of `lane_body_call` (`helper_address`).
+    /// The address of `body_call_helper` (`helper_address`).
     pub(super) helper: usize,
     pub(super) spills: &'a [(Place, Register)],
     pub(super) reloads: &'a [(Place, Register)],

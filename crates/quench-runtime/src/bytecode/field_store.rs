@@ -18,11 +18,15 @@ pub(crate) struct FieldStore {
 impl Op {
     #[inline(always)]
     pub(crate) const fn field_store(self) -> Option<FieldStore> {
-        if !(self.traits().has(Traits::SLOPPY_STORE) || self.traits().has(Traits::STRICT_STORE)) {
+        if !self.is_field_store() {
             return None;
         }
-        let receiver = if self.traits().has(Traits::THIS_FIELD_STORE) { StoreReceiver::This } else { StoreReceiver::Register };
-        Some(FieldStore { receiver, strict: self.traits().has(Traits::STRICT_STORE) })
+        let receiver = if self.traits().has(Traits::FIELD_STORE_THIS) {
+            StoreReceiver::This
+        } else {
+            StoreReceiver::Register
+        };
+        Some(FieldStore { receiver, strict: self.traits().has(Traits::FIELD_STORE_STRICT) })
     }
 
     /// Whether this is a strict named field store (`SetFieldStrict`, `SetThisFieldStrict`).
@@ -33,7 +37,7 @@ impl Op {
 
     #[inline(always)]
     pub(crate) const fn is_field_store(self) -> bool {
-        self.field_store().is_some()
+        self.traits().has(Traits::FIELD_STORE)
     }
 
     /// Whether this reads or stores a named field (`GetField` or a field store).

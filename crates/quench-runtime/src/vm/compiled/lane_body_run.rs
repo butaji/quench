@@ -16,7 +16,7 @@ pub(in crate::vm) const CALLEE_ACTIVATION_PENDING: usize = 1;
 /// What one run of a lane body is given.
 pub(in crate::vm) struct BodyRun<'a> {
     pub(in crate::vm) method: &'a LaneMethod,
-    /// Whether the body may call bodies by their compiled entries (`lane_direct_calls`).
+    /// Whether the body may call bodies by their compiled entries (`direct_calls_in_lane`).
     pub(in crate::vm) direct_calls: bool,
     pub(in crate::vm) program: ProgramId,
     pub(in crate::vm) residual: &'a ResidualProgram,

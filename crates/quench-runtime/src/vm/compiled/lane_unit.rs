@@ -8,7 +8,7 @@
 //! value to the call's result and jumps past the call. Each PC of the unit names its origin,
 //! so a leave inside a callee makes the activations of its frame and the frames around it,
 //! outermost first, through the lane's own call path, and continues at the innermost one's
-//! record (`Vm::lane_body_inlined_activation`).
+//! record (`Vm::body_inlined_activation_in_lane`).
 
 use crate::bytecode::{FieldLookup, ImmediateLayout, Register, WideInstruction};
 use crate::bytecode::Function;

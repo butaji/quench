@@ -25,7 +25,7 @@ pub(in crate::vm) struct DirectCallee {
     /// takes any receiver as it is.
     pub(in crate::vm) sloppy: Option<Value>,
     /// An arrow, which binds no receiver: its body reads its environment's `this`, so a call
-    /// passes the deleted marker (`lane_body_call`). Only BaseJIT's direct rows call one.
+    /// passes the deleted marker (`body_call_helper`). Only BaseJIT's direct rows call one.
     pub(in crate::vm) lexical: bool,
     /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
     pub(in crate::vm) capture_values: *const Value,
@@ -35,7 +35,7 @@ pub(in crate::vm) struct DirectCallee {
     /// For a construction site, the forwarding constructor whose activation the call skips:
     /// `callee` is that constructor, which the call guards, and `target` its forwarded
     /// initializer, which runs with the receiver the constructor's plan allocates and
-    /// whose result the construction ignores (`lane_construct_keeping_activation`).
+    /// whose result the construction ignores (`construct_keeping_activation_in_lane`).
     pub(in crate::vm) forwarder: Option<super::super::dispatch_fast::SkippedForwarder>,
 }
 
