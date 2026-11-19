@@ -3,6 +3,7 @@ use crate::Value;
 
 mod frame_record;
 mod generator_record;
+mod suspension_live;
 pub(crate) use frame_record::FrameRecord;
 #[cfg(test)]
 pub(in crate::vm) use frame_record::{frames_made, note_frame_made};

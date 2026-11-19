@@ -159,7 +159,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(in crate::vm) fn park_frame(&mut self, frame: &mut FrameRecord, pc: usize, depth: usize) {
         frame.close_environment_window();
-        if !matches!(frame.suspension_live, Some((at, _)) if at == pc) {
+        if !frame.suspended_live_at(pc) {
             self.note_suspension_registers(frame, pc);
         }
         self.lane_stack.take_with_objects(depth, &mut frame.with_objects);
@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn note_suspension_registers(&self, frame: &mut FrameRecord, pc: usize) {
         let (live, _) = self.suspension_registers(frame.program, frame.function, pc);
-        frame.suspension_live = Some((pc, live));
+        frame.note_suspension_live(pc, live);
     }
 
     /// Ends the windowed run of `generator` at its return: it completes, dropping its frame.

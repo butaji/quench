@@ -5,6 +5,7 @@
 //! has no record, a frame being what holds its dynamic bindings.
 
 use super::CallContext;
+use super::suspension_live::SuspensionLive;
 use crate::bytecode::Atom;
 use crate::compile::liveness::RegisterSet;
 use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
@@ -53,7 +54,7 @@ pub(crate) struct FrameRecord {
     suspended_epoch: u64,
     /// The last suspension's pc and the registers live there, when liveness covers the function
     /// (`Vm::park_frame`, `suspend_registers`).
-    pub(in crate::vm) suspension_live: Option<(usize, Option<RegisterSet>)>,
+    suspension_live: Option<SuspensionLive>,
     /// What its windowed resumes derive once (`generator_windows::window_plan`).
     pub(in crate::vm) window_plan: Option<crate::vm::dispatch_fast::WindowPlan>,
     /// Skip one function-entry tier attempt when the frame runs again (`Frame::js_jit_skip_entry_once`).
@@ -230,7 +231,7 @@ impl FrameRecord {
     /// pushed and the `with` objects its scope chain held while it ran come back first.
     #[inline(always)]
     pub(in crate::vm) fn suspend_at(&mut self, pc: usize, epoch: u64) {
-        debug_assert!(matches!(self.suspension_live, Some((at, _)) if at == pc));
+        debug_assert!(self.suspension_live.as_ref().is_none_or(|live| live.at(pc)));
         self.pc = pc;
         (self.traces_live, self.suspended_epoch) = (true, epoch);
     }
@@ -239,18 +240,30 @@ impl FrameRecord {
     /// function) and the collection epoch it happened in: the dead ones keep their values, which
     /// no collection traces (`extend_roots`).
     pub(in crate::vm) fn suspend_registers(&mut self, (live, epoch): (Option<RegisterSet>, u64)) {
-        self.suspension_live = Some((self.pc, live));
+        SuspensionLive::store(&mut self.suspension_live, self.pc, live);
         (self.traces_live, self.suspended_epoch) = (true, epoch);
     }
 
     /// The registers the GC traces alone while the frame is suspended, when liveness covers
     /// its function; `None` traces every register.
     #[inline(always)]
-    pub(in crate::vm) fn live_registers(&self) -> Option<&RegisterSet> {
-        match &self.suspension_live {
-            Some((_, Some(live))) if self.traces_live => Some(live),
-            _ => None,
+    pub(in crate::vm) fn live_registers(&self) -> Option<RegisterSet> {
+        if !self.traces_live {
+            return None;
         }
+        self.suspension_live.as_ref().and_then(SuspensionLive::live)
+    }
+
+    /// Whether the last suspension, whose live registers the record keeps, was at `pc`.
+    #[inline(always)]
+    pub(in crate::vm) fn suspended_live_at(&self, pc: usize) -> bool {
+        self.suspension_live.as_ref().is_some_and(|live| live.at(pc))
+    }
+
+    /// Keeps the registers live at a suspension at `pc` (`None`: liveness does not cover the
+    /// function) for each next suspension there (`Vm::park_frame`).
+    pub(in crate::vm) fn note_suspension_live(&mut self, pc: usize, live: Option<RegisterSet>) {
+        SuspensionLive::store(&mut self.suspension_live, pc, live);
     }
 
     /// The frame runs again, where every register is traced: the registers dead at its
@@ -268,8 +281,8 @@ impl FrameRecord {
     /// cleared.
     #[inline(never)]
     fn clear_dead_registers_after_collection(&mut self) {
-        if let Some((_, Some(live))) = &self.suspension_live {
-            clear_dead_registers(&mut self.registers, *live);
+        if let Some(live) = self.suspension_live.as_ref().and_then(SuspensionLive::live) {
+            clear_dead_registers(&mut self.registers, live);
         }
     }
 
@@ -342,7 +355,7 @@ impl FrameRecord {
         Value::extend_heap_values(out, &self.locals);
         out.extend(self.dynamic_bindings.iter().map(|(_, value)| *value));
         match self.live_registers() {
-            Some(&live) => out.extend(
+            Some(live) => out.extend(
                 self.registers.iter().enumerate().filter(|&(register, value)| value.is_heap() && live.contains(register)).map(|(_, &value)| value),
             ),
             None => Value::extend_heap_values(out, &self.registers),
@@ -378,7 +391,7 @@ impl Clone for FrameRecord {
             active_iterators: self.active_iterators.clone(),
             with_objects: self.with_objects.clone(),
             traces_live: self.traces_live,
-            suspension_live: self.suspension_live,
+            suspension_live: self.suspension_live.clone(),
             suspended_epoch: self.suspended_epoch,
             window_plan: None,
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
@@ -408,7 +421,7 @@ impl Snap for FrameRecord {
         match self.live_registers() {
             Some(live) => {
                 let mut registers = RegisterFile::from_registers(&self.registers);
-                clear_dead_registers(&mut registers, *live);
+                clear_dead_registers(&mut registers, live);
                 registers.snap(writer)?;
             }
             None => self.registers.snap(writer)?,
