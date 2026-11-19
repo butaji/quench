@@ -3260,6 +3260,35 @@ fn json_and_object_keys_read_enumerable_keys_in_own_property_order() {
 }
 
 #[test]
+fn enumerable_key_lists_follow_shape_changes_for_object_keys_and_for_in() {
+    // Each shape's enumerable keys are memoized and each loop's snapshot reused: every change
+    // a receiver or its prototype takes (a delete, a non-enumerable redefinition, an added key,
+    // an enumerable prototype key and its removal) must reach the next Object.keys and for-in.
+    let source = r#"var o = { a: 1, b: 2, c: 3 };
+var first = []; for (var k in o) first.push(k);
+delete o.b;
+var afterDelete = []; for (var k in o) afterDelete.push(k);
+Object.defineProperty(o, 'c', { enumerable: false });
+var afterHide = []; for (var k in o) afterHide.push(k);
+o.d = 4;
+var afterAdd = []; for (var k in o) afterAdd.push(k);
+var keysBefore = Object.keys(o).join();
+Object.prototype.inherited = 5;
+var inherited = []; for (var k in o) inherited.push(k);
+delete Object.prototype.inherited;
+var afterProto = []; for (var k in o) afterProto.push(k);
+var entries = Object.entries(o).map(function (e) { return e.join(','); }).join(';');
+var idx = { b: 1, 2: 'x', a: 2, 1: 'y' };
+var idxIn = []; for (var k in idx) idxIn.push(k);
+var result = [first.join(), afterDelete.join(), afterHide.join(), afterAdd.join(), keysBefore,
+  inherited.join(), afterProto.join(), entries, Object.keys(idx).join(), idxIn.join()].join('|');"#;
+    assert_eq!(
+        global_text(source, "result"),
+        "a,b,c|a,c|a|a,d|a,d|a,d,inherited|a,d|a,1;d,4|1,2,b,a|1,2,b,a"
+    );
+}
+
+#[test]
 fn string_indices_are_canonical_and_iterator_results_define_data_properties() {
     // Only canonical array-index names read a string's units; other names reach the
     // prototype. Iterator results define `value` and `done` without running setters.
