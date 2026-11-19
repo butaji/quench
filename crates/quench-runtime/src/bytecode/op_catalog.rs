@@ -160,6 +160,8 @@ pub(crate) enum Class {
     WasmTableInit,
     WasmMemoryInit,
     WasmSegmentDrop,
+    TierPrologue,
+    BodyEntry,
 }
 
 impl Class {

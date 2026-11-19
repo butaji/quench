@@ -865,6 +865,8 @@ representative! {
     OBJECT_PAIR => MakeObject2,
     OBJECT_LITERAL_ROW => MakeObjectLiteral,
     SUPER_CONST_ARRAY_OBJECT => SuperConstArrayObject2,
+    TIER_PROLOGUE => TierPrologue,
+    BODY_ENTRY => BodyEntry,
 }
 
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
@@ -1187,8 +1189,8 @@ opcodes!($;
     // of a function the JavaScript tier may claim starts at `TierPrologue` (`imm` the function, `a` its parameter
     // count); a specialized body's prologue is `BodyEntry` (`imm` the function, `b` whether it binds `this`).
     // Their staged rows are `Operation::Prologue` and `Operation::BodyEntry` (`staged::prologue`).
-    TierPrologue => CALL_EFFECT; layout Scalar; meaning Unused; staged Lane, @ Register, @ fields(Unused, Unused, Unused),
-    BodyEntry => CALL_EFFECT; layout Scalar; meaning Unused; staged Lane, @ Register, @ fields(Unused, Unused, Unused),
+    TierPrologue => CALL_EFFECT; layout Scalar; meaning Unused; class TierPrologue; staged Lane, @ Register, @ fields(Unused, Unused, Unused),
+    BodyEntry => CALL_EFFECT; layout Scalar; meaning Unused; class BodyEntry; staged Lane, @ Register, @ fields(Unused, Unused, Unused),
 );
 
 const _: () = {

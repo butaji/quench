@@ -12876,13 +12876,13 @@ fn body_entry_resumed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, vi
 /// The protocol row of a frameless activation's tier prologue record (`TierPrologue`): the staged prologue
 /// row (`PrologueFrame::tier_prologue`), with `tier_prologue_in_lane` as the body it completes where it leaves.
 const fn tier_prologue_row<H: Host>() -> Handler {
-    protocol_row::<H, { crate::bytecode::Op::TierPrologue as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::TIER_PROLOGUE as u16 }>
+    protocol_row::<H, { crate::bytecode::TIER_PROLOGUE as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::TIER_PROLOGUE as u16 }>
 }
 
 /// The protocol row of a specialized body's prologue record (`BodyEntry`): the staged prologue row
 /// (`PrologueFrame::body_entry`), with `body_entry_in_lane` as the body it completes where it leaves.
 const fn body_entry_row<H: Host>() -> Handler {
-    protocol_row::<H, { crate::bytecode::Op::BodyEntry as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::BODY_ENTRY as u16 }>
+    protocol_row::<H, { crate::bytecode::BODY_ENTRY as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::BODY_ENTRY as u16 }>
 }
 
 script_handler! {
@@ -16677,8 +16677,8 @@ const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
 const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode {
         // The lane's synthetic prologue records: their staged rows, which the lane's activations start at.
-        crate::bytecode::Op::TierPrologue => Some(tier_prologue_row::<H>()),
-        crate::bytecode::Op::BodyEntry => Some(body_entry_row::<H>()),
+        crate::bytecode::TIER_PROLOGUE => Some(tier_prologue_row::<H>()),
+        crate::bytecode::BODY_ENTRY => Some(body_entry_row::<H>()),
         _ if crate::staged::field_read_family(opcode) => Some(row_get_field_first::<H>),
         // merge: theirs' `lane_set_object_field_own` / `lane_set_this_field_own` are undefined; HEAD's `field_store_row` serves both receivers.
         _ if opcode.field_store().is_some() => opcode.field_store().map(|store| field_store_row::<H>(store)),
