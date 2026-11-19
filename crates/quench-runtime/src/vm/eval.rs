@@ -600,7 +600,7 @@ impl<H: Host> Vm<H> {
         // A script compiled from its own text (a package's module, an application's entry) goes
         // through the host's compile cache, keyed by its name, its text and what else shapes
         // its program: its origin and whether its functions keep their records.
-        let options = crate::compile::HostScriptOptions { origin, keep_records, typescript };
+        let options = crate::bytecode::HostScriptOptions { origin, keep_records, typescript };
         let cache_key = retained.is_none().then(|| options.cache_goal());
         #[cfg(feature = "native-execution")]
         if let Some(goal) = &cache_key {

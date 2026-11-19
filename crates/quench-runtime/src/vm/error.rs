@@ -1432,10 +1432,10 @@ impl<H: Host> Vm<H> {
         let source = argument_strings.pop().unwrap_or_default();
         let parameters = argument_strings.join(",");
         let kind = match native {
-            Native::AsyncFunction => crate::compile::DynamicFunctionKind::Async,
-            Native::GeneratorFunction => crate::compile::DynamicFunctionKind::Generator,
-            Native::AsyncGeneratorFunction => crate::compile::DynamicFunctionKind::AsyncGenerator,
-            _ => crate::compile::DynamicFunctionKind::Ordinary,
+            Native::AsyncFunction => crate::bytecode::DynamicFunctionKind::Async,
+            Native::GeneratorFunction => crate::bytecode::DynamicFunctionKind::Generator,
+            Native::AsyncGeneratorFunction => crate::bytecode::DynamicFunctionKind::AsyncGenerator,
+            _ => crate::bytecode::DynamicFunctionKind::Ordinary,
         };
         #[cfg(feature = "native-execution")]
         let native_program = {
@@ -1522,7 +1522,7 @@ impl<H: Host> Vm<H> {
         let function = result?;
         self.set_function_name_text(
             function,
-            crate::compile::DYNAMIC_FUNCTION_PUBLIC_NAME.to_owned(),
+            crate::bytecode::DYNAMIC_FUNCTION_PUBLIC_NAME.to_owned(),
         );
         let function_source = kind.source(&parameters, &source);
         self.set_function_source(function, &function_source)?;

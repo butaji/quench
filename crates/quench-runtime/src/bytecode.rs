@@ -4428,3 +4428,15 @@ impl HostScriptOptions {
             if self.typescript { ":typescript" } else { "" })
     }
 }
+
+/// Which dynamic function a `new Function`-style source is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DynamicFunctionKind {
+    Ordinary,
+    Async,
+    Generator,
+    AsyncGenerator,
+}
+
+/// The public name such a function reports (`anonymous`).
+pub(crate) const DYNAMIC_FUNCTION_PUBLIC_NAME: &str = "anonymous";

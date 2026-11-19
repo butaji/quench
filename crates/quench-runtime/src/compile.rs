@@ -13,6 +13,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 use std::ops::Range;
 pub use crate::bytecode::HostScriptOptions;
+pub use crate::bytecode::DynamicFunctionKind;
+pub(crate) use crate::bytecode::DYNAMIC_FUNCTION_PUBLIC_NAME;
 pub(crate) use crate::compile_phase::{CompilePhase, compile_phase_boundary};
 /// Source-shaping inputs shared by host Script preparation and native compilation.
 
@@ -133,18 +135,10 @@ pub(crate) fn eval_context_source(
 
 pub struct Engine;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DynamicFunctionKind {
-    Ordinary,
-    Async,
-    Generator,
-    AsyncGenerator,
-}
 
 #[cfg(feature = "native-execution")]
 pub(crate) const DYNAMIC_FUNCTION_GOAL: &str = "dynamic-function";
 
-pub(crate) const DYNAMIC_FUNCTION_PUBLIC_NAME: &str = "anonymous";
 
 /// The name of every Function-constructor program. Its frames report their origin, not this
 /// name (`CompilationOrigin::FunctionConstructor`), so one name serves all of them and keys
