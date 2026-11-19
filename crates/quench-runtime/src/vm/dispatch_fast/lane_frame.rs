@@ -134,19 +134,6 @@ impl CaptureStores {
                 .and_then(|slots| unsafe { crate::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
                 .is_some() }
     }
-
-    /// The running function's own initialized slot written directly through its dense slots
-    /// (`lane_store_own_capture`), over the register file `r`; any other store is the row's miss
-    /// (`row_miss`: the lane's walking store).
-    #[inline(always)]
-    fn own(r: Registers) -> Self {
-        Self { context: r.0.cast(), store: |context, depth, slot, value| depth == 0
-            && super::capture_stores(Registers(context.cast()).capture())
-                // SAFETY: the running function's dense capture slots, which admit this write
-                // (`CAPTURE_STORES`); no collection runs in the lane.
-                .and_then(|slots| unsafe { crate::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
-                .is_some() }
-    }
 }
 
 /// The lane context's steady decisions of a pair the words leave, erased of its host so the frame
