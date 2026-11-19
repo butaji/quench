@@ -824,11 +824,14 @@ impl<H: Host> Vm<H> {
             roots.extend(frame.original_arguments.iter().copied());
             roots.extend(frame.locals.iter().copied());
             roots.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
-            let program = self.programs.residual(frame.program);
-            // A Wasm function's raw registers hold machine words, not `Value`s (`raw_webs`).
-            let raw = self.programs.raw_register_masks(frame.program, frame.function);
-            match program.and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
-                Some(masks) => masks.extend_live_except(frame.pc as usize, raw.as_deref(), &frame.registers, &mut roots),
+            match self.programs.residual(frame.program).and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
+                // A frame parked inside a call (`pc_is_resume`) is scanned at the call itself, not
+                // the instruction after it: liveness before the call includes its callee and
+                // argument registers, so the frame keeps them alive while the callee or native
+                // runs and callers need not copy them into `active_call_roots`. The only register
+                // live after the call but not before it is the call's destination, which holds
+                // nothing the call reads and is written when the call returns.
+                Some(masks) => masks.extend_live(frame.source_instruction_pc(), &frame.registers, &mut roots),
                 None => roots.extend(frame.registers.iter().copied()),
             }
         }

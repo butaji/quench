@@ -3,7 +3,11 @@
 use crate::bytecode::{CALL_PLAN_FLAG_COUNT, DERIVED_FACT_COUNT};
 
 impl crate::bytecode::ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 156;
+    /// 154: a program that names private members encodes every closure's reads as the whole chain, which the
+    /// closure environment elision (`ResidualProgram::closure_takes_no_environment`) reads.
+    /// 147: `LoadGlobalLexical` and `StoreGlobalLexical` address a script's lexicals by declaration index.
+    /// 146: function records lost their realm word; a function's realm override is written in its extras.
+    pub const FORMAT_VERSION: u8 = 154;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

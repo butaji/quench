@@ -2167,6 +2167,55 @@ impl Heap {
         });
     }
 
+    /// The property-arena owners of the live objects, as the sweep lists them for a compacting
+    /// full collection (`sweep_serial`, `sweep_disposing` closures): the packed legacy slot
+    /// owners and the direct owners with their range offsets. After a full sweep every occupied
+    /// slot holds a surviving cell and every record a surviving record, so the walk lists exactly
+    /// what the sweep would have listed had it known.
+    fn list_property_owners(&self) -> (Vec<u64>, Vec<(usize, Value)>) {
+        let mut slot_owners = Vec::with_capacity(self.property_owner_counts.0);
+        let mut direct_owners = Vec::with_capacity(self.property_owner_counts.1);
+        let properties = &self.properties;
+        for (index, slot) in self.slots.iter().enumerate() {
+            if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
+                && properties.has_compact_range(object.properties())
+            {
+                slot_owners.push(pack_offset_owner(object.properties().start_offset(), index));
+            }
+        }
+        self.object_records.for_each_live(|record_id, object| {
+            if object.properties().has_compact_range() {
+                direct_owners.push((object.properties().start_offset(), Value::direct_object(record_id)));
+            }
+        });
+        self.function_records.for_each_live(|record_id, function| {
+            if function.object.properties().has_compact_range() {
+                direct_owners.push((function.object.properties().start_offset(), Value::direct_function(record_id)));
+            }
+        });
+        self.promise_records.for_each_live(|record_id, promise| {
+            if promise.object.properties().has_compact_range() {
+                direct_owners.push((promise.object.properties().start_offset(), Value::direct_promise(record_id)));
+            }
+        });
+        self.iterator_records.for_each_live(|record_id, iterator| {
+            if iterator.object.properties().has_compact_range() {
+                direct_owners.push((iterator.object.properties().start_offset(), Value::direct_iterator(record_id)));
+            }
+        });
+        self.collection_records.for_each_live(|record_id, collection| {
+            if collection.object.properties().has_compact_range() {
+                direct_owners.push((collection.object.properties().start_offset(), Value::direct_collection(record_id)));
+            }
+        });
+        self.array_records.for_each_live(|record_id, array| {
+            if array.properties().has_compact_range() {
+                direct_owners.push((array.properties().start_offset(), Value::direct_array(record_id)));
+            }
+        });
+        (slot_owners, direct_owners)
+    }
+
     /// Slide every live arena range down over released ones, in offset order.
     /// `objects` holds each live arena owner packed with its range offset.
     fn compact_property_arena(
@@ -2518,12 +2567,14 @@ impl Heap {
     }
 
     /// After a full collection that swept `payload_before` payload bytes: returns the empty record
-    /// pages (`RecordSpace::return_free_pages`), and the allocator's free memory when the sweep
+    /// pages (`RecordSpace::return_free_pages`), the whole pages of the property arena's released
+    /// runs (`ValueArena::return_free_pages`), and the allocator's free memory when the sweep
     /// freed a lot (`release_freed_allocator_memory`).
     fn return_freed_memory(&mut self, payload_before: usize) {
         for (family, _) in self.record_families_mut() {
             family.return_free_pages();
         }
+        self.properties.return_free_pages();
         let freed = payload_before.saturating_sub(self.payload_bytes);
         let share_freed = freed >= FREED_TRIM_SHARE_MIN_BYTES && freed.saturating_mul(4) > payload_before;
         if freed > FREED_TRIM_BYTES || share_freed {
@@ -2796,9 +2847,10 @@ impl Heap {
         let sweep_started = std::time::Instant::now();
         let payload_before_sweep = self.payload_bytes;
         let trace_sweep_started = trace_started.map(|_| std::time::Instant::now());
-        // Property-arena owners are listed only for a full collection that compacts: the
-        // lists hold an entry per live owner at the heap's peak. A compaction that this
-        // sweep's releases make due waits for the next full collection.
+        // Property-arena owners are listed during the sweep only for a full collection that
+        // already knows it compacts: the lists hold an entry per live owner at the heap's peak.
+        // A compaction that only this sweep's releases make due is decided after the sweep and
+        // lists the survivors then (`list_property_owners`), so it runs in the same collection.
         let compacts = full && self.properties.compaction_due();
         let sweep_pool = if full
             && !self.has_direct_records()
@@ -3174,10 +3226,19 @@ impl Heap {
         if full && crate::trace::Channel::Gc.on() {
             eprintln!("[narrow-elements] candidates={candidates} narrowed={narrowed} saved={}KB", saved_total / 1024);
         }
-        if compacts {
+        // A full collection whose sweep made a compaction due compacts now: the sweep listed no
+        // owners, so they are listed from the survivors. Compaction moves the young survivors
+        // with every other run and forgets the nursery, so the young evacuation is not needed.
+        let late_compaction = !compacts && full && self.properties.compaction_due();
+        let (property_owners, direct_property_owners) = if late_compaction {
+            self.list_property_owners()
+        } else {
+            (property_owners, direct_property_owners)
+        };
+        if compacts || late_compaction {
             // Compaction moves the young survivors with every other run and forgets the
-            // nursery (`ValueArena::finish_compaction`): due before the sweep, it stays due,
-            // as the sweep only releases.
+            // nursery (`ValueArena::finish_compaction`): due after the sweep, it stays due,
+            // as nothing after the sweep takes arena values back.
             debug_assert!(self.properties.compaction_due());
             self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
