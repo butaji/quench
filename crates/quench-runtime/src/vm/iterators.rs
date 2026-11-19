@@ -32,6 +32,9 @@ pub(super) const ITERATOR_RESULT_DONE_SLOT: usize = 1;
 
 #[path = "collection_steps.rs"]
 mod collection_steps;
+#[path = "iterator_in_place.rs"]
+mod iterator_in_place;
+pub(super) use iterator_in_place::InPlaceStep;
 
 /// The stores `Vm::intact_iteration_kind` proves iterate by their own contents.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3405,25 +3408,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let (source, position) = (*source, ext.position(*index));
-        let array = self.heap.array(source)?;
-        if array.has_indexed_descriptors()
-            || array.is_arguments_object()
-            || self.heap.sparse_length(source).is_some()
-        {
-            return None;
-        }
-        let Some(value) = array.elements().get(position) else {
-            if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
-                *done = true;
-                *source = Value::UNDEFINED;
-            }
-            return Some(None);
-        };
-        if value.is_deleted() {
-            return None;
-        }
-        self.heap.store_iterator_position(iterator, position + 1);
-        Some(Some(value))
+        self.step_present_element(iterator, source, position)
     }
 
     /// An iterator result `{ value, done }` whose object no code but the step that reads it

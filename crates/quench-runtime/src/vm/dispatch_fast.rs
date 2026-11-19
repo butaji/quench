@@ -27,6 +27,7 @@ use super::compiled::tier_policy::Tiers;
 use super::tier_events::Event;
 use super::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use super::dispatch_frame::PendingGeneralCall;
+use super::iterators::InPlaceStep;
 use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
@@ -14443,7 +14444,7 @@ script_handler! {
 
 script_handler! {
     /// `lane_iterator_step` of a for-of step (`lane_for_of_step`) over a plain array or a
-    /// String, Map or Set iterator (`Vm::step_collection`): the
+    /// String, Map or Set iterator (`Vm::step_in_place`): the
     /// step's `done` and `value` go to the registers its reads of `done` and `value` write,
     /// and the step goes on where they would, into the body or out of the loop. The result
     /// object only those reads observe is not written. Any other step runs as
@@ -14455,30 +14456,27 @@ script_handler! {
         // SAFETY: the view checked the step's records (`lane_for_of_step`).
         let (done_read, value_read) = unsafe { (&*ip.add(FOR_OF_DONE_READ), &*ip.add(form.value_read())) };
         let reads_step = done_read.imm() == vm.runtime_atoms.done && value_read.imm() == vm.runtime_atoms.value;
-        let kind = vm.iteration_step(iterator, method);
-        match kind {
-            super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
-            // A generator's step resumes it over its record, as `lane_iterator_step` makes it.
-            super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } && reads_step => {
-                if THREADED {
-                    sibling!(lane_generator_step::<H, STEP_READS_THREADED>, r, ip, Carried::script_in(cx, view))
-                }
-                sibling!(lane_generator_step::<H, STEP_READS_EMITTED>, r, ip, Carried::script_in(cx, view))
-            }
-            super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
+        let script_calls = unsafe { (*cx).script_calls };
+        if !reads_step {
+            if script_calls && vm.steps_as_generator(iterator, method) {
                 sibling!(lane_generator_step::<H, 0>, r, ip, Carried::script_in(cx, view))
             }
-            _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view)),
-        }
-        let step = if kind == super::iterators::IterationStep::Array {
-            vm.step_present_array_value(iterator)
-        } else {
-            let step = vm.step_collection(iterator);
-            note_allocation(vm);
-            step
-        };
-        let Some(step) = step else {
             sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        let step = match vm.step_in_place(iterator, method) {
+            InPlaceStep::Element(step) => step,
+            InPlaceStep::Item(step) => {
+                note_allocation(vm);
+                step
+            }
+            // A generator's step resumes it over its record, as `lane_iterator_step` makes it.
+            InPlaceStep::Generator if script_calls && THREADED => {
+                sibling!(lane_generator_step::<H, STEP_READS_THREADED>, r, ip, Carried::script_in(cx, view))
+            }
+            InPlaceStep::Generator if script_calls => {
+                sibling!(lane_generator_step::<H, STEP_READS_EMITTED>, r, ip, Carried::script_in(cx, view))
+            }
+            _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view)),
         };
         match step {
             Some(value) => {
@@ -14512,20 +14510,16 @@ script_handler! {
         let (done_read, flag, value_read) =
             unsafe { (&*ip.add(BINDING_DONE_READ), &*ip.add(BINDING_DONE_MOVE), &*ip.add(BINDING_VALUE_READ)) };
         let reads_step = done_read.imm() == vm.runtime_atoms.done && value_read.imm() == vm.runtime_atoms.value;
-        let kind = vm.iteration_step(iterator, method);
-        match kind {
-            super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
-            _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view)),
-        }
-        let step = if kind == super::iterators::IterationStep::Array {
-            vm.step_present_array_value(iterator)
-        } else {
-            let step = vm.step_collection(iterator);
-            note_allocation(vm);
-            step
-        };
-        let Some(step) = step else {
+        if !reads_step {
             sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        let step = match vm.step_in_place(iterator, method) {
+            InPlaceStep::Element(step) => step,
+            InPlaceStep::Item(step) => {
+                note_allocation(vm);
+                step
+            }
+            InPlaceStep::Generator | InPlaceStep::Call => sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view)),
         };
         match step {
             Some(value) => {
