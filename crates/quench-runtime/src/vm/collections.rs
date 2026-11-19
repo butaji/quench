@@ -1126,13 +1126,19 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         key: Value,
     ) -> Option<Value> {
+        match native {
+            Native::MapGet => {
+                let entries = self.heap.map_entries(receiver)?;
+                return Some(
+                    self.collection_entry_index(entries, key, self.same_value_zero_hash(key))
+                        .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
+                );
+            }
+            Native::MapHas => return Some(self.has_key(self.heap.map_entries(receiver)?, key)),
+            Native::SetHas => return Some(self.has_key(self.heap.set_entries(receiver)?, key)),
+            _ => {}
+        }
         match (native, self.heap.get(receiver)?) {
-            (Native::MapGet, Cell::Map { entries, .. }) => Some(
-                self.collection_entry_index(entries, key, self.same_value_zero_hash(key))
-                    .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
-            ),
-            (Native::MapHas, Cell::Map { entries, .. }) => Some(self.has_key(entries, key)),
-            (Native::SetHas, Cell::Set { entries, .. }) => Some(self.has_key(entries, key)),
             // A value that cannot be held weakly is never a key.
             (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(entries.get(key).unwrap_or(Value::UNDEFINED)),
             (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => Some(Value::boolean(entries.contains(key))),

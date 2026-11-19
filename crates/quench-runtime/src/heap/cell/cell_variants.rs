@@ -5,10 +5,6 @@ use super::*;
 #[derive(Clone, Debug)]
 #[rustfmt::skip]
 pub(crate) enum Cell {
-    Object(Object),
-    Array {
-        object: ArrayObject,
-    },
     ArrayBuffer {
         object: Box<Object>,
         bytes: super::BufferBytes,
@@ -27,17 +23,6 @@ pub(crate) enum Cell {
         object: Box<BufferViewObject>,
         buffer: Value,
         length: ViewLength,
-    },
-    // A Map's or Set's object lives in the cell, beside its entries' box: most collections
-    // stay empty (jsdom-d3: 107K of 132K Maps, 152K of 153K Sets), and a boxed object cost
-    // each a 16-byte allocation besides its slot.
-    Map {
-        object: Object,
-        entries: super::Entries<(Value, Value)>,
-    },
-    Set {
-        object: Object,
-        entries: super::Entries<Value>,
     },
     ShadowRealm {
         object: Box<Object>,
@@ -61,8 +46,6 @@ pub(crate) enum Cell {
         callback: Value,
         entries: Box<FinalizationEntries>,
     },
-    /// An iterator where no iterator record is available (`IteratorRecord`).
-    Iterator(Box<IteratorRecord>),
     ArrayFromAsyncState(Box<ArrayFromAsyncState>),
     AwaitState(Box<AwaitState>),
     Proxy {
@@ -71,8 +54,6 @@ pub(crate) enum Cell {
         target: Value,
         handler: Value,
     },
-    /// A function where no function record is available (`FunctionRecord`).
-    Function(Box<FunctionRecord>),
     BindingReference {
         environment: Value,
         slot: u16,
@@ -216,24 +197,18 @@ impl Cell {
 
     pub(crate) fn profile_variant_name(&self) -> &'static str {
         match self {
-            Self::Object(_) => "object",
             Self::WasmObject { .. } => "wasm_object",
-            Self::Array { .. } => "array",
             Self::ArrayBuffer { .. } => "array_buffer",
             Self::TypedArray { .. } => "typed_array",
             Self::DataView { .. } => "data_view",
-            Self::Map { .. } => "map",
-            Self::Set { .. } => "set",
             Self::ShadowRealm { .. } => "shadow_realm",
             Self::WeakMap { .. } => "weak_map",
             Self::WeakSet { .. } => "weak_set",
             Self::WeakRef { .. } => "weak_ref",
             Self::FinalizationRegistry { .. } => "finalization_registry",
-            Self::Iterator(_) => "iterator",
             Self::ArrayFromAsyncState(_) => "array_from_async_state",
             Self::AwaitState(_) => "await_state",
             Self::Proxy { .. } => "proxy",
-            Self::Function(_) => "function",
             Self::BindingReference { .. } => "binding_reference",
             Self::WasmBits64(_) => "wasm_bits64",
             Self::WasmInstance(_) => "wasm_instance",
@@ -280,8 +255,6 @@ impl Cell {
     /// a user function's code, an environment's scope, a suspended generator.
     pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
         match self {
-            Self::Function(function) => function.program().into_iter().for_each(&mut visit),
-            Self::Iterator(iterator) => iterator.program_references(&mut visit),
             Self::AwaitState(state) => state.program_references(&mut visit),
             _ => {}
         }
