@@ -236,7 +236,7 @@ fn plain_integer_magnitude(decimal: &Decimal<'_>) -> Option<f64> {
 pub(super) fn with_ascii_units<R>(units: Units<'_>, parse: impl FnOnce(&[u8]) -> R) -> R {
     match units {
         Units::Ascii(bytes) => parse(bytes),
-        Units::Wide(wide) => parse(&ascii_or_marked(wide)),
+        Units::Latin1(_) | Units::Wide(_) => parse(&ascii_or_marked(&units.wide())),
     }
 }
 

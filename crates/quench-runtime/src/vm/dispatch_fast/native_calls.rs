@@ -1,6 +1,7 @@
 //! Calls the lane answers in place for their common case (else `native_call_miss`), and
 //! for-in's step (`fast_names_step`, the loop exit's row).
 use super::*;
+use crate::bytecode::index as opc;
 use crate::vm::object_get::ordinary_chain::ChainRead;
 
 /// The natives whose steady case (`Vm::steady_native_value`) a `Call` site makes under its own
@@ -33,7 +34,7 @@ builtin_rows!(
 /// The natives whose in-place body a `Call` site makes under its own handler, one instantiation
 /// of `lane_call_in_place` per row. The native is a constant of the handler, so the site tests the
 /// callee's identity and calls the body directly (`in_place_row_value`), not through the family
-/// table of `Vm::in_place_native_value`. A native in no row keeps `lane_native_call`.
+/// table of `Vm::in_place_native_value`. A native in no row keeps `native_call_miss`.
 macro_rules! in_place_rows {
     ($($row:literal => $native:ident),* $(,)?) => {
         const fn in_place_row_native(row: u8) -> Native {
@@ -44,7 +45,7 @@ macro_rules! in_place_rows {
             match native { $(Native::$native => Some($row),)* _ => None }
         }
         fn in_place_handler<H: Host>(row: u8) -> Handler {
-            match row { $($row => lane_call_in_place::<H, $row>,)* _ => lane_native_call::<H> }
+            match row { $($row => lane_call_in_place::<H, $row>,)* _ => native_call_miss::<H> }
         }
     };
 }
@@ -70,7 +71,7 @@ macro_rules! math_rows {
         }
         /// The miss body of Math row `row` (`leaf_call_miss_of`).
         pub(in crate::vm::dispatch_fast) const fn math_miss_of<H: Host>(row: u8) -> Handler {
-            match row { $($row => math_native_miss::<H, $row> as Handler,)* _ => lane_call_math::<H> }
+            match row { $($row => math_native_miss::<H, $row> as Handler,)* _ => call_math_miss::<H> }
         }
     };
 }
@@ -325,7 +326,7 @@ pub(super) fn in_place_row_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram
 script_handler! {
     /// A `Call` site whose callee was the native of in-place row `ROW` (`native_call_handler`): that
     /// native's in-place body (`in_place_row_value`) on its receiver and arguments. Any other callee
-    /// or case takes `lane_native_call`.
+    /// or case takes `native_call_miss`.
     fn lane_call_in_place<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { in_place_row_native(ROW) };
@@ -333,12 +334,12 @@ script_handler! {
             // SAFETY: the context's program outlives the lane run.
             let code = unsafe { &*(*cx).code };
             // SAFETY: the call's window is registers of the running function.
-            in_place_row_value(vm, code, native, r.get(i.c), unsafe { lane_call_window(r, i) })
+            in_place_row_value(vm, code, native, r.get(i.c), unsafe { call_window_in_lane(r, i) })
         } else {
             None
         };
         let Some(value) = value else {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
+            sibling!(native_call_miss::<H>, r, ip, Carried::script(cx))
         };
         // An in-place case may allocate; a due collection runs at the lane's next safepoint.
         note_allocation(vm);
@@ -402,7 +403,7 @@ script_handler! {
     pub(super) fn reflect_get_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // SAFETY: the window is registers of the running function, read before anything runs.
-        let window = unsafe { lane_call_window(r, i) };
+        let window = unsafe { call_window_in_lane(r, i) };
         if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
             return exit(ip);
         }

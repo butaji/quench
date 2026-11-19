@@ -325,7 +325,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
     ) -> Result<Value, JsError> {
         let records = match self.object_data(receiver).and_then(Object::stack_data) {
-            Some(StackData::Formatted(value)) => return Ok(*value),
+            Some(StackData::Formatted(value)) => return Ok(value.clone()),
             Some(StackData::Captured { records, .. }) => records.clone(),
             _ => return Ok(Value::UNDEFINED),
         };

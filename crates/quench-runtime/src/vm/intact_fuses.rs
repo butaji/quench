@@ -4,37 +4,7 @@
 
 use super::property_key::PropertyKey;
 use super::*;
-use crate::code_dependencies::IntactFuse;
-
-/// How a fuse's holder names its method.
-#[derive(Clone, Copy)]
-enum FuseKey {
-    IteratorSymbol,
-    /// `next`, of an iterator prototype.
-    Next,
-    Named(&'static str),
-    /// `@@species`, a getter-only accessor whose slot holds the getter.
-    SpeciesSymbol,
-}
-
-/// Each fuse's key and intrinsic, in `IntactFuse` order.
-const FUSES: [(FuseKey, Native); IntactFuse::COUNT] = [
-    (FuseKey::IteratorSymbol, Native::ArrayValues),
-    (FuseKey::Next, Native::ArrayIteratorNext),
-    (FuseKey::IteratorSymbol, Native::SetValues),
-    (FuseKey::Next, Native::IteratorNext),
-    (FuseKey::IteratorSymbol, Native::MapEntries),
-    (FuseKey::Next, Native::IteratorNext),
-    (FuseKey::IteratorSymbol, Native::StringValues),
-    (FuseKey::Next, Native::StringIteratorNext),
-    (FuseKey::Named("charCodeAt"), Native::StringCharCodeAt),
-    (FuseKey::Named("includes"), Native::StringIncludes),
-    (FuseKey::Named("test"), Native::RegExpTest),
-    (FuseKey::Named("exec"), Native::RegExpExec),
-    (FuseKey::Named("constructor"), Native::Array),
-    (FuseKey::SpeciesSymbol, Native::ArraySpecies),
-    (FuseKey::SpeciesSymbol, Native::RegExpSpecies),
-];
+use crate::code_dependencies::{FuseKey, IntactFuse};
 
 impl<H: Host> Vm<H> {
     /// Whether `fuse` holds in the current realm: its holder keeps the key as an own data

@@ -187,6 +187,7 @@ pub(crate) mod vm {
         #[allow(dead_code)]
         pub(crate) enum Units<'a> {
             Ascii(&'a [u8]),
+            Latin1(&'a [u8]),
             Wide(&'a [u16]),
         }
         pub(crate) mod native_string {

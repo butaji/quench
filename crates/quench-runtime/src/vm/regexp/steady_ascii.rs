@@ -73,12 +73,12 @@ impl<H: Host> Vm<H> {
 
     /// Whether a RegExp of prototype `proto` and `shape` finds this realm's builtin `exec`,
     /// from what the realm's RegExp record holds: the prototype is the realm's, the recorded
-    /// proof names the shape under the current layout epoch (no own `exec`, the prototype's
+    /// proof names the shape and its chain cell still holds (no own `exec`, the prototype's
     /// in a data slot, `RegExpExecProof`), and the exec fuse holds for that prototype, so the
     /// slot still holds the intrinsic. A `false` is no answer: the full proof decides.
     #[inline(always)]
     pub(super) fn steady_exec_holds(&self, intrinsics: &RegExpIntrinsics, proto: Value, shape: u32) -> bool {
-        let proven = intrinsics.exec_proof.get().is_some_and(|proof| proof.shape == shape && proof.epoch == crate::heap::prototype_layout_epoch());
+        let proven = intrinsics.exec_proof.get().is_some_and(|proof| proof.shape == shape && proof.cell.holds());
         proven
             && proto == intrinsics.prototype
             && self.heap.dependencies().fuses().intact(IntactFuse::RegExpExec, intrinsics.prototype) == Some(true)

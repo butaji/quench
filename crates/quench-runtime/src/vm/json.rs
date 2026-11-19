@@ -2101,78 +2101,7 @@ impl<H: Host> Vm<H> {
             w.output.extend_from_slice(raw.as_bytes());
             return Ok(true);
         }
-        if self.heap.object_record(value).is_some()
-            || self.heap.promise(value).is_some()
-            || self.heap.is_map(value)
-            || self.heap.is_set(value)
-        {
-            return self.json_serialize_object(p, value, state).map(|()| true);
-        }
-        if let Some(array) = self.heap.array(value) {
-            // An arguments object is an ordinary object to IsArray, so it serializes as one.
-            return if array.is_arguments_object() {
-                self.json_serialize_object(p, value, state)
-            } else {
-                self.json_serialize_array(p, value, state)
-            }
-            .map(|()| true);
-        }
-        match self.heap.get(value).cloned() {
-            _ if let Some(text) = self.heap.string(value).cloned()  => {
-                write_json_string(&text, &mut state.output);
-                Ok(true)
-            }
-            _ if self.heap.is_symbol(value) => Ok(false),
-            Some(Cell::BigInt(_)) => {
-                Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
-            }
-            None => Ok(false),
-            Some(Cell::Promise(_)) => {
-                unreachable!("heap.array, heap.promise and the collection accessors classify their values before this match")
-            }
-            _ if self.is_array(p, value)? => {
-                self.json_serialize_array(p, value, state).map(|()| true)
-            }
-            Some(Cell::Proxy { .. })
-            | Some(Cell::Date { .. })
-            | Some(Cell::Error(_))
-            | Some(Cell::ShadowRealm { .. })
-            | Some(Cell::WeakMap { .. })
-            | Some(Cell::WeakSet { .. })
-            | Some(Cell::WeakRef { .. })
-            | Some(Cell::FinalizationRegistry { .. })
-            | Some(Cell::RegExp { .. })
-            | Some(Cell::TypedArray { .. })
-            | Some(Cell::ArrayBuffer { .. })
-            | Some(Cell::DataView { .. })
-            | Some(Cell::TemporalDuration { .. })
-            | Some(Cell::TemporalPlainDate { .. })
-            | Some(Cell::TemporalPlainDateTime { .. })
-            | Some(Cell::TemporalPlainMonthDay { .. })
-            | Some(Cell::TemporalPlainYearMonth { .. })
-            | Some(Cell::TemporalZonedDateTime { .. })
-            | Some(Cell::TemporalInstant { .. })
-            | Some(Cell::WasmObject { .. })
-            | Some(Cell::WasmGlobal { .. })
-            | Some(Cell::WasmMemory { .. })
-            | Some(Cell::WasmTable { .. }) => {
-                self.json_serialize_object(p, value, state).map(|()| true)
-            }
-            Some(Cell::ArrayFromAsyncState(_))
-            | Some(Cell::AwaitState(_))
-            | Some(Cell::PromiseResolvingState { .. })
-            | Some(Cell::WasmElements(_))
-            | Some(Cell::WasmBits64(_))
-            | Some(Cell::WasmInstance(_))
-            | Some(Cell::WasmGc { .. })
-            | Some(Cell::WasmExtern(_))
-            | Some(Cell::AccessorPair { .. })
-            | Some(Cell::WasmTag { .. })
-            | Some(Cell::WasmException { .. })
-            | Some(Cell::WasmV128(_))
-            | Some(Cell::BindingReference { .. })
-            | Some(Cell::WasmHostFunction { .. }) => Ok(false),
-        }
+        self.json_serialize_heap_value(p, value, w)
     }
 
     /// SerializeJSONValue's last steps, for a value no earlier step writes: an object or
@@ -2184,15 +2113,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         w: &mut JsonWriter,
     ) -> JsonStep {
-        if let Some(text) = self.heap.string(value).cloned() {
-            write_json_string(&text, &mut w.output);
-            return Ok(true);
-        }
-        if self.heap.is_symbol(value) {
-            return Ok(false);
-        }
-        let is_array = if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some()
-            || self.heap.is_map(value) || self.heap.is_set(value) {
+        let is_array = if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
             false
         } else if let Some(array) = self.heap.array(value) {
             // An arguments object is an ordinary object to IsArray, so it serializes as one.
@@ -2319,7 +2240,7 @@ fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
         Some(C::BigInt(_)) => JsonForm::BigInt,
         Some(
             C::Object(_) | C::Array { .. } | C::Promise(_) | C::Proxy { .. } | C::Date { .. } | C::Error(_)
-            | C::Collection(_) | C::ShadowRealm { .. } | C::WeakMap { .. } | C::WeakSet { .. }
+            | C::Map { .. } | C::Set { .. } | C::ShadowRealm { .. } | C::WeakMap { .. } | C::WeakSet { .. }
             | C::WeakRef { .. } | C::FinalizationRegistry { .. } | C::RegExp { .. } | C::TypedArray { .. }
             | C::ArrayBuffer { .. } | C::DataView { .. } | C::TemporalDuration { .. }
             | C::TemporalPlainDate { .. } | C::TemporalPlainDateTime { .. } | C::TemporalPlainMonthDay { .. }
@@ -2328,7 +2249,7 @@ fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
         ) => JsonForm::Object,
         None
         | Some(
-            C::Function(_) | C::Iterator(_) | C::ArrayFromAsyncState(_) | C::AwaitState(_)
+            C::Symbol(_) | C::Function(_) | C::Iterator(_) | C::ArrayFromAsyncState(_) | C::AwaitState(_)
             | C::PromiseResolvingState { .. } | C::WasmElements(_) | C::WasmBits64(_) | C::WasmInstance(_)
             | C::WasmGc { .. } | C::WasmExtern(_) | C::AccessorPair { .. } | C::WasmTag { .. }
             | C::WasmException { .. } | C::WasmV128(_) | C::BindingReference { .. }

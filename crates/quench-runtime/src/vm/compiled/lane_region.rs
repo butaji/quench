@@ -4122,7 +4122,7 @@ impl Lowering<'_, '_> {
                     self.builder.def_var(variables.length, view.length);
                     let unproved = self.raw_const(Lane::I32, 0);
                     self.builder.def_var(variables.room, unproved);
-                    if (array.header..=array.back).any(|pc| super::native_calls::searches(&self.intrinsics, pc)) {
+                    if (array.header..=array.back).any(|pc| native_calls::searches(&self.intrinsics, pc)) {
                         let base = self.builder.use_var(variables.bits);
                         let held = self.helper_call(LaneHelper::PrototypesHoldNoIndex, &[base]);
                         let clear = self.raw_compare_imm(Relation::NotEqual, held, 0);
