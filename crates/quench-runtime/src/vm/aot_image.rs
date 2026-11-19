@@ -48,6 +48,8 @@ pub(crate) struct AotImage {
     pub(crate) heap_values: Vec<HeapValueRecipe>,
     /// Atom texts by `Symbol::Atom` key (atom numbers are per VM).
     pub(crate) atoms: Vec<Box<str>>,
+    /// The `(function, pc)` labels of `Symbol::BasePc` keys.
+    pub(crate) labels: Vec<(u32, u32)>,
 }
 
 /// One function of the image.
@@ -79,7 +81,7 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: ImageTa
     let functions = (0..program.function_count() as u32)
         .map(|id| lower_function(program, facts, target, id, &mut symbols))
         .collect::<Result<Vec<_>, String>>()?;
-    let (shapes, heap_values, atoms) = symbols.finish();
+    let (shapes, heap_values, atoms, labels) = symbols.finish();
     Ok(AotImage {
         fingerprint: super::compiled::ahead_program_fingerprint(program),
         build_id: super::compiled::AHEAD_BUILD_ID,
@@ -87,6 +89,7 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: ImageTa
         shapes,
         heap_values,
         atoms,
+        labels,
     })
 }
 
