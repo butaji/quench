@@ -9,7 +9,7 @@ pub(crate) enum LaneCompletion {
     /// No completion waits.
     #[default]
     None,
-    /// A frame's own call record returned this value (`dispatch_fast::frame_return_in_lane`): the
+    /// A frame's own call record returned this value (`dispatch_fast::frame_return`): the
     /// general loop returns it from the frame at that instruction.
     Returned(Value),
     /// A native's frameless callback completed with this value (`Completion::ReturnsToNative`):

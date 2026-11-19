@@ -402,8 +402,8 @@ script_handler! {
     pub(super) fn reflect_get_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // SAFETY: the window is registers of the running function, read before anything runs.
-        let window = unsafe { call_window_in_lane(r, i) };
-        if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted_in_lane(cx) {
+        let window = unsafe { lane_call_window(r, i) };
+        if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
             return exit(ip);
         }
         let read = match window {

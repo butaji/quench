@@ -147,7 +147,7 @@ impl<H: Host> Vm<H> {
             };
             let continuation = Continuation::suspend(frame, Completion::Await(Value::UNDEFINED), None, promise);
             let kind = AwaitKind::function(continuation);
-            let state = vm.heap.alloc_await_state(AwaitState::arm(kind, vm.realm.globals, promise));
+            let state = vm.armed_await_state(kind, promise);
             vm.with_call_roots([state], |vm| vm.start_await_job(p, state))?;
             Ok(promise)
         })
@@ -247,11 +247,53 @@ impl<H: Host> Vm<H> {
             AwaitKind::AsyncGeneratorAwait { generator }
             | AwaitKind::AsyncGeneratorYield { generator } => Some(*generator),
         };
-        let state = self.heap.alloc_await_state(AwaitState::arm(kind, self.realm.globals, promise));
+        let state = self.armed_await_state(kind, promise);
         // Host lifecycle observers can run before a reaction holds the state.
         self.with_call_roots([state, source], |vm| {
             vm.attach_await_reactions(p, state, promise, generator, source)
         })
+    }
+
+    /// An await state armed with `kind` in the current realm, settling `promise`: the spare
+    /// state (`spare_await_state`) where one waits, armed anew as `await_again` arms a spent
+    /// one, else a fresh one. The spare is spent and no reaction, job or continuation names
+    /// it (`keep_spare_await_state`), so arming it is indistinguishable from allocating.
+    fn armed_await_state(&mut self, kind: AwaitKind, promise: Value) -> Value {
+        let realm = self.realm.globals;
+        let spare = std::mem::replace(&mut self.spare_await_state, Value::UNDEFINED);
+        if !spare.is_undefined()
+            && let Some(state) = self.heap.await_state_mut(spare)
+        {
+            debug_assert!(matches!(state, AwaitState::Spent), "only a spent await state is kept spare");
+            *state = AwaitState::arm(kind, realm, promise);
+            return spare;
+        }
+        self.heap.alloc_await_state(AwaitState::arm(kind, realm, promise))
+    }
+
+    /// Keeps `state`, the await state of an async generator's `yield` whose fulfilled reaction
+    /// is running and has spent it (`resume_awaited`), as the spare the next await arms
+    /// (`armed_await_state`) instead of allocating, where no spare waits yet.
+    ///
+    /// Nothing names the state any more: `attach_await_reactions` made it both handlers of
+    /// one reaction, the one whose job is running, which reads it no further
+    /// (`run_promise_reaction` settles no capability for an await); the yield's frame stays
+    /// parked in its generator's record, not in the state; and the job's call roots, which
+    /// hold it until the job ends, only keep it alive. A host that observes promise lifecycles
+    /// keeps its fresh states, which its resources may be tied to.
+    pub(super) fn keep_spare_await_state(&mut self, state: Value) {
+        if self.spare_await_state.is_undefined()
+            && !self.host.observes_promise_lifecycle()
+            && self.heap.await_state(state).is_some_and(|state| matches!(state, AwaitState::Spent))
+        {
+            self.spare_await_state = state;
+        }
+    }
+
+    /// Lets the spare await state go (`spare_await_state`), so the collection before a
+    /// snapshot frees it: a snapshot holds no await state.
+    pub(crate) fn forget_spare_await_state(&mut self) {
+        self.spare_await_state = Value::UNDEFINED;
     }
 
     /// `enqueue_async_resume` of an activation that awaits again from the reaction of its last

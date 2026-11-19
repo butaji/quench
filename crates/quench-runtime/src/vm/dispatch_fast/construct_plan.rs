@@ -544,8 +544,8 @@ pub(super) fn initialize_stores_in_lane<H: Host>(
 }
 
 /// Where the lane continues after a returned construction (`return new C(...)`) made `this`
-/// in place: the innermost activation completed with it (`complete_activation_in_lane`), else
-/// the frame's own return of it (`frame_return_in_lane`).
+/// in place: the innermost activation completed with it (`lane_complete_activation`), else
+/// the frame's own return of it (`frame_return`).
 #[inline(always)]
 pub(super) fn return_constructed_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
     // The common return first, as a `Return` record takes it (`complete_plain_activation_in_lane`),
@@ -555,5 +555,5 @@ pub(super) fn return_constructed_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: I
     {
         return resumed;
     }
-    complete_activation_in_lane(cx, ip, this).unwrap_or_else(|| Resumed::Exit(frame_return_in_lane(unsafe { vm(cx) }, ip, this)))
+    lane_complete_activation(cx, ip, this).unwrap_or_else(|| Resumed::Exit(frame_return(unsafe { vm(cx) }, ip, this)))
 }

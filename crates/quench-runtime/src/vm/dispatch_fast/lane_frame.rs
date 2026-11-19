@@ -57,16 +57,7 @@ struct LaneHost {
     define: ElementDefiner,
     delete: PropertyDeleter,
     read_name: NameReader,
-    /// The `typeof` kind of a heap value, as the VM names it (`typeof_kind`), for a staged `typeof` row.
-    type_of: unsafe fn(*mut (), Value) -> Option<crate::staged::value::TypeofKind>,
-    /// The interned `typeof` result string of a name index in `TYPEOF_NAMES` (`typeof_names`).
-    typeof_name: unsafe fn(*mut (), u64) -> Option<Value>,
-    /// SetFunctionName of a function to a program atom through a cache site (`Vm::set_function_name`).
-    set_name: unsafe fn(*mut (), Value, u32, u16) -> Option<()>,
-    /// The values a keeping activation kept (`kept_values`): their count and the register
-    /// that holds the first, past the function's registers.
-    kept_values: KeptValues,
-    /// What an `await`'s source conversion asks (`staged_ops::awaited_value_in_lane`).
+    /// What an `await`'s source conversion asks (`staged::await_source`, `AwaitSource::of`).
     awaits: AwaitSource,
     /// What the by-name load the frame runs resolved its name to, if it runs one.
     name: Option<NameBinding>,

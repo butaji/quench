@@ -3701,7 +3701,7 @@ macro_rules! next {
 
 /// Where the lane continues once an activation completes (`complete_activation_in_lane`): after
 /// the call in its caller, with these registers and view, or out of the lane at a frame's
-/// call record that returns the completion (`frame_return_in_lane`).
+/// call record that returns the completion (`frame_return`).
 enum Resumed {
     At(Registers, Ip, Carried),
     Exit(Ip),
@@ -4465,9 +4465,9 @@ fn relation_outcome<H: Host>(operator: u32, left: Value, right: Value) -> Option
 }
 
 /// Return `value` from the running function at the record `ip`, as `Return` would: the
-/// innermost activation completes (`complete_activation_in_lane`); a script frame the lane
-/// pushed returns in place (`return_script_frame_in_lane`); any other VM frame returns the value
-/// from this record (`frame_return_in_lane`).
+/// innermost activation completes (`lane_complete_activation`); a script frame the lane
+/// pushed returns in place (`lane_return_script_frame`); any other VM frame returns the value
+/// from this record (`frame_return`).
 macro_rules! lane_return_value {
     ($cx:expr, $ip:expr, $value:expr) => {
         lane_return_value!($cx, $ip, $value, NOT_LEAF)
@@ -4530,7 +4530,7 @@ fn return_value_other_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: V
         // written the Return register. Publish it if this frame cannot retire.
         return Resumed::Exit(return_script_frame_in_lane(cx, ip, value, true));
     }
-    Resumed::Exit(frame_return_in_lane(unsafe { vm(cx) }, ip, value))
+    Resumed::Exit(frame_return(unsafe { vm(cx) }, ip, value))
 }
 
 
@@ -11719,7 +11719,7 @@ macro_rules! lane_plain_activation {
         // A `with` scope refuses every cached target (`LaneStack::refuse_cached_calls`), and
         // only an admitted one reaches here.
         debug_assert!(!vm.with_scope_entered);
-        if returns && !returning_call_admitted_in_lane(cx) {
+        if returns && !returning_call_admitted(cx) {
             return exit(ip);
         }
         // SAFETY: the record's window of `r` holds its values.
@@ -11947,7 +11947,7 @@ script_handler! {
         let argc = ImmediateLayout::argument_count(i.imm());
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         let value = if target.entry.activates()
-            || returns && !returning_call_admitted_in_lane(cx)
+            || returns && !returning_call_admitted(cx)
         {
             None
         } else {
@@ -11960,8 +11960,8 @@ script_handler! {
             // program's target takes the general form (`activate_in_lane`). A callee that drops
             // the values past its parameters is passed those alone, as `activate_in_lane` passes them.
             if (argc > target.params && !target.drops_extra_arguments())
-                || !activation_room_in_lane(vm, target)
-                || (returns && !returning_call_admitted_in_lane(cx))
+                || !lane_activation_room(vm, target)
+                || (returns && !returning_call_admitted(cx))
                 || vm.with_scope_entered
             {
                 sibling!(script_call_general_miss::<H>, r, ip, Carried::script_in(cx, view))
@@ -12077,7 +12077,7 @@ script_handler! {
         };
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         if ImmediateLayout::argument_count(i.imm()) > target.params
-            || (returns && !returning_call_admitted_in_lane(cx))
+            || (returns && !returning_call_admitted(cx))
             || vm.with_scope_entered
             || vm.host.observes_promise_lifecycle()
         {
@@ -12859,7 +12859,7 @@ script_handler! {
             vm.note_site_callee(&i.call_link, super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Forwarded { through: r.get(i.b), callee }, function });
         }
         if let Some(FunctionKind::Native(native)) = kind {
-            if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted_in_lane(cx) {
+            if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
                 return exit(ip);
             }
             let value = native_value_in_lane(cx, ip, i, native, callee, receiver, args);
@@ -13076,7 +13076,7 @@ fn activate_kept_in_lane<H: Host, const MAY_CROSS: bool>(
     let returns = unsafe { (*ip).a } & crate::bytecode::RETURN_REGISTER != 0;
     if !target.forwards()
         && (argc <= target.params || target.drops_extra_arguments())
-        && (!returns || returning_call_admitted_in_lane(cx))
+        && (!returns || returning_call_admitted(cx))
         && !vm.with_scope_entered
         && activation_room_in_lane(vm, target)
     {
@@ -13119,7 +13119,7 @@ fn passed_frame_call_in_lane<H: Host>(
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-    if !unsafe { (*cx).script_calls } || returns && !returning_call_admitted_in_lane(cx) {
+    if !unsafe { (*cx).script_calls } || returns && !returning_call_admitted(cx) {
         return Resumed::Exit(exit(ip));
     }
     let Some(target) = vm.in_loop_call_target(code, callee) else {
@@ -13236,11 +13236,11 @@ fn native_call_value_in_lane<H: Host>(
     native: Native,
 ) -> Resumed {
     // A call that returns its result completes its caller: an activation in the lane, or
-    // the frame in the general loop (`frame_return_in_lane`).
+    // the frame in the general loop (`frame_return`).
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     // The running function is the same activation or, once the call made activations
-    // frames (`call_native_in_lane`), the frame it became.
-    if returns && !returning_call_admitted_in_lane(cx) {
+    // frames (`lane_call_native`), the frame it became.
+    if returns && !returning_call_admitted(cx) {
         return Resumed::Exit(exit(ip));
     }
     // SAFETY: the call's window is registers of the running function, which the native
@@ -13366,7 +13366,7 @@ fn passed_linked_call_in_lane<H: Host>(
     if !admits_activation_in_lane(&target)
         || target.forwards()
         || (argc > target.params && !target.drops_extra_arguments())
-        || (returns && !returning_call_admitted_in_lane(cx))
+        || (returns && !returning_call_admitted(cx))
         || vm.with_scope_entered
         || !activation_room_in_lane(vm, &target)
     {
@@ -13658,7 +13658,7 @@ fn native_complete_in_lane<H: Host>(
             if unsafe { !(*cx).inline_calls && (*cx).script_calls } {
                 return Resumed::Exit(return_script_frame_in_lane(cx, ip, value, true));
             }
-            return Resumed::Exit(frame_return_in_lane(unsafe { vm(cx) }, ip, value));
+            return Resumed::Exit(frame_return(unsafe { vm(cx) }, ip, value));
         };
         return resumed;
     }
@@ -14078,7 +14078,7 @@ script_handler! {
             if let Some(resumed) = complete_activation_in_lane(cx, ip, this) {
                 resume!(cx, resumed)
             }
-            return frame_return_in_lane(vm, ip, this);
+            return frame_return(vm, ip, this);
         }
         let target = *target;
         if target.forwards() {
@@ -14112,8 +14112,8 @@ script_handler! {
             }
             // The frame's own construct: the general loop returns the receiver from it, unless
             // proper tail calls send it to the activation below, which leaves for that loop.
-            if returning_call_admitted_in_lane(cx) {
-                return frame_return_in_lane(vm, ip, this);
+            if returning_call_admitted(cx) {
+                return frame_return(vm, ip, this);
             }
         }
         let activated = if target.entry == CallEntry::Environment {
@@ -14290,7 +14290,7 @@ fn activate_keeping_window_in_lane<H: Host, const GENERAL: bool>(
     // SAFETY: `ip` is a record of the running view.
     let i = unsafe { &*ip };
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-    if (returns && !returning_call_admitted_in_lane(cx)) || vm.with_scope_entered {
+    if (returns && !returning_call_admitted(cx)) || vm.with_scope_entered {
         return Err(exit(ip));
     }
     let argc = ImmediateLayout::argument_count(i.imm());
@@ -14331,7 +14331,7 @@ fn activate_gathering_in_lane<H: Host>(
     // SAFETY: `ip` is a record of the running view.
     let i = unsafe { &*ip };
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-    if (returns && !returning_call_admitted_in_lane(cx)) || vm.with_scope_entered {
+    if (returns && !returning_call_admitted(cx)) || vm.with_scope_entered {
         return Err(exit(ip));
     }
     let view = target.forms & TARGET_REST_VIEW != 0;
@@ -14385,7 +14385,7 @@ script_handler! {
                 }
                 // The frame's own construct, which `finishes_construction_in_lane` admitted: the
                 // general loop returns the receiver from it.
-                frame_return_in_lane(unsafe { vm(cx) }, ip, this)
+                frame_return(unsafe { vm(cx) }, ip, this)
             }
             Err(Some(next)) => next,
             Err(None) => {
@@ -14407,13 +14407,13 @@ enum KeepingConstruction {
 
 /// Whether a construction at `i` may complete in the lane with a receiver its body finished
 /// without an activation: into a register, into the activation that returns it, or from the
-/// frame's own returning construct where `returning_call_admitted_in_lane` admits it, as
-/// `script_construct_miss` completes one.
+/// frame's own returning construct where `returning_call_admitted` admits it, as
+/// `lane_script_construct` completes one.
 #[inline(always)]
 fn finishes_construction_in_lane<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> bool {
     i.a & crate::bytecode::RETURN_REGISTER == 0
-        || !unsafe { vm(cx) }.lane_stack.activations().is_empty()
-        || returning_call_admitted_in_lane(cx)
+        || !unsafe { vm(cx) }.lane_stack.activations.is_empty()
+        || returning_call_admitted(cx)
 }
 
 /// The receiver a forwarding constructor's holding plan finishes with its recorded fields
@@ -14957,7 +14957,7 @@ fn activate_in_lane<H: Host>(
     // activation's return does in the lane. A host permitting proper tail calls
     // sends strict terminal calls to the general dispatch path instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-    if returns && !returning_call_admitted_in_lane(cx) {
+    if returns && !returning_call_admitted(cx) {
         return Err(exit(ip));
     }
     if vm.with_scope_entered {
@@ -16201,7 +16201,7 @@ fn activate_environment_in_lane<H: Host>(
         return Err(exit(ip));
     };
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-    if returns && !returning_call_admitted_in_lane(cx) {
+    if returns && !returning_call_admitted(cx) {
         return Err(exit(ip));
     }
     // SAFETY: the program store keeps a derived view alive with its program, and an
@@ -16544,7 +16544,7 @@ fn activate_keeping_in_lane<H: Host, const MAY_CROSS: bool>(
     // activation's return does in the lane. A host permitting proper tail calls
     // sends strict terminal calls to the general dispatch path instead.
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
-    if returns && !returning_call_admitted_in_lane(cx) {
+    if returns && !returning_call_admitted(cx) {
         return Err(exit(ip));
     }
     if argc > usize::from(u16::MAX)
@@ -16897,15 +16897,15 @@ fn complete_activation_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut val
     if let Some(ActivationKind::Script(ScriptActivation { completion: Completion::ToWasm, .. })) = vm.lane_stack.activations().last().map(|activation| activation.kind()) {
         return Some(lane_complete_to_wasm(cx, ip, value));
     }
-    if proxy_traps::trap_result_needs_general_path(vm, vm.lane_stack.activations().last(), value) {
-        return Some(Resumed::Exit(frame_return_in_lane(vm, ip, value)));
+    if proxy_traps::trap_result_needs_general_path(vm, vm.lane_stack.activations.last(), value) {
+        return Some(Resumed::Exit(frame_return(vm, ip, value)));
     }
     // A settling activation whose promise's resolution would observe the value returns it
     // from its frame, whose pending call resolves the promise (`settled_then_in_lane`); else the
     // `then` read here is the one its resolution uses.
     let mut then = Value::UNDEFINED;
-    if settling(vm.lane_stack.activations().last()?) {
-        let Some(read) = settled_then_in_lane(vm, value) else { return Some(Resumed::Exit(frame_return_in_lane(vm, ip, value))) };
+    if settling(vm.lane_stack.activations.last()?) {
+        let Some(read) = lane_settled_then(vm, value) else { return Some(Resumed::Exit(frame_return(vm, ip, value))) };
         then = read;
     }
     let mut activation = vm.lane_stack.pop_activation()?;
@@ -16958,8 +16958,8 @@ fn complete_activation_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut val
         }
         // The call returns its callee's completion: its caller completes in turn, an
         // activation here or the frame in the general loop, which the exit hands it to.
-        if caller_returns_in_frame_in_lane(vm, value, &mut then) {
-            return Some(Resumed::Exit(frame_return_in_lane(vm, activation.call(), value)));
+        if caller_returns_in_frame(vm, value, &mut then) {
+            return Some(Resumed::Exit(frame_return(vm, activation.call, value)));
         }
         activation = vm.lane_stack.pop_activation().expect("the caller activation is the innermost");
     }
@@ -16982,7 +16982,7 @@ fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value)
         Some(_) => None,
     };
     let Some(encoded) = encoded else {
-        return Resumed::Exit(frame_return_in_lane(vm, ip, value));
+        return Resumed::Exit(frame_return(vm, ip, value));
     };
     vm.lane_stack.to_wasm.pop();
     let activation = vm.lane_stack.pop_activation().expect("the import's activation is the innermost");
@@ -17787,13 +17787,13 @@ script_handler! {
     /// `script_call_full_miss` at a site whose read call made a memo (`memoize_read_in_lane`): the
     /// memo's hits, of its shape `SHAPE` (`MemoRead::shape`), answer the call as the read
     /// target's would. A call the memo does not answer takes the full form, which the site
-    /// then keeps; a run that admits no read call (`returning_call_admitted_in_lane`) takes it
+    /// then keeps; a run that admits no read call (`returning_call_admitted`) takes it
     /// once.
     fn script_call_memo_miss<SHAPE: u8>(cx, r, ip, i, view) {
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         // A run that admits no read call leaves the memo to the next.
-        if !unsafe { (*cx).script_calls } || (returns && !returning_call_admitted_in_lane(cx)) {
-            sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
+        if !unsafe { (*cx).script_calls } || (returns && !returning_call_admitted(cx)) {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
         }
         let Some(value) = (unsafe { memo_read_in_lane::<H, SHAPE>(cx, r, i) }) else {
             requicken::<H>(ip, call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
@@ -17841,7 +17841,7 @@ fn returning_kind(instruction: WideInstruction) -> Option<u8> {
 script_handler! {
     /// A value record that returns its result from the frame (`returning_kind`): the value
     /// as the record's own handler computes it, then the activation's completion, or the VM
-    /// frame's return of it from the general loop (`frame_return_in_lane`). A value the
+    /// frame's return of it from the general loop (`frame_return`). A value the
     /// handler does not compute takes the general path.
     fn returning_miss<KIND: u8, LEAF: u8>(cx, r, ip, i, view) {
         let value = unsafe {
@@ -18079,7 +18079,7 @@ script_handler! {
         let admitted = |target: &(ProgramId, u32, Value)| {
             // SAFETY: the context outlives the lane run.
             let script_calls = unsafe { (*cx).script_calls };
-            script_calls && (!returns || returning_call_admitted_in_lane(cx))
+            script_calls && (!returns || returning_call_admitted(cx))
         };
         let Some(target) = target.filter(admitted) else {
             if let Some(resumed) = start_async_call_in_lane(cx, r, ip, i, callee) {
@@ -18330,14 +18330,14 @@ fn push_frame_call_in_lane<H: Host>(
 /// run of the general loop. Lane activations become frames first, as for any frame call.
 /// `None` leaves the call to the native: a run that is not a frame's own JavaScript run
 /// (`LaneContext::script_calls`), a callee native code may run, a call completing a caller
-/// the lane does not complete (`returning_call_admitted_in_lane`), or another program the lane
+/// the lane does not complete (`returning_call_admitted`), or another program the lane
 /// does not admit.
 #[inline(never)]
 fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     if !unsafe { (*cx).script_calls }
-        || (returns && !returning_call_admitted_in_lane(cx))
+        || (returns && !returning_call_admitted(cx))
         || vm.execution_mode == ExecutionMode::Compiled
     {
         return None;
@@ -18515,7 +18515,7 @@ fn frame_construct_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     if !pushable
         || !unsafe { (*cx).script_calls && (*cx).script_constructs }
         || vm.construct_target.is_some()
-        || returns && !returning_call_admitted_in_lane(cx)
+        || returns && !returning_call_admitted(cx)
     {
         return exit(ip);
     }
@@ -18616,7 +18616,7 @@ fn enter_script_frame_in_lane<H: Host>(cx: *mut LaneContext<H>, frame: usize) ->
 /// in-loop `new` substitutes its receiver for a non-object result, and the caller continues
 /// with the value in the call's register. A call that returns its callee's completion
 /// completes its caller in turn: another pending caller here, or the loop's own frame,
-/// which the general loop returns from at that call (`frame_return_in_lane`). A call into
+/// which the general loop returns from at that call (`frame_return`). A call into
 /// another program returns to the caller's, as the loop's return restores it.
 #[inline(never)]
 fn return_script_frame_in_lane<H: Host>(
@@ -18639,7 +18639,7 @@ fn return_script_frame_in_lane<H: Host>(
             if !retired {
                 return exit(exit_ip);
             }
-            return frame_return_in_lane(vm, exit_ip, value);
+            return frame_return(vm, exit_ip, value);
         }
         let mut call = pending.pop().expect("a pending call names the returning frame");
         let completed = vm.frames.pop().expect("the returning frame is the innermost");

@@ -216,6 +216,9 @@ pub(super) enum Declined {
     Window,
     /// The cell's facts do not describe the callee (not yet published, or another function's).
     Facts,
+    /// A returning call: its callee's activation under a host that makes proper tail calls must not
+    /// grow the stack, which only the helper row's own admission (`returning_call_admitted`) knows.
+    Returning,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -165,7 +165,7 @@ fn call_admitted<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>, call: &BodyCall, 
         return Err(miss(vm, reason));
     }
     if vm.with_scope_entered { return Err(miss(vm, Miss::WithScope)); }
-    if call.site.returns && !returning_call_admitted_in_lane(cx) { return Err(miss(vm, Miss::CallReturningNotAdmitted)); }
+    if call.site.returns && !returning_call_admitted(cx) { return Err(miss(vm, Miss::CallReturningNotAdmitted)); }
     Ok(())
 }
 

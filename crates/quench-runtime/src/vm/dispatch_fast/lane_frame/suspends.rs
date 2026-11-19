@@ -30,6 +30,9 @@ pub(in crate::vm::dispatch_fast) enum Suspender {
     Request,
     /// The generator a job's lane run is rooted in (`LaneRoot::Job`).
     JobRoot(JobRoot),
+    /// An async body whose caller's run settles its call's promise (`Completion::SettlesPromise`),
+    /// which the await hands its frame to the continuation (`generator_yields::suspend_settling`).
+    Settling,
 }
 
 impl Suspender {
@@ -49,12 +52,35 @@ impl Suspender {
         }
     }
 
+    /// How the running activation of `cx` suspends an `await`, by the completion it runs with: a
+    /// request parks, a settling body hands its frame over, and a promise job's run suspends into
+    /// its owner. `None` where it suspends in place by none, and the general path suspends its frame.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn of_await<H: Host>(cx: *mut LaneContext<H>) -> Option<Self> {
+        let vm = unsafe { vm(cx) };
+        let activation = vm.lane_stack.activations.last()?;
+        let script = activation.script()?;
+        match script.completion {
+            Completion::AsyncRequest => Some(Self::Request),
+            Completion::SettlesPromise => {
+                // SAFETY: the call record belongs to the caller's live view.
+                let returns = unsafe { (*activation.call).a } & crate::bytecode::RETURN_REGISTER != 0;
+                (!script.forwards && !returns).then_some(Self::Settling)
+            }
+            Completion::ResumesJob => match unsafe { (*cx).root } {
+                LaneRoot::Job(job) => Some(Self::JobRoot(job)),
+                LaneRoot::Frame(_) => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Whether the activation that suspends is async: a request's is an async generator, a job
-    /// root's as its kind says, and a window's is a sync generator.
+    /// root's as its kind says, and a window's is a sync generator. A settling body is async.
     fn asynchronous(self) -> bool {
         match self {
             Self::Window => false,
-            Self::Request => true,
+            Self::Request | Self::Settling => true,
             Self::JobRoot(job) => job.kind == SuspendKind::AsyncGenerator,
         }
     }
@@ -132,8 +158,8 @@ pub(in crate::vm::dispatch_fast) fn yield_star_kind(i: &LaneInstruction) -> Susp
 pub(in crate::vm::dispatch_fast) fn suspension_row_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction,
     (kind, suspender): (Suspension, Suspender)) -> Resumed {
     let mut stage = Concrete::new(std::ptr::null());
-    // Only an async activation's conversion resolves promises through the lane's host.
-    let mut frame = if suspender.asynchronous() {
+    // Only an async activation's or an await's conversion resolves promises through the lane's host.
+    let mut frame = if suspender.asynchronous() || kind == Suspension::Await {
         LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx)
     } else {
         LaneFrame::<ACC_NONE>::new(r, Carried::script(cx))
@@ -143,7 +169,7 @@ pub(in crate::vm::dispatch_fast) fn suspension_row_in_lane<H: Host>(cx: *mut Lan
     match crate::staged::suspension_step(&mut stage, &mut frame, kind, destination, i.b) {
         Step::Value(_) => Resumed::At(r, following(ip), Carried::script(cx)),
         Step::Control(LaneControl::Suspend(suspending)) =>
-            super::super::generator_yields::suspend_at_in_lane(cx, ip, suspender, suspending),
+            super::super::generator_yields::lane_suspend_at(cx, r, ip, suspender, suspending),
         Step::Control(LaneControl::Resumed(resumed)) => resumed,
         Step::Control(LaneControl::Edge(_)) => unreachable!("a suspension row takes no edge"),
         Step::Unresolved => Resumed::Exit(exit(ip)),

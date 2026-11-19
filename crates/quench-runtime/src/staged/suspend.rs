@@ -6,11 +6,11 @@
 //! resumes into and, for `yield*`, the delegate's result and that it resumes at this instruction.
 //!
 //! The interpreter's frame (`Vm::staged_suspend`) answers every call-out and the effect, so the
-//! general step runs these rows. The lane runs the `yield` and `yield*` rows on its own frame
-//! (`dispatch_fast::lane_frame::suspension_row_in_lane`), which answers the effect with its in-place
-//! suspension and declines, before any effect, a step it cannot finish; it converts an `await`'s
-//! source by the same `await_source` over its own PromiseResolve, which observes nothing
-//! (`dispatch_fast::awaited_value_in_lane`). The emit and stencil
+//! general step runs these rows. The lane runs the `yield` and `yield*` rows, and an async
+//! generator request's `await`, on its own frame (`dispatch_fast::lane_frame::lane_suspension`),
+//! which answers the effect with its in-place suspension and declines, before any effect, a step
+//! it cannot finish; its `await`s convert their source by the same `await_source` over its own
+//! PromiseResolve, which observes nothing. The emit and stencil
 //! frames answer none of the call-outs yet, so the row stays unresolved there and the tier exits at
 //! its exact PC for the interpreter to suspend.
 use super::{CallFrame, Operation, Register, Stage, Step};
@@ -141,7 +141,7 @@ fn yield_value<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, (destina
 /// and unreachable (the resume reads the value itself, `Vm::enqueue_async_resume`). `None` where
 /// the frame cannot tell an object or resolve it, or the resolution raised.
 #[inline(always)]
-pub(crate) fn await_source<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, awaited: S::Word) -> Option<S::Word> {
-    let object = frame.object_test(stage, awaited)?;
+pub(super) fn await_source<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, awaited: S::Word) -> Option<S::Word> {
+    let object = frame.object_like(stage, awaited)?;
     stage.choose_leaving(object, |stage| frame.promise_resolve(stage, awaited), |_| Some(awaited))
 }

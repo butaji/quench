@@ -549,7 +549,7 @@ impl<H: Host> Vm<H> {
             self.async_from_sync_iterator_proto,
             self.regexp_proto,
             self.reused_iterator_result,
-            self.shared_entry_pair,
+            self.spare_await_state,
         ]);
         // The active realm's top-level lexical bindings, then every inactive realm's.
         roots.extend(self.realm.global_lexical_bindings.values().copied());

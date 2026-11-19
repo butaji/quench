@@ -59,11 +59,11 @@ impl<H: Host> Vm<H> {
             && !resume.rejected
         {
             self.spend_await(state);
+            self.keep_spare_await_state(state);
             if let Some(record) = self.generator_record_mut(generator) {
                 record.stop();
             }
-            let result = self.iterator_result(value, false)?;
-            return self.promise_resolve_value(p, resume.promise, result);
+            return self.resolve_iterator_result(p, resume.promise, value, false);
         }
         let how = if resume.rejected {
             JobResume::Throws(JsError::thrown(value, "await rejected".into()))

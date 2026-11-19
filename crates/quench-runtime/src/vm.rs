@@ -2031,6 +2031,9 @@ pub(crate) struct Vm<H> {
     /// That an iterator prototype's chain lacks a name (`Vm::iterator_lacks_property`): the
     /// prototype, the name (`PropertyKey::key32`) and the `prototype_layout_epoch` it was proved under.
     iterator_absence_proof: std::cell::Cell<Option<(Value, u32, u64)>>,
+    /// That the realm's `%Object.prototype%` chain lacks `then` (`Vm::resolve_iterator_result`):
+    /// the prototype and the `prototype_layout_epoch` it was proved under.
+    then_absence_proof: Option<(Value, u64)>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
     /// The `then` a resolution read from promises of one layout (`Vm::memoized_resolution_then`).
@@ -2159,13 +2162,10 @@ pub(crate) struct Vm<H> {
     /// The one `{ value, done }` result a lane iterator step reuses (`Vm::reused_iterator_result`),
     /// `undefined` until the first; cleared with `iterator_result_header`.
     reused_iterator_result: Value,
-    /// The one `[key, value]` pair a for-of step over entries reuses when the step's value goes
-    /// only to an array pattern (`Vm::iterator_item_value`), `undefined` until the first;
-    /// cleared with `reused_iterator_result`.
-    shared_entry_pair: Value,
-    /// Whether the entry step running now may yield `shared_entry_pair`
-    /// (`iterator_step_reads_miss`).
-    share_entry_pair: bool,
+    /// A spent await state no reaction, job or continuation names, which the next await
+    /// arms instead of allocating one (`Vm::armed_await_state`); `undefined` when there is
+    /// none. A root, so it outlives collections; cleared with the heap it belongs to.
+    spare_await_state: Value,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
     /// field-cache invalidation clears them.
@@ -3066,6 +3066,7 @@ impl<H: Host> Vm<H> {
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
         self.iterator_absence_proof.set(None);
+        self.then_absence_proof = None;
         self.promise_species_proof.take();
         self.promise_then_memo.take();
         self.heap.dependencies_mut().retire_all();
@@ -3131,7 +3132,7 @@ impl<H: Host> Vm<H> {
         self.closure_templates.fill(None);
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
-        self.shared_entry_pair = Value::UNDEFINED;
+        self.spare_await_state = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_header = None;

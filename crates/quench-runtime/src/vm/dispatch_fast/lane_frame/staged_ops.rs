@@ -228,7 +228,11 @@ impl AwaitSource {
 
 impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
     /// Whether `value` is an object, by the lane context's VM; `None` without a context.
-    fn object_test(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
+    fn object_like(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
+        // A value outside the heap is no object; only a cell asks the lane context.
+        if !Value::from_bits(value).is_heap() {
+            return Some(false);
+        }
         let host = self.host?;
         Some((host.awaits.object_like)(host.cx, Value::from_bits(value)))
     }
@@ -261,13 +265,4 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
         -> Option<LaneControl> {
         self.suspends?.in_place(self.registers, step).map(LaneControl::Resumed)
     }
-}
-
-/// What `await` of `awaited` waits on in the lane context `cx` (registers `r`): the staged
-/// conversion (`staged::await_source`) over the lane's own PromiseResolve. `None` leaves a
-/// conversion that could run guest code, or throw into the frame's handlers, to the general path.
-pub(in crate::vm::dispatch_fast) fn awaited_value_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, awaited: Value) -> Option<Value> {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
-    crate::staged::await_source(&mut stage, &mut frame, awaited.to_bits()).map(Value::from_bits)
 }
