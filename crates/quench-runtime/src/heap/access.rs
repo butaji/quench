@@ -276,10 +276,7 @@ impl Heap {
             // store writes no reference.
             unsafe { self.iterator_records.get_live_mut_unbarriered(record_id) }
         } else {
-            match self.get_mut_unbarriered(value) {
-                Some(Cell::Iterator(iterator)) => &mut **iterator,
-                _ => return,
-            }
+            return;
         };
         let IteratorRecord { index, ext, .. } = record;
         ext.store_position(index, position);

@@ -17,8 +17,6 @@ use cranelift_frontend::FunctionBuilder;
 
 /// The proof's place above the slot in its entry's slot word, whose low half the slot fills.
 const STORE_CLASS_SHIFT: u32 = u16::BITS;
-/// The entry's slot word among its stored words.
-const STORE_CLASS_WORD: usize = CACHE.slot_offset / size_of::<u32>();
 
 /// The store class of `value` that a proof names, or `None`: `SlotType::of(value)` filtered to
 /// the four classes a proof records (an int32, a direct object, null, undefined). Those are the
@@ -44,7 +42,7 @@ pub(super) fn record_store_class<H: Host>(vm: &mut Vm<H>, site: u16, value: Valu
     if !vm.field_cache_records(index) {
         return;
     }
-    let word = &mut vm.field_caches.stored_mut(index)[STORE_CLASS_WORD];
+    let word = &mut vm.field_caches.stored_mut(index).slot;
     let recorded = (*word & !(super::super::object::FIELD_BYTE << STORE_CLASS_SHIFT)) | ((class as u32) << STORE_CLASS_SHIFT);
     if *word != recorded {
         *word = recorded;

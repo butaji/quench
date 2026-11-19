@@ -804,7 +804,7 @@ impl<H: Host> Vm<H> {
                     let mut object = Self::empty_object(proto);
                     vm.capture_constructed_name(&mut object, callee, callee == new_target);
                     let start = object.shape();
-                    let object = vm.heap.alloc(Cell::Object(object));
+                    let object = vm.heap.alloc_object(object);
                     // `callee`'s body runs next on it: its constant layout and the storage
                     // `new_target`'s receivers reach (`preshaped_receiver`).
                     vm.preshape_receiver(object, start, callee, new_target);

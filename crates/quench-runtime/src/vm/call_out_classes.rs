@@ -118,7 +118,7 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.programs.import_meta(program) {
             return Ok(value);
         }
-        let value = self.heap.alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        let value = self.heap.alloc_object(Self::empty_object(Value::NULL));
         if let Some(source_name) = self.programs.source_name(program).map(str::to_owned) {
             let url = self.host.import_meta_url(&source_name);
             let url = self.heap.alloc_string(url.into());

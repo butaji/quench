@@ -63,7 +63,7 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: as `steady_instanceof`: the memo names the slot of `prototype` in the shape it holds.
         let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
-        Some((object, ProtoLink::object_record(prototype.direct_object_index()?).bits(), slot))
+        Some((object, ProtoLink::object_record(prototype.direct_object_index()?)?.bits(), slot))
     }
 
     /// The encoded `prototype` link `instanceof constructor` tests a chain for, where the steady case proved

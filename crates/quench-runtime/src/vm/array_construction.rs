@@ -31,9 +31,9 @@ impl<H: Host> Vm<H> {
         if length_units <= crate::heap::MAX_DENSE_ARRAY_HOLE_LENGTH {
             return Some(self.heap.alloc_literal_array(prototype, length_units, |_| Value::DELETED));
         }
-        let array = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
-        });
+        let array = self
+            .heap
+            .alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()));
         self.heap.sparse_set_length(array, length as usize);
         Some(array)
     }

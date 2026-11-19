@@ -36,9 +36,9 @@ fn prototype_references_round_trip_through_every_family() {
         Value::heap(0),
         Value::heap(super::MAX_HEAP_CELLS as u32 - 1),
         Value::direct_object(0),
-        Value::direct_object(super::RECORD_SPACE_CAPACITY as u32 - 1),
+        Value::direct_object(super::PROTO_RECORD_WINDOW as u32 - 1),
         Value::direct_array(0),
-        Value::direct_array(super::RECORD_SPACE_CAPACITY as u32 - 1),
+        Value::direct_array(super::PROTO_RECORD_WINDOW as u32 - 1),
     ] {
         let mut object = Object::new(proto);
         assert_eq!(object.proto(), proto);
