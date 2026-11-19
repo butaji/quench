@@ -654,6 +654,9 @@ struct Lowering<'a, 'f> {
     loop_strings: Vec<LoopString>,
     /// The variables each held string's facts live in, by register (`loop_strings`).
     string_vars: BTreeMap<Register, StringVariables>,
+    /// The unit a string element read left for the comparison at the next PC, which compares it
+    /// as a unit and never makes the one-character string (`Lowering::unit_compare`).
+    pending_unit: Option<PendingUnit>,
     /// The shapes loops proved of their invariant receivers on their entering edges (`loop_receivers`).
     loop_shapes: Vec<loop_receivers::LoopShape>,
     /// Whether no operation of the unit may move an array's backing or the array record table
@@ -1226,6 +1229,29 @@ impl<'a, 'f> Lowering<'a, 'f> {
         })
     }
 
+    /// The unit's block leaders (`leaders`), made once for the unit.
+    fn unit_leaders(&self) -> &CompoundBitSet {
+        self.unit_leaders.get_or_init(|| std::rc::Rc::new(leaders(&self.unit.instructions)))
+    }
+
+    /// The one-unit string constant `operand` names, for a strict comparison that decides on its unit
+    /// (`Lowering::unit_compare`).
+    fn one_unit_constant(&self, operand: Operand) -> Option<u16> {
+        if operand.kind()? != OperandKind::Constant { return None; }
+        match self.program.constants.get(usize::from(operand.payload()))? {
+            crate::bytecode::Constant::String(text) => {
+                let mut units = text.encode_utf16();
+                let unit = units.next()?;
+                units.next().is_none().then_some(unit)
+            }
+            crate::bytecode::Constant::StringUnits(units) => match units[..] {
+                [unit] => Some(unit),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Whether unit `register` is live at unit `pc`. Without unit masks: the frame that owns
     /// it is in the chain of frames `pc` runs in, and its function's masks keep it live at
     /// the frame's own PC there (the PC itself for the innermost, its call's for each frame
@@ -1285,6 +1311,18 @@ impl<'a, 'f> Lowering<'a, 'f> {
             _ => false,
         }
     }
+}
+
+/// A string element read whose unit its next instruction compares with a one-unit constant
+/// (`Lowering::unit_compare`): the register the read would define, the unit it read, and the
+/// constant unit and sense of the comparison.
+#[derive(Clone, Copy)]
+struct PendingUnit {
+    pc: usize,
+    register: Register,
+    unit: ir::Value,
+    constant: u16,
+    negated: bool,
 }
 
 /// The PCs that begin basic blocks: the entry, every jump target and every instruction
@@ -1939,7 +1977,7 @@ pub(super) fn lower(
         prototype_clear: BTreeMap::new(),
         int_only: BTreeSet::new(),
         construct_ready: Vec::new(),
-        loop_arrays: Vec::new(), loop_strings: Vec::new(), string_vars: BTreeMap::new(), loop_shapes: Vec::new(), arrays_fixed: false,
+        loop_arrays: Vec::new(), loop_strings: Vec::new(), string_vars: BTreeMap::new(), pending_unit: None, loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
         views,
         entry_bounds,
