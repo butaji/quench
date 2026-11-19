@@ -329,7 +329,7 @@ impl<H: Host> Vm<H> {
 
     /// An iteration or spread `step` of its operand values, or a receiver's constant fields
     /// test: the value it defines, if any (`AppendArray` defines none).
-    fn protocol_step(&mut self, p: &ResidualProgram, step: Protocol, array: Option<Value>, operand: Option<Value>)
+    fn protocol_step(&mut self, p: &ResidualProgram, site: CallSite, step: Protocol, array: Option<Value>, operand: Option<Value>)
         -> Result<Option<Value>, JsError> {
         let source = operand.unwrap_or(Value::UNDEFINED);
         match step {
@@ -338,6 +338,7 @@ impl<H: Host> Vm<H> {
             Protocol::IteratorClose => self.iterator_close(p, source).map(Some),
             Protocol::RestView { .. } => unreachable!("a rest view's step reads its activation (`rest_view_step`)"),
             Protocol::ConstantFieldsHeld { site } => Ok(Some(Value::boolean(self.constant_fields_held(source, site)))),
+            Protocol::Wasm(step) => self.wasm_host_step(p, site, step, array, operand),
             Protocol::AppendArray { length, spread } => {
                 let array = array.expect("AppendArray names its array");
                 self.append_array_literal_holes(array, length)?;

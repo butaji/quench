@@ -285,7 +285,7 @@ pub(crate) enum WasmFloatOperation {
 /// Whether opcode `op` is a raw f64 operator (`staged::raw_representation`): the raw and boxed forms
 /// share every rule, and differ only in the f64 representation.
 const fn raw_float(op: Op) -> bool {
-    super::raw_representation(op)
+    crate::staged::raw_representation(op)
 }
 
 /// The representation a scalar of type `ty` takes, raw where the operator is raw.

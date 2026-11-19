@@ -352,6 +352,9 @@ impl Traits {
     /// Tagged: `Move`, `LoadConst`.
     pub(crate) const REMOVABLE_WHEN_DEAD: Self = Self(1 << 39);
     /// An op that always jumps to its `JumpTarget`. Tagged: `Jump`.
+    /// A Wasm opcode (its catalog name begins `Wasm`): its own compiler owns the memory, tables and
+    /// typed registers it reads, so the b-jit compiles no function holding one (`base_region::covers`).
+    pub(crate) const WASM_OPCODE: Self = Self(1 << 90);
     pub(crate) const UNCONDITIONAL_JUMP: Self = Self(1 << 40);
     /// An op that jumps to its `JumpTarget` when its register A is truthy, falling through otherwise: the
     /// opposite test of `JUMPS_ON_FALSE`, one polarity of a conditional branch. Tagged: `JumpTrue`.

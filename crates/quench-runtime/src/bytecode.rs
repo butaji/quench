@@ -1199,6 +1199,7 @@ opcodes!($;
     CallRest => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallRest; staged Names; traits CALL_LINK MAY_ALLOCATE, @ Returnable, @ fields(ResultRegister, Register, Register),
     // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
     CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmSegmentDrop => Effect::WRITES_HEAP; layout Scalar; meaning WasmInstanceSlot; class WasmSegmentDrop; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
     // `a` = whether `b`, a base class constructor's fresh receiver, already holds the run of
     // leading constant fields (`ConstantField`) whose defines follow the `JumpTrue` of `a` that
     // skips them: its exact shape is the one the run's first `DefineField` (cache site `c`) found

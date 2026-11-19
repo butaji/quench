@@ -35,6 +35,8 @@ pub(crate) enum Protocol {
     /// through cache site `site`, found already holding its name (`Vm::constant_fields_held`).
     /// It reads one cache entry and a shape, runs no guest code and raises nothing.
     ConstantFieldsHeld { site: u16 },
+    /// A Wasm GC, reference, table, memory-init, atomic or exception step (`protocol_wasm`).
+    Wasm(super::protocol_wasm::WasmHostStep),
 }
 
 /// The bits of a `CloneEnv`'s immediate that name its clone plan: an environment window's record
