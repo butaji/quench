@@ -541,8 +541,11 @@ pub(crate) const FUSED_WINDOW: u8 = 3;
 ///   then its test), and an update pair into an update then its test;
 /// - a lone back jump with no pair before it (`row_jump`'s target run, `lone_target_form`). Subsumes
 ///   `lane_jump_back_nullish` and `specialize_nullish_back_edges` (a nullish test), and
-///   `lane_jump_back_update_small` for an update then a test directly (its copy-then-test variant is not
-///   a form: a `Move` between the update and the test is not a prefix row).
+///   `lane_jump_back_update_small` for an update then a test directly;
+/// - a lone back jump whose target run is a prefix row, a copy (`FUSED_TARGET_COPY_ROWS`) and the test
+///   (`lone_copy_target_form`). The copy runs its register write as its own row does, so the test reads
+///   the copied value from its register; the form is taken only where the test names the copy's
+///   destination. Subsumes `lane_jump_back_update_small`'s copy-then-test variant.
 /// The back edge's fuel check runs before the prefix, as the jump's own does (`take_jump`).
 pub(crate) const FUSED_TARGET: u8 = 4;
 
@@ -551,10 +554,19 @@ pub(crate) const FUSED_TARGET: u8 = 4;
 /// the test itself (`NO_LINK`).
 pub(crate) const FUSED_TARGET_PREFIX_ROWS: [u16; 3] = [LOAD_LOCAL_PLAIN_ROW, LOAD_CAPTURE_ROW, INC_DEC_ROW];
 
+/// The row a back edge's target run may carry between its prefix row and its test (`FUSED_TARGET`'s second
+/// prefix slot): a register copy (`copies_register`), whose destination the test reads.
+pub(crate) const FUSED_TARGET_COPY_ROWS: [u16; 1] = [MOVE_ROW];
+
 const _: () = {
     let mut k = 0;
     while k < FUSED_TARGET_PREFIX_ROWS.len() {
         assert!(target_prefix(row_op(FUSED_TARGET_PREFIX_ROWS[k])), "a FUSED_TARGET_PREFIX_ROWS entry is not a target prefix");
+        k += 1;
+    }
+    let mut k = 0;
+    while k < FUSED_TARGET_COPY_ROWS.len() {
+        assert!(copies_register(row_op(FUSED_TARGET_COPY_ROWS[k])), "a FUSED_TARGET_COPY_ROWS entry is not a register copy");
         k += 1;
     }
 };

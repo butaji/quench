@@ -2489,21 +2489,56 @@ pub(in crate::vm::dispatch_fast) const fn jumps_by_row(op: Op) -> bool {
 /// Opcode `OP`'s jump row in direction `backward`.
 pub(in crate::vm::dispatch_fast) const fn jump_row<H: Host, const OP: u16>(backward: bool) -> Handler {
     if backward {
-        row_jump::<H, OP, true, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>
+        row_jump::<H, OP, true, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>
     } else {
-        row_jump::<H, OP, false, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>
+        row_jump::<H, OP, false, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>
     }
+}
+
+/// One prefix row of a backward jump's target run (`FUSED_TARGET`), run at `$at`: a value row, its register
+/// write and its accumulator carried on as a chain's link does. `$at` advances to the record after it. A miss
+/// takes the row's own miss at its record. `$cx`, `$r`, `$at` and `$carried` are the caller's names; `$prefix`
+/// is the row's const param.
+macro_rules! target_prefix_row {
+    ($cx:ident, $r:ident, $at:ident, $carried:ident, $prefix:ident) => {{
+        // SAFETY: `$at` is a validated record of the view.
+        let prefix_i = unsafe { &*$at };
+        // The prefix at flag `$flag`.
+        macro_rules! prefix_at { ($flag:expr) => {{
+            let fields = LaneFields::<$prefix, { $flag }>(prefix_i);
+            let Some(operation) = row_decode!($prefix, { $flag }, fields) else { sibling!(lane_general_step::<H>, $r, $at, $carried) };
+            let mut stage = Concrete::new(std::ptr::null());
+            let mut frame = row_frame::<H, $prefix, ACC_NONE, { $flag }>($cx, $r, $at, prefix_i, $carried);
+            match row_step!(LaneFields::<$prefix>::OPCODE, &mut stage, &mut frame, operation) {
+                Step::Value(value) => {
+                    if const { !crate::staged::row_writes_result(LaneFields::<$prefix>::OPCODE) } {
+                        $r.set(prefix_i.a, Value::from_bits(value));
+                    }
+                    if const { row_produces(LaneFields::<$prefix>::OPCODE) } {
+                        $carried = Carried { acc: Slot::of(Value::from_bits(value)), ..$carried };
+                    }
+                    $at = following($at);
+                }
+                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$prefix>::OPCODE) }, $r, $at, $carried),
+            }
+        }}; }
+        if const { LaneFields::<$prefix>::FLAG_ROLE } {
+            if prefix_i.imm() != 0 { prefix_at!(FLAG_SET) } else { prefix_at!(FLAG_CLEAR) }
+        } else {
+            prefix_at!(FLAG_UNREAD)
+        }
+    }};
 }
 
 /// A backward jump's target run (`FUSED_TARGET`), run in the jump's record `$ip` once the jump is taken: the
 /// back edge's fuel check (a safepoint at the target, before its run, as `take_jump` makes it), then the
-/// target's prefix row `$prefix` when it is not `NO_LINK` (a value row: its register write and its
-/// accumulator carry on, as a chain's link does), then the conditional test `$test` at the record after the
-/// prefix (or at the target) over its own fields, which continues at the test's taken or fall-through edge.
-/// A miss takes the missing row's own miss at its record, as a fused record's miss does. Every path returns.
-/// `$cx`, `$r`, `$ip` and `$carried` are the handler's own names; `$prefix` and `$test` are its const params.
+/// target's prefix row `$prefix` when it is not `NO_LINK` (`target_prefix_row`), then the copy row `$copy`
+/// when it is not `NO_LINK` (a `Move` between the prefix and the test: its register write is the copy's own),
+/// then the conditional test `$test` over its own fields, which continues at the test's taken or fall-through
+/// edge. A miss takes the missing row's own miss at its record, as a fused record's miss does. Every path returns.
+/// `$cx`, `$r`, `$ip` and `$carried` are the handler's own names; `$prefix`, `$copy` and `$test` are its const params.
 macro_rules! target_run {
-    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $test:ident) => {{
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $copy:ident, $test:ident) => {{
         // SAFETY: the view records the distance to a validated jump target.
         let target: super::Ip = unsafe { $ip.byte_offset((*$ip).jump()) };
         if script_fuel_out($cx) {
@@ -2512,34 +2547,12 @@ macro_rules! target_run {
         let mut at: super::Ip = target;
         let mut carried: Carried = $carried;
         if const { $prefix != crate::staged::NO_LINK } {
-            // SAFETY: as the target above.
-            let prefix_i = unsafe { &*at };
-            // The prefix at flag `$flag`: a value row, as `fused_rows`' link `A` runs.
-            macro_rules! prefix_at { ($flag:expr) => {{
-                let fields = LaneFields::<$prefix, { $flag }>(prefix_i);
-                let Some(operation) = row_decode!($prefix, { $flag }, fields) else { sibling!(lane_general_step::<H>, $r, at, carried) };
-                let mut stage = Concrete::new(std::ptr::null());
-                let mut frame = row_frame::<H, $prefix, ACC_NONE, { $flag }>($cx, $r, at, prefix_i, carried);
-                match row_step!(LaneFields::<$prefix>::OPCODE, &mut stage, &mut frame, operation) {
-                    Step::Value(value) => {
-                        if const { !crate::staged::row_writes_result(LaneFields::<$prefix>::OPCODE) } {
-                            $r.set(prefix_i.a, Value::from_bits(value));
-                        }
-                        if const { row_produces(LaneFields::<$prefix>::OPCODE) } {
-                            carried = Carried { acc: Slot::of(Value::from_bits(value)), ..carried };
-                        }
-                        at = following(at);
-                    }
-                    Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$prefix>::OPCODE) }, $r, at, carried),
-                }
-            }}; }
-            if const { LaneFields::<$prefix>::FLAG_ROLE } {
-                if prefix_i.imm() != 0 { prefix_at!(FLAG_SET) } else { prefix_at!(FLAG_CLEAR) }
-            } else {
-                prefix_at!(FLAG_UNREAD)
-            }
+            target_prefix_row!($cx, $r, at, carried, $prefix);
         }
-        // SAFETY: `at` is the target or the record the prefix falls through to, a validated record of the view.
+        if const { $copy != crate::staged::NO_LINK } {
+            target_prefix_row!($cx, $r, at, carried, $copy);
+        }
+        // SAFETY: `at` is the target or the record the prefix rows fall through to, a validated record of the view.
         let test_i = unsafe { &*at };
         let fields = LaneFields::<$test, { FLAG_UNREAD }>(test_i);
         let Some(operation) = row_decode!($test, { FLAG_UNREAD }, fields) else { sibling!(lane_general_step::<H>, $r, at, carried) };
@@ -2556,6 +2569,9 @@ macro_rules! target_run {
         }
     }};
 }
+
+/// The `FUSED_TARGET` copy slot of no row: `target_run`'s `$copy` for a target run with no copy.
+const NO_COPY: u16 = crate::staged::NO_LINK;
 
 /// Opcode `$op`'s staged operation decoded from `$fields` by its row family's one decoder. Each
 /// decoder is an `if const` branch: rustc compiles only the taken one (it compiles every arm of a
@@ -2604,9 +2620,9 @@ lane_handler! {
     /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
     /// its target runs the lane's jump (`take_jump`), whose backward edge (`BACKWARD`, which the
     /// view fixes per record) is a safepoint. `TEST` (not `NO_LINK`) is a backward jump's `FUSED_TARGET`
-    /// target run: its target's `PREFIX` row (or none) and then the test `TEST`, run in this record
-    /// (`target_run`). Any other `TEST` takes the jump as it always does.
-    pub(super) fn row_jump<OP: u16, BACKWARD: bool, FLAG: u8, PREFIX: u16, TEST: u16>(cx, r, ip, i, view) {
+    /// target run: its target's `PREFIX` row (or none), then the `COPY` row (or none), then the test `TEST`,
+    /// run in this record (`target_run`). Any other `TEST` takes the jump as it always does.
+    pub(super) fn row_jump<OP: u16, BACKWARD: bool, FLAG: u8, PREFIX: u16, COPY: u16, TEST: u16>(cx, r, ip, i, view) {
         // A loop site's backward jump (`FLAG_LOOP`) warming up takes its jump here, with the fuel
         // spent here, as the site's body does. Fuel out, or a site past its warm-up, leaves to that
         // body (`loop_jump_miss`), which spends the fuel and decides the site itself.
@@ -2640,7 +2656,7 @@ lane_handler! {
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Control(Edge::Target) => {
                 if const { TEST != crate::staged::NO_LINK } {
-                    target_run!(cx, r, ip, carried, PREFIX, TEST)
+                    target_run!(cx, r, ip, carried, PREFIX, COPY, TEST)
                 } else {
                     resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None))
                 }
@@ -3268,7 +3284,7 @@ lane_handler! {
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Control(Edge::Target) => {
                     if const { MODE == crate::staged::FUSED_TARGET } {
-                        target_run!(cx, r, ip, carried, PREFIX, TEST)
+                        target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST)
                     } else {
                         resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None))
                     }
