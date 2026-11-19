@@ -7221,37 +7221,65 @@ impl<H: Host> Emitter<'_, '_, H> {
         let plan = self.plan;
         self.roots = &plan.references[pc];
         self.pc = pc;
-        match step {
-            Step::Numeric(operation) => self.operation(pc, instruction, operation),
-            Step::Instance(step) => {
-                self.instance(pc, instruction, step);
-                true
-            }
-            Step::Memory(step) => {
-                self.memory(instruction, step);
-                true
-            }
-            Step::Table(op) => {
-                self.table_op(pc, instruction, op);
-                true
-            }
-            Step::Gc(op) => {
-                self.gc(pc, instruction, op);
-                true
-            }
-            Step::Exception(op) => self.exception_op(pc, instruction, op),
-            Step::Flow(flow) => self.flow(function, pc, instruction, flow),
-            Step::Call(call) => {
-                self.call(pc, instruction, call);
-                // A tail call returns from the function with its result: nothing follows it.
-                !wasm_call_stage::is_tail_call(instruction)
-            }
-            Step::Simd(step) => {
-                self.simd(pc, instruction, step);
-                true
-            }
-            Step::Atomic(_) => unreachable!("the analysis rejects atomic steps"),
-        }
+        crate::staged::wasm_step::dispatch(&mut UjitTier { emitter: self, function }, pc, instruction, step)
+    }
+}
+
+/// The u-jit as a Wasm tier (`staged::wasm_step::WasmTier`): each family emits its staged
+/// rules over the compiled frame and answers whether control falls through.
+struct UjitTier<'t, 'e, 'f, H: Host> {
+    emitter: &'t mut Emitter<'e, 'f, H>,
+    function: &'t Function,
+}
+
+impl<H: Host> crate::staged::wasm_step::WasmTier for UjitTier<'_, '_, '_, H> {
+    type Out = bool;
+
+    fn numeric(&mut self, pc: usize, instruction: WideInstruction, operation: crate::staged::wasm_operation::WasmOperation) -> bool {
+        self.emitter.operation(pc, instruction, operation)
+    }
+
+    fn instance(&mut self, pc: usize, instruction: WideInstruction, step: crate::staged::wasm_instance::Instance) -> bool {
+        self.emitter.instance(pc, instruction, step);
+        true
+    }
+
+    fn memory(&mut self, _pc: usize, instruction: WideInstruction, step: crate::staged::wasm_memory::Memory) -> bool {
+        self.emitter.memory(instruction, step);
+        true
+    }
+
+    fn flow(&mut self, pc: usize, instruction: WideInstruction, flow: crate::staged::wasm_flow::Flow) -> bool {
+        self.emitter.flow(self.function, pc, instruction, flow)
+    }
+
+    fn call(&mut self, pc: usize, instruction: WideInstruction, call: crate::staged::wasm_call::Call) -> bool {
+        self.emitter.call(pc, instruction, call);
+        // A tail call returns from the function with its result: nothing follows it.
+        !wasm_call_stage::is_tail_call(instruction)
+    }
+
+    fn table(&mut self, pc: usize, instruction: WideInstruction, op: crate::staged::wasm_table_ops::TableOp) -> bool {
+        self.emitter.table_op(pc, instruction, op);
+        true
+    }
+
+    fn simd(&mut self, pc: usize, instruction: WideInstruction, step: crate::staged::wasm_simd::Simd) -> bool {
+        self.emitter.simd(pc, instruction, step);
+        true
+    }
+
+    fn gc(&mut self, pc: usize, instruction: WideInstruction, op: crate::staged::wasm_gc::GcOp) -> bool {
+        self.emitter.gc(pc, instruction, op);
+        true
+    }
+
+    fn exception(&mut self, pc: usize, instruction: WideInstruction, op: crate::staged::wasm_exception::Exception) -> bool {
+        self.emitter.exception_op(pc, instruction, op)
+    }
+
+    fn atomic(&mut self, _pc: usize, _instruction: WideInstruction, _op: crate::staged::wasm_atomic::Atomic) -> bool {
+        unreachable!("the analysis rejects atomic steps")
     }
 }
 

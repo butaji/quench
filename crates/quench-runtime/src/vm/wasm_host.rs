@@ -1407,4 +1407,26 @@ mod tests {
         assert!(vm.heap.is_live(target));
         assert!(vm.heap.is_live(marker));
     }
+
+    /// The memory-copy helper is recognized by its shape, not its spelling: any names for the
+    /// parameters and the captured view, the same `view.copyWithin(a, b, b + n)` body. A body of
+    /// another shape is not.
+    #[test]
+    fn memory_copy_helper_is_recognized_by_shape_not_spelling() {
+        let mut vm = Vm::new(crate::SystemHost);
+        let owner = Engine::specialize("void 0", "memory-copy-shape-owner.js").unwrap();
+        vm.execute(&owner).unwrap();
+        let signature = WasmSignature { params: vec![WasmType::I32, WasmType::I32, WasmType::I32], results: vec![] };
+        let mut helper = |source: &str| {
+            let script = vm.compile_embedding_host_script(source, "memory-copy-shape.js", (0, 0)).unwrap();
+            let helper = vm.evaluate_embedding_compiled_script(&script).unwrap();
+            vm.emscripten_memcpy_view_capture(helper, &signature).is_some()
+        };
+        assert!(helper("(() => { let HEAPU8 = new Uint8Array(64); return (dest, src, num) => HEAPU8.copyWithin(dest, src, src + num); })()"));
+        assert!(helper("(() => { let bytes = new Uint8Array(64); return (to, from, count) => bytes.copyWithin(to, from, from + count); })()"));
+        assert!(helper("(() => { let bytes = new Uint8Array(64); return function (a, b, n) { return bytes.copyWithin(a, b, b + n); }; })()"));
+        assert!(!helper("(() => { let bytes = new Uint8Array(64); return (a, b, n) => bytes.copyWithin(a, b, n); })()"));
+        assert!(!helper("(() => { let bytes = new Uint8Array(64); return (a, b, n) => bytes.copyWithin(b, a, a + n); })()"));
+        assert!(!helper("(() => { let bytes = new Uint8Array(64); return (a, b, n) => bytes.fill(a, b, b + n); })()"));
+    }
 }
