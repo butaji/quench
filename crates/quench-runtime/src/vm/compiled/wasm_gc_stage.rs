@@ -12,7 +12,8 @@ use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, Slot, Value, Vm, finish_callout};
 use crate::bytecode::{Function, Op, WideInstruction};
-use crate::staged::machine::{MachineAccess, MachineFlow, MachineStage};
+use crate::staged::machine::{Extend, Lane, MachineAccess, MachineFlow, MachineStage};
+use cranelift_codegen::ir::MemFlagsData;
 use crate::staged::wasm::Width;
 use crate::staged::wasm_gc::{Aggregate, GcOp, GcStep, WasmGc, array_length, field_read, field_write, non_null, reference_cast};
 use crate::vm::wasm_gc::stage::HeapStage;
@@ -33,34 +34,6 @@ unsafe fn machine<'a, H: Host>(context: *const CallContext) -> &'a mut Vm<H> {
     unsafe { &mut *(*context).vm.cast::<Vm<H>>() }
 }
 
-/// The field a callout's tag names; the emitted code passes the tag of a planned access.
-fn field_of_tag(tag: u64) -> GcField {
-    GcField::from_tag(tag as u32).expect("planned field operand")
-}
-
-/// The Wasm bits of `stored`, the word `HeapStage::read_slot` returned for `field`: a packed
-/// field's integer, an `i32`'s integer, a number's bits (boxed where the payload is in the tag
-/// space), or a reference's bits.
-pub(super) fn stored_bits<H: Host>(vm: &Vm<H>, field: GcField, stored: u64) -> u64 {
-    match field.value() {
-        GcFieldValue::Narrow if field.packed_bits().is_some() => stored,
-        GcFieldValue::Narrow => u64::from(Value::from_bits(stored).as_int().expect("validated Wasm i32 field") as u32),
-        GcFieldValue::Wide => vm.decode_bits64(Value::from_bits(stored)).expect("validated Wasm 64-bit field"),
-        GcFieldValue::Reference => stored,
-        GcFieldValue::Vector => unreachable!("the analysis admits no vector field"),
-    }
-}
-
-/// The value a field of `class` stores for the Wasm bits `bits`, the inverse of `stored_bits`.
-pub(super) fn value_of_bits<H: Host>(vm: &mut Vm<H>, class: GcFieldValue, bits: u64) -> Value {
-    match class {
-        GcFieldValue::Narrow => Value::integer(bits as u32 as i32),
-        GcFieldValue::Wide => vm.encode_bits64(bits),
-        GcFieldValue::Reference => Value::from_bits(bits),
-        GcFieldValue::Vector => unreachable!("the analysis admits no vector field"),
-    }
-}
-
 /// The heap primitives of `WasmGc`, one callout each; every one returns a word, zero where the
 /// primitive has none. The rules have checked each argument before the callout runs.
 unsafe extern "C" fn gc_is_object<H: Host>(context: *mut CallContext, reference: u64) -> u64 {
@@ -75,39 +48,15 @@ unsafe extern "C" fn gc_field_count<H: Host>(context: *mut CallContext, referenc
     HeapStage { vm: unsafe { machine::<H>(context) } }.field_count(reference)
 }
 
-/// The stored bytes of `field` at `slot`, a `field_slot` address: a 64-bit number's raw bits are
-/// read and written in place, without a cell.
-///
-/// # Safety
-/// `slot` is a nonzero `field_slot` answer for an object's field of `field`'s storage, taken with
-/// nothing allocated since.
-unsafe fn slot_bytes<'a>(slot: u64, field: GcField) -> &'a mut [u8] {
-    // SAFETY: as the caller guarantees, the field's `size()` bytes are live in the object's payload.
-    unsafe { std::slice::from_raw_parts_mut(slot as usize as *mut u8, field.size()) }
-}
-
-unsafe extern "C" fn gc_read_slot<H: Host>(context: *mut CallContext, slot: u64, tag: u64) -> u64 {
-    let vm = unsafe { machine::<H>(context) };
-    let field = field_of_tag(tag);
-    if field.value() == GcFieldValue::Wide {
-        // SAFETY: `slot` is the callout's `field_slot` answer, as the rules pass it.
-        return field.load(unsafe { slot_bytes(slot, field) });
+/// The machine cell of `field`'s storage (`GcField::size`): the lane a compiled access loads and
+/// stores in place.
+fn field_lane(field: GcField) -> Lane {
+    match field.size() {
+        1 => Lane::I8,
+        2 => Lane::I16,
+        4 => Lane::I32,
+        _ => Lane::I64,
     }
-    let stored = HeapStage { vm: &mut *vm }.read_slot(slot, field);
-    stored_bits(vm, field, stored)
-}
-
-unsafe extern "C" fn gc_write_slot<H: Host>(context: *mut CallContext, slot: u64, tag: u64, bits: u64) -> u64 {
-    let vm = unsafe { machine::<H>(context) };
-    let field = field_of_tag(tag);
-    if field.value() == GcFieldValue::Wide {
-        // SAFETY: as `gc_read_slot`.
-        field.store(unsafe { slot_bytes(slot, field) }, bits);
-        return 0;
-    }
-    let value = value_of_bits(vm, field.value(), bits);
-    HeapStage { vm: &mut *vm }.write_slot(slot, field, value.to_bits());
-    0
 }
 
 unsafe extern "C" fn gc_array_mutable<H: Host>(context: *mut CallContext, reference: u64) -> u64 {
@@ -125,11 +74,7 @@ unsafe extern "C" fn gc_fields_exceed<H: Host>(context: *mut CallContext, refere
 /// Stores the Wasm bits `bits` in `extent` elements of the array; the element storage the array
 /// holds gives the value's form.
 unsafe extern "C" fn gc_fill_fields<H: Host>(context: *mut CallContext, reference: u64, index: u64, extent: u64, bits: u64) -> u64 {
-    let vm = unsafe { machine::<H>(context) };
-    let storage = HeapStage { vm: &mut *vm }.array_element(reference).expect("the rules fill an array they checked");
-    let class = GcField::new(0, storage).expect("every storage has a class").value();
-    let value = value_of_bits(vm, class, bits);
-    HeapStage { vm: &mut *vm }.fill_fields(reference, index, extent, value.to_bits());
+    HeapStage { vm: unsafe { machine::<H>(context) } }.fill_field_bits(reference, index, extent, bits);
     0
 }
 
@@ -188,16 +133,18 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
         self.call_leaf(gc_field_count::<H> as *const () as usize, &[context, reference])
     }
 
+    /// One load of the field's storage, zero-extended to the word: the field's static type says
+    /// what the bits are, so no callout, box or tag test stands between the slot and the value.
     fn read_slot(&mut self, slot: ir::Value, field: GcField) -> ir::Value {
-        let context = self.body.core.context;
-        let tag = self.constant(Width::I64, i64::from(field.tag()));
-        self.call_leaf(gc_read_slot::<H> as *const () as usize, &[context, slot, tag])
+        match field_lane(field) {
+            Lane::I64 => self.raw_load(Lane::I64, MemFlagsData::trusted(), slot, 0),
+            cell => self.raw_load_extended(cell, Extend::Zero, Lane::I64, MemFlagsData::trusted(), slot, 0),
+        }
     }
 
+    /// One store of the word's low bits to the field's storage.
     fn write_slot(&mut self, slot: ir::Value, field: GcField, value: ir::Value) {
-        let context = self.body.core.context;
-        let tag = self.constant(Width::I64, i64::from(field.tag()));
-        self.call_leaf(gc_write_slot::<H> as *const () as usize, &[context, slot, tag, value]);
+        self.raw_store(field_lane(field), MemFlagsData::trusted(), (value, false), slot, 0);
     }
 
     fn array_mutable(&mut self, reference: ir::Value) -> ir::Value {

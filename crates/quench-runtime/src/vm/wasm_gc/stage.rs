@@ -6,7 +6,7 @@ use super::super::*;
 use crate::WasmTypes;
 use crate::staged::machine::{Machine, MachineStage};
 use crate::staged::wasm_gc::WasmGc;
-use crate::wasm::gc::{GcField, GcFieldValue};
+use crate::wasm::gc::GcField;
 use crate::wasm::reference::{ReferenceTarget, TargetHeap};
 
 /// The VM's heap, as a stage the GC rules run on.
@@ -61,31 +61,19 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
         }
     }
 
-    /// The word a read of `field` gives: a packed field's integer; an `i32` or `f32` as a `Value`
-    /// integer; a 64-bit number as a `Value` (boxed where its bits are not in place); a reference's
-    /// `Value` bits.
+    /// The field's Wasm bits as its storage holds them: one load, no box and no tag.
     fn read_slot(&mut self, slot: u64, field: GcField) -> u64 {
         // SAFETY: `slot` is a nonzero `field_slot` answer, taken just before with nothing
         // allocated since, so it addresses the field's `size()` bytes of a live payload.
         let bytes = unsafe { std::slice::from_raw_parts(slot as usize as *const u8, field.size()) };
-        let stored = field.load(bytes);
-        if field.packed_bits().is_some() {
-            return stored;
-        }
-        match field.value() {
-            GcFieldValue::Narrow => Value::integer(stored as u32 as i32).to_bits(),
-            GcFieldValue::Wide => self.vm.encode_bits64(stored).to_bits(),
-            GcFieldValue::Reference | GcFieldValue::Vector => stored,
-        }
+        field.load(bytes)
     }
 
-    /// Stores the `Value` bits `value` in the field: its stored form, the raw bits a 64-bit number
-    /// keeps in place of its cell.
+    /// Stores the field's Wasm bits `value` in its storage: one store, no unboxing.
     fn write_slot(&mut self, slot: u64, field: GcField, value: u64) {
-        let bits = self.vm.wasm_stored_bits(field, Value::from_bits(value));
         // SAFETY: as `read_slot`: a fresh nonzero `field_slot` answer.
         let bytes = unsafe { std::slice::from_raw_parts_mut(slot as usize as *mut u8, field.size()) };
-        field.store(bytes, bits);
+        field.store(bytes, value);
     }
 
     fn array_mutable(&mut self, reference: u64) -> u64 {
@@ -115,11 +103,7 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
         let element = self.array_element(reference).expect("the rules fill an array they checked");
         let field = GcField::new(0, element).expect("index 0 fits");
         let bits = self.vm.wasm_stored_bits(field, Value::from_bits(value));
-        let Some(Cell::WasmGc { declarations, ty, fields }) = self.vm.heap.get_mut(Value::from_bits(reference)) else {
-            unreachable!("the rules fill an array they checked")
-        };
-        let layout = declarations.layout(*ty).expect("a validated array");
-        fields.fill(layout, field, index as usize, extent as usize, bits);
+        self.fill_field_bits(reference, index, extent, bits);
     }
 
     fn copy_fields(&mut self, destination: u64, output: u64, source: u64, input: u64, extent: u64) {
@@ -160,6 +144,18 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
 }
 
 impl<H: Host> HeapStage<'_, H> {
+    /// Stores the element's Wasm bits `bits` in `extent` elements of the array `reference` from
+    /// `index`: the fill a tier makes with a value it already holds as bits, no box between.
+    pub(in crate::vm) fn fill_field_bits(&mut self, reference: u64, index: u64, extent: u64, bits: u64) {
+        let element = self.array_element(reference).expect("the rules fill an array they checked");
+        let field = GcField::new(0, element).expect("index 0 fits");
+        let Some(Cell::WasmGc { declarations, ty, fields }) = self.vm.heap.get_mut(Value::from_bits(reference)) else {
+            unreachable!("the rules fill an array they checked")
+        };
+        let layout = declarations.layout(*ty).expect("a validated array");
+        fields.fill(layout, field, index as usize, extent as usize, bits);
+    }
+
     /// The element storage of the array `reference`, if it is an array.
     pub(in crate::vm) fn array_element(&self, reference: u64) -> Option<wasmparser::StorageType> {
         self.array_owner(reference).map(|(field, _)| field.element_type)

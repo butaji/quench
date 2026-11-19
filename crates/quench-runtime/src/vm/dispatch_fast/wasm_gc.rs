@@ -78,14 +78,12 @@ fn lane_gc_field<H: Host>(
     let mut stage = HeapStage { vm };
     match operands.value {
         Some(value) => {
-            field_write(&mut stage, aggregate, reference, index, operands.field, value.to_bits()).ok().map(|()| None)
+            let bits = stage.vm.wasm_stored_bits(operands.field, value);
+            field_write(&mut stage, aggregate, reference, index, operands.field, bits).ok().map(|()| None)
         }
         None => {
             let word = field_read(&mut stage, aggregate, reference, index, operands.field, operands.access).ok()?;
-            Some(Some(match operands.access {
-                GcFieldAccess::Read => Value::from_bits(word),
-                _ => Value::integer(word as i32),
-            }))
+            Some(Some(stage.vm.wasm_field_value(operands.field, operands.access, word)))
         }
     }
 }
@@ -204,10 +202,11 @@ lane_handler! {
             (Aggregate::Struct, field.index())
         };
         let reference = r.get(i.b).to_bits();
-        let Ok(word) = field_read(&mut HeapStage { vm }, aggregate, reference, u64::from(index), field, GcFieldAccess::Read) else {
+        let mut stage = HeapStage { vm };
+        let Ok(word) = field_read(&mut stage, aggregate, reference, u64::from(index), field, GcFieldAccess::Read) else {
             return exit(ip);
         };
-        r.set(i.a, Value::from_bits(word));
+        r.set(i.a, stage.vm.wasm_field_value(field, GcFieldAccess::Read, word));
         next!(cx, r, following(ip), view)
     }
 }
