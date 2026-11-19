@@ -3228,6 +3228,12 @@ lane_handler! {
         let Some(operation) = row_decode!(OP, FLAG_UNREAD, fields) else {
             sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
         };
+        // A returning record's value is `returning_row`'s to complete: this row never computes it.
+        if const { LaneFields::<OP>::OPCODE.result_layout().allowed_flags() & crate::bytecode::RETURN_REGISTER != 0 }
+            && i.a & crate::bytecode::RETURN_REGISTER != 0
+        {
+            sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
+        }
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = row_frame::<H, OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
@@ -3242,6 +3248,34 @@ lane_handler! {
             Step::Control(LaneControl::Edge(Edge::Leave)) => return exit(ip),
             // A transfer resumes the register file the frame switched to.
             Step::Control(LaneControl::Resumed(resumed)) => resume!(cx, resumed),
+            Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
+        }
+    }
+}
+
+script_handler! {
+    /// The lane handler of a returning record of opcode `OP` at leaf form `LEAF`, whose RETURN
+    /// parameter is `MISS` (`protocol_misses::returning_code`). It is generated from its staged row as
+    /// `protocol_row` is, but its value completes the activation (`lane_return_value!`) instead of
+    /// writing a register. The record decodes with its result flags stripped (`decode_completed`), and
+    /// only a record whose flags are exactly the return reaches its row. Any other record, and any step
+    /// but a value, takes the record's protocol miss, which completes the returning value itself.
+    pub(super) fn returning_row<OP: u16, LEAF: u8, MISS: u16>(cx, r, ip, i, view) {
+        let fields = LaneFields::<OP>(i);
+        let decoded = Operation::decode_completed(crate::staged::Fields::wide(fields), crate::staged::DecodeContext::EMPTY);
+        let Some((operation, _)) = decoded.filter(|(_, flags)| *flags == crate::bytecode::RETURN_REGISTER) else {
+            sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
+        };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
+        match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
+            Step::Value(value) => {
+                let value = Value::from_bits(value);
+                if let Some(resumed) = by_leaf!(LEAF, |L| super::complete_plain_activation_in_lane::<H, L>(cx, value)) {
+                    resume!(cx, resumed)
+                }
+                resume!(cx, super::return_value_general_in_lane(cx, ip, value));
+            }
             Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
         }
     }

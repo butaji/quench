@@ -41,6 +41,15 @@ macro_rules! return_row {
     };
 }
 
+/// The lane handler of a returning record of opcode `$op` of kind `$kind` at leaf form `$leaf`
+/// (`returning_row`): its RETURN parameter is `returning_code($kind, $leaf)`, which its miss body
+/// (`returning_miss` of `$kind`) completes.
+macro_rules! returning_row_of {
+    ($op:expr, $kind:expr, $leaf:expr) => {
+        returning_row::<H, { $op as u16 }, { $leaf }, { protocol_family::RETURN | (returning_code($kind, $leaf) as u16) }>
+    };
+}
+
 
 use crate::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
 use super::compiled::tier_policy::Tiers;
@@ -530,10 +539,11 @@ impl LaneView {
     fn specialize_leaf_returns<H: Host>(&self, form: LeafForm) {
         macro_rules! forms {
             ($leaf:expr) => {{
+                // A constant right operand's record keeps its operator in the operand (`specialize_returning_operator`),
+                // so only its operator's miss decodes it; a register right operand is a `returning_row`.
                 macro_rules! pick {
                     ($op:expr) => {
                         [
-                            (returning_operator_miss::<H, { $op }, false, NOT_LEAF> as Handler, returning_operator_miss::<H, { $op }, false, { $leaf }> as Handler),
                             (returning_operator_miss::<H, { $op }, true, NOT_LEAF> as Handler, returning_operator_miss::<H, { $op }, true, { $leaf }> as Handler),
                         ]
                     };
@@ -543,30 +553,32 @@ impl LaneView {
                         return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, $leaf)) as Handler),
                     (return_row!(crate::bytecode::Op::Return, returning_code(CONSTANT_KIND, NOT_LEAF)) as Handler,
                         return_row!(crate::bytecode::Op::Return, returning_code(CONSTANT_KIND, $leaf)) as Handler),
-                    (returning_miss::<H, RETURNING_UNARY, NOT_LEAF>, returning_miss::<H, RETURNING_UNARY, { $leaf }>),
-                    (returning_miss::<H, RETURNING_BINARY, NOT_LEAF>, returning_miss::<H, RETURNING_BINARY, { $leaf }>),
+                    (returning_row_of!(crate::bytecode::Op::Unary, RETURNING_UNARY, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::Op::Unary, RETURNING_UNARY, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::Op::Binary, RETURNING_BINARY, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::Op::Binary, RETURNING_BINARY, $leaf) as Handler),
                     (row_returning_field_first::<H, NOT_LEAF>, row_returning_field_first::<H, { $leaf }>),
                     (row_returning_field_miss::<H, NOT_LEAF>, row_returning_field_miss::<H, { $leaf }>),
                     (generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, NOT_LEAF) }>,
                         generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, { $leaf }) }>),
                     (generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, NOT_LEAF) }>,
                         generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, { $leaf }) }>),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_GETTER, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_GETTER, $leaf)) as Handler),
+                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_OWN, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_OWN, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_POLYMORPHIC, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_HOLDER, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_HOLDER, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_INHERITED, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_INHERITED, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_NESTED, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_NESTED, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_PRIVATE, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_PRIVATE, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_GETTER, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_GETTER, $leaf) as Handler),
                 ];
                 returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
             }};
@@ -3709,7 +3721,7 @@ mod lane_reads;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{protocol_row, protocol_miss, protocol_family, is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{protocol_row, returning_row, protocol_miss, protocol_family, is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 mod capture_append;
@@ -15068,10 +15080,10 @@ impl LeafRead {
             return Some(Self::Element { base: entry.b, field: FieldHit::of::<H>(entry)?, index: element.c });
         }
         let handler = entry.handler;
-        if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, NOT_LEAF)) as *const () {
+        if handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_NESTED, NOT_LEAF) as *const () {
             return Some(Self::Nested { site: entry.imm() });
         }
-        if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, NOT_LEAF)) as *const () {
+        if handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_PRIVATE, NOT_LEAF) as *const () {
             return Some(Self::Private {
                 base: entry.b,
                 atom: entry.imm(),
@@ -15080,13 +15092,13 @@ impl LeafRead {
                 function: target.function,
             });
         }
-        let kind = if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, NOT_LEAF)) as *const () {
+        let kind = if handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF) as *const () {
             RETURNING_FIELD_POLYMORPHIC
-        } else if returning_own_row::<H>(handler) || handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, NOT_LEAF)) as *const () {
+        } else if returning_own_row::<H>(handler) || handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_OWN, NOT_LEAF) as *const () {
             RETURNING_FIELD_OWN
-        } else if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, NOT_LEAF)) as *const () {
+        } else if handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_HOLDER, NOT_LEAF) as *const () {
             RETURNING_FIELD_HOLDER
-        } else if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, NOT_LEAF)) as *const () {
+        } else if handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_INHERITED, NOT_LEAF) as *const () {
             RETURNING_FIELD_INHERITED
         } else {
             return None;
@@ -15769,7 +15781,7 @@ fn returning_field_first_kind<H: Host, const LEAF: u8>(
     if is_single_field_base(i.b) && !vm.reads_function_info(i.imm()) {
         by_leaf!(LEAF, |L| single_base_handler(i.b, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, L) }>,
             generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, L) }>,
-            return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, L)) as Handler))
+            returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD, L) as Handler))
     } else if field_site_tier_in_lane(vm, code, i) == FieldSiteTier::Nested {
         field_return_row::<H, LEAF>(RETURNING_FIELD_NESTED)
     } else {
@@ -15781,14 +15793,14 @@ fn returning_field_first_kind<H: Host, const LEAF: u8>(
 /// `LEAF`: its RETURN code (`returning_code`), which `returning_miss` completes.
 fn field_return_row<H: Host, const LEAF: u8>(kind: u8) -> Handler {
     by_leaf!(LEAF, |L| match kind {
-        RETURNING_FIELD => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, L)) as Handler,
-        RETURNING_FIELD_OWN => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, L)) as Handler,
-        RETURNING_FIELD_POLYMORPHIC => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, L)) as Handler,
-        RETURNING_FIELD_HOLDER => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, L)) as Handler,
-        RETURNING_FIELD_INHERITED => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, L)) as Handler,
-        RETURNING_FIELD_NESTED => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, L)) as Handler,
-        RETURNING_FIELD_PRIVATE => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, L)) as Handler,
-        RETURNING_FIELD_GETTER => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_GETTER, L)) as Handler,
+        RETURNING_FIELD => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD, L) as Handler,
+        RETURNING_FIELD_OWN => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_OWN, L) as Handler,
+        RETURNING_FIELD_POLYMORPHIC => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_POLYMORPHIC, L) as Handler,
+        RETURNING_FIELD_HOLDER => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_HOLDER, L) as Handler,
+        RETURNING_FIELD_INHERITED => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_INHERITED, L) as Handler,
+        RETURNING_FIELD_NESTED => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_NESTED, L) as Handler,
+        RETURNING_FIELD_PRIVATE => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_PRIVATE, L) as Handler,
+        RETURNING_FIELD_GETTER => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_GETTER, L) as Handler,
         _ => unreachable!("a returning GetField's kind is a field kind"),
     })
 }
@@ -17168,15 +17180,16 @@ use crate::vm::compiled::tier_policy::{LANE_ENTRY_MIN_RUN, LANE_ENTRY_MIN_CALL_R
 /// handler returns to the lane loop, which carries no accumulator.
 const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
 
-/// The handler of a returning record of `kind` (`returning_kind`) in a view that has no leaf form.
+/// The handler of a returning record of `kind` (`returning_kind`) in a view that has no leaf form:
+/// each kind is one opcode's (its traits name it), so the record is that opcode's `returning_row`.
 fn returning_handler<H: Host>(kind: u8) -> Handler {
     match kind {
         RETURNING_FIELD => row_returning_field_first::<H, NOT_LEAF>,
-        RETURNING_UNARY => returning_miss::<H, RETURNING_UNARY, NOT_LEAF>,
-        RETURNING_BINARY => returning_miss::<H, RETURNING_BINARY, NOT_LEAF>,
-        RETURNING_OBJECT => returning_miss::<H, RETURNING_OBJECT, NOT_LEAF>,
-        RETURNING_OBJECT_LITERAL => returning_miss::<H, RETURNING_OBJECT_LITERAL, NOT_LEAF>,
-        _ => returning_miss::<H, RETURNING_LITERAL, NOT_LEAF>,
+        RETURNING_UNARY => returning_row_of!(crate::bytecode::Op::Unary, RETURNING_UNARY, NOT_LEAF) as Handler,
+        RETURNING_BINARY => returning_row_of!(crate::bytecode::Op::Binary, RETURNING_BINARY, NOT_LEAF) as Handler,
+        RETURNING_OBJECT => returning_row_of!(crate::bytecode::Op::MakeObject2, RETURNING_OBJECT, NOT_LEAF) as Handler,
+        RETURNING_OBJECT_LITERAL => returning_row_of!(crate::bytecode::Op::MakeObjectLiteral, RETURNING_OBJECT_LITERAL, NOT_LEAF) as Handler,
+        _ => returning_row_of!(crate::bytecode::Op::SuperConstArrayObject2, RETURNING_LITERAL, NOT_LEAF) as Handler,
     }
 }
 
@@ -17805,7 +17818,7 @@ fn install_loop_sites<'live, H: Host>(
 /// its generated row or jump row gave it: operand kinds and operators are the rows' own decode
 /// (`Binary`, `JumpBinaryFalse`, `Unary`), not handler choices made here.
 fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction]) {
-    let returning_binary = returning_miss::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
+    let returning_binary = returning_row_of!(crate::bytecode::Op::Binary, RETURNING_BINARY, NOT_LEAF) as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
         if records[pc].handler == returning_binary {
             specialize_returning_operator::<H>(instruction, constants, &mut records[pc]);
@@ -18292,10 +18305,11 @@ fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInst
 
 
 
-/// Gives a returning `Binary` record of an arithmetic operator on a register and a register
-/// or constant its operator's `returning_operator_miss`, its fields resolved as
-/// `specialize_register_operands` resolves a non-returning one's; any other keeps
-/// `returning_miss`.
+/// Gives a returning `Binary` record of an arithmetic operator on a register and a constant its
+/// operator's `returning_operator_miss`, its fields resolved as `specialize_register_operands`
+/// resolves a non-returning one's. A record whose right operand is a register, and any other,
+/// keeps its `returning_row`: a constant operand replaces the record's operator field (the
+/// operand is one union with it), so only that operator's miss can decode the record.
 fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constants: &[Value], record: &mut LaneInstruction) {
     use crate::bytecode::OperandKind::{Constant, Register};
     let (left, right) = (instruction.operand_b(), instruction.operand_c());
@@ -18303,20 +18317,15 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
         return;
     }
     let constant = match right.kind() {
-        Some(Register) => None,
         Some(Constant) => match constants.get(usize::from(right.payload())) {
-            Some(constant) => Some(*constant),
+            Some(constant) => *constant,
             None => return,
         },
         _ => return,
     };
     macro_rules! pick {
         ($op:expr) => {
-            if constant.is_some() {
-                returning_operator_miss::<H, { $op }, true, NOT_LEAF> as Handler
-            } else {
-                returning_operator_miss::<H, { $op }, false, NOT_LEAF> as Handler
-            }
+            returning_operator_miss::<H, { $op }, true, NOT_LEAF> as Handler
         };
     }
     let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) else {
@@ -18324,10 +18333,7 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
     };
     record.handler = handler as *const ();
     record.b = left.payload();
-    match constant {
-        Some(constant) => record.operand = LaneOperand { constant },
-        None => record.c = right.payload(),
-    }
+    record.operand = LaneOperand { constant };
 }
 
 
