@@ -19,100 +19,7 @@ use std::sync::Mutex;
 /// runtime's own: each is a `const` check against the runtime's `offset_of!`, `size_of` or layout const.
 /// The stencils are x86-64 only, so the checks are too.
 #[cfg(target_arch = "x86_64")]
-mod layout_checks {
-    use super::super::{CallContext, JsStepDispatch};
-    use crate::staged::layout_offsets as L;
-    use std::mem::offset_of;
-
-    // The stencils' stand-in words for the call context's head and the function record (`layout_offsets::CallContextWords`,
-    // `FunctionRecordWords`) have their runtime fields' sizes and alignments, so their `offset_of!` values are the runtime's.
-    const _: () = assert!(std::mem::size_of::<crate::Value>() == std::mem::size_of::<u64>() && std::mem::align_of::<crate::Value>() == std::mem::align_of::<u64>());
-    const _: () = assert!(std::mem::size_of::<crate::vm::ProgramId>() == std::mem::size_of::<u32>() && std::mem::align_of::<crate::vm::ProgramId>() == std::mem::align_of::<u32>());
-    const _: () = assert!(std::mem::size_of::<Option<super::super::Raised>>() == std::mem::size_of::<[usize; 3]>() && std::mem::align_of::<Option<super::super::Raised>>() == std::mem::align_of::<[usize; 3]>());
-    const _: () = assert!(std::mem::size_of::<crate::heap::Object>() == std::mem::size_of::<crate::staged::record_heads::ObjectHead>() && std::mem::align_of::<crate::heap::Object>() == std::mem::align_of::<crate::staged::record_heads::ObjectHead>());
-    const _: () = assert!(std::mem::size_of::<crate::heap::FunctionKind>() == std::mem::size_of::<[u32; 3]>() && std::mem::align_of::<crate::heap::FunctionKind>() == std::mem::align_of::<[u32; 3]>());
-    const _: () = assert!(L::CAPTURE_ADDRESS_PAD == u64::BITS - quench_bjit::shared_words::CAPTURE_ADDRESS_BITS);
-
-    // The dispatch record's head is its first field, so the stencil's `JS_STEP_*` offsets (`js_step_head`) are its own.
-    const _: () = assert!(offset_of!(JsStepDispatch, head) == 0);
-
-    // The layout structs: every field of each is the runtime's.
-    // NATIVE_OBJECT_LAYOUT
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_capacity == L::NATIVE_OBJECT_LAYOUT.record_capacity);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_size == L::NATIVE_OBJECT_LAYOUT.record_size);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_align == L::NATIVE_OBJECT_LAYOUT.record_align);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset == L::NATIVE_OBJECT_LAYOUT.layout_offset);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.meta_offset == L::NATIVE_OBJECT_LAYOUT.meta_offset);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset == L::NATIVE_OBJECT_LAYOUT.auxiliary_offset);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.payload_offset == L::NATIVE_OBJECT_LAYOUT.payload_offset);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.extras_arena_start_offset == L::NATIVE_OBJECT_LAYOUT.extras_arena_start_offset);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.extras_inline_values_offset == L::NATIVE_OBJECT_LAYOUT.extras_inline_values_offset);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.inline_storage_mask == L::NATIVE_OBJECT_LAYOUT.inline_storage_mask);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.array_mask == L::NATIVE_OBJECT_LAYOUT.array_mask);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.storage_start_mask == L::NATIVE_OBJECT_LAYOUT.storage_start_mask);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.dictionary_mask == L::NATIVE_OBJECT_LAYOUT.dictionary_mask);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.inline_form == L::NATIVE_OBJECT_LAYOUT.inline_form);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.extras_form == L::NATIVE_OBJECT_LAYOUT.extras_form);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.narrow_form == L::NATIVE_OBJECT_LAYOUT.narrow_form);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.narrow_run_tag == L::NATIVE_OBJECT_LAYOUT.narrow_run_tag);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.integrity_mask == L::NATIVE_OBJECT_LAYOUT.integrity_mask);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count == L::NATIVE_OBJECT_LAYOUT.inline_property_count);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.extras_tag == L::NATIVE_OBJECT_LAYOUT.extras_tag);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.extras_tag_mask == L::NATIVE_OBJECT_LAYOUT.extras_tag_mask);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.proto_mask == L::NATIVE_OBJECT_LAYOUT.proto_mask);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.proto_record_base == L::NATIVE_OBJECT_LAYOUT.proto_record_base);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.proto_record_end == L::NATIVE_OBJECT_LAYOUT.proto_record_end);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.mark_records_per_block == L::NATIVE_OBJECT_LAYOUT.mark_records_per_block);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.mark_word_bits == L::NATIVE_OBJECT_LAYOUT.mark_word_bits);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.mark_block_size == L::NATIVE_OBJECT_LAYOUT.mark_block_size);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.mark_offset == L::NATIVE_OBJECT_LAYOUT.mark_offset);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size == L::NATIVE_OBJECT_LAYOUT.property_value_size);
-    const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.property_value_align == L::NATIVE_OBJECT_LAYOUT.property_value_align);
-
-    // NATIVE_ARRAY_LAYOUT
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.record_capacity == L::NATIVE_ARRAY_LAYOUT.record_capacity);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.record_size == L::NATIVE_ARRAY_LAYOUT.record_size);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.record_align == L::NATIVE_ARRAY_LAYOUT.record_align);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.elements_offset == L::NATIVE_ARRAY_LAYOUT.elements_offset);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.extras_elements_offset == L::NATIVE_ARRAY_LAYOUT.extras_elements_offset);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.elements_header_offset == L::NATIVE_ARRAY_LAYOUT.elements_header_offset);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.header_length_offset == L::NATIVE_ARRAY_LAYOUT.header_length_offset);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.header_values_offset == L::NATIVE_ARRAY_LAYOUT.header_values_offset);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.header_owners_offset == L::NATIVE_ARRAY_LAYOUT.header_owners_offset);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.header_capacity_offset == L::NATIVE_ARRAY_LAYOUT.header_capacity_offset);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.capacity_mask == L::NATIVE_ARRAY_LAYOUT.capacity_mask);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.object_offset == L::NATIVE_ARRAY_LAYOUT.object_offset);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.frozen_mask == L::NATIVE_ARRAY_LAYOUT.frozen_mask);
-    const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.integrity_mask == L::NATIVE_ARRAY_LAYOUT.integrity_mask);
-
-    // NATIVE_TYPED_ARRAY_LAYOUT
-    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.entry_size == L::NATIVE_TYPED_ARRAY_LAYOUT.entry_size);
-    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.page_shift == L::NATIVE_TYPED_ARRAY_LAYOUT.page_shift);
-    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.page_mask == L::NATIVE_TYPED_ARRAY_LAYOUT.page_mask);
-    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.kind_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.kind_offset);
-    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.detached_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.detached_offset);
-    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.unshared_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.unshared_offset);
-    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.data_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.data_offset);
-    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.length_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.length_offset);
-    const _: () = assert!(crate::heap::NATIVE_TYPED_ARRAY_LAYOUT.stamp_offset == L::NATIVE_TYPED_ARRAY_LAYOUT.stamp_offset);
-
-    // NATIVE_ENVIRONMENT_LAYOUT
-    const _: () = assert!(crate::heap::NATIVE_ENVIRONMENT_LAYOUT.header_pointer_offset == L::NATIVE_ENVIRONMENT_LAYOUT.header_pointer_offset);
-    const _: () = assert!(crate::heap::NATIVE_ENVIRONMENT_LAYOUT.sparse_mark == L::NATIVE_ENVIRONMENT_LAYOUT.sparse_mark);
-    const _: () = assert!(crate::heap::NATIVE_ENVIRONMENT_LAYOUT.slots_offset == L::NATIVE_ENVIRONMENT_LAYOUT.slots_offset);
-    const _: () = assert!(crate::heap::NATIVE_ENVIRONMENT_LAYOUT.slot_size == L::NATIVE_ENVIRONMENT_LAYOUT.slot_size);
-
-    // NATIVE_FIELD_CACHE_LAYOUT
-    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size == L::NATIVE_FIELD_CACHE_LAYOUT.entry_size);
-    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.receiver_offset == L::NATIVE_FIELD_CACHE_LAYOUT.receiver_offset);
-    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_offset == L::NATIVE_FIELD_CACHE_LAYOUT.holder_offset);
-    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.slot_offset == L::NATIVE_FIELD_CACHE_LAYOUT.slot_offset);
-    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.receiver_complement == L::NATIVE_FIELD_CACHE_LAYOUT.receiver_complement);
-    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_complement == L::NATIVE_FIELD_CACHE_LAYOUT.holder_complement);
-    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.slot_complement == L::NATIVE_FIELD_CACHE_LAYOUT.slot_complement);
-    const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.own_holder == L::NATIVE_FIELD_CACHE_LAYOUT.own_holder);
-
-}
+mod layout_checks;
 
 /// What a heap row does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -477,30 +384,45 @@ pub(super) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
 }
 
 /// The runtime's heap codes are the catalog's rows (`quench-bjit/stencils/row_catalog.rs`): a `Heap` variant
-/// whose code the catalog did not list would plan a row no stencil is built for. The samples name each
-/// variant once, so a new variant without one here leaves the new row unchecked.
+/// whose code the catalog did not list would plan a row no stencil is built for. `every_variant` names each
+/// variant over every payload its arms tell apart, so a variant whose code is not a catalog row fails here.
 #[cfg(test)]
 mod catalog_tests {
-    use super::{Form, Heap, library};
+    use super::{FORMS, Heap, library};
+
+    /// Every variant, with each payload value its arms distinguish: every typed kind, every staged code, every flag and form.
+    fn every_variant() -> Vec<Heap> {
+        let mut all = vec![
+            Heap::Capture(0), Heap::Index, Heap::Store, Heap::TypedLength, Heap::Field, Heap::Site, Heap::SiteChain,
+            Heap::ThisSite, Heap::ThisChain, Heap::Length, Heap::CharCodeAt, Heap::ParseInt, Heap::SiteStore, Heap::ThisStore,
+            Heap::IcGet, Heap::IcKnownGet, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
+            Heap::EnvStore(0), Heap::EnvDefine(0), Heap::StoreLocal(0), Heap::LoadChecked(0), Heap::StoreChecked(0), Heap::Identity,
+            Heap::Declared, Heap::CaptureIdentity, Heap::Prototype, Heap::Shape, Heap::Stores, Heap::Held, Heap::ThisHeld, Heap::Realm,
+            Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString, Heap::Instanceof, Heap::GlobalRead,
+            Heap::GlobalStore, Heap::LexicalRead, Heap::LexicalWrite, Heap::Word, Heap::CalleeCapture, Heap::Append, Heap::ForIn,
+        ];
+        all.extend((0..library::TYPED_KINDS).flat_map(|kind| [Heap::TypedIndex(kind), Heap::TypedStore(kind)]));
+        all.extend((library::STAGED_FIRST..=library::STAGED_LAST).map(Heap::Staged));
+        for flag in [false, true] {
+            all.push(Heap::IcSet { int: flag });
+            all.push(Heap::TypeofIs { index: 0, negated: flag });
+            for admitted in [false, true] {
+                all.push(Heap::IcKnownSet { int: flag, admitted });
+            }
+        }
+        for form in FORMS {
+            all.push(Heap::Name { form });
+            for this in [false, true] {
+                all.push(Heap::Add { form, this });
+            }
+        }
+        all
+    }
 
     #[test]
     fn heap_codes_are_catalog_rows() {
         let catalog = library::heap_row_codes();
-        let samples = [
-            Heap::Capture(0), Heap::Index, Heap::Store, Heap::TypedIndex(0), Heap::TypedStore(0), Heap::TypedLength,
-            Heap::Field, Heap::Site, Heap::SiteChain, Heap::ThisSite, Heap::ThisChain, Heap::Length, Heap::CharCodeAt,
-            Heap::ParseInt, Heap::SiteStore, Heap::ThisStore, Heap::IcGet, Heap::IcSet { int: false }, Heap::IcSet { int: true },
-            Heap::IcKnownGet, Heap::IcKnownSet { int: false }, Heap::IcKnownSet { int: true }, Heap::IcProof, Heap::CaptureSet(0),
-            Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0), Heap::EnvStore(0), Heap::EnvDefine(0), Heap::StoreLocal(0),
-            Heap::LoadChecked(0), Heap::StoreChecked(0), Heap::Identity, Heap::Declared, Heap::CaptureIdentity, Heap::Prototype,
-            Heap::Held, Heap::ThisHeld, Heap::Realm, Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString,
-            Heap::Instanceof, Heap::TypeofIs { index: 0, negated: false }, Heap::TypeofIs { index: 0, negated: true },
-            Heap::GlobalRead, Heap::GlobalStore, Heap::LexicalRead, Heap::LexicalWrite, Heap::Word, Heap::CalleeCapture,
-            Heap::Append, Heap::Add { form: Form::Packed, this: false }, Heap::Add { form: Form::Arena, this: true },
-            Heap::ForIn, Heap::Name { form: Form::Packed }, Heap::Name { form: Form::Arena },
-            Heap::Staged(library::STAGED_REMAINDER), Heap::Staged(library::STAGED_STRICT_NE),
-        ];
-        for heap in samples {
+        for heap in every_variant() {
             let code = heap.code();
             assert!(catalog.contains(&code), "{heap:?} has code {code}, which the catalog does not list");
         }
@@ -508,119 +430,4 @@ mod catalog_tests {
 }
 
 #[cfg(all(test, target_arch = "x86_64"))]
-mod tests {
-
-    /// The numbers the stencil rows are compiled with (`quench-bjit/stencils/layout.rs`) are
-    /// the runtime's own.
-    use super::super::CallContext;
-    use crate::vm::wtf16::native_string as form;
-    #[allow(dead_code)]
-    mod stencil_layout {
-        include!("../../../../quench-bjit/stencils/layout.rs");
-    }
-    mod stencil_units {
-        include!("../../../../quench-bjit/stencils/units.rs");
-    }
-
-
-    /// Every payload field a stencil row reads, as (name, the runtime's offset, the stencil layout's).
-    fn payload_offsets() -> Vec<(&'static str, usize, usize)> {
-        use stencil_layout as m;
-        use std::mem::offset_of as at;
-        let own = vec![
-            ("adapter_payload", at!(CallContext, head.adapter_payload), m::CALL_CONTEXT_ADAPTER_PAYLOAD),
-            ("property_buffer_base", crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, m::PROPERTY_BUFFER_BASE),
-            ("activation_kind", crate::vm::dispatch_fast::KIND_OFFSET, m::ACTIVATION_KIND_OFFSET),
-            ("cell_entry", at!(super::super::entry_cell::EntryCell, entry), m::CELL_ENTRY_AT),
-            ("cell_recovery", at!(super::super::entry_cell::EntryCell, recovery), m::CELL_RECOVERY_AT),
-            ("cell_body", at!(super::super::entry_cell::EntryCell, body), m::CELL_BODY_AT),
-            ("cell_counters", at!(super::super::entry_cell::EntryCell, counters), m::CELL_COUNTERS_AT),
-            ("raised_run", super::super::entry_cell::RAISED_RUN as usize, m::RAISED_RUN as usize),
-            ("frame_bytes", super::super::FRAME_BYTES, m::ACTIVATION_BYTES),
-            ("layout_table_base", crate::heap::layouts::table_base().addr(), m::LAYOUT_TABLE_BASE as usize),
-            ("short_units", form::SHORT_UNITS_OFFSET as usize, m::string_form::SHORT_UNITS_OFFSET as usize),
-            ("shared_pointer", form::SHARED_POINTER_OFFSET as usize, m::string_form::SHARED_POINTER_OFFSET as usize),
-            ("shared_units", form::shared_units_offset() as usize, m::string_form::shared_units_offset() as usize),
-        ];
-        own
-    }
-
-    /// The value and narrow-value words the stencils are compiled with are the runtime's own.
-    fn value_words_match() {
-        use crate::value::{NarrowLayout, ValueLayout};
-        use stencil_layout as mirror;
-        use mirror::words as w;
-        assert_eq!(
-            [ValueLayout::TAG_MASK, ValueLayout::INT_TAG, ValueLayout::INTERNAL_TAG, ValueLayout::HEAP_TAG, ValueLayout::DIRECT_ARRAY_TAG, ValueLayout::DIRECT_OBJECT_TAG, ValueLayout::DIRECT_FUNCTION_TAG, ValueLayout::DIRECT_PROMISE_TAG, ValueLayout::DIRECT_ITERATOR_TAG, ValueLayout::HEAP_FAMILY_MASK, ValueLayout::DIRECT_STRING_TAG, u64::from(ValueLayout::TAG_SHIFT), ValueLayout::FIRST_TAG_FIELD, ValueLayout::TAG_FIELD_SPAN, ValueLayout::CANONICAL_NAN, crate::Value::NULL.to_bits(), crate::Value::UNDEFINED.to_bits(), crate::Value::DELETED.to_bits(), crate::Value::FALSE.to_bits(), crate::Value::TRUE.to_bits()],
-            [w::TAG_MASK, w::INT_TAG, w::INTERNAL_TAG, w::HEAP_TAG, w::DIRECT_ARRAY_TAG, w::DIRECT_OBJECT_TAG, w::DIRECT_FUNCTION_TAG, w::DIRECT_PROMISE_TAG, w::DIRECT_ITERATOR_TAG, w::HEAP_FAMILY_MASK, w::DIRECT_STRING_TAG, u64::from(w::TAG_SHIFT), w::FIRST_TAG_FIELD, w::TAG_FIELD_SPAN, w::CANONICAL_NAN, w::NULL, w::UNDEFINED, w::DELETED, w::FALSE, w::TRUE]
-        );
-        assert_eq!(
-            [crate::value::LOWER_WORD, crate::value::HEAP_FAMILY_BITS, u64::from(crate::value::HEAP_FAMILY_SHIFT), crate::value::NARROW_HEAP_FAMILIES as u64, crate::value::TAG_UNDEFINED, crate::value::TAG_NULL, crate::value::TAG_BOOL, crate::value::TAG_DELETED],
-            [w::LOWER_WORD, w::HEAP_FAMILY_BITS, u64::from(w::HEAP_FAMILY_SHIFT), w::NARROW_HEAP_FAMILIES as u64, w::UNDEFINED, w::NULL, w::FALSE, w::DELETED]
-        );
-        assert_eq!(
-            [u64::from(NarrowLayout::INTEGER_FLAG), u64::from(NarrowLayout::INTEGER_BITS), u64::from(NarrowLayout::CODE_SHIFT), u64::from(NarrowLayout::CODE_MASK), u64::from(NarrowLayout::INDEX_SHIFT), u64::from(NarrowLayout::INDEX_BITS), NarrowLayout::DIRECT_OBJECT_UPPER, u64::from(NarrowLayout::DIRECT_OBJECT_CODE)],
-            [u64::from(w::NARROW_INT_FLAG), u64::from(w::NARROW_INTEGER_BITS), u64::from(w::NARROW_CODE_SHIFT), u64::from(w::NARROW_CODE_MASK), u64::from(w::NARROW_INDEX_SHIFT), u64::from(w::NARROW_INDEX_BITS), w::DIRECT_OBJECT_UPPER, u64::from(w::DIRECT_OBJECT_NARROW_CODE)]
-        );
-    }
-
-    /// The typed-array kinds the stencils name are the runtime's, in its order, with its widths.
-    fn typed_kinds_match() {
-        use stencil_layout::TypedArrayKind as Mirror;
-        let mirrored = Mirror::ALL;
-        assert_eq!(usize::from(stencil_layout::LOOP_ENTRY_ARRAY_COUNT_AT as u8), std::mem::size_of::<u64>(), "the count follows the elements' address");
-        let native_kinds: Vec<u8> = (0..quench_bjit::numeric::library::TYPED_KINDS).filter(|kind| !quench_bjit::numeric::library::NON_NATIVE_KINDS.contains(kind)).collect();
-        let runtime_native: Vec<u8> = crate::heap::TYPED_ARRAYS.iter().filter(|row| crate::staged::typed_elements::NativeKind::new(row.kind).is_some()).map(|row| row.kind as u8).collect();
-        assert_eq!(native_kinds, runtime_native);
-        assert_eq!(crate::heap::TYPED_ARRAYS.len(), mirrored.len());
-        for (row, mirror) in crate::heap::TYPED_ARRAYS.iter().zip(mirrored) {
-            assert_eq!((row.kind as usize, row.width), (mirror as usize, mirror.width()), "{}", row.name);
-        }
-    }
-
-    /// The conversions the stencils make of a binary64's bits are the runtime's own of its value.
-    #[test]
-    fn stencil_units_match() {
-        let samples = [
-            0.0, -0.0, 0.5, -0.5, 1.0, 1.5, -1.5, 2.5, 254.5, 255.0, 255.5, 256.0, 0.499_999_999_999_999_94, 0.500_000_000_000_000_1,
-            2_147_483_648.0, -2_147_483_649.0, 4_294_967_295.0, 4_294_967_296.5, 1e10, -1e10, 9_007_199_254_740_993.0, 1e19, 1e300,
-            f64::MAX, f64::MIN, f64::MIN_POSITIVE, f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
-        ];
-        for value in samples {
-            assert_eq!(stencil_units::to_int32(value), crate::units::to_int32(value), "ToInt32 of {value}");
-            let clamped = if value.is_nan() { 0 } else { value.clamp(f64::from(u8::MIN), f64::from(u8::MAX)).round_ties_even() as u64 };
-            assert_eq!(stencil_units::clamp_u8(value.to_bits()), clamped, "clamp of {value}");
-        }
-    }
-
-    #[test]
-    fn stencil_layout_matches() {
-        use stencil_layout as mirror;
-        eprintln!("OFFSETS {:?}", payload_offsets());
-        assert_eq!(format!("{:?}", crate::heap::NATIVE_OBJECT_LAYOUT), format!("{:?}", mirror::NATIVE_OBJECT_LAYOUT));
-        assert_eq!(format!("{:?}", crate::heap::NATIVE_FUNCTION_LAYOUT), format!("{:?}", mirror::NATIVE_FUNCTION_LAYOUT));
-        assert_eq!(format!("{:?}", crate::heap::NATIVE_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_ARRAY_LAYOUT));
-        assert_eq!(format!("{:?}", crate::heap::NATIVE_TYPED_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_TYPED_ARRAY_LAYOUT));
-        assert_eq!(format!("{:?}", crate::heap::NATIVE_ENVIRONMENT_LAYOUT), format!("{:?}", mirror::NATIVE_ENVIRONMENT_LAYOUT));
-        let (cache, copy) = (crate::vm::NATIVE_FIELD_CACHE_LAYOUT, mirror::NATIVE_FIELD_CACHE_LAYOUT);
-        assert_eq!([cache.entry_size, cache.receiver_offset, cache.holder_offset, cache.slot_offset], [copy.entry_size, copy.receiver_offset, copy.holder_offset, copy.slot_offset]);
-        assert_eq!(
-            [cache.receiver_complement, cache.holder_complement, cache.slot_complement, cache.own_holder],
-            [copy.receiver_complement, copy.holder_complement, copy.slot_complement, copy.own_holder]
-        );
-        assert_eq!(
-            [crate::heap::NARROW_LEN as u64, crate::heap::DOUBLE_LEN as u64, crate::heap::ENCODED_LEN as u64, crate::heap::OTHERS_UNKNOWN as u64, crate::heap::LENGTH_FROM_VALUES as i64 as u64, crate::heap::OTHERS_FROM_VALUES as i64 as u64, crate::value_vec::INLINE_PROPERTY_COUNT as u64, u64::from(crate::heap::SMALL_STRING_ID_MASK), u64::from(crate::heap::SMALL_STRING_ID_BASE)],
-            [mirror::NARROW_LEN as u64, mirror::DOUBLE_LEN as u64, mirror::ENCODED_LEN as u64, mirror::OTHERS_UNKNOWN as u64, mirror::LENGTH_FROM_VALUES as i64 as u64, mirror::OTHERS_FROM_VALUES as i64 as u64, mirror::INLINE_PROPERTIES as u64, u64::from(mirror::SMALL_STRING_ID_MASK), u64::from(mirror::SMALL_STRING_ID_BASE)]
-        );
-        value_words_match();
-        typed_kinds_match();
-        assert_eq!(super::super::NATIVE_JS_STOPPED, mirror::call_record::NATIVE_JS_STOPPED);
-        for (name, runtime, copy) in payload_offsets() {
-            assert_eq!(runtime, copy, "{name}: the runtime's offset is the stencil layout's");
-        }
-        assert_eq!(
-            [form::RECORD_SIZE as i32, form::SHORT_LENGTH_OFFSET, form::SHARED_LENGTH_OFFSET],
-            [mirror::string_form::RECORD_SIZE as i32, mirror::string_form::SHORT_LENGTH_OFFSET, mirror::string_form::SHARED_LENGTH_OFFSET]
-        );
-    }
-}
+mod tests;

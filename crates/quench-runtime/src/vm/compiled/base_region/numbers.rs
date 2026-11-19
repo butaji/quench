@@ -28,20 +28,20 @@ fn leaves_on_other(kind: Kind) -> bool {
         | Kind::Min | Kind::Max | Kind::Imul | Kind::Clz32 | Kind::AddNoOverflow | Kind::SubNoOverflow)
 }
 
-/// Whether an entry (or a stub) checks the web `web` as a Number: the rule `entry_rows` applies to a live web.
-fn checked_web(homes: &Homes, numbers: &[Register], web: usize) -> bool {
+/// Whether the entry at `row` checks the web `web` as a Number: the rule `entry_rows` applies to a live web.
+fn checked_web(homes: &Homes, reads: &EntryReads, row: usize, web: usize) -> bool {
     match homes.place(web as Register) {
         Place::Pin(_) | Place::PinF(_) | Place::MemInt => true,
-        Place::Mem => numbers.contains(&homes.orig[web]),
+        Place::Mem => reads.guards(row, usize::from(homes.orig[web])),
         _ => false,
     }
 }
 
 /// The state an entry at `row` holds: the slots of its live webs that its guards check.
-fn entry_state(span: &Span, homes: &Homes, webs: &Webs, row: usize) -> Held {
+fn entry_state(span: &Span, homes: &Homes, webs: &Webs, reads: &EntryReads, row: usize) -> Held {
     let mut held = Held::with_capacity(homes.orig.len().max(1));
     for web in webs.live_at(span, row as u32) {
-        if checked_web(homes, span.number_registers(), web) {
+        if checked_web(homes, reads, row, web) {
             held.insert(usize::from(homes.orig[web]));
         }
     }
@@ -50,11 +50,11 @@ fn entry_state(span: &Span, homes: &Homes, webs: &Webs, row: usize) -> Held {
 
 /// Per row, whether the checked operand of a `checked` row is a Number on every path into it.
 ///
-/// `reached` marks the rows control reaches, `kinds` is each row's site feedback (`variant_of`), and
-/// `entries` the first row of each caller PC a resume stub enters at (none for a body, which only its
-/// entry enters).
+/// `reached` marks the rows control reaches, `kinds` is each row's site feedback (`variant_of`), `reads`
+/// the entry guards the rows keep (`entry_reads`), and `entries` the first row of each caller PC a resume
+/// stub enters at (none for a body, which only its entry enters).
 pub(super) fn proven_operands(span: &Span, decoded: &[Decoded], reached: &Bits, homes: &Homes, webs: &Webs,
-    kinds: &[Option<OperandKinds>], ending: Ending, entries: &[(u32, u32)]) -> Vec<bool> {
+    reads: &EntryReads, kinds: &[Option<OperandKinds>], ending: Ending, entries: &[(u32, u32)]) -> Vec<bool> {
     let count = decoded.len();
     let mut entry_rows = vec![span.header as usize];
     if ending == Ending::Region {
@@ -65,7 +65,7 @@ pub(super) fn proven_operands(span: &Span, decoded: &[Decoded], reached: &Bits, 
     let mut state: Vec<Option<Held>> = vec![None; count];
     let mut pending = Vec::new();
     for row in entry_rows.into_iter().filter(|row| *row < count) {
-        state[row] = Some(entry_state(span, homes, webs, row));
+        state[row] = Some(entry_state(span, homes, webs, reads, row));
         pending.push(row);
     }
     while let Some(k) = pending.pop() {
@@ -124,4 +124,81 @@ fn meet(known: &mut Held, other: &Held) -> bool {
         known.remove(*slot);
     }
     !lost.is_empty()
+}
+
+/// Which entry guards of Mem slots a region keeps (`entry_rows`), by row and frame slot.
+///
+/// A Number guard checks the entry value of its slot. Its check is redundant where no row reads that value
+/// natively before writing the slot (`entry_reads`). `kept` slots keep theirs whatever the rows read: a declared
+/// Number parameter's rows rely on its guard, and an inlined frame's copies run at a leave.
+pub(super) struct EntryReads {
+    /// The number-register slots (`Span::number_registers`), the only ones a Number guard checks.
+    numbers: Held,
+    kept: Held,
+    /// Per row, the slots whose entry value a native read reaches before a write, on some path from the row.
+    live: Vec<Held>,
+}
+
+impl EntryReads {
+    /// Whether the entry at row `row` emits the Number guard of frame slot `slot`. A row past the analysis keeps it.
+    pub(super) fn guards(&self, row: usize, slot: usize) -> bool {
+        self.numbers.contains(slot) && (self.kept.contains(slot) || self.live.get(row).is_none_or(|live| live.contains(slot)))
+    }
+}
+
+/// Whether the row checks each operand it reads, so it reads no fact an entry guard provides: a numeric stencil
+/// that leaves on any other operand (`leaves_on_other`) with no heap, step, global or checked operand.
+fn self_checking(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
+    row.heap.is_none() && row.step.is_none() && row.global.is_none() && !row.checked
+        && leaves_on_other(row.kind) && variant_of(row.kind, kinds) != Variant::Concat
+}
+
+/// The slots of `from` in `into`.
+fn union(into: &mut Held, from: &Held) {
+    for slot in from.iter() {
+        into.insert(slot);
+    }
+}
+
+/// The entry reads of a region's rows: a backward analysis of the slots a native read reaches before a write.
+/// A self-checking row reads nothing an entry must prove; any other row reads all its registers, and a row writes
+/// its destinations, which end the entry value there.
+pub(super) fn entry_reads(span: &Span, decoded: &[Decoded], homes: &Homes, kinds: &[Option<OperandKinds>], kept: &[Register]) -> EntryReads {
+    let count = decoded.len();
+    let capacity = homes.orig.len().max(1);
+    let slot = |web: Register| usize::from(homes.orig[usize::from(web)]);
+    let mut live: Vec<Held> = vec![Held::with_capacity(capacity); count];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for k in (0..count).rev() {
+            let row = &decoded[k];
+            let mut before = Held::with_capacity(capacity);
+            for next in row.successors(k, count, span) {
+                if let Next::Row(n) = next {
+                    union(&mut before, &live[n]);
+                }
+            }
+            for written in [row.dst, row.also].into_iter().flatten() {
+                before.remove(slot(written));
+            }
+            if !self_checking(row, kinds.get(k).and_then(Option::as_ref)) {
+                for read in row.registers() {
+                    before.insert(slot(read));
+                }
+            }
+            if !before.iter().eq(live[k].iter()) {
+                live[k] = before;
+                changed = true;
+            }
+        }
+    }
+    let set = |registers: &mut dyn Iterator<Item = Register>| {
+        let mut held = Held::with_capacity(capacity);
+        for register in registers {
+            held.insert(usize::from(register));
+        }
+        held
+    };
+    EntryReads { numbers: set(&mut span.number_registers().iter().copied()), kept: set(&mut kept.iter().copied()), live }
 }

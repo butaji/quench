@@ -17,7 +17,8 @@ use super::*;
 /// class-typed receivers whose exact shape and prototype link hold here: the entry proved them, or a held read checked
 /// them, and no row since may change an object's shape (`may_reshape`). `stores`: the entry checked that the run stores
 /// specialized (`guard::stores`), and no row since has run code that could rewrite that word (`runs_code`): a store the
-/// proofs admit needs no test of its own.
+/// proofs admit needs no test of its own. `released`: a call on some path cleared `stores`, and no store re-read the word
+/// since (`Decoded::recheck`).
 #[derive(Clone, Default, PartialEq)]
 struct Proved {
     objects: Vec<Register>,
@@ -25,6 +26,7 @@ struct Proved {
     copies: Vec<(Register, Register)>,
     shapes: Vec<Register>,
     stores: bool,
+    released: bool,
 }
 
 impl Proved {
@@ -58,6 +60,12 @@ fn may_reshape(row: &Decoded) -> bool {
         || row.declined.is_some() || row.checked
 }
 
+/// Whether `row` may rewrite the run's stores word: code that may run in a nested run (a call, a helper, an `instanceof`,
+/// a checked conversion, a declined store's step).
+fn clears_stores(row: &Decoded) -> bool {
+    row.makes_calls() || row.instanceof.is_some() || row.checked || row.declined.is_some()
+}
+
 /// The receiver register an inline-cache access names.
 pub(super) fn receiver(row: &Decoded) -> Option<Register> {
     row.ic?;
@@ -79,9 +87,14 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
     if may_reshape(row) {
         proved.shapes.clear();
     }
-    // Code that may run in a nested run (a call, a helper, an `instanceof`, a checked conversion) may rewrite the run's stores word.
-    if row.makes_calls() || row.instanceof.is_some() || row.checked || row.declined.is_some() {
+    if clears_stores(row) {
         proved.stores = false;
+        proved.released |= row.makes_calls();
+    }
+    // A recheck re-reads the stores word before the store, so the flag holds after it.
+    if recheck_store(row, before) {
+        proved.stores = true;
+        proved.released = false;
     }
     if let Some(register) = receiver(row) {
         let root = proved.root(register);
@@ -114,7 +127,55 @@ fn meet(a: &Proved, b: &Proved) -> Proved {
         copies: a.copies.iter().filter(|copy| b.copies.contains(copy)).copied().collect(),
         shapes: a.shapes.iter().filter(|held| b.shapes.contains(held)).copied().collect(),
         stores: a.stores && b.stores,
+        released: a.released || b.released,
     }
+}
+
+/// Whether `row`, reached with `held`, is a store the inline-cache known-set row takes: its receiver `held` proves a direct
+/// object, and it names no second register and is not declined (so no step runs in its place).
+fn admitted_store(row: &Decoded, held: &Proved) -> bool {
+    matches!(row.heap, Some(Heap::SiteStore)) && row.also.is_none() && row.declined.is_none() && receiver(row).is_some_and(|register| held.holds(register))
+}
+
+/// Whether `row`, reached with `held`, re-reads the stores word before it stores (`Decoded::recheck`): an admitted store
+/// whose flag a call cleared.
+fn recheck_store(row: &Decoded, held: &Proved) -> bool {
+    !held.stores && held.released && admitted_store(row, held)
+}
+
+/// The rows of `from`'s successors that are rows of the region.
+fn next_rows(rows: &[Decoded], span: &Span, from: usize) -> Vec<usize> {
+    rows[from].successors(from, rows.len(), span).filter_map(|next| match next {
+        Next::Row(k) => Some(k),
+        Next::Leave(_) => None,
+    }).collect()
+}
+
+/// Whether a proven store follows `from` before the next row that may rewrite the stores word: the re-read at `from`
+/// then admits it too, so the re-read is worth its test.
+fn admits_after(rows: &[Decoded], span: &Span, before: &[Option<Proved>], from: usize) -> bool {
+    let mut seen = Bits::default();
+    let mut pending = next_rows(rows, span, from);
+    while let Some(k) = pending.pop() {
+        if seen.contains(k) {
+            continue;
+        }
+        seen.insert(k);
+        let Some(held) = before[k].as_ref() else { continue };
+        if admitted_store(&rows[k], held) {
+            return true;
+        }
+        if !clears_stores(&rows[k]) {
+            pending.extend(next_rows(rows, span, k));
+        }
+    }
+    false
+}
+
+/// The rows that re-read the stores word before they store (`Decoded::recheck`): each store `recheck_store` takes, where
+/// a proven store follows it before the next kill (`admits_after`). Other rows are false.
+fn rechecks(rows: &[Decoded], span: &Span, before: &[Option<Proved>]) -> Vec<bool> {
+    (0..rows.len()).map(|k| before[k].as_ref().is_some_and(|held| recheck_store(&rows[k], held)) && admits_after(rows, span, before, k)).collect()
 }
 
 /// Marks each reached row whose receiver every path proves a direct object (`Decoded::proven`), and
@@ -124,7 +185,8 @@ fn meet(a: &Proved, b: &Proved) -> Proved {
 /// re-establishes them with the declared entry rows. `shaped` holds the class-typed receivers the entry checked for
 /// exact shape and prototype link (`declared::class_prototypes`): a held read of one becomes a constant load on every
 /// path where no row since may change the shape (`may_reshape`). Each proven store the run-level stores test admits, with no
-/// call since the entry, is marked `Decoded::admitted`.
+/// call since the entry, is marked `Decoded::admitted`; a store a call cleared the test for re-reads the word (`Decoded::recheck`)
+/// where a proven store follows it before the next such clear.
 pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[Register], shaped: &[Register]) {
     let count = rows.len();
     // `None`: no path reaches the row yet (the top of the meet).
@@ -153,6 +215,13 @@ pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[
             }
         }
     }
+    settle(rows, span, reached, &mut before);
+}
+
+/// Each reached row's proofs, from the `before` of the fixpoint: its receiver, its re-read (`Decoded::recheck`), its
+/// admission, and the constant reads the shapes settle.
+fn settle(rows: &mut [Decoded], span: &Span, reached: &Bits, before: &mut [Option<Proved>]) {
+    let rechecked = rechecks(rows, span, before);
     for (k, row) in rows.iter_mut().enumerate() {
         let held = before[k].take().unwrap_or_default();
         if !reached.contains(k) {
@@ -160,7 +229,8 @@ pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[
         }
         row.relies = !held.established.is_empty();
         row.proven = receiver(row).is_some_and(|register| held.holds(register));
-        row.admitted = row.proven && held.stores && matches!(row.heap, Some(Heap::SiteStore));
+        row.recheck = rechecked[k];
+        row.admitted = row.proven && matches!(row.heap, Some(Heap::SiteStore)) && (held.stores || row.recheck);
         if row.class_read && let Some(register) = row.a.and_then(register_of) && held.shapes.contains(&register) {
             constant_read(row);
         }
