@@ -333,7 +333,9 @@ function scan(tree, branch, wantOwners) {
     }
     // P12: delete dead paths.
     for (const m of s.matchAll(/#!?\[(?:allow|expect)\((?:[a-z_]+, *)*dead_code\b[^\]]*\]/g))
-      if (!inRanges(tests, m.index) && !pathIncluded.has(rel)) add("dead-code", rel, lineOf(starts, m.index), `dead@${lineOf(starts, m.index)}`, `#[allow(dead_code)] keeps a dead path (principle 12)`);
+      // A reasoned expect on a repr(C) ABI-layout struct: its fields exist for the C layout, and the build fails if they become live.
+      if (/^#\[expect\(dead_code,\s*reason/.test(m[0]) && /#\[repr\(C/.test(s.slice(Math.max(0, m.index - 200), m.index + 300))) continue;
+      else if (!inRanges(tests, m.index) && !pathIncluded.has(rel)) add("dead-code", rel, lineOf(starts, m.index), `dead@${lineOf(starts, m.index)}`, `#[allow(dead_code)] keeps a dead path (principle 12)`);
     // One policy home: QUENCH_* switches outside vm/switches.rs.
     if (inRuntime && !/vm\/switches\.rs$/.test(rel)) for (const m of src.matchAll(/env::var(?:_os)?\(\s*"(QUENCH_[A-Z0-9_]+)"/g))
       if (!inRanges(tests, m.index)) add("policy-outside-home", rel, lineOf(starts, m.index), m[1], `${m[1]} read outside vm/switches.rs (one policy home)`, { owner: "Compile pipeline" });
