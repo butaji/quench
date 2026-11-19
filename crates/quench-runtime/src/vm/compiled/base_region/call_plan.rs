@@ -38,6 +38,8 @@
 
 pub(super) mod inline;
 mod chain;
+pub(super) mod builtin;
+use builtin::BuiltinCall;
 pub(super) use chain::ChainRead;
 use chain::chained_reads;
 use super::{Exit, SLOT};
@@ -325,6 +327,8 @@ pub(super) struct CallPlan<'a> {
     /// with the value its holder held when planned. Where one pairs with a callee the site reached, the chain is its reads
     /// and direct rows (`chained_reads`), and `read` is not planned.
     pub(super) chain: Vec<ChainRead>,
+    /// The builtin the callee is, where the site's native callee is one the b-jit runs on a row (`builtin::of`).
+    pub(super) builtin: Option<BuiltinCall>,
 }
 
 
@@ -370,7 +374,6 @@ fn helper_part(call_pc: u32, helper: usize, packed: Option<[u64; 2]>) -> Result<
         }
     }
 }
-
 
 /// The pinned register holding argument `k` of the call, where the call passes it by place (the leading
 /// `PLACED_ARGUMENTS` only) and the register is spilled: its place and its window register.
@@ -433,8 +436,9 @@ fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Optio
         return Ok(None);
     }
     let record = Box::new(CallRecord {
-        callee: identity, cell: 0, expected: 0, descriptor: 0, captures: 0, global_this: 0, frame_bytes: 0,
+        proven_args: 0, callee: identity, cell: 0, expected: 0, call: 0, caller_base: 0, packed: 0, captures: 0, global_this: 0,
         callee_register: shape.callee, this_register: shape.this, args_register: shape.window, result_register: shape.result,
+        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS],
     });
     let stencil = call::stencil(CallRow::Builtin(row))?;
     Ok(Some((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), Vec::new()), record)))
@@ -466,6 +470,10 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     let mut directs = Vec::new();
     for (_, facts) in choices.into_iter().filter(|(choice, _)| *choice == Choice::Direct) {
         directs.push(direct_part(&plan.shape, facts, arguments, plan.proven_args)?);
+    }
+    // A builtin callee's row stands where no direct row does: its miss is the helper row behind it.
+    if directs.is_empty() && let Some(builtin) = builtin_part(&plan.shape, plan.builtin)? {
+        directs.push(builtin);
     }
     // The spills before the direct rows; the spills of pinned arguments that only the refusal path reads
     // (`refusal_only`) follow them, where the rows' NEXT falls to the helper row. Without a direct row, all come first.

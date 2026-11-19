@@ -39,6 +39,15 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 /// A tier guard, or a taken back edge's poll and count (`step`): `Step::Value` where the proof holds,
 /// `Step::Unresolved` where the row leaves.
 #[inline(always)]
+/// The control a frame answers (`Frame::raise`), or `Unresolved` where it answers none.
+#[inline(always)]
+fn suspended<W, C>(control: Option<C>) -> Step<W, C> {
+    match control {
+        Some(control) => Step::Control(control),
+        None => Step::Unresolved,
+    }
+}
+
 fn guard_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let held = match operation {

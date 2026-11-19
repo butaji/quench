@@ -35,7 +35,7 @@ pub(super) enum Inline {
     /// `Math.clz32` of a Number: its ToUint32's leading zeros, an int32 (`staged::math::count_leading_zeros`).
     LeadingZeros,
     Builtin(Builtin),
-    /// A scalar native (`global_facts::scalar_native`), called in place by its helper (`Lowering::scalar_call`).
+    /// A scalar native (`global_facts::scalar_native`), called in place by its helper (`Lowering::scalar_native_call`).
     Scalar,
 }
 
@@ -223,7 +223,7 @@ impl Lowering<'_, '_> {
         emit_js_guard(&mut self.builder, same, exit);
         match inline {
             Inline::Builtin(builtin) => self.builtin_call(state, pc, instruction, builtin, exit),
-            Inline::Scalar => self.guarded_scalar_call(state, pc, instruction, held, exit),
+            Inline::Scalar => self.scalar_native_call(state, pc, instruction, held, exit),
             _ => self.math_call(state, instruction, inline, exit),
         }
         true
@@ -233,7 +233,7 @@ impl Lowering<'_, '_> {
     /// case on the arguments (`lane_allocations::scalar_native_in_lane`), which reads the native from the callee. The call
     /// leaves at `exit`, before it changes anything, where that case does not complete (an object argument, an error, a
     /// due collection).
-    fn guarded_scalar_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, held: ir::Value, exit: ir::Block) {
+    fn scalar_native_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, held: ir::Value, exit: ir::Block) {
         // The value the loop's entry computed (`hoist_scalar_calls`), where the callee's identity guard at this call holds.
         if let Some(hoisted) = self.scalar_values.get(&pc).copied() {
             let value = self.builder.use_var(hoisted.value);

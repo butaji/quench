@@ -107,7 +107,7 @@ impl<H: Host> Vm<H> {
 pub(super) fn owned_flat_ascii(heap: &crate::heap::Heap, value: Value) -> Option<JsString> {
     let text = match heap.flat_text(value)? {
         crate::heap::FlatText::Record(Units::Ascii(_)) => heap.string(value)?.clone(),
-        crate::heap::FlatText::Record(Units::Wide(_)) => return None,
+        crate::heap::FlatText::Record(Units::Wide(_) | Units::Latin1(_)) => return None,
         crate::heap::FlatText::Small(text) => JsString::from_shared_text(&text),
     };
     let ascii = matches!(text.units(), Units::Ascii(_));
@@ -118,7 +118,7 @@ pub(super) fn owned_flat_ascii(heap: &crate::heap::Heap, value: Value) -> Option
 pub(super) fn ascii_bytes(string: &JsString) -> Option<&[u8]> {
     match string.units() {
         Units::Ascii(bytes) => Some(bytes),
-        Units::Wide(_) => None,
+        Units::Latin1(_) | Units::Wide(_) => None,
     }
 }
 

@@ -1971,6 +1971,10 @@ pub(crate) struct Vm<H> {
     /// Whether the innermost running job queue has entered the host's context for unobserved
     /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.
     unobserved_jobs_entered: bool,
+    /// The native whose fast in-place body a dispatcher tried and declined on the call that is
+    /// about to reach its general native, so that native skips that body (the one-shot flag is
+    /// taken at each such native's entry, and cleared at each dispatcher attempt).
+    declined_fast: Option<Native>,
     /// The programs the running job queues return to, innermost last (`Vm::run_job_queue`):
     /// an await's job leaves its function's program active for the queue's next jobs, so a
     /// collection keeps each of these, which the queue makes active again when it ends.
@@ -2211,6 +2215,9 @@ pub(crate) struct Vm<H> {
     /// That an iterator prototype's chain lacks a name (`Vm::iterator_lacks_property`): the
     /// prototype, the name (`PropertyKey::key32`) and the cell of the chain it was proved over.
     iterator_absence_proof: std::cell::Cell<Option<(Value, u32, crate::heap::ChainCell)>>,
+    /// That the realm's `%Object.prototype%` chain lacks `then` (`Vm::resolve_iterator_result`):
+    /// the prototype and the `prototype_layout_epoch` it was proved under.
+    then_absence_proof: Option<(Value, u64)>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
     /// The `then` a resolution read from promises of one layout (`Vm::memoized_resolution_then`).
@@ -3340,7 +3347,7 @@ impl<H: Host> Vm<H> {
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
         self.field_add_chains.clear();
-        self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
+        self.megamorphic_field_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.megamorphic_fields.clear();
         self.field_stubs.clear();
         self.holder_hints.clear();

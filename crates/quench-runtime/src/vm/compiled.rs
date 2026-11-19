@@ -925,11 +925,11 @@ fn emit_unlogged_property_store_guard(
     // A marked owner would be logged by RecordSpace::store_logs; otherwise the
     // barrier is a no-op. Marks and block bases are refreshed after each callout.
     let list = match space {
-        crate::staged::RecordSpace::Object => MarkList {
+        crate::staged::StagedRecordSpace::Object => MarkList {
             blocks: std::mem::offset_of!(JsStepDispatch, head.object_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, head.object_mark_block_count),
         },
-        crate::staged::RecordSpace::Function => MarkList {
+        crate::staged::StagedRecordSpace::Function => MarkList {
             blocks: std::mem::offset_of!(JsStepDispatch, head.function_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, head.function_mark_block_count),
         },
@@ -2153,6 +2153,7 @@ const CONTEXT_TABLE_WORDS: i32 = std::mem::offset_of!(CallContext, head.table_wo
 const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, head.callout) as i32;
 const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, head.call_reference) as i32;
 const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, head.memory_length) as i32;
+const CONTEXT_MEMORY_GROW: i32 = std::mem::offset_of!(CallContext, memory_grow) as i32;
 const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
     std::mem::offset_of!(CallContext, head.call_reference_diagnostic) as i32;
 const CONTEXT_INSTANCE: i32 = std::mem::offset_of!(CallContext, instance) as i32;
@@ -4423,7 +4424,7 @@ impl<H: Host> Vm<H> {
     /// window's header the body's rows read: the frame's own and the header's are written by the one step.
     pub(super) fn publish_body_receiver(&self, receiver: Value) {
         let frame = frame_in_lane();
-        // SAFETY: as `refresh_body_bases`.
+        // SAFETY: as `refresh_body_bases`; the running body's window is the dispatch's registers.
         unsafe { set_frame_word((*frame).dispatch.native_registers, CONTEXT_THIS, receiver.to_bits()) }
     }
 
@@ -7495,7 +7496,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         // Registers start at i32 zero, as an activation's register file does, where an entry may
         // read them before writing (`entry_fill`), and the locals. Any other register is written
         // before a read on every path, so it needs no zero.
-        let zeroed = super::dispatch_fast::entry_fill(function);
+        let zeroed = super::dispatch_fast::entry_fill(self.code, function);
         for register in (0..zeroed).chain(function.registers..function.registers.saturating_add(function.locals)) {
             emitter.write_constant(register, Kind::I32, 0);
             emitter.write_constant(register, Kind::I64, 0);

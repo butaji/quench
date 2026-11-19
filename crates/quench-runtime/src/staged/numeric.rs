@@ -570,7 +570,8 @@ pub(crate) fn int32_binary_operation(operator: u32, destination: Register, left:
         Some(operation) => Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Int32,
             overflow: Overflow::Exit, zero: NegativeZero::Exit }),
         None if operator == BinaryOperator::Remainder as u32 =>
-            Some(NumberOperation::Remainder { destination, left, right, domain: Domain::Int32 }),
+            Some(NumberOperation::Remainder { destination, left, right, domain: Domain::Int32,
+                zero: NegativeZero::Exit, divisor_nonzero: false }),
         None => None,
     };
     int32.or_else(|| binary_operation(operator, destination, left, right))

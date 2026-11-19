@@ -342,6 +342,7 @@ pub(crate) fn window_fill<S: Stage>(stage: &mut S, facts: S::Word, room: S::Word
     let all = stage.eq_imm(fill, u32::from(FILL_ALL));
     stage.select(all, room, fill)
 }
+
 /// The direct native call both JIT tiers emit at a bound call site: the callee identity guard
 /// inlined (`guard_callee`, one compare of the held word against the identity the site was bound
 /// to) and the code pointer read from the callee's entry cell, the word the tier then jumps or

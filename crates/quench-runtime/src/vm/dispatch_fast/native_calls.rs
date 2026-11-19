@@ -2,6 +2,7 @@
 //! for-in's step (`fast_names_step`, the loop exit's row).
 use super::*;
 use crate::staged::call_complete::{concrete_returns_callee_completion, concrete_write_call_result};
+use crate::bytecode::index as opc;
 use crate::vm::object_get::ordinary_chain::ChainRead;
 
 /// `charCodeAt` of a flat string at an integer index (`staged::builtins::char_code_at`): the

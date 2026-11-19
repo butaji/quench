@@ -46,24 +46,6 @@ pub enum BuiltinRow {
     CharAt,
     /// `Number.isInteger` of a Number.
     IsInteger,
-    /// `Math.floor` of a Number.
-    Floor,
-    /// `Math.ceil` of a Number.
-    Ceil,
-    /// `Math.trunc` of a Number.
-    Trunc,
-    /// `Math.abs` of a Number.
-    Abs,
-    /// `Math.sqrt` of a Number.
-    Sqrt,
-    /// `Math.fround` of a Number.
-    Fround,
-    /// `Math.round` of a Number.
-    Round,
-    /// `Math.max` of two Numbers.
-    Max,
-    /// `Math.min` of two Numbers.
-    Min,
     /// `Math.imul` of two int32 operands.
     Imul,
     /// `Array.prototype.push` of one value onto a dense array (`staged::builtins::array_push_one`).
@@ -74,27 +56,17 @@ pub enum BuiltinRow {
 
 impl BuiltinRow {
     /// Every builtin row, each with its own stencil.
-    pub const ALL: [BuiltinRow; 15] = [
-        BuiltinRow::CharCodeAt, BuiltinRow::CharAt, BuiltinRow::IsInteger, BuiltinRow::Floor, BuiltinRow::Ceil, BuiltinRow::Trunc, BuiltinRow::Abs,
-        BuiltinRow::Sqrt, BuiltinRow::Fround, BuiltinRow::Round, BuiltinRow::Max, BuiltinRow::Min, BuiltinRow::Imul,
+    pub const ALL: [BuiltinRow; 6] = [
+        BuiltinRow::CharCodeAt, BuiltinRow::CharAt, BuiltinRow::IsInteger, BuiltinRow::Imul,
         BuiltinRow::Push, BuiltinRow::Pop,
     ];
 
-    /// The row's name in the stencil object, after `call_builtin_`.
+    /// The row's name in the stencil object, after `builtin_`.
     pub const fn symbol(self) -> &'static str {
         match self {
             BuiltinRow::CharCodeAt => "char_code_at",
             BuiltinRow::CharAt => "char_at",
             BuiltinRow::IsInteger => "is_integer",
-            BuiltinRow::Floor => "floor",
-            BuiltinRow::Ceil => "ceil",
-            BuiltinRow::Trunc => "trunc",
-            BuiltinRow::Abs => "abs",
-            BuiltinRow::Sqrt => "sqrt",
-            BuiltinRow::Fround => "fround",
-            BuiltinRow::Round => "round",
-            BuiltinRow::Max => "max",
-            BuiltinRow::Min => "min",
             BuiltinRow::Imul => "imul",
             BuiltinRow::Push => "push",
             BuiltinRow::Pop => "pop",
@@ -104,7 +76,7 @@ impl BuiltinRow {
     /// The arguments the builtin reads after its receiver's window: the count the planner must match.
     pub const fn arguments(self) -> u16 {
         match self {
-            BuiltinRow::Max | BuiltinRow::Min | BuiltinRow::Imul => 2,
+            BuiltinRow::Imul => 2,
             BuiltinRow::Pop => 0,
             _ => 1,
         }
@@ -131,7 +103,7 @@ impl CallRow {
                 Ok(format!("call_direct_a{argc}_{mode}{}", if checked { "" } else { "_unchecked" }))
             }
             CallRow::Reload(place @ (Place::Pin(_) | Place::PinF(_))) => Ok(format!("reload_{}", place.code())),
-            CallRow::Builtin(row) => Ok(format!("call_builtin_{}", row.symbol())),
+            CallRow::Builtin(row) => Ok(format!("builtin_{}", row.symbol())),
             other => Err(format!("no call row {other:?}")),
         }
     }

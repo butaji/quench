@@ -672,6 +672,11 @@ pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
     }
 }
 
+/// Whether `native` is a Math function of one Number, which `math_unary` computes.
+pub(super) fn is_math_unary(native: Native) -> bool {
+    matches!(math_function(native), Some(MathFunction::Row(_) | MathFunction::Unary(_)))
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn math_hypot(
         &mut self,

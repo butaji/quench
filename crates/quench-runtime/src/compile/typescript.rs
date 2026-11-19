@@ -6,6 +6,7 @@
 use oxc_ast::ast::*;
 
 use crate::typed_ir::language_bit;
+use crate::staged::value::language as bits;
 
 mod admit;
 mod checked;

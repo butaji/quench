@@ -115,6 +115,47 @@ fn lane_simd_operand<H: Host>(vm: &Vm<H>, value: Value, ty: crate::WasmType) -> 
     )
 }
 
+/// Store `value` to the mutable global bound in `binding` (`Vm::wasm_global_store`, the staged
+/// rule), for the lane context `context`; `false` for a binding that is no mutable global, which the
+/// row leaves to the general step that raises.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_global_store<H: Host>(context: *mut (), binding: Value, value: Value) -> bool {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    vm.wasm_global_store(binding, value).is_ok()
+}
+
+/// The value of the running instance's slot `slot` (`WasmInstanceBinding`) for the instance-state
+/// row of the lane context `context`: the environment's dense storage this run holds, else the
+/// heap's read (`lane_instance_slot_miss`). `None` for a slot that holds no binding.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_instance_slot<H: Host>(context: *mut (), slot: u32) -> Option<Value> {
+    let cx = context.cast::<LaneContext<H>>();
+    let env = instance_env_in_lane(cx);
+    let (known, storage) = unsafe { (*cx).instance_slots };
+    // SAFETY: `storage` is the dense storage of `known`, found this run, which no collection has run
+    // since (`after_nested_collection_in_lane` drops it).
+    let cached = if known == env && slot <= u32::from(u16::MAX) {
+        unsafe { crate::heap::EnvironmentSlots::read_storage(storage, slot as u16) }
+    } else {
+        None
+    };
+    cached.or_else(|| lane_instance_slot_miss(cx, env, slot))
+}
+
+/// The 16 bytes of the vector cell `value` (`Heap::v128`) for the vector rows of the lane context
+/// `context`; `None` where `value` is no vector.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_vector_read<H: Host>(context: *mut (), value: Value) -> Option<[u8; 16]> {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    vm.heap.v128(value)
+}
+
 /// A fresh vector cell holding `bytes` for the vector rows of the lane context `context`
 /// (`Heap::alloc_v128`), noting the allocation as the hand handlers did.
 ///
