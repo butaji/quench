@@ -1,8 +1,10 @@
 use super::program_store::ProgramId;
 use crate::Value;
 
+mod frame_cold;
 mod frame_record;
 mod generator_record;
+mod suspension_live;
 pub(crate) use frame_record::FrameRecord;
 pub(in crate::vm) use frame_record::extend_this_env_roots;
 #[cfg(test)]
@@ -16,9 +18,6 @@ pub(crate) use generator_record::GeneratorRecord;
 pub(crate) enum Completion {
     GeneratorStart,
     Return(Value),
-    // Current thrown resumes enter the shared frame error boundary directly.
-    #[allow(dead_code)]
-    Throw(Value),
     Yield(Value),
     Await(Value),
 }
@@ -99,6 +98,12 @@ pub(crate) enum CallContext {
 pub(crate) enum CallCompletion {
     Value,
     Constructor(Value),
+    /// [[Construct]] of a derived class constructor pushed in place (`Vm::try_inline_construct`,
+    /// `dispatch_fast::lane_frame_construct`): the frame starts with `this` uninitialized and
+    /// its `super(...)` binds it, so the call yields what `Vm::derived_construct_value` makes
+    /// of the returned value and the frame's `this` as it retires: the returned object, else
+    /// the binding, or the error a missing `super(...)` or a primitive result throws at the call.
+    DerivedConstructor,
     Promise(crate::heap::RootId),
     Generator(super::generator::GeneratorResume),
     /// An async generator's request a lane ran in place (`Completion::AsyncRequest`), whose
@@ -293,6 +298,7 @@ impl Continuation {
     /// continuation's record: the frame's address, which its box keeps until the run ends,
     /// and the register that takes the value the run resumes with. Every register is live
     /// while it runs: the caller settles them (`FrameRecord::settle_registers`).
+    #[inline(always)]
     pub(crate) fn begin_window(&mut self) -> (*mut FrameRecord, Option<u16>) {
         (&raw mut *self.frame, self.resume_register)
     }
@@ -309,7 +315,6 @@ impl Continuation {
         out.extend(match self.completion {
             Completion::GeneratorStart => None,
             Completion::Return(value)
-            | Completion::Throw(value)
             | Completion::Yield(value)
             | Completion::Await(value) => Some(value),
         });
@@ -433,7 +438,7 @@ mod tests {
         assert!(roots.contains(&Value::heap(1)) && roots.contains(&Value::heap(3)) && !roots.contains(&Value::heap(2)));
         quiet.frame.settle_registers(4);
         assert_eq!(&quiet.frame.registers[..], [Value::heap(1), Value::heap(2), Value::heap(3)]);
-        assert!(quiet.frame.live_registers.is_none());
+        assert!(quiet.frame.live_registers().is_none());
         let mut collected = suspended(4);
         collected.frame.settle_registers(5);
         assert_eq!(&collected.frame.registers[..], [Value::heap(1), Value::UNDEFINED, Value::heap(3)]);

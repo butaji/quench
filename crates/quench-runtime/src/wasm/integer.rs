@@ -1,6 +1,10 @@
 //! Integer rules have one declaration; width-specific selectors and execution
 //! are macro-derived. Selector order is the residual ABI, not a Wasm opcode.
 
+#[macro_use]
+#[path = "../staged/wasm_lists.rs"]
+mod wasm_lists;
+
 use super::WasmTrap;
 #[cfg(not(stencil_build))]
 use super::WasmValue;
@@ -16,10 +20,10 @@ use crate::staged::machine::MachineStage;
 use crate::staged::wasm::{Width, binary_result, integer_binary, unary_result};
 
 macro_rules! binary_family {
-    ($enum:ident, $signed:ty, $unsigned:ty, $variant:ident,
+    ($(@ $decoded:ident)? $enum:ident, $signed:ty, $unsigned:ty, $variant:ident,
      ($signed_alias:ident, $unsigned_alias:ident), ($($argument:ident),+);
      $($name:ident, $wasm:ident => $body:expr;)+) => {
-        selectors!($enum; $($name, $wasm;)+);
+        selectors!($(@ $decoded)? $enum; $($name, $wasm;)+);
         impl $enum {
             pub(crate) fn allowed_in_constant_expression(self) -> bool {
                 matches!(self, Self::Add | Self::Subtract | Self::Multiply)
@@ -44,13 +48,11 @@ macro_rules! binary_family {
 }
 
 /// Each operator is declared once, with its rule and, in brackets, the machine row it is
-/// (`staged::machine::MachineOperator`): the Cranelift tier's operator rows are generated from
-/// these declarations (`I64BinaryOperator::machine`), not listed again beside the backend.
+/// (`staged::machine::MachineOperator`), in `i64_binary_list!` (`staged/wasm_lists.rs`): the Cranelift
+/// tier's operator rows are generated from these declarations (`I64BinaryOperator::machine`).
 macro_rules! integer_binary_operators {
     ($aliases:tt, $arguments:tt; $($name:ident, $i32:ident, $i64:ident [$($machine:tt)+] => $body:expr;)+
      @i64 $($wide_name:ident, $wide_wasm:ident [$($wide_machine:tt)+] => $wide_body:expr;)+) => {
-        binary_family!(I32BinaryOperator, i32, u32, I32, $aliases, $arguments; $($name, $i32 => $body;)+);
-        binary_family!(I64BinaryOperator, i64, u64, I64, $aliases, $arguments; $($name, $i64 => $body;)+ $($wide_name, $wide_wasm => $wide_body;)+);
         #[cfg(not(stencil_build))]
         impl I64BinaryOperator {
             /// The machine row this operator is, from its declaration.
@@ -60,13 +62,15 @@ macro_rules! integer_binary_operators {
                 match self { $(Self::$name => $($machine)+,)+ $(Self::$wide_name => $($wide_machine)+,)+ }
             }
         }
+        binary_family!(I32BinaryOperator, i32, u32, I32, $aliases, $arguments; $($name, $i32 => $body;)+);
+        binary_family!(@decoded I64BinaryOperator, i64, u64, I64, $aliases, $arguments; $($name, $i64 => $body;)+ $($wide_name, $wide_wasm => $wide_body;)+);
     };
 }
 
 macro_rules! unary_family {
     ($enum:ident, $signed:ty, $variant:ident, $signed_alias:ident, $argument:ident;
      $($name:ident, $wasm:ident => $body:expr;)+) => {
-        selectors!($enum; $($name, $wasm;)+);
+        selectors!(@decoded $enum; $($name, $wasm;)+);
         impl $enum {
             #[cfg(test)]
             #[inline(always)] pub(crate) fn apply(self, $argument: $signed) -> WasmValue {
@@ -82,63 +86,14 @@ macro_rules! integer_unary_operators {
     ($signed:ident, $argument:ident;
      $($name:ident, $i32:ident, $i64:ident => $body:expr;)+
      @i64 $($wide_name:ident, $wide_wasm:ident => $wide_body:expr;)+) => {
-        selectors!(I32UnaryOperator; $($name, $i32;)+);
+        selectors!(@decoded I32UnaryOperator; $($name, $i32;)+);
         unary_family!(I64UnaryOperator, i64, I64, $signed, $argument; $($name, $i64 => $body;)+ $($wide_name, $wide_wasm => $wide_body;)+);
     };
 }
 
-integer_binary_operators! { (Signed, Unsigned), (left, right);
-    Add, I32Add, I64Add [Binary(Add)] => Ok(NumericResult::Value(left.wrapping_add(right)));
-    Subtract, I32Sub, I64Sub [Binary(Sub)] => Ok(NumericResult::Value(left.wrapping_sub(right)));
-    Multiply, I32Mul, I64Mul [Binary(Mul)] => Ok(NumericResult::Value(left.wrapping_mul(right)));
-    DivideSigned, I32DivS, I64DivS [Binary(DivideSigned)] => {
-        if right == 0 { Err(WasmTrap::IntegerDivideByZero) }
-        else { left.checked_div(right).map(NumericResult::Value).ok_or(WasmTrap::IntegerOverflow) }
-    };
-    DivideUnsigned, I32DivU, I64DivU [Binary(DivideUnsigned)] => {
-        (left as Unsigned).checked_div(right as Unsigned).map(|v| NumericResult::Value(v as Signed))
-            .ok_or(WasmTrap::IntegerDivideByZero)
-    };
-    RemainderSigned, I32RemS, I64RemS [SignedRemainder] => {
-        if right == 0 { Err(WasmTrap::IntegerDivideByZero) }
-        else { Ok(NumericResult::Value(left.wrapping_rem(right))) }
-    };
-    RemainderUnsigned, I32RemU, I64RemU [Binary(RemainderUnsigned)] => {
-        (left as Unsigned).checked_rem(right as Unsigned).map(|v| NumericResult::Value(v as Signed))
-            .ok_or(WasmTrap::IntegerDivideByZero)
-    };
-    And, I32And, I64And [Binary(And)] => Ok(NumericResult::Value(left & right));
-    Or, I32Or, I64Or [Binary(Or)] => Ok(NumericResult::Value(left | right));
-    Xor, I32Xor, I64Xor [Binary(Xor)] => Ok(NumericResult::Value(left ^ right));
-    ShiftLeft, I32Shl, I64Shl [Binary(ShiftLeft)] => Ok(NumericResult::Value(left.wrapping_shl(right as u32)));
-    ShiftRightSigned, I32ShrS, I64ShrS [Binary(ShiftRightSigned)] => Ok(NumericResult::Value(left.wrapping_shr(right as u32)));
-    ShiftRightUnsigned, I32ShrU, I64ShrU [Binary(ShiftRightUnsigned)] => Ok(NumericResult::Value((left as Unsigned).wrapping_shr(right as u32) as Signed));
-    RotateLeft, I32Rotl, I64Rotl [Binary(RotateLeft)] => Ok(NumericResult::Value(left.rotate_left(right as u32)));
-    RotateRight, I32Rotr, I64Rotr [Binary(RotateRight)] => Ok(NumericResult::Value(left.rotate_right(right as u32)));
-    Equal, I32Eq, I64Eq [Relation(Equal)] => Ok(NumericResult::Comparison(left == right));
-    NotEqual, I32Ne, I64Ne [Relation(NotEqual)] => Ok(NumericResult::Comparison(left != right));
-    LessSigned, I32LtS, I64LtS [Relation(SignedLess)] => Ok(NumericResult::Comparison(left < right));
-    LessUnsigned, I32LtU, I64LtU [Relation(UnsignedLess)] => Ok(NumericResult::Comparison((left as Unsigned) < (right as Unsigned)));
-    GreaterSigned, I32GtS, I64GtS [Relation(SignedGreater)] => Ok(NumericResult::Comparison(left > right));
-    GreaterUnsigned, I32GtU, I64GtU [Relation(UnsignedGreater)] => Ok(NumericResult::Comparison((left as Unsigned) > (right as Unsigned)));
-    LessEqualSigned, I32LeS, I64LeS [Relation(SignedLessEqual)] => Ok(NumericResult::Comparison(left <= right));
-    LessEqualUnsigned, I32LeU, I64LeU [Relation(UnsignedLessEqual)] => Ok(NumericResult::Comparison((left as Unsigned) <= (right as Unsigned)));
-    GreaterEqualSigned, I32GeS, I64GeS [Relation(SignedGreaterEqual)] => Ok(NumericResult::Comparison(left >= right));
-    GreaterEqualUnsigned, I32GeU, I64GeU [Relation(UnsignedGreaterEqual)] => Ok(NumericResult::Comparison((left as Unsigned) >= (right as Unsigned)));
-    @i64
-    MultiplyHighSigned, I64MulWideS [Binary(MulHighSigned)] => Ok(NumericResult::Value(((i128::from(left) * i128::from(right)) >> i64::BITS) as i64));
-    MultiplyHighUnsigned, I64MulWideU [Binary(MulHighUnsigned)] => Ok(NumericResult::Value(((u128::from(left as u64) * u128::from(right as u64)) >> u64::BITS) as i64));
-}
+i64_binary_list!(integer_binary_operators);
 
-integer_unary_operators! { Signed, value;
-    EqualZero, I32Eqz, I64Eqz => NumericResult::Comparison(value == 0);
-    LeadingZeros, I32Clz, I64Clz => NumericResult::Value(value.leading_zeros() as Signed);
-    TrailingZeros, I32Ctz, I64Ctz => NumericResult::Value(value.trailing_zeros() as Signed);
-    PopulationCount, I32Popcnt, I64Popcnt => NumericResult::Value(value.count_ones() as Signed);
-    ExtendSigned8, I32Extend8S, I64Extend8S => NumericResult::Value(value as i8 as Signed);
-    ExtendSigned16, I32Extend16S, I64Extend16S => NumericResult::Value(value as i16 as Signed);
-    @i64 ExtendSigned32, I64Extend32S => NumericResult::Value(value as i32 as Signed);
-}
+i64_unary_list!(integer_unary_operators);
 
 /// Wide arithmetic has its own multi-register lowering ahead of scalar operators.
 #[cfg(not(stencil_build))]

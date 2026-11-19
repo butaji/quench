@@ -13,19 +13,21 @@ impl LaneStack {
     /// The objects of a resumed frame's chain, now the activation at `depth`'s, moved off its
     /// record.
     #[inline(always)]
-    pub(super) fn restore_with_objects(&mut self, depth: usize, held: &mut Vec<Value>) {
-        if !held.is_empty() {
+    pub(super) fn restore_with_objects(&mut self, depth: usize, record: &mut crate::vm::activation::FrameRecord) {
+        if let Some(held) = record.held_with_objects_mut()
+            && !held.is_empty()
+        {
             self.with_objects.extend(held.drain(..).map(|object| (depth, object)));
         }
     }
 
     /// The chain of the activation at `depth`, the innermost, moved off the stack to the end
-    /// of `held`, the suspending frame's (`FrameRecord::with_objects`); usually none.
+    /// of `record`'s, the suspending frame's (`FrameRecord::with_objects`); usually none.
     #[inline(always)]
-    pub(in crate::vm) fn take_with_objects(&mut self, depth: usize, held: &mut Vec<Value>) {
+    pub(in crate::vm) fn take_with_objects(&mut self, depth: usize, record: &mut crate::vm::activation::FrameRecord) {
         if self.with_objects.last().is_some_and(|(owner, _)| *owner >= depth) {
             let first = self.with_objects.partition_point(|(owner, _)| *owner < depth);
-            held.extend(self.with_objects.drain(first..).map(|(_, object)| object));
+            record.with_objects_mut().extend(self.with_objects.drain(first..).map(|(_, object)| object));
         }
     }
 
@@ -91,7 +93,7 @@ pub(super) fn native_with_scope<H: Host>(cx: *mut LaneContext<H>, native: Native
         return None;
     }
     let depth = vm.lane_stack.activation_count().checked_sub(1)?;
-    vm.lane_stack.activations().last().and_then(Activation::script)?;
+    vm.lane_stack.top_frame().and_then(|frame| frame.script())?;
     if native == Native::WithEnter {
         let object = args.first().copied().filter(|value| vm.is_object_like(*value))?;
         vm.lane_stack.with_objects.push((depth, object));

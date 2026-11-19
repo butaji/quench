@@ -266,6 +266,22 @@ impl Heap {
         Some(unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) })
     }
 
+    /// Stores `position` as iterator `value`'s position (`IteratorExt::store_position`) past
+    /// the write barrier: a position is no reference, so the store adds no edge and removes
+    /// none, as `get_mut_unbarriered` writes (a built-in iterator's step, one store a step).
+    #[inline(always)]
+    pub(crate) fn store_iterator_position(&mut self, value: Value, position: usize) {
+        let record: &mut IteratorRecord = if let Some(record_id) = value.direct_iterator_index() {
+            // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive; the
+            // store writes no reference.
+            unsafe { self.iterator_records.get_live_mut_unbarriered(record_id) }
+        } else {
+            return;
+        };
+        let IteratorRecord { index, ext, .. } = record;
+        ext.store_position(index, position);
+    }
+
     /// A promise, in its record or in a slot (`PromiseCell`).
     #[inline(always)]
     pub(crate) fn promise(&self, value: Value) -> Option<&PromiseCell> {
@@ -793,6 +809,12 @@ impl Heap {
     /// as `native_object_cursor` is for objects.
     pub(crate) fn native_array_cursor(&self) -> usize {
         std::ptr::addr_of!(self.array_records.cursor) as usize
+    }
+
+    /// Array mark blocks, which a native store of a reference into an array's elements reads
+    /// (`staged::barrier::unlogged_store`, the array records' list in the dispatch head).
+    pub(crate) fn native_array_mark_blocks(&self) -> (*const u8, usize) {
+        self.array_records.native_mark_blocks()
     }
 
     /// Function mark blocks, which a native store into a function's own properties reads.

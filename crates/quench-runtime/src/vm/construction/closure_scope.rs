@@ -53,7 +53,13 @@ impl<H: Host> Vm<H> {
         let parts = self.closure_parts(plan, id, realm);
         let recorded_shapes = self.closure_shapes[parts.shapes_key].filter(|_| parts.ordinary);
         let (function, named_shape) = self.alloc_closure(&parts, env, recorded_shapes);
-        self.record_top_level_closure(plan, id, function);
+        // A class constructor's closure is a class evaluation, which makes the class's private
+        // homes: the closure and its prototype object. No template makes one: only an ordinary
+        // closure records its shapes.
+        if plan.is_class_constructor {
+            self.note_class_evaluation(id, function, parts.prototype);
+        }
+        self.record_top_level_closure(p, plan, id, function);
         let Some(shapes) = recorded_shapes else {
             self.define_closure_properties(function, plan, &parts)?;
             return Ok(function);
@@ -148,11 +154,13 @@ impl<H: Host> Vm<H> {
         (self.alloc_function_in(FunctionRecord { object, kind, env }, parts.realm), named_shape)
     }
 
-    /// Records `function`, a closure of a program's top level, as found again by plan
-    /// (`cached_functions`): a module root's hoisted functions and Wasm functions, which have no
-    /// parent. A nested closure is never looked up, so it is not recorded.
-    fn record_top_level_closure(&mut self, plan: &crate::bytecode::FunctionHeader, id: u32, function: Value) {
-        if plan.parent.is_none_or(|parent| parent == crate::vm::ROOT_FUNCTION_ID) {
+    /// Records `function`, a closure of a non-module program's top level, as found again by plan
+    /// (`cached_functions`): Wasm functions, which have no parent, and a script's top-level
+    /// functions. A module's closures are not recorded: its hoisted declarations are its instance's
+    /// (`ModuleFunctions`), and any other closure is made fresh each evaluation. A nested closure
+    /// is never looked up, so it is not recorded either.
+    fn record_top_level_closure(&mut self, p: &ResidualProgram, plan: &crate::bytecode::FunctionHeader, id: u32, function: Value) {
+        if !p.is_module() && plan.parent.is_none_or(|parent| parent == crate::vm::ROOT_FUNCTION_ID) {
             let handle = self.heap.weak_handle(function).expect("new closure is live");
             self.function_values.record((self.active_program, id), [handle]);
         }

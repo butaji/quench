@@ -239,7 +239,7 @@ fn append_compacted_shape(
     let shape = u32::try_from(shapes.len()).expect("object shape table exhausted");
     let dictionary_trigger = match transition {
         ShapeTransition::Dictionary { trigger } => Some(trigger),
-        _ => shapes[parent as usize].dictionary_trigger,
+        _ => shapes[parent as usize].dictionary_trigger(),
     };
     let parent_facts = shapes[parent as usize].facts;
     shapes.push(Shape::child(
@@ -297,7 +297,7 @@ fn rebuild_shape(
             );
         }
     }
-    if let Some(trigger) = old_shapes[old_shape as usize].dictionary_trigger {
+    if let Some(trigger) = old_shapes[old_shape as usize].dictionary_trigger() {
         parent = append_compacted_shape(
             shapes,
             transitions,
@@ -356,6 +356,7 @@ impl<H: Host> Vm<H> {
         };
         reference(ProgramId::MAIN);
         reference(self.active_program);
+        self.job_queue_programs.iter().copied().for_each(&mut reference);
         self.direct_eval_var_program
             .into_iter()
             .for_each(&mut reference);
@@ -367,10 +368,14 @@ impl<H: Host> Vm<H> {
         if reclaimed.is_empty() {
             return;
         }
+        // The reclaimed programs' lane records are freed, and a later view may take their
+        // addresses, which name the private-name sites' entries.
+        self.private_site_homes.clear();
         self.free_cache_layouts_of(reclaimed.iter().copied());
         let reclaimed = reclaimed.into_iter().collect::<FxHashSet<_>>();
         self.function_values
             .retain(|(program, _), _| !reclaimed.contains(program));
+        self.module_functions.drop_programs(&reclaimed);
         self.realm
             .template_objects
             .retain(|(program, _, _), _| !reclaimed.contains(program));
@@ -437,7 +442,11 @@ impl<H: Host> Vm<H> {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
+        // Atom strings are not kept, so a collection may free a cached key string.
+        self.enumerable_key_value_lists.clear();
         self.preshaped_receivers.fill(super::preshaped_receiver::PreshapedReceiver::EMPTY);
+        // The sampled receivers may be freed; the counts stay as hints.
+        self.forget_learned_receiver_samples();
         // Prepared regexp subjects share their strings' text: kept across a collection, they
         // would keep a dropped subject's text alive however large, as no string holds them.
         self.regexp_subjects.clear();
@@ -510,6 +519,8 @@ impl<H: Host> Vm<H> {
             self.realm.globals,
             self.object_proto,
             self.function_proto,
+            self.promise_proto,
+            self.promise_constructor,
             self.array_proto,
             self.array_buffer_proto,
             self.shared_array_buffer_proto,
@@ -549,6 +560,7 @@ impl<H: Host> Vm<H> {
             self.regexp_proto,
             self.reused_iterator_result,
             self.shared_entry_pair,
+            self.spare_await_state,
         ]);
         // The active realm's top-level lexical bindings, then every inactive realm's.
         roots.extend(self.realm.global_lexical_bindings.values().copied());
@@ -801,10 +813,28 @@ impl<H: Host> Vm<H> {
                 .flat_map(|((global, _), template)| [*global, template.anchor]),
         );
         roots.extend(self.with_stack.iter().copied());
+        // A lane window is filled only up to its entry fill (`lane_fill_window`), and the windows
+        // of the top activation and of a native's callee are scanned whole, so a register past
+        // the fill may hold a stale word an earlier activation left: a Value whose record may
+        // since have been freed. Window roots are therefore admitted only when they name a
+        // record that is still occupied. A stale word naming a reused record keeps that record
+        // one collection longer, which is safe; one naming a free record is dropped.
+        let lane_start = roots.len();
         self.lane_stack.extend_roots(&self.programs, &mut roots);
         self.lane_roots.iter().for_each(|parked| parked.extend_roots(&self.programs, &mut roots));
+        let heap = &self.heap;
+        let mut kept = lane_start;
+        for index in lane_start..roots.len() {
+            let value = roots[index];
+            if value.heap_reference().is_none() || heap.is_live(value) {
+                roots[kept] = value;
+                kept += 1;
+            }
+        }
+        roots.truncate(kept);
         roots.extend(std::iter::once(self.instanceof_has_instance_holder));
         roots.extend(self.active_call_roots.iter().copied());
+        roots.extend(self.prepared_roots.iter().copied());
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values());
         roots.extend(self.typeof_names);
@@ -822,11 +852,18 @@ impl<H: Host> Vm<H> {
             roots.extend(frame.original_arguments.iter().copied());
             roots.extend(frame.locals.iter().copied());
             roots.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
-            let program = self.programs.residual(frame.program);
-            // A Wasm function's raw registers hold machine words, not `Value`s (`raw_webs`).
-            let raw = self.programs.raw_register_masks(frame.program, frame.function);
-            match program.and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
-                Some(masks) => masks.extend_live_except(frame.pc as usize, raw.as_deref(), &frame.registers, &mut roots),
+            match self.programs.residual(frame.program).and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
+                // A frame parked inside a call (`pc_is_resume`) is scanned at the call itself, not
+                // the instruction after it: liveness before the call includes its callee and
+                // argument registers, so the frame keeps them alive while the callee or native
+                // runs and callers need not copy them into `active_call_roots`. The only register
+                // live after the call but not before it is the call's destination, which holds
+                // nothing the call reads and is written when the call returns.
+                // Past the registers that hold raw words, not `Value`s (a Wasm function's).
+                Some(masks) => {
+                    let raw = self.programs.raw_register_masks(frame.program, frame.function);
+                    masks.extend_live_except(frame.source_instruction_pc(), raw.as_deref(), &frame.registers, &mut roots)
+                }
                 None => roots.extend(frame.registers.iter().copied()),
             }
         }
@@ -950,8 +987,15 @@ impl<H: Host> Vm<H> {
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         // Under reference counts a minor collection frees old closures too.
         self.prune_function_values(full || self.heap.rc_active());
+        self.prune_module_functions();
         self.prune_wasm_exported_functions();
-        self.prune_dead_private_homes();
+        // A home stays reachable through its environment; entries of swept environments go
+        // before their slots can name new cells.
+        let heap = &self.heap;
+        self.private_homes
+            .retain(|key, _| heap.is_live(key.environment));
+        self.private_site_homes.prune_dead(|value| heap.is_live(value));
+        self.private_classes.prune_dead(|value| heap.is_live(value));
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
         }
@@ -981,6 +1025,8 @@ impl<H: Host> Vm<H> {
         // stack resolved before names cells the sweep freed (`LaneStack::retire_after_collection`).
         let generation_key = (self.cache_epochs.gc, self.realm.globals);
         self.lane_stack.retire_after_collection(generation_key);
+        // A swept function's id may go to another record (`RealmNativeProofs`).
+        self.realm_native_proofs.forget();
         super::dispatch_fast::retire_running_lane_context();
         self.forget_dead_parked_lanes_and_hints();
         self.realm.jobs.extend(
@@ -1086,6 +1132,7 @@ impl<H: Host> Vm<H> {
     fn compact_live_shapes(&mut self, live_shapes: Vec<u32>) {
         // Compiled code and proofs name shapes by id, which compaction renumbers.
         crate::heap::advance_prototype_layout_epoch();
+        self.heap.dependencies_mut().retire_cells();
         self.bound_parts_layout.set(None);
         let old_shapes = std::mem::replace(&mut self.shapes, vec![Shape::root()]);
         #[cfg(feature = "profile-memory")]
@@ -1183,7 +1230,7 @@ impl<H: Host> Vm<H> {
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = (|| {
             self.check_execution_interrupt()?;
-            self.run_job_queue(program, |_| true)?;
+            self.run_job_queue(program, true, |_| true)?;
             Ok(Value::UNDEFINED)
         })();
         self.native_microtask_running = previous;
@@ -1204,13 +1251,21 @@ impl<H: Host> Vm<H> {
     /// Runs queued jobs while `more` holds. A job runs in its realm, and the queue stays
     /// there until work of another realm comes: consecutive jobs of one realm share one
     /// realm entry, and the drain's own realm returns for module advancement, a host job,
-    /// and the drain's end, however it ends.
+    /// and the drain's end, however it ends. The active program is kept the same way: an
+    /// await's job leaves its function's program active (`Vm::resume_queued_await`), so
+    /// consecutive resumptions of one program switch to it once, and the queue's own program
+    /// returns where its realm does. A queue that `chains`, one whose `more` always holds, lets
+    /// an await's job run the queue's next await jobs in its lane run (`Vm::chain_next_job`).
     fn run_job_queue(
         &mut self,
         program: &ResidualProgram,
+        chains: bool,
         mut more: impl FnMut(&Self) -> bool,
     ) -> Result<(), JsError> {
         let home = self.realm.globals;
+        let home_program = self.active_program;
+        self.job_queue_programs.push(home_program);
+        let outer_chains = std::mem::replace(&mut self.queue_chains, chains);
         // An enclosing queue's entry stays in place below this queue's own.
         let outer = std::mem::replace(&mut self.unobserved_jobs_entered, false);
         let result = (|| {
@@ -1218,6 +1273,7 @@ impl<H: Host> Vm<H> {
                 self.check_execution_interrupt()?;
                 if matches!(job, PendingJob::Call { .. }) {
                     self.leave_unobserved_jobs();
+                    self.restore_active_program(home_program);
                 }
                 self.run_pending_job(program, job, home)?;
                 // Static continuations may become ready after a reaction. Import
@@ -1225,6 +1281,7 @@ impl<H: Host> Vm<H> {
                 if self.static_module_jobs_pending() {
                     self.leave_unobserved_jobs();
                     self.switch_realm_global(home);
+                    self.restore_active_program(home_program);
                     self.advance_static_module_jobs(program)?;
                 }
             }
@@ -1233,7 +1290,19 @@ impl<H: Host> Vm<H> {
         self.leave_unobserved_jobs();
         self.unobserved_jobs_entered = outer;
         self.switch_realm_global(home);
+        self.restore_active_program(home_program);
+        self.job_queue_programs.pop();
+        self.queue_chains = outer_chains;
         result
+    }
+
+    /// Makes the innermost running job queue's own program active again, where an await's job
+    /// left its function's (`Vm::run_job_queue`): a host's job hooks run in it, as they would
+    /// had the job restored it.
+    pub(super) fn restore_queue_program(&mut self) {
+        if let Some(&home) = self.job_queue_programs.last() {
+            self.restore_active_program(home);
+        }
     }
 
     /// Leaves the context unobserved Promise jobs of the running queue share, if entered: a
@@ -1292,7 +1361,7 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Result<(), JsError> {
         loop {
-            self.run_job_queue(program, |vm| vm.promise_record(promise)
+            self.run_job_queue(program, false, |vm| vm.promise_record(promise)
                 .is_some_and(|record| record.state() == PromiseState::Pending))?;
             if self.promise_record(promise).is_none_or(|record| record.state() != PromiseState::Pending)
                 || !self.realm.jobs.is_empty() { return Ok(()); }

@@ -88,10 +88,17 @@ impl<H: Host> Vm<H> {
         let realm = self.realm.globals;
         let prototype = self.object_data(proto)?;
         let prototype_shape = prototype.shape();
-        let position = self.regexp_symbol_layouts.iter().position(|layout| {
+        // The layout last proven here is kept last, where the search starts: a program's
+        // steady string method calls meet it at the first compare.
+        let layouts = &mut self.regexp_symbol_layouts;
+        let found = layouts.iter().rposition(|layout| {
             layout.symbol == symbol && layout.realm == realm && layout.prototype_object == proto
                 && layout.receiver == receiver_shape && layout.prototype == prototype_shape
         })?;
+        // Moving it last keeps the others' order, so the first entry is still the one least
+        // recently met, which `remember_shape_proof` evicts.
+        layouts[found..].rotate_left(1);
+        let position = layouts.len() - 1;
         let layout = &self.regexp_symbol_layouts[position];
         if layout.steady.as_ref().is_some_and(|watch| watch.is_published()) {
             return Some(true);

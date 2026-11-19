@@ -21,8 +21,8 @@ impl<H: Host> Vm<H> {
 /// every instruction of a function that may run once (mandreel's `global_init`: 614K records,
 /// 14 MB; babylonjs's module scope: 124K records, each iteration). Where a return already
 /// `retired`, only a caller that loops takes its view here; any other frame returns at its
-/// call record on the general path (`frame_return_in_lane`).
-pub(super) fn completes_return<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
+/// call record on the general path (`frame_return`).
+pub(super) fn lane_completes_return<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
     let vm = unsafe { vm(cx) };
     call.caller + 1 == frame
         && frame + 1 == vm.frames.len()
@@ -59,7 +59,7 @@ pub(super) fn record_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target:
     if unsafe { (*cx).late_settled } == ip { return; }
     let vm = unsafe { vm(cx) };
     // The innermost frame's function: a native callee's frame is linked, so it is the activation's.
-    let function = match vm.lane_stack.activations().last() {
+    let function = match vm.lane_stack.top_frame() {
         Some(activation) => activation.function(),
         None => { let Some(frame) = vm.frames.get(unsafe { (*cx).frame() }) else { return }; frame.function }
     };

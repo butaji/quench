@@ -52,7 +52,6 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "assignment to constant binding".into()));
             }
             *self.owner_binding_mut(p, owner, slot).ok_or_else(|| JsError("invalid local slot".into()))? = value;
-            self.mirror_global_lexical_binding(p, owner, slot, value);
             self.mapped_argument_store(p, owner, slot, value);
         }
         Ok(())

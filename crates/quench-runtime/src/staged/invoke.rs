@@ -24,8 +24,49 @@ use super::property::get_field;
 use super::protocol::{bind_this, complete_call, fill_call, guard_callee, guard_received};
 use super::{word_bytes, word_offset, Arguments, CallFacts, CallOperation, Callee, Frame, Invocation, Operation, Passed, PropertyFrame,
     Receiver, Register, RegisterList, Stage, Step};
-use crate::bytecode::{FieldBase, FieldLookup};
+use crate::bytecode::{FieldBase, FieldLookup, Op, WideInstruction};
 use crate::Value;
+
+/// The general forms of the call-family records a frame may run where its staged row declines
+/// (`CallFrame::call_general`): the call's operands are the record's own.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CallForm {
+    /// A call through a callee register and a receiver register, over a window (`Call`, direct eval included).
+    Plain,
+    /// A call that passes the activation's `arguments` as its last argument (`CallForwardingArguments`).
+    Forwarding,
+    /// A call whose one argument register holds the array to apply (`CallArray`).
+    Array,
+    /// A call whose one argument register holds the iterable to spread (`CallSpread`).
+    Spread,
+    /// A call of a function the record names (`CallKnown`).
+    Known,
+    /// A method call through its receiver register (`CallMethod`).
+    Method,
+    /// A method call on the activation's `this` (`CallThisMethod`).
+    ThisMethod,
+    /// A construction, plain, applied or `super(...)` (`Construct`).
+    Construct,
+    /// A first-call stub's call of its chunk (`CallFirstChunk`).
+    FirstChunk,
+}
+
+/// The general form of the call-family opcode `op`, else `None`: the records the call runner answers
+/// (`vm::dispatch`'s `Runner::Call`).
+pub(crate) const fn general_call_form(op: Op) -> Option<CallForm> {
+    Some(match op {
+        Op::Call => CallForm::Plain,
+        Op::CallForwardingArguments => CallForm::Forwarding,
+        Op::CallArray => CallForm::Array,
+        Op::CallSpread => CallForm::Spread,
+        Op::CallKnown => CallForm::Known,
+        Op::CallMethod => CallForm::Method,
+        Op::CallThisMethod => CallForm::ThisMethod,
+        Op::Construct => CallForm::Construct,
+        Op::CallFirstChunk => CallForm::FirstChunk,
+        _ => return None,
+    })
+}
 
 /// The stacks a direct call is admitted to: the callee's entry cell, its window at `top` (its
 /// end at `next`), and the frame below at `shadow`.
@@ -91,6 +132,18 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
     /// and what its body needs to recover.
     #[inline(always)]
     fn call_room(&mut self, _stage: &mut S, _miss: S::Miss) -> Option<Room<S::Word>> {
+        None
+    }
+
+    /// Hand the admitted direct call to the callee's activation in place of entering it
+    /// (`call_enter`): the frame fills the callee's window from the site's arguments itself (it
+    /// knows how much of it the callee reads before writing), pushes the callee's frame, which holds
+    /// `this`, and answers the control the caller's step ends in, which runs the callee's first
+    /// record; the callee's completion is its return's, not this step's. `None`, before any effect,
+    /// where the frame enters the callee through its cell and takes its completion here
+    /// (`call_enter`, `call_settle`). The lane's frame activates (`LaneControl::Resumed`).
+    #[inline(always)]
+    fn call_activate(&mut self, _stage: &mut S, _this: S::Word, _room: Room<S::Word>) -> Option<Self::Control> {
         None
     }
 
@@ -184,6 +237,14 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
     fn call_helper(&mut self, _stage: &mut S, _site: &Invocation, direct: Option<S::Word>) -> Option<S::Word> {
         direct
     }
+
+    /// The general form `form` of the call-family record `instruction` at resume PC `pc`, which the
+    /// call row runner asks where the row declined (the record's operands are read from it, since an
+    /// `Invocation` does not name every form). `None` where the frame runs no general calls.
+    #[inline(always)]
+    fn call_general(&mut self, _form: CallForm, _instruction: WideInstruction, _pc: usize) -> Option<Step<S::Word, Self::Control>> {
+        None
+    }
 }
 
 /// The call of `site`: by the frame's direct entry where it has one (a unit's inlined callee is a
@@ -195,7 +256,11 @@ pub(crate) fn invoke<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S
     let direct = match frame.call_entry(&site) {
         CallEntry::Direct(plan) | CallEntry::Inline(plan) => match plan.kind {
             CalleeKind::Native(native) => super::native_call::enter_native(stage, frame, miss, &site, (plan, native)),
-            CalleeKind::Script | CalleeKind::Class => enter_direct(stage, frame, miss, &site, plan),
+            CalleeKind::Script | CalleeKind::Class => match enter_direct(stage, frame, miss, &site, plan) {
+                Some(Direct::Activated(control)) => return Step::Control(control),
+                Some(Direct::Returned(word)) => Some(word),
+                None => None,
+            },
         },
         CallEntry::Helper => None,
     };
@@ -267,22 +332,32 @@ pub(super) fn fill_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F
     Some(())
 }
 
+/// How a direct call ended its step: the callee returned the word, or the frame handed the call to
+/// the callee's activation (`CallFrame::call_activate`), whose control the step ends in.
+enum Direct<W, C> {
+    Returned(W),
+    Activated(C),
+}
+
 /// The direct call of `site` through `plan`: the call protocol's rows in order, on the words the
 /// frame keeps.
 #[inline(always)]
 fn enter_direct<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: &Invocation,
-    plan: DirectPlan) -> Option<S::Word> {
+    plan: DirectPlan) -> Option<Direct<S::Word, F::Control>> {
     let constructs = plan.kind.allocates_receiver();
     if constructs != site.constructs() || (constructs && plan.bound.is_some()) { return None; }
     let file = frame.call_registers(stage)?;
     let this = callee_this(stage, frame, file, miss, (site, &plan))?;
     let room = frame.call_room(stage, miss)?;
+    if let Some(control) = frame.call_activate(stage, this, room) {
+        return Some(Direct::Activated(control));
+    }
     fill_arguments(stage, frame, file, room.top, (site, &plan, plan.registers))?;
     let entered = frame.call_enter(stage, this, room)?;
     let receiver = constructs.then_some(this);
     let value = complete_call(stage, entered.status, entered.word, receiver, plan.returned, entered.unfinished)?;
     frame.call_settle(stage, site, entered, room, value)?;
-    Some(value)
+    Some(Direct::Returned(value))
 }
 
 impl<W, P> Operation<W, P> {

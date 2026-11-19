@@ -6,6 +6,7 @@
 use super::{immediate, operand_type, set};
 use crate::bytecode::{Constant, Operand, WideInstruction};
 use crate::typed_ir::{IntRange, Type};
+use crate::staged::{DecodeContext, NumberOperation, Operation};
 use crate::value::Value;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
@@ -57,7 +58,7 @@ fn stepped(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange>
 /// int32 never overflows, whatever int32 operands reach it.
 pub(in crate::vm::compiled) fn exact(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
-    if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Number(NumberOperation::IncDec { .. }))) { return stepped(lookup, instruction); }
+    if matches!(Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::Number(NumberOperation::IncDec { .. }))) { return stepped(lookup, instruction); }
     let (operation, left, right) = operation(lookup, instruction)?;
     arithmetic(operation, left, right)
 }
@@ -128,8 +129,15 @@ pub(super) fn bitwise(lookup: Lookup<'_>, operation: NumberBitwise, operands: [O
     match operation {
         NumberBitwise::Or if right == zero => left,
         NumberBitwise::Or if left == zero => right,
+        // A non-negative operand clears the bits of the other, so the result is non-negative and at
+        // most the smallest non-negative operand's maximum (`i & 255` lies in 0..=255).
+        NumberBitwise::And if left.min >= 0 || right.min >= 0 => {
+            let ceiling = [left, right].iter().filter(|range| range.min >= 0).map(|range| range.max).min().unwrap_or(0);
+            IntRange::bounds(0, ceiling).unwrap_or(IntRange::FULL)
+        }
         NumberBitwise::And | NumberBitwise::Or | NumberBitwise::Xor => left.bitwise_hull(right),
         NumberBitwise::ShiftRight => left.shift_right(right).unwrap_or(IntRange::FULL),
+        NumberBitwise::ShiftRightUnsigned => left.shift_right_unsigned(right).unwrap_or(IntRange::FULL),
         _ => IntRange::FULL,
     }
 }
@@ -147,6 +155,9 @@ pub(in crate::vm::compiled) fn result(lookup: Lookup<'_>, constants: &[Constant]
     match bitwise_operation {
         Some(operation @ (NumberBitwise::And | NumberBitwise::Or | NumberBitwise::Xor | NumberBitwise::ShiftRight)) =>
             Some(bitwise(lookup, operation, [instruction.operand_b(), instruction.operand_c()])),
+        // A zero-fill shift by a known nonzero count is an int32 (`NumberBitwise::result_is_int32`).
+        Some(operation @ NumberBitwise::ShiftRightUnsigned) if lookup(instruction.operand_c()).is_some_and(|count| IntRange::FULL.shift_right_unsigned(count).is_some()) =>
+            Some(bitwise(lookup, operation, [instruction.operand_b(), instruction.operand_c()])),
         Some(_) => None,
         None => exact(lookup, instruction).filter(IntRange::fits_int32),
     }
@@ -162,6 +173,18 @@ pub(in crate::vm::compiled) fn effective_relation(relation: NumberRelation, trut
     }
 }
 
+/// `range` without the value `other` names when `other` is a singleton, which an interval can
+/// drop only at its end: `range` ≠ v with `range` = [v, max] is [v + 1, max]. `None` where no
+/// value is left (`range` is the singleton v).
+fn without(range: IntRange, other: IntRange) -> Option<IntRange> {
+    if other.min != other.max { return Some(range); }
+    let value = other.min;
+    if range.min == value && range.max == value { return None; }
+    if range.min == value { IntRange::bounds(value + 1, range.max) }
+    else if range.max == value { IntRange::bounds(range.min, value - 1) }
+    else { Some(range) }
+}
+
 /// The ranges of `left` and `right` on an edge where `relation` holds if `truth`; `None` where
 /// no pair of values reaches the edge.
 fn relation_ranges(relation: NumberRelation, truth: bool, left: IntRange, right: IntRange) -> Option<(IntRange, IntRange)> {
@@ -169,7 +192,7 @@ fn relation_ranges(relation: NumberRelation, truth: bool, left: IntRange, right:
     let relation = effective_relation(relation, truth);
     match relation {
         Equal => { let common = left.intersect(right)?; Some((common, common)) }
-        NotEqual => (left != right || left.min != left.max).then_some((left, right)),
+        NotEqual => Some((without(left, right)?, without(right, left)?)),
         GreaterThan | GreaterEqual => relation_ranges(
             if relation == GreaterThan { LessThan } else { LessEqual }, true, right, left).map(|(right, left)| (left, right)),
         LessThan | LessEqual => {

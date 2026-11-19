@@ -14,14 +14,14 @@ use super::scoped_names::window_scope;
 use super::super::activation::FrameRecord;
 
 impl LaneStack {
-    /// Keeps `record`, made for the activation at `depth`, until that activation pops, and names
-    /// it from the activation.
+    /// Keeps `record`, made for the innermost activation, at `depth`, until that activation pops,
+    /// and names it from the activation where it is (one-frame-one-call.md F4 (3)): a header's
+    /// side record, which `frame::OWNS_FLAG` tags, or the record's `ScriptActivation::record`.
     fn own_record(&mut self, depth: usize, record: Box<FrameRecord>) -> *mut FrameRecord {
+        debug_assert_eq!(depth + 1, self.activation_count(), "an eval runs in the innermost activation");
         self.records.push((depth, record));
         let record: *mut FrameRecord = &mut *self.records.last_mut().expect("the record just pushed").1;
-        if let Some(ActivationKind::Script(script)) = self.activations_mut().get_mut(depth).map(|activation| activation.kind_mut()) {
-            script.record = record;
-        }
+        self.name_top_record(record);
         record
     }
 }
@@ -50,7 +50,7 @@ fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parame
     let (this, env) = unsafe { ((*cx).registers.this(), (*cx).registers.env()) };
     let record = if scope.record.is_null() {
         let depth = vm.lane_stack.activation_count() - 1;
-        let callee = vm.lane_stack.activations().last().and_then(Activation::script)?.callee;
+        let callee = vm.lane_stack.top_frame().and_then(|frame| frame.script())?.callee;
         vm.lane_stack.own_record(depth, FrameRecord::for_eval(scope.program, scope.function, callee, this, env))
     } else {
         scope.record
@@ -60,11 +60,14 @@ fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parame
     // SAFETY: the record is the activation's own, which nothing else accesses during the call;
     // its held bindings pass to the environment, as a closure's creation passes them.
     unsafe {
-        let held = std::mem::take(&mut (*record).dynamic_bindings);
+        let held = (*record).take_dynamic_bindings();
         window_environment(vm, code, entries, scope.function, env, scope.program, this, Some(held));
         (*record).pull_window(entries, usize::from(body.locals));
-        (*record).binding_site_pc = scope.site;
-        (*record).with_objects = scope.chain.into_vec();
+        (*record).replace_binding_site_pc(scope.site);
+        let chain = scope.chain.into_vec();
+        if !chain.is_empty() || !(*record).with_objects().is_empty() {
+            *(*record).with_objects_mut() = chain;
+        }
     }
     Some(EvalWindow { record, entries })
 }
@@ -80,8 +83,7 @@ unsafe fn settle_eval_record(record: *mut FrameRecord, previous_this: Option<Val
         if let Some(this) = previous_this {
             (*record).replace_this(this);
         }
-        (*record).binding_site_pc = None;
-        (*record).with_objects.clear();
+        (*record).end_eval_scope();
         (*record).push_window_locals(entries);
     }
 }

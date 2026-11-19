@@ -60,7 +60,8 @@ impl NativeTable {
         self.functions.clear();
     }
 
-    fn get(&self, kind: Native) -> Option<Value> {
+    #[inline(always)]
+    pub(super) fn get(&self, kind: Native) -> Option<Value> {
         self.functions
             .get(kind as usize)
             .copied()
@@ -136,6 +137,8 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_prototypes");
         self.natives.reset(self.realm.globals);
+        // A shared native proved before is no longer in the table (`RealmNativeProofs`).
+        self.realm_native_proofs.forget();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_native_function_table");
         // Error intrinsics must exist before any guarded initialization step.
@@ -547,6 +550,14 @@ impl<H: Host> Vm<H> {
         function
     }
 
+    /// Whether `value` is the function every realm shares for `native` (`is_shared_native` of
+    /// a function of that native): one comparison with the table's entry, no read of the
+    /// function. The table enters only `native`'s own function under it (`native_value`).
+    #[inline(always)]
+    pub(super) fn is_shared_native_of(&self, value: Value, native: Native) -> bool {
+        self.natives.get(native) == Some(value)
+    }
+
     /// Whether `value` is the function every realm shares for its native: one native serves
     /// every realm, so it runs in the realm of its caller rather than switching to its own.
     pub(super) fn is_shared_native(&self, value: Value) -> bool {
@@ -897,7 +908,7 @@ mod math_function_tests {
         }
         for native in (0..Native::COUNT).filter_map(Native::from_discriminant).filter(|native| native.is_math_function()) {
             assert!(
-                MATH_FUNCTIONS.iter().any(|(_, listed)| listed == native),
+                MATH_FUNCTIONS.iter().any(|(_, listed)| *listed == native),
                 "{native:?} is a Math function"
             );
         }

@@ -3,6 +3,7 @@
 
 use crate::bytecode::Class;
 use super::*;
+use super::super::facts::TypedAccess;
 
 /// An array base a local loop indexes and never redefines: its loop's entry proves the
 /// array's view once, writable where the loop stores through it, and only the element
@@ -63,9 +64,12 @@ fn array_source(unit: &super::super::lane_unit::Unit, leaders: &CompoundBitSet, 
 /// register's array has the region's `views`; a capture's, a typed array's. A source a lowered
 /// loop around another proves too is proved there alone: its view is proved once for the whole nest,
 /// where the base is invariant (`loops` hold only native operations, which cannot change a view).
+/// The receiver of an append (`push`) is a writable view too, where the region's arrays are dense:
+/// the append stores within the view's room (`Lowering::hoisted_push`). A search's receiver
+/// (`includes`, `indexOf`) is a read-only view, scanned in place (`Lowering::element_search`).
 pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &CompoundBitSet,
     captured: impl Fn(usize, usize) -> bool, views: ElementViews, typed_captures: &[u16],
-    lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {
+    intrinsics: &super::native_calls::Intrinsics, lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {
     let mut arrays = Vec::new();
     for &(header, back) in loops {
         let body = &unit.instructions[header..=back];
@@ -75,6 +79,8 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             let (base, stores) = match instruction.op() {
                 _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => (instruction.operand_b().register_index(), false),
                 _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementWrite { .. })) => (Some(instruction.register_b()), true),
+                _ if super::native_calls::appends(intrinsics, pc) => (Some(instruction.register_c()), true),
+                _ if super::native_calls::searches(intrinsics, pc) => (Some(instruction.register_c()), false),
                 _ => continue,
             };
             let Some(source) = base.and_then(|base| array_source(unit, leaders, &written, |at| captured(header, at),
@@ -82,6 +88,10 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             // A double region stores raw doubles: a typed capture's raw NaN could carry a hole's
             // bits (`heap::DOUBLE_LEN`), so its elements are read boxed, NaN canonical.
             if views == ElementViews::Double && matches!(source, ArraySource::Capture(_)) { continue; }
+            // An append's array is a dense register's: the view of any other kind leaves the append to its helper.
+            if super::native_calls::appends(intrinsics, pc) && (views != ElementViews::Dense || matches!(source, ArraySource::Capture(_))) { continue; }
+            // A search's array is a dense register's too: its scan reads the words a dense view holds.
+            if super::native_calls::searches(intrinsics, pc) && (views != ElementViews::Dense || matches!(source, ArraySource::Capture(_))) { continue; }
             match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.source == source) {
                 Some(array) => array.writable |= stores,
                 None => {
@@ -124,5 +134,29 @@ impl Lowering<'_, '_> {
             _ => None,
         };
         self.loop_array(pc, base).is_some()
+    }
+}
+
+impl Lowering<'_, '_> {
+    /// What the access at `pc` does through a hoisted typed view (`Model::typed`): a `length` read of a
+    /// register's typed array, which `length_read` answers from the view, or an element store through a
+    /// typed or double view, which the held view writes or leaves at its miss (`element_write`). Any
+    /// other access, or one through a view that is not hoisted, is `None`.
+    pub(super) fn typed_access(&self, pc: usize) -> Option<TypedAccess> {
+        let instruction = self.unit.instructions[pc];
+        let (base, access) = match crate::vm::compiled::performed(instruction) {
+            Some(crate::staged::Operation::ElementWrite { .. }) if !instruction.returns_from_frame() => (Some(instruction.register_b()), TypedAccess::Store),
+            _ if crate::vm::compiled::reads_length(self.program, instruction) => match instruction.field_lookup() {
+                Some(FieldLookup::Atom { base, .. }) => (base.register_index(), TypedAccess::Length),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let array = self.loop_array(pc, base)?;
+        let typed = match access {
+            TypedAccess::Length => matches!(array.views, ElementViews::Typed(_)) && matches!(array.source, ArraySource::Register(_)),
+            TypedAccess::Store => matches!(array.views, ElementViews::Typed(_) | ElementViews::Double) && array.writable,
+        };
+        typed.then_some(access)
     }
 }

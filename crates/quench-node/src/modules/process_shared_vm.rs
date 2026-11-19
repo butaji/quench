@@ -868,6 +868,7 @@ fn emit_exit_event_inner(
     set_exit_property(context, process, "_exiting", exiting)?;
     let event = context.string_rooted("exit");
     call_process_method(context, process, "emit", &[event, code])?;
+    if matches!(origin, ExitEventOrigin::Natural) { crate::modules::napi::run_cleanup_hooks(context); }
     Ok(context.undefined())
 }
 

@@ -88,10 +88,12 @@ impl ProgramEntry {
             function_sources,
             regexp_literals: _,
             regexp_receivers: _,
+            regexp_arguments: _,
             module_environment,
             import_meta,
             module_imports,
             root_slots: _,
+            root_constants: _,
             module,
             views_in_lane: _,
             raw_masks: _,
@@ -231,6 +233,7 @@ impl ProgramEntry {
         Ok(Self {
             regexp_literals: vec![None; regexp_literal_sites],
             regexp_receivers: FxHashMap::default(),
+            regexp_arguments: FxHashMap::default(),
             #[cfg(feature = "native-execution")]
             native_js: None,
             views_in_lane: super::LaneViews::default(),
@@ -246,6 +249,7 @@ impl ProgramEntry {
             import_meta,
             module_imports,
             root_slots: std::cell::OnceCell::new(),
+            root_constants: Default::default(),
             module,
             compiled: None,
             jit_tiers: JitTierManager::default(),

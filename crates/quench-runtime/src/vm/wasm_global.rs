@@ -5,11 +5,42 @@
 //! and its registers' encoding (`encode_bits64`) here, at the one boundary.
 
 use super::*;
-use crate::staged::wasm_instance::{Instance, Storage, global_get, global_set};
+use crate::staged::machine::{Machine, MachineStage};
+use crate::staged::wasm_instance::{
+    Instance, Storage, WasmBindings, binding_get, global_get, global_set,
+};
 use crate::staged::wasm_machine::ConcreteInstance;
 
 /// The slot of the one native slot a global access's stage holds.
 const CELL: u32 = 0;
+
+/// The environment of a running instance, as the interpreter's stage for its binding rule: the
+/// fields the heap holds in `env`. The lane's binding loads run the same rule on it
+/// (`dispatch_fast/wasm_instance.rs`).
+pub(super) struct InstanceBindings<'a, H: Host> {
+    pub(super) vm: &'a Vm<H>,
+    pub(super) env: Value,
+}
+
+impl<H: Host> Machine for InstanceBindings<'_, H> {
+    type Word = u64;
+}
+
+impl<H: Host> MachineStage for InstanceBindings<'_, H> {
+    type Exit = JsError;
+
+    crate::staged::wasm_concrete::scalar_operators! {}
+
+    fn trap_when(&mut self, flag: u64, trap: crate::WasmTrap) -> Result<(), JsError> {
+        if flag == 0 { Ok(()) } else { Err(JsError::wasm_trap_error(trap)) }
+    }
+}
+
+impl<H: Host> WasmBindings for InstanceBindings<'_, H> {
+    fn binding_word(&mut self, slot: u32) -> Option<u64> {
+        self.vm.heap.environment_slot(self.env, slot as usize).map(|value| value.to_bits())
+    }
+}
 
 impl<H: Host> Vm<H> {
     /// An instance-binding or global step: the register `a` takes the environment slot `imm`, the
@@ -34,7 +65,7 @@ impl<H: Host> Vm<H> {
             Instance::GlobalSet => {
                 self.wasm_global_store(self.read(f, i.register_b()), self.read(f, i.register_a()))?;
             }
-            Instance::Move | Instance::Constant | Instance::Fill => {
+            Instance::Move | Instance::Constant | Instance::Fill | Instance::LoadLocal | Instance::StoreLocal => {
                 unreachable!("step_wasm routes the other instance steps")
             }
         }
@@ -42,9 +73,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// The instance field at environment slot `slot` of `env`: a binding is a handle read from
-    /// the environment's cell.
+    /// the environment's cell, by the binding rule (`binding_get`) over `InstanceBindings`.
     pub(super) fn wasm_binding(&self, env: Value, slot: usize) -> Option<Value> {
-        self.heap.environment_slot(env, slot)
+        let slot = u32::try_from(slot).ok()?;
+        binding_get(&mut InstanceBindings { vm: self, env }, slot).map(Value::from_bits)
     }
 
     /// The register encoding of the word a global's slot holds under `storage`.

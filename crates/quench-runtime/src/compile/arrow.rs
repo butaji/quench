@@ -110,6 +110,7 @@ impl Compiler<'_> {
             &promoted_local_slots,
             &clobbered_local_slots,
         );
+        function.code.reserve(super::code_capacity_hint(source_span));
         function.strict = strict;
         function.declared_key = source_span.map(|span| span.start);
         function.super_static = super_static;
@@ -140,8 +141,7 @@ impl Compiler<'_> {
             }
         }
         // As in `Compiler::compile_function`: no doubling slack beside the syntax tree.
-        function.code.shrink_to_fit();
-        function.source_positions.shrink_to_fit();
+        super::trim_slack(&mut function.code);
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
@@ -161,13 +161,14 @@ impl Compiler<'_> {
                 .count() as u16,
             parameter_end_pc: 0,
             parameter_atoms,
-            declared_parameters: declared_parameters.into(),
+            rare: crate::bytecode::FunctionRare { declared_parameters: declared_parameters.into(), ..Default::default() }.boxed(),
             rest: value.params.rest.is_some(),
             is_async: value.r#async,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom,
             constructible: false,
             class_initializer,
@@ -187,26 +188,18 @@ impl Compiler<'_> {
             local_registers: function.promoted_local_layout().into(),
             inherited_with_scope: with_depth != 0,
             lexical_atoms: lexical_atoms.into(),
-            global_declarations: None,
             name_bindings,
             binding_sites: function.binding_sites.into(),
-            source_positions: function.source_positions,
+            source_positions: function.source_positions.freeze(),
             environment_clones,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: function.handlers.into(),
             register_roots: Default::default(),
             undefined_register,

@@ -5,7 +5,7 @@
 //!   `array.set`, ...) call `wasm_gc_callout::<H>` (`wasm_gc_callout.rs`) through the kind-21 row
 //!   `call_w_21_<flags>_1_0` (`quench-bjit/stencils/wasm_rows_callout.rs`);
 //! - the allocating operations (`struct.new`, `array.new*`, `ref.i31`, ...) call
-//!   `allocate_frame::<H>` (`wasm_gc_allocate.rs`) through `call_w_25_0_1_0`
+//!   `allocate_frame::<H>` (`wasm_gc_allocate.rs`) through `call_w_26_0_1_0`
 //!   (`wasm_rows_callout.rs`, `gc_allocate`), which reads the operands from the frame.
 //!
 //! The callouts run the staged rules the interpreter runs, so both tiers share their checks and

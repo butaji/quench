@@ -113,6 +113,7 @@ impl Frame {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Unit {
     pub(crate) instructions: Vec<WideInstruction>,
     pub(crate) origins: Vec<Origin>,
@@ -598,7 +599,8 @@ impl Emitter {
                 WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
             _ if super::meaning_compiled::is_construct(instruction) => super::meaning_compiled::construct_record(register(instruction.a()), register(instruction.b()),
                 register(instruction.c()), instruction.imm()),
-            Some(Operation::GetField { .. }) if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
+            _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::GetField { .. }))
+                && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
                 let flags = instruction.result_flags();
                 super::meaning_compiled::get_field_record(flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
             }

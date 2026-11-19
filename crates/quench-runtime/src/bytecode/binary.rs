@@ -7,7 +7,7 @@ use super::{
     EvalBindingLocation, FieldBase, FieldSite, Function, FunctionSlot, Handler, InitialRegister, Instr,
     LexicalBindingKind, LocalRegister, MethodSite, ModuleImportBinding, ModuleImportName,
     ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest,
-    LiteralStep, ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction,
+    LiteralStep, ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourceOffset, Superinstruction,
     WideInstruction,
 };
 
@@ -167,6 +167,9 @@ const KEPT_SOURCE_TRAILER: usize = size_of::<u64>() + size_of::<u64>() + size_of
 /// mapping the program keeps for its records, instead of holding a copy on the heap for its
 /// whole run (V8-v7 RegExp: 118 KiB at its heap's peak).
 pub(crate) fn append_kept_source(entry: &mut Vec<u8>, source: &str) {
+    // Sized once: the entry lives as long as the program that reads its text, and `extend`
+    // would grow it by doubling, leaving up to half of the source's size in spare capacity.
+    entry.reserve_exact(source.len() + KEPT_SOURCE_TRAILER);
     entry.extend_from_slice(source.as_bytes());
     entry.extend_from_slice(&compact_checksum(source.as_bytes()).to_le_bytes());
     entry.extend_from_slice(&(source.len() as u64).to_le_bytes());
@@ -320,7 +323,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
             && crate::DYNAMIC_EXECUTION_ENABLED
             && !load_records.contains_key(&(index as u32))
             && function.record.get().is_none())
-        .then(|| function.unlowered.borrow().as_ref().map(|unlowered| unlowered.function(function.header())))
+        .then(|| function.unlowered.with(|unlowered| unlowered.map(|unlowered| unlowered.function(function.header()))))
         .flatten();
         let rewrites_pending = program.rewrite_ranges.defers(index);
         out.u8(match (deferred, unlowered.is_some(), rewrites_pending) {
@@ -376,7 +379,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         out.u16(site.cache);
         out.u32(site.argument_start);
         out.u16(site.argument_count);
-        out.optional_atom_pair(site.receiver_path);
+        out.optional_atom_pair(site.receiver_path.get());
     }
     out.u16s(&program.method_arguments);
     out.u32(program.field_sites.len() as u32);
@@ -385,11 +388,10 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         out.atom_pair(site.first);
         out.optional_atom_pair(site.second);
         out.optional_atom_pair(site.sink);
-        for source in site.sources {
+        for source in site.source_offsets() {
             out.u8(source.is_some() as u8);
-            if let Some((line, column)) = source {
-                out.u32(line);
-                out.u32(column);
+            if let Some(offset) = source {
+                out.u32(offset);
             }
         }
     }
@@ -423,7 +425,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     }
     out.u32(program.superinstructions.len() as u32);
     for site in &program.superinstructions {
-        for instruction in site.code {
+        for instruction in site.wide {
             out.instruction(instruction.op(), instruction.a(), instruction.b(), instruction.c(), instruction.imm());
         }
     }
@@ -600,7 +602,6 @@ fn decode_program(
             base: input.u32()?,
             line_offset: input.u32()?,
             column_offset: input.u32()?,
-            line_starts: Default::default(),
             call_sites: if input.bool()? {
                 std::cell::OnceCell::from(std::sync::Arc::from(input.list(|input| {
                     Ok(super::CallSiteDescription {
@@ -683,11 +684,11 @@ fn decode_program(
         )),
         0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
         1 => Ok(Constant::String(input.string()?.into())),
-        7 => Ok(Constant::StringUnits(input.u16s()?)),
-        6 => Ok(Constant::BigInt(input
+        7 => Ok(Constant::StringUnits(input.u16s()?.into())),
+        6 => Ok(Constant::BigInt(Box::new(input
             .string()?
             .parse()
-            .map_err(|_| "invalid residual BigInt constant")?)),
+            .map_err(|_| "invalid residual BigInt constant")?))),
         2 => Ok(Constant::Boolean(true)),
         3 => Ok(Constant::Boolean(false)),
         4 => Ok(Constant::Null),
@@ -716,19 +717,15 @@ fn decode_program(
                 return Err("deferred record outside its region".into());
             }
             let start = u32::try_from(region + offset).map_err(|_| "residual records exceed u32")?;
-            ranges.push(Some(super::DeferredRecord {
-                start,
-                length,
-                checksum,
-                unlowered: entry >= DEFERRED_UNLOWERED,
-                rewrites_pending: entry == DEFERRED_UNREWRITTEN,
-            }));
+            let record = super::DeferredRecord::new(start, length, checksum, entry >= DEFERRED_UNLOWERED, entry == DEFERRED_UNREWRITTEN)
+                .ok_or("deferred record exceeds the encoding's record length")?;
+            ranges.push(Some(record));
             functions.push(FunctionSlot::released(header));
             continue;
         }
         let record = input.take(length as usize)?;
         let mut reader = input.sub_reader(record);
-        let function = read_function(&mut reader)?;
+        let function = read_function(&mut reader, None)?;
         reader.finish()?;
         ranges.push(None);
         functions.push(FunctionSlot::compiled(function));
@@ -747,7 +744,7 @@ fn decode_program(
             cache: input.u16()?,
             argument_start: input.u32()?,
             argument_count: input.u16()?,
-            receiver_path: input.optional_atom_pair()?,
+            receiver_path: input.optional_atom_pair()?.into(),
         })
     })?;
     let method_arguments = input.u16s()?;
@@ -758,9 +755,9 @@ fn decode_program(
             second: input.optional_atom_pair()?,
             sink: input.optional_atom_pair()?,
             sources: [
-                input.optional_source_location()?,
-                input.optional_source_location()?,
-                input.optional_source_location()?,
+                field_source_word(input)?,
+                field_source_word(input)?,
+                field_source_word(input)?,
             ],
         })
     })?;
@@ -887,7 +884,7 @@ fn append_to(out: &mut BinaryWriter, target: &mut Vec<u8>, write: impl FnOnce(&m
 /// its names resolve statically, given the facts of the functions encoded before it.
 fn write_record(program: &super::ResidualProgram, index: usize, static_names: &[bool], out: &mut BinaryWriter) -> bool {
     program.with_record(index, |record| {
-        let names_static = *record.static_name_scope.get_or_init(|| {
+        let names_static = record.lazy_flag(super::LazyFlag::StaticNameScope, || {
             record.own_names_resolve_statically(program) && enclosing_names_static(program, static_names, record.parent)
         });
         let facts = record.derived_facts(program, names_static);
@@ -1018,11 +1015,12 @@ pub(crate) fn packs_alike(a: &Function, b: &Function) -> bool {
     pack_unlowered(a).bytes == pack_unlowered(b).bytes
 }
 
-/// `pack_unlowered`'s record.
-pub(crate) fn unpack_unlowered(packed: &PackedUnlowered) -> Function {
+/// `pack_unlowered`'s record, over `header`: the slot's header, which holds the fields a packed
+/// record leaves out (`write_function`).
+pub(crate) fn unpack_unlowered(packed: &PackedUnlowered, header: &super::FunctionHeader) -> Function {
     let mut input = BinaryReader::new(&packed.bytes);
     input.packed = true;
-    let mut function = read_function(&mut input).unwrap_or_else(|error| panic!("a packed unlowered record decodes: {error}"));
+    let mut function = read_function(&mut input, Some(header)).unwrap_or_else(|error| panic!("a packed unlowered record decodes: {error}"));
     function.name_bindings = packed.name_bindings.clone();
     function
 }
@@ -1049,32 +1047,86 @@ const RECORD_INFERRED_NAME_AT: usize = 2 * size_of::<u32>();
 /// The size of the derived facts `write_function` ends a record with.
 const RECORD_DERIVED_FACTS_SIZE: usize = size_of::<u32>();
 
+/// A base class constructor's leading constant fields (`Function::constant_fields`): their
+/// count, then each field's atom and its primitive's tag, with the number's bits or the string's
+/// atom after the tags that carry one.
+fn write_constant_fields(out: &mut BinaryWriter, fields: &[super::ConstantField]) {
+    out.u32(fields.len() as u32);
+    for field in fields {
+        out.atom(field.atom);
+        match field.value {
+            super::FieldConstant::Undefined => out.u8(CONSTANT_FIELD_UNDEFINED),
+            super::FieldConstant::Null => out.u8(CONSTANT_FIELD_NULL),
+            super::FieldConstant::Boolean(false) => out.u8(CONSTANT_FIELD_FALSE),
+            super::FieldConstant::Boolean(true) => out.u8(CONSTANT_FIELD_TRUE),
+            super::FieldConstant::Number(number) => {
+                out.u8(CONSTANT_FIELD_NUMBER);
+                out.u64(number.to_bits());
+            }
+            super::FieldConstant::String(atom) => {
+                out.u8(CONSTANT_FIELD_STRING);
+                out.atom(atom);
+            }
+        }
+    }
+}
+
+fn read_constant_fields(input: &mut BinaryReader<'_>) -> Result<Vec<super::ConstantField>, String> {
+    input.list(|input| {
+        let atom = input.atom()?;
+        let value = match input.u8()? {
+            CONSTANT_FIELD_UNDEFINED => super::FieldConstant::Undefined,
+            CONSTANT_FIELD_NULL => super::FieldConstant::Null,
+            CONSTANT_FIELD_FALSE => super::FieldConstant::Boolean(false),
+            CONSTANT_FIELD_TRUE => super::FieldConstant::Boolean(true),
+            CONSTANT_FIELD_NUMBER => super::FieldConstant::Number(f64::from_bits(input.u64()?)),
+            CONSTANT_FIELD_STRING => super::FieldConstant::String(input.atom()?),
+            _ => return Err("invalid constant field tag".to_string()),
+        };
+        Ok(super::ConstantField { atom, value })
+    })
+}
+
+const CONSTANT_FIELD_UNDEFINED: u8 = 0;
+const CONSTANT_FIELD_NULL: u8 = 1;
+const CONSTANT_FIELD_FALSE: u8 = 2;
+const CONSTANT_FIELD_TRUE: u8 = 3;
+const CONSTANT_FIELD_NUMBER: u8 = 4;
+const CONSTANT_FIELD_STRING: u8 = 5;
+
 /// A function's record, which `read_function` decodes, with the projection of its plain local
 /// slots (`Function::plain_local_slots`) that the interpreter memoizes on first call and its
 /// `derived_facts`: a decoder sets the memos instead of running the analyses again in every
 /// process.
 fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions: &[Superinstruction], derived_facts: u32) {
         let start = out.bytes.len();
-        out.option_u32(function.parent);
-        out.option_atom(function.name);
-        debug_assert!(out.packed || out.bytes.len() - start == RECORD_INFERRED_NAME_AT);
-        out.option_atom(function.inferred_name);
-        out.u8(u8::from(function.is_arrow));
+        // A packed record leaves out the fields its slot's header holds (`unpack_unlowered`).
+        if !out.packed {
+            out.option_u32(function.parent);
+            out.option_atom(function.name);
+            debug_assert!(out.bytes.len() - start == RECORD_INFERRED_NAME_AT);
+            out.option_atom(function.inferred_name);
+            out.u8(u8::from(function.is_arrow));
+        }
         out.u16(function.self_binding_slot.unwrap_or(u16::MAX));
-        out.u8(u8::from(function.source_span.is_some()));
-        if let Some(span) = function.source_span {
-            out.u32(span.start);
-            out.u32(span.end);
+        if !out.packed {
+            out.u8(u8::from(function.source_span.is_some()));
+            if let Some(span) = function.source_span {
+                out.u32(span.start);
+                out.u32(span.end);
+            }
         }
         out.u16(function.params);
-        out.u16(function.length);
+        if !out.packed {
+            out.u16(function.length);
+        }
         out.u32(function.parameter_end_pc);
         out.u32(function.parameter_atoms.len() as u32);
         for atom in &function.parameter_atoms {
             out.atom(*atom);
         }
-        out.u32(function.declared_parameters.len() as u32);
-        for declared in &function.declared_parameters {
+        out.u32(function.declared_parameters().len() as u32);
+        for declared in function.declared_parameters() {
             out.u16(*declared);
         }
         out.u8(u8::from(function.rest));
@@ -1083,6 +1135,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.u8(u8::from(function.is_class_constructor));
         out.u8(u8::from(function.derived_constructor));
         out.option_u32(function.instance_initializer);
+        write_constant_fields(out, &function.constant_fields);
         out.option_atom(function.super_home_atom);
         out.u8(u8::from(function.constructible));
         out.u8(u8::from(function.class_initializer));
@@ -1156,14 +1209,10 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
             }
         }
         out.u16(function.registers);
-        out.u8(function.dispatch as u8);
-        out.u8(u8::from(function.register_roots.covered()));
-        out.u16(function.register_roots.entry_live());
-        let dead_call_results = function.register_roots.dead_call_results();
-        out.u32(dead_call_results.len() as u32);
-        for &pc in dead_call_results {
-            out.u32(pc);
+        if !out.packed {
+            out.u8(function.dispatch as u8);
         }
+        out.u8(u8::from(function.register_roots.covered()));
         out.u16(function.undefined_register.unwrap_or(NO_UNDEFINED_REGISTER));
         out.u16(
             function
@@ -1240,92 +1289,58 @@ fn write_function_header(out: &mut BinaryWriter, header: &super::FunctionHeader)
 }
 
 /// `write_function`'s record.
-fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
-        let parent = input.option_u32()?;
-        let name = input.option_atom()?;
-        let inferred_name = input.option_atom()?;
-        let is_arrow = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid arrow function flag".into()),
+/// `header` is a packed record's slot header, which holds the fields `write_function` leaves out
+/// of a packed record; a disk record carries them and reads with `None`.
+fn read_function(input: &mut BinaryReader<'_>, header: Option<&super::FunctionHeader>) -> Result<Function, String> {
+        debug_assert_eq!(header.is_some(), input.packed);
+        let (parent, name, inferred_name) = match header {
+            Some(header) => (header.parent, header.name, header.inferred_name),
+            None => (input.option_u32()?, input.option_atom()?, input.option_atom()?),
+        };
+        let is_arrow = match header {
+            Some(header) => header.is_arrow,
+            None => input.flag("arrow function")?,
         };
         let self_binding_slot = match input.u16()? {
             u16::MAX => None,
             slot => Some(slot),
         };
-        let source_span = match input.u8()? {
-            0 => None,
-            _ => Some(super::SourceSpan {
-                start: input.u32()?,
-                end: input.u32()?,
-            }),
+        let source_span = match header {
+            Some(header) => header.source_span,
+            None => match input.u8()? {
+                0 => None,
+                _ => Some(super::SourceSpan {
+                    start: input.u32()?,
+                    end: input.u32()?,
+                }),
+            },
         };
         let params = input.u16()?;
-        let length = input.u16()?;
+        let length = match header {
+            Some(header) => header.length,
+            None => input.u16()?,
+        };
         let parameter_end_pc = input.u32()?;
         let parameter_atoms = input.list(|input| input.atom())?;
         let declared_parameters = input.list(|input| input.u16())?;
-        let rest = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid residual rest flag".into()),
-        };
-        let is_async = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid async function flag".into()),
-        };
-        let is_generator = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid generator function flag".into()),
-        };
-        let is_class_constructor = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid class constructor flag".into()),
-        };
-        let derived_constructor = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid derived constructor flag".into()),
-        };
+        let rest = input.flag("rest")?;
+        let is_async = input.flag("async function")?;
+        let is_generator = input.flag("generator function")?;
+        let is_class_constructor = input.flag("class constructor")?;
+        let derived_constructor = input.flag("derived constructor")?;
         let instance_initializer = input.option_u32()?;
+        let constant_fields = read_constant_fields(input)?;
         let super_home_atom = input.option_atom()?;
-        let constructible = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid constructible function flag".into()),
-        };
-        let class_initializer = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid class field initializer flag".into()),
-        };
-        let prototype_unobservable = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid prototype observability flag".into()),
-        };
-        let parameter_eval_arguments_error = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid parameter eval flag".into()),
-        };
+        let constructible = input.flag("constructible function")?;
+        let class_initializer = input.flag("class field initializer")?;
+        let prototype_unobservable = input.flag("prototype observability")?;
+        let parameter_eval_arguments_error = input.flag("parameter eval")?;
         let (unaliased_arguments, rest_alias) = match input.u8()? {
             flags if flags & !(UNALIASED_ARGUMENTS_BIT | REST_ALIAS_BIT) == 0 => (flags & UNALIASED_ARGUMENTS_BIT != 0, flags & REST_ALIAS_BIT != 0),
             _ => return Err("invalid unaliased arguments flags".into()),
         };
-        let simple_parameters = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid simple parameters flag".into()),
-        };
-        let strict = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid strict function flag".into()),
-        };
+        let simple_parameters = input.flag("simple parameters")?;
+        let strict = input.flag("strict function")?;
         let arguments_slot = match input.u16()? {
             u16::MAX => None,
             slot => Some(slot),
@@ -1349,11 +1364,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         };
         let declared_functions = input.u16s()?.into();
         let declared_captures = input.u16s()?.into();
-        let inherited_with_scope = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid inherited with-scope flag".into()),
-        };
+        let inherited_with_scope = input.flag("inherited with-scope")?;
         let lexical_atoms = input.list(|input| input.atom())?;
         let global_lexical_atoms = input.list(|input| input.atom())?;
         let global_var_atoms = input.list(|input| input.atom())?;
@@ -1370,17 +1381,12 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })
         })?;
         let registers = input.u16()?;
-        let dispatch = input.dispatch_class()?;
+        let dispatch = match header {
+            Some(header) => header.dispatch,
+            None => input.dispatch_class()?,
+        };
         let covered = input.flag("register root coverage")?;
-        let entry_live = input.u16()?;
-        let dead_call_results = input.list(BinaryReader::u32)?;
-        if !dead_call_results.is_sorted_by(|before, after| before < after) || !covered && !dead_call_results.is_empty() {
-            return Err("invalid residual dead call results".into());
-        }
-        if !covered && entry_live != super::RegisterRoots::ALL_LIVE_AT_ENTRY {
-            return Err("invalid residual entry liveness".into());
-        }
-        let register_roots = super::RegisterRoots::with_entry_live(covered, entry_live, dead_call_results.into());
+        let register_roots = super::RegisterRoots::new(covered);
         let undefined_register =
             Some(input.u16()?).filter(|register| *register != NO_UNDEFINED_REGISTER);
         let parameter_registers = Some(input.u16()?).filter(|base| *base != NO_PARAMETER_REGISTERS);
@@ -1463,13 +1469,26 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             length,
             parameter_end_pc,
             parameter_atoms: parameter_atoms.into(),
-            declared_parameters: declared_parameters.into(),
+            rare: crate::bytecode::FunctionRare {
+                declared_parameters: declared_parameters.into(),
+                global_declarations: super::GlobalDeclarations::new(
+                    global_lexical_atoms,
+                    global_var_atoms,
+                    global_function_atoms,
+                    global_annex_b_var_atoms,
+                    global_immutable_atoms,
+                )
+                .boxed(),
+                instance_initializer,
+            }
+            .boxed(),
             rest,
             is_async,
             is_generator,
             is_class_constructor,
             derived_constructor,
             instance_initializer,
+            constant_fields: constant_fields.into(),
             super_home_atom,
             constructible,
             prototype_unobservable,
@@ -1490,14 +1509,6 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             environment_clones,
             name_bindings: crate::bytecode::NameBindings::flat(name_bindings),
             lexical_atoms: lexical_atoms.into(),
-            global_declarations: super::GlobalDeclarations::new(
-                global_lexical_atoms,
-                global_var_atoms,
-                global_function_atoms,
-                global_annex_b_var_atoms,
-                global_immutable_atoms,
-            )
-            .boxed(),
             binding_sites: binding_sites.into(),
             source_positions,
             code,
@@ -1506,15 +1517,9 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             dispatch,
             decoded: Default::default(),
             plain_locals: if packed { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(plain_locals) },
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: handlers.into(),
             register_roots,
             undefined_register,
@@ -1564,19 +1569,19 @@ pub(super) fn decode_deferred_function(
 ) -> Option<Result<Function, String>> {
     let record = (*records.ranges.get(index)?)?;
     let start = record.start as usize;
-    let bytes = records.bytes.as_ref().as_ref().get(start..start + record.length as usize)?;
+    let bytes = records.bytes.as_ref().as_ref().get(start..start + record.length())?;
     if compact_checksum(bytes) != record.checksum {
         return Some(Err("deferred record checksum mismatch".into()));
     }
-    let mut reader = BinaryReader { bytes, cursor: 0, atoms: records.atoms.clone(), packed: false, unlowered: record.unlowered };
-    Some(read_function(&mut reader).and_then(|function| reader.finish().map(|()| function)))
+    let mut reader = BinaryReader { bytes, cursor: 0, atoms: records.atoms.clone(), packed: false, unlowered: record.unlowered() };
+    Some(read_function(&mut reader, None).and_then(|function| reader.finish().map(|()| function)))
 }
 
 /// The bytes of function `index`'s deferred record, when it has one.
 pub(super) fn deferred_record_bytes(records: &super::EncodedRecords, index: usize) -> Option<&[u8]> {
     let record = (*records.ranges.get(index)?)?;
     let start = record.start as usize;
-    records.bytes.as_ref().as_ref().get(start..start + record.length as usize)
+    records.bytes.as_ref().as_ref().get(start..start + record.length())
 }
 
 /// A lowered instruction's fixed-width record: four `u16` fields and a `u32` immediate.
@@ -1674,7 +1679,7 @@ impl BinaryWriter {
         self.u32(bytes.len() as u32);
         self.bytes.extend_from_slice(bytes);
         match last {
-            Some(position) => { self.u8(1); self.u32(position.pc); self.u32(position.line); self.u32(position.column); }
+            Some(entry) => { self.u8(1); self.u32(entry.pc); self.u32(entry.offset); }
             None => self.u8(0),
         }
     }
@@ -1685,6 +1690,16 @@ impl BinaryWriter {
     pub(super) fn strings(&mut self, values: &AtomTable) { self.u32(values.len() as u32); for value in values.iter() { self.string(value); } }
     pub(super) fn u16s(&mut self, values: &[u16]) { self.u32(values.len() as u32); for value in values { self.u16(*value); } }
     pub(super) fn option_u32(&mut self, value: Option<u32>) { self.u32(value.unwrap_or(u32::MAX)); }
+}
+
+/// A field site's source word, read as its optional offset (`FieldSite::sources`): an offset
+/// of `FieldSite::NO_SOURCE` names no source, so an encoding that stores one is invalid.
+fn field_source_word(input: &mut BinaryReader<'_>) -> Result<u32, String> {
+    match input.optional_source_offset()? {
+        None => Ok(FieldSite::NO_SOURCE),
+        Some(FieldSite::NO_SOURCE) => Err("invalid field site".into()),
+        Some(offset) => Ok(offset),
+    }
 }
 
 pub(super) struct BinaryReader<'a> {
@@ -1720,7 +1735,7 @@ impl<'a> BinaryReader<'a> {
         let bytes = self.take(len)?.to_vec();
         let last = match self.u8()? {
             0 => None,
-            1 => Some(SourcePosition { pc: self.u32()?, line: self.u32()?, column: self.u32()? }),
+            1 => Some(SourceOffset { pc: self.u32()?, offset: self.u32()? }),
             _ => return Err("invalid residual source position table".into()),
         };
         Ok(super::SourcePositions::from_encoded(bytes, last))
@@ -1851,10 +1866,10 @@ impl<'a> BinaryReader<'a> {
         let value = self.u32()?;
         Ok((value != u32::MAX).then_some(value))
     }
-    pub(super) fn optional_source_location(&mut self) -> Result<Option<(u32, u32)>, String> {
+    pub(super) fn optional_source_offset(&mut self) -> Result<Option<u32>, String> {
         match self.u8()? {
             0 => Ok(None),
-            1 => Ok(Some((self.u32()?, self.u32()?))),
+            1 => Ok(Some(self.u32()?)),
             _ => Err("invalid residual source option".into()),
         }
     }

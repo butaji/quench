@@ -32,10 +32,11 @@ impl<H: Host> AccessorCall<H> {
     pub(super) unsafe fn getter_read(&self, object: Value, atom: crate::bytecode::Atom, site: u16) -> Option<Option<Value>> {
         let vm = unsafe { vm(self.cx) };
         let index = vm.field_cache_index(site);
-        if let Some(value) = vm.memoized_getter_answer(object, index) {
-            return Some(Some(value));
-        }
-        let getter = vm.cached_field_getter(object, atom, index)?;
+        let getter = match vm.getter_entry_read(object, index) {
+            crate::vm::accessor_cache::GetterEntryRead::Answer(value, _) => return Some(Some(value)),
+            crate::vm::accessor_cache::GetterEntryRead::Call(getter) => getter,
+            crate::vm::accessor_cache::GetterEntryRead::Miss => vm.cached_field_getter(object, atom, index)?,
+        };
         let Some(value) = (unsafe { self.getter_answer(getter, object) }) else {
             return Some(None);
         };
@@ -63,7 +64,7 @@ impl<H: Host> AccessorCall<H> {
         };
         if base == crate::bytecode::FieldBase::THIS.0 {
             let answer = vm.field_cache_entry(cache);
-            vm.memoize_getter_answer(object, site, getter, answer);
+            vm.memoize_getter_answer(object, site, getter, crate::vm::AccessorForward::Field(answer));
         }
     }
 
@@ -117,6 +118,11 @@ impl<H: Host> AccessorCall<H> {
         // once, is answered by its read or activated.
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(self.cx) }.heap.function(getter) {
             let native = *native;
+            // A native getter has no target to admit it: the admission word decides, as a link's
+            // compare would.
+            if !unsafe { vm(self.cx) }.lane_stack.script_calls_allowed() {
+                return Err(exit(ip));
+            }
             if reads {
                 if let Some(value) = unsafe { vm(self.cx) }.pure_native_getter_value(getter, base) {
                     let r = unsafe { (*self.cx).registers };
@@ -169,7 +175,7 @@ impl<H: Host> AccessorCall<H> {
             .getter_field_slot(getter, base)
             .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
         if !slot.is_some_and(|slot| set_getter_hint(vm, ip, i.imm(), base, slot)) {
-            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>);
+            requicken::<H>(ip, protocol_handler::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
         }
         Some(value)
     }
@@ -361,7 +367,7 @@ impl<H: Host> AccessorCall<H> {
     pub(super) fn store_setter(&self, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
         let vm = unsafe { vm(self.cx) };
         let site = vm.field_cache_index(i.c);
-        if !met_setter(site) {
+        if !met_setter(&vm.lane_stack, site) {
             return None;
         }
         let setter = stored_setter(vm, object, i.imm(), site)?;

@@ -22,11 +22,12 @@ thread_local! {
 pub(crate) fn float_slots() -> bool {
     #[cfg(test)]
     if FLOAT_SLOTS_FOR_TEST.get() { return true; }
-    // One byte compared, not a `OnceLock`'s state and value: every field read decodes through
-    // here (`value_vec::read_type`), so the off case is a compare and a branch.
+    // One byte loaded and tested once on the decided path, not a `OnceLock`'s state and value:
+    // every field read decodes through here (`value_vec::read_type`). Only the unread state takes
+    // the cold reader, which stores the answer; OFF and ON are then one compare, not two.
     let state = FLOAT_SLOTS.load(std::sync::atomic::Ordering::Relaxed);
-    if state == SWITCH_OFF { return false; }
-    state == SWITCH_ON || read_float_slots()
+    if state == SWITCH_UNREAD { return read_float_slots(); }
+    state == SWITCH_ON
 }
 
 /// `float_slots`'s state: `SWITCH_UNREAD` until the environment is read, then off or on.

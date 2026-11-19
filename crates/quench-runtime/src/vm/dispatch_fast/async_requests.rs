@@ -12,7 +12,7 @@ use super::*;
 
 /// Whether the innermost activation is an async generator's in-place request.
 pub(super) fn running_request<H: Host>(vm: &Vm<H>) -> bool {
-    vm.lane_stack.activations().last().and_then(Activation::script).is_some_and(|script| script.completion == Completion::AsyncRequest)
+    vm.lane_stack.top_frame().and_then(|frame| frame.script()).is_some_and(|script| script.completion == Completion::AsyncRequest)
 }
 
 /// `next` of an async generator, called at `ip` with registers `r`: the generator resumes in
@@ -56,7 +56,8 @@ pub(super) fn async_generator_throw_in_lane<H: Host>(cx: *mut LaneContext<H>, r:
 }
 
 /// The request of `generator`, whose `next` or `throw` the call at `ip` with registers `r`
-/// makes: its promise made and rooted in `LaneStack::settling`, the generator resumes as an
+/// makes: its promise made and rooted in the activation's side record (`SidePayload::Settles`),
+/// the generator resumes as an
 /// activation receiving `sent` (`resume_generator_in_lane`). The registers and record the lane
 /// continues at, or `None`, before any effect but a promise left to the collector.
 fn resume_request_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, generator: Value, sent: Value) -> Option<(Registers, Ip)> {
@@ -64,20 +65,20 @@ fn resume_request_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
     let promise = vm.promise_object().ok()?;
     note_allocation(vm);
     let root = vm.heap.root(promise);
-    vm.lane_stack.settling.push(Some(root));
     let resumed = generator_windows::resume_generator_in_lane(cx, r, ip, generator, r.get(i.b), sent, Completion::AsyncRequest);
-    if resumed.is_none() {
-        vm.lane_stack.settling.pop();
-        vm.heap.release_root(root);
+    match resumed {
+        // The promise rides in the request activation's side record (one-frame-one-call.md F4 (3)).
+        Some(_) => vm.lane_stack.attach_payload(SidePayload::Settles(Some(root))),
+        None => {
+            vm.heap.release_root(root);
+        }
     }
     resumed
 }
 
-/// The promise of the innermost in-place request, unrooted as its activation stops.
-fn take_request_promise<H: Host>(vm: &mut Vm<H>) -> Value {
-    let root = vm.lane_stack.settling.pop().expect("each request activation has its entry");
-    let root = vm.settling_root(root);
-    vm.release_settled_call_root(root)
+/// The promise of the in-place request `frame`, unrooted as its activation stops.
+fn take_request_promise<H: Host>(vm: &mut Vm<H>, frame: &Frame) -> Value {
+    vm.settling_promise(frame.payload().settles())
 }
 
 /// `await` (or, where `yielded`, `yield`) of the in-place request's activation on `value`, the
@@ -93,23 +94,23 @@ pub(super) fn suspend_request_in_lane<H: Host>(cx: *mut LaneContext<H>, (pc, des
     // The converted value may be a fresh promise, which the safepoints after the run collect.
     note_allocation(vm);
     let depth = vm.lane_stack.activation_count() - 1;
-    let activation = *vm.lane_stack.activations().last().expect("a request's activation runs");
-    let ActivationKind::Script(script) = activation.kind else { unreachable!("a request runs as a script activation") };
-    vm.suspend_request_window(script.callee, (pc, destination, depth), yielded, value);
-    vm.lane_stack.pop_activation();
+    let callee = vm.lane_stack.top_frame().expect("a request's activation runs").callee();
+    vm.suspend_request_window(callee, (pc, destination, depth), yielded, value);
+    let activation = vm.lane_stack.pop_activation().expect("a request's activation runs");
     let (memory, _) = restore_caller_in_lane(cx, &activation);
-    let promise = take_request_promise(vm);
+    let promise = take_request_promise(vm, &activation);
+    let script = activation.script().expect("a request runs as a script activation");
     let settled = vm.await_request(code, script.callee, promise, yielded, value);
     request_settled(vm, &activation, memory, promise, settled)
 }
 
 /// The return of the in-place request's `activation`, popped with its caller restored
 /// (`memory`), with `value`: the generator completes and the caller goes on with the promise.
-pub(super) fn request_returned_in_lane<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, memory: MemoryView, value: Value) -> Resumed {
+pub(super) fn request_returned_in_lane<H: Host>(cx: *mut LaneContext<H>, activation: &Frame, memory: MemoryView, value: Value) -> Resumed {
     let vm = unsafe { vm(cx) };
-    let ActivationKind::Script(script) = activation.kind else { unreachable!("a request runs as a script activation") };
+    let script = activation.script().expect("a request runs as a script activation");
     vm.finish_request_window(script.callee);
-    let promise = take_request_promise(vm);
+    let promise = take_request_promise(vm, activation);
     // SAFETY: the context's program outlives the lane run.
     let settled = vm.complete_request(unsafe { &*(*cx).code }, script.callee, promise, value);
     request_settled(vm, activation, memory, promise, settled)
@@ -117,12 +118,12 @@ pub(super) fn request_returned_in_lane<H: Host>(cx: *mut LaneContext<H>, activat
 
 /// The caller of the request `activation` goes on after its call with `promise`, or raises at
 /// the call the error its settlement threw.
-fn request_settled<H: Host>(vm: &mut Vm<H>, activation: &Activation, memory: MemoryView, promise: Value, settled: Result<(), JsError>) -> Resumed {
+fn request_settled<H: Host>(vm: &mut Vm<H>, activation: &Frame, memory: MemoryView, promise: Value, settled: Result<(), JsError>) -> Resumed {
     match settled {
         Ok(()) => resume_after_call_in_lane(activation, memory, promise),
         Err(error) => {
             vm.lane_completion.raise(error);
-            Resumed::Exit(exit(activation.call))
+            Resumed::Exit(exit(activation.call()))
         }
     }
 }

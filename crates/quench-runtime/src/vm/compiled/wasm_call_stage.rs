@@ -11,6 +11,7 @@
 //! call that writes the result, followed by the return of that result (`return_if_tail`), as
 //! before. The b-jit's stitched tail calls still grow the native stack (`wasm_stitch_tail`).
 
+use cranelift_codegen::ir::InstBuilder;
 use super::wasm_instance_stage::value_kind;
 use super::{
     Analysis, AnalysisState, BODY_CALL_CONV, Emitter, Host, Kind, Plan, Slot, function_name,
@@ -106,7 +107,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         if self.memory.base {
             arguments.push(self.base);
         }
-        arguments.extend(self.length);
+        arguments.extend(self.passed_length());
         for (offset, ty) in plan.params.iter().enumerate() {
             let kind = Kind::of(*ty).expect("planned");
             arguments.push(self.read(window.base + offset as u16, kind));

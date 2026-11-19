@@ -45,7 +45,12 @@ impl<H: Host> Vm<H> {
             let target = vm.array_species_create(p, source, 0)?;
             vm.active_call_roots.push(target);
             let mut frames = vec![FlattenFrame { source, length, index: 0, depth }];
-            vm.flatten_into(p, target, &mut frames, mapper)?;
+            match mapper {
+                Some((callback, receiver)) => vm.with_prepared_callback(callback, receiver, |vm, prepared| {
+                    vm.flatten_into(p, target, &mut frames, Some(prepared))
+                })?,
+                None => vm.flatten_into(p, target, &mut frames, None)?,
+            }
             Ok(target)
         })
     }
@@ -58,7 +63,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         target: Value,
         frames: &mut Vec<FlattenFrame>,
-        mapper: Option<(Value, Value)>,
+        mut mapper: Option<&mut PreparedCallback<H>>,
     ) -> Result<(), JsError> {
         let mut target_index = 0;
         while let Some(frame) = frames.last_mut() {
@@ -77,9 +82,9 @@ impl<H: Host> Vm<H> {
             }
             let mut value = self.get_index(p, source, key)?;
             if frames.len() == 1
-                && let Some((callback, receiver)) = mapper
+                && let Some(prepared) = mapper.as_deref_mut()
             {
-                value = self.call_value(p, callback, receiver, &[value, key, source])?;
+                value = self.call_prepared(p, prepared, &[value, key, source])?;
             }
             self.active_call_roots.push(value);
             if depth > 0 && self.is_array(p, value)? {

@@ -3,7 +3,6 @@
 //! specializer reads them to keep facts across operations (a fact about a region survives
 //! until an operation that writes the region), and the interpreter ignores them.
 
-#![allow(dead_code)] // Stage v2 vocabulary; first consumers are the rows moving under `Concrete` next.
 
 use super::{Allocation, CallOperation, Operation};
 pub(crate) use super::region::Region;
@@ -106,7 +105,13 @@ impl<W, P> Operation<W, P> {
             Self::Allocate { allocation: Allocation::Closure { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Frame)
                 .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
-            Self::Allocate { allocation: Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::ConstArray { .. }, .. } => Effects {
+            // A callee-argument regexp literal reads its callee register, and its shared object's
+            // `lastIndex` and the proofs it is kept under (`Vm::regexp_literal_argument_of`).
+            Self::Allocate { allocation: Allocation::RegExp { callee: Some(_), .. }, .. } => Effects {
+                reads: RegionSet::of(Region::Frame).with(Region::ObjectSlots).with(Region::ShapeWord).with(Region::Records),
+                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            Self::Allocate { allocation: Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { callee: None, .. } | Allocation::ConstArray { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
                 .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
             Self::Allocate { allocation: Allocation::ObjectLiteral { .. } | Allocation::ObjectPair { .. } | Allocation::ArrayOf { .. } | Allocation::Template { .. }, .. } => Effects {
@@ -157,10 +162,10 @@ mod tests {
     #[test]
     fn only_operations_that_store_allocate_or_run_guest_code_move_arrays() {
         type Row = Operation<u64, ()>;
-        let stay: [Row; 5] = [Operation::ElementRead { base: 0, key: Operand(1) }, Operation::Move { destination: 0, source: 1 },
+        let stay: [Row; 5] = [Operation::ElementRead { base: 0, key: Operand(1), destination: 0 }, Operation::Move { destination: 0, source: 1 },
             Operation::Jump, Operation::Safepoint { proof: () }, Operation::LoadThis { destination: 0 }];
         assert!(stay.iter().all(|row| !row.moves_arrays()));
-        let move_arrays: [Row; 4] = [Operation::ElementWrite { value: 0, base: 1, key: 2 }, Operation::IndexWrite { index: 0, value: 0, proof: () },
+        let move_arrays: [Row; 4] = [Operation::ElementWrite { value: 0, base: 1, key: 2, strict: false }, Operation::IndexWrite { index: 0, value: 0, proof: () },
             Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () }, Operation::Binary { destination: 0, left: crate::bytecode::Operand::register(1), right: crate::bytecode::Operand::register(2), operator: 0 }];
         assert!(move_arrays.iter().all(Row::moves_arrays));
     }

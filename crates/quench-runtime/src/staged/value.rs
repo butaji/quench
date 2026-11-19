@@ -179,22 +179,32 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
     let unheaped = stage.not(heap);
     let decided = stage.any(unheaped, record);
     let undecided = stage.not(decided);
-    let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
-    let payload = stage.and_imm(bits, u64::from(u32::MAX));
-    let integer_truthy = stage.ne_imm(payload, 0u32);
-    let past = is_double(stage, bits);
-    let tagged = stage.not(past);
-    // The four falsy immediates, folded by hand: an iterator fold is an out-of-line call (and a
-    // panic path) in a stencil, which may carry no relocation but its holes.
-    let [null, undefined, deleted, false_word] = [crate::Value::NULL, crate::Value::UNDEFINED, crate::Value::DELETED, crate::Value::FALSE]
-        .map(|value| stage.eq_imm(bits, value.to_bits()));
-    let (nullish, marked) = (stage.any(null, undefined), stage.any(deleted, false_word));
-    let falsy = stage.any(nullish, marked);
-    let immediate_truthy = stage.not(falsy);
-    let double_truthy = stage.number_truthy(bits);
-    let tagged_truthy = stage.pick(integer, integer_truthy, immediate_truthy);
-    let unheaped_truthy = stage.pick(tagged, tagged_truthy, double_truthy);
-    (undecided, stage.pick(heap, record, unheaped_truthy))
+    // A heap word's truth is its record's test alone, so the immediate and Number ladder below
+    // runs only where the word is not a heap value: an object's ToBoolean costs its tag and
+    // record tests, not every arm of the ladder. The arms compute the same truth as before.
+    let truthy = stage.choose(heap, |stage| {
+        let (yes, no) = (stage.constant(1), stage.constant(0));
+        stage.select(record, yes, no)
+    }, |stage| {
+        let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
+        let payload = stage.and_imm(bits, u64::from(u32::MAX));
+        let integer_truthy = stage.ne_imm(payload, 0u32);
+        let past = is_double(stage, bits);
+        let tagged = stage.not(past);
+        // The four falsy immediates, folded by hand: an iterator fold is an out-of-line call (and a
+        // panic path) in a stencil, which may carry no relocation but its holes.
+        let [null, undefined, deleted, false_word] = [crate::Value::NULL, crate::Value::UNDEFINED, crate::Value::DELETED, crate::Value::FALSE]
+            .map(|value| stage.eq_imm(bits, value.to_bits()));
+        let (nullish, marked) = (stage.any(null, undefined), stage.any(deleted, false_word));
+        let falsy = stage.any(nullish, marked);
+        let immediate_truthy = stage.not(falsy);
+        let double_truthy = stage.number_truthy(bits);
+        let tagged_truthy = stage.pick(integer, integer_truthy, immediate_truthy);
+        let unheaped_truthy = stage.pick(tagged, tagged_truthy, double_truthy);
+        let (yes, no) = (stage.constant(1), stage.constant(0));
+        stage.select(unheaped_truthy, yes, no)
+    });
+    (undecided, stage.ne_imm(truthy, 0u32))
 }
 
 /// ToBoolean of a Boolean's `bits`: `true` alone is truthy.

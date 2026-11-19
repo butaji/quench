@@ -29,17 +29,24 @@ impl<H: Host> Vm<H> {
     /// `frame` is the suspended frame the caller looked up (`job_frame`), which the job's owner
     /// keeps boxed and unmoved until the run resumes it.
     pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, resume: JobResume) -> JobEnd {
-        let nested = !self.lane_stack.activations().is_empty() || self.lane_deferred.is_some();
+        // Keeps the spill: a stack `nested_lane_run` parks has held records alone so far (one-frame-one-call.md, F2).
+        let nested = self.lane_stack.has_frames() || self.lane_deferred.is_some();
         let admitted = if nested {
             let innermost = self.innermost_lane_state();
             self.nested_lane_run(innermost, |vm| vm.run_lane_job(code, job, frame, resume))
         } else {
             self.run_lane_job(code, job, frame, resume)
         };
-        let resume = match admitted {
-            Ok(end) => return end,
-            Err(refused) => refused,
-        };
+        match admitted {
+            Ok(end) => end,
+            Err(refused) => self.run_job_frame(code, job, refused),
+        }
+    }
+
+    /// `run_job` of `job`'s activation, which the lane did not admit: its owner gives the frame
+    /// up, which the general loop runs from the resume point, or, for a throw, from the handler
+    /// the suspended `await` or `yield` selects.
+    pub(in crate::vm) fn run_job_frame(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> JobEnd {
         let (sent, error) = match resume {
             JobResume::Sends(sent) => (sent, None),
             JobResume::Throws(error) => (Value::UNDEFINED, Some(error)),

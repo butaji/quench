@@ -53,8 +53,9 @@ pub(super) struct LoopKernel {
     /// The run's columns (`run`), kept between runs.
     scratch: std::cell::UnsafeCell<Vec<f64>>,
     /// The run's entry facts and recurrences (`run::State`), kept between runs: an entry
-    /// writes the slots its shape uses and copies nothing.
-    state: std::cell::UnsafeCell<Box<run::State>>,
+    /// writes the slots its shape uses and copies nothing. Made by the first run (`LoopKernel::run`):
+    /// a kernel that never runs keeps none of its roughly 2 KB.
+    state: std::cell::UnsafeCell<Option<Box<run::State>>>,
 }
 
 /// The recurrence pass that runs the loop of `shape`, where the kernel is that loop's tier. A pass
@@ -100,7 +101,7 @@ impl LoopKernel {
             original: std::cell::Cell::new(original),
             declines: std::cell::Cell::new(0),
             scratch: std::cell::UnsafeCell::new(Vec::new()),
-            state: std::cell::UnsafeCell::new(Box::new(run::State::EMPTY)),
+            state: std::cell::UnsafeCell::new(None),
         });
         kernel.slot = register(&kernel)?;
         Some(kernel)
@@ -124,6 +125,14 @@ impl Drop for LoopKernel {
         let kernels = unsafe { &mut *KERNELS.get() };
         if let Some(entry) = kernels.get_mut(usize::from(self.slot)) {
             *entry = std::ptr::null();
+        }
+        // Trailing free slots name no kernel, so the registry gives them back: it keeps only
+        // as many slots as its live kernels reach, not the peak of every view ever derived.
+        while kernels.last().is_some_and(|entry| entry.is_null()) {
+            kernels.pop();
+        }
+        if kernels.capacity() > 4 * kernels.len().max(8) {
+            kernels.shrink_to_fit();
         }
     }
 }

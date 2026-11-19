@@ -295,7 +295,7 @@ pub(crate) fn run_lexical<const D: u8, const A: u8, const B: u8>(stage: &mut Con
 /// `GetField` of the receiver in register `LEFT` (hole 1), the plan deciding how it reads.
 #[inline(always)]
 pub(crate) fn receiver_read() -> Operation<u64, ()> {
-    Operation::GetField { base: FieldBase::register(LEFT), lookup: FieldLookup::Site(0) }
+    Operation::GetField { base: FieldBase::register(LEFT), lookup: FieldLookup::Site(0), destination: DEST }
 }
 
 /// `SetField` of the value in register `LEFT` into the object in register `DEST` (hole 0).

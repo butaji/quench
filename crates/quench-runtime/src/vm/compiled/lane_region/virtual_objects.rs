@@ -280,18 +280,19 @@ impl Lowering<'_, '_> {
                 .is_some_and(|base| state.virtuals.iter().any(|kept| kept.register == base
                     && self.is_live(pc, kept.register) && self.virtual_reads(instruction, kept)));
         }
-        let class = op.class();
-        if matches!(class, Class::Move | Class::LoadConst | Class::Nop | Class::Jump) { return true; }
+        use crate::staged::meaning::{means, Meaning};
+        if [Meaning::Move, Meaning::LoadConst, Meaning::Nop, Meaning::Jump].into_iter().any(|meaning| means(instruction, meaning)) { return true; }
+        let compare_jump = means(instruction, Meaning::CompareJump);
         // ToBoolean of any immediate, and Number arithmetic and relations, run no guest code
         // and allocate nothing; on any other operand the step may.
-        let operands = if matches!(class, Class::JumpTrue | Class::JumpFalse) { Type::IMMEDIATE }
-            else if matches!(class, Class::JumpBinaryFalse | Class::IncDec)
+        let operands = if means(instruction, Meaning::TruthJump) { Type::IMMEDIATE }
+            else if compare_jump || means(instruction, Meaning::IncDec)
                 || matches!(op.js_denotation(), JsDenotation::NumericBinary | JsDenotation::NumericUnary) { Type::NUMBER }
             else { return false };
         let typed = |register: Register| state.values.get(usize::from(register)).map_or(Type::ANY, |fact| fact.value.ty);
         // A binary step's operands may also be constants, fields or locals: a string constant
         // would concatenate, a field read run a getter.
-        if (matches!(class, Class::JumpBinaryFalse) || op.js_denotation() == JsDenotation::NumericBinary)
+        if (compare_jump || op.js_denotation() == JsDenotation::NumericBinary)
             && ![instruction.operand_b(), instruction.operand_c()].into_iter().all(|operand|
                 super::super::facts::operand_type(&self.program.constants, operand, typed).is_subtype(Type::NUMBER)) {
             return false;

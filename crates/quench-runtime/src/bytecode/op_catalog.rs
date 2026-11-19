@@ -160,6 +160,8 @@ pub(crate) enum Class {
     WasmTableInit,
     WasmMemoryInit,
     WasmSegmentDrop,
+    TierPrologue,
+    BodyEntry,
 }
 
 impl Class {
@@ -237,6 +239,7 @@ pub(crate) enum OwnedStep {
     LoadLocal,
     StoreVarBinding,
     StoreLocal,
+    InitializeTdz,
     StoreEnvLocal,
     LoadCapture,
     StoreCapture,
@@ -260,273 +263,313 @@ pub(crate) enum ValueStep {
 
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Traits(pub(crate) u128);
+/// Two words: the first 128 traits, then the rest (`Self(0, 1 << n)`).
+pub(crate) struct Traits(pub(crate) u128, pub(crate) u64);
 
 impl Traits {
-    pub(crate) const NONE: Self = Self(0);
-    pub(crate) const LEAF_VALUE: Self = Self(1 << 0);
-    pub(crate) const LEAF_JUMP: Self = Self(1 << 1);
-    pub(crate) const LEAF_BINARY: Self = Self(1 << 2);
-    pub(crate) const THIS_LEAF: Self = Self(1 << 3);
-    pub(crate) const NAME_LEAF: Self = Self(1 << 4);
-    pub(crate) const FIELD_LEAF: Self = Self(1 << 5);
-    pub(crate) const NAME_OPERATION: Self = Self(1 << 6);
-    pub(crate) const MAKES_CLOSURE: Self = Self(1 << 7);
-    pub(crate) const RETURNING_FIELD: Self = Self(1 << 8);
-    pub(crate) const RETURNING_UNARY: Self = Self(1 << 9);
-    pub(crate) const RETURNING_BINARY: Self = Self(1 << 10);
-    pub(crate) const RETURNING_OBJECT: Self = Self(1 << 11);
-    pub(crate) const RETURNING_OBJECT_LITERAL: Self = Self(1 << 12);
-    pub(crate) const RETURNING_LITERAL: Self = Self(1 << 13);
+    pub(crate) const NONE: Self = Self(0, 0);
+    pub(crate) const LEAF_VALUE: Self = Self(1 << 0, 0);
+    pub(crate) const LEAF_JUMP: Self = Self(1 << 1, 0);
+    pub(crate) const LEAF_BINARY: Self = Self(1 << 2, 0);
+    pub(crate) const THIS_LEAF: Self = Self(1 << 3, 0);
+    pub(crate) const NAME_LEAF: Self = Self(1 << 4, 0);
+    pub(crate) const FIELD_LEAF: Self = Self(1 << 5, 0);
+    pub(crate) const NAME_OPERATION: Self = Self(1 << 6, 0);
+    pub(crate) const MAKES_CLOSURE: Self = Self(1 << 7, 0);
+    pub(crate) const RETURNING_FIELD: Self = Self(1 << 8, 0);
+    pub(crate) const RETURNING_UNARY: Self = Self(1 << 9, 0);
+    pub(crate) const RETURNING_BINARY: Self = Self(1 << 10, 0);
+    pub(crate) const RETURNING_OBJECT: Self = Self(1 << 11, 0);
+    pub(crate) const RETURNING_OBJECT_LITERAL: Self = Self(1 << 12, 0);
+    pub(crate) const RETURNING_LITERAL: Self = Self(1 << 13, 0);
     /// An op an inlined OSR callee may hold.
-    pub(crate) const INLINABLE: Self = Self(1 << 14);
+    pub(crate) const INLINABLE: Self = Self(1 << 14, 0);
     /// An op a call's argument setup may run with no repeatable effect.
-    pub(crate) const PURE_SETUP: Self = Self(1 << 15);
+    pub(crate) const PURE_SETUP: Self = Self(1 << 15, 0);
     /// A Wasm memory access through the function's memory register.
-    pub(crate) const WASM_MEMORY: Self = Self(1 << 16);
+    pub(crate) const WASM_MEMORY: Self = Self(1 << 16, 0);
     /// An op reading nothing of its activation (environment, `this`, captures, names), making no closure or call.
-    pub(crate) const ACTIVATION_FREE: Self = Self(1 << 17);
+    pub(crate) const ACTIVATION_FREE: Self = Self(1 << 17, 0);
     /// An op a call-free loop region lowers beside numeric binaries (`static_typed_regions`).
-    pub(crate) const SCALAR_REGION: Self = Self(1 << 18);
+    pub(crate) const SCALAR_REGION: Self = Self(1 << 18, 0);
     /// An indexed element read or write, which a loop region views its arrays for.
-    pub(crate) const ELEMENT_ACCESS: Self = Self(1 << 19);
+    pub(crate) const ELEMENT_ACCESS: Self = Self(1 << 19, 0);
     /// An op whose result may return from the frame instead of the register file.
-    pub(crate) const FRAME_RETURNABLE: Self = Self(1 << 20);
+    pub(crate) const FRAME_RETURNABLE: Self = Self(1 << 20, 0);
     /// An op that reads and writes only registers and control, no heap value.
-    pub(crate) const FRAME_ONLY: Self = Self(1 << 21);
+    pub(crate) const FRAME_ONLY: Self = Self(1 << 21, 0);
     /// An op the lifetime-role loop admission can rename a register through.
-    pub(crate) const LIFETIME_SAFE: Self = Self(1 << 22);
+    pub(crate) const LIFETIME_SAFE: Self = Self(1 << 22, 0);
     /// An op whose handler keeps its call target hint in the record's `call_link`.
-    pub(crate) const CALL_LINK: Self = Self(1 << 23);
+    pub(crate) const CALL_LINK: Self = Self(1 << 23, 0);
     /// A by-name load or store access.
-    pub(crate) const GLOBAL_NAME_ACCESS: Self = Self(1 << 24);
+    pub(crate) const GLOBAL_NAME_ACCESS: Self = Self(1 << 24, 0);
     /// A Wasm op that calls out to the VM or ends the body, which no unrolled loop admits.
-    pub(crate) const UNROLL_EXCLUDED: Self = Self(1 << 25);
+    pub(crate) const UNROLL_EXCLUDED: Self = Self(1 << 25, 0);
     /// An op that always completes abruptly: it raises the value of its operand as an exception.
-    pub(crate) const RAISES: Self = Self(1 << 26);
+    pub(crate) const RAISES: Self = Self(1 << 26, 0);
     /// An op whose step binds the frame's `this` (`super()` completing a derived constructor's receiver).
-    pub(crate) const BINDS_THIS: Self = Self(1 << 27);
+    pub(crate) const BINDS_THIS: Self = Self(1 << 27, 0);
     /// An op an inlined callee's unit holds by its own rewrite or an exit (`lane_unit::emit_inlined`), which
     /// `osr_loop::renamed` is not asked about: a call, a return, `this`, a name read, a construction and a throw.
-    pub(crate) const UNIT_REWRITTEN: Self = Self(1 << 28);
+    pub(crate) const UNIT_REWRITTEN: Self = Self(1 << 28, 0);
     /// An op whose result may be an arbitrary boxed value: a read of a capture, a field, an element or a global name.
-    pub(crate) const BOXED_RESULT: Self = Self(1 << 29);
+    pub(crate) const BOXED_RESULT: Self = Self(1 << 29, 0);
     /// A lane step that leaves its loop (`ForInNext` once no key is left), which the lane's loop
     /// dispatch makes with its own handler.
-    pub(crate) const LANE_LOOP_EXIT: Self = Self(1 << 30);
+    pub(crate) const LANE_LOOP_EXIT: Self = Self(1 << 30, 0);
     /// An op whose lane handler is its staged row (`generated_row`), generated rather than written; the
     /// flow rows that fall through have theirs without the trait.
-    pub(crate) const ROW_HANDLER: Self = Self(1 << 31);
+    pub(crate) const ROW_HANDLER: Self = Self(1 << 31, 0);
     /// An op that stores its register A into the frame local slot its immediate names (`LocalSlot`). When its
     /// optional register B is set, the stored value is also written there, and every tier honours B: the
     /// interpreter's owner step and plain-store arm, the lane windows' local stores, and the base tier, which
     /// leaves a store that sets B to the interpreter. `StoreEnvLocal` names an environment slot, so it is not one.
     /// Tagged: `StoreLocal`, `StoreLocalPlain`.
-    pub(crate) const FRAME_LOCAL_STORE: Self = Self(1 << 32);
+    pub(crate) const FRAME_LOCAL_STORE: Self = Self(1 << 32, 0);
     /// An op that loads the frame local slot its immediate names (`LocalSlot`) into its result register A, and
     /// writes no other register. `LoadEnvLocal` names an environment slot, so it is not one.
     /// Tagged: `LoadLocal`, `LoadLocalPlain`.
-    pub(crate) const FRAME_LOCAL_LOAD: Self = Self(1 << 33);
+    pub(crate) const FRAME_LOCAL_LOAD: Self = Self(1 << 33, 0);
     /// An op that jumps to its `JumpTarget` when its register A is falsy, and falls through otherwise.
     /// `JumpTrue` jumps on the opposite test, and `JumpBinaryFalse` fuses its operator into the test, so
     /// neither is one. Tagged: `JumpFalse`.
-    pub(crate) const JUMPS_ON_FALSE: Self = Self(1 << 34);
+    pub(crate) const JUMPS_ON_FALSE: Self = Self(1 << 34, 0);
     /// An op that writes the value of its `BinaryOperator` immediate applied to its two operands into its
     /// result register A, and writes no other register. The arithmetic rows name their operator in their own
     /// immediate role, so they are not one. Tagged: `Binary`.
-    pub(crate) const BINARY_RESULT: Self = Self(1 << 35);
+    pub(crate) const BINARY_RESULT: Self = Self(1 << 35, 0);
     /// An op that stores its register A as the property its immediate atom names on `this`, through the cache
     /// site in C, and makes no other write. A field read may take it as its field site's sink (`FieldSite.sink`,
     /// a fused `GetSetThis`). Tagged: `SetThisField` alone. `SetThisFieldStrict` is not: the inlined expansion
     /// of a sink re-emits it as a `SetThisField`, so the strict variant has no sink in every tier.
-    pub(crate) const THIS_FIELD_SINK: Self = Self(1 << 36);
+    pub(crate) const THIS_FIELD_SINK: Self = Self(1 << 36, 0);
     /// The op that does nothing: the canonical filler a rewrite leaves where it removed an instruction.
     /// Tagged: `Nop`.
-    pub(crate) const NO_OP: Self = Self(1 << 37);
+    pub(crate) const NO_OP: Self = Self(1 << 37, 0);
     /// An op that copies register B into its result register A and writes no other register. Tagged: `Move`.
-    pub(crate) const REGISTER_COPY: Self = Self(1 << 38);
+    pub(crate) const REGISTER_COPY: Self = Self(1 << 38, 0);
     /// A pure op whose only effect is writing its result, so a write nothing reads is removable.
     /// Tagged: `Move`, `LoadConst`.
-    pub(crate) const REMOVABLE_WHEN_DEAD: Self = Self(1 << 39);
+    pub(crate) const REMOVABLE_WHEN_DEAD: Self = Self(1 << 39, 0);
     /// An op that always jumps to its `JumpTarget`. Tagged: `Jump`.
-    pub(crate) const UNCONDITIONAL_JUMP: Self = Self(1 << 40);
+    pub(crate) const UNCONDITIONAL_JUMP: Self = Self(1 << 40, 0);
     /// An op that jumps to its `JumpTarget` when its register A is truthy, falling through otherwise: the
     /// opposite test of `JUMPS_ON_FALSE`, one polarity of a conditional branch. Tagged: `JumpTrue`.
-    pub(crate) const JUMPS_ON_TRUE: Self = Self(1 << 41);
+    pub(crate) const JUMPS_ON_TRUE: Self = Self(1 << 41, 0);
     /// An op that ends its activation, returning its register A. Tagged: `Return`.
-    pub(crate) const RETURN_VALUE: Self = Self(1 << 42);
+    pub(crate) const RETURN_VALUE: Self = Self(1 << 42, 0);
     /// An op that suspends its activation (`await`, `yield`). Tagged: `Await`, `Yield`.
-    pub(crate) const SUSPENDS: Self = Self(1 << 43);
+    pub(crate) const SUSPENDS: Self = Self(1 << 43, 0);
     /// A property store with sloppy-mode semantics, whose strict form (`STRICT_STORE`) shares its encoding.
     /// Tagged: `SetField`, `SetThisField`.
-    pub(crate) const SLOPPY_STORE: Self = Self(1 << 44);
+    pub(crate) const SLOPPY_STORE: Self = Self(1 << 44, 0);
     /// A property store with strict-mode semantics, the strict form of a `SLOPPY_STORE` row of the same
     /// encoding. Tagged: `SetFieldStrict`, `SetThisFieldStrict`.
-    pub(crate) const STRICT_STORE: Self = Self(1 << 45);
+    pub(crate) const STRICT_STORE: Self = Self(1 << 45, 0);
     /// The fused form of a comparison and the jump that tests it (`BinaryJumpFalse`'s target). Tagged: `JumpBinaryFalse`.
-    pub(crate) const FUSED_BINARY_JUMP: Self = Self(1 << 46);
+    pub(crate) const FUSED_BINARY_JUMP: Self = Self(1 << 46, 0);
     /// The first op of the `[MakeConstArray, Binary, Binary, MakeObject2]` superinstruction pattern. Tagged: `MakeConstArray`.
-    pub(crate) const CONST_ARRAY_OBJECT2_HEAD: Self = Self(1 << 47);
+    pub(crate) const CONST_ARRAY_OBJECT2_HEAD: Self = Self(1 << 47, 0);
     /// An element op of the `CONST_ARRAY_OBJECT2` pattern (the two `Binary` rows). Tagged: `Binary`.
-    pub(crate) const CONST_ARRAY_OBJECT2_OPERAND: Self = Self(1 << 48);
+    pub(crate) const CONST_ARRAY_OBJECT2_OPERAND: Self = Self(1 << 48, 0);
     /// The last op of the `CONST_ARRAY_OBJECT2` pattern. Tagged: `MakeObject2`.
-    pub(crate) const CONST_ARRAY_OBJECT2_TAIL: Self = Self(1 << 49);
+    pub(crate) const CONST_ARRAY_OBJECT2_TAIL: Self = Self(1 << 49, 0);
     /// The superinstruction that fuses `CONST_ARRAY_OBJECT2`. Tagged: `SuperConstArrayObject2`.
-    pub(crate) const FUSED_CONST_ARRAY_OBJECT2: Self = Self(1 << 50);
+    pub(crate) const FUSED_CONST_ARRAY_OBJECT2: Self = Self(1 << 50, 0);
     /// The op that copies a whole activation environment for a per-iteration or block scope. Tagged: `CloneEnv`.
-    pub(crate) const ENVIRONMENT_CLONE: Self = Self(1 << 71);
+    pub(crate) const ENVIRONMENT_CLONE: Self = Self(1 << 71, 0);
     /// The op that loads an environment-resident local slot into its result register. Tagged: `LoadEnvLocal`.
-    pub(crate) const ENV_LOCAL_LOAD: Self = Self(1 << 72);
+    pub(crate) const ENV_LOCAL_LOAD: Self = Self(1 << 72, 0);
     /// The op that stores its register A into an environment-resident local slot. Tagged: `StoreEnvLocal`.
-    pub(crate) const ENV_LOCAL_STORE: Self = Self(1 << 73);
+    pub(crate) const ENV_LOCAL_STORE: Self = Self(1 << 73, 0);
     /// The op that loads a captured slot into its result register. Tagged: `LoadCapture`.
-    pub(crate) const CAPTURE_LOAD: Self = Self(1 << 74);
+    pub(crate) const CAPTURE_LOAD: Self = Self(1 << 74, 0);
     /// The op that stores its register A into a captured slot. Tagged: `StoreCapture`.
-    pub(crate) const CAPTURE_STORE: Self = Self(1 << 75);
+    pub(crate) const CAPTURE_STORE: Self = Self(1 << 75, 0);
     /// The indexed element read of an operand register (`obj[key]`). Tagged: `GetIndex`.
-    pub(crate) const ELEMENT_LOAD: Self = Self(1 << 76);
+    pub(crate) const ELEMENT_LOAD: Self = Self(1 << 76, 0);
     /// A call that spreads the array of its one-value argument window. Tagged: `CallSpread`.
-    pub(crate) const SPREAD_CALL: Self = Self(1 << 77);
+    pub(crate) const SPREAD_CALL: Self = Self(1 << 77, 0);
     /// A call that spreads a rest parameter's kept values in place of its array. Tagged: `CallRest`.
-    pub(crate) const REST_SPREAD_CALL: Self = Self(1 << 78);
+    pub(crate) const REST_SPREAD_CALL: Self = Self(1 << 78, 0);
     /// A read of one kept rest value by index. Tagged: `RestGet`.
-    pub(crate) const REST_INDEX_READ: Self = Self(1 << 79);
+    pub(crate) const REST_INDEX_READ: Self = Self(1 << 79, 0);
     /// The read of a rest parameter's length from its kept values. Tagged: `RestLength`.
-    pub(crate) const REST_LENGTH_READ: Self = Self(1 << 80);
+    pub(crate) const REST_LENGTH_READ: Self = Self(1 << 80, 0);
     /// The call whose callee and arguments are both registers, without a spread or a method site. Tagged: `Call`.
-    pub(crate) const PLAIN_CALL: Self = Self(1 << 81);
+    pub(crate) const PLAIN_CALL: Self = Self(1 << 81, 0);
     /// The raw-register form of a Wasm i64 or f64 operation (`raw_webs`). Tagged: every `*Raw` row and `WasmReturn64`.
-    pub(crate) const RAW_FORM: Self = Self(1 << 82);
+    pub(crate) const RAW_FORM: Self = Self(1 << 82, 0);
     /// The family of the i64 binary operation, boxed or raw. Tagged: `WasmI64Binary`, `WasmI64BinaryRaw`.
-    pub(crate) const I64_BINARY_FAMILY: Self = Self(1 << 83);
+    pub(crate) const I64_BINARY_FAMILY: Self = Self(1 << 83, 0);
     /// The family of the i64 binary operation with an immediate operand. Tagged: `WasmI64BinaryImmediate`, `WasmI64BinaryImmediateRaw`.
-    pub(crate) const I64_BINARY_IMMEDIATE_FAMILY: Self = Self(1 << 84);
+    pub(crate) const I64_BINARY_IMMEDIATE_FAMILY: Self = Self(1 << 84, 0);
     /// The family of the i64 unary operation. Tagged: `WasmI64Unary`, `WasmI64UnaryRaw`.
-    pub(crate) const I64_UNARY_FAMILY: Self = Self(1 << 85);
+    pub(crate) const I64_UNARY_FAMILY: Self = Self(1 << 85, 0);
     /// The family of the f64 binary operation. Tagged: `WasmF64Binary`, `WasmF64BinaryRaw`.
-    pub(crate) const F64_BINARY_FAMILY: Self = Self(1 << 86);
+    pub(crate) const F64_BINARY_FAMILY: Self = Self(1 << 86, 0);
     /// The family of the f64 unary operation. Tagged: `WasmF64Unary`, `WasmF64UnaryRaw`.
-    pub(crate) const F64_UNARY_FAMILY: Self = Self(1 << 87);
+    pub(crate) const F64_UNARY_FAMILY: Self = Self(1 << 87, 0);
     /// The family of a function's return, boxed or raw. Tagged: `Return`, `WasmReturn64`.
-    pub(crate) const RETURN_FAMILY: Self = Self(1 << 88);
+    pub(crate) const RETURN_FAMILY: Self = Self(1 << 88, 0);
     /// The op that puts a frame local slot into its temporal-dead-zone state. Tagged: `InitializeTdz`.
-    pub(crate) const TDZ_INITIALIZE: Self = Self(1 << 91);
+    pub(crate) const TDZ_INITIALIZE: Self = Self(1 << 91, 0);
     /// The op that checks a class's `extends` value before the class is built. Tagged: `ValidateClassHeritage`.
-    pub(crate) const CLASS_HERITAGE_CHECK: Self = Self(1 << 92);
+    pub(crate) const CLASS_HERITAGE_CHECK: Self = Self(1 << 92, 0);
     /// The op that marks a private method or accessor name onto its home object. Tagged: `MarkPrivateName`.
-    pub(crate) const PRIVATE_NAME_MARK: Self = Self(1 << 93);
+    pub(crate) const PRIVATE_NAME_MARK: Self = Self(1 << 93, 0);
     /// The op that converts a computed property key to its property key value. Tagged: `ToPropertyKey`.
-    pub(crate) const PROPERTY_KEY_CONVERT: Self = Self(1 << 94);
+    pub(crate) const PROPERTY_KEY_CONVERT: Self = Self(1 << 94, 0);
     /// The op that sets a function's `name` from a computed key and a name prefix. Tagged: `SetFunctionNameKey`.
-    pub(crate) const FUNCTION_NAME_KEY_SET: Self = Self(1 << 95);
+    pub(crate) const FUNCTION_NAME_KEY_SET: Self = Self(1 << 95, 0);
     /// The op that calls a callee with a receiver and a contiguous argument window. Tagged: `Call`.
-    pub(crate) const CALL_INVOKE: Self = Self(1 << 96);
+    pub(crate) const CALL_INVOKE: Self = Self(1 << 96, 0);
     /// The op that stores a value at an element index of an object. Tagged: `SetIndex`.
-    pub(crate) const ELEMENT_STORE: Self = Self(1 << 97);
+    pub(crate) const ELEMENT_STORE: Self = Self(1 << 97, 0);
     /// The op that stores a value into a named own field with sloppy-mode semantics. Tagged: `SetField`.
-    pub(crate) const OBJECT_FIELD_STORE: Self = Self(1 << 98);
+    pub(crate) const OBJECT_FIELD_STORE: Self = Self(1 << 98, 0);
     /// The op that defines a private class field on an instance. Tagged: `DefinePrivateField`.
-    pub(crate) const PRIVATE_FIELD_DEFINE: Self = Self(1 << 99);
+    pub(crate) const PRIVATE_FIELD_DEFINE: Self = Self(1 << 99, 0);
     /// The op that defines a computed-key class field on an instance. Tagged: `DefineComputedField`.
-    pub(crate) const COMPUTED_FIELD_DEFINE: Self = Self(1 << 100);
+    pub(crate) const COMPUTED_FIELD_DEFINE: Self = Self(1 << 100, 0);
     /// The op that defines a named class field on an instance. Tagged: `DefineField`.
-    pub(crate) const FIELD_DEFINE: Self = Self(1 << 101);
+    pub(crate) const FIELD_DEFINE: Self = Self(1 << 101, 0);
     /// The op that stores a value into a frame local slot as a binding initialization. Tagged: `StoreLocal`.
-    pub(crate) const LOCAL_BINDING_STORE: Self = Self(1 << 102);
+    pub(crate) const LOCAL_BINDING_STORE: Self = Self(1 << 102, 0);
     /// The op that defines a method or accessor property from a property definition record. Tagged: `DefinePropertyRecord`.
-    pub(crate) const PROPERTY_RECORD_DEFINE: Self = Self(1 << 103);
+    pub(crate) const PROPERTY_RECORD_DEFINE: Self = Self(1 << 103, 0);
     /// The op that reads a template site's cached template object. Tagged: `LoadCachedTemplateObject`.
-    pub(crate) const TEMPLATE_CACHE_LOAD: Self = Self(1 << 104);
+    pub(crate) const TEMPLATE_CACHE_LOAD: Self = Self(1 << 104, 0);
     /// The op that stores a freshly built template object into its template site's cache. Tagged: `CacheTemplateObject`.
-    pub(crate) const TEMPLATE_CACHE_STORE: Self = Self(1 << 105);
+    pub(crate) const TEMPLATE_CACHE_STORE: Self = Self(1 << 105, 0);
     /// The op that builds an array from a window of elements of a given length. Tagged: `MakeArray`.
-    pub(crate) const ARRAY_MAKE: Self = Self(1 << 106);
+    pub(crate) const ARRAY_MAKE: Self = Self(1 << 106, 0);
     /// The op that allocates a plain object with no properties. Tagged: `MakeObject`.
-    pub(crate) const OBJECT_MAKE: Self = Self(1 << 107);
+    pub(crate) const OBJECT_MAKE: Self = Self(1 << 107, 0);
     /// The op that loads a constant into its result register. Tagged: `LoadConst`.
-    pub(crate) const CONSTANT_LOAD: Self = Self(1 << 108);
+    pub(crate) const CONSTANT_LOAD: Self = Self(1 << 108, 0);
     /// The op that concatenates a window of string parts into one string. Tagged: `StringConcat`.
-    pub(crate) const STRING_CONCAT: Self = Self(1 << 109);
+    pub(crate) const STRING_CONCAT: Self = Self(1 << 109, 0);
     /// The op that runs a first-call stub's function body as its compiled chunk. Tagged: `CallFirstChunk`.
-    pub(crate) const FIRST_CALL_CHUNK: Self = Self(1 << 110);
+    pub(crate) const FIRST_CALL_CHUNK: Self = Self(1 << 110, 0);
     /// A suspension point of an activation: `await`, `yield` and `yield*`. Tagged: `Await`, `Yield`, `YieldStar`.
-    pub(crate) const SUSPENSION_POINT: Self = Self(1 << 51);
+    pub(crate) const SUSPENSION_POINT: Self = Self(1 << 51, 0);
     /// An access that reads its object register as an indexed receiver. Tagged: `GetIndex`, `SetIndex`, `RequireObjectCoercible`.
-    pub(crate) const INDEXED_RECEIVER: Self = Self(1 << 52);
+    pub(crate) const INDEXED_RECEIVER: Self = Self(1 << 52, 0);
     /// A store to a binding by name. Tagged: `StoreName`.
-    pub(crate) const NAME_STORE: Self = Self(1 << 54);
+    pub(crate) const NAME_STORE: Self = Self(1 << 54, 0);
     /// A load of a binding by name, throwing or `typeof`. Tagged: `LoadName`, `LoadNameCall`, `LoadNameTypeof`.
-    pub(crate) const NAME_LOAD: Self = Self(1 << 55);
+    pub(crate) const NAME_LOAD: Self = Self(1 << 55, 0);
     /// A read of the activation's passed arguments. Tagged: `ArgumentsLength`, `ArgumentGet`.
-    pub(crate) const ARGUMENTS_READ: Self = Self(1 << 56);
+    pub(crate) const ARGUMENTS_READ: Self = Self(1 << 56, 0);
     /// A call through a callee register, with a window or a spread array. Tagged: `Call`, `CallArray`.
-    pub(crate) const ORDINARY_CALL: Self = Self(1 << 57);
+    pub(crate) const ORDINARY_CALL: Self = Self(1 << 57, 0);
     /// An op that captures the current environment: a closure or an environment clone. Tagged: `MakeClosure`, `CloneEnv`.
-    pub(crate) const ENVIRONMENT_CAPTURE: Self = Self(1 << 59);
+    pub(crate) const ENVIRONMENT_CAPTURE: Self = Self(1 << 59, 0);
     /// A load or store of an environment-resident local. Tagged: `LoadEnvLocal`, `StoreEnvLocal`.
-    pub(crate) const ENV_LOCAL_ACCESS: Self = Self(1 << 60);
+    pub(crate) const ENV_LOCAL_ACCESS: Self = Self(1 << 60, 0);
     /// A frame local access that a capture layout can move into the environment. Tagged: `LoadLocal`, `StoreLocal`.
-    pub(crate) const RELOCATABLE_LOCAL: Self = Self(1 << 61);
+    pub(crate) const RELOCATABLE_LOCAL: Self = Self(1 << 61, 0);
     /// A load or store of a captured slot. Tagged: `LoadCapture`, `StoreCapture`.
-    pub(crate) const CAPTURE_ACCESS: Self = Self(1 << 62);
+    pub(crate) const CAPTURE_ACCESS: Self = Self(1 << 62, 0);
     /// A store of register A to a `this` field, through a named field site. Tagged: `SetThisField`, `SetThisFieldStrict`.
-    pub(crate) const THIS_FIELD_STORE: Self = Self(1 << 63);
+    pub(crate) const THIS_FIELD_STORE: Self = Self(1 << 63, 0);
     /// A store of register A into a frame or environment local slot its immediate names, not a plain one. Tagged: `StoreLocal`, `StoreEnvLocal`.
-    pub(crate) const LOCAL_SLOT_STORE: Self = Self(1 << 65);
+    pub(crate) const LOCAL_SLOT_STORE: Self = Self(1 << 65, 0);
     /// An op that reads or binds the implicit bindings an environment holds, by their form. Tagged: `ResolveName`,
     /// `LoadResolvedName`, `DeleteName`, `StoreResolvedName`, `StoreVarBinding`, `InitializeThis`, `SuperCallCheck`.
-    pub(crate) const BINDING_FORM: Self = Self(1 << 66);
+    pub(crate) const BINDING_FORM: Self = Self(1 << 66, 0);
     /// An op that defines an instance element of a class constructor. Tagged: `DefineField`, `DefinePrivateField`, `DefineComputedField`, `MarkPrivateName`.
-    pub(crate) const INSTANCE_ELEMENT_DEFINE: Self = Self(1 << 67);
+    pub(crate) const INSTANCE_ELEMENT_DEFINE: Self = Self(1 << 67, 0);
     /// The check a `super(...)` construction makes of the parent's result. Tagged: `SuperCallCheck`.
-    pub(crate) const SUPER_CALL_CHECK: Self = Self(1 << 69);
+    pub(crate) const SUPER_CALL_CHECK: Self = Self(1 << 69, 0);
     /// An op that constructs a value from a callee and a register window or array. Tagged: `Construct`.
-    pub(crate) const CONSTRUCTION: Self = Self(1 << 70);
+    pub(crate) const CONSTRUCTION: Self = Self(1 << 70, 0);
     /// The op that loads a frame local slot's binding (`LocalSlot`) into its result register: the binding
     /// form of `FRAME_LOCAL_LOAD`, without its plain form. Tagged: `LoadLocal`.
-    pub(crate) const LOCAL_BINDING_LOAD: Self = Self(1 << 116);
+    pub(crate) const LOCAL_BINDING_LOAD: Self = Self(1 << 116, 0);
     /// The op that loads a plain frame local slot (`Function::plain_local_slots`) into its result register,
     /// the plain form of `LOCAL_BINDING_LOAD`. Tagged: `LoadLocalPlain`.
-    pub(crate) const PLAIN_LOCAL_LOAD: Self = Self(1 << 117);
+    pub(crate) const PLAIN_LOCAL_LOAD: Self = Self(1 << 117, 0);
     /// The op that stores its register A into a plain frame local slot, the plain form of
     /// `LOCAL_BINDING_STORE`. Tagged: `StoreLocalPlain`.
-    pub(crate) const PLAIN_LOCAL_STORE: Self = Self(1 << 118);
+    pub(crate) const PLAIN_LOCAL_STORE: Self = Self(1 << 118, 0);
     /// The op that steps its register B by one (up or down, by its `BooleanFlag`) into its result register A.
     /// Tagged: `IncDec`.
-    pub(crate) const INCREMENT_UPDATE: Self = Self(1 << 119);
+    pub(crate) const INCREMENT_UPDATE: Self = Self(1 << 119, 0);
     /// The op that allocates a plain object literal from a pair of registers, its two values in its object
     /// site's atom order. Tagged: `MakeObject2`.
-    pub(crate) const PAIR_LITERAL_MAKE: Self = Self(1 << 120);
+    pub(crate) const PAIR_LITERAL_MAKE: Self = Self(1 << 120, 0);
     /// The op that allocates a plain object literal from a window of registers, one value per object-site
     /// atom in order. Tagged: `MakeObjectLiteral`.
-    pub(crate) const WINDOW_LITERAL_MAKE: Self = Self(1 << 121);
+    pub(crate) const WINDOW_LITERAL_MAKE: Self = Self(1 << 121, 0);
     /// The op that stores its register A into a named field of the object its register B holds (`obj.x = v`),
     /// with sloppy or strict semantics. `SetThisField` stores into `this`, so it is not one. Tagged: `SetField`,
     /// `SetFieldStrict`.
-    pub(crate) const NAMED_FIELD_WRITE: Self = Self(1 << 122);
+    pub(crate) const NAMED_FIELD_WRITE: Self = Self(1 << 122, 0);
     /// An op that reads a frame slot into its result register: a local's binding or an arguments slot,
     /// the slot its `LocalSlot` immediate names. Tagged: `LoadLocal`, `ArgumentsLength`, `ArgumentGet`.
-    pub(crate) const FRAME_SLOT_READ: Self = Self(1 << 123);
+    pub(crate) const FRAME_SLOT_READ: Self = Self(1 << 123, 0);
+    /// A value producer whose result register is its A field alone, which reads neither the register it
+    /// writes nor any register it does not name, and whose abrupt completion is caught only by handlers
+    /// that do not read that register. `coalesce_distant_producer_moves` may then write its value straight
+    /// into a later `Move`'s destination, beyond the adjacent `ProducerMove` recipe. Ops that `plain_producer`
+    /// already admits need no tag. Tagged: `GetIndex`, `ToNumeric`, `ToPropertyKey`, `MakeArray`,
+    /// `MakeConstArray`, `MakeObject`, `MakeObjectLiteral`, `MakeLiteralTemplate`, `CreateRegExpLiteral`,
+    /// `LoadCallee`, `LoadNameTypeof`, `LoadCachedTemplateObject`, `StringConcat`, `ArgumentsLength`,
+    /// `ArgumentGet`, `NumericAdd`, `NumericMultiply`, `PrivateIn`.
+    pub(crate) const DISTANT_PRODUCER: Self = Self(1 << 89, 0);
     /// The op that appends an element window to an array under construction. Tagged: `AppendArray`.
     /// The Wasm op that copies one of two registers by a condition. Tagged: `WasmSelect`.
-    pub(crate) const WASM_SELECT: Self = Self(1 << 64);
+    pub(crate) const WASM_SELECT: Self = Self(1 << 64, 0);
     /// The Wasm op that fills a register run from one constant. Tagged: `WasmFillRegisters`.
-    pub(crate) const REGISTER_FILL: Self = Self(1 << 68);
-    pub(crate) const ARRAY_APPEND: Self = Self(1 << 124);
+    pub(crate) const REGISTER_FILL: Self = Self(1 << 68, 0);
+    pub(crate) const ARRAY_APPEND: Self = Self(1 << 124, 0);
     /// An op that reaches a binding by its name (an atom immediate): `LoadName`, `LoadNameCall`,
     /// `LoadNameTypeof`, `ResolveName`, `StoreName`, `DeleteName`.
-    pub(crate) const BY_NAME_ACCESS: Self = Self(1 << 125);
+    pub(crate) const BY_NAME_ACCESS: Self = Self(1 << 125, 0);
     /// A Wasm op whose register window's length the atomic operator in its immediate fixes. Tagged: `WasmAtomicAccess`.
-    pub(crate) const WASM_ATOMIC_WINDOW: Self = Self(1 << 126);
+    pub(crate) const WASM_ATOMIC_WINDOW: Self = Self(1 << 126, 0);
     /// A Wasm op whose register window holds an exception's inputs. Tagged: `WasmExceptionNew`.
-    pub(crate) const WASM_EXCEPTION_WINDOW: Self = Self(1 << 127);
+    pub(crate) const WASM_EXCEPTION_WINDOW: Self = Self(1 << 127, 0);
     /// A Wasm op whose constant is a 64-bit memory offset. Tagged: `WasmMemoryAddress`.
-    pub(crate) const WASM_MEMORY_OFFSET_CONSTANT: Self = Self(1 << 53);
+    pub(crate) const WASM_MEMORY_OFFSET_CONSTANT: Self = Self(1 << 53, 0);
     /// A Wasm op whose constant is a V128 lane shuffle. Tagged: `WasmSimdShuffle`.
-    pub(crate) const WASM_SHUFFLE_CONSTANT: Self = Self(1 << 58);
+    pub(crate) const WASM_SHUFFLE_CONSTANT: Self = Self(1 << 58, 0);
 
-    pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
-    pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
+    /// An op whose step may allocate a heap value or call guest code, so its step may make a collection due
+    /// (`note_allocation`). Conservative: every op is tagged unless its step only moves registers, jumps or
+    /// reads and writes a frame local, or is a Wasm op whose effect is pure or control alone.
+    pub(crate) const MAY_ALLOCATE: Self = Self(0, 1 << 0);
+    /// A Wasm opcode (its catalog name begins `Wasm`): its own compiler owns the memory, tables and
+    /// typed registers it reads, so the b-jit compiles no function holding one (`base_region::covers`).
+    pub(crate) const WASM_OPCODE: Self = Self(0, 1 << 1);
+    /// An op whose staged row is a register move, a local slot access or a jump, which decodes over the
+    /// register file alone (`Operation::decode_flow`, `decode_local`). Tagged: `Move`, `LoadLocalPlain`,
+    /// `StoreLocalPlain`, `Jump`, `JumpFalse`, `JumpTrue`.
+    pub(crate) const REGISTER_ROW: Self = Self(0, 1 << 2);
+    /// An op the general step does nothing for (`Nop`), or that is never dispatched (`Wide`, the wide marker).
+    pub(crate) const NO_STEP: Self = Self(0, 1 << 3);
+    /// An op whose step is its owner's own (`Vm::owner_step`) alone, with no staged row first: an environment
+    /// local's load or store and a by-name store.
+    pub(crate) const OWNER_ONLY: Self = Self(0, 1 << 4);
+    /// An op its staged row decides on the interpreter's frame alone, which never declines: the general step
+    /// runs the row and nothing else.
+    pub(crate) const ROW_ONLY: Self = Self(0, 1 << 5);
+
+    /// A named field store (`SetField`, `SetFieldStrict`, `SetThisField`, `SetThisFieldStrict`): its receiver is
+    /// field B's register, or the frame's `this` with `FIELD_STORE_THIS`; a rejected write throws with
+    /// `FIELD_STORE_STRICT`. Names for the store roles the rows carry, not traits of their own.
+    pub(crate) const FIELD_STORE: Self = Self::SLOPPY_STORE.union(Self::STRICT_STORE);
+    pub(crate) const FIELD_STORE_THIS: Self = Self::THIS_FIELD_STORE;
+    pub(crate) const FIELD_STORE_STRICT: Self = Self::STRICT_STORE;
+    /// A binary operation whose arithmetic operator the operand's `binary_operator` names (`Binary`,
+    /// `NumericAdd`, `NumericMultiply`).
+    pub(crate) const ARITHMETIC_BINARY: Self = Self(0, 1 << 6);
+
+    pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 || self.1 & other.1 != 0 }
+    pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0, self.1 | other.1) }
 }
 
 pub(crate) use super::denotation::JsDenotation;

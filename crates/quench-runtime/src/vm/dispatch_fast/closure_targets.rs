@@ -48,7 +48,7 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     pub(super) fn relink_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let entry = *self.lane_stack.script_targets.entries.get(linked)?;
-        if entry.admission != self.lane_stack.admission {
+        if !entry.admission.admits(self.lane_stack.admission) {
             return None;
         }
         let (program, function, env) = self.same_realm_user_target(callee)?;
@@ -77,7 +77,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn relink_known_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let (function, env) = callee.as_known_closure()?;
         let entry = self.lane_stack.script_targets.entries.get(linked)?;
-        if entry.admission != self.lane_stack.admission
+        if !entry.admission.admits(self.lane_stack.admission)
             || entry.function != function
             || !entry.this_binding.binds_receiver()
         {
@@ -192,7 +192,7 @@ pub(super) fn target_entry(body: &crate::bytecode::Function, plan: &crate::bytec
 /// its environment and locals (`CallPlan::suspended_environment`), laid out as an environment
 /// activation lays out an ordinary body (`CallPlan::environment_activation`): each parameter a
 /// frame local, every register starting `undefined`. Its `await` suspends it in place, its frame
-/// taking the window's environment (`generator_yields::await_settling_in_lane`).
+/// taking the window's environment (`generator_yields::suspend_settling`).
 pub(super) fn settles_in_environment(body: &crate::bytecode::Function, plan: &crate::bytecode::CallPlan) -> bool {
     body.is_async
         && !body.is_generator

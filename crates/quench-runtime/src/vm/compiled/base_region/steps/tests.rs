@@ -6,7 +6,7 @@ fn instruction(op: Op) -> WideInstruction {
 
 /// The facts of a program that has recorded nothing: no add, no store in place, no fold.
 fn known(program: &ResidualProgram) -> Known<'_> {
-    Known { program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: None, classes: &[], shapes: &[] }
+    Known { program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[] }
 }
 
 fn empty_program() -> ResidualProgram {
@@ -46,7 +46,9 @@ fn under_ahead_every_opcode_without_a_row_is_generic() {
 /// The opcodes whose only lowering is the generic helper step, each for the reason beside it:
 /// no fast arm a register's word, a shape or a backing the row can read decides, so the helper
 /// is their whole operation, not a slow arm.
-const RESIDUAL: [Op; 18] = [
+const RESIDUAL: [Op; 20] = [
+    // Reads the frame's `this` binding, a VM-held dynamic binding of the derived constructor's environment.
+    Op::SuperCallCheck,
     // The define adds a property: where its site recorded the transition (`Known::adds`) its staged row (`staged::add`) is the fast arm (`adds`) and this helper its slow arm; with none recorded, the helper is the whole operation.
     Op::DefineField,
     // The key is converted (guest code) and the property defined through the shape's slow path.
@@ -83,6 +85,8 @@ const RESIDUAL: [Op; 18] = [
     Op::IteratorCleanupPush,
     // Pops the frame's VM-held active-iterator stack.
     Op::IteratorCleanupPop,
+    // Compares the receiver's shape with a define site's overwrite entry (`Vm::constant_fields_held`): VM-held cache state, read once per construction in place of the run of helper defines it skips.
+    Op::ConstantFieldsHeld,
 ];
 
 /// No function of the lane fixtures holds a generic helper step of the lane's in-place steps
@@ -237,4 +241,16 @@ fn nothing_in_the_lane_fixtures_is_refused() {
         }
     }
     assert!(fixtures > 0 && instructions > 0);
+}
+
+/// An empty object and an object literal of a site's shape lower to the allocation step where the helper table
+/// addresses it; a literal that writes a flag does not.
+#[test]
+fn fixed_shape_objects_lower_to_the_allocation_step() {
+    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let program = empty_program();
+    assert_eq!(lowering(WideInstruction::new(Op::MakeObject, 1, 0, 0, 0), known(&program), process), Step::Allocate);
+    assert_eq!(lowering(WideInstruction::new(Op::MakeObjectLiteral, 4, 1, 3, 9), known(&program), process), Step::Allocate);
+    let flagged = WideInstruction::new(Op::MakeObject, 1 | crate::bytecode::RETURN_REGISTER, 0, 0, 0);
+    assert_ne!(lowering(flagged, known(&program), process), Step::Allocate);
 }

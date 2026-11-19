@@ -881,7 +881,7 @@ impl<H: Host> Vm<H> {
         self.encode_wasm_value(value)
     }
 
-    fn wasm_memory_mut(
+    pub(super) fn wasm_memory_mut(
         &self,
         memory: Value,
     ) -> Result<(crate::wasm::memory::MemoryGuard<'_>, usize), JsError> {
@@ -962,19 +962,6 @@ impl<H: Host> Vm<H> {
         let memory = self.read(f, i.register_b());
         let value = self.decode_wasm_value(self.read(f, i.register_a()), access.ty)?;
         access
-            .write(&mut self.wasm_memory_mut(memory)?.0, address, value)
-            .map_err(JsError::wasm_trap_error)
-    }
-
-    pub(super) fn wasm_memory_store(
-        &mut self,
-        memory: Value,
-        address: u64,
-        operator: crate::wasm::memory::MemoryStore,
-        value: Value,
-    ) -> Result<(), JsError> {
-        let value = self.decode_wasm_value(value, operator.value_type())?;
-        operator
             .write(&mut self.wasm_memory_mut(memory)?.0, address, value)
             .map_err(JsError::wasm_trap_error)
     }
@@ -4189,11 +4176,12 @@ mod tests {
                 vm.heap.get(memory),
                 Some(Cell::WasmMemory { header, .. }) if header.ty.maximum == Some(3)
             ));
-            vm.wasm_memory_store(
-                memory,
-                7,
+            let stored = vm.decode_wasm_value(Value::integer(23), crate::WasmType::I32).unwrap();
+            crate::staged::wasm_memory_bytes::write_memory(
+                &mut vm.wasm_memory_mut(memory).unwrap().0,
                 crate::wasm::memory::MemoryStore::I32Store,
-                Value::integer(23),
+                7,
+                stored,
             )
             .unwrap();
             assert_eq!(

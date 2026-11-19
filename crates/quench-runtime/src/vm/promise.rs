@@ -15,24 +15,31 @@ use rustc_hash::FxHashSet;
 /// that proved it found `constructor` in a data slot of a prototype and the constructor's own
 /// `@@species` holding the intrinsic getter, and both objects are watched prototypes whose
 /// values it watches (`heap::watch_prototype_values`, holder then constructor): a write to their
-/// slots advances the intrinsic epoch, a change to any prototype's layout the chain epoch, and
-/// either retires it, as does a collection. A use reads no slot: a layout id and two epochs.
+/// slots advances the intrinsic epoch, and a change to the layout of a prototype up to the
+/// holder, or of the constructor, retires one of its cells (`Vm::chain_cell`); either retires
+/// it, as does a collection that frees one. A use reads no slot: a layout id, an epoch and two
+/// cells.
 pub(super) struct PromiseSpeciesProof {
     layout: u32,
-    epochs: (u64, u64),
+    intrinsic_epoch: u64,
+    /// The cells of the chain from the receiver's prototype to the holder, and of the
+    /// constructor, whose own `@@species` the proof read.
+    cells: [crate::heap::ChainCell; 2],
     realm: Value,
     /// Keeps the subscriptions whose retirement advances the intrinsic epoch.
     _watches: [crate::heap::PrototypeValueWatch; 2],
 }
 
 /// That promises of one layout read `then` as plain data inherited from their prototype,
-/// holding `then`: the receiver's layout fixes its own keys and prototype link, the chain epoch
-/// every prototype's layout, and the intrinsic epoch the prototype's values, which a write to
-/// them advances while the prototype's values are watched (`heap::watch_prototype_values`).
+/// holding `then`: the receiver's layout fixes its own keys and prototype link, the
+/// prototype's cell its layout (`Vm::chain_cell`), and the intrinsic epoch the prototype's
+/// values, which a write to them advances while the prototype's values are watched
+/// (`heap::watch_prototype_values`).
 #[derive(Clone, Copy)]
 pub(super) struct PromiseThenMemo {
     layout: u32,
-    epochs: (u64, u64),
+    intrinsic_epoch: u64,
+    cell: crate::heap::ChainCell,
     realm: Value,
     then: Value,
 }
@@ -529,10 +536,41 @@ impl<H: Host> Vm<H> {
         self.heap.alloc_string("ModuleSource".into())
     }
 
+    #[cfg(test)]
     pub(super) fn call_native_guarded(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value],
         callee: Value) -> Result<Value, JsError> {
-        #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
         self.as_native_activation(native, callee, |vm| vm.call_native(p, native, this, args))
+    }
+
+    /// `call_native_guarded` of `Vm::call_value_with_target_inner`, whose callers hold the
+    /// arguments for the call (`call_value` roots them; the `_from_frame` calls' frame is parked
+    /// at the call, which the collector scans at the call's liveness), so the native roots only
+    /// its receiver (`call_native_arguments_held`).
+    pub(super) fn call_native_guarded_arguments_held(&mut self, p: &ResidualProgram, native: Native, this: Value,
+        args: &[Value], callee: Value) -> Result<Value, JsError> {
+        #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
+        self.as_native_activation(native, callee, |vm| vm.call_native_arguments_held(p, native, this, args))
+    }
+
+    /// `call_native_guarded` of a lane's native call: its stack depth is the compare of the
+    /// bounds the lane read at its entry (`LaneStack::native_stack`) in place of a
+    /// `StackGuard`'s thread-local enter and drop; past them the guard decides, as before.
+    pub(super) fn call_native_from_lane(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value],
+        callee: Value) -> Result<Value, JsError> {
+        #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
+        let limit = self.lane_stack.native_stack;
+        self.native_activation_within(native, callee, Some(limit), |vm| vm.call_native(p, native, this, args))
+    }
+
+    /// `call_native_from_lane` of a call whose `args` are its call record's window in the
+    /// running function's registers (`dispatch_fast::lane_arguments_in_window`): the frame
+    /// parked at the call (the lane's own, or the one its activation becomes, before any
+    /// collection) holds them live at the call's pc, so only the receiver is rooted.
+    pub(super) fn call_native_from_lane_arguments_held(&mut self, p: &ResidualProgram, native: Native, this: Value,
+        args: &[Value], callee: Value) -> Result<Value, JsError> {
+        #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
+        let limit = self.lane_stack.native_stack;
+        self.native_activation_within(native, callee, Some(limit), |vm| vm.call_native_arguments_held(p, native, this, args))
     }
 
     /// Runs `body` as the native `callee` of kind `native` runs: in its realm, under its
@@ -541,6 +579,20 @@ impl<H: Host> Vm<H> {
         &mut self,
         native: Native,
         callee: Value,
+        body: impl FnOnce(&mut Self) -> Result<R, JsError>,
+    ) -> Result<R, JsError> {
+        self.native_activation_within(native, callee, None, body)
+    }
+
+    /// `as_native_activation` with its stack check: a `StackGuard` (`None`), or the compare of
+    /// bounds a lane read at its entry (`Some`, `Vm::call_native_from_lane`), which enters no
+    /// transition of its own.
+    #[inline(always)]
+    fn native_activation_within<R>(
+        &mut self,
+        native: Native,
+        callee: Value,
+        lane_stack: Option<crate::stack::StackLimit>,
         body: impl FnOnce(&mut Self) -> Result<R, JsError>,
     ) -> Result<R, JsError> {
         // A realm's own natives run in that realm; a native shared by every realm runs in
@@ -573,7 +625,13 @@ impl<H: Host> Vm<H> {
                 boundary,
             });
         let result = (|| {
-            let _stack = self.enter_stack()?;
+            // Within the lane's bounds the call needs no guard of its own; outside them (or
+            // with no bounds read yet, `StackLimit::CLOSED`) the guard decides, raising its
+            // RangeError where the budget is spent.
+            let _stack = match lane_stack {
+                Some(limit) if limit.admits() => None,
+                _ => Some(self.enter_stack()?),
+            };
             body(self)
         })();
         self.realm.promise.active_native.pop();
@@ -730,6 +788,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::Promise), prototype);
+        self.note_realm_promise(global, promise, prototype);
         self.set_builtin_function_name(promise, "Promise")?;
         self.set_builtin_value_named(promise, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
@@ -761,13 +820,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         parent: Option<HostExecutionContext>,
     ) -> Result<Value, JsError> {
-        let prototype = self
-            .realm
-            .intrinsics
-            .builtin_prototypes
-            .get(&(self.realm.globals, Native::Promise))
-            .copied()
-            .unwrap_or(Value::NULL);
+        // The active realm's `%Promise.prototype%`, null before its `Promise` is installed, as
+        // the intrinsics table's absent entry read (`Vm::note_realm_promise`).
+        let prototype = self.promise_proto;
         let host_context = if self.host.observes_promise_lifecycle() {
             self.host.create_promise_context(parent)
         } else {
@@ -2257,6 +2312,7 @@ impl<H: Host> Vm<H> {
             let closure = self.closure(p, function, environment);
             self.set_active_program(previous);
             let closure = closure?;
+            self.record_module_function(program, function, closure);
             if let Some(binding) = self.heap.environment_slot_mut(environment, slot) {
                 *binding = closure;
             }
@@ -3762,7 +3818,7 @@ impl<H: Host> Vm<H> {
                                 .name
                                 .is_some_and(|name| residual.atoms[name as usize] == local)
                     })
-                    .and_then(|(id, _)| self.cached_functions(program_id, id as u32).next_back());
+                    .and_then(|(id, _)| self.module_function(program_id, id as u32));
                 let slot = residual.function(0)
                     .local_atoms
                     .iter()
@@ -4745,7 +4801,7 @@ impl<H: Host> Vm<H> {
             Constant::StringUnits(value) => {
                 self.heap.alloc_string(JsString::from_units(&value))
             }
-            Constant::BigInt(value) => self.heap.alloc(Cell::bigint(value)),
+            Constant::BigInt(value) => self.heap.alloc(Cell::bigint(*value)),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
             Constant::Null => Value::NULL,
@@ -4846,13 +4902,14 @@ impl<H: Host> Vm<H> {
     }
 
     /// The `then` a resolution reads from promise `value` (`PromiseThenMemo`), where the memo
-    /// holds for it: one layout compare and two epoch compares instead of the read.
+    /// holds for it: one layout compare, an epoch compare and a cell's instead of the read.
     #[inline(always)]
     fn memoized_resolution_then(&self, value: Value) -> Option<Value> {
         let memo = self.promise_then_memo.get()?;
         let object = &self.heap.promise(value)?.object;
         (object.layout_id() == memo.layout
-            && memo.epochs == (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch())
+            && memo.intrinsic_epoch == crate::heap::intrinsic_epoch()
+            && memo.cell.holds()
             && memo.realm == self.realm.globals)
             .then_some(memo.then)
     }
@@ -4879,9 +4936,11 @@ impl<H: Host> Vm<H> {
         if crate::heap::watch_prototype_values(holder.exact_shape()).is_none() {
             return;
         }
+        let Some(cell) = self.chain_cell(prototype, 1) else { return };
         self.promise_then_memo.set(Some(PromiseThenMemo {
             layout,
-            epochs: (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch()),
+            intrinsic_epoch: crate::heap::intrinsic_epoch(),
+            cell,
             realm: self.realm.globals,
             then,
         }));
@@ -4939,7 +4998,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the `PromiseSpeciesProof` answers `promise`: a receiver of the proved layout
-    /// (shape and prototype), with no side descriptors, under the epochs the proof was made in.
+    /// (shape and prototype), with no side descriptors, under the epoch and cells the proof was
+    /// made in.
     #[inline]
     fn promise_species_proved(&self, promise: Value) -> bool {
         let proofs = self.promise_species_proof.borrow();
@@ -4950,7 +5010,8 @@ impl<H: Host> Vm<H> {
             return false;
         };
         data.layout_id() == proof.layout
-            && proof.epochs == (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch())
+            && proof.intrinsic_epoch == crate::heap::intrinsic_epoch()
+            && proof.cells.iter().all(|cell| cell.holds())
             && !data.has_side_descriptors()
             && proof.realm == self.realm.globals
     }
@@ -4964,7 +5025,7 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.ordinary_object(promise) else {
             return;
         };
-        let (layout, key) = (data.layout_id(), PropertyKey::string(self.runtime_atoms.constructor));
+        let (layout, key, prototype) = (data.layout_id(), PropertyKey::string(self.runtime_atoms.constructor), data.proto());
         let Some(SymbolLoadAnswer::Inherited { hops, .. }) =
             self.symbol_load_proofs.answer(data.layout_id(), key)
         else {
@@ -4976,20 +5037,29 @@ impl<H: Host> Vm<H> {
             let Some(link) = self.heap.object(holder) else { return };
             holder = link.proto();
         }
-        self.heap.mark_prototype(holder);
-        self.heap.mark_prototype(constructor);
+        let (Some(chain), Some(own)) = (self.chain_cell(prototype, hops), self.chain_cell(constructor, 1)) else {
+            *self.promise_species_proof.borrow_mut() = None;
+            return;
+        };
         let watch = |object| self.heap.object(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));
         *self.promise_species_proof.borrow_mut() = watch(holder).zip(watch(constructor))
             .map(|(holder, constructor)| PromiseSpeciesProof {
                 layout,
-                epochs: (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch()),
+                intrinsic_epoch: crate::heap::intrinsic_epoch(),
+                cells: [chain, own],
                 realm: self.realm.globals,
                 _watches: [holder, constructor],
             });
     }
 
+    /// The active realm's `%Promise%`, which its field follows (`Vm::note_realm_promise`)
+    /// without hashing the intrinsics table.
     pub(super) fn intrinsic_promise_constructor(&self) -> Value {
-        self.realm.intrinsics.promise_constructors[&self.realm.globals]
+        debug_assert_eq!(
+            self.realm.intrinsics.promise_constructors.get(&self.realm.globals).copied(),
+            Some(self.promise_constructor)
+        );
+        self.promise_constructor
     }
 
     pub(super) fn promise_species_constructor(

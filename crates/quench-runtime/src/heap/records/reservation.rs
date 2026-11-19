@@ -47,6 +47,37 @@ unsafe fn unmap_range(base: NonNull<u8>, layout: Layout) {
     unsafe { libc::munmap(base.as_ptr().cast(), layout.size()) };
 }
 
+/// The kernel's page size: `return_pages` ranges are whole pages of it.
+#[cfg(target_os = "linux")]
+pub(super) fn page_bytes() -> usize {
+    // SAFETY: `sysconf` reads a constant of the system.
+    usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).unwrap_or(4096)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn page_bytes() -> usize {
+    4096
+}
+
+/// Gives the pages of `[start, start + bytes)` back to the kernel (`MADV_DONTNEED`): they stay
+/// mapped and read back as zero, and the next write faults them in again. Elsewhere it does
+/// nothing, and the pages stay resident.
+///
+/// # Safety
+/// `start` is page aligned, `bytes` is a multiple of the page size, and the range lies within a
+/// mapping `map_range` made. It holds no live record: no reference into it may be used until a
+/// record is written there again.
+#[cfg(target_os = "linux")]
+pub(super) unsafe fn return_pages(start: *mut u8, bytes: usize) {
+    // SAFETY: the caller's contract names whole pages of this space's mapping, none of them live.
+    unsafe { libc::madvise(start.cast(), bytes, libc::MADV_DONTNEED) };
+}
+
+/// # Safety
+/// As `return_pages` (on this platform the call does nothing).
+#[cfg(not(target_os = "linux"))]
+pub(super) unsafe fn return_pages(_start: *mut u8, _bytes: usize) {}
+
 /// # Safety
 /// `layout` is nonzero-sized.
 #[cfg(not(target_os = "linux"))]

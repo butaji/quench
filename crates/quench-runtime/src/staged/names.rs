@@ -12,11 +12,15 @@ use crate::Value;
 
 /// An iteration or spread step the host makes by the interpreter's own definition
 /// (`Vm::call_out`): the protocol runs guest code (`@@iterator`, `next`, `return`), so a
-/// frame answers it with a callout.
+/// frame answers it with a callout; and the test of a receiver's constant fields, whose
+/// answer is VM state (a cache entry), which a frame answers the same way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Protocol {
     /// The iterator of the operand (`GetIterator`).
     GetIterator,
+    /// The async iterator of the operand (`GetAsyncIterator`): its `@@asyncIterator`, else the
+    /// async-from-sync wrapper of its `@@iterator` (`Vm::get_async_iterator`).
+    GetAsyncIterator,
     /// The for-in state over the operand's key snapshot (`ForInStart`).
     ForInStart,
     /// Close the iterator in the operand (`IteratorClose`).
@@ -29,6 +33,12 @@ pub(crate) enum Protocol {
     /// parameters while the rest register (`rest`, the second operand) holds `undefined`,
     /// else the array there. A key no kept value answers makes the rest array, into `rest`.
     RestView { get: bool, fixed: usize, rest: Register },
+    /// Whether the operand, a base class constructor's fresh receiver at the run of leading
+    /// constant fields its body defines first, already holds that run as its defines would
+    /// leave it (`ConstantFieldsHeld`): its exact shape is the one the run's first define,
+    /// through cache site `site`, found already holding its name (`Vm::constant_fields_held`).
+    /// It reads one cache entry and a shape, runs no guest code and raises nothing.
+    ConstantFieldsHeld { site: u16 },
     /// A literal, template, closure or object-construction step (`protocol_literals`).
     Literal(super::protocol_literals::LiteralStep),
     /// A class, private-name or function-naming step (`protocol_classes`).
@@ -85,6 +95,7 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
 impl<W, P> Operation<W, P> {
     /// The name read `instruction` (`LoadName`, or a call's `LoadNameCall`) denotes under the
     /// tier's `proof` of the global it names; `None` for any other opcode.
+    #[inline(always)]
     pub(crate) fn decode_load_name(instruction: WideInstruction, proof: P) -> Option<Self> {
         let receiver = match instruction.op() {
             Op::LoadName => None,
@@ -105,8 +116,11 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
             spread: instruction.boolean_field(crate::bytecode::InstructionField::C)? },
             None, [Some(instruction.register_a()), instruction.optional_register_b()]),
         Op::GetIterator => (Protocol::GetIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::GetAsyncIterator => (Protocol::GetAsyncIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ForInStart => (Protocol::ForInStart, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::IteratorClose => (Protocol::IteratorClose, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::ConstantFieldsHeld => (Protocol::ConstantFieldsHeld { site: instruction.cache_site_index() },
+            Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::RestLength => (Protocol::RestView { get: false, fixed: instruction.array_length(), rest: instruction.register_b() },
             Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::RestGet => (Protocol::RestView { get: true, fixed: instruction.array_length(), rest: instruction.register_c() },
@@ -317,6 +331,14 @@ fn load_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
 fn store_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     (source, slot, initialize): (Register, u16, bool), result: Option<Register>) -> Step<S::Word, F::Control> {
     let value = frame.tagged(stage, source);
+    // A window whose names resolve through its scope stores to the `with` object that has the local's name first.
+    if frame.scoped_local_store(stage, slot, value).is_some() {
+        if let Some(result) = result {
+            let fact = frame.fact(source);
+            frame.write(stage, result, value, fact);
+        }
+        return Step::Value(value);
+    }
     if frame.environment_write(stage, slot, value, initialize).is_none() {
         return calling(stage, frame, CallOut::StoreEnvLocal { source, slot, initialize }, result);
     }

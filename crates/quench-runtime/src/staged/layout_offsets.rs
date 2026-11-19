@@ -18,7 +18,7 @@ use super::object_encoding::{
     DICTIONARY_STORAGE, EXTRAS_FORM, EXTRAS_TAG, EXTRAS_TAG_MASK, HEADER_CAPACITY_MASK, INLINE_FORM,
     INLINE_PROPERTY_COUNT, META_OFFSET, NARROW_FORM, NARROW_RUN_TAG, OBJECT_ARRAY, OBJECT_INLINE_STORAGE,
     OCCUPANCY_WORD_BITS, PROTO_ARRAY_RECORD_BASE, PROTO_INDEX_BITS, PROTO_OBJECT_RECORD_BASE,
-    RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordBlock, START_MASK, VALUE_VEC_FROZEN,
+    OBJECT_RECORD_CAPACITY, ARRAY_RECORD_CAPACITY, RECORDS_PER_BLOCK, RecordBlock, START_MASK, VALUE_VEC_FROZEN,
     VALUE_VEC_INTEGRITY_BITS,
 };
 use super::object_extras::ObjectExtrasWords;
@@ -58,7 +58,7 @@ pub(crate) struct NativeObjectLayout {
 }
 
 pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: RECORD_SPACE_CAPACITY,
+    record_capacity: OBJECT_RECORD_CAPACITY,
     record_size: size_of::<super::record_heads::ObjectHead>(),
     record_align: align_of::<super::record_heads::ObjectHead>(),
     layout_offset: core::mem::offset_of!(super::record_heads::ObjectHead, layout),
@@ -125,7 +125,7 @@ pub(crate) struct NativeArrayLayout {
 }
 
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
-    record_capacity: RECORD_SPACE_CAPACITY,
+    record_capacity: ARRAY_RECORD_CAPACITY,
     record_size: size_of::<super::record_heads::ObjectHead>(),
     record_align: align_of::<super::record_heads::ObjectHead>(),
     elements_offset: core::mem::offset_of!(super::record_heads::ObjectHead, payload),
@@ -210,6 +210,7 @@ pub(crate) struct NativeFieldCacheLayout {
     pub(crate) receiver_offset: usize,
     pub(crate) holder_offset: usize,
     pub(crate) slot_offset: usize,
+    pub(crate) holder_id_offset: usize,
     pub(crate) receiver_complement: u32,
     pub(crate) holder_complement: u32,
     pub(crate) slot_complement: u32,
@@ -222,6 +223,7 @@ pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeField
     receiver_offset: core::mem::offset_of!(super::field_cache_layout::FieldCacheWords, receiver),
     holder_offset: core::mem::offset_of!(super::field_cache_layout::FieldCacheWords, holder),
     slot_offset: core::mem::offset_of!(super::field_cache_layout::FieldCacheWords, slot),
+    holder_id_offset: core::mem::offset_of!(super::field_cache_layout::FieldCacheWords, holder_id),
     receiver_complement: super::field_cache_layout::EMPTY.receiver,
     holder_complement: super::field_cache_layout::EMPTY.holder,
     slot_complement: super::field_cache_layout::EMPTY.slot,
@@ -327,6 +329,13 @@ pub(crate) const JS_STEP_LANE_VALUES_TOP: usize = core::mem::offset_of!(super::j
 pub(crate) const JS_STEP_LANE_VALUES_END: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_values_end);
 pub(crate) const JS_STEP_LANE_ACTIVATIONS_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_activations_top);
 pub(crate) const JS_STEP_LANE_FRAMES_END: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_frames_end);
+/// The plain-frame words a native frame's header bumps (`PlainFrames`), and the body table each depth indexes.
+/// (reconciled with u-jit F5 on merge)
+pub(crate) const JS_STEP_PLAIN_DEPTH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, plain_depth);
+pub(crate) const PLAIN_DEPTH_LIMIT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, plain_depth_limit);
+pub(crate) const JS_STEP_BODY_TABLE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_table);
+pub(crate) const JS_STEP_BODY_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_top);
+pub(crate) const JS_STEP_ACTIVATION_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, activation_count);
 /// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`).
 pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
 pub(crate) const RAISED_RUN: u64 = 1 << u32::BITS;
@@ -342,6 +351,9 @@ pub(crate) const CELL_ENTRY_AT: usize = crate::staged::call::ENTRY_CELL.entry_of
 pub(crate) const CELL_RECOVERY_AT: usize = crate::staged::call::ENTRY_CELL.recovery_offset as usize;
 pub(crate) const CELL_BODY_AT: usize = crate::staged::call::ENTRY_CELL.body_offset as usize;
 pub(crate) const CELL_ROWS_AT: usize = crate::staged::call::ENTRY_CELL.rows_offset as usize;
+pub(crate) const CELL_PROVEN_AT: usize = crate::staged::call::ENTRY_CELL.proven_offset as usize;
+pub(crate) const CELL_NUMBERS_AT: usize = crate::staged::call::ENTRY_CELL.numbers_offset as usize;
+pub(crate) const CELL_USES_THIS_AT: usize = crate::staged::call::ENTRY_CELL.uses_this_offset as usize;
 pub(crate) const RECOVERY_VALUES_AT: usize = 0;
 pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;
 

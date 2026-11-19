@@ -15,6 +15,9 @@ pub enum CallRow {
     /// NEXT (completed), TAKEN (a step that branched), EXIT0 (missed: leave at the pc, no spill),
     /// EXIT1 (leave with (status, word) in the first two pinned ints: `LEAVE_STATUS`).
     Helper,
+    /// `Helper` with the instruction the planner decoded in value holes 2 and 3 (`WideInstruction::from_words`),
+    /// for the helper that runs it without decoding the record again (`call_helper_packed`).
+    HelperPacked,
     /// The direct call of `argc` arguments (at most `MAX_DIRECT_ARGC`) through an entry cell:
     /// value hole 0 is the `CallRecord`'s address; successors NEXT (refused: the helper row),
     /// TAKEN (completed), EXIT0 (a leave inside the callee, `LEAVE_STATUS`). `checked` compares the
@@ -47,24 +50,6 @@ pub enum BuiltinRow {
     CharAt,
     /// `Number.isInteger` of a Number.
     IsInteger,
-    /// `Math.floor` of a Number.
-    Floor,
-    /// `Math.ceil` of a Number.
-    Ceil,
-    /// `Math.trunc` of a Number.
-    Trunc,
-    /// `Math.abs` of a Number.
-    Abs,
-    /// `Math.sqrt` of a Number.
-    Sqrt,
-    /// `Math.fround` of a Number.
-    Fround,
-    /// `Math.round` of a Number.
-    Round,
-    /// `Math.max` of two Numbers.
-    Max,
-    /// `Math.min` of two Numbers.
-    Min,
     /// `Math.imul` of two int32 operands.
     Imul,
     /// `Array.prototype.push` of one value onto a dense array (`staged::builtins::array_push_one`).
@@ -75,27 +60,17 @@ pub enum BuiltinRow {
 
 impl BuiltinRow {
     /// Every builtin row, each with its own stencil.
-    pub const ALL: [BuiltinRow; 15] = [
-        BuiltinRow::CharCodeAt, BuiltinRow::CharAt, BuiltinRow::IsInteger, BuiltinRow::Floor, BuiltinRow::Ceil, BuiltinRow::Trunc, BuiltinRow::Abs,
-        BuiltinRow::Sqrt, BuiltinRow::Fround, BuiltinRow::Round, BuiltinRow::Max, BuiltinRow::Min, BuiltinRow::Imul,
+    pub const ALL: [BuiltinRow; 6] = [
+        BuiltinRow::CharCodeAt, BuiltinRow::CharAt, BuiltinRow::IsInteger, BuiltinRow::Imul,
         BuiltinRow::Push, BuiltinRow::Pop,
     ];
 
-    /// The row's name in the stencil object, after `call_builtin_`.
+    /// The row's name in the stencil object, after `builtin_`.
     pub const fn symbol(self) -> &'static str {
         match self {
             BuiltinRow::CharCodeAt => "char_code_at",
             BuiltinRow::CharAt => "char_at",
             BuiltinRow::IsInteger => "is_integer",
-            BuiltinRow::Floor => "floor",
-            BuiltinRow::Ceil => "ceil",
-            BuiltinRow::Trunc => "trunc",
-            BuiltinRow::Abs => "abs",
-            BuiltinRow::Sqrt => "sqrt",
-            BuiltinRow::Fround => "fround",
-            BuiltinRow::Round => "round",
-            BuiltinRow::Max => "max",
-            BuiltinRow::Min => "min",
             BuiltinRow::Imul => "imul",
             BuiltinRow::Push => "push",
             BuiltinRow::Pop => "pop",
@@ -105,7 +80,7 @@ impl BuiltinRow {
     /// The arguments the builtin reads after its receiver's window: the count the planner must match.
     pub const fn arguments(self) -> u16 {
         match self {
-            BuiltinRow::Max | BuiltinRow::Min | BuiltinRow::Imul => 2,
+            BuiltinRow::Imul => 2,
             BuiltinRow::Pop => 0,
             _ => 1,
         }
@@ -125,6 +100,7 @@ impl CallRow {
     pub fn name(self) -> Result<String, String> {
         match self {
             CallRow::Helper => Ok("call_helper".to_string()),
+            CallRow::HelperPacked => Ok("call_helper_packed".to_string()),
             CallRow::Here => Ok("exit_here".to_string()),
             CallRow::Semantic => Ok("call_semantic".to_string()),
             CallRow::Direct { argc, this, checked } if usize::from(argc) <= MAX_DIRECT_ARGC => {
@@ -132,7 +108,7 @@ impl CallRow {
                 Ok(format!("call_direct_a{argc}_{mode}{}", if checked { "" } else { "_unchecked" }))
             }
             CallRow::Reload(place @ (Place::Pin(_) | Place::PinF(_))) => Ok(format!("reload_{}", place.code())),
-            CallRow::Builtin(row) => Ok(format!("call_builtin_{}", row.symbol())),
+            CallRow::Builtin(row) => Ok(format!("builtin_{}", row.symbol())),
             other => Err(format!("no call row {other:?}")),
         }
     }
@@ -161,8 +137,7 @@ mod tests {
         let direct = (0..=MAX_DIRECT_ARGC as u8).flat_map(|argc| [ThisRow::Strict, ThisRow::Sloppy, ThisRow::Lexical].into_iter()
             .flat_map(move |this| [true, false].map(|checked| CallRow::Direct { argc, this, checked })));
         let pins = (0..crate::PINNED as u8).map(Place::Pin).chain((0..crate::PINNED_F as u8).map(Place::PinF)).map(CallRow::Reload);
-        let builtins = BuiltinRow::ALL.into_iter().map(CallRow::Builtin);
-        [CallRow::Helper, CallRow::Semantic, CallRow::Here].into_iter().chain(direct).chain(pins).chain(builtins).collect()
+        [CallRow::Helper, CallRow::HelperPacked, CallRow::Semantic, CallRow::Here].into_iter().chain(direct).chain(pins).collect()
     }
 
     /// Every row the planner can name was built, and its successors and holes are the contract's.
@@ -173,9 +148,12 @@ mod tests {
             let successors: Vec<u32> = stencil.relocs.iter().filter(|r| crate::class::is_successor(r.class)).map(|r| r.index).collect();
             let values: Vec<u32> = stencil.relocs.iter().filter(|r| !crate::class::is_successor(r.class)).map(|r| r.index).collect();
             match row {
-                CallRow::Helper => {
+                CallRow::Helper | CallRow::HelperPacked => {
                     assert!([NEXT, TAKEN, EXIT, EXIT + 1].iter().all(|s| successors.contains(s)), "{successors:?}");
                     assert!(values.contains(&0) && values.contains(&1), "{values:?}");
+                    if row == CallRow::HelperPacked {
+                        assert!(values.contains(&2) && values.contains(&3), "{values:?}");
+                    }
                 }
                 CallRow::Semantic => {
                     assert!([NEXT, TAKEN, EXIT].iter().all(|s| successors.contains(s)), "{successors:?}");

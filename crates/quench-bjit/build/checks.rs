@@ -10,9 +10,6 @@ const ENTRY_PREFIX: &str = "entry_";
 const LEAVE_PREFIX: &str = "leave_";
 /// The rows that may make a call through a register (`stencils/call_rows.rs`).
 pub(crate) const CALL_ROW_PREFIX: &str = "call_";
-/// The builtin call-site rows (`stencils/builtin_rows.rs`): call rows whose builtin may finish
-/// inline, so a row of them need make no call at all.
-pub(crate) const BUILTIN_ROW_PREFIX: &str = "call_builtin_";
 
 /// `push r64`: `50 + register`, behind a REX.B byte for r8-r15.
 const PUSH_OPCODES: std::ops::RangeInclusive<u8> = 0x50..=0x57;

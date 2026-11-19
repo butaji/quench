@@ -44,5 +44,5 @@ const NO_TARGET: u64 = u64::MAX;
 fn semantic_part(pc: u32, semantic: Semantic, target: Option<u32>) -> Result<CallPart, String> {
     let target = target.map_or(NO_TARGET, u64::from);
     let holes = padded_holes([u64::from(pc), semantic.entry, semantic.operands, target]);
-    Ok(CallPart { stencil: call::stencil(CallRow::Semantic)?, holes, taken: None, exits: vec![Exit::Status] })
+    Ok(CallPart { stencil: call::stencil(CallRow::Semantic)?, holes, taken: None, exits: vec![Exit::Status], symbol: None })
 }

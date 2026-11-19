@@ -33,12 +33,42 @@ pub(in crate::vm) use crate::staged::wasm_gc::wasm_gc_value_ops;
 
 /// A field access's operands (`Vm::wasm_field_operands`): the object, the field or element, its
 /// storage and access, and the value a write stores.
-struct FieldOperands {
-    reference: Value,
-    location: GcFieldIndex,
-    field: GcField,
-    access: GcFieldAccess,
-    value: Option<Value>,
+pub(in crate::vm) struct FieldOperands {
+    pub(in crate::vm) reference: Value,
+    pub(in crate::vm) location: GcFieldIndex,
+    pub(in crate::vm) field: GcField,
+    pub(in crate::vm) access: GcFieldAccess,
+    pub(in crate::vm) value: Option<Value>,
+}
+
+/// The operands of a bulk array step (`array.fill`, `array.copy`), decoded from the registers: the
+/// destination and source references, the element count, and the output and input indices (`input`
+/// is only read by a copy).
+pub(in crate::vm) struct ArrayBulkOperands {
+    pub(in crate::vm) destination: Value,
+    pub(in crate::vm) source: Value,
+    pub(in crate::vm) count: u64,
+    pub(in crate::vm) output: u64,
+    pub(in crate::vm) input: u64,
+}
+
+impl<H: Host> Vm<H> {
+    /// The operands of a bulk array step of `i`'s registers, as `wasm_array_bulk_step` and the lane
+    /// decode them (`copy` for `array.copy`, else `array.fill`).
+    #[inline(always)]
+    pub(in crate::vm) fn wasm_array_bulk_operands(
+        &self,
+        i: WideInstruction,
+        read: impl Fn(&Self, u16) -> Value,
+        copy: bool,
+    ) -> Result<ArrayBulkOperands, JsError> {
+        let (destination, source) = (read(self, i.register_a()), read(self, i.register_b()));
+        let count = u64::from(Self::wasm_u32_operand(read(self, i.register_c()))?);
+        let (output, input) = i.register_pair();
+        let output = u64::from(Self::wasm_u32_operand(read(self, output))?);
+        let input = if copy { u64::from(Self::wasm_u32_operand(read(self, input))?) } else { 0 };
+        Ok(ArrayBulkOperands { destination, source, count, output, input })
+    }
 }
 
 /// Whether the GC value opcode `op` reads the running instance's environment: the
@@ -119,7 +149,7 @@ impl<H: Host> Vm<H> {
     /// The operands of the field step `step` (`struct.get`/`set`, `array.get`/`set`) of the
     /// instruction `i`, read from its registers.
     #[inline(always)]
-    fn wasm_field_operands(
+    pub(in crate::vm) fn wasm_field_operands(
         &self,
         step: GcStep,
         i: WideInstruction,
@@ -138,33 +168,6 @@ impl<H: Host> Vm<H> {
         let location = GcFieldIndex::Array(Self::wasm_u32_operand(read(self, index))?);
         let value = write.then(|| read(self, i.register_c()));
         Ok(FieldOperands { reference: read(self, reference), location, field, access, value })
-    }
-
-    /// The field access `i` of a GC object, as a struct or array op makes it
-    /// (`wasm_field_access`).
-    #[inline(always)]
-    pub(in crate::vm) fn wasm_gc_field_hit(
-        &mut self,
-        i: WideInstruction,
-        read: impl Fn(&Self, u16) -> Value,
-    ) -> Result<Option<Option<Value>>, JsError> {
-        let step = GcStep::of(i.op()).expect("field step");
-        let FieldOperands { reference, location, field, access, value } = self.wasm_field_operands(step, i, read)?;
-        Ok(self.wasm_field_access(reference, location, field, access, value))
-    }
-
-    /// One field access of a GC object: its value if it reads, `None` if the reference is
-    /// null, not an object, or past the element bound.
-    #[inline(always)]
-    pub(in crate::vm) fn wasm_field_access(
-        &mut self,
-        reference: Value,
-        location: GcFieldIndex,
-        field: GcField,
-        access: GcFieldAccess,
-        value: Option<Value>,
-    ) -> Option<Option<Value>> {
-        self.wasm_field_rule(reference, location, field, access, value).ok()
     }
 
     /// The field access the GC rules make on the heap (`staged::wasm_gc`): the value it reads, or
@@ -223,22 +226,15 @@ impl<H: Host> Vm<H> {
                 Ok(Some(Value::integer(length as i32)))
             }
             GcStep::ArrayFill => {
-                let (destination, source) = (read(self, i.register_a()), read(self, i.register_b()));
-                let count = u64::from(Self::wasm_u32_operand(read(self, i.register_c()))?);
-                let (output, _) = i.register_pair();
-                let output = u64::from(Self::wasm_u32_operand(read(self, output))?);
+                let ops = self.wasm_array_bulk_operands(i, read, false)?;
                 let stage = &mut HeapStage { vm: self };
-                array_fill(stage, destination.to_bits(), output, source.to_bits(), count)?;
+                array_fill(stage, ops.destination.to_bits(), ops.output, ops.source.to_bits(), ops.count)?;
                 Ok(None)
             }
             _ => {
-                let (destination, source) = (read(self, i.register_a()), read(self, i.register_b()));
-                let count = u64::from(Self::wasm_u32_operand(read(self, i.register_c()))?);
-                let (output, input) = i.register_pair();
-                let output = u64::from(Self::wasm_u32_operand(read(self, output))?);
-                let input = u64::from(Self::wasm_u32_operand(read(self, input))?);
+                let ops = self.wasm_array_bulk_operands(i, read, true)?;
                 let stage = &mut HeapStage { vm: self };
-                array_copy(stage, destination.to_bits(), output, source.to_bits(), input, count)?;
+                array_copy(stage, ops.destination.to_bits(), ops.output, ops.source.to_bits(), ops.input, ops.count)?;
                 Ok(None)
             }
         }

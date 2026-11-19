@@ -1248,7 +1248,7 @@ fn shape_compaction_clears_own_field_hints() {
 #[test]
 fn nested_reads_follow_their_first_steps_hint_across_shapes() {
     // A nested read's record keeps the own entry its first step last hit as its hint
-    // (`nested_own_value_in_lane`): bases of two layouts holding the first field at different
+    // (`lane_nested_value`): bases of two layouts holding the first field at different
     // slots, alternating and in runs, a prototype-held first field, and a parser whose `this`
     // gains a field mid-run each read the field the layout in hand holds. Expected value is
     // Node's (v26).
@@ -3416,6 +3416,35 @@ fn json_and_object_keys_read_enumerable_keys_in_own_property_order() {
 }
 
 #[test]
+fn enumerable_key_lists_follow_shape_changes_for_object_keys_and_for_in() {
+    // Each shape's enumerable keys are memoized and each loop's snapshot reused: every change
+    // a receiver or its prototype takes (a delete, a non-enumerable redefinition, an added key,
+    // an enumerable prototype key and its removal) must reach the next Object.keys and for-in.
+    let source = r#"var o = { a: 1, b: 2, c: 3 };
+var first = []; for (var k in o) first.push(k);
+delete o.b;
+var afterDelete = []; for (var k in o) afterDelete.push(k);
+Object.defineProperty(o, 'c', { enumerable: false });
+var afterHide = []; for (var k in o) afterHide.push(k);
+o.d = 4;
+var afterAdd = []; for (var k in o) afterAdd.push(k);
+var keysBefore = Object.keys(o).join();
+Object.prototype.inherited = 5;
+var inherited = []; for (var k in o) inherited.push(k);
+delete Object.prototype.inherited;
+var afterProto = []; for (var k in o) afterProto.push(k);
+var entries = Object.entries(o).map(function (e) { return e.join(','); }).join(';');
+var idx = { b: 1, 2: 'x', a: 2, 1: 'y' };
+var idxIn = []; for (var k in idx) idxIn.push(k);
+var result = [first.join(), afterDelete.join(), afterHide.join(), afterAdd.join(), keysBefore,
+  inherited.join(), afterProto.join(), entries, Object.keys(idx).join(), idxIn.join()].join('|');"#;
+    assert_eq!(
+        global_text(source, "result"),
+        "a,b,c|a,c|a|a,d|a,d|a,d,inherited|a,d|a,1;d,4|1,2,b,a|1,2,b,a"
+    );
+}
+
+#[test]
 fn string_indices_are_canonical_and_iterator_results_define_data_properties() {
     // Only canonical array-index names read a string's units; other names reach the
     // prototype. Iterator results define `value` and `done` without running setters.
@@ -3839,7 +3868,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
             let shape = vm.object_data(object).expect("object value").shape();
             assert!(vm.shape_is_dictionary(shape), "{mode}: {name}");
             assert_eq!(
-                vm.shapes[shape as usize].dictionary_trigger,
+                vm.shapes[shape as usize].dictionary_trigger(),
                 Some(trigger),
                 "{mode}: {name} trigger"
             );
@@ -3950,7 +3979,7 @@ fn a_deletion_keeps_a_shared_shape_until_vacated_slots_outnumber_properties() {
     assert_eq!(first, second);
     // Two vacated slots and no property: the object's storage is all holes.
     assert_eq!(
-        vm.shapes[emptied as usize].dictionary_trigger,
+        vm.shapes[emptied as usize].dictionary_trigger(),
         Some(super::DictionaryTrigger::DeletionPattern)
     );
     assert_eq!(output.borrow().as_slice(), ["14 false a,c"]);
@@ -3995,7 +4024,7 @@ fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
     let shape = vm.transition_property_shape(0, key);
     assert!(vm.shape_is_dictionary(shape));
     assert_eq!(
-        vm.shapes[shape as usize].dictionary_trigger,
+        vm.shapes[shape as usize].dictionary_trigger(),
         Some(super::DictionaryTrigger::PropertyCount)
     );
     assert_eq!(
@@ -7154,7 +7183,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
         Some(state) => state.take_function_continuation(),
         _ => panic!("await state"),
     };
-    assert_eq!(take(&mut vm).unwrap().frame.original_arguments, [original]);
+    assert_eq!(take(&mut vm).unwrap().frame.original_arguments(), [original]);
     assert!(take(&mut vm).is_none());
     vm.collect_now(&program);
     assert!(!vm.heap.is_live(live));
@@ -9452,7 +9481,6 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
     use super::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, GeneratorRecord};
     for completion in [
         Completion::Return,
-        Completion::Throw,
         Completion::Yield,
         Completion::Await,
     ] {
@@ -11404,6 +11432,52 @@ fn regexp_literal_sites_share_matchers_but_create_fresh_objects() {
             .regexp_literal_record_count(super::program_store::ProgramId::MAIN),
         1
     );
+}
+
+#[test]
+fn regexp_argument_literals_share_an_object_only_while_no_evaluation_can_tell() {
+    // `s.replace(/re/g, y)` and its siblings: while the callee is the realm's String method
+    // and the RegExp builtins are intact, the site answers one object per frame
+    // (`Vm::regexp_literal_argument_of`); each evaluation still behaves as a fresh one.
+    let program = Engine::specialize(
+        r#"
+        function strip(s) { return s.replace(/a/g, ''); }
+        var out = '';
+        for (var i = 0; i < 50; i++) out += strip('banana' + i);
+        if (out.indexOf('a') !== -1 || out.indexOf('bnn49') === -1) throw new Error('global replace: ' + out);
+        function count(s) { return (s.match(/a/g) || []).length + s.search(/n/); }
+        for (var i = 0; i < 20; i++) if (count('banana') !== 5) throw new Error('match/search');
+        function digits(s) { return s.match(/(\d+)/); }
+        digits('x12y');
+        if (RegExp.$1 !== '12') throw new Error('legacy statics ' + RegExp.$1);
+        digits('x345y');
+        if (RegExp.$1 !== '345') throw new Error('legacy statics after a share ' + RegExp.$1);
+        function nest(s, depth) {
+            return s.replace(/b/g, function () { return depth ? nest('bb', depth - 1) : 'x'; });
+        }
+        for (var i = 0; i < 5; i++) if (nest('ab', 2) !== 'axxxx') throw new Error('reentrant replace');
+        function words(s) { return s.split(/,/); }
+        for (var i = 0; i < 5; i++) if (words('a,b,c').join('|') !== 'a|b|c') throw new Error('split');
+        function take(x) { return x.replace(/q/g, ''); }
+        take('aq'); take('aq');
+        var holder = { replace: function (re) { return re; } };
+        var first = take(holder), second = take(holder);
+        if (first === second || first.lastIndex !== 0) throw new Error('an unknown callee saw a shared object');
+        first.lastIndex = 3;
+        if (take('qaq') !== 'a' || second.lastIndex !== 0) throw new Error('an escaped object stayed shared');
+        var seen = [];
+        var original = RegExp.prototype[Symbol.split];
+        RegExp.prototype[Symbol.split] = function (s, n) { seen.push(this); return original.call(this, s, n); };
+        words('a,b'); words('c,d');
+        if (seen.length !== 2 || seen[0] === seen[1]) throw new Error('a replaced @@split saw a shared object');
+        seen[0].lastIndex = 7;
+        if (words('e,f').join('|') !== 'e|f' || seen[2].lastIndex !== 0) throw new Error('state leaked');
+        "#,
+        "regexp-argument-literal.js",
+    )
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
 }
 
 #[test]
@@ -16425,11 +16499,11 @@ fn shared_osr_shape_invalidation_retires_only_dependent_code() {
     assert_eq!(before.currently_compiled_sites, 1);
     assert_eq!(state(&vm, scalar_id).currently_compiled_sites, 1);
 
-    let epoch = crate::heap::prototype_layout_epoch();
+    // A watched prototype's layout change retires its own chain cells and all code holding
+    // prototype values, not the global epoch.
     let mutate_atom = vm.intern_atom("mutatePrototype");
     let mutate = vm.own_property(vm.realm.globals, mutate_atom).unwrap();
     vm.call_value(&program, mutate, Value::UNDEFINED, &[]).unwrap();
-    assert!(crate::heap::prototype_layout_epoch() > epoch);
     let sum_atom = vm.intern_atom("sum");
     let sum = vm.own_property(vm.realm.globals, sum_atom).unwrap();
     let head_atom = vm.intern_atom("nativeOwnHead");
@@ -18434,6 +18508,153 @@ fn lane_in_place_steps_keep_private_brands_and_field_definitions() {
         output.borrow().as_slice(),
         ["1:0:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h|1:1:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h|1:2:1|true|TypeError|true|1|TypeError|true|TypeError|x+y|x,y|f|g|h"]
     );
+}
+
+/// Whether the private name `#label`, whose identity the VM interned once, belongs to a class
+/// evaluated once (`PrivateClasses::unique_name`), so its warm sites answer from shapes alone.
+fn private_name_unique(vm: &Vm<TestHost>, label: &str) -> bool {
+    let suffix = format!(":{label}");
+    let count = vm.atom_text.len() + vm.atom_sequence.appended_len();
+    let names = (0..count as crate::bytecode::Atom)
+        .filter(|atom| {
+            let name = vm.atom_name(*atom);
+            name.starts_with("\0quench:private:") && name.ends_with(&suffix)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), 1, "one identity for #{label}");
+    vm.private_classes.unique_name(names[0])
+}
+
+#[test]
+fn lane_private_sites_read_by_shape_while_homes_are_unique() {
+    // Warm private reads, stores, method reads and `#x in` answer from the receiver's shape
+    // while the class owning the name was evaluated once; a second evaluation of a class
+    // makes a second home and shares that class's names alone, after which a warmed site of
+    // one still refuses an object of the first home's class, and the other classes' sites
+    // keep their shapes.
+    let source = r#"
+      const out = [];
+      class V {
+        #x; #y;
+        constructor(x, y) { this.#x = x; this.#y = y; }
+        #mag() { return this.#x + this.#y; }
+        sum() { return this.#mag(); }
+        static x(o) { return o.#x; }
+        static has(o) { return #x in o; }
+        static hasMag(o) { return #mag in o; }
+        static setX(o, v) { o.#x = v; }
+      }
+      let total = 0;
+      for (let i = 0; i < 3000; i++) {
+        const v = new V(i, 1);
+        V.setX(v, i + 1);
+        total += V.x(v) + v.sum();
+        if (!V.has(v) || V.has({}) || !V.hasMag(v) || V.hasMag({})) throw Error("in");
+      }
+      out.push(total);
+      try { V.x({}); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      try { V.prototype.sum.call({}); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      class Outer {
+        #v = "o";
+        static inner() { return class Inner { #v = "i"; static read(o) { return o.#v; } }; }
+        static read(o) { return o.#v; }
+      }
+      const I = Outer.inner();
+      let w = "";
+      for (let i = 0; i < 2000; i++) w = Outer.read(new Outer()) + I.read(new I());
+      out.push(w);
+      try { I.read(new Outer()); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      class Base { constructor(o) { return o; } }
+      class Stamp extends Base { #t = 7; static t(o) { return o.#t; } }
+      const target = { a: 1 };
+      new Stamp(target);
+      let t = 0;
+      for (let i = 0; i < 2000; i++) t += Stamp.t(target);
+      out.push(t, Object.keys(target).join(), JSON.stringify(target), Reflect.ownKeys(target).length);
+      function make() { return class { #p = 1; static get(o) { return o.#p; } static has(o) { return #p in o; } }; }
+      const A = make();
+      const a = new A();
+      let s = 0;
+      for (let i = 0; i < 3000; i++) s += A.get(a) + (A.has(a) ? 1 : 0);
+      out.push(s);
+      const B = make();
+      try { B.get(a); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      out.push(B.has(a), A.has(a), B.get(new B()));
+      let after = 0;
+      for (let i = 0; i < 2000; i++) after += V.x(new V(1, 0));
+      out.push(after);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-private-unique-homes.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["9006000|TypeError|TypeError|oi|TypeError|14000|a|{\"a\":1}|1|6000|TypeError|false|true|1|2000"]
+    );
+    // `make`'s class was evaluated twice; `V` once, so its sites still read by shape.
+    assert!(private_name_unique(&vm, "x"));
+    assert!(!private_name_unique(&vm, "p"));
+}
+
+#[test]
+fn lane_private_class_factories_keep_other_classes_sites() {
+    // Class factories and mixins evaluated on every iteration share only their own names: a
+    // top-level class's sites, and an outer class's name read from a class nested in it and
+    // evaluated each time, keep answering from shapes, while each factory class still refuses
+    // another evaluation's objects. Eval code that sees a name shares that name alone.
+    let source = r#"
+      const out = [];
+      class Solo {
+        #solo = 1;
+        static read(o) { return o.#solo; }
+      }
+      const mixin = (Base) => class extends Base { #mix = 2; static mix(o) { return o.#mix; } };
+      function factory(n) { return class { #fac = n; static fac(o) { return o.#fac; } }; }
+      class Outer {
+        #outer = 3;
+        static nest() { return class { #inner = 4; static both(o, i) { return o.#outer + i.#inner; } }; }
+      }
+      class Ev { #ev = 5; read() { return eval("this.#ev"); } plain(o) { return o.#ev; } }
+      const solo = new Solo();
+      const outer = new Outer();
+      const ev = new Ev();
+      let total = 0;
+      for (let i = 0; i < 3000; i++) {
+        const M = mixin(Object);
+        const F = factory(i);
+        const N = Outer.nest();
+        total += Solo.read(solo) + M.mix(new M()) + F.fac(new F()) + N.both(outer, new N()) + ev.plain(ev);
+      }
+      out.push(total);
+      const F1 = factory(1), F2 = factory(2);
+      try { F1.fac(new F2()); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      const M1 = mixin(Object), M2 = mixin(Object);
+      try { M1.mix(new M2()); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      const N1 = Outer.nest(), N2 = Outer.nest();
+      try { N1.both(outer, new N2()); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      try { Solo.read({}); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      try { Solo.read(outer); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      out.push(ev.read(), ev.plain(ev));
+      try { ev.plain(solo); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      let after = 0;
+      for (let i = 0; i < 2000; i++) after += Solo.read(solo) + N1.both(outer, new N1());
+      out.push(after);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-private-class-factories.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["4543500|TypeError|TypeError|TypeError|TypeError|TypeError|5|5|TypeError|16000"]
+    );
+    assert!(private_name_unique(&vm, "solo"));
+    assert!(private_name_unique(&vm, "outer"));
+    assert!(!private_name_unique(&vm, "inner"));
+    assert!(!private_name_unique(&vm, "mix"));
+    assert!(!private_name_unique(&vm, "fac"));
+    assert!(!private_name_unique(&vm, "ev"));
 }
 
 #[test]
@@ -21593,6 +21814,34 @@ fn lane_loops_make_regexp_literals_natively_with_fresh_state() {
 }
 
 #[test]
+#[cfg(not(quench_profiled))]
+fn compiled_loops_answer_regexp_argument_literals_as_the_interpreter_does() {
+    // A literal argument of `replace` in a loop the compiled tiers run (`Allocation::RegExp`
+    // with its callee, `lane_new_regexp`) answers through `Vm::regexp_literal_argument_of`:
+    // shared while the callee is the realm's String method, a fresh object for any other
+    // callee, which may keep and change it. Expected value is Node's.
+    let source = r#"
+      function run(n, s) {
+        var t = 0, last;
+        for (var i = 0; i < n; i++) {
+          last = s.replace(/a/g, '');
+          t = (t + i) | 0;
+        }
+        return [last, t];
+      }
+      var total = 0, made;
+      for (var k = 0; k < 200; k++) { made = run(300, 'banana'); total = (total + made[1]) | 0; }
+      var holder = { replace: function (re) { return re; } };
+      var first = run(300, holder)[0], second = run(300, holder)[0];
+      first.lastIndex = 3;
+      print([made[0], total, first !== second, second.lastIndex, run(5, 'qaqa')[0]].join(" "));
+    "#;
+    // Only the answer is checked: whether the loop's call of `replace` stays native is the
+    // call tiers' concern.
+    let _ = compiled_loop_diagnostics(source, "lane-regexp-argument-loop.js", "run", &["bnn 8970000 true 0 qq"]);
+}
+
+#[test]
 fn lane_bodies_construct_empty_arrays() {
     // `new Array()` of the realm's `Array` in a lane body is an empty array
     // (`dispatch_fast::body_construct_helper`); a function named `Array` constructs as itself,
@@ -23567,7 +23816,8 @@ fn lane_leaf_calls_return_field_reads_as_activations() {
 
 #[test]
 fn lane_returning_operators_keep_binary_semantics() {
-    // A returning arithmetic `Binary` decided per operator (`returning_operator_miss`) gives
+    // A returning arithmetic `Binary` decided per operator (`returning_operator_row`, and its
+    // `returning_operator_miss` for the rest) gives
     // integers, other Numbers, concatenations, BigInts and a `valueOf` the values the general
     // `Binary` gives (expected values from Node).
     let source = r#"
@@ -24136,6 +24386,38 @@ fn hot_loops_keep_planned_receivers_as_their_fields_and_allocate_them_where_need
 }
 
 #[test]
+fn hot_loops_keep_function_constructed_receivers_as_their_fields() {
+    // The same kept-receiver program as `hot_loops_keep_planned_receivers_...`, with the
+    // constructors written as plain functions (sloppy, a global binding) rather than classes:
+    // a loop's `new Pair(...)` whose result only has its fields read must keep its field values
+    // (`lane_region::virtual_objects`) as a class's does, and print the same results.
+    let source = r#"
+      function Pair(x, y) { this.x = x; this.y = y; }
+      function K(a) { this.a = a; this.k = 7; }
+      function kept(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, 3); s = (s + p.x + p.y) | 0; } return s; }
+      function escapes(n) { var out = [], s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, i + 1); if (i % 97 === 0) out.push(p); s = (s + p.y) | 0; }
+        return [s, out.length, out[3].x, out[3].y, out[3] instanceof Pair, Object.keys(out[3]).join()].join(); }
+      function other(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, 2); s = (s + p.x + (p.z === undefined ? 1 : 0)) | 0; } return s; }
+      function constant(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new K(i); s = (s + p.a + p.k) | 0; } return s; }
+      function missing(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i); s = (s + p.x + (p.y === undefined ? 5 : 0)) | 0; } return s; }
+      function overflow(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i * 100000, 3); s = s + p.x + p.y; } return s; }
+      function setter(n) { var s = 0; for (var i = 0; i < n; i++) {
+          if (i === n - 50) Object.defineProperty(Pair.prototype, 'y', { set(v) { this._y = v * 2; }, get() { return this._y; }, configurable: true });
+          const p = new Pair(i, 1); s = (s + p.x + p.y) | 0; }
+        delete Pair.prototype.y; return s; }
+      var out = [];
+      for (var k = 0; k < 3; k++) { out.push(kept(20000), escapes(20000), other(20000), constant(20000), missing(20000), overflow(20000), setter(20000)); }
+      print(out.join(";"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "function-receivers.js").unwrap();
+    vm.execute(&program).unwrap();
+    let round = "200050000;200010000,207,291,292,true,x,y;200010000;200130000;200090000;19999000060000;200010050";
+    assert_eq!(output.borrow().as_slice(), [[round, round, round].join(";")]);
+}
+
+#[test]
 fn an_own_constant_hint_answers_for_its_object_until_the_object_is_written() {
     // `Vm::own_constant_hint_hit`: an enum-like object's member read as the value it held,
     // for that object only (another object of its layout misses) and until a write to any of
@@ -24289,5 +24571,507 @@ fn declared_class_layouts_allocate_receivers_without_showing_fields_early() {
         assert!(shape(&vm, first).is_some());
         // One layout from birth.
         assert_eq!(shape(&vm, first), shape(&vm, second));
+    }
+}
+
+#[test]
+fn learned_receivers_keep_construction_semantics() {
+    // Constructors whose receivers are learned to reach more values than the inline slots hold
+    // (`preshaped_receiver`'s slack tracking) take a reserved run, and every add still runs the
+    // full assignment or define: setters, read-only and frozen names, a non-extensible
+    // prototype, a Proxy in the chain, `super()`, a returned object, a throw midway, deletes and
+    // redefinitions, `preventExtensions`, class fields, another `new.target` and a replaced
+    // `prototype` each keep their semantics. Each body has a store no construct plan models
+    // (`typeof`, a sum of two parameters), so its receiver is allocated empty.
+    let source = r#"
+        const out = [];
+        globalThis.keep = [];
+        function Plain(a, b) { this.a = a; this.b = b; this.c = a + b; this.d = 0.5; this.e = "e"; this.f = null; }
+        let p; for (let i = 0; i < 3000; i++) { p = new Plain(i, 1.5); if (i % 100 === 0) keep.push(p); }
+        out.push(Object.keys(p).join(""), p.a + p.b + p.c + p.d);
+    "#;
+    // The other constructors run after the first's count is read: one could take its entry.
+    let others = r#"
+        const seen = [];
+        Object.defineProperty(Plain.prototype, "e", { set(v) { seen.push(v); }, get() { return "proto"; }, configurable: true });
+        const q = new Plain(1, 2);
+        out.push(Object.keys(q).join(""), q.e, seen.join(""), q.hasOwnProperty("e"));
+        function RO(k) { this.a = typeof k; this.b = 2; this.c = 3; this.d = 4; }
+        for (let i = 0; i < 3000; i++) new RO(i);
+        Object.defineProperty(RO.prototype, "c", { value: "ro", writable: false });
+        const r = new RO(1);
+        out.push(Object.keys(r).join(""), r.c);
+        class ROS { constructor(k) { this.a = typeof k; this.b = 2; this.c = 3; this.d = 4; } }
+        for (let i = 0; i < 3000; i++) new ROS(i);
+        Object.defineProperty(ROS.prototype, "b", { value: 0, writable: false });
+        try { new ROS(1); out.push("no"); } catch (e) { out.push(e instanceof TypeError); }
+        function FZ(k) { this.a = typeof k; this.b = 2; this.c = 3; this.x = 9; }
+        for (let i = 0; i < 3000; i++) new FZ(i);
+        FZ.prototype.x = 0; Object.freeze(FZ.prototype);
+        const fz = new FZ(1);
+        out.push(Object.keys(fz).join(""), fz.x);
+        function NX(k) { this.a = typeof k; this.b = 2; this.c = 3; }
+        for (let i = 0; i < 3000; i++) new NX(i);
+        Object.preventExtensions(NX.prototype);
+        out.push(Object.keys(new NX(1)).join(""));
+        function PX(k) { this.a = typeof k; this.b = 2; this.c = 3; this.d = 4; }
+        for (let i = 0; i < 3000; i++) new PX(i);
+        const traps = [];
+        Object.setPrototypeOf(PX.prototype, new Proxy({}, { set(t, k, v, recv) { traps.push(k); return Reflect.set(t, k, v, recv); } }));
+        const px = new PX(1);
+        out.push(traps.join(""), Object.keys(px).join(""));
+        class Base { constructor(n) { this.a = typeof n; this.b = n; this.c = n; } }
+        class Derived extends Base { constructor(n) { super(n); this.d = n; this.e = n; } }
+        let dv; for (let i = 0; i < 3000; i++) { new Base(i); dv = new Derived(i); }
+        out.push(Object.keys(dv).join(""), Object.getPrototypeOf(dv) === Derived.prototype, dv.e);
+        function RT(k) { this.a = typeof k; this.b = 2; this.c = 3; if (k) return { other: k }; this.d = 4; }
+        let rt; for (let i = 0; i < 3000; i++) rt = new RT(i % 2);
+        out.push(JSON.stringify(rt), JSON.stringify(new RT(0)));
+        let partial;
+        function TH(k) { this.a = typeof k; this.b = 2; if (k) { partial = this; throw new Error("x"); } this.c = 3; this.d = 4; this.e = 5; }
+        for (let i = 0; i < 3000; i++) new TH(0);
+        try { new TH(1); } catch (e) {}
+        partial.z = 26;
+        out.push(Object.keys(partial).join(""), partial.z + partial.b);
+        function DL(k) { this.a = typeof k; this.b = 2; this.c = 3; delete this.b; Object.defineProperty(this, "g", { get() { return 7; }, enumerable: true, configurable: true }); this.e = 5; this.f = 6; }
+        let dl; for (let i = 0; i < 3000; i++) dl = new DL(i);
+        out.push(Object.keys(dl).join(""), dl.g + dl.e + dl.f, "b" in dl);
+        function PE(k) { this.a = typeof k; this.b = 2; this.c = 3; Object.preventExtensions(this); this.d = 4; }
+        let pe; for (let i = 0; i < 3000; i++) pe = new PE(i);
+        out.push(Object.keys(pe).join(""));
+        class CF { a = 1; b = "x"; c = null; d; constructor(v) { this.e = v; this.f = v * 2; } }
+        let cf; for (let i = 0; i < 3000; i++) cf = new CF(i);
+        out.push(Object.keys(cf).join(""), cf.f, cf.d === undefined);
+        class OB { a = 1; b = Object.keys(this).join(""); c = 3; d = 4; }
+        let ob; for (let i = 0; i < 3000; i++) ob = new OB();
+        out.push(ob.b, Object.keys(ob).join(""));
+        function NT(k) { this.a = typeof k; this.b = 2; this.c = 3; }
+        function Other() {}
+        Other.prototype.tag = "o";
+        let nt; for (let i = 0; i < 3000; i++) nt = Reflect.construct(NT, [i], Other);
+        out.push(nt.tag, Object.keys(nt).join(""), nt instanceof NT);
+        function CP(k) { this.a = typeof k; this.b = 2; this.c = 3; }
+        for (let i = 0; i < 3000; i++) new CP(i);
+        CP.prototype = { kind: "new" };
+        const cp = new CP(1);
+        out.push(cp.kind, Object.keys(cp).join(""));
+        globalThis.wides = [];
+        function Wide(n) { this.f0 = n; this.f1 = n + 1; this.f2 = n + 2; this.f3 = 0.5; this.f4 = typeof n; this.f5 = null; this.f6 = n * 2; this.f7 = true; this.f8 = n; this.f9 = n; this.f10 = n; this.f11 = n + 0.25; }
+        let w; for (let i = 0; i < 3000; i++) { w = new Wide(i); if (i % 10 === 0) wides.push(w); }
+        out.push(Object.keys(w).length, w.f11 + w.f6);
+        print(out.join(" "));
+    "#;
+    // After collections, which evacuate the reserved runs of the survivors and restart the
+    // sampling, the survivors keep their values and take more adds.
+    let after = r#"
+        const ok = keep.length === 30 && keep.every((o, k) => o.a === k * 100 && o.c === k * 100 + 1.5 && Object.keys(o).join("") === "abcdef")
+            && wides.length === 300 && wides.every((o, k) => o.f11 === k * 10 + 0.25 && o.f6 === k * 20 && o.f4 === "number" && Object.keys(o).length === 12);
+        for (const o of keep) o.g = 1;
+        let more; for (let i = 0; i < 3000; i++) more = new Plain(i, 2);
+        print([ok, keep.every(o => o.g === 1 && Object.keys(o).join("") === "abcdefg"), Object.keys(more).join(""), more.c].join(" "));
+    "#;
+    let expected = concat!(
+        "abcdef 6001.5 abcdf proto e false abd ro true abc 0 abc abcd abcd abcde true 2999 ",
+        "{\"other\":1} {\"a\":\"number\",\"b\":2,\"c\":3,\"d\":4} abz 28 acgef 18 false abc ",
+        "abcdef 5998 true a abcd o abc false new abc 12 8997.25",
+    );
+    let program = Engine::specialize(source, "learned-receivers.js").unwrap();
+    let others = Engine::specialize(others, "learned-receivers-others.js").unwrap();
+    let rest = Engine::specialize(after, "learned-receivers-after.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        if mode == crate::ExecutionMode::Interpreted {
+            // The previous receiver, complete, is what the next one learns from.
+            let plain = vm.intern_atom("Plain");
+            let plain = vm.own_property(vm.realm.globals, plain).unwrap();
+            assert_eq!(vm.learned_receiver_slots(plain), Some(6));
+        }
+        vm.execute(&others).unwrap();
+        vm.collect_slow(&program, false);
+        vm.collect_slow(&program, true);
+        vm.execute(&rest).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected, "true true abcdf 3001"]);
+    }
+}
+
+/// Per-prototype validity (`heap::ChainCell`): a layout change to one prototype retires only
+/// the cells of chains that hold it, so proofs about other prototypes stay proved, while a
+/// change anywhere on a proof's chain (an add, a delete, a redefinition, a freeze, a
+/// `setPrototypeOf` of a link or a write of `__proto__`) retires it.
+#[test]
+fn a_prototype_change_retires_only_the_chains_that_hold_it() {
+    let program = Engine::specialize(r#"
+        class A { m() { return 1; } }
+        class B { m() { return 2; } }
+        class C extends A {}
+        globalThis.a = new A(); globalThis.b = new B(); globalThis.c = new C();
+        const fresh = () => ({});
+        globalThis.addToB = () => { B.prototype.extra = 1; };
+        globalThis.addToC = () => { C.prototype.own = 1; };
+        globalThis.addToA = () => { A.prototype.later = 1; };
+        globalThis.deleteFromB = () => { delete B.prototype.m; };
+        globalThis.defineOnB = () => { Object.defineProperty(B.prototype, 'k', { get() { return 3; } }); };
+        globalThis.freezeB = () => { Object.freeze(B.prototype); };
+        globalThis.relinkB = () => { Object.setPrototypeOf(B.prototype, fresh()); };
+        globalThis.protoWriteC = () => { C.prototype.__proto__ = B.prototype; };
+        globalThis.addToObject = () => { Object.prototype.everywhere = 1; };
+        globalThis.makeUnrelated = () => { const p = { q: 1 }; const o = Object.create(p); p.r = 2; return o; };
+    "#, "prototype-validity-cells.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).unwrap()
+    };
+    let call = |vm: &mut Vm<TestHost>, name: &str| {
+        let function = global(vm, name);
+        vm.call_value(&program, function, Value::UNDEFINED, &[]).unwrap();
+    };
+    let prototype = |vm: &mut Vm<TestHost>, name: &str| {
+        let object = global(vm, name);
+        vm.heap.object(object).unwrap().proto()
+    };
+    let (a_proto, b_proto, c_proto) = (prototype(&mut vm, "a"), prototype(&mut vm, "b"), prototype(&mut vm, "c"));
+    let cells = |vm: &mut Vm<TestHost>| {
+        [a_proto, b_proto, c_proto].map(|proto| vm.chain_cell_to_end(proto).expect("an ordinary chain has a cell"))
+    };
+
+    let [a, b, c] = cells(&mut vm);
+    assert_eq!(vm.chain_cell_to_end(a_proto), Some(a), "proofs about one chain share its cell");
+    call(&mut vm, "makeUnrelated");
+    assert!(a.holds() && b.holds() && c.holds(), "prototypes built elsewhere retire nothing");
+    call(&mut vm, "addToB");
+    assert!(a.holds() && c.holds(), "a change to B.prototype keeps the chains without it");
+    assert!(!b.holds(), "a change to B.prototype retires its own chain");
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "addToC");
+    assert!(a.holds() && b.holds(), "a change below A.prototype keeps A's chain");
+    assert!(!c.holds());
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "addToA");
+    assert!(b.holds(), "a change to A.prototype keeps B's chain");
+    assert!(!a.holds() && !c.holds(), "a change to A.prototype retires every chain through it");
+
+    for change in ["deleteFromB", "defineOnB", "relinkB", "freezeB"] {
+        let [a, b, c] = cells(&mut vm);
+        call(&mut vm, change);
+        assert!(a.holds() && c.holds(), "{change} keeps the chains without B.prototype");
+        assert!(!b.holds(), "{change} retires B.prototype's chain");
+    }
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "protoWriteC");
+    assert!(a.holds() && b.holds(), "relinking C.prototype keeps the chains it left and joined");
+    assert!(!c.holds(), "a `__proto__` write retires the chain of the object written");
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "addToObject");
+    assert!(!a.holds() && !b.holds() && !c.holds(), "Object.prototype is on every chain");
+
+    let [a, ..] = cells(&mut vm);
+    vm.heap.dependencies_mut().retire_cells();
+    assert!(!a.holds(), "an event no prototype names retires every cell");
+}
+
+/// A proof keyed on a chain's cell (`Vm::iterator_absence_proof`) survives a change to an
+/// unrelated, watched prototype and retires at a change on its chain.
+#[test]
+fn a_proof_survives_an_unrelated_prototype_change() {
+    let program = Engine::specialize(r#"
+        class Other {}
+        globalThis.other = new Other();
+        globalThis.pair = [1, 2];
+        globalThis.growOther = () => { Other.prototype.extra = 1; };
+        globalThis.patchIterator = () => {
+            Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]())).marker = 1;
+        };
+    "#, "prototype-validity-proofs.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).unwrap()
+    };
+    let call = |vm: &mut Vm<TestHost>, name: &str| {
+        let function = global(vm, name);
+        vm.call_value(&program, function, Value::UNDEFINED, &[]).unwrap();
+    };
+    let pair = global(&mut vm, "pair");
+    let key = super::property_key::PropertyKey::string(vm.runtime_atoms.iterator_return);
+    let proto = vm.array_iterator_proto;
+    assert!(vm.array_pattern_fits(pair, 1), "an intact pair fits a one-element pattern");
+    assert!(vm.iterator_absence_proved(proto, key), "the fit proves the array iterator lacks `return`");
+    call(&mut vm, "growOther");
+    assert!(vm.iterator_absence_proved(proto, key), "a change off the chain keeps the proof");
+    call(&mut vm, "patchIterator");
+    assert!(!vm.iterator_absence_proved(proto, key), "a change to %IteratorPrototype% retires it");
+    assert!(vm.array_pattern_fits(pair, 1), "and the next fit proves it again");
+    assert!(vm.iterator_absence_proved(proto, key));
+}
+
+#[test]
+fn constant_class_fields_allocate_receivers_in_their_layout() {
+    // A base class's leading fields whose initializers are absent or primitive constants
+    // (`bytecode::ConstantField`) give its receivers their layout and values at allocation;
+    // their defines still run and find each in place. Exact for another `new.target` (a
+    // subclass's `super()`, `Reflect.construct`, a Proxy), a prototype setter, a throw in a
+    // later initializer that saved the receiver, classes evaluated many times, numeric,
+    // `__proto__`, repeated and string-literal keys, private elements, static fields and a
+    // receiver whose constructor adds more (its learned storage reserved first).
+    let source = r#"
+        const out = [];
+        class P { a = 1; b = "s"; c = null; d; e = -2.5; f = true; constructor(x) { this.g = x; } }
+        let p; for (let i = 0; i < 200; i++) p = new P(i);
+        out.push(Object.keys(p).join(""), String(p.a) + p.b + p.c + p.d + p.e + p.f + p.g);
+        globalThis.first = new P(1);
+        globalThis.second = new P(2);
+        const log = [];
+        Object.defineProperty(P.prototype, "a", { set(v) { log.push(v); }, get() { return "proto"; }, configurable: true });
+        const ps = new P(3);
+        out.push(log.length, ps.a, ps.hasOwnProperty("a"));
+        class D extends P { h = 7; constructor() { super(5); this.i = 8; } }
+        let d; for (let i = 0; i < 200; i++) d = new D();
+        out.push(Object.keys(d).join(""), Object.getPrototypeOf(d) === D.prototype, d.h + d.i + d.g);
+        function Other() {}
+        Other.prototype.tag = "o";
+        let rc; for (let i = 0; i < 200; i++) rc = Reflect.construct(P, [i], Other);
+        out.push(rc.tag, Object.keys(rc).join(""), Object.getPrototypeOf(rc) === Other.prototype, rc instanceof P);
+        const traps = [];
+        const NT = new Proxy(function () {}, { get(t, k, r) { traps.push(String(k)); return k === "prototype" ? Other.prototype : Reflect.get(t, k, r); } });
+        const pr = Reflect.construct(P, [9], NT);
+        out.push(traps.join(), Object.keys(pr).join(""), pr.tag, pr.g);
+        let saved, seen;
+        function boom(o) { saved = o; seen = Object.keys(o).join("") + ("d" in o); throw new Error("boom"); }
+        class T { a = 1; b = 2; c = boom(this); d = 4; }
+        let caught = 0; for (let i = 0; i < 50; i++) { try { new T(); } catch (e) { caught++; } }
+        out.push(caught, seen, Object.keys(saved).join(""), saved.b);
+        function make() { return class { x = 1; y = "y"; z; }; }
+        const made = [];
+        for (let i = 0; i < 20; i++) { const C = make(); made.push(new C(), new C()); }
+        out.push(
+            made.every(o => Object.keys(o).join("") === "xyz" && o.x === 1 && o.y === "y" && o.z === undefined),
+            Object.getPrototypeOf(made[0]) !== Object.getPrototypeOf(made[2]),
+            Object.getPrototypeOf(made[0]) === Object.getPrototypeOf(made[1]),
+        );
+        class N { 0 = 1; x = 2; }
+        class PR { __proto__ = 5; y = 1; }
+        class DU { a = 1; a = 2; b = 3; }
+        class SK { "my-key" = 1; plain = "v"; }
+        const n = new N(), pro = new PR(), du = new DU(), sk = new SK();
+        out.push(Object.keys(n).join(","), Object.keys(pro).join(","), pro.__proto__, Object.getPrototypeOf(pro) === PR.prototype,
+            Object.keys(du).join(","), du.a, Object.keys(sk).join(","), sk["my-key"]);
+        class PM { #p = 1; a = 1; get p() { return this.#p; } }
+        class PM2 { a = 1; #q() { return 4; } b = 2; get q() { return this.#q(); } }
+        const pm = new PM(), pm2 = new PM2();
+        out.push(Object.keys(pm).join(""), pm.p, Object.keys(pm2).join(""), pm2.q);
+        class ST { static s = 1; a = "a"; static t = 2; b = 0; }
+        const st = new ST();
+        out.push(Object.keys(st).join(""), ST.s + ST.t);
+        globalThis.bigs = [];
+        class Big { a = 1; b = 2; c = "c"; constructor(n) { this.d = n; this.e = n; this.f = n; this.g = typeof n; this.h = n + 0.5; } }
+        let big; for (let i = 0; i < 3000; i++) { big = new Big(i); if (i % 100 === 0) bigs.push(big); }
+        globalThis.Big = Big;
+        globalThis.P = P;
+        out.push(Object.keys(big).join(""), big.h + big.a);
+        print(out.join(" "));
+    "#;
+    // After collections, which evacuate the reserved runs of the survivors and forget the
+    // layouts, the survivors keep their values and new receivers take the layout again.
+    let after = r#"
+        const ok = bigs.length === 30
+            && bigs.every((o, k) => o.d === k * 100 && o.h === k * 100 + 0.5 && o.c === "c" && Object.keys(o).join("") === "abcdefgh");
+        const again = new P(4);
+        print([ok, first.b + second.e, Object.keys(again).join(""), again.a, again.g].join(" "));
+    "#;
+    let expected = concat!(
+        "abcdefg 1snullundefined-2.5true199 0 1 true abcdefghi true 20 o abcdefg true false ",
+        "prototype abcdefg o 9 50 abfalse ab 2 true true true 0,x __proto__,y 5 true a,b 2 ",
+        "my-key,plain 1 a 1 ab 4 ab 3 abcdefgh 3000.5",
+    );
+    let program = Engine::specialize(source, "constant-fields.js").unwrap();
+    let rest = Engine::specialize(after, "constant-fields-after.js").unwrap();
+
+    // The layouts the compiler kept: each base class's leading run, which stops at a key or an
+    // initializer outside it; a derived class has none. They survive the encoding.
+    let layouts = |program: &crate::ResidualProgram| {
+        program.compile_released();
+        (0..program.function_count())
+            .filter_map(|index| program.function_get(index))
+            .filter(|function| !function.constant_fields.is_empty())
+            .map(|function| function.constant_fields.iter().map(|field| program.atoms[field.atom as usize].to_string()).collect::<Vec<_>>().join(","))
+            .collect::<Vec<_>>()
+    };
+    let kept = layouts(&program);
+    for layout in ["a,b,c,d,e,f", "a,b", "a", "my-key,plain", "a,b,c"] {
+        assert!(kept.iter().any(|kept| kept == layout), "{layout} in {kept:?}");
+    }
+    assert!(!kept.iter().any(|kept| kept.contains('h') || kept.contains('0') || kept.contains("__proto__")), "{kept:?}");
+    let p = (0..program.function_count())
+        .filter_map(|index| program.function_get(index))
+        .find(|function| function.constant_fields.len() == 6)
+        .unwrap();
+    let values = p.constant_fields.iter().map(|field| field.value).collect::<Vec<_>>();
+    let s = values[1];
+    assert!(matches!(s, crate::bytecode::FieldConstant::String(atom) if &program.atoms[atom as usize] == "s"));
+    assert_eq!(values[0], crate::bytecode::FieldConstant::Number(1.0));
+    assert_eq!(values[2..], [
+        crate::bytecode::FieldConstant::Null,
+        crate::bytecode::FieldConstant::Undefined,
+        crate::bytecode::FieldConstant::Number(-2.5),
+        crate::bytecode::FieldConstant::Boolean(true),
+    ]);
+    let bytes: crate::KeptBytes = Rc::new(program.encode_trusted());
+    let decoded = crate::ResidualProgram::decode_trusted(bytes).unwrap();
+    let mut round = layouts(&decoded);
+    let mut original = kept.clone();
+    round.sort();
+    original.sort();
+    assert_eq!(round, original);
+
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = |vm: &mut Vm<TestHost>, name: &str| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        // One layout from birth.
+        let first = global(&mut vm, "first");
+        let second = global(&mut vm, "second");
+        let shape = |vm: &Vm<TestHost>, value| vm.object_data(value).map(|object| object.shape());
+        assert!(shape(&vm, first).is_some());
+        assert_eq!(shape(&vm, first), shape(&vm, second));
+        if mode == crate::ExecutionMode::Interpreted {
+            // The receiver's eight values, three of them its layout's, are what the next learns.
+            let big = global(&mut vm, "Big");
+            assert_eq!(vm.learned_receiver_slots(big), Some(8));
+        }
+        vm.collect_slow(&program, false);
+        vm.collect_slow(&program, true);
+        vm.execute(&rest).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected, "true s-2.5 abcdefg 1 4"]);
+    }
+}
+
+#[test]
+fn constant_field_runs_are_skipped_only_on_receivers_that_hold_them() {
+    // A base class constructor's run of two or more leading constant fields is skipped
+    // (`Op::ConstantFieldsHeld` and a `JumpTrue` past its defines) where the receiver was made
+    // holding it; anything else runs the defines. Exact for a prototype setter of the same name, a
+    // throw in a later initializer that saved the receiver, another `new.target` (a subclass's
+    // `super()`, `Reflect.construct`, a Proxy), classes evaluated many times, a run longer than
+    // a receiver is given, a run of one, private brands, and a derived class's fields on an
+    // object its base returned, which already holds them.
+    let source = r#"
+        const out = [];
+        class A { a = 1; b = "two"; c; d = false; constructor(n) { this.n = n; } }
+        let a; for (let i = 0; i < 300; i++) a = new A(i);
+        out.push(Object.keys(a).join(""), [a.a, a.b, a.c, a.d, a.n].join("|"));
+        a.a = 9; delete a.b;
+        const a2 = new A(1);
+        out.push(Object.keys(a2).join(""), a2.a, a2.b);
+        const log = [];
+        Object.defineProperty(A.prototype, "b", { set(v) { log.push(v); }, get() { return "proto"; }, configurable: true });
+        let as; for (let i = 0; i < 50; i++) as = new A(i);
+        out.push(log.length, as.b, Object.getOwnPropertyDescriptor(as, "b").writable);
+        let saved, seen;
+        function boom(o) { saved = o; seen = Object.keys(o).join(""); throw new Error("boom"); }
+        class T { a = 1; b = 2; c = 3; d = boom(this); e = 5; }
+        let caught = 0; for (let i = 0; i < 100; i++) { try { new T(); } catch (e) { caught++; } }
+        out.push(caught, seen, saved.a + saved.b + saved.c, "e" in saved);
+        function Other() {}
+        Other.prototype.tag = "o";
+        let rc; for (let i = 0; i < 100; i++) rc = Reflect.construct(A, [i], Other);
+        out.push(rc.tag, Object.keys(rc).join(""), rc.b, rc instanceof A);
+        const NT = new Proxy(function () {}, { get(t, k, r) { return k === "prototype" ? Other.prototype : Reflect.get(t, k, r); } });
+        let pr; for (let i = 0; i < 100; i++) pr = Reflect.construct(A, [i], NT);
+        out.push(Object.keys(pr).join(""), pr.tag, pr.a, pr.n);
+        class S extends A { e = 5; f = 6; constructor() { super(7); this.g = 8; } }
+        let s; for (let i = 0; i < 100; i++) s = new S();
+        out.push(Object.keys(s).join(""), s.a + s.e + s.f + s.g + s.n);
+        class B { constructor(o) { return o; } }
+        class E extends B { x = 1; y = 2; z = 3; constructor(o) { super(o); } }
+        const target = { x: 10, y: 20, z: 30 };
+        let okE = true;
+        for (let i = 0; i < 100; i++) {
+            target.x = -i; target.y = "s";
+            const r = new E(target);
+            okE = okE && r === target && r.x === 1 && r.y === 2 && r.z === 3;
+        }
+        out.push(okE, Object.keys(target).join(""));
+        function make(v) { return class { p = 1; q = "q"; r = null; constructor() { this.v = v; } }; }
+        let okM = true;
+        for (let i = 0; i < 30; i++) {
+            const C = make(i);
+            for (let j = 0; j < 5; j++) {
+                const o = new C();
+                okM = okM && Object.keys(o).join("") === "pqrv" && o.p === 1 && o.q === "q" && o.r === null && o.v === i;
+            }
+        }
+        out.push(okM);
+        class L {
+            f0 = 0; f1 = 1; f2 = 2; f3 = 3; f4 = 4; f5 = 5; f6 = 6; f7 = 7; f8 = 8; f9 = 9;
+            f10 = 10; f11 = 11; f12 = 12; f13 = 13; f14 = 14; f15 = 15; f16 = 16; f17 = 17; f18 = 18; f19 = 19;
+        }
+        let l; for (let i = 0; i < 100; i++) l = new L();
+        out.push(Object.keys(l).length, Object.keys(l)[19], Object.values(l).reduce((x, y) => x + y, 0));
+        class One { only = 4; ["oth" + "er"] = 2; }
+        let one; for (let i = 0; i < 100; i++) one = new One();
+        out.push(Object.keys(one).join(""), one.only + one.other);
+        class M { a = 1; b = 2; c = [3]; d = 4; }
+        let m; for (let i = 0; i < 100; i++) m = new M();
+        out.push(Object.keys(m).join(""), m.c[0] + m.d);
+        class PB { #m() { return 1; } a = 1; b = 2; get m() { return this.#m(); } }
+        let pb; for (let i = 0; i < 100; i++) pb = new PB();
+        out.push(Object.keys(pb).join(""), pb.m);
+        print(out.join(" "));
+    "#;
+    let expected = concat!(
+        "abcdn 1|two||false|299 abcdn 1 two 0 two true 100 abc 6 false o abcdn two true ",
+        "abcdn o 1 99 abcdnefg 27 true xyz true 20 f19 190 onlyother 6 abcd 7 ab 1",
+    );
+    let program = Engine::specialize(source, "constant-field-skips.js").unwrap();
+
+    // The skip opens each base class constructor's run of two or more, a test then a jump past
+    // the run's last define; a run of one, a derived class's initializer and every function
+    // without a run have none.
+    program.compile_released();
+    let mut skips = 0;
+    for function in (0..program.function_count()).filter_map(|index| program.function_get(index)) {
+        let code = function.instructions().collect::<Vec<_>>();
+        let tests = code.iter().enumerate().filter(|(_, instruction)| instruction.op() == crate::bytecode::Op::ConstantFieldsHeld)
+            .map(|(pc, _)| pc).collect::<Vec<_>>();
+        if function.constant_fields.len() < 2 {
+            assert!(tests.is_empty(), "{} constant fields, {} tests", function.constant_fields.len(), tests.len());
+            continue;
+        }
+        assert_eq!(tests.len(), 1);
+        let jump = code[tests[0] + 1];
+        assert_eq!(jump.op(), crate::bytecode::Op::JumpTrue);
+        let end = jump.jump_target() as usize;
+        let defines = code[tests[0]..end].iter().filter(|instruction| instruction.op() == crate::bytecode::Op::DefineField).count();
+        assert_eq!(defines, function.constant_fields.len().min(crate::bytecode::PRESHAPED_FIELDS));
+        assert_eq!(code[end - 1].op(), crate::bytecode::Op::DefineField);
+        skips += 1;
+    }
+    // A, T, M, PB, the made class and L.
+    assert_eq!(skips, 6);
+
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        use super::call_out::counts::{take, CONSTANT_FIELD_SKIPS};
+        take(&CONSTANT_FIELD_SKIPS);
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected], "{mode:?}");
+        assert!(take(&CONSTANT_FIELD_SKIPS) > 0, "{mode:?}: no run was skipped");
     }
 }

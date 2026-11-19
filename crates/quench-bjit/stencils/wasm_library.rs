@@ -1,14 +1,12 @@
-//! Which Wasm rows the library holds, as codes (`wasm_codes.rs`): built from the kind table there
-//! (`ROW_FAMILIES`), the one definition `build.rs` generates the stencils from and the stitcher
-//! looks rows up by.
+//! Which Wasm rows the library holds, as codes: built from the kind table (`wasm_kinds.rs`) and its
+//! families (`wasm_families.rs`, `ROW_FAMILIES`), the one definition `build.rs` generates the stencils
+//! from and the stitcher looks rows up by. The lib exposes it with the runtime's codes as `quench_bjit::wasm`.
 
-#[path = "wasm_codes.rs"]
-mod wasm_codes;
-pub use wasm_codes::*;
+use crate::wasm_families::*;
+use crate::wasm_kinds::*;
 
 /// The routines around a function's rows (`wasm_entry.rs` on x86-64, `wasm_entry_a64.rs` on AArch64): its entry and the leaves
-/// with a word, with none, and with a trap's status.
-#[allow(dead_code)] // `build.rs` includes this file and builds the routines by name, not from this list.
+/// with a word, with none, and with a trap's status. `build.rs` requires each to be a built row.
 pub const ROUTINES: [&str; 4] = ["entry_wasm", "leave_wasm_word", "leave_wasm_void", "leave_wasm_trap"];
 
 /// A row as codes: kind, operator tag, width, shape.
@@ -45,6 +43,6 @@ pub fn wasm_library() -> Vec<WasmCode> {
 /// The name of a Wasm row's stencil symbol.
 pub fn wasm_name((kind, operator, width, shape): WasmCode) -> String {
     // A row that calls must be named so (`build/checks.rs`).
-    let call = if matches!(kind, CALL | CALL_INDIRECT | CALL_VM | MEMORY_GROW | CALLOUT | GC_ALLOCATE) { "call_" } else { "" };
+    let call = if matches!(kind, CALL | CALL_KEEP | CALL_INDIRECT | CALL_VM | MEMORY_GROW | CALLOUT | GC_ALLOCATE) { "call_" } else { "" };
     format!("{call}w_{kind}_{operator}_{width}_{shape}")
 }

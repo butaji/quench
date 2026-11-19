@@ -1,5 +1,6 @@
 use crate::Value;
 use crate::staged::property_buffer::PropertyBufferHead;
+use crate::heap::growth::{GrowthPolicy, grown_capacity};
 use std::{
     mem::ManuallyDrop,
     ops::{Deref, DerefMut},
@@ -244,6 +245,39 @@ impl PropertyBuffer {
         };
         true
     }
+
+    /// Gives back the whole pages inside `[start, end)` (in values) when the storage is a
+    /// reservation: they read back as zero and the next write faults them in again. Pages
+    /// that hold any value outside the range stay resident, as does storage a heap allocation
+    /// owns. The caller holds no live value in the range.
+    #[cfg(unix)]
+    pub(super) fn release_pages(&mut self, start: usize, end: usize) {
+        let Allocation::Reserved { page_values, .. } = self.allocation else {
+            return;
+        };
+        let first = start.next_multiple_of(page_values);
+        let last = end.min(self.capacity) / page_values * page_values;
+        if first >= last {
+            return;
+        }
+        #[cfg(target_vendor = "apple")]
+        let advice = libc::MADV_FREE;
+        #[cfg(not(target_vendor = "apple"))]
+        let advice = libc::MADV_DONTNEED;
+        // SAFETY: `first..last` is page aligned, lies inside the accessible capacity of this
+        // reservation, and holds no live value (the caller's contract). Nothing reads it until
+        // a write initializes it, whether or not the OS reclaimed it.
+        unsafe {
+            libc::madvise(
+                self.head.base.as_ptr().add(first).cast(),
+                (last - first) * size_of::<Value>(),
+                advice,
+            );
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn release_pages(&mut self, _start: usize, _end: usize) {}
 
     /// Discard unused suffix storage after compaction while retaining every
     /// reserved address. Discarded pages may remain readable; only length, never

@@ -23,8 +23,20 @@ mod class;
 mod elf;
 #[path = "build/layout.rs"]
 mod layout;
+#[macro_use]
+#[path = "stencils/row_catalog.rs"]
+mod row_catalog;
+// Shared definitions (library, row names, supernode rules): the build script reads a subset of each; the
+// lib and the stencil crate mount the same files and keep the dead-code check on every item.
+#[allow(dead_code)]
 #[path = "stencils/library.rs"]
 mod library;
+// Shared definitions (library, row names, supernode rules): the build script reads a subset of each; the
+// lib and the stencil crate mount the same files and keep the dead-code check on every item.
+#[allow(dead_code)]
+#[path = "stencils/row_names.rs"]
+mod row_names;
+use library::TYPED_KINDS;
 #[path = "build/macho.rs"]
 mod macho;
 #[path = "build/sources.rs"]
@@ -33,8 +45,15 @@ mod sources;
 mod shards;
 #[path = "build/supernodes.rs"]
 mod supernodes;
+// Shared definitions (library, row names, supernode rules): the build script reads a subset of each; the
+// lib and the stencil crate mount the same files and keep the dead-code check on every item.
+#[allow(dead_code)]
 #[path = "stencils/supernode_rules.rs"]
 mod supernode_rules;
+#[path = "stencils/wasm_families.rs"]
+mod wasm_families;
+#[path = "stencils/wasm_kinds.rs"]
+mod wasm_kinds;
 #[path = "stencils/wasm_library.rs"]
 mod wasm_library;
 #[path = "build/transfer.rs"]
@@ -83,6 +102,7 @@ fn rustc_flags() -> Vec<String> {
 /// The architecture and object reader of a build target, if its stencils are supported.
 fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
     let var = |name| env::var(name).unwrap_or_default();
+    if !var("QUENCH_NO_STENCILS").is_empty() { return None; }
     match (var("CARGO_CFG_TARGET_ARCH").as_str(), var("CARGO_CFG_TARGET_OS").as_str()) {
         ("x86_64", "linux") => Some((Arch::X86_64, elf::rows)),
         ("aarch64", "linux") => Some((Arch::Aarch64, elf::rows)),
@@ -97,6 +117,7 @@ fn main() {
         println!("cargo::rerun-if-changed={}", source.display());
     }
     println!("cargo::rerun-if-changed=supernodes.txt");
+    println!("cargo::rustc-check-cfg=cfg(stencil_build)");
     println!("cargo::rerun-if-changed={RUSTC_FLAGS_FILE}");
     println!("cargo::rerun-if-changed=../quench-runtime/src/bytecode.rs");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -109,7 +130,7 @@ fn main() {
         fs::write(&table, VARIANTS.map(|(name, _)| library_source(name, Counts::default(), &[])).concat()).unwrap();
         return;
     };
-    let instances = instances(&listed);
+    let instances = instances(&listed, arch);
     let parts = shards::split(&instances, |(_, weight)| *weight);
     for (shard, part) in parts.iter().enumerate() {
         fs::write(instance_file(&out, shard), part.iter().map(|(row, _)| row.as_str()).collect::<String>()).unwrap();
@@ -117,6 +138,14 @@ fn main() {
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
     let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &VARIANTS[..1] };
     let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&out, parts.len(), (arch, read), *cpu))).collect();
+    // `rows.rs` builds the Wasm entry and leave routines on every target but Apple AArch64, so each listed routine is a row there.
+    if env::var("CARGO_CFG_TARGET_VENDOR").unwrap_or_default() != "apple" {
+        for (name, (rows, _)) in &built {
+            for routine in wasm_library::ROUTINES {
+                assert!(rows.iter().any(|(row, _)| row.as_str() == routine), "variant {name} lacks the Wasm routine {routine}");
+            }
+        }
+    }
     let mut tables = String::new();
     for (name, _) in VARIANTS {
         let (_, (rows, counts)) = built.iter().find(|(built_name, _)| *built_name == name).unwrap_or(&built[0]);
@@ -127,17 +156,24 @@ fn main() {
 
 /// One macro invocation per generated row, the unit `shards::split` distributes, with its
 /// compile weight (`shards::NUMBER_WEIGHT` and the weights beside it).
-fn instances(listed: &supernodes::Listed) -> Vec<(String, usize)> {
-    let numbers = library::library().into_iter().map(|c| (format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4), shards::NUMBER_WEIGHT));
-    let heap_weight = |kind: u8| match kind {
-        library::INDEX_ROW | library::STORE_ROW | library::TYPED_INDEX_ROW..=library::TYPED_INDEX_LAST
-        | library::TYPED_STORE_ROW..=library::TYPED_STORE_LAST => shards::ELEMENT_WEIGHT,
-        _ => shards::HEAP_WEIGHT,
+/// The base tier's numeric, heap and supernode rows are x86-64's only; every other target builds the Wasm rows alone,
+/// and its base tier falls back as a `--b-jit` without one does.
+fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize)> {
+    let base: Vec<(String, usize)> = if arch == Arch::X86_64 {
+        let numbers = library::library().into_iter().map(|c| (format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4), shards::NUMBER_WEIGHT));
+        let heap_weight = |kind: u8| match kind {
+            library::INDEX_ROW | library::STORE_ROW | library::TYPED_INDEX_ROW..=library::TYPED_INDEX_LAST
+            | library::TYPED_STORE_ROW..=library::TYPED_STORE_LAST => shards::ELEMENT_WEIGHT,
+            _ => shards::HEAP_WEIGHT,
+        };
+        let heaps = library::heap_library().into_iter().map(|c| (format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4), heap_weight(c.0)));
+        let supers = supernodes::instances(listed).into_iter().map(|nodes| (format!("supernode_row!({}, {});\n", supernode_rules::name(&nodes), supernode_rules::macro_args(&nodes)), shards::HEAP_WEIGHT));
+        numbers.chain(heaps).chain(supers).collect()
+    } else {
+        Vec::new()
     };
-    let heaps = library::heap_library().into_iter().map(|c| (format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4), heap_weight(c.0)));
-    let supers = supernodes::instances(listed).into_iter().map(|nodes| (format!("supernode_row!({}, {});\n", supernode_rules::name(&nodes), supernode_rules::macro_args(&nodes)), shards::HEAP_WEIGHT));
     let wasm = wasm_library::wasm_library().into_iter().map(|c| (format!("wasm_row!({}, {}, {}, {}, {});\n", wasm_library::wasm_name(c), c.0, c.1, c.2, c.3), shards::NUMBER_WEIGHT));
-    numbers.chain(heaps).chain(supers).chain(wasm).collect()
+    base.into_iter().chain(wasm).collect()
 }
 
 fn instance_file(out: &Path, shard: usize) -> PathBuf {

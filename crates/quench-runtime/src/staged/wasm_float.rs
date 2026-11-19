@@ -4,22 +4,7 @@
 
 use super::wasm::{WasmStage, Width};
 use crate::wasm::conversion::ScalarConversionOperator;
-use crate::wasm::float::F64BinaryOperator as FloatBinary;
-// The interpreter's float rows (`WasmFloatOperation`), which run on `Concrete` alone.
-#[cfg(not(stencil_build))]
-use super::machine::MachineStage;
-#[cfg(not(stencil_build))]
-use super::register_frame::{Frame, Step, WasmRep, wasm_operand, wasm_result};
-#[cfg(not(stencil_build))]
-use super::wasm_concrete::ConcreteWasm;
-#[cfg(not(stencil_build))]
-use super::wasm_operation::WasmOperation;
-#[cfg(not(stencil_build))]
-use super::{Concrete, Operation};
-#[cfg(not(stencil_build))]
-use crate::bytecode::{ImmediateLayout, Op, Register, WideInstruction};
-#[cfg(not(stencil_build))]
-use crate::wasm::float::F64UnaryOperator as FloatUnary;
+use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::numeric::canonical_nan_bits;
 use crate::{WasmTrap, WasmType};
 
@@ -269,7 +254,20 @@ pub(crate) fn opaque(word: u64) -> u64 {
     }
 }
 
+// The interpreter's float records as a staged operation (`Decoder::WasmFloat`): runtime only.
 #[cfg(not(stencil_build))]
+pub(crate) use operation::{WasmFloatOperation, step};
+#[cfg(not(stencil_build))]
+mod operation {
+use super::*;
+use crate::staged::machine::MachineStage;
+use crate::staged::register_frame::{Frame, Step, WasmRep, wasm_operand, wasm_result};
+use crate::staged::wasm_concrete::ConcreteWasm;
+use crate::staged::wasm_operation::WasmOperation;
+use crate::staged::{Concrete, Operation};
+use crate::bytecode::{ImmediateLayout, Op, Register, WideInstruction};
+
+
 /// A float, conversion or select record's operation, decoded from its opcode, its operator tag
 /// and its operands. A raw f64 (`raw`) reads and writes its registers as plain machine words.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -284,14 +282,12 @@ pub(crate) enum WasmFloatOperation {
     Select { destination: Register, condition: Register, chosen: Register, other: Register },
 }
 
-#[cfg(not(stencil_build))]
 /// Whether opcode `op` is a raw f64 operator (`staged::raw_representation`): the raw and boxed forms
 /// share every rule, and differ only in the f64 representation.
 const fn raw_float(op: Op) -> bool {
-    super::raw_representation(op)
+    crate::staged::raw_representation(op)
 }
 
-#[cfg(not(stencil_build))]
 /// The representation a scalar of type `ty` takes, raw where the operator is raw.
 const fn rep_of(ty: WasmType, raw: bool) -> WasmRep {
     match ty {
@@ -301,7 +297,6 @@ const fn rep_of(ty: WasmType, raw: bool) -> WasmRep {
     }
 }
 
-#[cfg(not(stencil_build))]
 impl WasmFloatOperation {
     /// The float operation `instruction` denotes: its operator is the tag of `WasmOperation::of`,
     /// and `WasmSelect`'s condition is the first register of its immediate pair.
@@ -322,11 +317,9 @@ impl WasmFloatOperation {
     }
 }
 
-#[cfg(not(stencil_build))]
 /// The result of an operation before it is written: its destination, word and representation.
 type Computed = (Register, u64, WasmRep);
 
-#[cfg(not(stencil_build))]
 /// `Binary`: the operands in their representation, `float_binary`'s word (a comparison's flag).
 #[inline(always)]
 fn computed_binary<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmFloatOperation) -> Option<Computed> {
@@ -339,7 +332,6 @@ fn computed_binary<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, oper
     Some((destination, word, result))
 }
 
-#[cfg(not(stencil_build))]
 /// `Unary`: the machine's float operator on its source.
 #[inline(always)]
 fn computed_unary<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmFloatOperation) -> Option<Computed> {
@@ -349,7 +341,6 @@ fn computed_unary<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, opera
     Some((destination, ConcreteWasm.operate_float_unary(operator, float, value), rep))
 }
 
-#[cfg(not(stencil_build))]
 /// `Convert`: the scalar conversion, a trap leaves at the miss edge.
 #[inline(always)]
 fn computed_convert<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmFloatOperation) -> Option<Computed> {
@@ -359,7 +350,6 @@ fn computed_convert<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, ope
     Some((destination, word, rep_of(operator.result_type(), false)))
 }
 
-#[cfg(not(stencil_build))]
 /// `Select`: the condition's word chooses between the tagged values, copied as they are.
 #[inline(always)]
 fn computed_select<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmFloatOperation) -> Option<Computed> {
@@ -370,7 +360,6 @@ fn computed_select<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, oper
     Some((destination, ConcreteWasm.select(u64::from(condition != 0), chosen, other), WasmRep::Tagged))
 }
 
-#[cfg(not(stencil_build))]
 /// Run `operation` on the interpreter's frame: the Wasm rules over machine words, read and
 /// written in each operand's `WasmRep`. An operand the frame does not hold so, and a trap, leave
 /// at the miss edge (`Step::Unresolved`), where the general path decides.
@@ -389,10 +378,10 @@ pub(crate) fn step<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, oper
     }
 }
 
-#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     /// The float operation `instruction` denotes (`Decoder::WasmFloat`).
     pub(crate) fn decode_wasm_float(instruction: WideInstruction) -> Option<Self> {
         WasmFloatOperation::decode(instruction).map(Self::WasmFloat)
     }
+}
 }

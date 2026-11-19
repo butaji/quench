@@ -208,6 +208,31 @@ impl Lowering<'_, '_> {
         self.identity_constant(expected)
     }
 
+    /// The root constant the capture read at `pc` takes (`FactTables::root_constant`), with its
+    /// program, where the division folds Stable facts.
+    pub(super) fn root_constant_at(&self, pc: usize) -> Option<(crate::vm::program_store::ProgramId, Value)> {
+        let found = (self.vm.online?.root_constant)(pc)?;
+        self.division().folds(BindingTime::Stable).then_some(found)
+    }
+
+    /// The capture read at `pc` of a written-once root binding that `root_constant_at` folds: the
+    /// binding's function, the result register's value, with no read of the environment. The
+    /// function is held as a Stable fact (`hold_stable`), a dependency on the program's root
+    /// constants (`StableFacts::root_program`), so the program's second root run retires the code.
+    /// `None` where the value is no function.
+    pub(super) fn root_constant_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        let (program, value) = self.root_constant_at(pc)?;
+        let ty = Type::function(value)?;
+        let exit = self.guard_exit(state, pc as u32);
+        self.hold_stable(state, exit);
+        self.stable.root_program = Some(program);
+        let fact = RegisterFact::admit(Fact { ty, representation: Representation::Tagged, binding: BindingTime::Stable,
+            proof: Proof::Dependency, projection: Projection::Exact }).expect("a Stable fact's dependency proves any type");
+        let word = self.identity_constant(value);
+        self.define(state, instruction.result_register(), word, fact);
+        Some(true)
+    }
+
     /// The capture row `instruction` decodes to, where this lowering makes it: a read at depth
     /// zero, or either at a caller's record, where the lane's own lookup serves it.
     fn capture_row(&self, pc: usize, instruction: WideInstruction) -> Option<crate::staged::Operation<ir::Value, EmitProof>> {

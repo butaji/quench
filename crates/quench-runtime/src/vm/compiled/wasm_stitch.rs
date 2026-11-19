@@ -23,7 +23,7 @@ use super::CONTEXT_MEMORY_LENGTH;
 
 /// The frame word a register is, past the header words.
 const fn slot(register: u16) -> u64 {
-    8 * (codes::FRAME_HEADER_WORDS + register as u64)
+    8 * (quench_bjit::FRAME_HEADER_WORDS + register as u64)
 }
 
 /// The word an integer constant is at `width`: an i32 zero-extended.
@@ -206,9 +206,14 @@ fn memory(instruction: WideInstruction, memory: Memory) -> Option<Vec<Planned>> 
 fn known_call(destination: u16, window: u16, callee: usize, world: &World<'_>) -> Option<Planned> {
     let length = u64::try_from(CONTEXT_MEMORY_LENGTH).ok()?;
     if let Some(cell) = (world.callee)(callee) {
-        // The callee may grow the memory: the row reloads the length from the context, at hole
-        // `HOLE_FOURTH` (`reload_memory`, `wasm_rows.rs`).
-        let mut call = row((codes::CALL, 0, codes::W64, codes::REGISTER), [slot(destination), slot(window), cell], None);
+        let holes = [slot(destination), slot(window), cell];
+        // A callee that may grow the memory makes the row reload the base and length: the length
+        // comes from the context, at hole `HOLE_FOURTH` (`reload_memory`, `wasm_rows.rs`). One that
+        // cannot keeps them (`CALL_KEEP`), and its row reads no length.
+        if world.grows_memory.len() > callee && !world.grows_memory.contains(callee) {
+            return Some(row((codes::CALL_KEEP, 0, codes::W64, codes::REGISTER), holes, None));
+        }
+        let mut call = row((codes::CALL, 0, codes::W64, codes::REGISTER), holes, None);
         call.holes[3] = length;
         return Some(call);
     }
@@ -366,6 +371,9 @@ pub(super) struct World<'a> {
     /// the length, so over a movable memory they have none.
     pub(super) memory_stable: bool,
     pub(super) callee: &'a dyn Fn(usize) -> Option<u64>,
+    /// The defined functions that may grow the memory (`wasm_growth`): a direct call of one that
+    /// may not plans `CALL_KEEP`. A function past the set's bound counts as growing.
+    pub(super) grows_memory: &'a crate::bitset::BitSet,
     /// The VM callout a `CALL_VM` row makes for a direct call of an unstitched function, as an
     /// address (`wasm_call_vm.rs`'s `vm_call_callout`).
     pub(super) vm_call: u64,
@@ -470,7 +478,8 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
     let trap = stencil("leave_wasm_trap")?;
     // The parameters follow the instance bindings (`Function::parameter_registers`).
     let first_parameter = function.parameter_registers?;
-    let rest = u64::from(function.registers).checked_sub(u64::from(first_parameter) + params as u64)?;
+    let past_parameters = u64::from(first_parameter) + params as u64;
+    let rest = u64::from(function.registers).checked_sub(past_parameters)?;
     let vectors = wasm_stitch_simd::uses_vectors(&instructions, world);
     // A v128 local starts as zero like any other: the vector area follows the registers, so the
     // entry's zeroing runs on through its two words per register.

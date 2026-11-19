@@ -1126,13 +1126,19 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         key: Value,
     ) -> Option<Value> {
+        match native {
+            Native::MapGet => {
+                let entries = self.heap.map_entries(receiver)?;
+                return Some(
+                    self.collection_entry_index(entries, key, self.same_value_zero_hash(key))
+                        .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
+                );
+            }
+            Native::MapHas => return Some(self.has_key(self.heap.map_entries(receiver)?, key)),
+            Native::SetHas => return Some(self.has_key(self.heap.set_entries(receiver)?, key)),
+            _ => {}
+        }
         match (native, self.heap.get(receiver)?) {
-            (Native::MapGet, Cell::Map { entries, .. }) => Some(
-                self.collection_entry_index(entries, key, self.same_value_zero_hash(key))
-                    .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
-            ),
-            (Native::MapHas, Cell::Map { entries, .. }) => Some(self.has_key(entries, key)),
-            (Native::SetHas, Cell::Set { entries, .. }) => Some(self.has_key(entries, key)),
             // A value that cannot be held weakly is never a key.
             (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(entries.get(key).unwrap_or(Value::UNDEFINED)),
             (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => Some(Value::boolean(entries.contains(key))),
@@ -1212,6 +1218,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// The slot of the entry whose key is SameValueZero to `key`, whose hash is `key_hash`.
+    /// Inlined into every lookup, so a Map or Set read is one probe with no call.
+    #[inline(always)]
     fn collection_entry_index<T: crate::heap::CollectionEntry>(
         &self,
         entries: &crate::heap::CollectionEntries<T>,
@@ -1231,6 +1239,8 @@ impl<H: Host> Vm<H> {
     }
     /// A hash under which SameValueZero-equal keys agree: numbers by value with both zeros
     /// and every NaN as one, strings and BigInts by content, everything else by identity.
+    /// Numbers are hashed inline; the rest goes to the out-of-line `non_number_key_hash`.
+    #[inline(always)]
     pub(super) fn same_value_zero_hash(&self, key: Value) -> u64 {
         match key.as_number() {
             Some(number) => crate::heap::number_key_hash(number),

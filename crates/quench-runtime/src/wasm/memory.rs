@@ -285,7 +285,6 @@ impl std::ops::Deref for MemoryRead<'_> {
     }
 }
 
-pub const WASM_PAGE_BITS: u32 = 16;
 const BYTE_PAGE_BITS: u32 = 0;
 #[cfg(test)]
 pub const WASM_PAGE_BYTES: usize = 1 << WASM_PAGE_BITS;
@@ -362,11 +361,17 @@ pub(crate) fn checked_range(
     Ok(start..end)
 }
 
-/// The loads of the scalar rows run `staged::wasm_memory`'s access (`Access::of_load`); the
-/// vector rows, whose widening and splatting are SIMD semantics, decode their own bytes.
 #[macro_use]
 #[path = "../staged/wasm_lists.rs"]
 mod wasm_lists;
+
+/// The page size of a Wasm memory as a shift, from the one list the b-jit codes also read.
+macro_rules! page_bits_const {
+    ($bits:literal) => {
+        pub const WASM_PAGE_BITS: u32 = $bits;
+    };
+}
+wasm_page_bits!(page_bits_const);
 
 /// The `MemoryLoad` enum, its discriminants the list's order (`wasm_lists.rs`).
 macro_rules! define_memory_loads {
@@ -381,6 +386,8 @@ macro_rules! define_memory_loads {
 }
 memory_load_list!(define_memory_loads);
 
+/// The loads of the scalar rows run `staged::wasm_memory`'s access (`Access::of_load`); the
+/// vector rows, whose widening and splatting are SIMD semantics, decode their own bytes.
 macro_rules! loads {
     ($value:ident; scalar { $($scalar:ident, $swidth:ty;)+ } vector { $($name:ident, $word:ty => $result:expr;)+ }) => {
         impl MemoryLoad {
@@ -389,17 +396,14 @@ macro_rules! loads {
                 match op { $(wasmparser::Operator::$scalar { memarg } => Some((Self::$scalar, *memarg)),)+ $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
             }
             #[inline(always)] pub(crate) const fn width(self) -> usize { match self { $(Self::$scalar => std::mem::size_of::<$swidth>(),)+ $(Self::$name => std::mem::size_of::<$word>(),)+ } }
-            /// The value of a vector load at `at`, unchecked.
-            ///
-            /// # Safety
-            /// `width` bytes from `at` must be readable.
+            /// The value of a vector load of the zero-extended lane `word` (its `width` bytes, the
+            /// staged lane load), the widening, splatting or zeroing the load's own semantics.
             #[inline(always)]
-            pub(crate) unsafe fn read_vector_at(self, at: *const u8) -> WasmValue {
+            pub(crate) fn vector_of_word(self, word: u64) -> WasmValue {
                 match self {
                     $(Self::$scalar)|+ => unreachable!("a scalar load has an access"),
                     $(Self::$name => {
-                        // SAFETY: the caller keeps the word's bytes readable.
-                        let $value = <$word>::from_le_bytes(unsafe { at.cast::<[u8; std::mem::size_of::<$word>()]>().read() });
+                        let $value = word as $word;
                         $result
                     },)+
                 }
@@ -440,7 +444,7 @@ impl MemoryLoad {
 }
 
 /// The stores of the scalar rows run `staged::wasm_memory`'s access (`Access::of_store`); the
-/// vector row writes its own bytes.
+/// vector store is `staged::wasm_memory_vector::store_vector`.
 macro_rules! stores {
     (scalar { $($scalar:ident, $swidth:ty, $variant:ident;)+ } vector { $($name:ident, $word:ty;)+ }) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -454,21 +458,6 @@ macro_rules! stores {
             }
             #[inline(always)] pub(crate) const fn value_type(self) -> WasmType { match self { $(Self::$scalar => WasmType::$variant,)+ $(Self::$name => WasmType::V128,)+ } }
             #[inline(always)] pub(crate) const fn width(self) -> usize { match self { $(Self::$scalar => std::mem::size_of::<$swidth>(),)+ $(Self::$name => std::mem::size_of::<$word>(),)+ } }
-            /// Write the vector `value` at `at`, unchecked.
-            ///
-            /// # Safety
-            /// `width` bytes from `at` must be writable.
-            #[inline(always)]
-            pub(crate) unsafe fn write_vector_at(self, at: *mut u8, value: WasmValue) {
-                match self {
-                    $(Self::$scalar)|+ => unreachable!("a scalar store has an access"),
-                    $(Self::$name => {
-                        let WasmValue::V128(word) = value else { unreachable!("decoded store type") };
-                        // SAFETY: the caller keeps the word's bytes writable.
-                        unsafe { at.cast::<[u8; std::mem::size_of::<$word>()]>().write((word as $word).to_le_bytes()) };
-                    },)+
-                }
-            }
         }
     }
 }
@@ -550,7 +539,7 @@ pub(super) fn direct_access_memory(
     let index = MemoryLoad::from_wasm(operator)
         .map(|(_, memarg)| memarg)
         .or_else(|| MemoryStore::from_wasm(operator).map(|(_, memarg)| memarg))
-        .or_else(|| simd_access_of(operator).map(|(_, _, memarg, _, _)| memarg))
+        .or_else(|| lane_access(operator).map(|(_, _, memarg, _, _)| memarg))
         .map(|memarg| memarg.memory)
         .or(match operator {
             wasmparser::Operator::MemorySize { mem }

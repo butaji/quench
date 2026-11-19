@@ -9,7 +9,7 @@ use super::{
     Vm, compiled_memory_copy, compiled_memory_fill, refresh_memory_length,
 };
 use crate::bytecode::{Function, WideInstruction};
-use crate::staged::machine::{MachineAccess, MachineStage};
+use crate::staged::machine::{Lane, MachineAccess, MachineStage};
 use crate::staged::wasm::Width;
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::integer::I64BinaryOperator as Binary;
@@ -20,16 +20,31 @@ use crate::wasm::INDEX_GROW_FAILURE;
 use crate::wasm::memory::WASM_PAGE_BITS;
 use cranelift_codegen::ir::{self, MemFlagsData};
 
+impl<H: Host> Emitter<'_, '_, H> {
+    /// The length a call passes after the context when the memory is unguarded (`length` is
+    /// passed): the current one (`memory_length`), so a callee sees a length a growing callee
+    /// refreshed. `None` where the length is not passed.
+    pub(super) fn passed_length(&mut self) -> Option<ir::Value> {
+        match self.length {
+            Some(_) => Some(self.memory_length()),
+            None => None,
+        }
+    }
+}
+
 impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
+    type Vector = ir::Value;
+
     fn guarded(&self) -> bool {
         self.guarded
     }
 
-    /// The length the function received, while no callout can grow the memory; else the
-    /// context's, which a callout refreshes.
+    /// The length the function received, while no callout can grow the memory, or the function
+    /// itself cannot grow it (`grows`: no callee it reaches may); else the context's, which a
+    /// callout refreshes.
     fn memory_length(&mut self) -> ir::Value {
         match self.length {
-            Some(length) if !self.analysis.callouts => length,
+            Some(length) if !self.analysis.callouts || !self.grows => length,
             _ => {
                 let context = self.body.core.context;
                 self.load_word(Width::I64, MemFlagsData::trusted(), context, CONTEXT_MEMORY_LENGTH)
@@ -46,6 +61,12 @@ impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
         let flags = self.load_flags();
         self.load_access(access, flags, host)
     }
+
+    fn memory_load_vector(&mut self, index: ir::Value, offset: u32) -> ir::Value {
+        let host = self.host_address(index, offset);
+        let flags = self.load_flags();
+        self.raw_load(Lane::V128, flags, host, 0)
+    }
 }
 
 impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
@@ -53,6 +74,14 @@ impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
         let host = self.host_address(index, offset);
         let flags = self.flags(Region::LinearMemory);
         self.store_access(access, flags, host, value);
+    }
+
+    /// A guarded vector store keeps the trap code of a load (`load_flags`): a proven access
+    /// skips the explicit check, so the fault is the store's own.
+    fn memory_store_vector(&mut self, index: ir::Value, offset: u32, value: ir::Value) {
+        let host = self.host_address(index, offset);
+        let flags = self.load_flags();
+        self.store_word(flags, value, host, 0);
     }
 
     fn memory_fill(&mut self, index: ir::Value, byte: ir::Value, length: ir::Value) {

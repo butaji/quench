@@ -83,7 +83,7 @@ impl Lowering<'_, '_> {
     /// to one retires this code rather than each run re-reading the member.
     /// `None` where the read is not one, or completes its frame or writes `this` besides.
     pub(super) fn fold_native_member(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        let Some(&crate::vm::global_facts::GlobalRead::NativeMember { value, native, holder, folds }) = self.global_reads.get(&pc) else { return None };
+        let Some(&crate::vm::global_facts::GlobalRead::NativeMember { value, native, holder, folds, .. }) = self.global_reads.get(&pc) else { return None };
         // A method read by name folds only where the receiver can hold no own member of that
         // name: a string primitive, whose members are its prototype's. A string method's read
         // proves its receiver a string by one tag test, as the call it names would.
@@ -92,7 +92,7 @@ impl Lowering<'_, '_> {
             _ => None,
         };
         let string = Type::language(crate::ValueType::String);
-        let string_method = matches!(native, crate::vm::Native::StringCharCodeAt | crate::vm::Native::StringCharAt);
+        let string_method = matches!(native, crate::heap::Native::StringCharCodeAt | crate::heap::Native::StringCharAt);
         let receiver = match (folds, receiver) {
             (true, _) => None,
             (false, Some(register)) if string_method && (string.is_subtype(state.values[usize::from(register)].value.ty) || state.values[usize::from(register)].value.ty.is_subtype(string)) => Some(register),

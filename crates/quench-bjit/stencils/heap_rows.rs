@@ -28,8 +28,6 @@
 //! The global object's slot rows (`GLOBAL_READ_ROW`, `GLOBAL_STORE_ROW`) take its record id in hole 1
 //! (the store: hole 0) and the slot's byte offset in hole 2; a constant row takes its word in hole 1
 //! and the realm proof (`REALM_ROW`) a VM field offset in hole 1 and the global object's word in hole 2.
-//! An empty object or zero-length array (`EMPTY_OBJECT_ROW`, `EMPTY_ARRAY_ROW`) takes only the destination in
-//! hole 0; its record comes from the cursor and template words of the dispatch payload.
 //! Every failed proof leaves through exit 0 with nothing written, so the interpreter runs the
 //! instruction.
 
@@ -47,7 +45,8 @@ pub(crate) use crate::stage::stage_site;
 pub(crate) use crate::words::{context_word, payload, set_context_word, word_at};
 use crate::stage::StencilStage;
 use crate::staged::{Frame, Operation, Stage, Step, step, step_local, step_value, string_length};
-use crate::codes::{EMPTY_ARRAY_ROW, EMPTY_OBJECT_ROW, LAST_INT_PIN, MEMINT, PIN, PINF, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_IDENTITY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, HELD_LINK_AT, PROTOTYPE_ROW, SHAPE_ROW, STORES_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
+use crate::codes::{EMPTY_ARRAY_ROW, EMPTY_OBJECT_ROW, LAST_INT_PIN, MEMINT, PIN, PINF, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_IDENTITY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, HELD_LINK_AT, PROTOTYPE_ROW, SHAPE_ROW, SHAPE_FLAT_ROW, STORES_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_GET_FLAT_ROW, IC_KNOWN_SET_FLAT_ROW, IC_KNOWN_SET_INT_FLAT_ROW, IC_KNOWN_SET_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
+use crate::staged::object::Form;
 use crate::staged::{code_units, environment, parse_int};
 use crate::places_view::{ELEMENT_SITES, PlacesView, entry_dense, entry_typed};
 use crate::{environment_rows, key_rows, name_rows, site_rows, staged_rows};
@@ -152,15 +151,14 @@ fn prototype_row(s: S) -> Out {
 }
 
 /// `GuardShape`: continues where the object at the frame offset in hole 0 is a direct object of the exact shape in hole 1
-/// (its record read from the object record table); any other object leaves with nothing written.
+/// (its record read from the object record table) in storage `form`; any other object leaves with nothing written.
 #[inline(always)]
-fn shape_row(s: S) -> Out {
+fn shape_row(s: S, form: Form) -> Out {
     let guard = Operation::GuardShape {
         source: word_at(s.frame, hole::<0>()),
         records: word_at(payload(&s), JS_STEP_OBJECT_RECORD_BASE),
         shape: hole64::<HOLE_A>(),
-        // The row reads either storage form, as the record's inline flag says.
-        form: crate::staged::object::Form::Either,
+        form,
     };
     guard_row(s, guard)
 }
@@ -200,7 +198,7 @@ fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) 
     if ENTRY {
         let view = entry_dense::<HOLE_A>(payload);
         let mut places = Places::<D, MEM, B>::new(s);
-        let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT) };
+        let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST };
         let mut frame = PlacesView::new(&mut places, LEFT, view);
         match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
             Step::Value(word) => deliver::<D>(places.s, word),
@@ -208,7 +206,7 @@ fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) 
         }
     } else {
         let mut frame = Places::<D, MEM, B>::new(s);
-        match staged_element(&mut frame, Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT) }) {
+        match staged_element(&mut frame, Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST }) {
             Some(word) => deliver::<D>(frame.s, word),
             None => Out::Exit(frame.s),
         }
@@ -222,7 +220,7 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
     if ENTRY {
         let view = entry_dense::<0>(payload);
         let mut places = Places::<MEM, A, B>::new(s);
-        let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT };
+        let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false };
         let mut frame = PlacesView::new(&mut places, DEST, view);
         match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
             Step::Value(_) => Out::Next(places.s),
@@ -230,7 +228,7 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
         }
     } else {
         let mut frame = Places::<MEM, A, B>::new(s);
-        let done = staged_element(&mut frame, Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT }).is_some();
+        let done = staged_element(&mut frame, Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false }).is_some();
         finish(frame, done)
     }
 }
@@ -241,7 +239,7 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
 fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     let view = need!(s, entry_typed::<KIND>(payload, (HOLE_A, TYPED_INDEX_ROW)));
     let mut places = Places::<D, MEM, B>::new(s);
-    let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT) };
+    let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST };
     let mut frame = PlacesView::new(&mut places, LEFT, view);
     let word = match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
         Step::Value(word) => Some(word),
@@ -260,7 +258,7 @@ fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usiz
 fn typed_store_row<const KIND: u8, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
     let view = need!(s, entry_typed::<KIND>(payload, (0, TYPED_STORE_ROW)));
     let mut places = Places::<MEM, A, B>::new(s);
-    let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT };
+    let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false };
     let mut frame = PlacesView::new(&mut places, DEST, view);
     match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
         Step::Value(_) => Out::Next(places.s),
@@ -434,12 +432,14 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         ADD_PACKED_ROW | ADD_ARENA_ROW | ADD_EITHER_ROW | THIS_ADD_PACKED_ROW | THIS_ADD_ARENA_ROW | THIS_ADD_EITHER_ROW
             | NAME_EITHER_ROW | NAME_ARENA_ROW => name_rows::run::<KIND, ENTRY, A>(s, payload),
         IDENTITY_ROW | THIS_ROW | LOAD_LOCAL_ROW | STORE_LOCAL_ROW | LOAD_CHECKED_ROW | STORE_CHECKED_ROW => register_row::<KIND, D, A>(s),
-        IC_GET_ROW | IC_GET_HOLDER_ROW | IC_SET_ROW | IC_SET_INT_ROW | IC_PROOF_ROW | IC_KNOWN_GET_ROW | IC_KNOWN_SET_ROW | IC_KNOWN_SET_INT_ROW | IC_KNOWN_SET_ADMITTED_ROW | IC_KNOWN_SET_INT_ADMITTED_ROW =>
+        IC_GET_ROW | IC_GET_HOLDER_ROW | IC_SET_ROW | IC_SET_INT_ROW | IC_PROOF_ROW | IC_KNOWN_GET_ROW | IC_KNOWN_SET_ROW | IC_KNOWN_SET_INT_ROW | IC_KNOWN_SET_ADMITTED_ROW | IC_KNOWN_SET_INT_ADMITTED_ROW
+            | IC_KNOWN_GET_FLAT_ROW | IC_KNOWN_SET_FLAT_ROW | IC_KNOWN_SET_INT_FLAT_ROW | IC_KNOWN_SET_FLAT_ADMITTED_ROW | IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW =>
             ic_rows::run::<KIND, ENTRY, D, A>(s),
         DECLARED_ROW => declared_row(s),
         CAPTURE_IDENTITY_ROW => capture_identity_row(s),
         PROTOTYPE_ROW => prototype_row(s),
-        SHAPE_ROW => shape_row(s),
+        SHAPE_ROW => shape_row(s, Form::Either),
+        SHAPE_FLAT_ROW => shape_row(s, Form::Arena),
         STORES_ROW => stores_row(s),
         CHAR_CODE_AT_ROW => char_code_at_row::<D, B>(s, payload),
         PARSE_INT_ROW => parse_int_row::<D>(s, payload),

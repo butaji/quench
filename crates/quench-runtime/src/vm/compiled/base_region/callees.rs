@@ -66,19 +66,45 @@ pub(in crate::vm::compiled) struct Callees {
     /// the one a stitch may inline, every one a direct row of the call's chain calls.
     at: Vec<Option<std::ops::Range<usize>>>,
     bodies: Vec<Option<InlineBody>>,
-    /// By PC, the Stable fact holding the callee its call site recorded: the global cell its
-    /// callee register is read from (`Vm::stable_callees`).
-    stable: Vec<Option<GlobalFact>>,
+    /// By PC, what holds the callee its call site recorded (`Vm::stable_callees`).
+    stable: Vec<Option<Held>>,
     /// By PC, the native function the call site's callee register holds, where a field read defines it
     /// (`Vm::native_callees`), with the holder whose values the code depends on.
-    natives: Vec<Option<(crate::value::Value, crate::vm::Native, u32)>>,
+    natives: Vec<Option<(crate::value::Value, crate::heap::Native, u32)>>,
+}
+
+/// What holds a call site's callee register, so that the register need not be checked: a Stable global cell
+/// (its change retires the body), or a captured declaration whose identity the body's entry checks once
+/// (`Captured`, `base_region::link::entry_rows`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::vm::compiled) enum Held {
+    Global(GlobalFact),
+    /// The depth-0 capture at `slot` holds `callee` (its word) at every entry of the body.
+    Captured { slot: u16, callee: u64 },
+}
+
+impl Held {
+    /// The Stable global fact, if it is one.
+    pub(in crate::vm::compiled) fn global(held: Held) -> Option<GlobalFact> {
+        match held {
+            Held::Global(fact) => Some(fact),
+            Held::Captured { .. } => None,
+        }
+    }
 }
 
 /// Whether the call at `instruction` is a plain call a body's call chain makes: a call whose result
 /// is its register's, or one that returns its result (`return f(x)`), which the row after it
 /// completes with. The other forms record no callee (`call_plan::CallForm`).
 pub(super) fn chains(instruction: WideInstruction) -> bool {
-    CallForm::of(instruction.split_return().0) == Some(CallForm::Plain)
+    let plain = instruction.split_return().0;
+    CallForm::of(plain) == Some(CallForm::Plain) || is_method_call(plain)
+}
+
+/// Whether `instruction` is a method call `o.m(args)`, whose callee its site's call feedback records and whose chain reads it
+/// (`call_plan::Method`).
+pub(super) fn is_method_call(instruction: WideInstruction) -> bool {
+    instruction.op() == crate::bytecode::Op::CallMethod && CallForm::of(instruction) == Some(CallForm::Stepped)
 }
 
 /// The callee the call site `instruction` makes calls, if its body's call chain makes it: the
@@ -100,8 +126,8 @@ impl Callees {
 
     /// The callee each call site of `code` calls (`candidates`, by PC), `body_of` the function it
     /// runs, and `stable` the Stable fact holding it by PC.
-    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<GlobalFact>>,
-        natives: Vec<Option<(crate::value::Value, crate::vm::Native, u32)>>) -> Self {
+    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<Held>>,
+        natives: Vec<Option<(crate::value::Value, crate::heap::Native, u32)>>) -> Self {
         let mut owned = Vec::new();
         let at = code.iter().zip(candidates).map(|(instruction, site)| {
             let callees = reached(*instruction, site);
@@ -128,7 +154,7 @@ impl Callees {
 
     /// Whether every call of `code` is a direct one (`LaneMethod::closed`).
     pub(in crate::vm::compiled) fn closed(&self, code: &[WideInstruction]) -> bool {
-        code.iter().zip(&self.at).all(|(instruction, callee)| !super::super::meaning_compiled::is_call(*instruction) || callee.is_some())
+        code.iter().zip(&self.at).all(|(instruction, callee)| !instruction.op().is_call() || (callee.is_some() && !is_method_call(*instruction)))
     }
 
     /// What each call site recorded of its callee, by PC.
@@ -173,6 +199,10 @@ impl Callees {
     /// The call `shape` planned as its callee's rows (`facts`: what each site recorded), in
     /// `context`, which it spends from; none where the callee stays a call.
     pub(super) fn inlined_call(&self, facts: &[Option<DirectFacts>], region: &LoopRegion, context: &mut Context, shape: &CallShape) -> Option<InlineSite> {
+        // A method call's callee is read into a scratch register, not the callee register an inlined site proves.
+        if shape.method.is_some() {
+            return None;
+        }
         let at = self.at.get(shape.call_pc as usize)?.as_ref()?.start;
         let (callee, body) = (&self.owned[at], self.bodies[at].as_ref()?);
         let numbers = |index: usize| body.numbers.get(&index).copied().or_else(|| region.number_constant(index));

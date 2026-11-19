@@ -46,7 +46,7 @@ fn exact_pcs(function: &Function, constants: &[Constant]) -> Option<Box<[u32]>> 
     let text = Text { entry: 0, instructions: &instructions, leaders: &blocks, constants, written: &writes,
         own_shape: &|_| None, native_calls: true, raises: &[] };
     let seeds = Seeds { contracts: &[], observed: Observed::NONE, entering: &[], model: None, signless: &[] };
-    let mut exact = CompoundBitSet::with_capacity(instructions.len());
+    let mut exact: CompoundBitSet = CompoundBitSet::with_capacity(instructions.len());
     facts::analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
         if point.overflow_free(constants, instructions[pc]) {
             exact.insert(pc);
@@ -60,7 +60,7 @@ fn exact_pcs(function: &Function, constants: &[Constant]) -> Option<Box<[u32]>> 
 /// since the function is entered only at pc 0, so every state a region or resume stub enters with is one it covers.
 /// Inlined callees' rows keep their checked kinds.
 pub(super) fn promote(function: &Function, constants: &[Constant], origins: &[Origin], rows: &mut [Decoded]) {
-    let Some(exact) = function.exact_sums.get_or_init(|| exact_pcs(function, constants)).as_deref() else { return };
+    let Some(exact) = function.caches().exact_sums.get_or_init(|| exact_pcs(function, constants)).as_deref() else { return };
     for (row, origin) in rows.iter_mut().zip(origins) {
         let Origin::Caller(pc) = origin else { continue };
         if exact.binary_search(pc).is_ok() && let Some(kind) = exact_kind(row.kind) {

@@ -16,7 +16,7 @@ fn a_simple_loop_is_planned_by_the_region_specializer() {
             && (instruction.jump_target() as usize) <= pc)
             .then(|| (instruction.jump_target(), pc as u32))
     }).expect("the function has a loop");
-    let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
+    let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner, &|_| false)
         .expect("the loop is admitted");
     let observation = Observation { native_field_loads: &[], store_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], entry_types: &[], operand_kinds: &[], entry_bounds: true, frame_captures: &[], construct_plans: None };
     let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
@@ -265,7 +265,7 @@ fn a_capture_loop_keeps_its_capture_value() {
 }
 /// Runs `source` interpreted and compiled with lane OSR, and returns the compiled output,
 /// equal to the interpreter's, and the OSR diagnostics of the function named `function`.
-fn osr_run(source: &str, function: &str) -> (Vec<String>, crate::vm::dispatch_fast::OsrDiagnostics) {
+pub(super) fn osr_run(source: &str, function: &str) -> (Vec<String>, crate::vm::dispatch_fast::OsrDiagnostics) {
     let program = crate::Engine::specialize(source, "lane-osr-admission.js").unwrap();
     let expected = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     crate::vm::Vm::new(crate::test_host::TestHost::writing_to(expected.clone()))
@@ -430,27 +430,26 @@ fn a_call_in_a_loop_region_runs_as_a_call_row() {
     assert_eq!(osr.exits, 0, "the call is no exit: {osr:?}");
 }
 
-/// (Loop regions keep call rows only under `with_region_call_rows` while calls cost more than the
-/// interpreter's, `function::interprets`.) A callee that throws inside a region's loop ends the run at its call (the callee's activation
+/// A callee that throws inside a region's loop ends the run at its call (the callee's activation
 /// is the lane's now), and the caller's handler catches it as the interpreter's does.
 #[test]
 fn a_throwing_callee_in_a_loop_region_is_caught_as_in_the_interpreter() {
-    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || crate::vm::compiled::base_region::function::with_region_call_rows(|| osr_run(
+    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
         "function pick(n) { if (n === 150000) throw new Error('at ' + n); return n + 1; }
          function sum(n, f) { var s = 0; try { for (var i = 0; i < n; i++) { s = (s + f(i)) | 0; } } catch (e) { print(e.message + ' after ' + s); } return s; }
-         print(sum(200000, pick));", "sum")));
+         print(sum(200000, pick));", "sum"));
     assert_eq!(output.len(), 2);
 }
 
-/// (Under `with_region_call_rows`, as above.) A callee that changes what the loop's entry recorded (a field, an array's length, a capture)
+/// A callee that changes what the loop's entry recorded (a field, an array's length, a capture)
 /// is seen by the rows after the call, which read it live.
 #[test]
 fn a_callee_that_changes_the_loops_snapshot_is_seen_after_the_call() {
-    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || crate::vm::compiled::base_region::function::with_region_call_rows(|| osr_run(
+    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
         "var box = { n: 1 }, xs = [1, 2, 3], shared = 0;
          function grow(i) { box.n = box.n + 1; xs.push(i); shared = shared + 1; return 0; }
          function run(n) { var t = 0; for (var i = 0; i < n; i++) { grow(i); t = (t + box.n + xs.length + shared) | 0; } return t; }
-         print(run(100000));", "run")));
+         print(run(100000));", "run"));
     assert_eq!(output.len(), 1);
 }
 

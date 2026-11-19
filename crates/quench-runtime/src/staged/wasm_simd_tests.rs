@@ -4,7 +4,8 @@
 
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_memory::effective_address;
-use super::wasm_simd::{Lanes, NATIVE, Native, NativeOp, Simd, WasmSimd, native, simd};
+use super::wasm_simd::{Lanes, Native, NativeOp, Simd, WasmSimd};
+use super::wasm_simd_rules::{NATIVE, native, simd};
 use super::wasm_simd_concrete::{ConcreteSimd, execute};
 use super::wasm_step::Step;
 use super::wasm_tests::Probe;
@@ -72,6 +73,11 @@ struct Route(Vec<String>);
 
 impl WasmSimd for Route {
     type Value = ();
+    type Scalar = ();
+
+    fn constant_vector(&mut self, _: u128) {
+        self.0.push("constant".into());
+    }
 
     fn vector_native(&mut self, native: Native, _: (), _: Option<()>) {
         self.0.push(format!("native {native:?}"));
@@ -79,6 +85,10 @@ impl WasmSimd for Route {
 
     fn vector_kernel(&mut self, selector: u32, _: (), _: Option<()>) {
         self.0.push(format!("kernel {selector}"));
+    }
+
+    fn scalar_kernel(&mut self, selector: u32, _: (), _: Option<()>) {
+        self.0.push(format!("scalar {selector}"));
     }
 
     fn vector_shuffle(&mut self, _: [u8; V128_BYTES], _: (), _: ()) {

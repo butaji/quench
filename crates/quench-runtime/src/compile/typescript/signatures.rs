@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(declared.declared_parameter(f, 0), Some(bit(V::Number)));
         let compiled = |start: u32| (0..program.function_count()).filter_map(|index| program.function_get(index))
             .find(|function| function.source_span.map(|span| span.start) == Some(start))
-            .map(|function| function.declared_parameters.to_vec())
+            .map(|function| function.declared_parameters().to_vec())
             .expect("the function is compiled");
         assert_eq!(compiled(f), vec![bit(V::Number)]);
         assert_eq!(compiled(g), vec![bit(V::Object) | bit(V::Function)]);

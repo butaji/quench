@@ -104,6 +104,12 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn object_like(&mut self, _stage: &mut S, _word: S::Word) -> Option<()> { None }
 
+    /// `RequireObjectCoercible`'s miss on a `null` or `undefined` word: the frame raises the TypeError the
+    /// VM's `require_object_coercible` raises, where it has a host. The default raises nothing, and the
+    /// row's miss is the caller's.
+    #[inline(always)]
+    fn object_coercion_failed(&mut self, _stage: &mut S, _word: S::Word) {}
+
     /// The heap value `allocation` makes, defined into `destination`; `None` where the frame
     /// has no allocator for it or the value is the general path's (a due collection).
     #[inline(always)]
@@ -281,11 +287,17 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn scoped_local_store(&mut self, _stage: &mut S, _slot: u16, _value: S::Word) -> Option<()> { None }
 
+    /// The running activation's bound `this`, as a word and the fact the frame keeps of it; `None`
+    /// where the frame holds none (an unbound `this`, or a frame that does not hold it), which leaves
+    /// the row to its miss edge.
+    #[inline(always)]
+    fn this_value(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
+
     /// The function the running activation runs (its self binding's value), as a word and the fact
     /// the frame keeps of it; `None` where the frame does not hold it, leaving the read to the
     /// interpreter.
     #[inline(always)]
-    fn callee(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
+    fn callee_value(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
 
     /// A rest view's read (`Protocol::RestView`): `rest.length` (`get` false) or `rest[key]`
     /// of the values its activation kept past its first `fixed` parameters; `None` where the
@@ -338,26 +350,6 @@ pub(crate) trait Frame<S: Stage> {
     /// prototype); `None` where the frame decides neither, leaving the test to the stage's walk and the VM's callout.
     #[inline(always)]
     fn instance_of(&mut self, _stage: &mut S, _value: S::Word, _constructor: S::Word) -> Option<S::Cond> { None }
-
-    /// Continues where register `source` holds a direct array; `None` where the frame does not
-    /// decide it, leaving the row to its miss edge.
-    #[inline(always)]
-    fn direct_array(&mut self, _stage: &mut S, _source: Register) -> Option<()> { None }
-
-    /// The length of the direct array in register `source` as an int32 and its fact; `None` leaves
-    /// the read to the VM.
-    #[inline(always)]
-    fn array_length(&mut self, _stage: &mut S, _source: Register) -> Option<(S::Word, Self::Fact)> { None }
-
-    /// The length of the typed array in register `source` as an int32 and its fact; `None` leaves
-    /// the read to the VM.
-    #[inline(always)]
-    fn typed_length(&mut self, _stage: &mut S, _source: Register) -> Option<(S::Word, Self::Fact)> { None }
-
-    /// Appends `value` to the array in register `array` where its backing is writable and has room;
-    /// `None` leaves the append to the VM, which grows it.
-    #[inline(always)]
-    fn array_append(&mut self, _stage: &mut S, _array: Register, _value: S::Word) -> Option<()> { None }
 
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
@@ -440,6 +432,10 @@ pub(crate) fn bound_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, mi
 /// marker); `miss` where it does not.
 #[inline(always)]
 pub(crate) fn load_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, miss: S::Miss) -> Step<S::Word, F::Control> {
+    if let Some((this, fact)) = frame.this_value(stage) {
+        frame.write(stage, destination, this, fact);
+        return Step::Value(this);
+    }
     match bound_this(stage, frame, miss) {
         Some(this) => {
             frame.define_this(stage, destination, this);

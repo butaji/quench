@@ -20,14 +20,15 @@ use crate::staged::wasm_memory::{load, store};
 use crate::wasm::WasmTrap;
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole, hole64, slot};
 
-pub(crate) use crate::wasm_codes::*;
+pub(crate) use crate::wasm_kinds::*;
+pub(crate) use crate::wasm_layout::*;
 
 #[path = "wasm_frame.rs"]
 pub(crate) mod wasm_frame;
 use wasm_frame::{access, float_of, read, right, trap, width_of, write};
 #[path = "wasm_stage.rs"]
 mod wasm_stage;
-pub(crate) use wasm_stage::StencilMemory;
+pub(crate) use wasm_stage::{StencilMemory, StencilSimd};
 #[path = "wasm_call_stage.rs"]
 mod wasm_call_stage;
 use crate::staged::wasm_call::call_entry;
@@ -73,7 +74,8 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
                 Out::Next(s)
             }
             LOAD => memory_load::<OP>(s),
-            CALL => call_wasm(s),
+            CALL => call_wasm::<true>(s),
+            CALL_KEEP => call_wasm::<false>(s),
             CALL_VM => call_vm(s),
             CALL_INDIRECT => indirect::call_indirect(s),
             GLOBAL_GET => global_get::<OP>(s),
@@ -207,16 +209,17 @@ unsafe fn memory_store<const OP: u32>(s: S) -> Out {
 
 /// Calls the entry in the cell at hole B's address (`call_entry`): the arguments are the registers
 /// from hole A on, the result goes to hole 0's register, and a trap's status leaves. The call
-/// clobbers the pins; afterwards the memory's length is the context's (`reload_memory`, hole
-/// `HOLE_FOURTH`).
+/// clobbers the pins. `RELOAD` (the callee may grow the memory) reloads the base and length after
+/// it: the length is the context's, read at hole `HOLE_FOURTH`; else they are kept (`CALL_KEEP`).
 #[inline(always)]
-unsafe fn call_wasm(mut s: S) -> Out {
+unsafe fn call_wasm<const RELOAD: bool>(mut s: S) -> Out {
     unsafe {
         let entry = *(hole64::<HOLE_B>() as *const usize);
         let (window, destination) = (slot::<HOLE_A>(&s), slot::<0>(&s));
+        let length_at = if RELOAD { hole64::<HOLE_FOURTH>() as usize } else { 0 };
         let result = {
             let mut stage = CallStage { s: &mut s };
-            call_entry(&mut stage, entry, window, destination, hole64::<HOLE_FOURTH>() as usize)
+            call_entry::<_, RELOAD>(&mut stage, entry, window, destination, length_at)
         };
         leave_with(s, result)
     }

@@ -74,6 +74,21 @@ pub(crate) enum PrototypeProof {
     Linked { expected_link: u32 },
 }
 
+/// Which of the VM's entry lookups a read takes where its plan has no op for the receiver: the
+/// VM's polymorphic entries, its hashed entries, a prototype holder's entry, or an inherited
+/// entry's chain walk. Each is one frame host call (`PropertyFrame::field_entry`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum EntryKind {
+    /// The site's inline megamorphic entries, own or of the immediate prototype.
+    Polymorphic,
+    /// The site's hashed entries past the inline ones (`Vm::polymorphic_field_hit`).
+    Hashed,
+    /// The site's primary holder entry, for a direct object or any other receiver.
+    Holder,
+    /// The site's inherited entry, walked past the immediate prototype.
+    Inherited,
+}
+
 /// How a `GetField` site reads, as the proof its tier holds of the site.
 #[derive(Clone, Copy)]
 pub(crate) enum FieldPlan<'a> {
@@ -665,8 +680,22 @@ pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let word = match operation {
-        Operation::GetField { base, lookup } => get_field(stage, frame, base, lookup, miss),
-        Operation::SetField { value, base, atom, site, .. } => super::property_write::set_field(stage, frame, (value, base), (atom, site), miss),
+        // A read its plan leaves is the VM's named read, where the frame takes it (`CallOut::LoadField`).
+        Operation::GetField { base, lookup, destination } => match get_field(stage, frame, base, lookup, miss) {
+            Some(word) => Some(word),
+            None => return super::callout::loading(stage, frame, super::CallOut::LoadField { lookup }, destination),
+        },
+        // A store its plan leaves is the VM's named store, where the frame takes it (`CallOut::StoreField`). A store
+        // to `this` has no base register: the VM takes `this` where the frame holds it (`Frame::this_value`).
+        Operation::SetField { value, base, atom, site, strict } => match super::property_write::set_field(stage, frame, (value, base), (atom, site), miss) {
+            Some(word) => Some(word),
+            None => match base {
+                Some(object) => super::callout::storing(stage, frame,
+                    super::CallOut::StoreField { object: Some(object), value, atom, site, strict }),
+                None => frame.this_value(stage).and_then(|_| super::callout::storing(stage, frame,
+                    super::CallOut::StoreField { object: None, value, atom, site, strict })),
+            },
+        },
         Operation::StoreField { base, value, fact, atom, site } =>
             super::property_write::store_word(stage, frame, base, (value, fact), (atom, site), miss),
         Operation::FieldGetHost { object, atom, site } => frame.field_probe(stage, Owner::Temporary, object, atom, site, miss),

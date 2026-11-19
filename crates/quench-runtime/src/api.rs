@@ -8,7 +8,7 @@ pub use embedding::RootedError;
 mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
-    CollectionContext, BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin, PreparedScript, NativeArithmetic,
+    CollectionContext, BufferStorage, Detach, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin, PreparedScript, NativeArithmetic,
     CompiledScript, NativeContext, RootScopeMark, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     ModuleAcceptArguments, ModuleAcceptCallback,
     DeserializerDelegate, SerializerDelegate,
@@ -270,6 +270,7 @@ impl<H: Host> Runtime<H> {
         self.vm.initialize_for_snapshot(program).map_err(|error| error.to_string())?;
         // A restored heap starts as a full collection leaves it, every cell old: garbage the
         // snapshot kept would stay until the next full collection.
+        self.vm.forget_spare_await_state();
         self.vm.collect_now(program);
         self.vm.write_snapshot(write_host).map_err(|error| error.0)
     }

@@ -852,6 +852,88 @@ print(out.join("|"));
 }
 
 #[test]
+fn closure_making_functions_with_parameters_in_registers_run_as_environment_activations() {
+    // A function that makes closures and loops keeps the parameters none of its closures
+    // names in registers (`Compiler::promoted_local_plan`'s `parameters_only`), parameter `k`
+    // in register `k` (`Function::parameters_promoted_in_place`). It still runs as an
+    // environment activation (`CallPlan::environment_activation`, one-frame-one-call.md F6),
+    // its call filling those registers: missing arguments are `undefined`, a parameter
+    // written in the loop keeps its register, a throw leaves through the caller, and legacy
+    // reflection sees the values passed.
+    let source = r#"
+"use strict";
+const out = [];
+function scan(list, key) {
+  let total = 0;
+  const seen = [];
+  for (let i = 0; i < list.length; i++) total += list[i][key];
+  const report = () => seen.length + ":" + total;
+  seen.push(total);
+  return report();
+}
+function shift(n, step) { const marks = []; while (n > 0) { n -= step; marks.push(n); } const f = () => marks.join("/"); return f(); }
+function guard(x, limit) { const msg = () => "over"; for (let i = 0; i < 3; i++) if (x > limit) throw new Error(msg()); return x; }
+for (let round = 0; round < 3; round++) {
+  out.push(scan([{ v: 1 }, { v: 2 }, { v: 3 }], "v"), shift(5, 2), shift(4), guard(1, 5));
+  try { guard(5, 1); } catch (e) { out.push(e.message); }
+}
+print(out.join("|"));
+"#;
+    let program = Engine::specialize(source, "parameters-in-registers.js").unwrap();
+    program.compile_released();
+    let scan = &program.functions[1];
+    assert!(scan.instructions().any(|instruction| instruction.op() == crate::bytecode::Op::MakeClosure));
+    assert_eq!(scan.parameters_promoted_in_place(), 2);
+    assert!(scan.call_plan(&program).environment_activation);
+    program.validate().unwrap();
+    assert_eq!(output(source), ["1:6|3/1/-1|NaN|1|over|1:6|3/1/-1|NaN|1|over|1:6|3/1/-1|NaN|1|over"]);
+    let sloppy = "function sl(a, b) { let s = 0; for (let i = 0; i < 2; i++) s += a; const g = () => s; return g() + sl.arguments.length; } \
+        function drive(n) { let s = 0; for (let i = 0; i < 50; i++) s += n === 2 ? sl(i, 1) : sl(i, 1, 2); return s; } print(drive(2) + \",\" + drive(3));";
+    assert_eq!(output(sloppy), ["2550,2600"]);
+}
+
+#[test]
+fn arguments_passed_last_inside_try_statements_keep_their_values() {
+    // A body that passes its `arguments` object on inside a `try` (mobx's action wrappers:
+    // `try { return run(this, arguments) } finally { … }`) keeps its passed values and makes the
+    // object at the pass (`KeptArguments::Passes`), since `arguments_passed_last` traces handler
+    // edges (one-frame-one-call.md F6 (d)). A read of the binding a handler may run after the
+    // pass (`late`) still declines; one before any pass (`early`, whose pass is in its `catch`)
+    // keeps. The expected output is Node's.
+    let source = r#"
+var depth = 0, out = [];
+function wrap() { depth++; try { return run(this, arguments); } finally { depth--; } }
+function late() { try { return run(this, arguments); } catch (e) { return "late:" + arguments.length; } }
+function early() { try { check(arguments.length); } catch (e) { return run(null, arguments); } return "ok"; }
+function run(self, args) { if (args[0] === "boom") throw new Error("boom"); var s = 0; for (var i = 0; i < args.length; i++) s += args[i]; return s; }
+function check(n) { if (n > 2) throw new Error("many"); }
+var total = 0;
+for (var i = 0; i < 300; i++) { total += wrap(i, 1); total += early(1, 2, i); }
+out.push(total, depth, early(1), late(1, 2), late("boom", 2));
+try { wrap("boom"); } catch (e) { out.push(e.message, depth); }
+print(out.join("|"));
+"#;
+    let program = Engine::specialize(source, "arguments-passed-in-try.js").unwrap();
+    program.compile_released();
+    let named = |name: &str| {
+        program
+            .functions
+            .iter()
+            .find(|function| function.name.is_some_and(|atom| program.atoms[atom as usize].to_string() == name))
+            .unwrap_or_else(|| panic!("function {name}"))
+    };
+    let (wrap, late, early) = (named("wrap"), named("late"), named("early"));
+    assert!(!wrap.handlers.is_empty() && !early.handlers.is_empty());
+    assert_eq!(wrap.kept_arguments(), Some(crate::bytecode::KeptArguments::Passes));
+    assert!(wrap.call_plan(&program).keeps_arguments);
+    assert_eq!(late.kept_arguments(), None);
+    assert!(!late.call_plan(&program).keeps_arguments);
+    assert_eq!(early.kept_arguments(), Some(crate::bytecode::KeptArguments::Passes));
+    program.validate().unwrap();
+    assert_eq!(output(source), ["90900|0|ok|3|late:2|boom|0"]);
+}
+
+#[test]
 fn closure_making_arrows_run_as_environment_activations_with_their_lexical_this() {
     // An arrow that makes closures runs as an environment activation
     // (`CallPlan::environment_activation`) whose `this` is its environment's; its

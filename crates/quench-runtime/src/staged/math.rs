@@ -105,6 +105,8 @@ pub(crate) enum FloatUnary {
     Fround,
     /// The nearest integer, halves toward `+Infinity`, `-0` for a negative that rounds to zero.
     Round,
+    /// `Math.sign`: the sign of a Number, with NaN and the zeros returned as they are.
+    Sign,
 }
 
 /// The value of `operation` on `value`.
@@ -118,6 +120,19 @@ pub(crate) fn float_unary(operation: FloatUnary, value: f64) -> f64 {
         FloatUnary::Sqrt => machine::sqrt(value),
         FloatUnary::Fround => f64::from(value as f32),
         FloatUnary::Round => round_half_up(value),
+        FloatUnary::Sign => sign(value),
+    }
+}
+
+/// `Math.sign`: `-1` or `1` by the sign bit, NaN and both zeros as they are.
+#[inline(always)]
+pub(crate) fn sign(value: f64) -> f64 {
+    if value.is_nan() || value == machine::constant(0.0) {
+        value
+    } else if value.is_sign_negative() {
+        machine::constant(-1.0)
+    } else {
+        machine::constant(1.0)
     }
 }
 
@@ -163,11 +178,69 @@ pub(crate) fn int_multiply(left: i32, right: i32) -> i32 {
     left.wrapping_mul(right)
 }
 
+/// `Math.max` (`maximum`) or `Math.min` of two int32 values: an int32 is never -0.
+#[inline(always)]
+pub(crate) fn int_extreme(maximum: bool, left: i32, right: i32) -> i32 {
+    if maximum { left.max(right) } else { left.min(right) }
+}
+
+/// `Math.abs` of an int32, whose magnitude is an int32 except at -2^31 (`None`, for the double path).
+#[inline(always)]
+pub(crate) fn int_abs(value: i32) -> Option<i32> {
+    (value != i32::MIN).then(|| value.abs())
+}
+
+/// `Math.clz32`: the leading zero bits of the ToUint32 of `value`, as a Number.
+#[inline(always)]
+#[cfg(not(stencil_build))]
+pub(crate) fn clz32(value: f64) -> f64 {
+    f64::from(to_uint32(value).leading_zeros())
+}
+
+/// The modulus of ToUint32, 2^32.
+#[cfg(not(stencil_build))]
+const UINT32_MODULUS: f64 = 4_294_967_296.0;
+
+/// ToUint32 of `value`: its integer part modulo 2^32, zero for NaN and the infinities. Here
+/// rather than in `value`, since this module also builds into the baseline JIT's stencils.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+fn to_uint32(value: f64) -> u32 {
+    if !value.is_finite() {
+        return 0;
+    }
+    value.trunc().rem_euclid(UINT32_MODULUS) as u32
+}
+
+/// `Math.hypot` of Numbers: infinite if any is (even beside a NaN), NaN if any is, else the
+/// root of the sum of squares, scaled by the largest magnitude so the squares do not overflow.
+#[cfg(not(stencil_build))]
+pub(crate) fn hypot(values: &[f64]) -> f64 {
+    if values.iter().any(|value| value.is_infinite()) {
+        return f64::INFINITY;
+    }
+    if values.iter().any(|value| value.is_nan()) {
+        return f64::NAN;
+    }
+    let largest = values.iter().copied().map(f64::abs).fold(0.0, f64::max);
+    if largest == 0.0 {
+        return 0.0;
+    }
+    let squares = values.iter().map(|value| value / largest).map(|ratio| ratio * ratio).sum::<f64>();
+    largest * squares.sqrt()
+}
+
 /// `Math.clz32`: the leading zero bits of the ToUint32 of a Number, given as that ToUint32 (`value::number_to_u32`
 /// in the interpreter, the stencil's exact truncation in a row).
 #[inline(always)]
 pub(crate) fn leading_zeros(uint32: u32) -> u32 {
     uint32.leading_zeros()
+}
+
+/// `Math.clz32` of the int32 word `value`, on `stage`: its unsigned low 32 bits' leading zeros.
+#[inline(always)]
+pub(crate) fn count_leading_zeros<S: NumericStage>(stage: &mut S, value: S::Word) -> S::Word {
+    stage.int_leading_zeros(value)
 }
 
 /// `operation` of the binary64 word `value`, on `stage`.

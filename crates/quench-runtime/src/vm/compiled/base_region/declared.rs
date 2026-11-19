@@ -68,7 +68,7 @@ impl DeclaredFact {
 
 /// Each parameter of `function` with a checkable declared fact, by the register it enters in.
 fn declared(function: &Function) -> impl Iterator<Item = (Register, DeclaredFact)> + '_ {
-    function.declared_parameters.iter().enumerate()
+    function.declared_parameters().iter().enumerate()
         .filter_map(|(index, declared)| Some((parameter_register(function, index)?, DeclaredFact::of(*declared)?)))
 }
 
@@ -164,7 +164,8 @@ pub(super) fn class_member_read(known: Known, object: Option<Register>, atom: cr
     let register = object?;
     let proto = known.classes.iter().find(|proto| proto.register == register)?;
     let (_, value) = proto.members.iter().find(|(member, _)| *member == atom)?;
-    let folded = Folded { shape: proto.shape, link: proto.link, holder: proto.holder };
+    // The link names the class prototype itself, the holder: a chain of one.
+    let folded = Folded { shape: proto.shape, link: proto.link, holder: proto.holder, depth: 1 };
     let row = Decoded::heap(Heap::Held, Some(dst), Some(Source::Register(register)), None);
     Some(Decoded { hole: *value, folded: Some(folded), class_read: true, ..row })
 }

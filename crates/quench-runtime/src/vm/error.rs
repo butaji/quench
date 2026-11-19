@@ -2,6 +2,7 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 mod stack_capture;
+pub(in crate::vm) use stack_capture::FrameSite;
 
 const FUNCTION_PROTOTYPE_LENGTH: f64 = 0.0;
 const ERROR_OPTIONS_ARGUMENT: usize = 1;
@@ -325,7 +326,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
     ) -> Result<Value, JsError> {
         let records = match self.object_data(receiver).and_then(Object::stack_data) {
-            Some(StackData::Formatted(value)) => return Ok(*value),
+            Some(StackData::Formatted(value)) => return Ok(value.clone()),
             Some(StackData::Captured { records, .. }) => records.clone(),
             _ => return Ok(Value::UNDEFINED),
         };
@@ -566,28 +567,28 @@ impl<H: Host> Vm<H> {
         frame: &Frame,
         hide_identity: bool,
     ) -> Option<(CallSiteRecord, bool)> {
+        self.source_site_record(self.frame_site(frame), hide_identity)
+    }
+
+    /// `source_call_site_record` of a frame as a stack capture reads it (`FrameSite`): a VM
+    /// frame's, or a lane activation's read from the frame walk (`Vm::lane_stack_sites`).
+    pub(super) fn source_site_record(
+        &self,
+        frame: FrameSite,
+        hide_identity: bool,
+    ) -> Option<(CallSiteRecord, bool)> {
         if frame.context == CallContext::Internal && frame.function != ROOT_FUNCTION_ID {
             return None;
         }
         let residual = self.programs.get(frame.program)?;
         let function = residual.function_get(frame.function as usize)?;
-        let pc = u32::try_from(frame.source_instruction_pc()).unwrap_or(u32::MAX);
-        let position = if let Some((site, part)) = frame.source_field {
-            if let Some((line, column)) = residual
-                .field_sites
-                .get(site)
-                .and_then(|site| site.source(part))
-            {
-                residual.adjust_source_position(crate::bytecode::SourcePosition {
-                    pc,
-                    line,
-                    column,
-                })?
-            } else {
-                residual.source_position(frame.function, pc)?
-            }
-        } else {
-            residual.source_position(frame.function, pc)?
+        let pc = u32::try_from(frame.pc).unwrap_or(u32::MAX);
+        let field_offset = frame
+            .source_field
+            .and_then(|(site, part)| residual.field_sites.get(site)?.source(part));
+        let position = match field_offset {
+            Some(offset) => residual.offset_position(offset)?,
+            None => residual.source_position(frame.function, pc)?,
         };
         // A call-only closure (`Value::known_closure`) has no function object to name it.
         let name = frame.context.callable().filter(|callee| callee.as_known_closure().is_none()).map_or_else(

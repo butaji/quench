@@ -1,6 +1,6 @@
 //! The builtin rows: a call of a native the b-jit knows by identity, run on its staged row (the
 //! rows the interpreter and the u-jit run: `staged::builtins`, `staged::strings`, `staged::math`).
-//! One row per builtin, `call_builtin_<symbol>` (`quench_bjit::call::BuiltinRow`).
+//! One row per builtin, `builtin_<symbol>` (`quench_bjit::call::BuiltinRow`).
 //!
 //! Contract. A row is entered and left like every row (`rows.rs`): frame in r12, context in r13.
 //! Value hole 0 is the call's `CallRecord` address. The record's `callee` is the identity word the
@@ -14,6 +14,7 @@
 //! helper row there, which makes the call. No row leaves through an exit or makes a call.
 
 use crate::heap_rows::{payload, word_at};
+use crate::staged::Stage;
 use crate::layout::call_record::{CallRecord, REGISTER_BYTES};
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
 use crate::layout::{
@@ -143,32 +144,6 @@ unsafe fn is_integer(s: &S, record: usize) -> Option<u64> {
     }
 }
 
-/// A Math function of one Number (`math::float_unary`), its result a Number.
-#[inline(always)]
-unsafe fn unary(s: &S, record: usize, operation: math::FloatUnary) -> Option<u64> {
-    // SAFETY: as `is_callee`.
-    unsafe {
-        if !is_callee(s, record) {
-            return None;
-        }
-        let value = number(s, record, 0)?;
-        Some(Value::number(math::float_unary(operation, value)).to_bits())
-    }
-}
-
-/// `Math.max` (true) or `Math.min` of two Numbers (`math::float_extreme`).
-#[inline(always)]
-unsafe fn extreme(s: &S, record: usize, maximum: bool) -> Option<u64> {
-    // SAFETY: as `is_callee`.
-    unsafe {
-        if !is_callee(s, record) {
-            return None;
-        }
-        let (left, right) = (number(s, record, 0)?, number(s, record, 1)?);
-        Some(Value::number(math::float_extreme(maximum, left, right)).to_bits())
-    }
-}
-
 /// `Math.imul` of two int32 operands (`math::int_multiply`), its result an int32.
 #[inline(always)]
 unsafe fn imul(s: &S, record: usize) -> Option<u64> {
@@ -261,18 +236,9 @@ macro_rules! builtin_row {
     };
 }
 
-builtin_row!(call_builtin_char_code_at, |s, record| char_code_at(s, record));
-builtin_row!(call_builtin_char_at, |s, record| char_at(s, record));
-builtin_row!(call_builtin_is_integer, |s, record| is_integer(s, record));
-builtin_row!(call_builtin_floor, |s, record| unary(s, record, math::FloatUnary::Floor));
-builtin_row!(call_builtin_ceil, |s, record| unary(s, record, math::FloatUnary::Ceil));
-builtin_row!(call_builtin_trunc, |s, record| unary(s, record, math::FloatUnary::Trunc));
-builtin_row!(call_builtin_abs, |s, record| unary(s, record, math::FloatUnary::Abs));
-builtin_row!(call_builtin_sqrt, |s, record| unary(s, record, math::FloatUnary::Sqrt));
-builtin_row!(call_builtin_fround, |s, record| unary(s, record, math::FloatUnary::Fround));
-builtin_row!(call_builtin_round, |s, record| unary(s, record, math::FloatUnary::Round));
-builtin_row!(call_builtin_max, |s, record| extreme(s, record, true));
-builtin_row!(call_builtin_min, |s, record| extreme(s, record, false));
-builtin_row!(call_builtin_imul, |s, record| imul(s, record));
-builtin_row!(call_builtin_push, |s, record| array_push(s, record));
-builtin_row!(call_builtin_pop, |s, record| array_pop(s, record));
+builtin_row!(builtin_char_code_at, |s, record| char_code_at(s, record));
+builtin_row!(builtin_char_at, |s, record| char_at(s, record));
+builtin_row!(builtin_is_integer, |s, record| is_integer(s, record));
+builtin_row!(builtin_imul, |s, record| imul(s, record));
+builtin_row!(builtin_push, |s, record| array_push(s, record));
+builtin_row!(builtin_pop, |s, record| array_pop(s, record));

@@ -3,8 +3,9 @@
 
 use crate::bytes::{ObjectReloc, ObjectRow, c_string, is_row_name, u16_at, u32_at, u64_at};
 use crate::class::{ABS32, ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
+use object::LittleEndian;
 use object::elf::{
-    ELFCLASS64, ELFDATA2LSB, EM_AARCH64, EM_X86_64, R_AARCH64_ABS64, R_AARCH64_CALL26, R_AARCH64_CONDBR19, R_AARCH64_JUMP26, R_AARCH64_MOVW_UABS_G0,
+    FileHeader64, Rela64, SectionHeader64, Sym64, ELFCLASS64, ELFDATA2LSB, EM_AARCH64, EM_X86_64, R_AARCH64_ABS64, R_AARCH64_CALL26, R_AARCH64_CONDBR19, R_AARCH64_JUMP26, R_AARCH64_MOVW_UABS_G0,
     R_AARCH64_MOVW_UABS_G0_NC, R_AARCH64_MOVW_UABS_G1, R_AARCH64_MOVW_UABS_G1_NC, R_AARCH64_MOVW_UABS_G2, R_AARCH64_MOVW_UABS_G2_NC, R_AARCH64_MOVW_UABS_G3, R_AARCH64_TSTBR14,
     R_X86_64_32, R_X86_64_32S, R_X86_64_64, R_X86_64_PC32, R_X86_64_PLT32, SHT_RELA, SHT_SYMTAB, STB_GLOBAL, STT_FUNC,
 };
@@ -12,58 +13,11 @@ use std::mem::{offset_of, size_of};
 
 /// The ELF64 structures this reader walks, in the spec's field order (`Elf64_Ehdr`, `Elf64_Shdr`,
 /// `Elf64_Sym`, `Elf64_Rela`); their offsets are taken with `offset_of!`, their sizes with `size_of`.
-#[allow(dead_code)]
-#[repr(C)]
-struct Elf64Ehdr {
-    e_ident: [u8; 16],
-    e_type: u16,
-    e_machine: u16,
-    e_version: u32,
-    e_entry: u64,
-    e_phoff: u64,
-    e_shoff: u64,
-    e_flags: u32,
-    e_ehsize: u16,
-    e_phentsize: u16,
-    e_phnum: u16,
-    e_shentsize: u16,
-    e_shnum: u16,
-    e_shstrndx: u16,
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-struct Elf64Shdr {
-    sh_name: u32,
-    sh_type: u32,
-    sh_flags: u64,
-    sh_addr: u64,
-    sh_offset: u64,
-    sh_size: u64,
-    sh_link: u32,
-    sh_info: u32,
-    sh_addralign: u64,
-    sh_entsize: u64,
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-struct Elf64Sym {
-    st_name: u32,
-    st_info: u8,
-    st_other: u8,
-    st_shndx: u16,
-    st_value: u64,
-    st_size: u64,
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-struct Elf64Rela {
-    r_offset: u64,
-    r_info: u64,
-    r_addend: i64,
-}
+/// The layouts are `object`'s, which the build already depends on for the format constants.
+type Elf64Ehdr = FileHeader64<LittleEndian>;
+type Elf64Shdr = SectionHeader64<LittleEndian>;
+type Elf64Sym = Sym64<LittleEndian>;
+type Elf64Rela = Rela64<LittleEndian>;
 
 /// (relocation type, class) per machine.
 const X86_64_CLASSES: [(u32, u8); 5] = [(R_X86_64_64, ABS64), (R_X86_64_PC32, REL32), (R_X86_64_PLT32, REL32), (R_X86_64_32, ABS32), (R_X86_64_32S, ABS32)];
@@ -85,7 +39,7 @@ const AARCH64_CLASSES: [(u32, u8); 12] = [
 ];
 
 const ELF_MAGIC: &[u8] = b"\x7fELF";
-/// `EI_CLASS` and `EI_DATA`, the class and data-encoding bytes of `e_ident` (the `object` crate names neither).
+/// The class and data bytes of `e_ident` (ELF spec EI_CLASS, EI_DATA).
 const CLASS_AT: usize = 4;
 const DATA_AT: usize = 5;
 const MACHINE_X86_64: usize = EM_X86_64 as usize;

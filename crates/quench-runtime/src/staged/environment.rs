@@ -74,7 +74,6 @@ pub(crate) unsafe fn concrete_environment_slot_open(storage: *mut crate::heap::E
     environment_slot_open(&mut stage, storage as u64, slot, ()).is_some()
 }
 
-#[cfg(test)]
 /// The interpreter's `environment_slot_define` over the storage at `storage`: whether it wrote.
 ///
 /// # Safety

@@ -475,16 +475,41 @@ impl<H: Host> Vm<H> {
             None => self.host.enter_unobserved_job(self.unobserved_jobs_entered),
         };
         let Some(context) = context else {
-            // The queue's consecutive unobserved jobs share the entry (`Vm::run_job_queue`).
+            // The queue's consecutive unobserved jobs share the entry (`Vm::run_job_queue`),
+            // and a queue that chains lets the job's await resumption run its next ones.
             self.unobserved_jobs_entered = true;
+            let chainable = std::mem::replace(&mut self.chainable_job, self.queue_chains);
             let outcome = body(self);
-            for root in self.host.end_unobserved_job() {
-                self.heap.release_root(root);
-            }
+            self.chainable_job = chainable;
+            self.end_unobserved_job();
             return outcome;
         };
+        self.run_observed_promise_job(context, body)
+    }
+
+    /// Ends an unobserved job in the context the queue's next unobserved jobs share
+    /// (`Host::end_unobserved_job`), releasing what the host returns.
+    pub(super) fn end_unobserved_job(&mut self) {
+        for root in self.host.end_unobserved_job() {
+            self.heap.release_root(root);
+        }
+    }
+
+    /// Runs `body` as a promise job the host observes in `context`: entered, observed before and
+    /// after the body, and released (`Vm::run_promise_job`). No await job it runs chains others.
+    pub(super) fn run_observed_promise_job(
+        &mut self,
+        context: HostExecutionContext,
+        body: impl FnOnce(&mut Self) -> Result<(), JsError>,
+    ) -> Result<(), JsError> {
+        // The host's hooks run in the queue's program, which an earlier await's job, or this
+        // job's own, may have left (`Vm::run_job_queue`).
+        self.restore_queue_program();
         let previous = self.host.enter_job_context(context);
+        let chainable = std::mem::replace(&mut self.chainable_job, false);
         let outcome = self.promise_job_boundary(Some(context), true).and_then(|()| body(self));
+        self.chainable_job = chainable;
+        self.restore_queue_program();
         let after = self.promise_job_boundary(Some(context), false);
         self.host.restore_job_context(previous);
         self.release_job_context(context);
@@ -497,32 +522,38 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         reaction: PromiseJob,
     ) -> Result<(), JsError> {
+        self.run_promise_job(reaction.realm, reaction.execution_context.get(), |vm| vm.promise_reaction_body(p, reaction))
+    }
+
+    /// The body of the reaction job `reaction`, which runs in its realm and job context
+    /// (`Vm::run_promise_job`): an await's resumes its activation, any other calls its handler,
+    /// and the reaction's derived promise settles with the outcome.
+    pub(super) fn promise_reaction_body(&mut self, p: &ResidualProgram, reaction: PromiseJob) -> Result<(), JsError> {
         let value = reaction.value;
-        self.run_promise_job(reaction.realm, reaction.execution_context.get(), |vm| {
-            let await_reaction = vm.heap.await_state(reaction.handler).is_some();
-            if !await_reaction && !vm.is_function(reaction.handler) {
-                let state = if reaction.rejected { PromiseState::Rejected } else { PromiseState::Fulfilled };
-                return vm.settle_reaction(p, reaction.next, state, value);
-            }
-            let called = if await_reaction {
-                vm.resume_await(p, reaction.handler, reaction.rejected, value)
-            } else {
-                // The job's call roots hold the handler and its argument (`Vm::run_pending_job`).
-                vm.call_value_from_frame(p, reaction.handler, Value::UNDEFINED, &[value])
-            };
-            let (state, result) = match called {
-                Ok(result) => (PromiseState::Fulfilled, result),
-                // Host execution termination is not a guest throw. Return
-                // through the outer realm/context cleanup, without
-                // rejecting the result capability with undefined.
-                Err(error) if error.is_execution_terminated() => return Err(error),
-                Err(error) => (
-                    PromiseState::Rejected,
-                    error.thrown_value().unwrap_or(Value::UNDEFINED),
-                ),
-            };
-            vm.settle_reaction(p, reaction.next, state, result)
-        })
+        // One look at the handler's await state both tells an await's reaction and gives
+        // what it resumes.
+        let awaited = self.heap.await_state(reaction.handler).map(|state| state.pending());
+        if awaited.is_none() && !self.is_function(reaction.handler) {
+            let state = if reaction.rejected { PromiseState::Rejected } else { PromiseState::Fulfilled };
+            return self.settle_reaction(p, reaction.next, state, value);
+        }
+        let called = match awaited {
+            Some(pending) => self.resume_queued_await(p, (reaction.handler, pending), reaction.rejected, value),
+            // The job's call roots hold the handler and its argument (`Vm::run_pending_job`).
+            None => self.call_value_from_frame(p, reaction.handler, Value::UNDEFINED, &[value]),
+        };
+        let (state, result) = match called {
+            Ok(result) => (PromiseState::Fulfilled, result),
+            // Host execution termination is not a guest throw. Return
+            // through the outer realm/context cleanup, without
+            // rejecting the result capability with undefined.
+            Err(error) if error.is_execution_terminated() => return Err(error),
+            Err(error) => (
+                PromiseState::Rejected,
+                error.thrown_value().unwrap_or(Value::UNDEFINED),
+            ),
+        };
+        self.settle_reaction(p, reaction.next, state, result)
     }
 
     pub(super) fn release_job_context(&mut self, context: HostExecutionContext) {

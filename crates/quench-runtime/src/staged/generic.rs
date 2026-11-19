@@ -4,7 +4,7 @@
 //! code), which the frame makes in place (`Frame::vm_step`) or declines, so every tier shares
 //! the one rule and the one boundary.
 
-use super::value::{is_direct_string, is_int};
+use super::value::{is_direct_string, is_double, is_heap, is_int};
 use super::*;
 #[cfg(not(stencil_build))]
 use crate::bytecode::OperandKind;
@@ -16,14 +16,15 @@ use crate::Value;
 #[cfg(not(stencil_build))]
 /// Whether `operand` names a register or a program constant: the operands a `Binary` or an
 /// `Equality` row reads (`NumericFrame::operand_word`).
-fn is_value_operand(operand: Operand) -> bool {
+pub(super) fn is_value_operand(operand: Operand) -> bool {
     matches!(operand.kind(), Some(OperandKind::Register | OperandKind::Constant))
 }
 
 #[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
-    /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where
-    /// an operand is no register or the instruction returns from the frame.
+    /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where a `Binary`
+    /// carries a result flag (`decode_completed` strips it first).
+    #[inline(always)]
     pub(crate) fn decode_generic(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::ToPropertyKey => Self::PropertyKey {
@@ -32,14 +33,32 @@ impl<W, P> Operation<W, P> {
             #[cfg(not(stencil_build))]
             Op::NumericAdd | Op::NumericMultiply => return Self::decode_numeric_arithmetic(instruction),
             Op::JumpBinaryFalse => Self::decode_compare(instruction),
+            Op::IntCaseIndex => return Self::decode_int_case(instruction),
             _ => return None,
         })
     }
 
+    /// `IntCaseIndex`: the case slot of register `c` among the `b` dense int labels from `imm`.
+    fn decode_int_case(instruction: WideInstruction) -> Option<Self> {
+        let count = instruction.element_count();
+        if count == 0 { return None; }
+        let minimum = instruction.imm() as i32;
+        let maximum = minimum.checked_add(i32::from(count) - 1)?;
+        Some(Self::Number(NumberOperation::IntCase {
+            destination: instruction.result_register(),
+            source: crate::bytecode::Operand::register(instruction.register_c()),
+            minimum,
+            maximum,
+            count,
+        }))
+    }
+
+    /// `Binary` over two registers: equality as its own row, any other operator the VM's.
     /// `NumericAdd` and `NumericMultiply`: the Number arithmetic of their own operator (`+` or `*`)
     /// over their two operands, which `Binary` decodes to the same operation (`decode_binary`). A record
     /// whose operator field names another operator is none.
     #[cfg(not(stencil_build))]
+    #[inline(always)]
     fn decode_numeric_arithmetic(instruction: WideInstruction) -> Option<Self> {
         let own = match instruction.op() {
             Op::NumericAdd => oxc_ast::ast::BinaryOperator::Addition,
@@ -51,8 +70,9 @@ impl<W, P> Operation<W, P> {
 
     /// `Binary`: an arithmetic, bitwise or relation operator as its Number operation
     /// (`numeric::binary_operation`), equality as its own row, and any other operator the VM's.
-    /// Both operands may be registers or program constants; any other operand leaves the record
-    /// to the general step.
+    /// Every operand kind decodes; whether a frame asks the VM for a record its words leave is
+    /// the frame's (`NumericFrame::general_operators`), not the decode's.
+    #[inline(always)]
     fn decode_binary(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         let destination = instruction.result_register();
@@ -61,15 +81,14 @@ impl<W, P> Operation<W, P> {
         if let Some(number) = super::numeric::binary_operation(operator, destination, left, right) {
             return Some(Self::Number(number));
         }
-        if !is_value_operand(left) || !is_value_operand(right) { return None; }
         #[cfg(not(stencil_build))]
         return Some(match equality_operator(operator) {
             Some((strict, negated)) => Self::Equality { destination, left, right, strict, negated },
             None => Self::Binary { destination, left, right, operator },
         });
-        // The stencil build has no equality classifier: a non-Number `Binary` is the caller's own path.
+        // The stencil build has no equality classifier: every other `Binary` is the VM's operator.
         #[cfg(stencil_build)]
-        return None;
+        return Some(Self::Binary { destination, left, right, operator });
     }
 }
 
@@ -82,8 +101,10 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::PropertyKey { destination, source } => property_key(stage, frame, destination, source),
         Operation::Equality { destination, left, right, strict, negated } =>
             equality(stage, frame, destination, [left, right], (strict, negated)),
-        Operation::Binary { destination, left, right, operator } =>
+        Operation::Binary { destination, left, right, operator } if frame.general_operators() =>
             super::callout::calling(stage, frame, CallOut::Binary { left, right, operator }, Some(destination)),
+        Operation::Unary { destination, source, operator } if frame.general_operators() =>
+            super::callout::calling(stage, frame, CallOut::Unary { operator, value: source }, Some(destination)),
         Operation::CompareJump { .. } => super::compare::step(stage, frame, operation),
         _ => Step::Unresolved,
     }
@@ -126,8 +147,10 @@ pub(super) fn nullish<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Cond 
 }
 
 /// The equality predicate where the two words decide it: `(decided, equal)`. The same word is
-/// equal unless it is NaN; two distinct int32 words are unequal; `null` and `undefined` are
-/// equal under `==` only.
+/// equal unless it is NaN. For `===`, two words that are not identical are unequal unless the
+/// words cannot tell: two heap values (strings and BigInts compare by content), two doubles (zero
+/// and negative zero), or an int32 and a double (the same Number). For `==`, two distinct int32
+/// words are unequal; `null` and `undefined` are equal under `==` only.
 #[inline(always)]
 pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2], strict: bool) -> (S::Cond, S::Cond) {
     let gap = stage.sub(left, right);
@@ -136,8 +159,29 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
     let same = stage.both(identical, ordered);
     let (left_int, right_int) = (is_int(stage, left), is_int(stage, right));
     let ints = stage.both(left_int, right_int);
+    if strict {
+        // Identical words and two int32s are settled by one compare each. Any other pair is tested
+        // by its tags only where it is not settled: the VM's `===` is false for two values that are
+        // neither both Numbers nor both heap values, so the pair is apart unless it is one of those.
+        let settled = stage.either(identical, ints);
+        let apart_word = stage.choose(settled, |stage| stage.constant(0), |stage| {
+            let (left_double, right_double) = (is_double(stage, left), is_double(stage, right));
+            let (left_heap, right_heap) = (is_heap(stage, left), is_heap(stage, right));
+            let heap_pair = stage.both(left_heap, right_heap);
+            let double_pair = stage.both(left_double, right_double);
+            let int_double = stage.both(left_int, right_double);
+            let double_int = stage.both(left_double, right_int);
+            let mixed = stage.either(int_double, double_int);
+            let open = stage.any(heap_pair, double_pair);
+            let open = stage.any(open, mixed);
+            let apart = stage.not(open);
+            let (apart_bit, none) = (stage.constant(1), stage.constant(0));
+            stage.select(apart, apart_bit, none)
+        });
+        let apart = stage.ne_imm(apart_word, 0u64);
+        return (stage.either(settled, apart), same);
+    }
     let by_words = stage.either(identical, ints);
-    if strict { return (by_words, same); }
     let (left_nullish, right_nullish) = (nullish(stage, left), nullish(stage, right));
     let nullish_pair = stage.both(left_nullish, right_nullish);
     (stage.either(by_words, nullish_pair), stage.either(same, nullish_pair))
@@ -149,7 +193,9 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
 fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     [left, right]: [Operand; 2], (strict, negated): (bool, bool)) -> Step<S::Word, F::Control> {
     let (Some(left_word), Some(right_word)) = (frame.operand_word(stage, left), frame.operand_word(stage, right)) else {
-        return Step::Unresolved;
+        // An operand the words do not hold (a constant, a field or a local): the VM's equality where the frame takes it.
+        if !frame.general_operators() { return Step::Unresolved; }
+        return super::callout::calling(stage, frame, CallOut::Equality { left, right, strict, negated }, Some(destination));
     };
     let (decided, equal) = decide(stage, [left_word, right_word], strict);
     let result = if negated { stage.not(equal) } else { equal };

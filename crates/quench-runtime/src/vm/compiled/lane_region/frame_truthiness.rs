@@ -35,14 +35,20 @@ pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: 
     }
 }
 
-/// ToBoolean of tagged `bits` whatever they hold: its word's answer, else its cell's by the
-/// VM (`truthy_in_lane`), so a string or a function a condition tests keeps the body running.
+/// ToBoolean of tagged `bits` whatever they hold: its word's answer, else a flat string's record
+/// length (`string_length::flat_truth`), else its cell's by the VM (`truthy_in_lane`), so a rope
+/// or a function a condition tests keeps the body running.
 fn cell_truthiness(builder: &mut FunctionBuilder<'_>, payload: ir::Value, helpers: LaneHelpers, bits: ir::Value) -> ir::Value {
+    let records = super::super::super::emit_js_payload_word(builder, payload, std::mem::offset_of!(super::super::super::JsStepDispatch, head.string_record_base));
     let mut stage = super::super::super::object_slots::emit(builder);
     let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut stage, bits);
     let word = stage.choose_cold(undecided, |stage| {
-        let address = helpers.address(stage.builder, LaneHelper::Truthy);
-        super::super::super::emit_lane_helper_call(stage.builder, payload, address, &[bits])
+        let flat = crate::staged::string_length::flat_truth(stage, records, bits);
+        let unknown = stage.eq_imm(flat, 2u64);
+        stage.choose_cold(unknown, |stage| {
+            let address = helpers.address(stage.builder, LaneHelper::Truthy);
+            super::super::super::emit_lane_helper_call(stage.builder, payload, address, &[bits])
+        }, |_| flat)
     }, |stage| {
         let (yes, no) = (stage.constant(1), stage.constant(0));
         stage.select(truthy, yes, no)

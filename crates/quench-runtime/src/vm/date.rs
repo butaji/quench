@@ -915,7 +915,7 @@ fn finite_i64(value: f64) -> Option<i64> {
     (value.is_finite() && value.abs() <= DATE_TIME_CLIP_LIMIT_MS).then_some(value as i64)
 }
 
-fn time_clip(value: f64) -> f64 {
+pub(super) fn time_clip(value: f64) -> f64 {
     if value.is_finite() && value.abs() <= DATE_TIME_CLIP_LIMIT_MS {
         let clipped = value.trunc();
         if clipped == 0.0 {

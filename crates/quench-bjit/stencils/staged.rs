@@ -1,7 +1,7 @@
 #[path = "../../quench-runtime/src/staged/stage.rs"] mod stage;
 pub(crate) use stage::{StagedRecordSpace, Stage, Table, word_bytes, word_offset, Passed};
 pub(crate) type Concrete = crate::stage::StencilStage;
-#[path = "../../quench-runtime/src/staged/region.rs"] #[allow(dead_code)] pub(crate) mod region;
+#[path = "../../quench-runtime/src/staged/region.rs"] pub(crate) mod region;
 #[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
 pub(crate) use crate::bytecode::Register;
@@ -27,9 +27,11 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/parse_int.rs"] pub(crate) mod parse_int;
 #[path = "../../quench-runtime/src/staged/typed_elements.rs"] pub(crate) mod typed_elements;
 #[path = "../../quench-runtime/src/staged/entry.rs"] pub(crate) mod entry;
-#[path = "../../quench-runtime/src/staged/frame.rs"] #[allow(dead_code)] pub(crate) mod frame;
+#[path = "../../quench-runtime/src/staged/frame.rs"] pub(crate) mod frame;
 #[path = "../../quench-runtime/src/staged/call.rs"] pub(crate) mod call;
 #[path = "../../quench-runtime/src/staged/ic.rs"] pub(crate) mod ic;
+#[path = "../../quench-runtime/src/staged/ic_flat.rs"] pub(crate) mod ic_flat;
+#[path = "../../quench-runtime/src/staged/ic_read.rs"] pub(crate) mod ic_read;
 #[path = "../../quench-runtime/src/staged/slot_store.rs"] pub(crate) mod slot_store;
 #[path = "../../quench-runtime/src/staged/iteration.rs"] pub(crate) mod iteration;
 #[path = "../../quench-runtime/src/staged/array_iteration.rs"] pub(crate) mod array_iteration;
@@ -43,7 +45,12 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/wasm_concrete.rs"] pub(crate) mod wasm_concrete;
 // The SIMD operators' bit semantics, shared with the interpreter (`wasm_simd_lanes.rs`).
 #[path = "../../quench-runtime/src/staged/wasm_simd_lanes.rs"] pub(crate) mod wasm_simd_lanes;
+#[path = "../../quench-runtime/src/staged/wasm_simd_rules.rs"] pub(crate) mod wasm_simd_rules;
 #[path = "../../quench-runtime/src/staged/wasm_memory.rs"] pub(crate) mod wasm_memory;
+#[path = "../../quench-runtime/src/staged/wasm_memory_vector.rs"] pub(crate) mod wasm_memory_vector;
+#[path = "../../quench-runtime/src/staged/wasm_call.rs"] #[allow(dead_code)] pub(crate) mod wasm_call;
+#[path = "../../quench-runtime/src/staged/wasm_roots.rs"] pub(crate) mod wasm_roots;
+#[path = "../../quench-runtime/src/staged/wasm_instance.rs"] #[allow(dead_code)] pub(crate) mod wasm_instance;
 
 // The interpreter's whole staged dispatch (call protocol v2 / Futamura: every stencil row is the
 // interpreter's staged row run on `StencilStage`). The runtime's `staged.rs` root names the opcode

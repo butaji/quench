@@ -131,23 +131,23 @@ pub(super) type ShapeAttributeMemo = ShapeMemo<u32, Option<super::ShapeAttribute
 /// The shape an empty object of a shape reaches by a plain copy (`Vm::copy_plain_properties`)
 /// of a source of the keyed shape: its enumerable data properties added in order.
 pub(super) type PlainCopyShapeMemo = ShapeMemo<u32, u32>;
-/// What `PlainAssignShapeMemo` answers for a target: the shape the copy reached, the
-/// `prototype_layout_epoch` it was proved under, and, for a source whose contiguous slot words
+/// What `PlainAssignShapeMemo` answers for a target: the shape the copy reached, the cell of
+/// the target prototype's chain it was proved over (`heap::ChainCell`), and, for a source whose contiguous slot words
 /// encode as the reached shape's (`Heap::slot_encodings_match`), the owner epoch that proof holds
 /// under (`words`), so the words may be copied as they are.
 #[derive(Clone, Copy)]
 pub(super) struct PlainAssignShape {
     /// The shape the copy reached.
     pub(super) shape: u32,
-    /// The prototype-layout epoch the copy was proved under.
-    pub(super) proved: u64,
+    /// The cell of the target prototype's chain the copy proved intercepts none of the keys.
+    pub(super) cell: crate::heap::ChainCell,
     /// The owner epoch under which the source's words are the reached shape's words, if proved.
     pub(super) words: Option<u64>,
 }
 
 /// `PlainCopyShapeMemo` for `Set` (`Object.assign`): keyed also by the target's prototype,
-/// whose chain the copy proved intercepts none of the keys, and valid while the
-/// `prototype_layout_epoch` it was proved under holds.
+/// whose chain the copy proved intercepts none of the keys, and valid while that chain's cell
+/// holds (`heap::ChainCell`).
 pub(super) type PlainAssignShapeMemo = ShapeMemo<(u32, super::Value), PlainAssignShape>;
 
 impl<K: Copy + Eq + Hash, V: Copy> Default for ShapeMemo<K, V> {

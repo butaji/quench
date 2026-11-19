@@ -383,8 +383,11 @@ impl<H: Host> Vm<H> {
         };
         if host_script && compiled
             && let Some(program) = self.programs.get(program_id)
-            && let Some(bytes) = self.encode_cached_program(&program)
+            && let Some(mut bytes) = self.encode_cached_program(&program)
         {
+            // The kept entry carries its source, so a later run reads it in place
+            // (`kept_host_script`) instead of copying the host's text into the program.
+            crate::bytecode::append_kept_source(&mut bytes, source);
             self.host.keep_compiled_program(source_name, &[mode, source], &bytes);
         }
         if let Some(key) = direct_key {
@@ -826,7 +829,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn calls_direct_eval(&self, callee: Value) -> bool {
         matches!(
             self.heap.function(callee),
-            Some(FunctionRecord { kind: FunctionKind::Native(Native::Eval), realm, .. }) if *realm == self.realm.globals
+            Some(record @ FunctionRecord { kind: FunctionKind::Native(Native::Eval), .. }) if self.record_realm(record) == self.realm.globals
         )
     }
 

@@ -3,7 +3,7 @@
 //! a loader fills.
 use super::*;
 use crate::vm::aot_image::Symbol;
-use quench_bjit::{EXIT_STUB_LEN, exit_stub};
+use quench_bjit::EXIT_STUB_LEN;
 
 /// A run-time address a linked body names by symbol: the code offset of its absolute word, which the
 /// loader fills (`Symbol`), where the code holds zero.
@@ -26,55 +26,14 @@ fn symbol_sites(rows: &[Placed], symbols: &[Option<(u8, Symbol)>], head: usize) 
     }).collect()
 }
 
-/// Writes the exit stub of `pc` at `at`: it pushes the PC and jumps to the routine at `routine_at`.
-fn write_stub(code: &mut [u8], at: usize, pc: u32, routine_at: usize) -> Result<(), String> {
-    let stub = exit_stub(pc, routine_at as i64 - at as i64).map_err(|error| format!("exit stub: {error:?}"))?;
-    code[at..at + EXIT_STUB_LEN].copy_from_slice(&stub);
-    Ok(())
-}
-
-/// Copies each of `routines` to `at`, returning where each starts and the end.
-fn append_routines(code: &mut [u8], mut at: usize, routines: &[Vec<u8>]) -> (Vec<usize>, usize) {
-    let mut starts = Vec::with_capacity(routines.len());
-    for routine in routines {
-        code[at..at + routine.len()].copy_from_slice(routine);
-        starts.push(at);
-        at += routine.len();
-    }
-    (starts, at)
-}
-
-/// The address each exit of each row goes to, writing the stubs it names at `at` (each entering its
-/// routine of `routine_at`); the end of the stubs too. `rows_at` is the address of the first row's
-/// code and `starts` each row's offset from it.
-fn exit_addresses(code: &mut [u8], (rows_at, starts): (usize, &[usize]), mut at: usize, (exits, routine_at): (&[Vec<Target>], &[usize])) -> Result<(Vec<Vec<usize>>, usize), String> {
-    let base = code.as_ptr() as usize;
-    let mut addresses: Vec<Vec<usize>> = Vec::with_capacity(exits.len());
-    for row_exits in exits {
-        let mut row_addresses = Vec::with_capacity(row_exits.len());
-        for target in row_exits {
-            row_addresses.push(match *target {
-                Target::Row(row) => rows_at + starts[row],
-                Target::Stub { pc, routine } => {
-                    write_stub(code, at, pc, routine_at[routine])?;
-                    at += EXIT_STUB_LEN;
-                    base + at - EXIT_STUB_LEN
-                }
-            });
-        }
-        addresses.push(row_addresses);
-    }
-    Ok((addresses, at))
-}
-
 /// Copies the rows behind the thunk, then the exit routines and each stub, and patches each
 /// row's exits to their targets, `exits` by row and exit kind (a leave row's start, or a stub);
 /// the code is position independent, so the buffer can move to executable memory. The rows are
 /// in layout order: the hot rows first, so nothing cold sits between them. Also the code offset of
 /// each row and, for a loop region, of the resume thunk (`entry_resume`), which follows the stubs;
 /// each resume stub's `jumps` is patched to its row.
-pub(super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], symbols: &[Option<(u8, Symbol)>]) -> Result<(Vec<u8>, Vec<usize>, usize, Vec<SymbolSite>), String> {
-    let head = thunk(ending, 0)?.len();
+pub(super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], proven_row: usize, symbols: &[Option<(u8, Symbol)>]) -> Result<(Vec<u8>, Vec<usize>, usize, Vec<SymbolSite>), String> {
+    let head = thunk(ending, 0, 0)?.len();
     let resume = if ending == Ending::Region { routine("entry_resume")?.code } else { Vec::new() };
     let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();
     let stubs = exits.iter().flatten().filter(|target| matches!(target, Target::Stub { .. })).count();
@@ -91,7 +50,8 @@ pub(super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[
         patch_jump(&mut code, head + starts[jump.row], starts[jump.target] as i64 - starts[jump.row] as i64)?;
     }
     let sites = symbol_sites(rows, symbols, head)?;
-    let thunk_bytes = thunk(ending, head)?;
+    let proven_at = head + starts.get(proven_row).copied().unwrap_or(0);
+    let thunk_bytes = thunk(ending, head, proven_at)?;
     code[..head].copy_from_slice(&thunk_bytes);
     code[at..at + resume.len()].copy_from_slice(&resume);
     let resume_at = at;

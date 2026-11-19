@@ -62,6 +62,17 @@ pub(crate) fn char_code_at<S: Stage>(stage: &mut S, width: UnitWidth, units: S::
     }, |stage| stage.constant(Value::NAN.to_bits())))
 }
 
+/// `charCodeAt(index)` of the flat string of width `width` at `units` for an index the caller proves
+/// an int32 below the string's length: the unit as an int32, with no bounds test (`char_code_at`).
+/// `None` (leaving at `miss`) for an index that is no int32, which the native coerces.
+#[inline(always)]
+pub(crate) fn char_code_at_within<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word,
+    index: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let index = int32_payload(stage, index, miss)?;
+    let unit = unit_at(stage, width, units, index);
+    Some(super::value::int_word(stage, unit))
+}
+
 /// `charAt(index)` of the flat string at `units` where the unit is ASCII: that unit, whose
 /// one-character string the caller names (a shared string per unit). `None` (leaving at
 /// `miss`) for an index that is no int32 or outside the string, or a unit past ASCII.
@@ -71,6 +82,22 @@ pub(crate) fn char_at_ascii<S: Stage>(stage: &mut S, width: UnitWidth, units: S:
     let index = int32_payload(stage, index, miss)?;
     let inside = stage.ult(index, length);
     stage.guard(inside, miss)?;
+    char_at_unit(stage, width, units, index, miss)
+}
+
+/// `char_at_ascii` for an index the caller proves an int32 below the string's length: the same unit
+/// with no bounds test.
+#[inline(always)]
+pub(crate) fn char_at_ascii_within<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word,
+    index: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let index = int32_payload(stage, index, miss)?;
+    char_at_unit(stage, width, units, index, miss)
+}
+
+/// The ASCII unit at `index` (inside the string) of the flat string at `units`, leaving at `miss`
+/// for a unit past ASCII in a wide string.
+#[inline(always)]
+fn char_at_unit<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word, index: S::Word, miss: S::Miss) -> Option<S::Word> {
     let unit = unit_at(stage, width, units, index);
     // A narrow string's units are ASCII by its form.
     if width == UnitWidth::Wide {

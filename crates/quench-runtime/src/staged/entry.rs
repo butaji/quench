@@ -76,7 +76,6 @@ fn plain_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, slot: 
 
 /// A field read through two cache entries: the first names a value the second entry's site reads from.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn site_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, tables, miss)?;
     let middle = site_read_in(stage, tables, object, first, miss)?;
@@ -140,7 +139,6 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
 /// a run in the arena, so `None` (leaving at `miss`) where it has none, or where an inline value
 /// is past the inline ones.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 fn holder_value<S: Stage>(stage: &mut S, holder: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
     let payload = stage.load_u64(Region::Payload.mutable(), holder, OBJECT.payload_offset as i32);
     let extras = has_extras(stage, payload);
@@ -182,7 +180,6 @@ fn own_entry_value<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, mis
 /// entry's slot. `None` (leaving at `miss`) for any other receiver, link or holder, so a changed
 /// prototype is a miss.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 fn holder_entry_value<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
     let link = super::object::proto_link(stage, record);
@@ -253,7 +250,6 @@ pub(crate) fn shape_link_matches<S: Stage>(stage: &mut S, record: S::Word, (shap
 /// `None` (leaving at `miss`) where the word is no direct object or the entry is no entry for
 /// the record (`own_entry_value`, `holder_entry_value`).
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 fn site_read_in<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
     let (_, record, entry) = site_record(stage, tables, object, offset, miss)?;
     let own = own_entry(stage, entry);
@@ -293,7 +289,6 @@ pub(crate) fn site_own_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word)
 /// offset is the row's only per-site operand, so a site is read as the interpreter's cached
 /// read reads it.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn site_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, tables, miss)?;
     site_read_in(stage, tables, object, offset, miss)
@@ -302,7 +297,6 @@ pub(crate) fn site_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), obj
 /// A nested lookup's chain of two reads, `object.first.second` (`FieldLookup::Site`): the value
 /// the first entry reads is the object the second reads from, and the tables are proved once.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
     stage.load_site(Region::LoopEntry.readonly(), entry, offset)
 }
@@ -315,7 +309,6 @@ pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm
 /// may store in place at all (a specialized run, no method cache naming the field) is the
 /// caller's.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let address = stage.add_imm(entry, offset);
@@ -332,7 +325,7 @@ pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::
 /// The interpreter's `site_read` of `object` through the stored field cache entry `entry` (at
 /// byte 0 of its table), over the heap's own tables.
 #[cfg(test)]
-fn concrete_read_entry(heap: &crate::heap::Heap, object: crate::Value, entry: &[u32; 3]) -> Option<crate::Value> {
+fn concrete_read_entry(heap: &crate::heap::Heap, object: crate::Value, entry: &[u32; 4]) -> Option<crate::Value> {
     let records = heap.object_record_base()? as u64;
     // SAFETY: a stored entry, and the heap's live record table and arena.
     unsafe { super::ic::concrete_site_read(heap.arena_values_base(), (entry.as_ptr() as u64, records), object, 0) }
@@ -346,8 +339,8 @@ mod tests {
     use crate::Value;
 
     /// A field cache entry as the site table stores it: each word complemented.
-    fn stored(shape: u32, holder: u32, slot: u32) -> [u32; 3] {
-        let mut words = [0; 3];
+    fn stored(shape: u32, holder: u32, slot: u32) -> [u32; 4] {
+        let mut words = [0; 4];
         words[ENTRY.receiver_offset / 4] = shape ^ ENTRY.receiver_complement;
         words[ENTRY.holder_offset / 4] = holder ^ ENTRY.holder_complement;
         words[ENTRY.slot_offset / 4] = slot ^ ENTRY.slot_complement;
@@ -380,10 +373,10 @@ mod tests {
             assert_eq!(by_entry, by_hint, "slot {slot}");
             assert_eq!(by_entry, Some(Value::integer(10 * (i32::from(slot) + 1))));
         }
-        let read = |entry: [u32; 3]| concrete_read_entry(&heap, object, &entry);
+        let read = |entry: [u32; 4]| concrete_read_entry(&heap, object, &entry);
         assert_eq!(read(stored(shape + 1, ENTRY.own_holder, 0)), None, "another shape");
         assert_eq!(read(stored(shape, 7, 0)), None, "a holder entry");
-        assert_eq!(read([0; 3]).is_some(), shape == ENTRY.receiver_complement, "the empty entry names no shape");
+        assert_eq!(read([0; 4]).is_some(), shape == ENTRY.receiver_complement, "the empty entry names no shape");
     }
 
     /// A holder entry reads the prototype's slot through the receiver's link, in both of a
@@ -407,7 +400,7 @@ mod tests {
             let receiver = heap.alloc_object(Object::new(prototype));
             let (holder_shape, receiver_shape) = (shape_of(&heap, prototype), shape_of(&heap, receiver));
             let records = heap.object_record_base().expect("object records exist") as u64;
-            let read = |object: Value, entry: [u32; 3]| {
+            let read = |object: Value, entry: [u32; 4]| {
                 let mut stage = crate::staged::Concrete::new(heap.arena_values_base());
                 site_read(&mut stage, (entry.as_ptr() as u64, records), object.to_bits(), 0u64, ()).map(Value::from_bits)
             };
@@ -452,11 +445,11 @@ mod tests {
             let mut heap = Heap::new();
             let (object, shape) = object_of(&mut heap, count);
             let records = heap.object_record_base().expect("object records exist") as u64;
-            let store = |heap: &Heap, entry: [u32; 3], value: Value| {
+            let store = |heap: &Heap, entry: [u32; 4], value: Value| {
                 let mut stage = crate::staged::Concrete::storing(heap);
                 site_store(&mut stage, (entry.as_ptr() as u64, records), object.to_bits(), 0u64, (value.to_bits(), true, None), ()).is_some()
             };
-            let read = |heap: &Heap, entry: [u32; 3]| concrete_read_entry(heap, object, &entry);
+            let read = |heap: &Heap, entry: [u32; 4]| concrete_read_entry(heap, object, &entry);
             for slot in 0..count as u32 {
                 let entry = stored(shape, ENTRY.own_holder, slot);
                 assert!(store(&heap, entry, Value::integer(-7)), "{count} values, slot {slot}");

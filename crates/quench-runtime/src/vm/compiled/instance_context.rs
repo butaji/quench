@@ -69,7 +69,7 @@ pub(super) struct MemoryBinding {
 /// offsets in the two structs with the machine type of each, which generated code copies to
 /// enter another instance, and `CallContext::enter`, which the VM copies them with.
 macro_rules! switched {
-    (head: { $($field:ident: $ty:expr),+ $(,)? }, tail: { $($tail:ident: $tail_ty:expr),+ $(,)? }) => {
+    (head: { $($field:ident: $ty:expr),+ $(,)? }, tail: { $($tail:ident: $tail_ty:expr),+ $(,)? } $(,)?) => {
         /// The offset in a call context, the offset in a record and the machine type of each
         /// field that belongs to an instance.
         pub(super) const SWITCHED: &[(i32, i32, ir::Type)] = &[

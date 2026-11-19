@@ -163,6 +163,10 @@ impl<H: Host> Vm<H> {
     /// job is enqueued with the settled state and result. A primitive `source` stands for the
     /// fulfilled promise an `await` never materializes. The handlers are stored as given: an
     /// `await` passes its `AwaitState`.
+    ///
+    /// One lookup of the source's record marks it observed and installs the reaction: the
+    /// host's capture of the job context between them in the spec's order sees no promise,
+    /// so it goes first, and nothing else runs between the mark and the install.
     pub(in crate::vm) fn attach_promise_reaction(
         &mut self,
         p: &ResidualProgram,
@@ -171,23 +175,28 @@ impl<H: Host> Vm<H> {
         on_rejected: Value,
         next: Value,
     ) -> Result<(), JsError> {
-        self.observe_promise_rejection(source);
         let parent = self.promise_record(next).and_then(|record| record.host_context().get());
         let execution_context = self.host.capture_job_context(parent).into();
         let reaction = PromiseReaction { on_fulfilled, on_rejected, next, execution_context };
         // Species selection, capability construction and lifecycle hooks may settle the
         // source: its state is read only when the reaction is installed.
-        let Some(record) = self.promise_record_mut(source) else {
+        let Some(cell) = self.heap.promise_mut(source) else {
             if self.is_object_like(source) {
                 return Err(JsError("await source is not a Promise".into()));
             }
             self.enqueue_promise_reaction(p, reaction, PromiseState::Fulfilled, source);
             return Ok(());
         };
+        let record = &mut cell.record;
+        let notification = crate::vm::promise_state::mark_rejection_observed(record, source);
         let (state, result) = (record.state(), record.result());
         if state == PromiseState::Pending {
             record.push_reaction(reaction);
-        } else {
+        }
+        if let Some(notification) = notification {
+            self.realm.promise.rejection_notifications.push_back(notification);
+        }
+        if state != PromiseState::Pending {
             self.enqueue_promise_reaction(p, reaction, state, result);
         }
         Ok(())

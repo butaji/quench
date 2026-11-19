@@ -6,6 +6,8 @@ impl LaneStack {
     /// The generation of a lane run under `key`: the current one while the key holds, else
     /// a new one, which retires every target resolved before.
     pub(super) fn enter_generation(&mut self, key: (u64, Value)) {
+        // The bounds this run's native calls are checked against (`Vm::call_native_from_lane`).
+        self.native_stack = crate::stack::StackLimit::here();
         if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
             self.generation_key = key;
             self.advance_generation();
@@ -16,6 +18,8 @@ impl LaneStack {
     /// (`enter_generation`, `Vm::enter_with_scope`).
     pub(in crate::vm) fn advance_generation(&mut self) {
         self.generation = self.generation.wrapping_add(1);
+        // An in-place native row's admitted callee names a target of the generation retired here.
+        self.native_identities.forget();
         if self.generation == NO_SCRIPT_GENERATION {
             // A wrapped number could name entries of a generation long past.
             self.clear_script_targets();

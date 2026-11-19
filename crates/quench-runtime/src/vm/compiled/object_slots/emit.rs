@@ -35,6 +35,18 @@ impl From<u32> for EmitImm { fn from(bits: u32) -> Self { Self::Const(u64::from(
 impl Emit<'_, '_> {
     /// `Math.round` of the binary64 `value`: the floor, one more where the excess reaches a half;
     /// a negative that rounds to zero is `-0`.
+    /// `Math.sign` (`staged::math::float_unary`): `-1` or `1` by the sign bit; NaN and both zeros are the operand.
+    fn sign(&mut self, value: ir::Value) -> ir::Value {
+        let zero = self.f64_constant(0.0);
+        let (one, minus_one) = (self.f64_constant(1.0), self.f64_constant(-1.0));
+        let negative = self.raw_compare(Relation::FloatLess, value, zero);
+        let signed = self.raw_select(negative, minus_one, one);
+        let is_zero = self.raw_compare(Relation::FloatEqual, value, zero);
+        let unordered = self.raw_compare(Relation::FloatUnordered, value, value);
+        let keep = self.raw_binary(Binary::Or, is_zero, unordered);
+        self.raw_select(keep, value, signed)
+    }
+
     fn round_half_up(&mut self, value: ir::Value) -> ir::Value {
         let floor = self.raw_unary(Unary::Floor, value);
         let excess = self.raw_binary(Binary::FloatSub, value, floor);
@@ -106,7 +118,6 @@ impl Stage for Emit<'_, '_> {
     fn add(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Add, a, b) }
     fn or(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Or, a, b) }
     fn and(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::And, a, b) }
-    fn shl(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::ShiftLeft, a, b) }
     fn add_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
         let v = self.word(imm.into());
         self.add(a, v)
@@ -327,6 +338,21 @@ impl Emit<'_, '_> {
     }
 }
 
+impl Emit<'_, '_> {
+    /// The i64 word of the binary64 `value` and whether it is an integer of magnitude at most 2^53 (`value` converted
+    /// and converted back is itself, and the saturated conversion stays inside that range; NaN fails both).
+    fn integral_below_2_53(&mut self, value: ir::Value) -> (ir::Value, ir::Value) {
+        let integer = self.raw_unary(Unary::ToSignedSaturating(Lane::I64), value);
+        let back = self.raw_unary(Unary::FromSigned(Lane::F64), integer);
+        let exact = self.raw_compare(Relation::FloatEqual, back, value);
+        let bias = self.raw_const(Lane::I64, 1 << 53);
+        let shifted = self.raw_binary(Binary::Add, integer, bias);
+        let width = self.raw_const(Lane::I64, 1 << 54);
+        let small = self.raw_compare(Relation::UnsignedLessEqual, shifted, width);
+        (integer, self.raw_binary(Binary::And, exact, small))
+    }
+}
+
 impl NumericStage for Emit<'_, '_> {
     fn relation(&mut self, relation: NumberRelation, domain: Domain,
         left: ir::Value, right: ir::Value) -> ir::Value {
@@ -343,8 +369,25 @@ impl NumericStage for Emit<'_, '_> {
         left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
         numbers::checked_int32_arithmetic(self, operation, left, right)
     }
+    /// The remainder of two binary64 words: where both are integers below 2^53 and the divisor is nonzero, the i64
+    /// remainder (exact, and the dividend's sign), copied onto the dividend's sign for a zero result (`-0`); else
+    /// the shared leaf (`numbers::float_remainder`).
     fn float_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
-        numbers::float_remainder(self, left, right)
+        let (dividend, dividend_ok) = self.integral_below_2_53(left);
+        let (divisor, divisor_ok) = self.integral_below_2_53(right);
+        let nonzero = self.raw_compare_imm(Relation::NotEqual, divisor, 0);
+        let both = self.raw_binary(Binary::And, dividend_ok, divisor_ok);
+        let integral = self.raw_binary(Binary::And, both, nonzero);
+        self.choose_arms(integral, |stage| {
+            let remainder = stage.raw_binary(Binary::RemainderSigned, dividend, divisor);
+            let magnitude = stage.raw_unary(Unary::FromSigned(Lane::F64), remainder);
+            stage.raw_binary(Binary::FloatCopySign, magnitude, left)
+        }, |stage| numbers::float_remainder(stage, left, right), false)
+    }
+    fn integral_remainder(&mut self, left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
+        // The u-jit makes the float remainder for every operand (a leaf call it can hold), so its miss is never taken.
+        let value = numbers::float_remainder(self, left, right);
+        (value, self.i32_constant(0))
     }
     fn int_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
         self.raw_binary(Binary::RemainderSigned, left, right)
@@ -361,16 +404,23 @@ impl NumericStage for Emit<'_, '_> {
                 self.raw_unary(Unary::Promote, single)
             }
             FloatUnary::Round => self.round_half_up(value),
+            FloatUnary::Sign => self.sign(value),
         }
     }
     fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
         self.raw_binary(Binary::Mul, left, right)
+    }
+    /// A 64-bit word's low 32 bits are the int32; the count is over those alone.
+    fn int_leading_zeros(&mut self, a: ir::Value) -> ir::Value {
+        let a = if self.raw_lane(a) == Lane::I64 { self.narrow(a) } else { a };
+        self.raw_unary(Unary::LeadingZeros, a)
     }
     fn float_extreme(&mut self, maximum: bool, left: ir::Value, right: ir::Value) -> ir::Value {
         self.raw_binary(if maximum { Binary::FloatMax } else { Binary::FloatMin }, left, right)
     }
     fn i32_constant(&mut self, value: i32) -> ir::Value { self.raw_const(Lane::I32, i64::from(value)) }
     fn f64_constant(&mut self, value: f64) -> ir::Value { self.raw_const(Lane::F64, value.to_bits() as i64) }
+    fn f64_from_bits(&mut self, bits: ir::Value) -> ir::Value { self.raw_unary(Unary::Bitcast(Lane::F64), bits) }
     fn narrow(&mut self, a: ir::Value) -> ir::Value { self.raw_unary(Unary::Narrow(Lane::I32), a) }
     /// An int32 word, whether a 32-bit value or a zero-extended 64-bit one.
     fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value {

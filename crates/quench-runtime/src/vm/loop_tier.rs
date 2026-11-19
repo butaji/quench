@@ -178,9 +178,14 @@ impl LoopTier {
     /// between looks count down, and a look publishes code that is ready.
     #[inline(always)]
     pub(super) fn awaits_code<H: Host>(&mut self, vm: &mut Vm<H>, site: &LoopSite) -> bool {
-        // A site with none under way has nothing to wait for; one with published code (a b-jit
-        // region moving to u-jit) runs it while it looks.
-        self.pending.is_some() && self.poll_pending(vm, site) && !self.is_published()
+        // A site with published code, or none under way, has nothing to wait for. A look still
+        // counting down is one decrement here; only the look itself leaves the inline path.
+        if self.pending.is_none() { return false; }
+        if self.wait > 0 {
+            self.wait -= 1;
+            return true;
+        }
+        self.poll_pending(vm, site)
     }
 
     #[cold]
@@ -192,7 +197,7 @@ impl LoopTier {
             return true;
         }
         use super::super::compiled::OsrCompile;
-        match pending.poll(&mut vm.heap, vm.method_cache_atoms.readers()) {
+        match pending.poll(&mut vm.heap, vm.method_cache_atoms.readers(), &vm.programs) {
             Err(pending) => {
                 self.wait = site.tiers.lane_body.compile_poll_interval;
                 self.pending = Some(pending);
@@ -217,7 +222,7 @@ impl LoopTier {
     /// Holds the compile `started`, while the facts its code names hold, and looks for its
     /// code at once.
     fn start<H: Host>(&mut self, started: Option<super::super::compiled::PendingOsrRegion>, vm: &mut Vm<H>, site: &LoopSite) {
-        self.pending = started.filter(|pending| pending.watch(&mut vm.heap, vm.method_cache_atoms.readers())).map(Box::new);
+        self.pending = started.filter(|pending| pending.watch(&mut vm.heap, vm.method_cache_atoms.readers(), &vm.programs)).map(Box::new);
         self.wait = 0;
         if self.pending.is_none() {
             self.compilations = site.tiers.loops.max_compilations;
@@ -297,7 +302,7 @@ pub(super) fn loop_compile_in_lane<H: Host>(
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
     let (native_field_loads, store_loads) = (native_field_loads(machine, own.filter(|_| !base), region), native_store_loads(machine, region));
-    let (ints, doubles) = entry_number_registers(region, r);
+    let types = entry_types(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
         .map(|inlining| inlining.frames.iter().map(|frame| machine.callee_capture_slots(frame.callee)).collect()).unwrap_or_default();
@@ -331,7 +336,7 @@ fn region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: 
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
     let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
-    let candidates = direct_callees_in_lane(machine, own, function, body);
+    let candidates = direct_callees_in_lane(machine, own, function, program, body);
     machine.region_calls(program, function, own, &candidates)
 }
 
@@ -343,7 +348,7 @@ fn unit_region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, prog
     let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
     // A callee with no published body yet is called through its entry cell, which holds its body
     // once that publishes: the region compiled before its callees still calls them natively.
-    let candidates = direct_callees_in_lane(machine, own, function, body);
+    let candidates = direct_callees_in_lane(machine, own, function, program, body);
     for callees in &candidates { super::super::compiled::bind_region_callees(callees, own); }
     super::super::compiled::RegionCalls::direct(candidates)
 }
@@ -464,9 +469,8 @@ pub(super) fn loop_function_in_lane<H: Host>(cx: *mut LaneContext<H>, code: &Res
     let machine = unsafe { vm(cx) };
     let function_index = machine
         .lane_stack
-        .activations()
-        .last()
-        .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function);
+        .top_frame()
+        .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function());
     let function = code.function_get(function_index as usize)?;
     let constants = machine.programs.constants(unsafe { (*cx).program }).to_vec();
     Some((function_index, function, function.instructions().collect(), constants))
@@ -479,9 +483,14 @@ pub(super) fn method_call_region_in_lane<H: Host>(cx: *mut LaneContext<H>, site:
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let (function_index, function, decoded, constants) = loop_function_in_lane(cx, code)?;
+    // A native method the loop holds inline is run in place by the lane (`intrinsic_call`), so its call
+    // is no exit of the region (`native_method_call`). The lane run owns the VM here.
+    let machine = unsafe { vm(cx) };
+    let natives: Vec<bool> = (0..decoded.len())
+        .map(|pc| super::super::compiled::native_method_call(machine, &decoded, pc)).collect();
     super::super::compiled::analyze_osr_region_detailed(function, &decoded, &constants, &code.field_sites,
         code.shared_register_root_masks(function_index), site.header, site.backedge,
-        super::super::compiled::MethodCalls::Exit).ok()
+        super::super::compiled::MethodCalls::Exit, &|pc| natives.get(pc).copied().unwrap_or(false)).ok()
 }
 
 /// The depth-zero capture slots the running function reads that hold typed arrays now (an observation

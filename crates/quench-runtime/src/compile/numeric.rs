@@ -243,13 +243,14 @@ mod tests {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
@@ -268,7 +269,6 @@ mod tests {
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -278,16 +278,9 @@ mod tests {
             registers: 3,
             dispatch: crate::bytecode::DispatchClass::Numeric,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -301,7 +294,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
-        crate::compile::rewrite::remove_nops(&mut dead, &mut None);
+        crate::compile::rewrite::remove_nops(&mut dead, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(dead.code.len(), 2);
         assert_eq!(dead.code[0].a(), NUMERIC_LOCAL_TARGET | 3);
 
@@ -312,7 +305,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
-        crate::compile::rewrite::remove_nops(&mut live, &mut None);
+        crate::compile::rewrite::remove_nops(&mut live, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(live.code.len(), 3);
     }
 
@@ -335,13 +328,14 @@ mod tests {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
@@ -360,7 +354,6 @@ mod tests {
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -370,16 +363,9 @@ mod tests {
             registers: 3,
             dispatch: crate::bytecode::DispatchClass::Numeric,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -393,7 +379,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
-        crate::compile::rewrite::remove_nops(&mut dead, &mut None);
+        crate::compile::rewrite::remove_nops(&mut dead, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(dead.code.len(), 2);
         assert_eq!(crate::bytecode::Operand(dead.code[0].b()).tag(), 3);
         assert_eq!(crate::bytecode::Operand(dead.code[0].c()).tag(), 3);
@@ -405,7 +391,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
-        crate::compile::rewrite::remove_nops(&mut live, &mut None);
+        crate::compile::rewrite::remove_nops(&mut live, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(live.code.len(), 4);
     }
 }

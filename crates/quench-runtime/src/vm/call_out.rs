@@ -3,8 +3,8 @@
 //! step by `Vm::call_out`, so every tier shares the one definition.
 
 use super::*;
-use crate::bytecode::{Operand, Register, WideInstruction};
-use crate::staged::{CallOut, Concrete, Constant, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};
+use crate::bytecode::{FieldLookup, Operand, Register, WideInstruction};
+use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};
 
 /// What the global-name rows did in a test: the call-outs that ran, and the direct global stores
 /// and typeofs the lane specializer emitted instead of one.
@@ -15,6 +15,8 @@ pub(crate) mod counts {
     thread_local! {
         pub(crate) static GLOBAL_CALL_OUTS: Cell<usize> = const { Cell::new(0) };
         pub(crate) static DIRECT_GLOBAL_STORES: Cell<usize> = const { Cell::new(0) };
+        /// The receivers whose run of constant field defines was skipped as already held.
+        pub(crate) static CONSTANT_FIELD_SKIPS: Cell<usize> = const { Cell::new(0) };
     }
 
     pub(crate) fn bump(counter: &'static std::thread::LocalKey<Cell<usize>>) {
@@ -24,6 +26,13 @@ pub(crate) mod counts {
     pub(crate) fn take(counter: &'static std::thread::LocalKey<Cell<usize>>) -> usize {
         counter.with(|count| count.replace(0))
     }
+}
+
+/// What a named or indexed read produced: its value, or the activation its getter pushed, which the
+/// read's destination takes when that activation returns.
+pub(super) enum Loaded {
+    Value(Value),
+    Pushed(StepResult),
 }
 
 /// Where a call-out runs: the owner of the running activation's variables and registers, the
@@ -49,8 +58,45 @@ impl<H: Host> Vm<H> {
         }
         match operation {
             CallOut::PropertyKey { .. } => self.to_property_key(p, operand).map(Some),
-            CallOut::Equality { .. } | CallOut::Binary { .. } | CallOut::Delete { .. } | CallOut::Decide { .. } =>
-                self.operator_step(p, site, operation, (first, operand)),
+            CallOut::ToNumeric { .. } => self.to_numeric(p, operand).map(Some),
+            CallOut::IncDec { decrement, .. } => self.inc_dec_value(p, operand, decrement).map(Some),
+            CallOut::Unary { operator, .. } => self.unary(p, operator, operand).map(Some),
+            // A read without a destination inlines no getter (`Loaded::Pushed` is the interpreter's own).
+            CallOut::LoadField { lookup } => {
+                let frame = self.owner_frame(site.owner).expect("a field read names its frame");
+                match self.load_field_step(p, frame, site.resume, lookup, None, false)? {
+                    Loaded::Value(value) => Ok(Some(value)),
+                    Loaded::Pushed(_) => unreachable!("a read with no destination inlines no getter"),
+                }
+            }
+            CallOut::LoadElement { .. } => {
+                let frame = self.owner_frame(site.owner).expect("an element read names its frame");
+                let base = first.expect("an element read names its base");
+                match self.load_element_step(p, frame, site.resume, (base, operand), None, false)? {
+                    Loaded::Value(value) => Ok(Some(value)),
+                    Loaded::Pushed(_) => unreachable!("a read with no destination inlines no getter"),
+                }
+            }
+            // A named store is the field store the row names, or the store to the frame's `this`: strict where the row
+            // says so (no function's strictness).
+            CallOut::StoreField { object, atom, site: cache, strict, .. } => {
+                let object = match object {
+                    Some(_) => first.expect("a store names its object"),
+                    None => {
+                        let frame = self.owner_frame(site.owner).expect("a store to this names its frame");
+                        self.checked_this_binding(p, frame)?
+                    }
+                };
+                self.set_field_cached(p, object, atom, operand, cache, strict).map(|()| None)
+            }
+            // A keyed store: the value is the operand list's register, and strict where the row or the function is.
+            CallOut::StoreElement { strict, .. } => {
+                let (object, value) = (first.expect("a keyed store names its object"), list.first().copied().expect("a keyed store names its value"));
+                let strict = strict || p.function(site.function as usize).strict;
+                self.set_index_mode(p, object, operand, value, strict).map(|()| None)
+            }
+            CallOut::Equality { .. } | CallOut::Binary { .. } | CallOut::Delete { .. } | CallOut::Decide { .. }
+                | CallOut::DecideOperand { .. } => self.operator_step(p, site, operation, (first, operand)),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
             CallOut::EnumeratedGet { .. } => self.get_index(p, first.expect("an enumerated read names its base"), operand).map(Some),
             CallOut::Protocol { step: Protocol::RestView { get, fixed, rest }, .. } =>
@@ -61,6 +107,77 @@ impl<H: Host> Vm<H> {
             CallOut::Accessor { atom, site: cache, .. } =>
                 self.get_field_cached(p, first.expect("an accessor read names its receiver"), atom, cache).map(Some),
             _ => self.name_step(p, site, operation, first),
+        }
+    }
+
+    /// The value of a call-out's operand `operand` read by `owner`: a register of the owner, a program constant,
+    /// or the field or local the owner's frame names (`resolve_operand`).
+    pub(super) fn call_out_operand(&mut self, p: &ResidualProgram, owner: VarOwner, operand: Operand) -> Result<Value, JsError> {
+        match operand.kind() {
+            Some(crate::bytecode::OperandKind::Register) => Ok(self.owner_register(owner, operand.payload())),
+            Some(crate::bytecode::OperandKind::Constant) => {
+                Ok(self.active_constant(usize::from(operand.payload())).expect("a call-out's constant is in its program"))
+            }
+            _ => {
+                let frame = self.owner_frame(owner).expect("a call-out's field or local names its frame");
+                self.resolve_operand(p, frame, operand)
+            }
+        }
+    }
+
+    /// The named read `lookup` of frame `frame` at resume PC `pc`: a nested chain's value, or the atom's value
+    /// through its base. Where `destination` names the register the read writes and `allow_inline_calls` holds,
+    /// a cached getter runs as an in-place activation (`try_inline_getter`), which pushes.
+    pub(super) fn load_field_step(&mut self, p: &ResidualProgram, frame: usize, pc: usize, lookup: FieldLookup,
+        destination: Option<Register>, allow_inline_calls: bool) -> Result<Loaded, JsError> {
+        let (atom, base, cache_site) = match lookup {
+            FieldLookup::Site(site) => return self.resolve_field(p, frame, site).map(Loaded::Value),
+            FieldLookup::Atom { atom, base, cache_site } => (atom, base, cache_site),
+        };
+        let base = self.resolve_field_base(p, frame, base)?;
+        // A read fused with its frame's return pushes the getter as a call whose completion returns from the frame
+        // (`PendingGeneralCall::returns`); a getter is no tail call, so a strict frame pushes it too.
+        if allow_inline_calls
+            && let Some(destination) = destination
+            && let Some(getter) = self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
+            && let Some(result) = self.try_inline_getter(p, frame, pc, getter, base, destination)
+        {
+            return result.map(Loaded::Pushed);
+        }
+        // A private field reads straight from the object's private elements; methods, accessors and a missing
+        // brand take the ordinary [[Get]].
+        match self.is_private_name(atom).then(|| self.private_field_value(p, base, atom)).flatten() {
+            Some(value) => Ok(Loaded::Value(value)),
+            None => self.get_field_cached(p, base, atom, cache_site).map(Loaded::Value),
+        }
+    }
+
+    /// `base[key]` at resume PC `pc` of frame `frame`: a proved symbol key's getter runs in place where
+    /// `destination` and `allow_inline_calls` hold (`load_field_step`), else the VM's indexed read.
+    pub(super) fn load_element_step(&mut self, p: &ResidualProgram, frame: usize, pc: usize, (base, key): (Value, Value),
+        destination: Option<Register>, allow_inline_calls: bool) -> Result<Loaded, JsError> {
+        if allow_inline_calls
+            && let Some(destination) = destination
+            && let Some(getter) = self.proved_symbol_getter(base, key)
+            && let Some(result) = self.try_inline_getter(p, frame, pc, getter, base, destination)
+        {
+            return result.map(Loaded::Pushed);
+        }
+        self.get_index(p, base, key).map(Loaded::Value)
+    }
+
+    /// `++` (or `--`) of `input`: the Number step, else ToNumeric and the step of the converted value
+    /// (its BigInt update). The value the update defines.
+    pub(super) fn inc_dec_value(&mut self, p: &ResidualProgram, input: Value, is_decrement: bool) -> Result<Value, JsError> {
+        match super::dispatch::number_increment(input, is_decrement) {
+            Some(value) => Ok(value),
+            None => {
+                let numeric = self.to_numeric(p, input)?;
+                match super::dispatch::number_increment(numeric, is_decrement) {
+                    Some(value) => Ok(value),
+                    None => self.numeric_update(p, numeric, is_decrement),
+                }
+            }
         }
     }
 
@@ -80,6 +197,11 @@ impl<H: Host> Vm<H> {
                 self.delete_reference_property_mode(p, left, right, strict).map(Some)
             }
             CallOut::Decide { operator, .. } => self.binary_truthy(p, operator, left, right).map(|holds| Some(Value::boolean(holds))),
+            // ToBoolean of the general `Binary` result, which a constant operand's comparison takes as its decision.
+            CallOut::DecideOperand { operator, .. } => {
+                let value = self.binary(p, operator, left, right)?;
+                Ok(Some(Value::boolean(self.truthy(value))))
+            }
             _ => unreachable!("{operation:?} is no operator step"),
         }
     }
@@ -205,21 +327,27 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    /// An iteration or spread `step` of its operand values: the value it defines, if any
-    /// (`AppendArray` defines none).
+    /// An iteration or spread `step` of its operand values, or a receiver's constant fields
+    /// test: the value it defines, if any (`AppendArray` defines none).
     fn protocol_step(&mut self, p: &ResidualProgram, site: CallSite, step: Protocol, array: Option<Value>, operand: Option<Value>)
         -> Result<Option<Value>, JsError> {
         let source = operand.unwrap_or(Value::UNDEFINED);
         match step {
             Protocol::GetIterator => self.get_iterator(p, source).map(Some),
+            Protocol::GetAsyncIterator => self.get_async_iterator(p, source).map(Some),
             Protocol::ForInStart => self.for_in_start(p, source).map(Some),
             Protocol::IteratorClose => self.iterator_close(p, source).map(Some),
             Protocol::RestView { .. } => unreachable!("a rest view's step reads its activation (`rest_view_step`)"),
+            Protocol::ConstantFieldsHeld { site } => Ok(Some(Value::boolean(self.constant_fields_held(source, site)))),
             Protocol::Literal(step) => self.literal_step(p, site, step, array, operand),
             Protocol::Class(step) => self.class_step(p, site, step, array, operand),
             Protocol::Value(step) => self.value_step(p, site, step, array, operand),
             Protocol::Owned(step) => self.owned_var_step(p, site, step, array, operand),
             Protocol::Wasm(step) => self.wasm_host_step(p, site, step, array, operand),
+            Protocol::Literal(step) => self.literal_step(p, site, step, array, operand),
+            Protocol::Class(step) => self.class_step(p, site, step, array, operand),
+            Protocol::Value(step) => self.value_step(p, site, step, array, operand),
+            Protocol::Owned(step) => self.owned_var_step(p, site, step, array, operand),
             Protocol::AppendArray { length, spread } => {
                 let array = array.expect("AppendArray names its array");
                 self.append_array_literal_holes(array, length)?;
@@ -300,6 +428,24 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 
     fn this(&mut self, _stage: &mut Concrete) -> u64 { Value::DELETED.to_bits() }
 
+    /// The running activation's `this`, where bound; an unbound `this` (a TDZ read) raises, which the
+    /// row's caller throws.
+    fn this_value(&mut self, _stage: &mut Concrete) -> Option<(u64, ())> {
+        let frame = self.vm.owner_frame(self.site.owner).expect("a this read names its frame");
+        match self.vm.checked_this_binding(self.program, frame) {
+            Ok(this) => Some((this.to_bits(), ())),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
+    fn callee_value(&mut self, _stage: &mut Concrete) -> Option<(u64, ())> {
+        let frame = self.vm.owner_frame(self.site.owner).expect("a callee read names its frame");
+        Some((self.vm.frames[frame].context.callee().unwrap_or(Value::UNDEFINED).to_bits(), ()))
+    }
+
     fn define_this(&mut self, stage: &mut Concrete, destination: Register, this: u64) {
         self.write(stage, destination, this, ());
     }
@@ -316,6 +462,35 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) {
         (Value::boolean(condition).to_bits(), ())
+    }
+
+    /// `RequireIteratorResult`'s object test: the VM's own check, which raises the iterator-result TypeError.
+    fn object_like(&mut self, _stage: &mut Concrete, word: u64) -> Option<()> {
+        match self.vm.require_iterator_result(self.program, Value::from_bits(word)) {
+            Ok(()) => Some(()),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
+    /// `RequireObjectCoercible`'s miss: the VM's own check, which raises for a `null` or `undefined` word.
+    fn object_coercion_failed(&mut self, _stage: &mut Concrete, word: u64) {
+        if let Err(error) = self.vm.require_object_coercible(self.program, Value::from_bits(word)) {
+            self.raised = Some(error);
+        }
+    }
+
+    /// `SetFunctionName` of `function` to the program atom `name` at cache `site`: the VM's naming.
+    fn set_function_name(&mut self, _stage: &mut Concrete, function: u64, name: u32, site: u16) -> Option<()> {
+        match self.vm.set_function_name(self.program, Value::from_bits(function), (name, site)) {
+            Ok(()) => Some(()),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
     }
 
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, ())> {

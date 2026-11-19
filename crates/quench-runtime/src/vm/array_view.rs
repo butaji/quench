@@ -26,13 +26,100 @@ pub(super) enum Search {
     Resume(usize),
 }
 
+/// How the elements equal to a searched value are recognised, decided once per search. Every
+/// kind but `Content` and `Nan` compares the raw words of the elements.
+#[derive(Clone, Copy)]
+enum Kind {
+    /// Equal values carry exactly this word.
+    One(u64),
+    /// An integral Number: equal values carry its int32 word or its double word.
+    Two([u64; 2]),
+    /// Zero: equal values carry the int32 0 word or the double word of either zero.
+    Three([u64; 3]),
+    /// NaN under SameValueZero: any NaN double word.
+    Nan,
+    /// NaN under strict equality: no element is equal.
+    Never,
+    /// A string or BigInt: equal by content, compared per element.
+    Content,
+}
+
+/// The searched value with the facts `Vm::search_dense` needs, computed once per search.
+#[derive(Clone, Copy)]
+struct Needle {
+    value: Value,
+    kind: Kind,
+    /// The narrow word a narrow element equal to the value carries, or `None` when no narrow
+    /// element can be equal (only a hole stops the walk then).
+    narrow: Option<u32>,
+}
+
+/// The bit pattern of negative zero, which is a double word.
+const NEGATIVE_ZERO_BITS: u64 = 0x8000_0000_0000_0000;
+
+/// The int32 a Number equals, when it is integral and within `i32`.
+fn integer_of(number: f64) -> Option<i32> {
+    let int = number as i32;
+    (f64::from(int) == number).then_some(int)
+}
+
+/// The narrow word of the elements equal to `search`, when no content comparison is needed.
+fn narrow_key(search: Value) -> Option<u32> {
+    match search.as_number() {
+        Some(number) => integer_of(number).and_then(Value::narrow_integer),
+        None => search.to_narrow(),
+    }
+}
+
+/// The kind of a Number needle, under `mode`.
+fn number_kind(number: f64, mode: Match) -> Kind {
+    if number.is_nan() {
+        return if mode == Match::SameValueZero { Kind::Nan } else { Kind::Never };
+    }
+    if number == 0.0 {
+        return Kind::Three([Value::integer(0).to_bits(), 0.0_f64.to_bits(), NEGATIVE_ZERO_BITS]);
+    }
+    let double = number.to_bits();
+    match integer_of(number) {
+        Some(int) => Kind::Two([Value::integer(int).to_bits(), double]),
+        None => Kind::One(double),
+    }
+}
+
+/// The offset of the first (last when `reverse`) value that is a hole or satisfies `matches`.
+fn first_stop<I>(mut values: I, reverse: bool, matches: impl Fn(Value) -> bool) -> Option<usize>
+where
+    I: DoubleEndedIterator<Item = Value> + ExactSizeIterator,
+{
+    let stop = |value: Value| value.is_deleted() || matches(value);
+    if reverse { values.rposition(stop) } else { values.position(stop) }
+}
+
+/// The offset of the first (last when `reverse`) narrow word that is a hole or `key`.
+fn find_narrow(words: &[u32], reverse: bool, key: Option<u32>) -> Option<usize> {
+    let hole = Value::DELETED.to_narrow();
+    let stop = |word: &u32| Some(*word) == hole || key == Some(*word);
+    if reverse { words.iter().rposition(stop) } else { words.iter().position(stop) }
+}
+
+
+/// Where the generic algorithm resumes a search of `range` the view cannot decide: its last
+/// index when `reverse`, else its first.
+fn resume_at(range: &std::ops::Range<usize>, reverse: bool) -> Search {
+    Search::Resume(if reverse { range.end - 1 } else { range.start })
+}
+
 impl<H: Host> Vm<H> {
     /// The element backing of an array whose indices are all own data properties of it: no
     /// indexed descriptors, sparse storage or arguments mapping. A slot holding the hole
     /// marker is a hole. Reading it runs no guest code; a search reads it in place.
     pub(super) fn array_search_elements(&self, this: Value) -> Option<&crate::heap::ArrayElements> {
         let object = self.heap.array(this)?;
-        (!object.has_indexed_descriptors() && !object.is_arguments_object() && self.heap.sparse_length(this).is_none())
+        // Only an array marked as having held sparse elements (`Object::mark_sparse_elements`,
+        // which every side-table insert sets first) can have a side-table entry: an unmarked
+        // one is decided by its header, without the side table's hash probe.
+        let sparse = || object.has_sparse_elements() && self.heap.sparse_length(this).is_some();
+        (!object.has_indexed_descriptors() && !object.is_arguments_object() && !sparse())
             .then(|| object.elements())
     }
 
@@ -47,52 +134,42 @@ impl<H: Host> Vm<H> {
     pub(super) fn search_dense(
         &self,
         array: Value,
+        range: std::ops::Range<usize>,
+        reverse: bool,
+        search: Value,
+        mode: Match,
+    ) -> Search {
+        // The backing itself, decoded element by element where it is narrow or double: a
+        // search reads each element once and copies nothing (`array_read_view` would decode an
+        // encoded backing into a new vector first).
+        let Some(elements) = self.array_search_elements(array) else {
+            return if range.is_empty() { Search::Missing } else { resume_at(&range, reverse) };
+        };
+        self.search_elements(elements, array, range, reverse, search, mode)
+    }
+
+    /// `search_dense` over `elements`, the backing `array_search_elements` gave for `array`.
+    fn search_elements(
+        &self,
+        elements: &crate::heap::ArrayElements,
+        array: Value,
         mut range: std::ops::Range<usize>,
         reverse: bool,
         search: Value,
         mode: Match,
     ) -> Search {
-        let resume = |range: &std::ops::Range<usize>| Search::Resume(if reverse { range.end - 1 } else { range.start });
-        // The backing itself, decoded element by element where it is narrow or double: a
-        // search reads each element once and copies nothing (`array_read_view` would decode an
-        // encoded backing into a new vector first).
-        let Some(elements) = self.array_search_elements(array) else {
-            return if range.is_empty() { Search::Missing } else { resume(&range) };
-        };
         // Indices past the vector are the generic algorithm's.
         if range.end > elements.len() && !range.is_empty() {
-            return resume(&range);
+            return resume_at(&range, reverse);
         }
-        // A narrow backing searched for a value whose equal values are its own word alone (an
-        // int32, or a constant or object reference): its words compare as they are, a hole by
-        // the hole marker's word. A narrow backing holds no double, so no other word is equal.
-        let narrow = elements.narrow_words().zip(self.word_identity_search(search).and_then(Value::to_narrow));
-        let hole = Value::DELETED.to_narrow();
+        let needle = self.classify(search, mode);
         while !range.is_empty() {
-            let found = match narrow {
-                Some((words, key)) => {
-                    let stop = |word: &u32| *word == key || Some(*word) == hole;
-                    let mut words = words[range.clone()].iter();
-                    if reverse { words.rposition(stop) } else { words.position(stop) }
-                }
-                None => match elements.wide_values() {
-                    // An int32 search of a wide backing: the same word, the hole's, or a double
-                    // word of the same value, tested as words in one pass.
-                    Some(values) if let Some(int) = search.as_int() && int != 0 => {
-                        let number = f64::from(int);
-                        let stop = |value: &Value| *value == search || value.is_deleted() || value.is_double() && value.as_number() == Some(number);
-                        let mut values = values[range.clone()].iter();
-                        if reverse { values.rposition(stop) } else { values.position(stop) }
-                    }
-                    Some(values) => self.position_of(values[range.clone()].iter().copied(), reverse, search, mode),
-                    None => self.position_of(elements.range(range.clone()), reverse, search, mode),
-                },
-            };
-            let Some(offset) = found else {
+            let Some(offset) = self.position_in(elements, range.clone(), reverse, &needle) else {
                 break;
             };
             let index = range.start + offset;
-            if let Some(settled) = self.settle_search_stop(array, index, slice[offset].is_deleted(), search, mode) {
+            let hole = elements.get(index).is_some_and(Value::is_deleted);
+            if let Some(settled) = self.settle_search_stop(array, index, hole, search, mode) {
                 return settled;
             }
             range = if reverse { range.start..index } else { index + 1..range.end };
@@ -100,15 +177,64 @@ impl<H: Host> Vm<H> {
         Search::Missing
     }
 
-    /// `search` when every value equal to it, under strict equality and SameValueZero alike,
-    /// is its own word: an int32, or anything but a Number, a string or a BigInt.
-    fn word_identity_search(&self, search: Value) -> Option<Value> {
-        let plain = if search.as_number().is_some() {
-            search.as_int().is_some()
-        } else {
-            self.heap.string(search).is_none() && !matches!(self.heap.get(search), Some(Cell::BigInt(_)))
+    /// Classifies `search` once for a search over the elements.
+    fn classify(&self, search: Value, mode: Match) -> Needle {
+        let kind = match search.as_number() {
+            Some(number) => number_kind(number, mode),
+            None if self.heap.string(search).is_some() || matches!(self.heap.get(search), Some(Cell::BigInt(_))) => {
+                Kind::Content
+            }
+            None => Kind::One(search.to_bits()),
         };
-        plain.then_some(search)
+        Needle { value: search, kind, narrow: narrow_key(search) }
+    }
+
+    /// The offset in `range` of the first (last when `reverse`) element that `needle` matches
+    /// or that is a hole, read from the backing's own form.
+    fn position_in(
+        &self,
+        elements: &crate::heap::ArrayElements,
+        range: std::ops::Range<usize>,
+        reverse: bool,
+        needle: &Needle,
+    ) -> Option<usize> {
+        if let Some(words) = elements.narrow_words().filter(|_| !matches!(needle.kind, Kind::Content)) {
+            return find_narrow(&words[range], reverse, needle.narrow);
+        }
+        match elements.wide_values() {
+            Some(values) => self.position_of(values[range].iter().copied(), reverse, needle),
+            None => self.position_of(elements.range(range), reverse, needle),
+        }
+    }
+
+    /// `position_in` over values, comparing by the needle's kind.
+    fn position_of<I>(&self, values: I, reverse: bool, needle: &Needle) -> Option<usize>
+    where
+        I: DoubleEndedIterator<Item = Value> + ExactSizeIterator,
+    {
+        match needle.kind {
+            Kind::One(word) => first_stop(values, reverse, |value| value.to_bits() == word),
+            Kind::Two(words) => first_stop(values, reverse, |value| words.contains(&value.to_bits())),
+            Kind::Three(words) => first_stop(values, reverse, |value| words.contains(&value.to_bits())),
+            Kind::Never => first_stop(values, reverse, |_| false),
+            Kind::Nan => first_stop(values, reverse, |value| {
+                value.is_double() && f64::from_bits(value.to_bits()).is_nan()
+            }),
+            Kind::Content => self.position_content(values, reverse, needle.value),
+        }
+    }
+
+    /// The first (last when `reverse`) value that is `search` itself, or a string with the same
+    /// units (compared by identity first, then length and units) or a BigInt of the same value.
+    fn position_content<I>(&self, values: I, reverse: bool, search: Value) -> Option<usize>
+    where
+        I: DoubleEndedIterator<Item = Value> + ExactSizeIterator,
+    {
+        let text = self.heap.string(search);
+        first_stop(values, reverse, |value| match text {
+            Some(text) => value == search || self.heap.string(value).is_some_and(|other| other == text),
+            None => self.strict_equal(value, search),
+        })
     }
 
     /// What the walk does at `index`, where it stopped on a match or a hole: a match is found;
@@ -128,7 +254,9 @@ impl<H: Host> Vm<H> {
     /// `fromIndex` that the view decides alone; `None` leaves any other call to the generic
     /// algorithm.
     pub(super) fn dense_search_call(&self, native: Native, array: Value, args: &[Value]) -> Option<Value> {
-        let length = self.array_search_elements(array)?.len();
+        // One proof of the backing serves the length and the search.
+        let elements = self.array_search_elements(array)?;
+        let length = elements.len();
         let start = match args.get(1) {
             None => 0,
             Some(from) => crate::units::relative_index(f64::from(from.as_int()?), length),
@@ -136,7 +264,7 @@ impl<H: Host> Vm<H> {
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
         let includes = native == Native::ArrayIncludes;
         let mode = if includes { Match::SameValueZero } else { Match::Strict };
-        Some(match self.search_dense(array, start..length, false, search, mode) {
+        Some(match self.search_elements(elements, array, start..length, false, search, mode) {
             Search::Found(_) if includes => Value::TRUE,
             Search::Found(index) => Value::number(index as f64),
             Search::Missing if includes => Value::FALSE,
@@ -144,39 +272,4 @@ impl<H: Host> Vm<H> {
             Search::Resume(_) => return None,
         })
     }
-
-    /// The offset in `slice` of the first (last when `reverse`) element equal to `search` under
-    /// `mode` or holding the hole marker. The searched value's kind picks the comparison once.
-    fn position_of<I>(&self, values: I, reverse: bool, search: Value, mode: Match) -> Option<usize>
-    where
-        I: DoubleEndedIterator<Item = Value> + ExactSizeIterator,
-    {
-        fn find<I>(mut values: I, reverse: bool, stop: impl Fn(Value) -> bool) -> Option<usize>
-        where
-            I: DoubleEndedIterator<Item = Value> + ExactSizeIterator,
-        {
-            let stop = |value: Value| stop(value) || value.is_deleted();
-            if reverse { values.rposition(stop) } else { values.position(stop) }
-        }
-        if let Some(number) = search.as_number() {
-            return if number.is_nan() {
-                // IsStrictlyEqual never holds for NaN; SameValueZero holds for it.
-                find(values, reverse, |value| mode == Match::SameValueZero && value.as_number().is_some_and(f64::is_nan))
-            } else if search.as_int().is_some_and(|int| int != 0) {
-                // An int32 search other than 0: the same word is the same Number, and any other
-                // equal Number is a double word of its value (a raw double), never an int32 one.
-                find(values, reverse, |value| value == search || value.is_double() && value.as_number() == Some(number))
-            } else {
-                find(values, reverse, |value| value.as_number() == Some(number))
-            };
-        }
-        if let Some(text) = self.heap.string(search) {
-            return find(values, reverse, |value| value == search || self.heap.string(value).is_some_and(|other| other == text));
-        }
-        if matches!(self.heap.get(search), Some(Cell::BigInt(_))) {
-            return find(values, reverse, |value| self.strict_equal(value, search));
-        }
-        find(values, reverse, |value| value == search)
-    }
-
 }

@@ -70,6 +70,9 @@ pub enum Kind {
     /// Go to `taken` unless the operand is a Number; into a pinned destination an int word, which
     /// it loads; for an int slot destination, an int word.
     Guard = library::GUARD,
+    /// `Guard` into a pinned destination with its tag test left out (`stencils/numeric.rs`'s `unbox_row`).
+    Unbox = library::UNBOX,
+    UnboxInt = library::UNBOX_INT,
     /// Set the high half of the int slot named by hole 0 to the int tag.
     TagInit = library::TAG_INIT,
     /// Write a pinned double (operand `a`) to the frame slot at hole 0 as a canonical Number word.
@@ -96,6 +99,9 @@ pub enum Kind {
     Trunc = library::TRUNC,
     Abs = library::ABS,
     Round = library::ROUND,
+    /// `Math.fround` and `Math.sign` of one Number (`codes::FROUND`, `codes::SIGN`).
+    Fround = library::FROUND,
+    Sign = library::SIGN,
     /// `Math.min`, `Math.max` of two Numbers and `Math.imul` of two int32s (`codes::MIN..=codes::IMUL`).
     Min = library::MIN,
     Max = library::MAX,
@@ -104,7 +110,15 @@ pub enum Kind {
     Clz32 = library::CLZ32,
     /// int32 `+` and `-` a tier proved exact (`staged::Overflow::Impossible`): no overflow test, int operands only.
     AddNoOverflow = library::ADD_NO_OVERFLOW,
+    /// `switch`'s case slot over dense int labels (`stencils/numeric.rs` `int_case_row`).
+    IntCase = library::INT_CASE,
     SubNoOverflow = library::SUB_NO_OVERFLOW,
+    /// The jumps of the tests a staged compare names with no Number relation (`library::BIT_TEST` and the rest).
+    BitTest = library::BIT_TEST,
+    NullishEq = library::NULLISH_EQ,
+    NullishNe = library::NULLISH_NE,
+    BoolTrue = library::BOOL_TRUE,
+    BoolFalse = library::BOOL_FALSE,
 }
 
 impl Kind {
@@ -150,6 +164,11 @@ pub struct Row {
 
 #[path = "../stencils/library.rs"]
 pub mod library;
+#[path = "../stencils/site_bits.rs"]
+pub mod site_bits;
+use library::TYPED_KINDS;
+#[path = "../stencils/row_names.rs"]
+pub mod row_names;
 #[path = "../stencils/supernodes.rs"]
 pub mod supernodes;
 

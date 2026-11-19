@@ -1,8 +1,8 @@
 use crate::bytecode::{
     Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, FunctionSlot, Instr,
-    LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
+    LexicalBindingKind, MethodSite, ReceiverPath, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
     ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, REGISTER_MOVE, RETURN_OP, Register,
-    ResidualProgram, SET_THIS_REGISTER, SourcePosition, Superinstruction, Traits, WideInstruction, the_op,
+    ResidualProgram, SET_THIS_REGISTER, Superinstruction, Traits, WideInstruction, the_op,
 };
 use oxc_allocator::Allocator;
 use replay::SiteTable;
@@ -96,8 +96,11 @@ pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 pub(crate) mod replay;
+mod settled;
 mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW, settle_deferred_rewrite};
 mod rewrite; mod rest_alias;
+mod scratch;
+pub(crate) use scratch::{CompileScratch, code_capacity_hint, trim_slack};
 mod sequence;
 pub(crate) mod stack;
 mod checks;
@@ -1173,7 +1176,7 @@ impl Engine {
         // A recognized body's check needs its call-only facts deferred, or none to find
         // (`BodyFacts::check`): only bodies with no function inside are recognized then.
         let recognize = if stubbing.functions { annex_b_targets::Recognize::All } else { annex_b_targets::Recognize::Flat };
-        let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing.functions, stubbing.arrows));
+        let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing));
         { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
         let mut declared_types = crate::bytecode::DeclaredTypes::default();
         let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, &mut declared_types, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, atom_prefix.native_global_script_calls());
@@ -1895,21 +1898,11 @@ type NameSharedSiteMap = FxHashMap<(NamedAccess, u32), u16>;
 struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
-    source_line_starts: std::borrow::Cow<'a, [usize]>,
-    /// The line start partition `source_position` found last, which the next position,
-    /// emitted from the same or a nearby node, most often falls on.
-    last_source_line: std::cell::Cell<usize>,
-    /// The UTF-16 excess partitions `source_position` found last, at a position and at its
-    /// line's start.
-    last_utf16_excess: [std::cell::Cell<usize>; 2],
     source_comments: Vec<Span>,
     /// The TypeScript declared environment its parse admitted (`typescript::admit`).
     declared_types: crate::bytecode::DeclaredTypes,
     /// A TypeScript checker's parameter types for this text (`typescript::checked`).
     checked_parameters: Option<std::sync::Arc<typescript::CheckedParameters>>,
-    /// Byte offset of each non-ASCII character with the running excess of
-    /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
-    source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
     mode: SpecializationMode,
     root_strict: bool,
     module_goal: bool,
@@ -2001,6 +1994,8 @@ struct Compiler<'a> {
     /// The source starts of function expressions called where they are made or marked as
     /// about to run, which keep their records (`note_invoked_callee`).
     invoked_functions: FxHashSet<u32>,
+    /// The buffers every function's lowering passes share (`CompileScratch`).
+    scratch: CompileScratch,
     /// How each replayable function was compiled, with the cursors it started from.
     replay_calls: FxHashMap<u32, (replay::TableCursors, replay::ReplayCall)>,
     /// In a replay, the function it recompiles and where the load left each function.
@@ -2069,39 +2064,6 @@ impl crate::bytecode::FactTables for LoadTables<'_, '_> {
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
-
-/// Byte offset of each non-ASCII character of `text` with the running excess of UTF-8 bytes
-/// over UTF-16 units through it.
-fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
-    let bytes = text.as_bytes();
-    let mut table = Vec::new();
-    let mut excess = 0;
-    let mut offset = 0;
-    while let Some(skipped) = ascii_prefix_len(&bytes[offset..]) {
-        offset += skipped;
-        let character = text[offset..].chars().next().expect("a non-ASCII byte starts a character");
-        excess += character.len_utf8() - character.len_utf16();
-        table.push((offset, excess));
-        offset += character.len_utf8();
-    }
-    table
-}
-
-/// The bytes of `bytes` before its first non-ASCII byte, `None` when every one is ASCII:
-/// a word of bytes at a time, as source text is nearly all ASCII.
-fn ascii_prefix_len(bytes: &[u8]) -> Option<usize> {
-    const WORD: usize = size_of::<u64>();
-    const HIGH_BITS: u64 = u64::from_ne_bytes([0x80; WORD]);
-    let (words, _) = bytes.as_chunks::<WORD>();
-    let mut offset = 0;
-    for word in words {
-        if u64::from_ne_bytes(*word) & HIGH_BITS != 0 {
-            break;
-        }
-        offset += WORD;
-    }
-    bytes[offset..].iter().position(|byte| !byte.is_ascii()).map(|position| offset + position)
-}
 
 /// The name prefix of a catch parameter's capture marker (`Compiler::capture_marker`).
 const CATCH_CAPTURE_PREFIX: &str = "\0quench:catch-capture:";
@@ -2265,25 +2227,6 @@ thread_local! {
     pub(crate) static LOWER_AT_LOAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// The index of the line of `starts` holding `offset`: the last line start at or before it, or
-/// the first line when none is. `last`, the line found before, is tried first and updated.
-fn source_line_index(starts: &[usize], last: &std::cell::Cell<usize>, offset: usize) -> usize {
-    partition_point_from(starts, last, |start| *start <= offset).saturating_sub(1)
-}
-
-/// `slice.partition_point(holds)`, trying `last`, the point found before, first and updating
-/// it: positions are asked for in nearly source order, so most fall where the last did.
-fn partition_point_from<T>(slice: &[T], last: &std::cell::Cell<usize>, holds: impl Fn(&T) -> bool) -> usize {
-    let point = last.get();
-    let before = point.checked_sub(1).is_none_or(|index| slice.get(index).is_some_and(&holds));
-    if point <= slice.len() && before && slice.get(point).is_none_or(|item| !holds(item)) {
-        return point;
-    }
-    let point = slice.partition_point(holds);
-    last.set(point);
-    point
-}
-
 /// The program tables a function's lowering reads, final once every function's rewrites
 /// have added their sites: at load the compiler's, after it the finished program's.
 pub(crate) struct LoweringTables<'t> {
@@ -2295,16 +2238,21 @@ pub(crate) struct LoweringTables<'t> {
     pub(crate) undefined_constant: u32,
 }
 
-/// The largest body whose copies are coalesced though it has no loop: a leaf small enough for
-/// a call entry to recognise by its shape (`capture_append::recognizes`).
-const RECOGNISED_LEAF_INSTRUCTIONS: usize = 16;
+/// The largest loop-free body whose copies are coalesced. This bound is unmeasured: the copy
+/// scans visit at most `copies::SCAN_LIMIT` instructions per `Move`, and the liveness and copy
+/// buffers are reused from `CompileScratch`, so a loop-free body's coalescing grows with its
+/// size rather than with its block lengths. The bound was picked without a measurement and
+/// must be checked on octane-code-load, where a coalescing pass once cost 4.7% of the run.
+/// It covers a leaf small enough for a call entry to recognise by its shape
+/// (`capture_append::recognizes`), which is 16 instructions or fewer.
+const LOOP_FREE_COALESCE_INSTRUCTIONS: usize = 128;
 
 /// Whether coalescing the copies frame-register promotion left repays its cost: a body that
 /// loops runs its instructions many times and its loops' tiers read the coalesced shape, and a
-/// small leaf's call entry recognises it. Any other body mostly runs once (octane-code-load:
-/// coalescing cost 4.7% of the run and saved no instruction on any V8-v7 or JetStream row).
+/// loop-free body up to `LOOP_FREE_COALESCE_INSTRUCTIONS` is coalesced too, since its scans are
+/// bounded (see that constant).
 fn coalescing_repays(function: &BcFunction) -> bool {
-    rewrite::live_count(&function.code) <= RECOGNISED_LEAF_INSTRUCTIONS || function.loops()
+    rewrite::live_count(&function.code) <= LOOP_FREE_COALESCE_INSTRUCTIONS || function.loops()
 }
 
 /// The lowering passes after a function's dispatch class is settled (`settle_dispatch`):
@@ -2316,10 +2264,11 @@ pub(crate) fn lower_settled<'a>(
     function: &mut BcFunction,
     tables: &LoweringTables<'_>,
     atom_name: impl Fn(usize) -> Option<&'a str>,
+    scratch: &mut CompileScratch,
 ) -> Option<Vec<liveness::RegisterSet>> {
     let LoweringTables { methods, field_sites, superinstructions, specialized, undefined_constant, object_sites } = *tables;
     if function.dispatch == DispatchClass::Numeric {
-        let live = liveness::analyze(function, methods, field_sites, superinstructions);
+        let live = liveness::buffers::analyze_with(function, methods, field_sites, superinstructions, scratch);
         numeric::apply(function, live.as_deref());
     }
     // Renaming a plain slot's operations keeps it plain (validation re-derives the same
@@ -2329,12 +2278,13 @@ pub(crate) fn lower_settled<'a>(
     // passes read one set of blocks.
     let flow = crate::bytecode::initialization::FlowCell::new();
     let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions, &flow);
-    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name, &flow);
+    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name, &flow, scratch);
     if specialized {
         if coalescing_repays(function) {
-            rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
+            rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions, scratch);
         }
-        object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
+        object_registers::promote(function, methods, field_sites, superinstructions, object_sites, scratch);
+        rewrite::hoist_loop_constants(function, methods, field_sites, superinstructions, scratch);
     }
     rest_reads::rewrite(function, methods, field_sites, superinstructions, &|atom| atom_name(atom as usize) == Some("length"));
     let mut solved = None;
@@ -2343,14 +2293,14 @@ pub(crate) fn lower_settled<'a>(
         .iter()
         .any(|instruction| instruction.op().traits().has(Traits::PLAIN_LOCAL_STORE))
     {
-        let live = liveness::analyze(function, methods, field_sites, superinstructions);
+        let live = liveness::buffers::analyze_with(function, methods, field_sites, superinstructions, scratch);
         if !numeric::apply_plain_local_stores(function, live.as_deref()) {
             solved = live;
         }
     }
     // The one compaction of the lowering: the passes above leave the `Nop`s their in-place
     // rewrites made, and the live sets this returns are compacted with the same map.
-    rewrite::remove_nops(function, &mut solved);
+    rewrite::remove_nops(function, &mut solved, scratch);
     solved
 }
 
@@ -2493,38 +2443,13 @@ impl<'a> Compiler<'a> {
         atom_prefix: &'a dyn AtomPrefix,
         private_name_ids: FxHashMap<(u32, u32), u32>,
     ) -> Self {
-        Self::with_layout(
-            source,
-            text,
-            mode,
-            atom_prefix,
-            private_name_ids,
-            std::borrow::Cow::Owned(crate::bytecode::source_line_starts(text).collect()),
-            std::borrow::Cow::Owned(source_utf16_excess(text)),
-        )
-    }
-
-    /// `new`, with `text`'s line starts and UTF-16 excess table already derived.
-    fn with_layout(
-        source: &'a str,
-        text: &'a str,
-        mode: SpecializationMode,
-        atom_prefix: &'a dyn AtomPrefix,
-        private_name_ids: FxHashMap<(u32, u32), u32>,
-        source_line_starts: std::borrow::Cow<'a, [usize]>,
-        source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
-    ) -> Self {
         let atoms = CompilerAtoms::new(atom_prefix, source.len() / 32);
         Self {
             source,
             text,
-            source_line_starts,
-            last_source_line: std::cell::Cell::new(0),
-            last_utf16_excess: Default::default(),
             source_comments: Vec::new(),
             declared_types: crate::bytecode::DeclaredTypes::default(),
             checked_parameters: typescript::checked_parameters(text),
-            source_utf16_excess,
             mode,
             root_strict: false,
             module_goal: false,
@@ -2571,6 +2496,7 @@ impl<'a> Compiler<'a> {
             dynamic_binding_scopes: 0,
             early_replays: FxHashMap::default(),
             invoked_functions: FxHashSet::default(),
+            scratch: CompileScratch::default(),
             replay_calls: FxHashMap::default(),
             replay_target: None,
             source_type: oxc_span::SourceType::default(),
@@ -3145,28 +3071,10 @@ impl<'a> Compiler<'a> {
         source_syntax::delimiter(self.text, &self.source_comments, start, end, delimiter)
     }
 
-    fn source_position(&self, offset: u32) -> SourcePosition {
-        let offset = (offset as usize).min(self.text.len());
-        let line_index = self.source_line_index(offset);
-        let line_start = self.source_line_starts[line_index];
-        let excess_before = |offset: usize, last: &std::cell::Cell<usize>| {
-            let index = partition_point_from(&self.source_utf16_excess, last, |(character, _)| *character < offset);
-            index
-                .checked_sub(1)
-                .map_or(0, |index| self.source_utf16_excess[index].1)
-        };
-        let [at_offset, at_line] = &self.last_utf16_excess;
-        let column = offset - line_start - (excess_before(offset, at_offset) - excess_before(line_start, at_line));
-        SourcePosition {
-            pc: 0,
-            line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
-            column: u32::try_from(column.saturating_add(1)).unwrap_or(u32::MAX),
-        }
-    }
-
-    /// The index of the line holding `offset` (`source_line_index`).
-    fn source_line_index(&self, offset: usize) -> usize {
-        source_line_index(&self.source_line_starts, &self.last_source_line, offset)
+    /// The source offset a position records: a byte of the text, clamped to its end. Its line
+    /// and column are derived from it only when something asks (`ProgramSource::position`).
+    fn source_offset(&self, offset: u32) -> u32 {
+        offset.min(u32::try_from(self.text.len()).unwrap_or(u32::MAX))
     }
 
     /// Emits every function of `program`: all the compiler reads of its tree. `finish` makes
@@ -3371,14 +3279,16 @@ impl<'a> Compiler<'a> {
             .map(|name| self.atom(name))
             .collect();
         if let Some(root) = self.functions.first_mut() {
-            root.global_declarations = crate::bytecode::GlobalDeclarations::new(
-                global_lexical_atoms,
-                global_var_atoms,
-                global_function_atoms,
-                global_annex_b_var_atoms,
-                global_immutable_atoms,
-            )
-            .boxed();
+            root.set_global_declarations(
+                crate::bytecode::GlobalDeclarations::new(
+                    global_lexical_atoms,
+                    global_var_atoms,
+                    global_function_atoms,
+                    global_annex_b_var_atoms,
+                    global_immutable_atoms,
+                )
+                .boxed(),
+            );
             // A strict eval's vars are its own bindings, not the global object's.
             if !self.module_goal && !(self.eval_context.is_some() && strict_script) {
                 fn lower_global_var(
@@ -3480,19 +3390,24 @@ impl<'a> Compiler<'a> {
         // A replay compiles one function and records no facts; it keeps no program. A class
         // constructor runs its instance initializer on its own environment
         // (`Vm::initialize_this_binding`); a released constructor's link is not at hand.
+        // A private name is found by walking the environment chain from the activation that
+        // uses it (`Vm::private_home`), and no capture records that walk, so a program that names
+        // any private member reads each closure's whole chain.
+        let names_private_members = self.private_name_references != 0;
         let closure_reads = (facts.len() == functions.len()).then(|| {
             let initializers: Vec<capture_layout::InstanceInitializer> = functions
                 .iter()
                 .enumerate()
                 .map(|(id, function)| match function {
-                    Some(function) => capture_layout::InstanceInitializer::Known(function.instance_initializer),
+                    Some(function) => capture_layout::InstanceInitializer::Known(function.instance_initializer()),
                     None if released.get(&id).is_some_and(|released| released.header.is_class_constructor) => {
                         capture_layout::InstanceInitializer::Unknown
                     }
                     None => capture_layout::InstanceInitializer::Known(None),
                 })
                 .collect();
-            std::rc::Rc::new(capture_layout::closure_reads(&facts, &reachable, &initializers))
+            let dynamic_scopes = if names_private_members { vec![true; facts.len()] } else { reachable.clone() };
+            std::rc::Rc::new(capture_layout::closure_reads(&facts, &dynamic_scopes, &initializers))
         });
         self.resolve_name_bindings(&mut functions, &reachable);
         let mut layout_inputs = capture_layout::inputs(&facts, &dynamic, |id| {
@@ -3606,6 +3521,7 @@ impl<'a> Compiler<'a> {
                                 undefined_constant,
                             },
                             |atom| self.atoms.get(atom),
+                            &mut CompileScratch::default(),
                         );
                     }
                     function
@@ -3629,6 +3545,14 @@ impl<'a> Compiler<'a> {
             .then(|| replay::ProgramAtomIndex::new(self.atoms.interned(), &atoms));
         let constants = self.constants.into_vec();
         let field_sites = self.field_sites.into_vec();
+        // Built by pushes, so each may hold doubling slack the program would keep for good.
+        let mut module_requests = module_requests;
+        module_requests.shrink_to_fit();
+        let mut module_imports = module_imports;
+        module_imports.shrink_to_fit();
+        let mut declared_types = std::mem::take(&mut self.declared_types);
+        declared_types.declared.shrink_to_fit();
+        declared_types.enum_constants.shrink_to_fit();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
             // Eval code is code compiled for an eval; a host script that only captures its
@@ -3643,7 +3567,7 @@ impl<'a> Compiler<'a> {
             module_requests,
             module_imports,
             module_link_plan,
-            declared_types: (!self.declared_types.is_empty()).then(|| Box::new(std::mem::take(&mut self.declared_types))),
+            declared_types: (!declared_types.is_empty()).then(|| Box::new(declared_types)),
             source_name: self.source.to_owned(),
             source: Some(self.first_call.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
                 text: source_text::kept_or_provided(self.text, self.eval_context.is_some(), self.provided_text.take()),
@@ -3651,7 +3575,6 @@ impl<'a> Compiler<'a> {
                 base: 0,
                 line_offset: 0,
                 column_offset: 0,
-                line_starts: Default::default(),
                 call_sites: Default::default(),
                 layout: Default::default(),
             })),
@@ -3931,7 +3854,7 @@ impl<'a> Compiler<'a> {
                     cache,
                     argument_start,
                     argument_count,
-                    receiver_path,
+                    receiver_path: receiver_path.into(),
                 }
             })
             .collect();
@@ -4285,6 +4208,7 @@ impl<'a> Compiler<'a> {
             &promoted_local_slots,
             &clobbered_local_slots,
         );
+        function.code.reserve(code_capacity_hint(options.source_span));
         if let Some((name, binding)) = name_binding {
             function.push_function_name_binding(name, binding);
         }
@@ -4332,8 +4256,13 @@ impl<'a> Compiler<'a> {
             .instance_fields
             .filter(|_| !options.derived_constructor)
         {
-            function
-                .emit_instance_fields(fields, options.instance_private_methods.unwrap_or_default());
+            // A base class constructor's receiver is its own [[Construct]]'s, fresh; a derived
+            // class's fields run in their initializer on the receiver `super()` returned.
+            function.emit_instance_fields(
+                fields,
+                options.instance_private_methods.unwrap_or_default(),
+                options.class_constructor,
+            );
         }
         if let Some(defaults) = options.defaults {
             function.emit_parameter_bindings(defaults);
@@ -4400,8 +4329,7 @@ impl<'a> Compiler<'a> {
         });
         // Grown by doubling, these would keep their slack beside the syntax tree until the
         // whole program has compiled.
-        function.code.shrink_to_fit();
-        function.source_positions.shrink_to_fit();
+        trim_slack(&mut function.code);
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
@@ -4423,7 +4351,11 @@ impl<'a> Compiler<'a> {
                 0
             },
             parameter_atoms: parameter_atoms.into(),
-            declared_parameters: declared_parameters.into(),
+            rare: crate::bytecode::FunctionRare {
+                declared_parameters: declared_parameters.into(),
+                ..Default::default()
+            }
+            .boxed(),
             // A rest alias's list is no rest list of the function's own (`rest_alias`).
             rest: options.rest_override
                 || options.defaults.is_some_and(|value| value.rest.is_some()) != rest_alias.is_some(),
@@ -4432,6 +4364,12 @@ impl<'a> Compiler<'a> {
             is_class_constructor: options.class_constructor,
             derived_constructor: options.derived_constructor,
             instance_initializer: None,
+            // Only a base class constructor's receiver is made by its own [[Construct]].
+            constant_fields: if options.class_constructor && !options.derived_constructor {
+                std::mem::take(&mut function.constant_fields).into()
+            } else {
+                Default::default()
+            },
             super_home_atom: options.super_home_atom,
             constructible: !options.non_constructible
                 && !options.async_function
@@ -4452,26 +4390,18 @@ impl<'a> Compiler<'a> {
             local_registers: function.promoted_local_layout().into(),
             inherited_with_scope: options.with_depth != 0,
             lexical_atoms: lexical_atoms.into(),
-            global_declarations: None,
             name_bindings,
             binding_sites: function.binding_sites.into(),
-            source_positions: function.source_positions,
+            source_positions: function.source_positions.freeze(),
             environment_clones,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: function.handlers.into(),
             register_roots: Default::default(),
             undefined_register,
@@ -4583,25 +4513,32 @@ impl<'a> Compiler<'a> {
                 methods,
                 &mut self.field_sites,
                 &mut self.superinstructions,
+                &mut self.scratch,
             );
         }
     }
 
     /// The finishing passes of one function after every function's rewrites: its dispatch
     /// class (`settle_dispatch`), then the passes the class leaves (`lower_settled`).
-    fn lower_function(&self, function: &mut BcFunction, undefined_constant: u32) -> Option<Vec<liveness::RegisterSet>> {
+    fn lower_function(&mut self, function: &mut BcFunction, undefined_constant: u32) -> Option<Vec<liveness::RegisterSet>> {
         self.settle_dispatch(function);
+        // Field borrows, not `method_arguments()`, so the scratch borrows alongside the tables.
+        let methods: &dyn liveness::MethodArguments = match self.replay_program {
+            Some(program) => program,
+            None => &self.method_sites,
+        };
         lower_settled(
             function,
             &LoweringTables {
                 object_sites: self.object_sites.as_slice(),
-                methods: self.method_arguments(),
+                methods,
                 field_sites: self.field_sites.as_slice(),
                 superinstructions: self.superinstructions.as_slice(),
                 specialized: self.mode == SpecializationMode::Enabled,
                 undefined_constant,
             },
             |atom| self.atoms.get(atom),
+            &mut self.scratch,
         )
     }
 
@@ -4619,9 +4556,9 @@ impl<'a> Compiler<'a> {
 
     /// `settle_dispatch` for a function whose lowering ends there, which therefore drops the
     /// `Nop`s its rewrites left (`lower_settled` does so for the functions it lowers).
-    fn settle_dispatch_only(&self, function: &mut BcFunction) {
+    fn settle_dispatch_only(&mut self, function: &mut BcFunction) {
         self.settle_dispatch(function);
-        rewrite::remove_nops(function, &mut None);
+        rewrite::remove_nops(function, &mut None, &mut self.scratch);
     }
 
     fn dispatch_class(code: &[Instr], wide: &[WideInstruction]) -> DispatchClass {

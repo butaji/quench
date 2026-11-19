@@ -687,20 +687,68 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     assert!(heap.live_payload_bytes()[CellKind::Object as usize] > 0);
 }
 
+fn anyref_storage() -> wasmparser::StorageType {
+    wasmparser::StorageType::Val(wasmparser::ValType::Ref(wasmparser::RefType::ANYREF))
+}
+
+/// A struct of an i8 then an anyref; `described` gives it a descriptor, which is the declaration
+/// itself (module index 0), so the layout ends with a descriptor word.
+fn i8_anyref_struct(described: bool) -> wasmparser::SubType {
+    wasmparser::SubType {
+        is_final: true,
+        supertype_idx: None,
+        composite_type: wasmparser::CompositeType {
+            inner: wasmparser::CompositeInnerType::Struct(wasmparser::StructType {
+                fields: Box::new([
+                    wasmparser::FieldType { element_type: wasmparser::StorageType::I8, mutable: true },
+                    wasmparser::FieldType { element_type: anyref_storage(), mutable: false },
+                ]),
+            }),
+            shared: false,
+            descriptor_idx: if described { wasmparser::PackedIndex::from_module_index(0) } else { None },
+            describes_idx: None,
+        },
+    }
+}
+
+#[test]
+fn wasm_gc_descriptor_is_the_last_traced_reference_word() {
+    let mut heap = Heap::new();
+    let bits = 0x7ffc_1234_5678_9abc;
+    let value = heap.alloc(Cell::WasmBits64(bits));
+    let external = heap.alloc(Cell::WasmExtern(value));
+    let descriptor = heap.alloc(Cell::WasmBits64(!bits));
+    let declarations = crate::WasmTypes::singletons_for_test(vec![i8_anyref_struct(true)]);
+    let layout = declarations.layout(0).expect("a described struct layout");
+    let mut stored = WasmGcFields::new(layout, 0, Some(descriptor)).unwrap();
+    stored.put(layout, 1, crate::wasm::gc::GcField::new(1, anyref_storage()).unwrap(), external.to_bits());
+    assert!(matches!(stored.descriptor(), Some(found) if found == descriptor));
+    let owner = heap.alloc(Cell::WasmGc { declarations, ty: 0, fields: stored });
+    let root = heap.root(owner);
+    heap.collect([]);
+    assert!(heap.is_live(external));
+    assert!(heap.is_live(descriptor));
+    assert!(matches!(heap.get(value), Some(Cell::WasmBits64(actual)) if *actual == bits));
+    assert!(heap.release_root(root));
+    heap.collect([]);
+    assert!(!heap.is_live(owner));
+    assert!(!heap.is_live(external));
+    assert!(!heap.is_live(descriptor));
+}
+
 #[test]
 fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     let mut heap = Heap::new();
     let bits = 0x7ffc_1234_5678_9abc;
     let value = heap.alloc(Cell::WasmBits64(bits));
-    // This allocator test checks edges; module admission owns declaration validity.
-    let declarations = crate::WasmTypes::default();
+    // This allocator test checks edges; module admission owns declaration validity. The struct is
+    // a packed i8 then an anyref, so its reference word is the one edge the collector follows.
+    let declarations = crate::WasmTypes::singletons_for_test(vec![i8_anyref_struct(false)]);
     let external = heap.alloc(Cell::WasmExtern(value));
-    let descriptor = heap.alloc(Cell::WasmBits64(!bits));
-    let owner = heap.alloc(Cell::WasmGc {
-        declarations,
-        ty: 0,
-        fields: WasmGcFields::try_new(1, Some(descriptor), |_| Some(external)).unwrap(),
-    });
+    let layout = declarations.layout(0).expect("a struct layout");
+    let mut stored = WasmGcFields::new(layout, 0, None).unwrap();
+    stored.put(layout, 1, crate::wasm::gc::GcField::new(1, anyref_storage()).unwrap(), external.to_bits());
+    let owner = heap.alloc(Cell::WasmGc { declarations, ty: 0, fields: stored });
     let tag = heap.alloc(Cell::WasmTag { object: Box::new(plain_object()), declarations: crate::WasmTypes::default(), ty: 0 });
     let exception = heap.alloc(Cell::WasmException {
         tag,
@@ -710,14 +758,12 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     heap.collect([]);
     assert!(heap.is_live(tag));
     assert!(heap.is_live(owner));
-    assert!(heap.is_live(descriptor));
     assert!(matches!(heap.get(value), Some(Cell::WasmBits64(actual)) if *actual == bits));
     assert!(heap.release_root(root));
     heap.collect([]);
     assert!(!heap.is_live(value));
     assert!(!heap.is_live(owner));
     assert!(!heap.is_live(external));
-    assert!(!heap.is_live(descriptor));
     assert!(!heap.is_live(tag));
     assert!(!heap.is_live(exception));
 }

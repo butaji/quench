@@ -851,6 +851,7 @@ impl JsStringInner {
                 match units.view() {
                     // SAFETY: ASCII units are UTF-8.
                     Units::Ascii(bytes) => text.push_str(unsafe { std::str::from_utf8_unchecked(bytes) }),
+                    Units::Latin1(bytes) => text.push_str(&latin1_text(bytes)),
                     Units::Wide(units) => {
                         let host = part.cached_host()?;
                         let pairs_at_ends = units.first().is_some_and(|&u| (0xDC00..=0xDFFF).contains(&u))
@@ -1096,12 +1097,16 @@ impl JsString {
     }
 
     /// IsLessThan's order of two strings, by code units: the one definition every string
-    /// comparison (relational operators, the default sort) takes. Two inline ASCII texts
-    /// compare in place, without forming their unit views.
-    #[inline]
+    /// comparison (relational operators, the default sort, JIT helpers) takes. Two inline
+    /// ASCII texts compare in place; two strings already flat compare their views in place
+    /// (`Units::cmp`), never flattening a rope; only a rope not yet flat is flattened first.
+    #[inline(always)]
     pub(crate) fn order(&self, other: &Self) -> std::cmp::Ordering {
         if let (Repr::Flat(FlatUnits::Short(left)), Repr::Flat(FlatUnits::Short(right))) = (&self.repr, &other.repr) {
             return left.order(right);
+        }
+        if let (Some(left), Some(right)) = (self.existing_units(), other.existing_units()) {
+            return left.cmp(&right);
         }
         self.units().cmp(&other.units())
     }
@@ -1174,6 +1179,12 @@ impl JsString {
             return result;
         }
         (read.take().expect("read once"))(self.flat_unkept().view())
+    }
+
+    /// Whether the string holds the flat form a string record reads in place (`native_string`): its
+    /// units held by the record, short or ASCII or wide, rather than a rope, a slice or parts.
+    pub(crate) fn holds_record_form(&self) -> bool {
+        matches!(&self.repr, Repr::Flat(FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::Wide(_)))
     }
 
     /// Whether this is a rope of ASCII units not made flat yet.

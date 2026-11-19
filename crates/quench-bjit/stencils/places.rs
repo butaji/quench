@@ -11,8 +11,8 @@
 use crate::bytecode::{Operand, Register};
 use crate::codes::*;
 use crate::heap_rows::{context_word, payload, word_at};
-use crate::layout::{CONTEXT_THIS, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE};
-use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, value};
+use crate::layout::{CONTEXT_THIS, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
+use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, string_length, value};
 use crate::typed_ir::Representation;
 use crate::words::*;
 
@@ -36,13 +36,13 @@ fn stage() -> Concrete {
 
 /// The binary64 bits of the int32 in the low half of `value`.
 #[inline(always)]
-fn widen(value: u64) -> u64 {
+pub(crate) fn widen(value: u64) -> u64 {
     stage().i32_to_f64(value)
 }
 
 /// The place's value in its own representation.
 #[inline(always)]
-fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
+pub(crate) fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
     match P {
         // SAFETY: the frame slot at hole `H` is a live register of the activation.
         MEM => unsafe { (slot::<H>(s) as *const u64).read() },
@@ -255,9 +255,20 @@ fn truthy<const P: u8, const H: u8>(s: &S) -> Option<bool> {
         Representation::Float64 => Some(stage().number_truthy(word)),
         Representation::Tagged => {
             let (undecided, truthy) = value::tagged_truthiness(&mut stage(), word);
-            (!undecided).then_some(truthy)
+            (!undecided).then_some(truthy).or_else(|| string_truthy(s, word))
         }
     }
+}
+
+/// ToBoolean of a flat string `word` names: its length is not zero, read from its record as the string rows read it
+/// (`string_length::flat_string`, the interpreter's `concrete_string_length`). `None` for any other heap value, or a
+/// string form the record does not hold flat (a rope, a slice), which leaves the row.
+#[inline(always)]
+fn string_truthy(s: &S, word: u64) -> Option<bool> {
+    let mut stage = stage();
+    let records = word_at(payload(s), JS_STEP_STRING_RECORD_BASE);
+    let string = string_length::flat_string(&mut stage, records, word, ())?;
+    Some(string.length != 0)
 }
 
 /// A row's three places over the machine state. `proved` records that a dispatch already
@@ -415,8 +426,7 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     }
     #[inline(always)]
     fn count_edge(&mut self, _stage: &mut Concrete) -> Option<()> {
-        crate::places_guard::count_edge(&self.s);
-        Some(())
+        crate::places_guard::count_edge(&self.s).then_some(())
     }
     #[inline(always)]
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Representation) {

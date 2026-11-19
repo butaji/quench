@@ -5,11 +5,12 @@
 //! bytes is the operator it names (`load_operator`), and the zero forms are the bytes themselves.
 
 use super::wasm_frame::{vector_read, vector_write};
-use super::{StencilMemory, read, trap, write};
-use crate::staged::wasm_memory::{Access, check_access};
+use super::{StencilMemory, StencilSimd, read, trap, write};
+use crate::staged::wasm_memory_vector::load_lane;
+use crate::staged::wasm_simd_rules::{selector_of, simd_scalar};
 use crate::staged::wasm_simd_lanes::SimdOperator;
-use crate::wasm::WasmType;
-use crate::wasm_codes::*;
+use crate::wasm_kinds::*;
+use crate::wasm_layout::*;
 use crate::words::{HOLE_A, HOLE_B, Out, S};
 
 /// The bits of operator `OP` on the operands: the operator's own body (`SimdOperator::bits`). A tag
@@ -144,31 +145,21 @@ pub(crate) unsafe fn shift<const OP: u32>(s: S) -> Out {
 /// `D` (a scalar word) = the any, all or bitmask test of vector `A`.
 #[inline(always)]
 pub(crate) unsafe fn test<const OP: u32>(s: S) -> Out {
-    unsafe {
-        let word = operate::<OP>(vector_read::<HOLE_A>(&s), 0, 0) as u64;
-        write::<0>(&s, word);
-    }
+    let left = unsafe { vector_read::<HOLE_A>(&s) };
+    let word = simd_scalar(&mut StencilSimd, selector_of(OP, 0), left, None);
+    unsafe { write::<0>(&s, word) };
     Out::Next(s)
 }
 
-/// `D = v128.load` of the form `OP` at the 64-bit address in `HOLE_A`; traps out of bounds, writing nothing.
+/// `D = v128.load` of the form `OP` at the 64-bit address in `HOLE_A`: the staged lane load of its
+/// `load_bytes`, then the operator's widening or splat. Traps out of bounds, writing nothing.
 #[inline(always)]
 pub(crate) unsafe fn load<const OP: u32>(s: S) -> Out {
     let index = unsafe { read::<HOLE_A>(&s) };
     let bytes = const { load_bytes(OP) };
     let mut memory = StencilMemory::of(&s);
-    match check_access(&mut memory, Access { ty: WasmType::V128, bytes, signed: false }, index, 0, false) {
-        Ok(()) => {
-            let word = unsafe {
-                let at = memory.at(index, 0);
-                let mut word = 0u64;
-                let mut byte = 0;
-                while byte < bytes {
-                    word |= u64::from(*at.add(byte)) << (8 * byte);
-                    byte += 1;
-                }
-                word
-            };
+    match load_lane(&mut memory, bytes, index, 0, false) {
+        Ok(word) => {
             unsafe { vector_write::<0>(&s, load_value::<OP>(word)) };
             Out::Next(s)
         }

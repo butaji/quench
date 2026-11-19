@@ -2,6 +2,7 @@ use super::*;
 use crate::bytecode::index;
 use crate::staged::frame_arm::FrameArm;
 mod loop_stack;
+mod interpreter_frame;
 pub(super) use interpreter_frame::{InterpreterFrame, RowRun, runs_row};
 mod materialized_stops;
 
@@ -724,6 +725,60 @@ impl<H: Host> Vm<H> {
         frame.registers.copy_from_slice(registers);
     }
 
+    /// The frame `push_script_frame_with_registers` would push for a plain activation of `id`
+    /// (`Function::plain_activation`), made off the frame stack as `unstarted_frame_with`
+    /// detaches one: bound as `activate_plain_frame` binds it, with the `with` objects it
+    /// would push held by the frame, and `registers` moved into its file once rather than
+    /// over the values activation filled and placed. `None` for any other function, which
+    /// takes the push.
+    pub(super) fn detached_plain_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        (env, this): (Value, Value),
+        context: CallContext,
+        (passed, registers): (&[Value], &[Value]),
+    ) -> Option<Box<Frame>> {
+        let function = &p.function(id as usize);
+        if id == super::ROOT_FUNCTION_ID || !function.plain_activation(p) {
+            return None;
+        }
+        #[cfg(test)]
+        super::activation::note_frame_made();
+        self.promote_tier0_if_due(p, id);
+        self.profile.function(self.active_program.raw(), id as usize);
+        // The receiver is already coerced, so binding it cannot fail.
+        let this = self.lexical_activation_this(function, env, this).expect("a frameless activation's receiver binds");
+        let mut frame = self.pooled_frame();
+        let local_count = if function.call_plan(p).addresses_locals { usize::from(function.locals) } else { 0 };
+        frame.reset_locals_undefined(local_count);
+        self.initialize_frame_invocation(p, &mut frame, function, context, passed);
+        self.place_detached_frame(&mut frame, id, (env, this));
+        frame.with_objects = self.captured_with_objects_for_function(env, function.inherited_with_scope, p.kind);
+        // A `new.target` set for this activation has no observable binding to land in.
+        if self.take_construction_target(context).is_some() {
+            frame.context = frame.context.constructed();
+        }
+        frame.adopt_registers(function, registers);
+        Some(frame)
+    }
+
+    /// Places the detached frame of `id` (`detached_plain_frame`) at its function's start in
+    /// the active program, with environment `env` and bound receiver `this`, as
+    /// `activate_plain_frame` places a pushed one.
+    fn place_detached_frame(&self, frame: &mut Frame, id: u32, (env, this): (Value, Value)) {
+        frame.function = id;
+        frame.program = self.active_program;
+        frame.pc = 0;
+        frame.pc_is_resume = true;
+        frame.binding_site_pc = None;
+        frame.env = env;
+        frame.this = this;
+        frame.fixed_this = !this.is_deleted();
+        frame.captured = false;
+        frame.with_base = self.with_stack.len();
+    }
+
     /// A frame from the pool, or a fresh one; its fields are set by activation.
     pub(super) fn pooled_frame(&mut self) -> Box<Frame> {
         self.frame_pool.pop().unwrap_or_else(|| self.empty_frame())
@@ -1260,6 +1315,10 @@ impl<H: Host> Vm<H> {
         let (mut locals, bindings) = (std::mem::take(&mut state.locals), std::mem::take(&mut state.dynamic_bindings));
         let (program, function, parent) = (state.program, state.function, state.env);
         let (env, _) = self.promoted_environment(parent, program, function, &mut locals, bindings);
+        // A root's promoted environment is the one its written-once slots are read from (`root_environment`).
+        if function == super::ROOT_FUNCTION_ID {
+            self.programs.note_root_environment(program, env);
+        }
         // The locals' buffer stays with the frame for its next activation.
         let state = &mut *self.frames[frame];
         state.locals = locals;
@@ -1625,7 +1684,7 @@ impl<H: Host> Vm<H> {
         let value = self.read(frame, instruction.register_b());
         // An async generator's `yield` resolves a promise for the value, as the general step
         // does (`promise_for_value`), where that observes nothing.
-        let value = if asynchronous { self.promise_resolve_in_lane(p, self.intrinsic_promise_constructor(), value)? } else { value };
+        let value = if asynchronous { self.intrinsic_promise_resolve(p, value)? } else { value };
         self.frames[frame].pc = pc + 1;
         self.frames[frame].pc_is_resume = true;
         Some(FrameOutcome::Suspend(
@@ -1637,7 +1696,7 @@ impl<H: Host> Vm<H> {
     /// The suspension of an async frame `frame` whose lane run stopped at its `Await` record
     /// `instruction` at `pc`, made as the general loop's `Await` makes it, where the awaited
     /// value's conversion observes nothing: a non-object as it is, or an object
-    /// `promise_resolve_in_lane` converts without running guest code. `None` leaves any other
+    /// `intrinsic_promise_resolve` converts without running guest code. `None` leaves any other
     /// stop, or a conversion that could throw into the frame's handlers, to the general loop.
     pub(super) fn stop_awaits_in_lane(
         &mut self,
@@ -1648,7 +1707,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<FrameOutcome> {
         let instruction = instruction.filter(|instruction| crate::staged::Operation::<u64, ()>::is_await(*instruction))?;
         self.await_value_in_lane(p, frame, instruction.register_b(), instruction.result_register(), pc)
-            .map(|value| FrameOutcome::Await { value, destination: instruction.result_register(), frame: None })
+            .map(|value| FrameOutcome::Suspend(Suspended::Await { value, destination: instruction.result_register() }, None))
     }
 
     /// `stop_awaits_in_lane` of the `Await` at `pc` that reads register `awaited` and resumes into
@@ -1658,7 +1717,7 @@ impl<H: Host> Vm<H> {
         let _ = destination;
         let awaited = self.read(frame, awaited);
         let value = if self.is_object_like(awaited) {
-            self.promise_resolve_in_lane(p, self.intrinsic_promise_constructor(), awaited)?
+            self.intrinsic_promise_resolve(p, awaited)?
         } else {
             awaited
         };
@@ -1906,7 +1965,7 @@ impl<H: Host> Vm<H> {
                     if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CloneEnv { .. } | crate::staged::Operation::Return { .. }
                             | crate::staged::Operation::ElementRead { .. } | crate::staged::Operation::ElementWrite { .. } | crate::staged::Operation::CompareJump { .. }))
                         || crate::staged::Operation::<u64, ()>::decode_load_name(instruction, ()).is_some() || crate::staged::Operation::<u64, ()>::is_field_read(instruction)
-                        || instruction.op().traits().has(crate::bytecode::Traits::BINARY_RESULT) || crate::staged::private_in_family(instruction.op()) || instruction.op().is_field_store() {
+                        || instruction.op().traits().has(crate::bytecode::Traits::BINARY_RESULT) || crate::staged::private_in_family(instruction.op()) || crate::staged::Operation::<u64, ()>::is_field_store(instruction) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
@@ -2159,7 +2218,7 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 FrameArm::LoadCapture => {
-                    if let (Some(value), _) =
+                    if let Some(value) =
                         self.cached_plain_capture(frame, ins.capture_depth(), ins.capture_slot())
                     {
                         self.write(frame, ins.result_register(), value);
@@ -2415,6 +2474,10 @@ impl<H: Host> Vm<H> {
                                     )
                                     .is_some()
                         );
+                        // A derived constructor's construction yields from its `this` binding,
+                        // which its frame holds as it retires (`complete_user_frame` reads the same).
+                        let derived_this = matches!(pending.completion, CallCompletion::DerivedConstructor)
+                            .then_some(completed_frame.this);
                         match pending.completion.take_generator() {
                             Some(resume) => {
                                 let stop = yielded.take().unwrap_or(super::generator::MaterializedStop::Returned);
@@ -2443,6 +2506,13 @@ impl<H: Host> Vm<H> {
                         // SAFETY: as for `p` at the top of the loop.
                         settle_error = request_error.take().or_else(|| self.trap_result_error(unsafe { &*executing_residual }, &pending, frame, value));
                         value = self.completed_call_value(&pending.completion, frame, pending.destination, value);
+                        if let Some(this) = derived_this {
+                            // SAFETY: as for `p` at the top of the loop.
+                            match self.derived_construct_value(unsafe { &*executing_residual }, value, this) {
+                                Ok(constructed) => value = constructed,
+                                Err(error) => settle_error = Some((pending.call_pc, error)),
+                            }
+                        }
                         if let CallCompletion::ToWasm(result) = pending.completion {
                             // SAFETY: as for `p` at the top of the loop.
                             match self.wasm_import_result(unsafe { &*executing_residual }, value, result) {
@@ -2864,6 +2934,16 @@ impl<H: Host> Vm<H> {
         // established `slot < Function.locals`; invocation setup sizes this frame
         // to that function's local count.
         unsafe { *self.frames.get_unchecked(frame).locals.get_unchecked(slot) }
+    }
+
+    #[inline(always)]
+    /// Writes a local whose slot was checked by residual validation.
+    ///
+    /// # Safety
+    /// As `read_validated_local`.
+    pub(super) unsafe fn write_validated_local(&mut self, frame: usize, slot: usize, value: Value) {
+        // SAFETY: as `read_validated_local`.
+        unsafe { *self.frames.get_unchecked_mut(frame).locals.get_unchecked_mut(slot) = value; }
     }
 
 }

@@ -149,6 +149,25 @@ impl GeneratorRecord {
         Some(window)
     }
 
+    /// The frame of a suspended generator, not busy, which a lane resumes over its register file
+    /// (`resume_suspended_window`), and the register that takes the value the resume sends.
+    /// The frame's address, which its box keeps while the record parks it.
+    #[inline(always)]
+    pub(crate) fn suspended_frame(&mut self) -> Option<(*mut FrameRecord, Option<u16>)> {
+        if self.life != GeneratorLife::Suspended {
+            return None;
+        }
+        self.parked.as_mut().map(Continuation::begin_window)
+    }
+
+    /// The suspended generator whose frame `suspended_frame` found resumes as a lane activation
+    /// over its register file: the continuation stays in the record, which runs `Windowed`.
+    #[inline(always)]
+    pub(crate) fn resume_suspended_window(&mut self) {
+        debug_assert!(self.life == GeneratorLife::Suspended && self.parked.is_some());
+        self.life = GeneratorLife::Windowed;
+    }
+
     /// The frame of a windowed run, in place.
     #[inline(always)]
     pub(crate) fn windowed_frame_mut(&mut self) -> Option<&mut FrameRecord> {
@@ -174,8 +193,17 @@ impl GeneratorRecord {
         }
     }
 
-    /// The frame of a windowed run, taken: the generator executes without one (a
-    /// materialization makes its frame).
+    /// The frame of a windowed run, read in place: what `take_windowed` would give a
+    /// materialization (`Vm::lane_stack_sites`).
+    pub(crate) fn windowed_frame(&self) -> Option<&FrameRecord> {
+        if self.life != GeneratorLife::Windowed {
+            return None;
+        }
+        self.parked.as_ref().map(|continuation| &*continuation.frame)
+    }
+
+    /// The frame of a windowed run, taken: the generator executes without one (a yield
+    /// suspends it again, a materialization makes its frame, a completion drops it).
     pub(crate) fn take_windowed(&mut self) -> Option<Box<FrameRecord>> {
         if self.life != GeneratorLife::Windowed {
             return None;
@@ -244,6 +272,17 @@ impl GeneratorRecord {
     /// windowed run's, whose frame the run's end pools.
     pub(crate) fn complete_taking(&mut self) -> Option<Continuation> {
         self.take_parked(GeneratorLife::Completed)
+    }
+
+    /// The oldest queued async request, taken. A completed generator queues no more (each
+    /// request then settles at once), so its queue's buffer goes with its last request rather
+    /// than with the generator.
+    pub(crate) fn next_request(&mut self) -> Option<AsyncGeneratorRequest> {
+        let request = self.requests.pop_front();
+        if self.requests.is_empty() && self.is_completed() {
+            self.requests = VecDeque::new();
+        }
+        request
     }
 
     pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {

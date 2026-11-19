@@ -3,8 +3,7 @@
 //! as a call site names them. The array builtins (`push`, `pop`) run on their staged rows too, which
 //! miss to the helper row where the staged body leaves.
 
-use crate::staged::math::FloatUnary;
-use crate::vm::Native;
+use crate::heap::Native;
 use crate::vm::number::{MathFunction, math_function};
 use quench_bjit::call::BuiltinRow;
 
@@ -29,23 +28,7 @@ pub(in super::super) fn of(native: Native) -> Option<BuiltinRow> {
         _ => {}
     }
     match math_function(native)? {
-        MathFunction::Row(operation) => unary_row(operation),
-        MathFunction::Extreme(maximum) => Some(if maximum { BuiltinRow::Max } else { BuiltinRow::Min }),
         MathFunction::Imul => Some(BuiltinRow::Imul),
         _ => None,
     }
-}
-
-/// The row of a machine Math function of one Number (`staged::math::float_unary`).
-fn unary_row(operation: FloatUnary) -> Option<BuiltinRow> {
-    Some(match operation {
-        FloatUnary::Floor => BuiltinRow::Floor,
-        FloatUnary::Ceil => BuiltinRow::Ceil,
-        FloatUnary::Trunc => BuiltinRow::Trunc,
-        FloatUnary::Abs => BuiltinRow::Abs,
-        FloatUnary::Sqrt => BuiltinRow::Sqrt,
-        FloatUnary::Fround => BuiltinRow::Fround,
-        FloatUnary::Round => BuiltinRow::Round,
-        _ => return None,
-    })
 }

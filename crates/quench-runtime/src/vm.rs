@@ -166,7 +166,7 @@ mod dispatch_wasm;
 mod dynamic_strings;
 #[cfg(feature = "profile-lane-exits")]
 mod lane_exits;
-mod embedding;
+mod embedding; mod embedding_values; pub use embedding_values::Detach;
 mod provenance;
 mod preshaped_receiver;
 mod inspection;
@@ -177,6 +177,7 @@ mod root_bindings;
 mod handler_entry;
 mod equality; mod error; mod eval;
 mod field_cache;
+mod field_stubs;
 mod in_presence;
 mod instanceof_walk;
 mod site_table;
@@ -235,6 +236,7 @@ mod object_integrity;
 mod object_keys;
 mod object_static;
 mod object_symbols;
+mod object_shape_adopt;
 #[cfg(test)] mod lane_loop_tests;
 #[cfg(test)] mod float_slot_tests;
 #[cfg(test)] mod lane_native_callback_tests;
@@ -275,7 +277,6 @@ mod string_cache;
 mod string_extra;
 pub(crate) mod value_serializer;
 mod owned_clone_native;
-mod superinstruction;
 mod symbol;
 mod well_known_symbols;
 pub(crate) use well_known_symbols::{WellKnownSymbol, WellKnownSymbols};
@@ -563,6 +564,19 @@ impl Frame {
         }
     }
 
+    /// Makes the file `registers`, a suspending activation's whole register window, sized as
+    /// `prepare_registers_for` sizes it for `function` with every slot then the window's: one
+    /// copy, not a fill the copy overwrites.
+    #[inline(always)]
+    fn adopt_registers(&mut self, function: &crate::bytecode::Function, registers: &[Value]) {
+        debug_assert_eq!(registers.len(), usize::from(function.registers));
+        self.js_jit_skip_entry_once = false;
+        self.reserve_suspension_window(function);
+        self.registers.clear();
+        self.registers.extend_from_slice(registers);
+        self.initialized_registers = self.initialized_registers.max(registers.len());
+    }
+
     /// Makes `locals` `count` undefined values. A pooled frame usually has the capacity already,
     /// so this is one capacity check and the stores.
     #[inline(always)]
@@ -748,25 +762,31 @@ struct ParkedRealm {
     global: Value,
     state: GlobalLexicalState,
     prototypes: [Value; REALM_FOLLOWING_PROTOTYPES.len()],
+    /// The realm's `%Promise%`, which `Vm::promise_constructor` held while it was active.
+    promise_constructor: Value,
 }
 /// The natives whose prototypes VM fields follow from the active realm
 /// (`Vm::realm_prototype_field`).
 /// One `typeof` name per `bytecode::TYPEOF_NAMES` entry, indexed as `typeof_name_index` classifies values.
 const TYPEOF_NAMES: usize = crate::bytecode::TYPEOF_NAMES.len();
-const REALM_FOLLOWING_PROTOTYPES: [Native; 4] =
-    [Native::Object, Native::Function, Native::Array, Native::String];
+const REALM_FOLLOWING_PROTOTYPES: [Native; 5] =
+    [Native::Object, Native::Function, Native::Array, Native::String, Native::Promise];
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldCache {
     receiver: u32,
     holder: u32,
     slot: u16,
+    /// The layout id of the holder (`Object::layout_id`) where the holder object was at hand when
+    /// the entry was recorded, else `NO_HOLDER_LAYOUT`. It names the holder's exact shape `holder`
+    /// (`layouts::auxiliary`), so a read may guard the holder's whole header in one compare.
+    holder_id: u32,
 }
 
 impl FieldCache {
     /// The entry of an own data field at `slot` of receivers of exact shape `receiver`.
     #[inline(always)]
     const fn own(receiver: u32, slot: u16) -> Self {
-        Self { receiver, holder: NO_FIELD_HOLDER, slot }
+        Self { receiver, holder: NO_FIELD_HOLDER, slot, holder_id: field_cache_layout::NO_HOLDER_LAYOUT }
     }
 }
 /// The internal keys of a bound function's environment object.
@@ -774,6 +794,8 @@ const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
 const NO_FIELD_HOLDER: u32 = field_cache_layout::NO_HOLDER;
+/// The holder layout id an entry holds where no holder object was at hand (`FieldCache::holder_id`).
+const NO_FIELD_HOLDER_LAYOUT: u32 = field_cache_layout::NO_HOLDER_LAYOUT;
 use crate::staged::field_cache_layout::{self, FieldCacheWords};
 /// Where an accessor field cache's holder keeps its getter (`AccessorFieldCache::slot_accessor`):
 /// in the slot itself (`ShapeAttributes::slot_getter`), in the slot's pair cell
@@ -801,17 +823,40 @@ struct AccessorFieldCache {
     slot: u16,
     /// Where the holder's shape keeps the accessor at `slot` (`SlotAccessor`): the shape the
     /// entry proves (the receiver's for `OWN_ACCESSOR`, else the prototype holder's, which the
-    /// epoch covers) fixes it.
+    /// cell covers) fixes it.
     slot_accessor: SlotAccessor,
-    /// The `prototype_layout_epoch` the chain was proved under.
-    epoch: u64,
+    /// The validity cell of the chain from `prototype` to `holder` (`Vm::chain_cell`); for an
+    /// own accessor, of no prototype.
+    cell: crate::heap::ChainCell,
     /// The site's next older entry in `Vm::accessor_fields`, or `NO_ACCESSOR_FIELD`.
     next: u32,
-    /// The getter whose call a field read of the receiver answers (`answer`), or undefined:
-    /// `Vm::memoized_getter_answer` reads it in place of the call.
+    /// The accessor function whose call `answer` stands for, or undefined: a read site's
+    /// getter (`Vm::getter_entry_read`), a store site's setter (`Vm::setter_entry_forward`).
+    /// The forward holds while the holder still holds this function: its body, and so what
+    /// `answer` derived from it, is the function's own.
     getter: Value,
-    /// That read's field entry, which proves the receiver's shape itself.
-    answer: FieldCache,
+    /// What the call of `getter` on a receiver of the entry's layout does, without a call
+    /// (getters-as-calls.md, trivial accessors).
+    answer: AccessorForward,
+}
+/// What an accessor entry's function does for a receiver of its layout
+/// (`AccessorFieldCache::answer`), recognized once from its body: a field read or store at a
+/// fixed slot, a constant, or the receiver itself. `None` is no forward: the call runs (a
+/// store site's `None` beside its setter records that the setter's body forwards nothing).
+#[derive(Clone, Copy)]
+enum AccessorForward {
+    None,
+    /// `return this.f` or `return this.#f`: that read's field entry, which proves the
+    /// receiver's shape itself (an own or holder entry of a public name; a private name's
+    /// own slot under the getter's home).
+    Field(FieldCache),
+    /// `return k` of a primitive `k` that is no heap value.
+    Constant(Value),
+    /// `return this` of a function with its own `this` binding.
+    Receiver,
+    /// `this.f = v` of the setter's first parameter, then `return`: the store entry of `f`
+    /// (an own data field of the receiver's exact shape) and its name.
+    Store { cache: FieldCache, atom: crate::bytecode::Atom },
 }
 /// A cache site without an accessor entry (`Vm::accessor_field_indices`).
 const NO_ACCESSOR_FIELD: u32 = object::MRU_CHAIN_END;
@@ -850,28 +895,34 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     receiver: field_cache_layout::EMPTY.receiver,
     holder: field_cache_layout::EMPTY.holder,
     slot: field_cache_layout::EMPTY.slot as u16,
+    holder_id: field_cache_layout::EMPTY.holder_id,
 };
 /// Stored as its `FieldCacheWords`, which complement the entry against `EMPTY`, so the empty entry is zero words.
 impl site_table::SiteEntry for FieldCache {
     type Stored = FieldCacheWords;
     #[inline(always)]
     fn store(self) -> FieldCacheWords {
-        FieldCacheWords::encode(self.receiver, self.holder, u32::from(self.slot))
+        FieldCacheWords::encode(self.receiver, self.holder, u32::from(self.slot), self.holder_id)
     }
     #[inline(always)]
     fn load(stored: FieldCacheWords) -> Self {
-        let (receiver, holder, slot) = stored.decode();
-        Self { receiver, holder, slot: slot as u16 }
+        let (receiver, holder, slot, holder_id) = stored.decode();
+        Self { receiver, holder, slot: slot as u16, holder_id }
     }
 }
-// SAFETY: three `u32` words, with no padding, and every bit pattern valid.
+// SAFETY: four `u32` words, with no padding, and every bit pattern valid.
 unsafe impl site_table::StoredWords for FieldCacheWords {}
 /// The layout generated code reads a field cache entry by (`staged::layout_offsets`).
 pub(crate) use crate::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
 
 /// One cached property-add transition: an extensible ordinary object of `source_shape` whose
-/// prototype chain still has exactly `prototype_shapes[..prototype_depth]` gains `atom` at `slot`
-/// and moves to `target_shape`.
+/// prototype chain still has exactly the `prototype_depth` shapes interned at `chain`
+/// (`Vm::field_add_chains`) gains `atom` at `slot` and moves to `target_shape`.
+///
+/// 48 bytes: proved chain cell (16), atom, source and target shapes, chain, proved prototype
+/// (20), layouts (8), slot and depth (3), padded; an inline `[u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH]`
+/// made it 72, though recorded adds prove at most a few prototypes and the sites of one
+/// constructor's stores share one chain.
 #[derive(Clone, Copy)]
 struct FieldAddCache {
     atom: Atom,
@@ -882,16 +933,31 @@ struct FieldAddCache {
     /// (`Transition::layouts`), which the staged rows guard and store.
     layouts: [u32; 2],
     prototype_depth: u8,
-    prototype_shapes: [u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
-    /// The `prototype_layout_epoch` under which a walk last proved the chain from
-    /// `proved_prototype`, or `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
-    proved_epoch: u64,
-    /// The receiver's prototype link the proof holds for, compared undecoded; a collection
-    /// advances the epoch, so it never outlives the record it names.
+    /// Where the chain's prototype shapes are interned (`Vm::field_add_chains`).
+    chain: u32,
+    /// The cell of the chain from `proved_prototype` a walk last proved (`Vm::chain_cell`), or
+    /// `None`; while it holds the chain needs no walk. A change to another prototype leaves it.
+    proved: Option<crate::heap::ChainCell>,
+    /// The receiver's prototype link the proof holds for, compared undecoded; its death
+    /// retires the cell, so it never outlives the record it names.
     proved_prototype: ProtoLink,
 }
-/// A `FieldAddCache::proved_epoch` no epoch reaches: the chain is unproven.
-const NO_PROVED_EPOCH: u64 = u64::MAX;
+// Keep the entry compact: a monomorphic add site's set is its first entry, a length and a box.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<FieldAddCache>() == 48);
+/// The prototype shapes a cached add must find again (`Vm::add_prototype_guard`), nearest
+/// first, before an entry interns them as its chain.
+#[derive(Clone, Copy)]
+struct AddPrototypeGuard {
+    depth: u8,
+    shapes: [u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
+}
+impl AddPrototypeGuard {
+    const EMPTY: Self = Self { depth: 0, shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH] };
+    fn shapes(&self) -> &[u32] {
+        &self.shapes[..usize::from(self.depth)]
+    }
+}
 impl FieldAddCache {
     const EMPTY: Self = Self {
         atom: u32::MAX,
@@ -900,23 +966,20 @@ impl FieldAddCache {
         slot: 0,
         layouts: [0; 2],
         prototype_depth: 0,
-        prototype_shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
-        proved_epoch: NO_PROVED_EPOCH,
+        chain: 0,
+        proved: None,
         proved_prototype: ProtoLink::NULL,
     };
-    fn prototype_shapes(&self) -> &[u32] {
-        &self.prototype_shapes[..usize::from(self.prototype_depth)]
-    }
     /// The shape transition the entry caches, as the staged add row takes it.
     #[inline(always)]
     fn transition(&self) -> Transition {
         Transition { before: self.source_shape, after: self.target_shape, slot: self.slot, layouts: self.layouts }
     }
-    /// Whether the chain proof (`proved_epoch`, `proved_prototype`) holds for a receiver
-    /// whose prototype `link` names: then the chain needs no walk.
+    /// Whether the chain proof (`proved`, `proved_prototype`) holds for a receiver whose
+    /// prototype `link` names: then the chain needs no walk.
     #[inline(always)]
     fn proof_holds(&self, link: ProtoLink) -> bool {
-        self.proved_epoch == crate::heap::prototype_layout_epoch() && self.proved_prototype == link
+        self.proved_prototype == link && self.proved.is_some_and(crate::heap::ChainCell::holds)
     }
 }
 /// The add transitions one site remembers, oldest first. The first lives in the set and the
@@ -998,9 +1061,11 @@ impl FieldAddCacheSet {
         let kept = match entries[..len]
             .iter()
             .position(|entry| {
+                // Interned chains are equal exactly when their offsets and lengths are.
                 entry.source_shape == cache.source_shape
                     && entry.atom == cache.atom
-                    && entry.prototype_shapes() == cache.prototype_shapes()
+                    && entry.prototype_depth == cache.prototype_depth
+                    && entry.chain == cache.chain
             })
         {
             Some(index) => {
@@ -1510,7 +1575,8 @@ impl ShapeLookupIndex {
     }
 }
 /// Facts a shape inherits from its chain: once a transition introduces one, every descendant
-/// keeps it. Two bytes, so `Shape` keeps its size.
+/// keeps it. Two bytes, so `Shape` keeps its size; the top three bits hold the shape's
+/// dictionary trigger (`DICTIONARY_MASK`).
 #[derive(Clone, Copy, Default)]
 struct ShapeFacts(u16);
 impl ShapeFacts {
@@ -1543,6 +1609,9 @@ impl ShapeFacts {
     const NAME_RECONFIGURED: u16 = 1 << 7;
     /// The function's own `length` was redefined (`ShapeTransition::FunctionLengthReconfigured`).
     const LENGTH_RECONFIGURED: u16 = 1 << 8;
+    /// A transition added a property under a non-string key: a symbol or a private name (any
+    /// `PropertyKey` but `String`). Read by `Vm::shape_may_have_symbol_keys`.
+    const HAS_SYMBOL_KEY: u16 = 1 << 9;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u16| if fact { bit } else { 0 };
@@ -1566,9 +1635,41 @@ impl ShapeFacts {
                 | introduced(matches!(transition, ShapeTransition::Delete { .. } | ShapeTransition::Vacant), Self::DELETIONS)
                 | introduced(matches!(transition, ShapeTransition::FunctionName { .. }), Self::FUNCTION_NAMED)
                 | introduced(matches!(transition, ShapeTransition::FunctionNameReconfigured), Self::NAME_RECONFIGURED)
-                | introduced(matches!(transition, ShapeTransition::FunctionLengthReconfigured), Self::LENGTH_RECONFIGURED),
+                | introduced(matches!(transition, ShapeTransition::FunctionLengthReconfigured), Self::LENGTH_RECONFIGURED)
+                | introduced(matches!(transition, ShapeTransition::Add { key, .. } if !matches!(key, property_key::PropertyKey::String(_))), Self::HAS_SYMBOL_KEY),
         )
     }
+
+    /// The dictionary trigger, in the top three bits: zero for none, else the trigger's
+    /// index plus one. Set per shape (`Shape::child`), not by `extended_by`.
+    const DICTIONARY_SHIFT: u32 = 13;
+    const DICTIONARY_MASK: u16 = 0b111 << Self::DICTIONARY_SHIFT;
+
+    /// These facts with `trigger` as the dictionary trigger.
+    fn with_dictionary_trigger(self, trigger: Option<DictionaryTrigger>) -> Self {
+        let code: u16 = match trigger {
+            None => 0,
+            Some(DictionaryTrigger::PropertyCount) => 1,
+            Some(DictionaryTrigger::DeletionPattern) => 2,
+            Some(DictionaryTrigger::PrototypeUse) => 3,
+            Some(DictionaryTrigger::ModuleNamespace) => 4,
+        };
+        Self((self.0 & !Self::DICTIONARY_MASK) | (code << Self::DICTIONARY_SHIFT))
+    }
+
+    #[inline(always)]
+    fn dictionary_trigger(self) -> Option<DictionaryTrigger> {
+        match (self.0 & Self::DICTIONARY_MASK) >> Self::DICTIONARY_SHIFT {
+            0 => None,
+            1 => Some(DictionaryTrigger::PropertyCount),
+            2 => Some(DictionaryTrigger::DeletionPattern),
+            3 => Some(DictionaryTrigger::PrototypeUse),
+            _ => Some(DictionaryTrigger::ModuleNamespace),
+        }
+    }
+
+    #[inline(always)]
+    fn is_dictionary(self) -> bool { self.0 & Self::DICTIONARY_MASK != 0 }
 
     fn accessor_pairs(self) -> bool { self.0 & Self::ACCESSOR_PAIRS != 0 }
     fn accessors(self) -> bool { self.0 & Self::ACCESSORS != 0 }
@@ -1579,6 +1680,7 @@ impl ShapeFacts {
     fn function_named(self) -> bool { self.0 & Self::FUNCTION_NAMED != 0 }
     fn name_reconfigured(self) -> bool { self.0 & Self::NAME_RECONFIGURED != 0 }
     fn length_reconfigured(self) -> bool { self.0 & Self::LENGTH_RECONFIGURED != 0 }
+    fn has_symbol_key(self) -> bool { self.0 & Self::HAS_SYMBOL_KEY != 0 }
 }
 /// Each shape's storage length and its parent's id and length, in table order (a parent
 /// precedes its children): the table as the heap registers slot owners from it.
@@ -1594,32 +1696,45 @@ struct Shape {
     transition: ShapeTransition,
     /// Property slots an object of this shape stores (slot indices are `u32`).
     storage_len: u32,
-    dictionary_trigger: Option<DictionaryTrigger>,
+    /// The chain's facts and, in its top bits, the dictionary trigger
+    /// (`ShapeFacts::dictionary_trigger`).
     facts: ShapeFacts,
+    /// This immutable shape's lazily derived memos in one word (`ShapeMemo`): its own data
+    /// `prototype` slot, whether its keys include an array-index name, and the long walks
+    /// spent toward a lookup index.
+    memo: std::cell::Cell<u16>,
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
-    /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions
-    /// from this shape before it had an index.
-    long_walks: std::cell::Cell<u8>,
-    /// Memo of this immutable shape's own data `prototype` slot, which every `new F` reads:
-    /// `PROTOTYPE_SLOT_UNKNOWN` until first derived, `PROTOTYPE_SLOT_NONE` when absent or an
-    /// accessor. Dictionary shapes never memoize.
-    prototype_slot: std::cell::Cell<u32>,
-    /// Memo of whether this immutable shape's keys include an array-index name: `None` until
-    /// first derived (`Vm::shape_has_index_key`). Dictionary shapes never memoize.
-    index_keys: std::cell::Cell<Option<bool>>,
     /// The child of this shape's latest cached transition (`NO_LAST_CHILD` before one), tried
     /// before the transition index: objects of one layout grow by the same keys in turn.
     last_child: std::cell::Cell<u32>,
 }
-// Every object layout and property key costs one shape; keep the record compact.
+// Every object layout and property key costs one shape; keep the record compact: 4 (parent)
+// + 24 (transition) + 4 (storage_len) + 2 (facts with the dictionary trigger) + 2 (memo) + 8
+// (lookup index) + 4 (last child) = 48, where separate memo and trigger fields made 56.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(size_of::<Shape>() == 56);
+const _: () = assert!(size_of::<Shape>() == 48);
 /// `Shape::parent` of the root shape.
 const NO_PARENT_SHAPE: u32 = u32::MAX;
 /// `Shape::last_child` before the shape has a cached transition.
 const NO_LAST_CHILD: u32 = u32::MAX;
 const PROTOTYPE_SLOT_UNKNOWN: u32 = u32::MAX;
 const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
+/// The bits of `Shape::memo`. The `prototype` slot memo takes the low ten bits: a slot below
+/// `MEMO_PROTOTYPE_NONE` is memoized as itself, a slot at or past it (a function with a
+/// thousand own properties before `prototype`) is never memoized and is derived again.
+struct ShapeMemo;
+impl ShapeMemo {
+    const PROTOTYPE_MASK: u16 = (1 << 10) - 1;
+    const PROTOTYPE_UNKNOWN: u16 = Self::PROTOTYPE_MASK;
+    const PROTOTYPE_NONE: u16 = Self::PROTOTYPE_MASK - 1;
+    const INDEX_KEYS_SHIFT: u32 = 10;
+    const INDEX_KEYS_MASK: u16 = 0b11 << Self::INDEX_KEYS_SHIFT;
+    const LONG_WALKS_SHIFT: u32 = 12;
+    const LONG_WALKS_MAX: u8 = 15;
+    const INITIAL: u16 = Self::PROTOTYPE_UNKNOWN;
+}
+// The long-walk count reaches `SHAPE_INDEX_LONG_WALKS` in its four bits.
+const _: () = assert!(object::SHAPE_INDEX_LONG_WALKS <= ShapeMemo::LONG_WALKS_MAX);
 /// The shape table's initial capacity, above what a builtin realm uses (about 1900 shapes).
 /// A table this large is mapped by the allocator on its own, so it grows by remapping in
 /// place, never leaving a copied-out table behind, and only the shapes in use are resident.
@@ -1644,6 +1759,66 @@ impl Shape {
         self.storage_len as usize
     }
 
+    /// What made this shape and its descendants dictionaries, if anything did.
+    #[inline(always)]
+    fn dictionary_trigger(&self) -> Option<DictionaryTrigger> {
+        self.facts.dictionary_trigger()
+    }
+
+    /// Whether this shape is a dictionary's (`dictionary_trigger`).
+    #[inline(always)]
+    fn is_dictionary(&self) -> bool {
+        self.facts.is_dictionary()
+    }
+
+    /// The memo of this shape's own data `prototype` slot: `PROTOTYPE_SLOT_UNKNOWN` until
+    /// derived, `PROTOTYPE_SLOT_NONE` when absent or an accessor.
+    #[inline(always)]
+    fn prototype_slot(&self) -> u32 {
+        match self.memo.get() & ShapeMemo::PROTOTYPE_MASK {
+            ShapeMemo::PROTOTYPE_UNKNOWN => PROTOTYPE_SLOT_UNKNOWN,
+            ShapeMemo::PROTOTYPE_NONE => PROTOTYPE_SLOT_NONE,
+            slot => u32::from(slot),
+        }
+    }
+
+    /// Memoizes `slot` as `prototype_slot`; a slot past the memo's range stays unknown.
+    fn set_prototype_slot(&self, slot: u32) {
+        let bits = match slot {
+            PROTOTYPE_SLOT_NONE => ShapeMemo::PROTOTYPE_NONE,
+            slot if slot < u32::from(ShapeMemo::PROTOTYPE_NONE) => slot as u16,
+            _ => return,
+        };
+        self.memo.set((self.memo.get() & !ShapeMemo::PROTOTYPE_MASK) | bits);
+    }
+
+    /// The memo of whether this shape's keys include an array-index name, once derived.
+    #[inline(always)]
+    fn index_keys(&self) -> Option<bool> {
+        match (self.memo.get() & ShapeMemo::INDEX_KEYS_MASK) >> ShapeMemo::INDEX_KEYS_SHIFT {
+            0 => None,
+            1 => Some(false),
+            _ => Some(true),
+        }
+    }
+
+    fn set_index_keys(&self, found: bool) {
+        let bits: u16 = (if found { 2u16 } else { 1u16 }) << ShapeMemo::INDEX_KEYS_SHIFT;
+        self.memo.set((self.memo.get() & !ShapeMemo::INDEX_KEYS_MASK) | bits);
+    }
+
+    /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions from this shape
+    /// before it had an index.
+    #[inline(always)]
+    fn long_walks(&self) -> u8 {
+        (self.memo.get() >> ShapeMemo::LONG_WALKS_SHIFT) as u8
+    }
+
+    fn set_long_walks(&self, walks: u8) {
+        let walks = u16::from(walks.min(ShapeMemo::LONG_WALKS_MAX));
+        self.memo.set((self.memo.get() & !(0xF_u16 << ShapeMemo::LONG_WALKS_SHIFT)) | (walks << ShapeMemo::LONG_WALKS_SHIFT));
+    }
+
     fn child(
         parent: Option<u32>,
         transition: ShapeTransition,
@@ -1655,12 +1830,9 @@ impl Shape {
             parent: parent.unwrap_or(NO_PARENT_SHAPE),
             transition,
             storage_len: u32::try_from(storage_len).expect("object property index exceeds u32"),
-            dictionary_trigger,
-            facts: parent_facts.extended_by(transition),
+            facts: parent_facts.extended_by(transition).with_dictionary_trigger(dictionary_trigger),
+            memo: std::cell::Cell::new(ShapeMemo::INITIAL),
             lookup_index: OnceCell::new(),
-            long_walks: std::cell::Cell::new(0),
-            prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
-            index_keys: std::cell::Cell::new(None),
             last_child: std::cell::Cell::new(NO_LAST_CHILD),
         }
     }
@@ -1800,6 +1972,18 @@ pub(crate) struct Vm<H> {
     /// about to reach its general native, so that native skips that body (the one-shot flag is
     /// taken at each such native's entry, and cleared at each dispatcher attempt).
     declined_fast: Option<Native>,
+    /// The programs the running job queues return to, innermost last (`Vm::run_job_queue`):
+    /// an await's job leaves its function's program active for the queue's next jobs, so a
+    /// collection keeps each of these, which the queue makes active again when it ends.
+    job_queue_programs: Vec<ProgramId>,
+    /// Whether the innermost running job queue drains with no stopping condition
+    /// (`Vm::run_job_queue`), so an await's job it runs may chain the queue's next ones in its
+    /// lane run (`Vm::chain_next_job`).
+    queue_chains: bool,
+    /// Whether the running job is an unobserved Promise job of a queue that chains
+    /// (`Vm::run_promise_job`), until the await resumption it runs takes it
+    /// (`Vm::resume_queued_await`).
+    chainable_job: bool,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,
@@ -1810,6 +1994,12 @@ pub(crate) struct Vm<H> {
     /// %String.prototype% of the current realm; primitive string property
     /// reads use it directly, so realm switches re-derive it.
     string_proto: Value,
+    /// %Promise.prototype% of the current realm, which every promise allocation takes
+    /// (`Vm::promise_object_with_parent`); it follows the active realm as `string_proto` does.
+    promise_proto: Value,
+    /// %Promise% of the current realm (`Vm::intrinsic_promise_constructor`), kept beside the
+    /// intrinsics table's entry and following the active realm with `promise_proto`.
+    promise_constructor: Value,
     /// %Number.prototype% of the main realm: a number primitive's field read takes it
     /// through the site's cache as a string's takes `string_proto`.
     number_proto: Value,
@@ -1876,6 +2066,8 @@ pub(crate) struct Vm<H> {
     /// (`Vm::release_lowered_tier0`).
     /// By residual address, which the collection matches against the live programs'.
     lowered_tier0: std::cell::RefCell<Vec<(usize, u32)>>,
+    /// Functions proved to be the current realm's natives (`Vm::is_current_realm_native`).
+    realm_native_proofs: iterators::RealmNativeProofs,
     /// Emptied call stacks of finished general loops, one per nesting level reached: a loop
     /// takes one on entry, so running a job allocates no stack of its own.
     pending_call_stacks: Vec<Vec<dispatch_frame::PendingGeneralCall>>,
@@ -1903,10 +2095,15 @@ pub(crate) struct Vm<H> {
     native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,
     active_call_roots: Vec<Value>,
-    /// The frame index of each root activation this Vm's entry points are running (`call_root`),
-    /// innermost last. Global var paths walk them rather than every frame. A script's lexical
-    /// bindings live in the realm, not in its root's frame.
+    /// The frame index of each root activation this Vm's entry points are running (`call_root`,
+    /// `call_eval_closure`), innermost last. Global var paths walk them rather than every frame.
     active_roots: Vec<usize>,
+    /// The roots of prepared callbacks' proofs (`CallbackProof::Lane`): each proof's callee,
+    /// receiver and argument slots, innermost proof last. Apart from `active_call_roots`, so a
+    /// native's own nested call roots (`with_call_roots`) neither drop nor displace them.
+    prepared_roots: Vec<Value>,
+    /// The step natives an iteration proved (`Vm::proved_step_native`), one per `StepNative`.
+    step_native_proofs: [iterators::StepNativeProof; iterators::STEP_NATIVES],
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
     startup_intrinsics: startup_intrinsics::StartupIntrinsics,
@@ -1998,14 +2195,17 @@ pub(crate) struct Vm<H> {
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
     /// Lane private-name sites' homes (`private_site_home`).
     private_site_homes: private_site_home::PrivateSiteHomes,
+    /// The classes evaluated once and the private names they own, whose sites each meet one
+    /// home for good, so a receiver shape alone proves the brand (`Vm::note_class_evaluation`).
+    private_classes: private_site_home::PrivateClasses,
     /// An array shape with no own `@@iterator` (`Vm::array_iteration_intact`).
     array_iteration_shape: Option<u32>,
     /// A Set or Map shape with no own `@@iterator` (`Vm::intact_iteration_kind`).
     collection_iteration_shape: Option<u32>,
     array_species_proof: Option<array::ArraySpeciesProof>,
-    /// An array shape no `@@isConcatSpreadable` reaches under a prototype layout epoch
-    /// (`Vm::concat_spreadable_absent`).
-    concat_spreadable_proof: Option<(u32, u64)>,
+    /// An array shape no `@@isConcatSpreadable` reaches, while the cell of `Array.prototype`
+    /// and `Object.prototype` holds (`Vm::concat_spreadable_absent`).
+    concat_spreadable_proof: Option<(u32, crate::heap::ChainCell)>,
     for_in: object_static::ForInMemo,
     /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
     /// payload's text would otherwise regrow from empty on each call, and its member plans
@@ -2013,13 +2213,21 @@ pub(crate) struct Vm<H> {
     json_plain: json::JsonPlainCache,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
     /// That an iterator prototype's chain lacks a name (`Vm::iterator_lacks_property`): the
-    /// prototype, the name (`PropertyKey::key32`) and the `prototype_layout_epoch` it was proved under.
-    iterator_absence_proof: std::cell::Cell<Option<(Value, u32, u64)>>,
+    /// prototype, the name (`PropertyKey::key32`) and the cell of the chain it was proved over.
+    iterator_absence_proof: std::cell::Cell<Option<(Value, u32, crate::heap::ChainCell)>>,
+    /// That a realm's `%Object.prototype%` chain lacks `then` (`Vm::then_absence_proved`): the
+    /// prototype and the cell of the chain it was proved over.
+    then_absence_proof: Option<(Value, crate::heap::ChainCell)>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
     /// The `then` a resolution read from promises of one layout (`Vm::memoized_resolution_then`).
     promise_then_memo: std::cell::Cell<Option<promise::PromiseThenMemo>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
+    /// Each shape's own enumerable string keys as atoms, by shape id (`Vm::own_enumerable_keys_cached`).
+    enumerable_key_lists: Vec<Option<std::rc::Rc<[Atom]>>>,
+    /// Each shape's own enumerable string keys as string values, by shape id
+    /// (`Vm::own_enumerable_key_values_cached`). Not kept by the heap: cleared at every collection.
+    enumerable_key_value_lists: Vec<Option<std::rc::Rc<[Value]>>>,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
     /// Every atom, hashed by its text (`atom_keys::text_hash`); equal hashes are told apart
@@ -2076,6 +2284,9 @@ pub(crate) struct Vm<H> {
     accessor_fields: Vec<AccessorFieldCache>,
     field_add_indices: site_table::CacheSiteTable<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
+    /// The prototype chains add entries name (`FieldAddCache::chain`), each once; cleared
+    /// only with every entry (`field_add_sets` and `keyed_adds`).
+    field_add_chains: crate::heap::InternedChains,
     /// The layouts and strings JSON parses share within a collection epoch.
     json_parse_cache: json::JsonParseCache,
     /// Adds a keyed `[[Set]]` of a string naming an atom made (`Vm::keyed_add_hit`): a keyed
@@ -2089,6 +2300,9 @@ pub(crate) struct Vm<H> {
     /// `FIELD_CACHE_SPARSE_RESET_SHARE` of the sites, and every site resets.
     field_cache_writes: Option<Vec<u32>>,
     megamorphic_fields: Vec<FieldCacheSet>,
+    /// The megamorphic read stub cache (`field_stubs`): copies of the site entries that
+    /// answered reads, by receiver shape and name, shared by every site; cleared with them.
+    field_stubs: field_stubs::FieldStubs,
     /// The prototype-held reads polymorphic `GetField` records keep as their hints, each
     /// record its own, by index (`Vm::holder_hint_hit`). A hint names its prototype by record
     /// id, so a collection that sweeps that prototype drops the hint's value, and one that
@@ -2110,13 +2324,14 @@ pub(crate) struct Vm<H> {
     in_presences: [Option<in_presence::InPresence>; in_presence::IN_PRESENCES],
     /// Constructor prototypes (a subclass's parent constructor, `%TypedArray%`) proved to
     /// inherit the native `@@hasInstance` (`Vm::inherits_native_has_instance`), each with the
-    /// prototype-layout epoch its proof holds under: the proof marks every link of the chain
-    /// a prototype, so any change to one, and every collection, retires it. Direct-mapped by
-    /// the holder's cell.
-    instanceof_inheriting_holders: [Option<(Value, u64)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+    /// cell of the chain its proof read (`Vm::chain_cell`): the proof marks every link of the
+    /// chain a prototype, so a change to one, or its death, retires it. Direct-mapped by the
+    /// holder's cell.
+    instanceof_inheriting_holders: [Option<(Value, crate::heap::ChainCell)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
     /// Per constructor, direct-mapped by its cell, the link of its `prototype` object while
-    /// a watch on its values and layout holds (`Vm::proved_instanceof`).
-    instanceof_proofs: [(Value, crate::heap::ProtoLink, Option<crate::heap::PrototypeValueWatch>); INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+    /// a watch on its values and layout holds, and the cell of the chain it inherits
+    /// `@@hasInstance` through (`Vm::proved_instanceof`).
+    instanceof_proofs: [(Value, crate::heap::ProtoLink, Option<(crate::heap::PrototypeValueWatch, crate::heap::ChainCell)>); INSTANCEOF_CONSTRUCTOR_LAYOUTS],
     /// The shapes an ordinary closure's own properties step through, without and with a
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
@@ -2145,6 +2360,10 @@ pub(crate) struct Vm<H> {
     /// Whether the entry step running now may yield `shared_entry_pair`
     /// (`iterator_step_reads_miss`).
     share_entry_pair: bool,
+    /// A spent await state no reaction, job or continuation names, which the next await
+    /// arms instead of allocating one (`Vm::armed_await_state`); `undefined` when there is
+    /// none. A root, so it outlives collections; cleared with the heap it belongs to.
+    spare_await_state: Value,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
     /// field-cache invalidation clears them.
@@ -2178,9 +2397,12 @@ pub(crate) struct Vm<H> {
     runtime_atoms: RuntimeAtoms,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
-    /// `Vm::preshape_receiver` answers: the declared layout a construction allocates its
-    /// receiver in; cleared by every collection.
+    /// `Vm::preshape_receiver` answers: the constant or declared layout a construction
+    /// allocates its receiver in; cleared by every collection and with the heap.
     preshaped_receivers: Box<[preshaped_receiver::PreshapedReceiver; preshaped_receiver::PRESHAPED_RECEIVER_ENTRIES]>,
+    /// What constructions' receivers reach, per `new.target` (`Vm::preshape_receiver`'s slack
+    /// tracking); kept across collections, which restart its sampling.
+    learned_receivers: Box<[preshaped_receiver::LearnedReceiver; preshaped_receiver::LEARNED_RECEIVER_ENTRIES]>,
     /// The host's object templates (`object_template`), indexed by their ids.
     object_templates: Vec<object_template::ObjectTemplate>,
     method_caches: method_cache::MethodCacheTable,
@@ -2195,6 +2417,8 @@ pub(crate) struct Vm<H> {
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     // Weak identities; captured environments remain authoritative in function cells.
     function_values: function_cache::FunctionValues,
+    /// The hoisted function declarations of each module instance, by function id (`ModuleFunctions`).
+    module_functions: function_cache::ModuleFunctions,
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one
     /// function is one object. Weak: a wrapper nothing holds is made again on demand.
     wasm_exported_functions: FxHashMap<Value, WeakHandle>,
@@ -2289,6 +2513,8 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn swap_realm_global(&mut self, previous: Value, global: Value) {
         self.clear_call_targets();
+        // A native of the realm being left is not the next realm's own.
+        self.realm_native_proofs.forget();
         // SAFETY: native lane bodies invoke no guest callbacks/realm switches.
         unsafe { self.programs.retire_native_calls_across_realms(); }
         let leaving = ParkedRealm {
@@ -2301,6 +2527,7 @@ impl<H: Host> Vm<H> {
                 ),
             },
             prototypes: REALM_FOLLOWING_PROTOTYPES.map(|native| *self.realm_prototype_field(native)),
+            promise_constructor: self.promise_constructor,
         };
         let parked = match self.realm.parked.replace(leaving) {
             Some(parked) if parked.global == global => Some(parked),
@@ -2313,38 +2540,70 @@ impl<H: Host> Vm<H> {
         };
         self.realm.globals = global;
         let state = match parked {
-            Some(parked) => {
-                // Natives are shared by every realm and allocate from these fields, so the
-                // fields follow the active realm: a native called from a realm builds that
-                // realm's objects.
-                for (native, prototype) in REALM_FOLLOWING_PROTOTYPES.into_iter().zip(parked.prototypes) {
-                    debug_assert!(self
-                        .realm
-                        .intrinsics
-                        .builtin_prototypes
-                        .get(&(global, native))
-                        .is_none_or(|intrinsic| *intrinsic == prototype));
-                    *self.realm_prototype_field(native) = prototype;
-                }
-                parked.state
-            }
+            Some(parked) => self.unpark_realm_fields(global, parked),
             None => {
-                for native in REALM_FOLLOWING_PROTOTYPES {
-                    if let Some(&prototype) = self
-                        .realm
-                        .intrinsics
-                        .builtin_prototypes
-                        .get(&(global, native))
-                    {
-                        *self.realm_prototype_field(native) = prototype;
-                    }
-                }
+                self.follow_realm_fields(global);
                 self.realm.global_lexical_states.remove(&global).unwrap_or_default()
             }
         };
         self.realm.global_lexical_declarations = state.declarations;
         self.realm.global_lexical_bindings = state.bindings;
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
+    }
+
+    /// Restores the realm-following fields `parked` held for `global`, which the switch makes
+    /// active again; its global lexical state.
+    ///
+    /// Natives are shared by every realm and allocate from these fields, so the fields follow
+    /// the active realm: a native called from a realm builds that realm's objects.
+    fn unpark_realm_fields(&mut self, global: Value, parked: ParkedRealm) -> GlobalLexicalState {
+        for (native, prototype) in REALM_FOLLOWING_PROTOTYPES.into_iter().zip(parked.prototypes) {
+            debug_assert!(self
+                .realm
+                .intrinsics
+                .builtin_prototypes
+                .get(&(global, native))
+                .is_none_or(|intrinsic| *intrinsic == prototype));
+            *self.realm_prototype_field(native) = prototype;
+        }
+        debug_assert!(self
+            .realm
+            .intrinsics
+            .promise_constructors
+            .get(&global)
+            .is_none_or(|intrinsic| *intrinsic == parked.promise_constructor));
+        self.promise_constructor = parked.promise_constructor;
+        parked.state
+    }
+
+    /// Points the realm-following fields at `global`'s intrinsics, read from the intrinsics
+    /// table. A realm without a `Promise` yet leaves its promise fields null, as the table's
+    /// absent entry read before; the other fields keep what they held.
+    fn follow_realm_fields(&mut self, global: Value) {
+        for native in REALM_FOLLOWING_PROTOTYPES {
+            if let Some(&prototype) = self.realm.intrinsics.builtin_prototypes.get(&(global, native)) {
+                *self.realm_prototype_field(native) = prototype;
+            } else if native == Native::Promise {
+                self.promise_proto = Value::NULL;
+            }
+        }
+        self.promise_constructor =
+            self.realm.intrinsics.promise_constructors.get(&global).copied().unwrap_or(Value::NULL);
+    }
+
+    /// Records `global`'s intrinsic `%Promise%` and `%Promise.prototype%`, which the
+    /// intrinsics table just took, in the fields that follow it: the VM's while `global` is
+    /// active, the parked realm's while it is parked; any other realm's are read from the
+    /// table when it becomes active (`follow_realm_fields`).
+    fn note_realm_promise(&mut self, global: Value, constructor: Value, prototype: Value) {
+        if global == self.realm.globals {
+            self.promise_constructor = constructor;
+            self.promise_proto = prototype;
+        } else if let Some(parked) = self.realm.parked.as_mut().filter(|parked| parked.global == global) {
+            parked.promise_constructor = constructor;
+            let index = REALM_FOLLOWING_PROTOTYPES.iter().position(|&native| native == Native::Promise);
+            parked.prototypes[index.expect("Promise follows the active realm")] = prototype;
+        }
     }
 
     /// The VM field holding the active realm's `native.prototype`.
@@ -2354,6 +2613,7 @@ impl<H: Host> Vm<H> {
             Native::Function => &mut self.function_proto,
             Native::Array => &mut self.array_proto,
             Native::String => &mut self.string_proto,
+            Native::Promise => &mut self.promise_proto,
             _ => unreachable!("only these prototypes follow the active realm"),
         }
     }
@@ -2801,7 +3061,8 @@ impl<H: Host> Vm<H> {
             })
             .sum();
         let field_add_cache_bytes = self.field_add_indices.capacity_bytes()
-            + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>();
+            + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
+            + self.field_add_chains.bytes();
         eprintln!(
             "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"inline_property_values\":{inline_property_values},\"narrowable_inline_property_values\":{narrowable_inline_property_values},\"out_of_line_property_values\":{out_of_line_property_values},\"narrowable_out_of_line_property_values\":{narrowable_out_of_line_property_values},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"dense_array_values\":{dense_array_values},\"narrowable_dense_array_values\":{narrowable_dense_array_values},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"field_cache_sites\":{},\"field_cache_site_capacity\":{},\"active_field_caches\":{active_field_caches},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"field_cache_data_bytes\":{},\"megamorphic_field_index_bytes\":{},\"field_add_index_bytes\":{},\"field_add_set_bytes\":{},\"field_add_sets\":{},\"field_add_cache_entries\":{field_add_cache_entries},\"field_add_cache_depth_counts\":{field_add_cache_depth_counts:?},\"field_add_set_occupancy\":{field_add_set_occupancy:?},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
             self.shapes.len(),
@@ -2958,7 +3219,7 @@ impl<H: Host> Vm<H> {
             heap.cell_payload_bytes,
             shape_table_bytes,
             self.shapes.len(),
-            self.shapes.iter().filter(|shape| shape.dictionary_trigger.is_some()).count(),
+            self.shapes.iter().filter(|shape| shape.is_dictionary()).count(),
             shape_lookup_bytes,
             transition_table_bytes,
             descriptor_side_table_bytes,
@@ -3011,6 +3272,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: initialization runs outside any native body, before reuse.
         unsafe { self.programs.retire_native_calls(); }
         self.heap.reset();
+        self.forget_learned_receivers();
         self.natives = Default::default();
         self.frames.clear();
         self.frame_pool.clear();
@@ -3045,10 +3307,11 @@ impl<H: Host> Vm<H> {
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
         self.iterator_absence_proof.set(None);
+        self.then_absence_proof = None;
         self.promise_species_proof.take();
         self.promise_then_memo.take();
         self.heap.dependencies_mut().retire_all();
-        self.enumerable_keys.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();
+        self.enumerable_keys.clear(); self.enumerable_key_lists.clear(); self.enumerable_key_value_lists.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
@@ -3083,8 +3346,10 @@ impl<H: Host> Vm<H> {
         self.field_add_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
+        self.field_add_chains.clear();
         self.megamorphic_field_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.megamorphic_fields.clear();
+        self.field_stubs.clear();
         self.holder_hints.clear();
         self.length_atom = self.intern_atom("length");
         self.prototype_atom = self.intern_atom("prototype");
@@ -3097,8 +3362,11 @@ impl<H: Host> Vm<H> {
         self.object_shapes = site_table::CacheSiteTable::with_empty(program.object_sites.capacity());
         self.descriptors.clear();
         self.function_values.clear();
+        self.module_functions.clear();
         self.wasm_exported_functions.clear();
         self.private_homes.clear();
+        // The heap reset discards every class closure, and so every private home.
+        self.private_classes.clear();
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.instanceof_inheriting_holders = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
@@ -3111,6 +3379,7 @@ impl<H: Host> Vm<H> {
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
         self.shared_entry_pair = Value::UNDEFINED;
+        self.spare_await_state = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_header = None;
@@ -3135,6 +3404,7 @@ impl<H: Host> Vm<H> {
         self.temporal_plain_month_day_proto = Value::NULL;
         self.temporal_plain_year_month_proto = Value::NULL;
         self.random_state = fresh_random_seed();
+        self.realm_native_proofs.forget();
         self.realm.globals = self
             .heap
             .alloc_object(Self::empty_object(Value::NULL));
@@ -3208,7 +3478,7 @@ impl<H: Host> Vm<H> {
                 .typeof_constant(v)
                 .unwrap_or_else(|| self.heap.alloc_string(JsString::from_shared_text(v))),
             Constant::StringUnits(v) => self.heap.alloc_string(JsString::from_units(v)),
-            Constant::BigInt(v) => self.heap.alloc(Cell::bigint(v.clone())),
+            Constant::BigInt(v) => self.heap.alloc(Cell::bigint((**v).clone())),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
             Constant::Null => Value::NULL,
@@ -3239,6 +3509,8 @@ impl<H: Host> Vm<H> {
             constants.push(value);
         }
         self.programs.set_constants(id, constants, program.constants.capacity() - program.constants.len());
+        // The dropped views' record addresses name private-name sites' entries.
+        self.private_site_homes.clear();
         // Lane views carry constants, so call targets naming the old views are stale.
         self.lane_stack.clear_script_targets();
         if id == self.active_program {
@@ -3307,19 +3579,20 @@ impl<H: Host> Vm<H> {
 
     /// Empties every cache entry in `layout`'s ranges, which a reclaimed program left, for
     /// the program taking them over.
+    ///
+    /// Every table's empty entry stores as zero bits, so a range empties by handing its whole
+    /// pages back to the kernel (`SiteTable::empty_range`): both when its program is reclaimed
+    /// (`free_cache_layouts_of`), so the dead program's recorded pages leave the resident set
+    /// at once, and again on reuse, where only the sites recorded since are written.
     fn empty_cache_ranges(&mut self, layout: ProgramCacheLayout) {
         let fields = layout.field_base..layout.field_base + usize::from(layout.sites.fields);
-        for site in fields {
-            self.field_caches.set(site, EMPTY_CACHE);
-            self.field_add_indices.set(site, NO_FIELD_ADD_SET);
-            self.megamorphic_field_indices.set(site, NO_MEGAMORPHIC_FIELD);
-            self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
-            self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
-        }
+        self.field_caches.empty_range(fields.clone());
+        self.field_add_indices.empty_range(fields.clone());
+        self.megamorphic_field_indices.empty_range(fields.clone());
+        self.inherited_field_indices.empty_range(fields.clone());
+        self.accessor_field_indices.empty_range(fields);
         self.method_caches.empty_sites(layout.method_base..layout.method_base + layout.sites.methods);
-        for site in layout.object_base..layout.object_base + layout.sites.objects {
-            self.object_shapes.set(site, NO_OBJECT_SHAPE);
-        }
+        self.object_shapes.empty_range(layout.object_base..layout.object_base + layout.sites.objects);
     }
 
     /// Files the cache-site ranges of reclaimed `programs` for programs with the same site
@@ -3328,6 +3601,7 @@ impl<H: Host> Vm<H> {
         for program in programs {
             let Some(&layout) = self.program_cache_layouts.get(program.raw() as usize) else { continue };
             if layout.sites != crate::bytecode::CacheSiteCounts::default() {
+                self.empty_cache_ranges(layout);
                 self.free_cache_layouts.entry(layout.sites).or_default().push(layout);
             }
         }
@@ -3569,7 +3843,7 @@ impl<H: Host> Vm<H> {
         let result = body(self, &mut prepared);
         if let CallbackProof::Lane { roots, lane } = prepared.proof {
             self.finish_lane_callback(lane);
-            self.active_call_roots.truncate(roots);
+            self.prepared_roots.truncate(roots);
         }
         result
     }
@@ -3587,10 +3861,12 @@ impl<H: Host> Vm<H> {
         match &mut prepared.proof {
             CallbackProof::Lane { roots, lane } => {
                 let arguments = *roots + CALL_ROOTS_BESIDE_ARGUMENTS;
+                // The proof's slots root the arguments while it is the innermost proof, whatever
+                // call roots the native pushed since (`prepared_roots`).
                 if args.len() <= PREPARED_ARGUMENT_ROOTS
-                    && self.active_call_roots.len() == arguments + PREPARED_ARGUMENT_ROOTS
+                    && self.prepared_roots.len() == arguments + PREPARED_ARGUMENT_ROOTS
                 {
-                    let slots = &mut self.active_call_roots[arguments..arguments + PREPARED_ARGUMENT_ROOTS];
+                    let slots = &mut self.prepared_roots[arguments..arguments + PREPARED_ARGUMENT_ROOTS];
                     for (index, slot) in slots.iter_mut().enumerate() {
                         *slot = args.get(index).copied().unwrap_or(Value::UNDEFINED);
                     }
@@ -3601,11 +3877,17 @@ impl<H: Host> Vm<H> {
             }
             CallbackProof::First => prepared.proof = CallbackProof::Second,
             CallbackProof::Second => {
-                prepared.proof = match self.prepare_lane_callback(prepared.callee, prepared.this) {
+                // Preparing can resolve the callee's target, which can allocate: the arguments
+                // stay rooted across it, as `call_value` roots them.
+                let start = self.active_call_roots.len();
+                self.active_call_roots.extend_from_slice(args);
+                let lane = self.prepare_lane_callback(prepared.callee, prepared.this);
+                self.active_call_roots.truncate(start);
+                prepared.proof = match lane {
                     Some(lane) => {
-                        let roots = self.active_call_roots.len();
-                        self.active_call_roots.extend_from_slice(&[prepared.callee, prepared.this]);
-                        self.active_call_roots.extend_from_slice(&[Value::UNDEFINED; PREPARED_ARGUMENT_ROOTS]);
+                        let roots = self.prepared_roots.len();
+                        self.prepared_roots.extend_from_slice(&[prepared.callee, prepared.this]);
+                        self.prepared_roots.extend_from_slice(&[Value::UNDEFINED; PREPARED_ARGUMENT_ROOTS]);
                         CallbackProof::Lane { roots, lane }
                     }
                     None => CallbackProof::General,
@@ -3690,7 +3972,10 @@ impl<H: Host> Vm<H> {
         match target {
             CallTarget::Native(native) => {
                 self.profile.call_target(0, args.len());
-                self.call_native_guarded(p, native, this, args, callee)
+                // Every caller holds `args`: `call_value_with_target` roots them, and the
+                // `_from_frame` calls pass the registers of a frame parked at the call, which
+                // the collector scans at the call's liveness, or values their caller roots.
+                self.call_native_guarded_arguments_held(p, native, this, args, callee)
             }
             CallTarget::User(program_id, id, env) => {
                 // A native a lane called runs its callee in that lane where the lane's own call

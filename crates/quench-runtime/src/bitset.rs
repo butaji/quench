@@ -130,6 +130,13 @@ impl BitSet {
         self.words.fill(0);
     }
 
+    /// Removes every member and sets the bound to `len`, reusing the words' storage.
+    pub(crate) fn reset(&mut self, len: usize) {
+        self.words.clear();
+        self.words.resize(words_for(len), 0);
+        self.len = len;
+    }
+
     /// Adds every member of `other`; whether this set grew.
     #[cfg(test)]
     pub(crate) fn union_with(&mut self, other: &Self) -> bool {

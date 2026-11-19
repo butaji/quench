@@ -308,7 +308,7 @@ impl FunctionCompiler<'_, '_> {
             // A replay of the function enclosing the class finds the constructor as the load
             // left it.
             if let Some(constructor) = self.owner.functions.get_mut(constructor_id) {
-                constructor.instance_initializer = Some(initializer);
+                constructor.set_instance_initializer(initializer);
             }
         }
         let class_value = self.reg();
@@ -750,10 +750,16 @@ impl FunctionCompiler<'_, '_> {
         );
     }
 
+    /// The instance elements' initialization: private methods' brands, then each field's define
+    /// in order. `fresh_receiver` where the receiver is the one the constructor's own [[Construct]]
+    /// just allocated (a base class constructor's), which may hold the leading constant fields
+    /// already (`vm::preshaped_receiver`): a run of two or more is then skipped where it does
+    /// (`Op::ConstantFieldsHeld`).
     pub(super) fn emit_instance_fields(
         &mut self,
         fields: &[ClassField<'_>],
         private_methods: &[Atom],
+        fresh_receiver: bool,
     ) {
         if fields.is_empty() && private_methods.is_empty() {
             return;
@@ -780,7 +786,15 @@ impl FunctionCompiler<'_, '_> {
         for atom in private_methods {
             self.emit(PRIVATE_NAME_MARK, 0, this, home, *atom);
         }
-        for field in fields {
+        // The leading run of fields whose defines evaluate no code (`bytecode::ConstantField`):
+        // nothing before them observes the receiver, so its allocation may hold them already.
+        let mut leading = true;
+        self.constant_fields.clear();
+        // The skip over the run's first `PRESHAPED_FIELDS` defines, where it is taken: the jump to
+        // patch, the first define's own cache site, which the test reads (`Op::ConstantFieldsHeld`),
+        // and the PC after the last define it covers.
+        let mut skip: Option<(usize, u16, u32)> = None;
+        for (index, field) in fields.iter().enumerate() {
             let span = class_field_span(*field);
             let initializer = class_field_value(*field);
             let backing = match field {
@@ -806,6 +820,18 @@ impl FunctionCompiler<'_, '_> {
                 }
                 _ => backing,
             };
+            // Whether this field continues the run, decided before its code: a define of a plain
+            // name with a constant (`leading_constant_field`).
+            let constant = match name {
+                Some(atom) if leading && computed_key.is_none() => self.leading_constant_field(*field, atom),
+                _ => None,
+            };
+            if constant.is_none() {
+                leading = false;
+                self.end_constant_skip(&mut skip);
+            } else if self.constant_fields.is_empty() && fresh_receiver {
+                skip = self.open_constant_skip(this, fields.get(index + 1).copied());
+            }
             let value = if let Some(initializer) = initializer.filter(|initializer| {
                 observes_nothing(initializer) || self.initializer_inlines(initializer)
             }) {
@@ -837,10 +863,90 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(OBJECT_FIELD_STORE, value, this, cache, field_atom);
             } else {
                 let field_atom = name.unwrap();
-                let cache = self.owner.cache_site();
-                self.emit(FIELD_DEFINE, value, this, cache, field_atom);
+                // The run's first define takes the site its skip's test reads.
+                let cache = match skip {
+                    Some((_, site, _)) if constant.is_some() && self.constant_fields.is_empty() => site,
+                    _ => self.owner.cache_site(),
+                };
+                self.emit(Op::DefineField, value, this, cache, field_atom);
+                if let Some(constant) = constant {
+                    self.constant_fields.push(constant);
+                    if let Some((_, _, end)) = skip.as_mut() {
+                        *end = self.code.len() as u32;
+                    }
+                    if self.constant_fields.len() == crate::bytecode::PRESHAPED_FIELDS {
+                        // A receiver holds no more of the run than this (`vm::preshaped_receiver`).
+                        self.end_constant_skip(&mut skip);
+                    }
+                    continue;
+                }
             }
+            leading = false;
+            self.end_constant_skip(&mut skip);
         }
+        self.end_constant_skip(&mut skip);
+    }
+
+    /// The skip over a run of constant fields that starts at the field being emitted, whose next
+    /// field is `next`, emitted before the field's code where the next may extend the run (a run
+    /// of one would not repay the test): the test of the receiver in `this`
+    /// (`Op::ConstantFieldsHeld`) through a cache site reserved for the run's first define, and
+    /// the jump past the run, patched where the run ends (`end_constant_skip`). `None` where no
+    /// unique site is left, whose shared entries would prove nothing of this run.
+    fn open_constant_skip(&mut self, this: Register, next: Option<ClassField<'_>>) -> Option<(usize, u16, u32)> {
+        if !next.is_some_and(may_extend_constant_run) {
+            return None;
+        }
+        let site = self.owner.cache_site();
+        if site == crate::bytecode::SHARED_UNCACHED_SITE {
+            return None;
+        }
+        let held = self.reg();
+        self.emit(Op::ConstantFieldsHeld, held, this, site, 0);
+        let jump = self.emit(Op::JumpTrue, held, 0, 0, 0);
+        Some((jump, site, 0))
+    }
+
+    /// Ends the skip over the run of constant fields, if one is open: its jump lands after the
+    /// last define the run's test covers.
+    fn end_constant_skip(&mut self, skip: &mut Option<(usize, u16, u32)>) {
+        if let Some((jump, _, end)) = skip.take() {
+            self.patch_instruction(jump, end);
+        }
+    }
+
+    /// The `ConstantField` a field whose `DefineField` of `atom` the run of leading constant
+    /// fields has reached adds to it: a public, non-computed, undecorated property whose key
+    /// is neither `__proto__` nor a numeric string and not already in the run, whose
+    /// initializer is absent (`undefined`) or folds to a primitive constant other than a
+    /// BigInt or a string with lone surrogates (`binding_time::expression`). Evaluating such an
+    /// initializer runs no code and its define (CreateDataPropertyOrThrow on the fresh,
+    /// extensible receiver) can neither fail nor run code; `None` ends the run.
+    fn leading_constant_field(&mut self, field: ClassField<'_>, atom: Atom) -> Option<crate::bytecode::ConstantField> {
+        use crate::bytecode::{ConstantField, FieldConstant};
+        let ClassField::Property(property) = field else { return None };
+        if property.computed || property.r#static || !property.decorators.is_empty() {
+            return None;
+        }
+        if !matches!(property.key, PropertyKey::StaticIdentifier(_) | PropertyKey::StringLiteral(_)) {
+            return None;
+        }
+        let key = &self.owner.atoms[atom as usize];
+        if key == "__proto__" || numeric_like_key(key) || self.constant_fields.iter().any(|constant| constant.atom == atom) {
+            return None;
+        }
+        let value = match class_field_value(field) {
+            None => FieldConstant::Undefined,
+            Some(initializer) => match super::binding_time::expression(initializer)? {
+                Constant::Undefined => FieldConstant::Undefined,
+                Constant::Null => FieldConstant::Null,
+                Constant::Boolean(value) => FieldConstant::Boolean(value),
+                Constant::Number(value) => FieldConstant::Number(value),
+                Constant::String(text) => FieldConstant::String(self.owner.atom(&text)),
+                _ => return None,
+            },
+        };
+        Some(ConstantField { atom, value })
     }
 
     fn set_class_field_function_name(&mut self, field: ClassField<'_>, value: Register) {
@@ -1269,6 +1375,26 @@ fn class_field_storage_name(compiler: &mut Compiler<'_>, key: &PropertyKey<'_>) 
         }
         _ => class_method_name(key),
     }
+}
+
+/// Whether `field` may extend a run of leading constant fields (`leading_constant_field`), judged
+/// by its syntax alone: a public, non-computed, undecorated property of a plain key whose
+/// initializer is absent or folds to a constant. Only whether the run's skip is emitted rests on
+/// it; what the run holds is `leading_constant_field`'s, as each field is reached.
+fn may_extend_constant_run(field: ClassField<'_>) -> bool {
+    let ClassField::Property(property) = field else { return false };
+    !property.computed
+        && !property.r#static
+        && property.decorators.is_empty()
+        && matches!(property.key, PropertyKey::StaticIdentifier(_) | PropertyKey::StringLiteral(_))
+        && property.value.as_ref().is_none_or(|value| binding_time::expression(value).is_some())
+}
+
+/// Whether a field key could name an array index or another canonical numeric string, which
+/// a receiver's layout of constant fields leaves out: every one starts with a digit or `-`,
+/// or is `Infinity` or `NaN`.
+fn numeric_like_key(key: &str) -> bool {
+    key.starts_with(|first: char| first.is_ascii_digit() || first == '-') || key == "Infinity" || key == "NaN"
 }
 
 pub(super) fn computed_field_key_name(start: u32) -> String {

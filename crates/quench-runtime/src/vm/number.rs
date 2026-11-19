@@ -2,6 +2,7 @@ use super::native_rows::Holder;
 use super::property_key::PropertyKey;
 use super::*;
 use crate::staged::math::FloatUnary;
+use crate::staged::call_native::MathCall;
 use num_bigint::{BigInt, Sign};
 
 const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
@@ -564,6 +565,26 @@ fn math_unary_function(native: Native) -> Option<MathFunction> {
         Native::MathLog2 => Unary(f64::log2),
         Native::MathSinh => Unary(f64::sinh),
         Native::MathTanh => Unary(f64::tanh),
+        _ => return None,
+    })
+}
+
+/// The staged row (`staged::call_native::math_call`) of the Math function `native`, whose
+/// call of Number arguments a site makes in place, int32 fast paths included; `None` for any
+/// other native.
+pub(super) const fn math_call(native: Native) -> Option<MathCall> {
+    Some(match native {
+        Native::MathSqrt => MathCall::Unary(FloatUnary::Sqrt),
+        Native::MathAbs => MathCall::Unary(FloatUnary::Abs),
+        Native::MathFloor => MathCall::Unary(FloatUnary::Floor),
+        Native::MathCeil => MathCall::Unary(FloatUnary::Ceil),
+        Native::MathRound => MathCall::Unary(FloatUnary::Round),
+        Native::MathTrunc => MathCall::Unary(FloatUnary::Trunc),
+        Native::MathFround => MathCall::Unary(FloatUnary::Fround),
+        Native::MathSign => MathCall::Sign,
+        Native::MathMax => MathCall::Extreme(true),
+        Native::MathMin => MathCall::Extreme(false),
+        Native::MathImul => MathCall::Imul,
         _ => return None,
     })
 }

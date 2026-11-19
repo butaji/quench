@@ -41,13 +41,47 @@ pub(super) struct FactTables {
     /// By (function, PC) of each construction of the unit, the scalar plan its callee builds by
     /// (`OnlineFacts::construct_plans`).
     construct_plans: std::collections::BTreeMap<(u32, u32), ScalarConstructPlan>,
+    /// The capture reads of the unit's own instructions that reach the program root's environment
+    /// at a slot the root writes once, by PC, with the function each holds now (`root_constants`).
+    root_constants: std::collections::BTreeMap<usize, Value>,
+    /// The program those root constants belong to: the active one (`Vm::root_slot_written_once`).
+    root_program: crate::vm::program_store::ProgramId,
+}
+
+/// Whether the `depth`-th enclosing function of `function`, by the program's static parent chain,
+/// is the root: depth zero is the parent (a capture read's environment is its closure's scope).
+fn reaches_root(program: &ResidualProgram, function: u32, depth: u16) -> bool {
+    let mut current = function;
+    for _ in 0..=depth {
+        let Some(parent) = program.function_get(current as usize).and_then(|body| body.parent) else { return false };
+        current = parent;
+    }
+    current == crate::vm::ROOT_FUNCTION_ID
+}
+
+/// The capture reads of `unit`'s own instructions that read a written-once root binding of the
+/// active program (`Vm::root_slot_written_once`), by PC, with the value the root environment's
+/// slot holds now, where that value is an initialized function. A read reaches the root by
+/// `reaches_root`; the root environment is the one its activation promoted (`root_environment`).
+fn root_constants<H: Host>(vm: &Vm<H>, function: u32, unit: &lane_unit::Unit) -> std::collections::BTreeMap<usize, Value> {
+    let program_id = vm.active_program;
+    let (Some(program), Some(environment)) = (vm.programs.residual(program_id), vm.programs.root_environment(program_id)) else {
+        return Default::default();
+    };
+    unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
+        let Some(crate::staged::Operation::LoadCapture { depth, slot, .. }) = crate::vm::compiled::decoded(instruction) else { return None };
+        let own = matches!(unit.origins.get(pc)?, lane_unit::Origin::Caller(_));
+        if !own || !reaches_root(program, function, depth) || !vm.root_slot_written_once(program_id, slot) { return None; }
+        let value = vm.heap.environment_slot(environment, usize::from(slot))?;
+        (value != Value::DELETED && vm.heap.function(value).is_some()).then_some((pc, value))
+    }).collect()
 }
 
 /// The (function, PC) each construction of `unit` is recorded at: the caller's own PC, or the
 /// inlined callee's (`Lowering::virtual_construct_plan`).
 fn construction_sites(unit: &lane_unit::Unit, function: u32) -> impl Iterator<Item = (u32, u32)> + '_ {
     unit.instructions.iter().enumerate()
-        .filter(|(_, instruction)| instruction.op().class() == crate::bytecode::Class::Construct)
+        .filter(|(_, instruction)| crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Construct))
         .filter_map(move |(pc, _)| match unit.origins.get(pc).copied()? {
             lane_unit::Origin::Caller(record) => Some((function, record)),
             lane_unit::Origin::Inlined { frame, pc } => Some((unit.frames[frame].target.function, pc)),
@@ -83,13 +117,15 @@ impl FactTables {
             }
         }
         for instruction in &unit.instructions {
-            if instruction.op() == crate::bytecode::Op::SetFunctionName {
+            if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::SetFunctionName) {
                 let key = (instruction.cache_site_index(), instruction.atom_index());
                 if let Some(name) = vm.native_function_name(key.0, key.1) { tables.names.insert(key, name); }
             }
         }
         tables.own_constants = vm.own_constants();
         tables.construct_plans = construction_plans(unit, function, construct);
+        tables.root_program = vm.active_program;
+        tables.root_constants = root_constants(vm, function, unit);
         tables
     }
 
@@ -111,6 +147,11 @@ impl FactTables {
 
     fn name(&self, site: u16, atom: Atom) -> Option<(crate::staged::add_plan::Transition, u64)> {
         self.names.get(&(site, atom)).copied()
+    }
+
+    /// The root constant the capture read at `pc` takes (`root_constants`), with its program.
+    fn root_constant(&self, pc: usize) -> Option<(crate::vm::program_store::ProgramId, Value)> {
+        self.root_constants.get(&pc).map(|value| (self.root_program, *value))
     }
 }
 
@@ -163,10 +204,11 @@ impl LoweringJob<'_> {
         let names = |site: u16, atom| self.tables.name(site, atom);
         let shape_stable = |shape: u32| self.tables.shape_stable(shape);
         let own_constant = |atom: Atom| self.tables.own_constant(atom);
+        let root_constant = |pc: usize| self.tables.root_constant(pc);
         let construct_plans = |function: u32, pc: u32| self.tables.construct_plan(function, pc);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &self.method_cache_atoms,
             invalidation: self.invalidation, constants: &self.constants, instanceofs: &instanceofs, shape_stable: &shape_stable,
-            names: Some(&names), own_constant: &own_constant }), construct_plans: Some(&construct_plans), ..self.facts };
+            names: Some(&names), own_constant: &own_constant, root_constant: &root_constant }), construct_plans: Some(&construct_plans), ..self.facts };
         lane_region::lower_body(&self.program, self.function, &self.unit, self.helpers, &self.fields, &self.global_reads, facts,
             &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.number_reads)
     }
@@ -208,7 +250,7 @@ pub(super) enum Lowered {
 impl Lowered {
     /// Lowers `job` and compiles its code, reporting it under `census`; a plan that may inline
     /// less (`replans`) is not compiled where its IR is oversized.
-    fn of(job: &LoweringJob<'_>, census: Option<Census>, replans: bool) -> Self {
+    fn of(job: &LoweringJob<'_>, census: Option<Census>, replans: bool, level: super::jit_backend::CompileLevel) -> Self {
         let Some(mut lowered) = job.run().filter(|lowered| lowered.region.native != 0) else { return Self::Nothing };
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         let ir = native.dfg.num_insts();
@@ -216,7 +258,7 @@ impl Lowered {
             return Self::Oversized;
         }
         let started = std::time::Instant::now();
-        let code = image::compile(native, lowered.scalar.take(), super::jit_backend::CompileLevel::run_default());
+        let code = image::compile(native, lowered.scalar.take(), level);
         if let Some(census) = census {
             eprintln!("{}", Census { ir, ..census }.report(started.elapsed(), code.as_ref().map_or(0, |image| image.code.len())));
         }
@@ -447,7 +489,7 @@ impl<H: Host> Vm<H> {
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
-            let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[], None, &|_, _, _, _| true)
+            let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[], &|_, _, _, _| true)
             else { break None };
             match image::compile(native, plan.lowered.scalar.take(), super::jit_backend::CompileLevel::run_default()) {
                 Ok(code) => break plan.finish(&code.code, code.scalar),
@@ -477,15 +519,24 @@ impl<H: Host> Vm<H> {
         // each, the loop region's measure): inlining only adds to it.
         let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
         let planned = self.programs.planned_lane_ir(&site);
-        if let Some(entries) = observed {
-            let ir = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
+        let estimated = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
+        // A quick body whose runs repaid the optimizing compile was priced at that (`LaneView::optimize_due`).
+        let optimize = entry.is_none() && caller.optimize_due();
+        let mut level = super::jit_backend::CompileLevel::run_default();
+        if let Some(entries) = observed && !optimize {
+            let ir = estimated;
             match pays_compile(tiers, program, function, entries, ir, caller, true, false) {
                 super::tier_model::Pick::Ultra => {}
                 super::tier_model::Pick::Interpreter => return Err(Unstarted::Unpaid),
                 // A function whose u-jit body would never get ahead of a b-jit body's takes the b-jit body (`LaneBodyOutcome::Base`).
                 super::tier_model::Pick::Base => return Err(Unstarted::Base),
             }
+            // Few entries to come take the quick compile, which an optimizing one follows once they repay it.
+            if level == super::jit_backend::CompileLevel::Optimized && super::lane_facts::compiles_quick(tiers, program, function, entries, ir, caller) {
+                level = super::jit_backend::CompileLevel::Quick;
+            }
         }
+        if entry.is_none() { caller.note_compile_level(level == super::jit_backend::CompileLevel::Quick, estimated); }
         if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true) { return Err(Unstarted::Unpaid); }
         super::base_region::count(super::base_region::Event::BodyPlanned);
         let plan_started = std::time::Instant::now();
@@ -551,7 +602,7 @@ impl<H: Host> Vm<H> {
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, budget, tiers };
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         let replans = !plan.unit.frames.is_empty() && budget > 0;
-        let code = super::jit_backend::OffThread::guarded((job, census, replans), |(job, census, replans)| Lowered::of(&job, census, replans));
+        let code = super::jit_backend::OffThread::guarded((job, census, replans, level), |(job, census, replans, level)| Lowered::of(&job, census, replans, level));
         self.programs.note_pending_native_calls(&watch, plan.callees());
         Ok(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code, key, site, taken: Box::new(taken) })
     }
@@ -645,7 +696,7 @@ impl<H: Host> Vm<H> {
     /// Whether the VM answers now what `pending`'s plan took from it (`TakenFacts`): the facts
     /// its lowering asked, its global reads, field proofs and inlined frames' captures, and no
     /// method cache naming an atom `lowered` stores in place.
-    fn lowering_holds(&self, program: &ResidualProgram, pending: &PendingLaneMethod, lowered: &lane_region::LoweredLane) -> bool {
+    fn lowering_holds(&mut self, program: &ResidualProgram, pending: &PendingLaneMethod, lowered: &lane_region::LoweredLane) -> bool {
         let (plan, taken) = (&pending.plan, &*pending.taken);
         // A construction's plan is asked of the callee it was planned for: its code tests the
         // callee, so another callee at the site only leaves.

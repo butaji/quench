@@ -15,6 +15,7 @@ use crate::staged::wasm_exception::Exception;
 use crate::staged::wasm_flow::Flow;
 use crate::staged::wasm_float::{convert, float_binary};
 use crate::staged::wasm_instance::Instance;
+use crate::staged::wasm_memory_bytes::write_memory;
 use crate::staged::wasm_machine::ConcreteMemory;
 use crate::staged::wasm_memory::{Memory, fill as memory_fill_rule, pages as memory_pages_rule, scalar_address};
 use crate::staged::wasm_operation::{Operand, WasmOperation};
@@ -148,7 +149,9 @@ impl<H: Host> Vm<H> {
         let memory = self.read(f, i.register_b());
         let address = self.wasm_i64_operand(self.read(f, i.register_c()))? as u64;
         let operator = crate::wasm::memory::MemoryStore::from_tag(i.imm()).expect("validated memory store");
-        self.wasm_memory_store(memory, address, operator, self.read(f, i.register_a()))
+        let value = self.decode_wasm_value(self.read(f, i.register_a()), operator.value_type())?;
+        let (mut bytes, _) = self.wasm_memory_mut(memory)?;
+        write_memory(&mut bytes, operator, address, value).map_err(JsError::wasm_trap_error)
     }
 
     /// The control steps (`Flow`): a select, a branch table, a trap and a return. A jump is

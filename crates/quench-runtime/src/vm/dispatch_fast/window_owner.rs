@@ -43,7 +43,7 @@ impl WindowScope {
     /// them over (`captured`); none for an activation without a record.
     pub(in crate::vm) fn record_bindings(&self) -> Option<&mut Vec<(Atom, Value)>> {
         // SAFETY: the record is the running activation's own, which nothing else accesses.
-        (!self.captured && !self.record.is_null()).then(|| unsafe { &mut (*self.record).dynamic_bindings })
+        (!self.captured && !self.record.is_null()).then(|| unsafe { (*self.record).dynamic_bindings_mut() })
     }
 
     /// The window's locals.

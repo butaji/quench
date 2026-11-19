@@ -23,7 +23,7 @@ fn write_closure_reads(out: &mut BinaryWriter, reads: Option<&crate::bytecode::C
     };
     out.u32(reads.functions.len() as u32);
     for function in reads.functions.iter() {
-        out.option_u32(function.parent);
+        out.option_u32(function.enclosing());
         out.u8(u8::from(function.is_arrow));
         out.u8(u8::from(function.reads.is_some()));
         if let Some(pairs) = &function.reads {
@@ -42,7 +42,12 @@ fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc
         return Ok(None);
     }
     let functions = input.list(|input| {
-        let parent = input.option_u32()?;
+        let parent = match input.option_u32()? {
+            Some(crate::bytecode::closure_reads::FunctionReads::NO_PARENT) => {
+                return Err("invalid residual closure reads parent".into());
+            }
+            parent => parent,
+        };
         let is_arrow = input.u8()? != 0;
         let reads = if input.u8()? != 0 {
             Some(input.list(|input| Ok((input.u32()?, input.u16()?)))?.into_boxed_slice())
@@ -50,15 +55,18 @@ fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc
             None
         };
         let named_slots = input.u16s()?.into_boxed_slice();
-        Ok(crate::bytecode::closure_reads::FunctionReads { parent, is_arrow, reads, named_slots })
+        Ok(crate::bytecode::closure_reads::FunctionReads::new(parent, is_arrow, reads, named_slots))
     })?;
     if functions
         .iter()
-        .any(|function| function.parent.is_some_and(|parent| parent as usize >= functions.len()))
+        .any(|function| function.enclosing().is_some_and(|parent| parent as usize >= functions.len()))
     {
         return Err("invalid residual closure reads parent".into());
     }
-    Ok(Some(std::rc::Rc::new(crate::bytecode::ClosureReads { functions: functions.into_boxed_slice() })))
+    Ok(Some(std::rc::Rc::new(crate::bytecode::ClosureReads {
+        functions: functions.into_boxed_slice(),
+        environment_elision: Default::default(),
+    })))
 }
 
 /// The scopes of a program's nested first-call stubs (`ResidualProgram::first_call_scopes`):

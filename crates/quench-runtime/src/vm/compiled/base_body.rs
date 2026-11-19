@@ -58,12 +58,12 @@ impl LaneMethod {
         // SAFETY: `base_region::function` links its code behind `entry_body`, of the lane body ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         // `entry_rows` follows `entry_body` (`base_region::rows_entry_offset`).
-        let rows = super::base_region::rows_entry_offset().map(|offset| memory.pointer().addr() + offset);
+        let rows = super::base_region::row_entries(memory.pointer().addr(), body.number_guards, body.uses_this);
         Some(Self {
-            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: memory, entry,
+            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, chains: body.chains, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: memory, entry,
             recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
-            caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(super::tier_policy::body_tier_in_lane()) || !direct.is_empty(),
+            caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(crate::jit_mode::Tier::Base) || !direct.is_empty(),
             direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound,
         })
     }
@@ -90,10 +90,10 @@ impl<H: Host> Vm<H> {
     /// callee register (`Vm::stable_callees`).
     pub(in crate::vm::compiled) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
         let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates));
+        let natives = self.native_callees(program, function, code);
         // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
         // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`call_this_in_lane`).
         let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
-        let natives = self.native_callees(program, function, code);
         Callees::of(code, candidates, &inline_body, stable, natives)
     }
 
@@ -138,6 +138,9 @@ impl<H: Host> Vm<H> {
         let masks: Option<&std::rc::Rc<RegisterMasks>> = program.shared_register_root_masks(function);
         let code: Vec<_> = body.instructions().collect();
         if !super::base_region::covers(&code) { return LaneBodyOutcome::Declined }
+        // A body whose entry its work cannot repay (no loop, no call, too short for the stencil
+        // tier) is not stitched only for `publish_base_body` to refuse it.
+        if !super::body_may_amortize(self.programs.tiers(), body, crate::jit_mode::Tier::Base) && !caller.called_by_bodies() { return LaneBodyOutcome::Short }
         if indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))) { return LaneBodyOutcome::Declined }
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let seen = observed(parameters);
@@ -151,6 +154,7 @@ impl<H: Host> Vm<H> {
         let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
         let names = |site: u16, atom| self.native_function_name(site, atom);
+        let fields = |site: u16| self.field_cache_filled(site);
         let known = Known {
             program, stitch: &self.programs.tiers().stitch, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
@@ -161,6 +165,7 @@ impl<H: Host> Vm<H> {
             typeof_names: &self.typeof_names,
             instanceofs: folds.then_some(&instanceofs as &dyn Fn(usize) -> Option<(Value, InstanceofFact)>),
             presences: folds.then_some(presences.as_slice()),
+            fields: folds.then_some(&fields as &dyn Fn(u16) -> bool),
             globals: globals.as_ref(),
             classes: if folds { classes.as_slice() } else { &[] },
             shapes: &[],
@@ -241,7 +246,7 @@ pub(in crate::vm) fn image_body(program: &ResidualProgram, function: u32) -> Res
     let region = LoopRegion::of_function(code, &[], program.shared_register_root_masks(function)).ok_or("no loop region")?;
     let known = Known {
         program, stitch: &super::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None,
-        invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: None, classes: &[], shapes: &[],
+        invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
     };
     let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[] };
     // SAFETY: no call site records a callee, so no entry cell is named.

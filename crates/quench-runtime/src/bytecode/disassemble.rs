@@ -34,9 +34,9 @@ impl ResidualProgram {
         }
         for (id, site) in self.superinstructions.iter().enumerate() {
             let _ = writeln!(output, "superinstruction {id}");
-            for instruction in site.code {
+            for instruction in site.wide {
                 let _ = write!(output, "  ");
-                let _ = write_instruction(&mut output, instruction.as_wide());
+                let _ = write_instruction(&mut output, instruction);
                 let _ = writeln!(output);
             }
         }
@@ -91,6 +91,7 @@ fn write_field(
         | FieldLayout::FunctionIndex
         | FieldLayout::ElementCount
         | FieldLayout::SignedConstant
+        | FieldLayout::WasmPayloadType
         | FieldLayout::CacheSiteIndex
         | FieldLayout::WideIndexChunk
         | FieldLayout::BooleanFlag => write_scalar_field(output, instruction, field, layout),

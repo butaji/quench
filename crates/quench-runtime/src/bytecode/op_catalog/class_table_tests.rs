@@ -6,9 +6,9 @@ fn catalog_tables_are_compact_and_the_runtime_uses_direct_predicates() {
     // read only by planning code; the per-instruction loop calls the generated
     // `is_*` predicates, which compile to direct enum comparisons.
     assert_eq!(core::mem::size_of::<Class>(), 1);
-    assert_eq!(core::mem::size_of::<Traits>(), 16);
+    assert_eq!(core::mem::size_of::<Traits>(), 32);
     let bytes = Op::COUNT * (core::mem::size_of::<Class>() + core::mem::size_of::<Traits>());
-    assert!(bytes <= 8192, "catalog tables take {bytes} bytes");
+    assert!(bytes <= 16384, "catalog tables take {bytes} bytes");
     assert!(Op::Call.class().eq(Class::Call) && !Op::Return.class().eq(Class::Call));
     assert!(Op::Return.class().eq(Class::Return) && !Op::Call.class().eq(Class::Return));
 }
@@ -43,6 +43,29 @@ fn role_traits_select_exactly_the_ops_they_replaced() {
     expect(Traits::REST_INDEX_READ, &[Op::RestGet]);
     expect(Traits::REST_LENGTH_READ, &[Op::RestLength]);
     expect(Traits::PLAIN_CALL, &[Op::Call]);
+    expect(
+        Traits::DISTANT_PRODUCER,
+        &[
+            Op::GetIndex,
+            Op::ToNumeric,
+            Op::ToPropertyKey,
+            Op::MakeArray,
+            Op::MakeConstArray,
+            Op::MakeObject,
+            Op::MakeObjectLiteral,
+            Op::MakeLiteralTemplate,
+            Op::CreateRegExpLiteral,
+            Op::LoadCallee,
+            Op::LoadNameTypeof,
+            Op::LoadCachedTemplateObject,
+            Op::StringConcat,
+            Op::ArgumentsLength,
+            Op::ArgumentGet,
+            Op::NumericAdd,
+            Op::NumericMultiply,
+            Op::PrivateIn,
+        ],
+    );
     expect(Traits::I64_BINARY_FAMILY, &[Op::WasmI64Binary, Op::WasmI64BinaryRaw]);
     expect(Traits::I64_BINARY_IMMEDIATE_FAMILY, &[Op::WasmI64BinaryImmediate, Op::WasmI64BinaryImmediateRaw]);
     expect(Traits::I64_UNARY_FAMILY, &[Op::WasmI64Unary, Op::WasmI64UnaryRaw]);

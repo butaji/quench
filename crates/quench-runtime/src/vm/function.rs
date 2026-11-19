@@ -368,7 +368,10 @@ impl<H: Host> Vm<H> {
             }
             return self.call_value(p, target, receiver, args);
         }
-        let mut combined = bound_args.to_vec();
+        // Filled once on the native stack, bound arguments then the call's: no heap
+        // allocation per call. The values are rooted as `call_value` roots its arguments.
+        let mut combined = smallvec::SmallVec::<[Value; 8]>::with_capacity(bound_args.len() + args.len());
+        combined.extend_from_slice(&bound_args);
         combined.extend_from_slice(args);
         self.call_value(p, target, receiver, &combined)
     }
@@ -432,6 +435,19 @@ impl<H: Host> Vm<H> {
     /// A bound function's target, bound `this` and bound arguments, read from the
     /// environment object `Function.prototype.bind` made (`env`); `None` for any other.
     pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, std::borrow::Cow<'_, [Value]>)> {
+        let (target, receiver, list) = self.bound_function_words(env)?;
+        let arguments = Some(list)
+            .filter(|list| !list.is_undefined())
+            .and_then(|list| self.heap.array_elements(list))
+            .map_or(std::borrow::Cow::Borrowed(&[][..]), |elements| elements.as_slice());
+        Some((target, receiver, arguments))
+    }
+
+    /// `bound_function_parts` as the three words the environment holds: the target, the bound
+    /// `this` and the list of bound arguments (`undefined` for none), which `bind` made and no
+    /// script can reach, so its elements never change. A call site may keep the words for a
+    /// bound function it calls again (`LaneStack::bound_call`).
+    pub(super) fn bound_function_words(&self, env: Value) -> Option<(Value, Value, Value)> {
         let data = self.object_data(env)?;
         let shape = data.shape();
         // The environment's three slots, read through the layout its shape keeps for every
@@ -469,10 +485,7 @@ impl<H: Host> Vm<H> {
                 self.own_property(env, self.runtime_atoms.bound_args),
             ),
         };
-        let arguments = arguments
-            .and_then(|list| self.heap.array_elements(list))
-            .map_or(std::borrow::Cow::Borrowed(&[][..]), |elements| elements.as_slice());
-        Some((target, receiver, arguments))
+        Some((target, receiver, arguments.unwrap_or(Value::UNDEFINED)))
     }
 }
 
@@ -525,6 +538,48 @@ impl ForwardedArgs for &[Value] {
     }
     fn prepend(&mut self, bound: &[Value]) -> bool {
         bound.is_empty()
+    }
+}
+
+/// A forwarded call's arguments read where the caller's window holds them until a bound
+/// prefix must lead them, then filled once, prefix then window, into an owned list: no copy
+/// of the window before the walk, and none moved again by the prepend.
+pub(super) enum WindowArgs<'a, const N: usize> {
+    Window(&'a [Value]),
+    Owned(smallvec::SmallVec<[Value; N]>),
+}
+
+impl<const N: usize> WindowArgs<'_, N> {
+    /// The values as an owned list, copied out of the window where they still lie there.
+    pub(super) fn into_owned(self) -> smallvec::SmallVec<[Value; N]> {
+        match self {
+            Self::Window(window) => smallvec::SmallVec::from_slice(window),
+            Self::Owned(values) => values,
+        }
+    }
+}
+
+impl<const N: usize> ForwardedArgs for WindowArgs<'_, N> {
+    fn shift(&mut self) -> Value {
+        match self {
+            Self::Window(window) => window.shift(),
+            Self::Owned(values) => values.shift(),
+        }
+    }
+    fn prepend(&mut self, bound: &[Value]) -> bool {
+        if bound.is_empty() {
+            return true;
+        }
+        match self {
+            Self::Window(window) => {
+                let mut values = smallvec::SmallVec::with_capacity(bound.len() + window.len());
+                values.extend_from_slice(bound);
+                values.extend_from_slice(window);
+                *self = Self::Owned(values);
+                true
+            }
+            Self::Owned(values) => values.prepend(bound),
+        }
     }
 }
 

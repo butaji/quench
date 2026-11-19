@@ -2,10 +2,136 @@
 //! (`Vm::wasm_gc_value_step`), rather than leaving for the general loop at each.
 use super::*;
 use super::super::dispatch_wasm::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance};
+use super::super::wasm_gc::GcFieldIndex;
+use super::super::wasm_gc::stage::HeapStage;
+use crate::staged::wasm_gc::{Aggregate, GcStep, array_copy, array_fill, array_length, field_read, field_write, non_null};
+use crate::wasm::gc::{GcField, GcFieldAccess};
+use crate::staged::wasm_call::Call;
+
+/// The running program's signature pool, cached on the lane for the program it was found for
+/// (`LaneContext::signatures`). `None` where the program has none; the general path raises that.
+#[inline(always)]
+fn lane_signatures<H: Host>(cx: *mut LaneContext<H>) -> Option<*const crate::wasm::WasmSignatures> {
+    // SAFETY: the context outlives the lane run; the cache's pool is kept by the context until
+    // the program changes, and no step in a lane target's check changes the program.
+    unsafe {
+        let program = (*cx).program;
+        if let (cached, Some(pool)) = &(*cx).signatures {
+            if *cached == program {
+                return Some(std::rc::Rc::as_ptr(pool));
+            }
+        }
+        let pool = vm(cx).programs.wasm_signatures_shared(program)?;
+        let pointer = std::rc::Rc::as_ptr(&pool);
+        (*cx).signatures = (program, Some(pool));
+        Some(pointer)
+    }
+}
+
+/// The lane's indirect target step (`Vm::wasm_indirect_row_with`, the interpreter's own check):
+/// the reference it writes to its result register, and the row it matched, which the reference
+/// call right after the target reads its callee from (`IndirectSlot`).
+#[inline(always)]
+fn lane_indirect_target<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>, i: WideInstruction, ip: Ip, r: Registers) -> Option<Value> {
+    // SAFETY: `lane_signatures` returned a pool the context holds for this step.
+    let pool = unsafe { lane_signatures(cx)?.as_ref() };
+    let (value, row) = vm.wasm_indirect_row_with(pool, r.get(i.register_b()), r.get(i.register_c()), i.imm()).ok()?;
+    // SAFETY: the context outlives the lane run.
+    unsafe {
+        (*cx).indirect = IndirectSlot {
+            // Lowering invariant: IndirectTarget is emitted only on the call_indirect path, and
+            // `emit_wasm_call` then emits exactly one load_constant (the void receiver, in a register
+            // above the target, so it never clobbers register a) followed by the call_through. So the
+            // call is two records on. A mismatch (e.g. a fused record) is a safe miss: the reference
+            // call's record, register and reference checks decide.
+            next: following(following(ip)),
+            register: i.result_register(),
+            reference: value.to_bits(),
+            entry: row.entry,
+            instance: row.instance,
+        };
+    }
+    Some(value)
+}
 
 /// The `wasm_gc_value_op` numbered `OP`.
 const fn gc_op<const OP: u16>() -> Op {
     Op::from_index(OP as usize).expect("a Wasm GC opcode")
+}
+
+/// A struct or array field access of the GC step `step`: its operands decoded from `i`'s registers
+/// (`Vm::wasm_field_operands`), then the staged `field_write` or `field_read` over the heap. `Some`
+/// of a read's value (`None` for a write); `None` for a miss or trap, which takes the general path.
+#[inline(always)]
+fn lane_gc_field<H: Host>(
+    vm: &mut Vm<H>,
+    step: GcStep,
+    i: WideInstruction,
+    read: impl Fn(&Vm<H>, u16) -> Value,
+) -> Option<Option<Value>> {
+    let operands = vm.wasm_field_operands(step, i, read).ok()?;
+    let (aggregate, index) = match operands.location {
+        GcFieldIndex::Struct(index) => (Aggregate::Struct, index),
+        GcFieldIndex::Array(index) => (Aggregate::Array, index),
+    };
+    let (reference, index) = (operands.reference.to_bits(), u64::from(index));
+    let mut stage = HeapStage { vm };
+    match operands.value {
+        Some(value) => {
+            field_write(&mut stage, aggregate, reference, index, operands.field, value.to_bits()).ok().map(|()| None)
+        }
+        None => {
+            let word = field_read(&mut stage, aggregate, reference, index, operands.field, operands.access).ok()?;
+            Some(Some(match operands.access {
+                GcFieldAccess::Read => Value::from_bits(word),
+                _ => Value::integer(word as i32),
+            }))
+        }
+    }
+}
+
+/// `array.fill` and `array.copy` (`GcStep::ArrayFill`, `ArrayCopy`) as the staged rules run them
+/// over the heap, their operands decoded by `Vm::wasm_array_bulk_operands`.
+#[inline(always)]
+fn lane_gc_array_bulk<H: Host>(
+    vm: &mut Vm<H>,
+    step: GcStep,
+    i: WideInstruction,
+    read: impl Fn(&Vm<H>, u16) -> Value,
+) -> Result<Option<Value>, crate::vm::JsError> {
+    let copy = step == GcStep::ArrayCopy;
+    let ops = vm.wasm_array_bulk_operands(i, read, copy)?;
+    if copy {
+        array_copy(&mut HeapStage { vm }, ops.destination.to_bits(), ops.output, ops.source.to_bits(), ops.input, ops.count)?;
+    } else {
+        array_fill(&mut HeapStage { vm }, ops.destination.to_bits(), ops.output, ops.source.to_bits(), ops.count)?;
+    }
+    Ok(None)
+}
+
+/// The non-field GC steps the lane runs as the staged rules over the heap: `ref.as_non_null`,
+/// `array.len`, `array.fill` and `array.copy`. `None` for the others, which the interpreter's step
+/// makes (`Vm::wasm_gc_value_step`).
+#[inline(always)]
+fn lane_gc_rule<H: Host>(
+    vm: &mut Vm<H>,
+    step: GcStep,
+    i: WideInstruction,
+    read: impl Fn(&Vm<H>, u16) -> Value + Copy,
+) -> Option<Result<Option<Value>, crate::vm::JsError>> {
+    match step {
+        GcStep::AsNonNull => {
+            let check = crate::wasm::reference::NonNullCheck::from_tag(i.imm()).expect("validated non-null check");
+            let reference = read(vm, i.register_b()).to_bits();
+            Some(non_null(&mut HeapStage { vm }, reference, check.trap()).map(|word| Some(Value::from_bits(word))))
+        }
+        GcStep::ArrayLen => {
+            let reference = read(vm, i.register_b()).to_bits();
+            Some(array_length(&mut HeapStage { vm }, reference).map(|length| Some(Value::integer(length as i32))))
+        }
+        GcStep::ArrayFill | GcStep::ArrayCopy => Some(lane_gc_array_bulk(vm, step, i, read)),
+        _ => None,
+    }
 }
 
 lane_handler! {
@@ -24,7 +150,8 @@ lane_handler! {
         // A field access allocates nothing and reads no instance state: a miss, which traps,
         // takes the general path, which raises it.
         if const { wasm_gc_field_op(gc_op::<OP>()) } {
-            let Ok(Some(value)) = vm.wasm_gc_field_hit(instruction, |_, register| r.get(register)) else {
+            let Some(step) = GcStep::of(op) else { return exit(ip) };
+            let Some(value) = lane_gc_field(vm, step, instruction, |_, register| r.get(register)) else {
                 return exit(ip);
             };
             if let Some(value) = value {
@@ -32,8 +159,24 @@ lane_handler! {
             }
             next!(cx, r, following(ip), view)
         }
-        let Ok(value) = vm.wasm_gc_value_step(program, env, instruction, |_, register| r.get(register)) else {
-            return exit(ip);
+        let rule = match GcStep::of(op) {
+            Some(step) => lane_gc_rule(vm, step, instruction, |_, register| r.get(register)),
+            None => None,
+        };
+        let indirect = const { matches!(Call::of(gc_op::<OP>()), Some(Call::IndirectTarget)) };
+        let value = match rule {
+            Some(Ok(value)) => value,
+            Some(Err(_)) => return exit(ip),
+            None if indirect => match lane_indirect_target(cx, vm, instruction, ip, r) {
+                Some(value) => Some(value),
+                None => return exit(ip),
+            },
+            None => {
+                let Ok(value) = vm.wasm_gc_value_step(program, env, instruction, |_, register| r.get(register)) else {
+                    return exit(ip);
+                };
+                value
+            }
         };
         if let Some(value) = value {
             r.set(instruction.result_register(), value);
@@ -48,24 +191,23 @@ lane_handler! {
 
 lane_handler! {
     /// A plain read of a value field (`GcStep::StructGet` or `ArrayGet` with no sign): the interpreter's own access
-    /// (`Vm::wasm_field_access`) with the record's operands read in place, a struct's field
+    /// (`staged::wasm_gc::field_read`) with the record's operands read in place, a struct's field
     /// or, where `ARRAY`, an array's element. A trap takes the general path, which raises it.
     #[inline(never)]
     fn lane_wasm_field_read<ARRAY: bool>(cx, r, ip, i, view) {
-        use crate::wasm::gc::{GcField, GcFieldAccess};
-        use super::super::wasm_gc::GcFieldIndex;
         let vm = unsafe { vm(cx) };
         let field = GcField::from_tag(i.imm()).expect("validated field operand");
-        let location = if ARRAY {
+        let (aggregate, index) = if ARRAY {
             let Some(index) = r.get(i.c).as_int() else { return exit(ip) };
-            GcFieldIndex::Array(index as u32)
+            (Aggregate::Array, index as u32)
         } else {
-            GcFieldIndex::Struct(field.index())
+            (Aggregate::Struct, field.index())
         };
-        let Some(Some(value)) = vm.wasm_field_access(r.get(i.b), location, field, GcFieldAccess::Read, None) else {
+        let reference = r.get(i.b).to_bits();
+        let Ok(word) = field_read(&mut HeapStage { vm }, aggregate, reference, u64::from(index), field, GcFieldAccess::Read) else {
             return exit(ip);
         };
-        r.set(i.a, value);
+        r.set(i.a, Value::from_bits(word));
         next!(cx, r, following(ip), view)
     }
 }

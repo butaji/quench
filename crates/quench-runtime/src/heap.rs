@@ -145,8 +145,8 @@ pub(crate) use array_proofs::{
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
-    Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache,
-    NO_PROVED_LAYOUT, ProofKind, FactStore};
+    Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, InternedChains,
+    NO_PROVED_LAYOUT, ProofKind, FactStore, ChainCell};
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
@@ -210,7 +210,7 @@ use young::YoungSlots;
 // genuinely large `new Array(length)` allocations to the sparse representation.
 // The slot limit is derived from Value's representation.
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 1024 * 1024;
-const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
+pub(crate) const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 // A sparse element is an index and a value in a hash table, at least this many dense slots;
 // a sparse array whose elements fill as many slots as its length turns dense.
 const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>();
@@ -538,9 +538,30 @@ pub(crate) const ASCII_UNITS: usize = 0x80;
 pub(crate) const UNIT_STRINGS: usize = 0x100;
 
 /// Dead prototype record ids a heap withholds from reuse (`Heap::retire_dead_prototypes`)
-/// before it advances `prototype_layout_epoch` once and frees them all. A withheld id costs one
-/// record's space; each advance retires every cache and proof the VM holds.
+/// before it advances `prototype_layout_epoch` and retires its chain cells once and frees them
+/// all. A withheld id costs one record's space; each advance retires every cache and proof the
+/// VM holds.
 const WITHHELD_PROTOTYPE_IDS: usize = 4096;
+/// A full collection that frees more payload than this returns the allocator's free memory to
+/// the kernel (`release_freed_allocator_memory`).
+const FREED_TRIM_BYTES: usize = 16 << 20;
+/// A full collection that frees more than a quarter of the payload it swept returns it too, once
+/// it frees at least this much: a small heap's share is not worth a trim.
+const FREED_TRIM_SHARE_MIN_BYTES: usize = 1 << 20;
+
+/// Returns the allocator's free memory to the kernel. Quench's small-object allocator, where it
+/// is the global allocator, releases its empty pages and ages its kept large blocks
+/// (`quench_alloc::release_empty_pages`; paced by its own purge delay). Glibc's free heap is
+/// trimmed too (`malloc_trim`): it serves every block past the small classes, which the
+/// allocator's purge does not reach.
+fn release_freed_allocator_memory() {
+    quench_alloc::release_empty_pages();
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: `malloc_trim` only advises the kernel about free allocator memory.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Heap {
@@ -666,10 +687,11 @@ pub(crate) struct Heap {
     /// mark for life: an allocation with one of them needs no lookup. A collection may free
     /// one and reuse its handle, so each one forgets them.
     marked_prototypes: [Option<Value>; MARKED_PROTOTYPE_WAYS],
-    /// Every object ever marked as a prototype, held weakly: a collection advances
-    /// `prototype_layout_epoch` only when one of them died, since only a dead prototype's
-    /// record can be reused under a proof that names it (`retire_dead_prototypes`). Each is
-    /// held with its subject in the dependency table (`Dependencies::watch`).
+    /// Every object ever marked as a prototype, held weakly: a collection releases the subject
+    /// of each that died, which retires the proofs and cells that read it, and advances
+    /// `prototype_layout_epoch` only when a dead prototype's record may be reused under a proof
+    /// that names it (`retire_dead_prototypes`). Each is held with its subject in the dependency
+    /// table (`Dependencies::watch`).
     prototypes: Vec<(Value, u32)>,
     /// The proofs that rely on prototypes' layouts, each retired when one it read changes.
     dependencies: dependencies::Dependencies,
@@ -1313,6 +1335,21 @@ impl Heap {
             // SAFETY: the run is the nursery's and nothing else's; the record follows at once.
             Some(run) => unsafe { ArrayElements::young(run, len, element) },
             None => ArrayElements::from_fn(len, element),
+        };
+        let object = ArrayObject::fresh(prototype, elements);
+        self.alloc_slotless_array_of(object, prototype)
+    }
+
+    /// A new array of `prototype`, with no properties, whose elements are the values of `parts`
+    /// in order, copied once into a young run where one is free (`alloc_literal_array`), else
+    /// into one allocation of the total length.
+    #[inline(always)]
+    pub(crate) fn alloc_literal_array_from_parts(&mut self, prototype: Value, parts: &[&[Value]]) -> Value {
+        let len: usize = parts.iter().map(|part| part.len()).sum();
+        let elements = match self.properties.young_elements(len) {
+            // SAFETY: the run is the nursery's and nothing else's; the record follows at once.
+            Some(run) => unsafe { ArrayElements::young_from_parts(run, parts) },
+            None => ArrayElements::from_parts(parts),
         };
         let object = ArrayObject::fresh(prototype, elements);
         self.alloc_slotless_array_of(object, prototype)
@@ -2129,6 +2166,55 @@ impl Heap {
         });
     }
 
+    /// The property-arena owners of the live objects, as the sweep lists them for a compacting
+    /// full collection (`sweep_serial`, `sweep_disposing` closures): the packed legacy slot
+    /// owners and the direct owners with their range offsets. After a full sweep every occupied
+    /// slot holds a surviving cell and every record a surviving record, so the walk lists exactly
+    /// what the sweep would have listed had it known.
+    fn list_property_owners(&self) -> (Vec<u64>, Vec<(usize, Value)>) {
+        let mut slot_owners = Vec::with_capacity(self.property_owner_counts.0);
+        let mut direct_owners = Vec::with_capacity(self.property_owner_counts.1);
+        let properties = &self.properties;
+        for (index, slot) in self.slots.iter().enumerate() {
+            if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
+                && properties.has_compact_range(object.properties())
+            {
+                slot_owners.push(pack_offset_owner(object.properties().start_offset(), index));
+            }
+        }
+        self.object_records.for_each_live(|record_id, object| {
+            if object.properties().has_compact_range() {
+                direct_owners.push((object.properties().start_offset(), Value::direct_object(record_id)));
+            }
+        });
+        self.function_records.for_each_live(|record_id, function| {
+            if function.object.properties().has_compact_range() {
+                direct_owners.push((function.object.properties().start_offset(), Value::direct_function(record_id)));
+            }
+        });
+        self.promise_records.for_each_live(|record_id, promise| {
+            if promise.object.properties().has_compact_range() {
+                direct_owners.push((promise.object.properties().start_offset(), Value::direct_promise(record_id)));
+            }
+        });
+        self.iterator_records.for_each_live(|record_id, iterator| {
+            if iterator.object.properties().has_compact_range() {
+                direct_owners.push((iterator.object.properties().start_offset(), Value::direct_iterator(record_id)));
+            }
+        });
+        self.collection_records.for_each_live(|record_id, collection| {
+            if collection.object.properties().has_compact_range() {
+                direct_owners.push((collection.object.properties().start_offset(), Value::direct_collection(record_id)));
+            }
+        });
+        self.array_records.for_each_live(|record_id, array| {
+            if array.properties().has_compact_range() {
+                direct_owners.push((array.properties().start_offset(), Value::direct_array(record_id)));
+            }
+        });
+        (slot_owners, direct_owners)
+    }
+
     /// Slide every live arena range down over released ones, in offset order.
     /// `objects` holds each live arena owner packed with its range offset.
     fn compact_property_arena(
@@ -2473,9 +2559,28 @@ impl Heap {
         self.prototypes = prototypes;
         let retire = died_unrecorded || withheld > WITHHELD_PROTOTYPE_IDS;
         if retire {
-            // Every proof made under the old epoch retires, so the withheld ids are free again.
+            // Every proof made under the old epoch, and every chain cell, retires, so the
+            // withheld ids are free again: a proof may name a record (a receiver's prototype
+            // link, a holder) its cell's subjects do not.
             advance_prototype_layout_epoch();
+            self.dependencies.retire_cells();
             self.object_records.release_withheld();
+        }
+    }
+
+    /// After a full collection that swept `payload_before` payload bytes: returns the empty record
+    /// pages (`RecordSpace::return_free_pages`), the whole pages of the property arena's released
+    /// runs (`ValueArena::return_free_pages`), and the allocator's free memory when the sweep
+    /// freed a lot (`release_freed_allocator_memory`).
+    fn return_freed_memory(&mut self, payload_before: usize) {
+        for (family, _) in self.record_families_mut() {
+            family.return_free_pages();
+        }
+        self.properties.return_free_pages();
+        let freed = payload_before.saturating_sub(self.payload_bytes);
+        let share_freed = freed >= FREED_TRIM_SHARE_MIN_BYTES && freed.saturating_mul(4) > payload_before;
+        if freed > FREED_TRIM_BYTES || share_freed {
+            release_freed_allocator_memory();
         }
     }
 
@@ -2742,10 +2847,12 @@ impl Heap {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
+        let payload_before_sweep = self.payload_bytes;
         let trace_sweep_started = trace_started.map(|_| std::time::Instant::now());
-        // Property-arena owners are listed only for a full collection that compacts: the
-        // lists hold an entry per live owner at the heap's peak. A compaction that this
-        // sweep's releases make due waits for the next full collection.
+        // Property-arena owners are listed during the sweep only for a full collection that
+        // already knows it compacts: the lists hold an entry per live owner at the heap's peak.
+        // A compaction that only this sweep's releases make due is decided after the sweep and
+        // lists the survivors then (`list_property_owners`), so it runs in the same collection.
         let compacts = full && self.properties.compaction_due();
         let sweep_pool = if full
             && !self.has_direct_records()
@@ -3121,10 +3228,19 @@ impl Heap {
         if full && crate::trace::Channel::Gc.on() {
             eprintln!("[narrow-elements] candidates={candidates} narrowed={narrowed} saved={}KB", saved_total / 1024);
         }
-        if compacts {
+        // A full collection whose sweep made a compaction due compacts now: the sweep listed no
+        // owners, so they are listed from the survivors. Compaction moves the young survivors
+        // with every other run and forgets the nursery, so the young evacuation is not needed.
+        let late_compaction = !compacts && full && self.properties.compaction_due();
+        let (property_owners, direct_property_owners) = if late_compaction {
+            self.list_property_owners()
+        } else {
+            (property_owners, direct_property_owners)
+        };
+        if compacts || late_compaction {
             // Compaction moves the young survivors with every other run and forgets the
-            // nursery (`ValueArena::finish_compaction`): due before the sweep, it stays due,
-            // as the sweep only releases.
+            // nursery (`ValueArena::finish_compaction`): due after the sweep, it stays due,
+            // as nothing after the sweep takes arena values back.
             debug_assert!(self.properties.compaction_due());
             self.property_owner_counts = (property_owners.len(), direct_property_owners.len());
             self.compact_property_arena(property_owners, direct_property_owners);
@@ -3242,6 +3358,9 @@ impl Heap {
         }
         self.peak_survivors = self.peak_survivors.max(live);
         self.retire_dead_prototypes();
+        if full {
+            self.return_freed_memory(payload_before_sweep);
+        }
         self.collection_state = CollectionState::Idle;
         #[cfg(feature = "profile-memory")]
         self.memory_profile.collection_finished();
@@ -4818,7 +4937,11 @@ impl Heap {
                 object(value);
                 work.extend(elements.iter().copied());
             }
-            Cell::WasmGc { fields, .. } => work.extend(fields.edges().iter().copied()),
+            Cell::WasmGc { declarations, ty, fields } => {
+                if let Some(layout) = declarations.layout(*ty) {
+                    fields.for_each_reference(layout, |value| work.push(value));
+                }
+            }
             Cell::WasmExtern(value) => work.push(*value),
             Cell::AccessorPair { getter, setter } => {
                 work.push(*getter);

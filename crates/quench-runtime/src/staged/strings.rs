@@ -6,7 +6,7 @@
 //! The interpreter reads the same units through `FlatUnits::view`: `concrete_char_code_at` and
 //! `concrete_char_at` take the string in either form (`ConcreteString`).
 
-use super::builtins::{UnitWidth, char_at_ascii, char_code_at};
+use super::builtins::{UnitWidth, char_at_ascii, char_at_ascii_within, char_code_at, char_code_at_within};
 use super::region::Region;
 use super::Stage;
 use crate::Value;
@@ -31,18 +31,32 @@ pub(crate) struct FlatString<W> {
 pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<FlatString<S::Word>> {
     let (record, short, wide) = super::string_length::flat_record(stage, record_base, value, miss)?;
-    // Every form keeps the words of both layouts inside the record, so each is read and the
-    // form selects.
-    let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
-    let shared_units = stage.add_imm(pointer, form::shared_units_offset());
-    let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
-    let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
-    let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
-    let units = stage.select(short, short_units, shared_units);
-    let length = stage.select(short, short_length, shared_length);
+    let units = record_units(stage, record, short);
+    let length = record_length(stage, record, short);
     let (one, zero) = (stage.constant(1), stage.constant(0));
     let wide = stage.select(wide, one, zero);
     Some(FlatString { units, length, wide })
+}
+
+/// The units of the flat string whose record is `record`, in the form `short` names: the record's
+/// own, else its shared buffer's. Every form keeps the words of both layouts inside the record, so
+/// each is read and the form selects. A record's suballocations may change when the VM runs, so a
+/// row reads them where it uses them, not held across a safepoint.
+#[inline(always)]
+pub(crate) fn record_units<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond) -> S::Word {
+    let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
+    let shared_units = stage.add_imm(pointer, form::shared_units_offset());
+    let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
+    stage.select(short, short_units, shared_units)
+}
+
+/// The length of the flat string whose record is `record`, in the form `short` names. A string's
+/// length never changes, so a loop may hold it (`loop_strings`).
+#[inline(always)]
+pub(crate) fn record_length<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond) -> S::Word {
+    let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
+    let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
+    stage.select(short, short_length, shared_length)
 }
 
 /// `row` of `string` at its own width.
@@ -60,6 +74,24 @@ pub(crate) fn string_char_code_at<S: Stage>(stage: &mut S, string: FlatString<S:
     at_width(stage, string, |stage, width| char_code_at(stage, width, string.units, string.length, index, miss))
 }
 
+/// `string_char_code_at` of `string` for an index the caller proves below its length: the row with no
+/// bounds test (`builtins::char_code_at_within`).
+#[inline(always)]
+pub(crate) fn string_char_code_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    at_width(stage, string, |stage, width| char_code_at_within(stage, width, string.units, index, miss))
+}
+
+/// `string_char_at` for an index the caller proves below the string's length (`builtins::char_at_ascii_within`).
+#[inline(always)]
+pub(crate) fn string_char_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word, table: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    let present = stage.ne_imm(table, 0u32);
+    stage.guard(present, miss)?;
+    let unit = at_width(stage, string, |stage, width| char_at_ascii_within(stage, width, string.units, index, miss))?;
+    character_of_unit(stage, table, unit, miss)
+}
+
 /// `builtins::char_at_ascii` of `string`: the one-character string of the unit, from the
 /// table of those strings at `table` (`Heap::ascii_unit_strings_base`, zero before the first
 /// exists). `None` (leaving at `miss`) where the row leaves, or where the unit has no string
@@ -70,6 +102,13 @@ pub(crate) fn string_char_at<S: Stage>(stage: &mut S, string: FlatString<S::Word
     let present = stage.ne_imm(table, 0u32);
     stage.guard(present, miss)?;
     let unit = at_width(stage, string, |stage, width| char_at_ascii(stage, width, string.units, string.length, index, miss))?;
+    character_of_unit(stage, table, unit, miss)
+}
+
+/// The one-character string of the ASCII `unit` from the table at `table`, which the unit has once
+/// it is made (`leaving at miss` where it has none yet).
+#[inline(always)]
+fn character_of_unit<S: Stage>(stage: &mut S, table: S::Word, unit: S::Word, miss: S::Miss) -> Option<S::Word> {
     let offset = stage.mul_imm(unit, size_of::<Value>() as u64);
     let address = stage.add(table, offset);
     let character = stage.load_u64(Region::HeapMeta.mutable(), address, 0);
@@ -103,9 +142,10 @@ impl ConcreteString<'_> {
             Self::Units(units) => {
                 let wide = u64::from(matches!(units, Units::Wide(_)));
                 let (base, length) = match units {
-                    // A Latin-1 unit is its byte, read zero-extended as an ASCII one is.
                     Units::Ascii(bytes) | Units::Latin1(bytes) => (bytes.as_ptr() as u64, bytes.len() as u64),
                     Units::Wide(units) => (units.as_ptr() as u64, units.len() as u64),
+                    // Latin-1 is no native row's form: the row leaves at its miss.
+                    Units::Latin1(_) => return None,
                 };
                 Some(FlatString { units: base, length, wide })
             }

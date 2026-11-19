@@ -52,7 +52,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
     let field = match instruction.field_lookup().unwrap() {
         FieldLookup::Atom { atom, base, cache_site } => FieldSite {
             base, first: (atom, cache_site), second: None,
-            sink: None, sources: std::array::from_fn(|_| None),
+            sink: None, sources: [FieldSite::NO_SOURCE; 3],
         },
         FieldLookup::Site(index) => *program.field_sites.get(index).unwrap(),
     };
@@ -118,6 +118,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
         receiver: black_box(entry.receiver),
         holder: if HOLDER { black_box(entry.holder) } else { super::super::NO_FIELD_HOLDER },
         slot: if FIXED { SLOT as u16 } else { black_box(entry.slot) },
+        holder_id: super::super::NO_FIELD_HOLDER_LAYOUT,
     };
     let mut cursor = first;
     b.iter(|| {

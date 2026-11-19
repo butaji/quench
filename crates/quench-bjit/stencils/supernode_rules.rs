@@ -27,10 +27,9 @@
 //! register allocator never gives a pin to two webs live together), and the rows read disjoint
 //! hole roles (`roles`). A tile with no variant is planned as single rows.
 
-#![allow(dead_code)]
 
-#[path = "library.rs"]
-mod library;
+/// The library mounted beside the rules: the build script's own, the lib's `numeric::library` (through `supernodes.rs`).
+use super::library;
 pub use library::{Code, HeapCode};
 use library::*;
 use std::collections::BTreeSet;
@@ -146,7 +145,7 @@ fn bitwise_kind(operation: NumberBitwise) -> u8 {
     }
 }
 
-/// The kinds whose two operands may be exchanged without changing the result.
+/// The kinds whose two operands may be exchanged without changing the result (`tile::oriented`).
 pub const fn commutative(kind: u8) -> bool {
     matches!(kind, ADD | MUL | AND | OR | XOR | EQ | NE)
 }
@@ -173,6 +172,7 @@ pub enum Operand {
 }
 
 impl Operand {
+    /// The other operand of a two-operand row, which a commutative row exchanges.
     pub const fn other(self) -> Self {
         match self {
             Operand::A => Operand::B,
@@ -308,7 +308,8 @@ pub fn roles(node: &Node) -> u8 {
 /// Which of (destination, first, second) a Number kind reads or writes, as a role mask.
 fn read_roles(kind: u8) -> u8 {
     match kind {
-        _ if is_compare(kind) => FIRST_ROLE | SECOND_ROLE,
+        _ if is_compare(kind) || kind == BIT_TEST => FIRST_ROLE | SECOND_ROLE,
+        NULLISH_EQ | NULLISH_NE | BOOL_TRUE | BOOL_FALSE => FIRST_ROLE,
         _ if is_copy(kind) => DESTINATION_ROLE | FIRST_ROLE,
         _ => ALL_ROLES,
     }

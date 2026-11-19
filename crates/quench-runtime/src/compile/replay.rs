@@ -8,6 +8,7 @@
 //! the replay reaches, and each function nested in it already has its id and its range.
 
 use crate::bytecode::Atom;
+pub(crate) use super::settled::Settled;
 use rustc_hash::FxHashMap;
 use std::ops::{Index, IndexMut};
 
@@ -433,9 +434,9 @@ pub(crate) struct RewriteRanges {
     /// unlowered and unrewritten, so its encoding says so (`binary::encode_program`) and its
     /// first read settles it; every other kept record was rewritten at load.
     pub(crate) deferred: Box<[u32]>,
-    /// Per function id: where a replay or first read put its rewrites' sites (`Some(Some)`), or
-    /// that they stayed unrun (`Some(None)`); `None` before either.
-    pub(crate) settled: std::cell::RefCell<Vec<Option<Option<crate::compile::replay::RewriteStart>>>>,
+    /// Per function id: where a replay or first read put its rewrites' sites, or that they
+    /// stayed unrun; `Settled::UNSETTLED` before either.
+    pub(crate) settled: std::cell::RefCell<Vec<Settled>>,
 }
 
 impl RewriteRanges {
@@ -455,8 +456,6 @@ impl RewriteRanges {
 #[derive(Default)]
 pub(super) struct ReplayViews {
     pub(super) constants: std::cell::OnceCell<Vec<(u64, u32)>>,
-    pub(super) line_starts: std::cell::OnceCell<Vec<usize>>,
-    pub(super) utf16_excess: std::cell::OnceCell<Vec<(usize, usize)>>,
 }
 
 /// How a program's functions can be compiled again, one at a time.
@@ -853,16 +852,7 @@ pub(crate) fn recompile(
     } else {
         SpecializationMode::Disabled
     };
-    let (line_starts, utf16_excess) = views.layout(text);
-    let mut compiler = Compiler::with_layout(
-        &program.source_name,
-        text,
-        mode,
-        &atoms,
-        FxHashMap::default(),
-        std::borrow::Cow::Borrowed(line_starts),
-        std::borrow::Cow::Borrowed(utf16_excess),
-    );
+    let mut compiler = Compiler::new(&program.source_name, text, mode, &atoms, FxHashMap::default());
     compiler.source_comments = parsed
         .program
         .comments
@@ -970,7 +960,7 @@ pub(crate) fn recompile(
                 let start = site.argument_start as usize;
                 let arguments =
                     program.method_arguments[start..start + usize::from(site.argument_count)].to_vec();
-                format!("{:?}", (site.atom, site.cache, arguments, site.receiver_path))
+                format!("{:?}", (site.atom, site.cache, arguments, site.receiver_path.get()))
             },
         );
         entries.push(("method_sites", index, format!("{value:?}"), loaded));

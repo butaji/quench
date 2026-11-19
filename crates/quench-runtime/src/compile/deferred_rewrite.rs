@@ -1,5 +1,5 @@
 //! Rewrites a load leaves to the first compile of the functions it releases.
-use super::replay::{Rewrite, RewriteStart};
+use super::replay::{Rewrite, RewriteStart, Settled};
 use super::*;
 
 /// The instructions a rewrite consumes for each site it adds: a field site fuses a read of a
@@ -155,11 +155,18 @@ pub(crate) fn settle_deferred_rewrite(program: &crate::bytecode::ResidualProgram
             program,
             &mut SiteTable::replay(fields, start.field_sites as usize),
             &mut SiteTable::replay(supers, start.superinstructions as usize),
+            &mut CompileScratch::default(),
         ),
-        RewritePlan::Append => rewrite::apply(function, program, &mut SiteTable::grow(fields), &mut SiteTable::grow(supers)),
+        RewritePlan::Append => rewrite::apply(
+            function,
+            program,
+            &mut SiteTable::grow(fields),
+            &mut SiteTable::grow(supers),
+            &mut CompileScratch::default(),
+        ),
     }
     // The rewrites leave their `Nop`s in place; this settles the record without lowering it.
-    rewrite::remove_nops(function, &mut None);
+    rewrite::remove_nops(function, &mut None, &mut CompileScratch::default());
     function.dispatch = Compiler::dispatch_class(&function.code, &function.wide);
 }
 
@@ -196,14 +203,14 @@ impl crate::bytecode::ResidualProgram {
     /// What an earlier replay of function `id` settled: its sites' start, or `None` for their
     /// skip. Read out of the cell before a plan records its own choice.
     fn settled_rewrite(&self, id: u32) -> Option<Option<RewriteStart>> {
-        self.rewrite_ranges.settled.borrow().get(id as usize).copied().flatten()
+        self.rewrite_ranges.settled.borrow().get(id as usize).copied().unwrap_or(Settled::UNSETTLED).get()
     }
 
     /// Notes where the sites of function `id`'s deferred rewrites start, or `None` if they stayed unrun.
     fn record_rewrite(&self, id: u32, start: Option<RewriteStart>) {
         let mut ranges = self.rewrite_ranges.settled.borrow_mut();
         let len = ranges.len().max(id as usize + 1);
-        ranges.resize(len, None);
-        ranges[id as usize] = Some(start);
+        ranges.resize(len, Settled::UNSETTLED);
+        ranges[id as usize] = start.map_or(Settled::UNRUN, Settled::placed);
     }
 }

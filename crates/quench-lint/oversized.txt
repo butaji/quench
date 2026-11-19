@@ -259,7 +259,6 @@ complexity crates/quench-node/src/modules/message_event_shared_vm.rs::convert 17
 complexity crates/quench-node/src/modules/module_shared_vm.rs::enable_compile_cache 11
 complexity crates/quench-node/src/modules/module_shared_vm.rs::find_package_json 23
 complexity crates/quench-node/src/modules/module_shared_vm.rs::resolve_lookup_paths 15
-complexity crates/quench-node/src/modules/napi/abi.rs::Status::message 24
 complexity crates/quench-node/src/modules/napi/objects.rs::collect_keys 22
 complexity crates/quench-node/src/modules/net_class_shared_vm.rs::socket_connect 12
 complexity crates/quench-node/src/modules/net_endpoint_shared_vm.rs::normalize 45
@@ -542,9 +541,9 @@ complexity crates/quench-runtime/src/heap.rs::Heap::collect_with_object_roots 67
 complexity crates/quench-runtime/src/heap.rs::Heap::mark_value 26
 complexity crates/quench-runtime/src/heap.rs::Heap::sweep_serial 19
 complexity crates/quench-runtime/src/heap/access.rs::Heap::move_collection_iterators 11
-complexity crates/quench-runtime/src/heap/cell.rs::Cell::profile_variant_name 40
-complexity crates/quench-runtime/src/heap/cell.rs::EnvironmentSlots::iteration_copy 14
-complexity crates/quench-runtime/src/heap/cell.rs::Object::encode_other_proto 11
+complexity crates/quench-runtime/src/heap/cell/cell_variants.rs::Cell::profile_variant_name 40
+complexity crates/quench-runtime/src/heap/cell/environment_slots.rs::EnvironmentSlots::iteration_copy 14
+complexity crates/quench-runtime/src/heap/cell/object_layout.rs::Object::encode_other_proto 11
 complexity crates/quench-runtime/src/heap/cell/snapshot.rs::Cell::read_snapshot 28
 complexity crates/quench-runtime/src/heap/cell/snapshot.rs::Cell::write_snapshot 32
 complexity crates/quench-runtime/src/heap/environment_trace.rs::Heap::trace_environment_edge 35
@@ -980,7 +979,6 @@ complexity crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_receive
 complexity crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_view 12
 complexity crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_write 12
 complexity crates/quench-runtime/src/vm/vector_region.rs::Builder<'_>::add 32
-complexity crates/quench-runtime/src/vm/vector_region.rs::Builder<'_>::fused 22
 complexity crates/quench-runtime/src/vm/vector_region.rs::VectorRegion::run 23
 complexity crates/quench-runtime/src/vm/vector_region.rs::admit 15
 complexity crates/quench-runtime/src/vm/wasm.rs::Vm<H>::decode_wasm_value_in 15
@@ -1344,7 +1342,7 @@ file-lines crates/quench-runtime/src/compile/rewrite.rs 1668
 file-lines crates/quench-runtime/src/heap.rs 4447
 file-lines crates/quench-runtime/src/heap/access.rs 836
 file-lines crates/quench-runtime/src/heap/array_elements.rs 664
-file-lines crates/quench-runtime/src/heap/cell.rs 3943
+file-lines crates/quench-runtime/src/heap/cell.rs 1829
 file-lines crates/quench-runtime/src/heap/cell/snapshot.rs 1128
 file-lines crates/quench-runtime/src/heap/environment_trace.rs 543
 file-lines crates/quench-runtime/src/heap/memory_profile.rs 736
@@ -2564,8 +2562,8 @@ function-lines crates/quench-runtime/src/heap/access.rs::Heap::move_collection_i
 function-lines crates/quench-runtime/src/heap/access.rs::Heap::object_and_arena_mut 50
 function-lines crates/quench-runtime/src/heap/array_elements/tests.rs::every_write_keeps_the_others_count_exact 46
 function-lines crates/quench-runtime/src/heap/array_elements/tests.rs::native_layout_matches_header_and_dense_backing 61
-function-lines crates/quench-runtime/src/heap/cell.rs::Cell::profile_variant_name 46
-function-lines crates/quench-runtime/src/heap/cell.rs::EnvironmentSlots::iteration_copy 86
+function-lines crates/quench-runtime/src/heap/cell/cell_variants.rs::Cell::profile_variant_name 46
+function-lines crates/quench-runtime/src/heap/cell/environment_slots.rs::EnvironmentSlots::iteration_copy 86
 function-lines crates/quench-runtime/src/heap/cell.rs::Native::is_math_function 43
 function-lines crates/quench-runtime/src/heap/cell/snapshot.rs::Cell::read_snapshot 116
 function-lines crates/quench-runtime/src/heap/cell/snapshot.rs::Cell::write_snapshot 194
@@ -2745,7 +2743,7 @@ function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::entry_facts 171
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::binary 86
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::entry_facts 171
-function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::equality 82
+function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::equality_words 82
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::get_field 81
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::hoist_reads 131
 function-lines crates/quench-runtime/src/vm/compiled/lane_region.rs::Lowering<'_,'_>::inline_call 70
@@ -3592,7 +3590,6 @@ function-lines crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_rec
 function-lines crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_view 45
 function-lines crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_write 50
 function-lines crates/quench-runtime/src/vm/vector_region.rs::Builder<'_>::add 131
-function-lines crates/quench-runtime/src/vm/vector_region.rs::Builder<'_>::fused 64
 function-lines crates/quench-runtime/src/vm/vector_region.rs::VectorRegion::run 100
 function-lines crates/quench-runtime/src/vm/vector_region.rs::admit 50
 function-lines crates/quench-runtime/src/vm/vector_region.rs::tests::fixture 41
@@ -4654,7 +4651,7 @@ magic crates/quench-runtime/src/heap.rs::Heap::marked 2
 magic crates/quench-runtime/src/heap.rs::Heap::marked_words 2
 magic crates/quench-runtime/src/heap.rs::Heap::new 5
 magic crates/quench-runtime/src/heap.rs::Heap::sweep_serial 2
-magic crates/quench-runtime/src/heap/cell.rs::EnvironmentSlots::sparse_position 1
+magic crates/quench-runtime/src/heap/cell/environment_slots.rs::EnvironmentSlots::sparse_position 1
 magic crates/quench-runtime/src/heap/cell/snapshot.rs::read_call_site 1
 magic crates/quench-runtime/src/heap/cell/snapshot.rs::read_stack_data 1
 magic crates/quench-runtime/src/heap/cell/snapshot.rs::write_call_site 1

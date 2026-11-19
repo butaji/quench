@@ -6,6 +6,8 @@ use crate::bytecode::{
 use super::liveness::{RegisterSet, register_bit};
 mod copies;
 use copies::forward_move_sources;
+mod loop_constants;
+pub(super) use loop_constants::hoist_loop_constants;
 pub(super) use crate::bytecode::OpSet;
 
 /// The one op each role names, derived from the catalog. The rewriter spells its ops by role,
@@ -147,7 +149,7 @@ fusion_recipes! {
                         first: (atom, cache_site),
                         second: None,
                         sink: Some(sink),
-                        sources: [None; 3],
+                        sources: [FieldSite::NO_SOURCE; 3],
                     });
                     first.set_field_lookup_site(fields.len() - 1);
                 }
@@ -162,6 +164,7 @@ pub(super) fn apply(
     methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &mut SiteTable<'_, Superinstruction>,
+    scratch: &mut CompileScratch,
 ) {
     let input = function.code.len();
     thread_jumps(function);
@@ -172,14 +175,17 @@ pub(super) fn apply(
     }
     // Each pass hands the liveness of the code it leaves unchanged to the next.
     let mut liveness = None;
-    if coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
+    if coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness, scratch) {
         changed_passes += 1;
     }
-    if forward_move_sources(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
+    if forward_move_sources(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness, scratch) {
         changed_passes += 1;
     }
-    if rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness) {
+    if rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness, scratch) {
         changed_passes += 1;
+    }
+    if let Some(facts) = liveness {
+        facts.recycle(scratch);
     }
     if crate::trace::Channel::Rewrite.on() {
         eprintln!(
@@ -199,12 +205,16 @@ pub(super) fn coalesce_promoted_moves(
     methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
+    scratch: &mut CompileScratch,
 ) {
     // The `Nop`s the passes leave in place are dropped by the one compaction `lower_settled` ends with.
     let mut liveness = None;
-    coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness);
-    forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness);
-    remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness);
+    coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness, scratch);
+    forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness, scratch);
+    remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness, scratch);
+    if let Some(facts) = liveness {
+        facts.recycle(scratch);
+    }
 }
 
 /// Removes each `Move` or `LoadConst` whose destination no path reads before writing it again:
@@ -218,12 +228,13 @@ fn remove_dead_moves(
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
     let removable = |i: Instr| i.op().traits().has(Traits::REMOVABLE_WHEN_DEAD) && !i.is_wide() && i.result_flags() == 0;
     if !function.code.iter().any(|&instruction| removable(instruction)) {
         return false;
     }
-    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions, scratch)
     else {
         return false;
     };
@@ -273,13 +284,13 @@ fn hand_on(
 /// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
 /// that followed it. The per-pc live sets, when given, are compacted with the same map: a `Nop`
 /// passes its successor's live set through, so a dropped entry loses nothing.
-pub(super) fn remove_nops(function: &mut BcFunction, live: &mut Option<Vec<RegisterSet>>) {
+pub(super) fn remove_nops(function: &mut BcFunction, live: &mut Option<Vec<RegisterSet>>, scratch: &mut CompileScratch) {
     if !function.code.iter().any(|instruction| instruction.op() == NOP) {
         return;
     }
     let old = std::mem::take(&mut function.code);
-    let mut code = Vec::with_capacity(old.len());
-    let mut map = vec![0usize; old.len() + 1];
+    let mut code = scratch.code_buffer(old.len());
+    let map = scratch.remap(old.len());
     for (pc, &instruction) in old.iter().enumerate() {
         map[pc] = code.len();
         if instruction.op() != NOP {
@@ -297,7 +308,7 @@ pub(super) fn remove_nops(function: &mut BcFunction, live: &mut Option<Vec<Regis
     relocate(
         &mut code,
         &mut function.wide,
-        &map,
+        &*map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
         &mut function.binding_sites,
@@ -305,6 +316,7 @@ pub(super) fn remove_nops(function: &mut BcFunction, live: &mut Option<Vec<Regis
         &old,
     );
     function.code = code;
+    scratch.recycle_code(old);
 }
 
 /// The liveness of a function's code as it stands: each instruction's transfer masks and the
@@ -325,14 +337,26 @@ enum CodeFacts {
     Transfers(Vec<(RegisterSet, RegisterSet)>),
 }
 
+impl CodeFacts {
+    /// Recycles the tables of the facts a pass chain ends with into `scratch`.
+    fn recycle(self, scratch: &mut CompileScratch) {
+        match self {
+            CodeFacts::Live(analysis) => analysis.recycle(scratch),
+            CodeFacts::Transfers(transfers) => scratch.recycle_transfers(transfers),
+        }
+    }
+}
+
 impl CodeLiveness {
-    /// The liveness `current` hands on or completes, otherwise derived from the code.
+    /// The liveness `current` hands on or completes, otherwise derived from the code, with its
+    /// transfer and successor tables taken from `scratch`.
     fn of(
         current: &mut Option<CodeFacts>,
         function: &BcFunction,
         methods: &(impl liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
+        scratch: &mut CompileScratch,
     ) -> Option<Self> {
         let transfers = match current.take() {
             Some(CodeFacts::Live(analysis)) => return Some(analysis),
@@ -344,16 +368,31 @@ impl CodeLiveness {
                 );
                 transfers
             }
-            None => liveness::transfers(function, methods, field_sites, superinstructions)?,
+            None => {
+                let mut transfers = std::mem::take(&mut scratch.transfers);
+                if !liveness::buffers::transfers_into(function, methods, field_sites, superinstructions, &mut transfers) {
+                    scratch.recycle_transfers(transfers);
+                    return None;
+                }
+                transfers
+            }
         };
-        let successors = crate::bytecode::Successors::of_code(function);
-        let live = liveness::analyze_wide(function, &transfers, &successors);
+        let mut successors = std::mem::take(&mut scratch.successors);
+        successors.refill(function);
+        let live = liveness::analyze_wide_with(function, &transfers, &successors, scratch);
         Some(Self { transfers, live, successors })
     }
 
+    /// Keeps this analysis's tables as the buffers of the next one.
+    fn recycle(self, scratch: &mut CompileScratch) {
+        scratch.recycle_transfers(self.transfers);
+        scratch.recycle_successors(self.successors);
+    }
+
     /// Updates the facts for one span `coalesce_distant_producer_moves` coalesced. A span is a
-    /// block (one entry, falling through, no handler) where nothing between the producer and
-    /// the move touches either register, so only the live sets after the producer change:
+    /// block (one entry, falling through, under handlers that read neither register) where
+    /// nothing between the producer and the move touches either register, so only the live
+    /// sets after the producer change:
     /// `src` is no longer read there and `dst` holds the value instead, live up to the move
     /// exactly when it is live after it. The producer's own live set is unchanged.
     fn coalesce(
@@ -472,18 +511,20 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
 /// non-adjacent form of `ProducerMove`: `src = producer; ...; dst = Move src` becomes
 /// `dst = producer; ...; Nop`. Call arguments are evaluated before their window is
 /// reserved, so each argument computed ahead of another argument's evaluation ends in such
-/// a move. Writing `dst` earlier is unobservable when the span between the two is one
-/// handler-free basic block that neither reads nor writes `dst` or `src`, `src` is dead
-/// after the move, and neither register is promoted local storage (which legacy
-/// `f.arguments` reflection reads). Each coalesced span updates the transfer masks and live
-/// sets it changes before the next move is read (`CodeLiveness::coalesce`), so spans may
-/// nest and chain within one pass.
+/// a move. Writing `dst` earlier is unobservable when the span between the two is one basic
+/// block that neither reads nor writes `dst` or `src`, the handlers covering the producer read
+/// neither register (`CodeLiveness::handler_live`; the span lies under one set of handlers,
+/// since its boundaries are protected positions), `src` is dead after the move, and neither
+/// register is promoted local storage (which legacy `f.arguments` reflection reads). Each
+/// coalesced span updates the transfer masks and live sets it changes before the next move is
+/// read (`CodeLiveness::coalesce`), so spans may nest and chain within one pass.
 fn coalesce_distant_producer_moves(
     function: &mut BcFunction,
     methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
     // Liveness is the expensive part; a function without a `Move` has nothing to coalesce.
     if !function
@@ -493,7 +534,7 @@ fn coalesce_distant_producer_moves(
     {
         return false;
     }
-    let Some(mut analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    let Some(mut analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions, scratch)
     else {
         return false;
     };
@@ -538,10 +579,8 @@ fn coalesce_distant_producer_moves(
         };
         let instruction = function.code[producer];
         if instruction.is_wide()
-            || !function.handlers.iter().all(|handler| handler.end as usize <= producer || handler.start as usize > target)
-            || !fuses(instruction.op(), MOVE, |recipe| {
-                matches!(recipe, Recipe::ProducerMove)
-            })
+            || analysis.handler_live(producer) & pair != 0
+            || !coalesces_at_a_distance(instruction.op())
             || instruction.result_register() != source
             || analysis.transfers[producer].1 != register_bit(source)
             || analysis.transfers[producer].0 & pair != 0
@@ -694,7 +733,7 @@ pub(super) fn express_strict_sets(function: &mut BcFunction) {
 /// another register is then the same operation, which `ProducerMove` retargets to a `Move`'s
 /// destination. A suspension (`Await`, `Yield`) writes its result on resume, from a frame the
 /// tiers rebuild, so it keeps its register.
-const fn plain_producer(op: Op) -> bool {
+pub(super) const fn plain_producer(op: Op) -> bool {
     const fn other_field_plain(layout: FieldLayout) -> bool {
         !matches!(
             layout,
@@ -810,6 +849,16 @@ fn fuses(first: Op, second: Op, recipe: impl Fn(Recipe) -> bool) -> bool {
     rules_for(first, second).iter().any(|&rule| recipe(rule))
 }
 
+/// Whether `op` may compute its result straight into a later `Move`'s destination when nothing
+/// between them touches either register (`coalesce_distant_producer_moves`): the adjacent
+/// `ProducerMove` producers, and the `DISTANT_PRODUCER` rows. Some rows are not `ProducerMove`
+/// producers (`MakeObjectLiteral` and `StringConcat` take a register window, which
+/// `plain_producer` excludes), and the adjacent recipe keeps its own list, since it also lets a
+/// producer read its new destination. The pass refuses a producer that reads either register,
+/// so no row here reads the register it writes.
+fn coalesces_at_a_distance(op: Op) -> bool {
+    fuses(op, MOVE, |recipe| matches!(recipe, Recipe::ProducerMove)) || op.traits().has(Traits::DISTANT_PRODUCER)
+}
 
 struct SuperRule {
     pattern: &'static [Op],
@@ -817,10 +866,9 @@ struct SuperRule {
 }
 
 
-const SUPER_RULES: &[SuperRule] = &[SuperRule {
-    pattern: &CONST_ARRAY_OBJECT2,
-    fuse: fuse_const_array_object2,
-}];
+/// No superinstruction rules: a fused record would carry a second meaning for its parts, so
+/// `MakeConstArray`, `Binary` and `MakeObject2` run as their own generated rows.
+const SUPER_RULES: &[SuperRule] = &[];
 
 fn rewrite_super_window(
     function: &mut BcFunction,
@@ -874,35 +922,6 @@ fn rewrite_super_window(
         }
     }
     changed
-}
-
-fn fuse_const_array_object2(
-    window: &[Instr],
-    superinstructions: &mut SiteTable<'_, Superinstruction>,
-) -> Option<Instr> {
-    let code: [Instr; 4] = window.try_into().ok()?;
-    if code.map(|instruction| instruction.op()) != CONST_ARRAY_OBJECT2 {
-        return None;
-    }
-    let [array, _, second, object] = code;
-    let object_inputs = [object.register_b(), object.register_c()];
-    if code
-        .iter()
-        .any(|instruction| instruction.result_flags() != 0)
-        || !object_inputs.contains(&array.result_register())
-        || !object_inputs.contains(&second.result_register())
-    {
-        return None;
-    }
-    let site = superinstructions.len() as u32;
-    superinstructions.push(Superinstruction::new(code));
-    Some(Instr::new(
-        SUPER_CONST_ARRAY_OBJECT2,
-        object.result_register(),
-        0,
-        0,
-        site,
-    ))
 }
 
 /// The pcs of `code`'s instructions that are not `Nop`s, in order.
@@ -977,6 +996,7 @@ fn rewrite_once(
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
     let rewrites_pair = |first: &Instr, second: &Instr| {
         !first.is_wide()
@@ -993,7 +1013,7 @@ fn rewrite_once(
         return false;
     }
     let Some(CodeLiveness { mut transfers, live, successors }) =
-        CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions)
+        CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions, scratch)
     else {
         return false;
     };
@@ -1054,7 +1074,7 @@ fn rewrite_once(
         return false;
     }
     drop(live);
-    drop(successors);
+    scratch.recycle_successors(successors);
     update_transfers(
         &mut transfers,
         &rewritten,
@@ -1080,19 +1100,14 @@ fn apply_rule(
     let replacement = sound_replacement(first, second, replacement)?;
     if matches!(recipe, Recipe::GetSetThis)
         && let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
-            // The entry in effect at a pc, found by the table's own lookup rather than a
+            // The source offset in effect at a pc, found by the table's own lookup rather than a
             // decoded copy of the whole table.
-            let at = |pc: usize| {
-                u32::try_from(pc)
-                    .ok()
-                    .and_then(|pc| source_positions.at(pc))
-                    .map(|position| (position.line, position.column))
-            };
+            let at = |pc: usize| u32::try_from(pc).ok().and_then(|pc| source_positions.at(pc));
             let site = &mut field_sites[index];
-            if site.sources[0].is_none() {
-                site.sources[0] = at(pc);
+            if site.sources[0] == FieldSite::NO_SOURCE {
+                site.sources[0] = FieldSite::source_word(at(pc));
             }
-            site.sources[2] = at(second_pc);
+            site.sources[2] = FieldSite::source_word(at(second_pc));
         }
     Some(replacement)
 }
@@ -1155,7 +1170,7 @@ fn relocate_source_positions(
     map: &[usize],
 ) {
     let relocated = relocated_source_positions(code_len, source_positions, old_code, wide, map);
-    *source_positions = relocated;
+    *source_positions = relocated.freeze();
 }
 
 /// The table `source_positions` becomes once the code is relocated through `map`. Surviving
@@ -1166,13 +1181,13 @@ fn relocated_source_positions(
     old_code: &[Instr],
     wide: &[WideInstruction],
     map: &[usize],
-) -> crate::bytecode::SourcePositions {
+) -> crate::bytecode::SourcePositionsBuilder {
     let mut survivors = source_positions
         .iter()
         .filter(|position| source_instruction_survives(position.pc as usize, old_code, map))
         .peekable();
     // Relocation keeps or drops entries, so the old coding bounds the new one's.
-    let mut relocated = crate::bytecode::SourcePositions::with_capacity(source_positions.coded_len());
+    let mut relocated = crate::bytecode::SourcePositionsBuilder::with_capacity(source_positions.coded_len());
     let mut origin_pc = 0;
     let mut effective = None;
     let mut previous_location = None;
@@ -1195,10 +1210,10 @@ fn relocated_source_positions(
         {
             effective = survivors.next();
         }
-        let Some(position) = effective else {
+        let Some(entry) = effective else {
             continue;
         };
-        let location = (position.line, position.column);
+        let location = entry.offset;
         // Call anchors are observable even when their location matches a
         // preceding Move that a later pass may remove.
         if previous_location == Some(location)
@@ -1209,10 +1224,9 @@ fn relocated_source_positions(
         {
             continue;
         }
-        relocated.push(crate::bytecode::SourcePosition {
+        relocated.push(crate::bytecode::SourceOffset {
             pc: new_pc as u32,
-            line: position.line,
-            column: position.column,
+            offset: location,
         });
         previous_location = Some(location);
     }
@@ -1329,7 +1343,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
             Instr::new(Op::Move, 5, 3, 0, 0),
             Instr::new(Op::Return, 5, 0, 0, 0),
         ];
-        assert!(!coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None));
+        assert!(!coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None, &mut CompileScratch::default()));
         assert_eq!(function.code[0].result_register(), 3);
         assert_eq!(function.code[2].op(), Op::Move);
     }
@@ -1447,7 +1461,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
                 register,
             })
             .collect();
-        while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None) {}
+        while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None, &mut CompileScratch::default()) {}
         function
             .code
             .iter()
@@ -1553,8 +1567,8 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         let function = &mut program.functions[0];
         function.code = code;
         function.registers = registers;
-        rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None);
-        remove_nops(function, &mut None);
+        rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None, &mut CompileScratch::default());
+        remove_nops(function, &mut None, &mut CompileScratch::default());
         std::mem::take(&mut function.code)
     }
 
@@ -1683,7 +1697,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
 
     #[test]
     fn source_positions_follow_compaction_and_skip_removed_instructions() {
-        use crate::bytecode::SourcePosition;
+        use crate::bytecode::SourceOffset;
 
         let mut code = vec![Instr::new(Op::Return, 0, 0, 0, 0); 2];
         let old_code = vec![
@@ -1693,21 +1707,9 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
             Instr::new(Op::Return, 0, 0, 0, 0),
         ];
         let mut source_positions: crate::bytecode::SourcePositions = vec![
-            SourcePosition {
-                pc: 0,
-                line: 1,
-                column: 1,
-            },
-            SourcePosition {
-                pc: 1,
-                line: 1,
-                column: 5,
-            },
-            SourcePosition {
-                pc: 2,
-                line: 1,
-                column: 9,
-            },
+            SourceOffset { pc: 0, offset: 0 },
+            SourceOffset { pc: 1, offset: 4 },
+            SourceOffset { pc: 2, offset: 8 },
         ]
         .into_iter()
         .collect();
@@ -1730,30 +1732,22 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         assert_eq!(
             source_positions.iter().collect::<Vec<_>>(),
             vec![
-                SourcePosition {
-                    pc: 0,
-                    line: 1,
-                    column: 1,
-                },
-                SourcePosition {
-                    pc: 1,
-                    line: 1,
-                    column: 5,
-                },
+                SourceOffset { pc: 0, offset: 0 },
+                SourceOffset { pc: 1, offset: 4 },
             ]
         );
     }
 
     #[test]
     fn wide_call_source_anchors_survive_later_argument_move_removal() {
-        use crate::bytecode::SourcePosition;
+        use crate::bytecode::SourceOffset;
         let wide = [WideInstruction::new(Op::Call, 0, 0, 0, 0)];
         let load = Instr::new(Op::LoadConst, 0, 0, 0, 0);
         let call = Instr::wide(0).unwrap();
         let mut positions = vec![
-            SourcePosition { pc: 0, line: 1, column: 74 },
-            SourcePosition { pc: 1, line: 1, column: 69 },
-            SourcePosition { pc: 2, line: 1, column: 69 },
+            SourceOffset { pc: 0, offset: 73 },
+            SourceOffset { pc: 1, offset: 68 },
+            SourceOffset { pc: 2, offset: 68 },
         ]
         .into_iter()
         .collect();
@@ -1763,8 +1757,8 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         let second = [load, Instr::new(Op::Nop, 0, 0, 0, 0), call];
         relocate_source_positions(2, &mut positions, &second, &wide, &[0, 1, 1, 2]);
         assert_eq!(positions.iter().collect::<Vec<_>>(), vec![
-            SourcePosition { pc: 0, line: 1, column: 74 },
-            SourcePosition { pc: 1, line: 1, column: 69 },
+            SourceOffset { pc: 0, offset: 73 },
+            SourceOffset { pc: 1, offset: 68 },
         ]);
     }
 }

@@ -175,7 +175,7 @@ pub(crate) fn entry_dense<const H: u8>(payload: usize) -> ElementView<u64> {
     let record = word_at(payload, JS_STEP_LOOP_ENTRY);
     let offset = stage_site(&mut stage);
     let (values, length) = entry::entry_backing(&mut stage, record, offset);
-    ElementView::Dense(DenseView { values, length, packed: false, within: false, double: None })
+    ElementView::Dense(DenseView { values, length, packed: false, within: false, double: None, uncounted: false })
 }
 
 /// The typed view the loop's entry recorded for the array whose entry words lie at the offset of the site

@@ -11,13 +11,13 @@ fn lowered(source: &str, names: &[&str], ty: Type, invalidation: Option<usize>) 
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),
-                storage: None, ty, inherited: None, function_shape: false, raw_double: false, formed: None }]))
+                storage: None, ty, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None }]))
         } else { None }
     }));
     let atoms = crate::bitset::BitSet::default();
     let facts = match invalidation {
         Some(invalidation) => VmFacts { online: Some(OnlineFacts { method_cache_atoms: &atoms, invalidation, constants: &[],
-            instanceofs: &|_| None, shape_stable: &|_| false, names: None, own_constant: &|_| None }), ..VmFacts::STATIC },
+            instanceofs: &|_| None, shape_stable: &|_| false, names: None, own_constant: &|_| None, root_constant: &|_| None }), ..VmFacts::STATIC },
         None => VmFacts::STATIC,
     };
     let isa = super::super::super::jit_backend::target_isa().unwrap();

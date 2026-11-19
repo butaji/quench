@@ -13,7 +13,7 @@ use super::*;
 use crate::bytecode::{RETURN_OP, Traits, the_op};
 use program_shape::ParsedProgramShape;
 use oxc_ast_visit::Visit;
-use replay::{ReplayViews, ShiftSpans};
+use replay::ShiftSpans;
 mod append;
 mod room;
 mod template;
@@ -25,27 +25,6 @@ pub(in crate::compile) use room::ChunkRoom;
 
 /// The op that runs a first-call stub on its chunk.
 const FIRST_CALL_CHUNK: Op = the_op(Traits::FIRST_CALL_CHUNK);
-
-impl ReplayViews {
-    /// The line starts and UTF-16 excess table of `text`, the program's source, which a
-    /// replay and a first-call chunk compile with.
-    pub(super) fn layout(&self, text: &str) -> (&[usize], &[(usize, usize)]) {
-        (
-            self.line_starts.get_or_init(|| crate::bytecode::source_line_starts(text).collect()),
-            self.utf16_excess.get_or_init(|| super::source_utf16_excess(text)),
-        )
-    }
-}
-
-/// The line starts and UTF-16 excess table of `source`'s text, which its first-call chunks
-/// compile with: made once per source and shared by its copies (`ProgramSource::layout`).
-pub(super) fn source_layout(source: &crate::bytecode::ProgramSource) -> (&[usize], &[(usize, usize)]) {
-    let layout = source.layout.get_or_init(|| std::sync::Arc::new(crate::bytecode::SourceLayout {
-        line_starts: crate::bytecode::source_line_starts(&source.text).collect(),
-        utf16_excess: super::source_utf16_excess(&source.text).into(),
-    }));
-    (&layout.line_starts, &layout.utf16_excess)
-}
 
 /// A body the compiler makes for a function whose source gives it none to run.
 #[derive(Clone, Copy)]
@@ -60,7 +39,7 @@ pub(super) enum ImplicitBody {
 }
 
 /// Where a first-call chunk's function lies (`ParsedProgramShape::FirstCallChunk`): at `start`
-/// in the text of `source`, whose layout tables a replay of its program shares.
+/// in the text of `source`.
 #[derive(Clone, Copy)]
 pub(super) struct ChunkWindow<'a> {
     source: &'a crate::bytecode::ProgramSource,
@@ -69,8 +48,6 @@ pub(super) struct ChunkWindow<'a> {
     function: u32,
     /// A nested stub's function start and the scopes it compiles against.
     outer: Option<(u32, &'a std::rc::Rc<FirstCallScopes>)>,
-    line_starts: &'a [usize],
-    utf16_excess: &'a [(usize, usize)],
     /// The run of a streamed body the chunk compiles.
     run: Option<&'a super::statement_stream::StreamRun>,
     /// The load checked the function's body alone (`ProgramReplay::checked_at_load`), so its early
@@ -138,15 +115,7 @@ impl<'a> ChunkWindow<'a> {
         prototype_unobservable: &mut FxHashSet<u32>,
     ) -> Compiler<'a> {
         self.place(program, &mut private_name_ids, private_name_labels, prototype_unobservable);
-        let mut compiler = Compiler::with_layout(
-            name,
-            &self.source.text,
-            mode,
-            atom_prefix,
-            private_name_ids,
-            std::borrow::Cow::Borrowed(self.line_starts),
-            std::borrow::Cow::Borrowed(self.utf16_excess),
-        );
+        let mut compiler = Compiler::new(name, &self.source.text, mode, atom_prefix, private_name_ids);
         compiler.first_call.kept_source = Some(self.source);
         compiler.first_call.outer = self.outer.map(|(start, scopes)| (start, scopes.clone()));
         compiler.first_call.chunk_function = Some(self.function);
@@ -209,11 +178,10 @@ impl Engine {
         let Some((source, chunk)) = source.and_then(|source| Some((source, chunk_text(source, span, run, method)?))) else {
             return Err(vec![Diagnostic::unsupported(name, "a first-call stub keeps no source")]);
         };
-        let (line_starts, utf16_excess) = source_layout(source);
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
         let checked = program.replay.as_deref().is_some_and(|replay| replay.checked_at_load(span.start));
-        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, line_starts, utf16_excess, run, checked };
+        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, run, checked };
         Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script(), None)
     }
 }

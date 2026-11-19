@@ -175,3 +175,49 @@ fn an_await_of_a_settled_value_continues_in_place_only_where_no_other_job_waits(
     );
     assert_eq!(lines, ["a0 b0 sync a1 b1 c1 then a2 b2 c5 solo10"]);
 }
+
+#[test]
+fn chained_await_jobs_keep_the_queue_order_and_yield_to_other_jobs() {
+    // Consecutive await jobs of one program run in one resumption (`Vm::run_job_chain`); a
+    // `then` callback between them ends the chain, and more workers than a chain holds still
+    // resume round by round in the queue's order.
+    let lines = agree(
+        r#"
+        const log = [];
+        async function worker(name, n) { for (let i = 0; i < n; i++) { log.push(name + i); await null; } }
+        const first = [worker("x", 3), worker("y", 3)];
+        Promise.resolve().then(() => log.push("t"));
+        first.push(worker("z", 2));
+        const many = [];
+        async function round(k) { for (let i = 0; i < 3; i++) { many.push(k + ":" + i); await i; } }
+        for (let k = 0; k < 300; k++) first.push(round(k));
+        Promise.all(first).then(() => print(log.join(" ") + " | " + [many.length, many[0], many[299], many[300], many[599], many[899]].join(" ")));
+        "#,
+    );
+    assert_eq!(lines, ["x0 y0 z0 x1 y1 t z1 x2 y2 | 900 0:0 299:0 0:1 299:1 299:2"]);
+}
+
+#[test]
+fn for_await_steps_chain_the_yield_jobs_in_the_queues_order() {
+    // A `for await` over an async generator alternates its await job with the generator's yield
+    // job, which a chain runs in place (`Vm::chain_yield_job`): two loops still take turns job
+    // by job, and a `then` chain started beside one still lands between its ticks.
+    let lines = agree(
+        r#"
+        const log = [];
+        async function* g(n) { for (let i = 0; i < 3; i++) yield n + i; }
+        async function run(n) { for await (const x of g(n)) log.push(x); log.push(n + "end"); }
+        const both = Promise.all([run("a"), run("b")]);
+        const ticks = [];
+        async function solo() { for await (const x of g("v")) ticks.push(x); ticks.push("end"); }
+        const alone = both.then(() => {
+            const done = solo();
+            let p = Promise.resolve();
+            for (let k = 0; k < 8; k++) p = p.then(() => ticks.push("t" + k));
+            return Promise.all([done, p]);
+        });
+        alone.then(() => print(log.join(" ") + " | " + ticks.join(" ")));
+        "#,
+    );
+    assert_eq!(lines, ["a0 b0 a1 b1 a2 b2 aend bend | t0 v0 t1 t2 v1 t3 t4 v2 t5 end t6 t7"]);
+}

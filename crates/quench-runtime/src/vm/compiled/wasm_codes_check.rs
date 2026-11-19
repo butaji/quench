@@ -1,4 +1,4 @@
-//! Compile-time checks that the b-jit's Wasm codes (`quench-bjit/stencils/wasm_codes.rs`) equal the
+//! Compile-time checks that the b-jit's Wasm codes (`quench-bjit/stencils/wasm_*.rs`) equal the
 //! runtime's values. The stencil build compiles `quench-bjit` alone and cannot see the runtime, so
 //! a count or tag that drifts from its operator family fails here, at build time, instead of
 //! silently building a row no operator selects. The SIMD operator tags are checked where they are
@@ -13,18 +13,18 @@ use quench_bjit::wasm as codes;
 
 // The integer families: the i32 operators are the first `SHARED_*` tags of the i64 families, which
 // add the wide operators after them.
-const _: () = assert!(I32BinaryOperator::COUNT == codes::SHARED_BINARY as usize);
-const _: () = assert!(I64BinaryOperator::COUNT == codes::BINARY_COUNT as usize);
-const _: () = assert!(I32UnaryOperator::COUNT == codes::SHARED_UNARY as usize);
-const _: () = assert!(I64UnaryOperator::COUNT == codes::UNARY_COUNT as usize);
+const _: () = assert!(I32BinaryOperator::ALL.len() == codes::SHARED_BINARY as usize);
+const _: () = assert!(I64BinaryOperator::ALL.len() == codes::BINARY_COUNT as usize);
+const _: () = assert!(I32UnaryOperator::ALL.len() == codes::SHARED_UNARY as usize);
+const _: () = assert!(I64UnaryOperator::ALL.len() == codes::UNARY_COUNT as usize);
 // The comparisons are the operators from `Equal` through `GreaterEqualUnsigned`.
 const _: () = assert!(I64BinaryOperator::Equal as u32 == codes::FIRST_COMPARISON);
 const _: () = assert!(I64BinaryOperator::GreaterEqualUnsigned as u32 == codes::LAST_COMPARISON);
 
 // The float families and the scalar conversions.
-const _: () = assert!(F64BinaryOperator::COUNT == codes::FLOAT_BINARY_COUNT as usize);
-const _: () = assert!(F64UnaryOperator::COUNT == codes::FLOAT_UNARY_COUNT as usize);
-const _: () = assert!(ScalarConversionOperator::COUNT == codes::CONVERT_COUNT as usize);
+const _: () = assert!(F64BinaryOperator::ALL.len() == codes::FLOAT_BINARY_COUNT as usize);
+const _: () = assert!(F64UnaryOperator::ALL.len() == codes::FLOAT_UNARY_COUNT as usize);
+const _: () = assert!(ScalarConversionOperator::ALL.len() == codes::CONVERT_COUNT as usize);
 
 // The page size the bulk rows shift by.
 const _: () = assert!(WASM_PAGE_BITS == codes::WASM_PAGE_BITS);

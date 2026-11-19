@@ -39,12 +39,12 @@ impl<W, P> Operation<W, P> {
         if instruction.result_flags() != 0 { return None; }
         Some(match instruction.op() {
             Op::GetIndex => match instruction.operand_b().register_index() {
-                Some(base) => Self::ElementRead { base, key: instruction.operand_c() },
+                Some(base) => Self::ElementRead { base, key: instruction.operand_c(), destination: instruction.result_register() },
                 None => Self::ElementReadOperand { destination: instruction.result_register(),
                     base: instruction.operand_b(), key: instruction.operand_c() },
             },
             Op::SetIndex => Self::ElementWrite { value: instruction.register_a(), base: instruction.register_b(),
-                key: instruction.register_c() },
+                key: instruction.register_c(), strict: instruction.boolean_flag().unwrap_or(false) },
             _ => return None,
         })
     }
@@ -163,12 +163,22 @@ fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (val
 #[inline(always)]
 pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    let word = match operation {
-        Operation::ElementRead { base, key } => read(stage, frame, base, key),
-        Operation::ElementWrite { value, base, key } => write(stage, frame, (value, base, key)),
-        _ => None,
-    };
-    word.map_or(Step::Unresolved, Step::Value)
+    match operation {
+        Operation::ElementRead { base, key, destination } => match read(stage, frame, base, key) {
+            Some(word) => Step::Value(word),
+            // A read the dense arm leaves is the VM's indexed read, where the frame takes it (`CallOut::LoadElement`).
+            None => super::callout::loading(stage, frame, super::CallOut::LoadElement { base: Operand::register(base), key }, destination),
+        },
+        Operation::ElementReadOperand { destination, base, key } =>
+            super::callout::loading(stage, frame, super::CallOut::LoadElement { base, key }, destination),
+        // A store the dense arm leaves is the VM's keyed store, where the frame takes it (`CallOut::StoreElement`).
+        Operation::ElementWrite { value, base, key, strict } => match write(stage, frame, (value, base, key)) {
+            Some(word) => Step::Value(word),
+            None => super::callout::storing(stage, frame, super::CallOut::StoreElement { object: base, index: key, value, strict })
+                .map_or(Step::Unresolved, Step::Value),
+        },
+        _ => Step::Unresolved,
+    }
 }
 
 /// The interpreter's replacement of the present element `index` of a direct array among the array

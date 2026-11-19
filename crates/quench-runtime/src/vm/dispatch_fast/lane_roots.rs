@@ -4,8 +4,8 @@
 //! with no VM frame beneath it; its `await` suspends it back into the record (`await_in_lane`), its
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
-use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan, WindowPlan};
-use super::super::activation::{extend_this_env_roots, FrameRecord, JobResume, JobRoot};
+use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan};
+use super::super::activation::{FrameRecord, JobResume, JobRoot};
 use super::super::dispatch_frame::{ExecutingProgram, LaneExit};
 
 /// The frame index of no frame: reads that look a frame up find none, and any other is a state
@@ -129,7 +129,7 @@ impl ParkedLane {
     pub(in crate::vm) fn extend_roots(&self, programs: &crate::vm::program_store::ProgramStore, out: &mut Vec<Value>) {
         self.stack.extend_roots(programs, out);
         let [this, env] = self.innermost;
-        extend_this_env_roots(out, this, env);
+        crate::vm::activation::extend_this_env_roots(out, this, env);
     }
 }
 
@@ -168,7 +168,7 @@ impl<H: Host> Vm<H> {
         (self.lane_deferred, self.lane_native, self.running_window) = (deferred, native, window);
         let mut stack = self.lane_roots.pop().expect("the lane stack this run parked").stack;
         std::mem::swap(&mut self.lane_stack, &mut stack);
-        if stack.activations().is_empty() {
+        if !stack.has_frames() {
             self.spare_lane_stacks.push(stack);
         }
         self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
@@ -184,6 +184,8 @@ impl<H: Host> Vm<H> {
         registers.set_this(this);
         registers.set_env(Value::DELETED);
         registers.set_capture(std::ptr::null());
+        let (views, constants) = self.programs.lane_tables(program);
+        let (views, constants) = (std::ptr::from_ref(views), std::ptr::from_ref(constants));
         LaneContext {
             binding: LaneBinding { object_base: self.heap.object_record_base().unwrap_or(std::ptr::null()), resume: resume_lane_binding::<H>, retire: retire_lane_binding::<H> },
             vm: self,
@@ -194,13 +196,19 @@ impl<H: Host> Vm<H> {
             base,
             pending,
             executing,
-            views: self.programs.views_in_lane(program).map_or(&[][..], |views| views) as *const _,
-            constants: self.programs.constants(program) as *const _,
+            views,
+            constants,
             inline_calls: inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm,
             script_calls,
             script_constructs,
+            tiers_run: self.tier_may_run(crate::jit_mode::Tier::ANY),
+            // `script_calls` starts on only where `inline_calls` is.
+            returns_script_frame: false,
             instance: Value::DELETED,
             instance_slots: (Value::DELETED, std::ptr::null()),
+            indirect: IndirectSlot::NONE,
+            instance_address: (Value::DELETED.to_bits(), ProgramId::default(), 0),
+            signatures: (ProgramId::default(), None),
             backedges_left: self.credits_backedges_in_lane(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
             floor,
             // SAFETY: the VM holds its interrupt state for the whole run.
@@ -234,6 +242,8 @@ impl<H: Host> Vm<H> {
     ) -> Ip {
         self.lane_stack.refresh_activation_limit();
         self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
+        // The tier's diagnostics, which no proved call runs under (`Admission::DIAGNOSED`).
+        self.lane_stack.set_diagnosed(self.programs.js_jit_diagnostics_enabled());
         let epoch = self.cache_epochs.gc;
         let cx: *mut LaneContext<H> = context;
         // The lane's admission mirrors the run's `script_calls` (`LaneStack::set_script_calls`);
@@ -264,7 +274,7 @@ impl<H: Host> Vm<H> {
     /// The census detail of a lane exit at the record `ip` of the innermost activation.
     #[cfg(feature = "profile-lane-exits")]
     fn record_lane_exit(&self, cx: *mut LaneContext<H>, ip: Ip) {
-        let Some(activation) = self.lane_stack.activations().last() else {
+        let Some(activation) = self.lane_stack.top_frame() else {
             return;
         };
         // SAFETY: the context's program outlives the run; `ip` is a record of
@@ -340,20 +350,45 @@ impl<H: Host> Vm<H> {
             return Err(resume);
         };
         let mut pending = self.pending_call_stacks.pop().unwrap_or_default();
+        let end = self.drive_job_window(code, job, window, resume, &mut pending);
+        self.pending_call_stacks.push(pending);
+        Ok(end)
+    }
+
+    /// `run_lane_job` of a job a chain of await jobs resumes (`Vm::run_job_chain`), over the
+    /// pending general calls `pending`, which the chain keeps for all its jobs instead of taking
+    /// a stack from `pending_call_stacks` and giving it back for each one. `pending` is empty
+    /// when the run starts and when it ends.
+    pub(in crate::vm) fn run_chained_lane_job(
+        &mut self,
+        code: &ResidualProgram,
+        (job, frame): (JobRoot, *const FrameRecord),
+        resume: JobResume,
+        pending: &mut Vec<PendingGeneralCall>,
+    ) -> Result<JobEnd, JobResume> {
+        let Some(window) = self.admit_job(code, job, frame, resume.sent()) else {
+            return Err(resume);
+        };
+        Ok(self.drive_job_window(code, job, window, resume, pending))
+    }
+
+    /// The lane run of `job`'s activation over `window`, which `admit_job` admitted, entered
+    /// with `resume`, its general calls pending on `pending`, which it leaves empty. How the
+    /// run ended (`job_end`).
+    fn drive_job_window(&mut self, code: &ResidualProgram, job: JobRoot, window: JobWindow, resume: JobResume, pending: &mut Vec<PendingGeneralCall>) -> JobEnd {
         let mut executing = ExecutingProgram { id: window.entry.program, retained: None };
         let caller_registers = self.active_registers;
         let entered = self.enter_lane_floor(code, window.entry.program);
-        let start = job_start(code, job, &window, (&raw mut pending, &raw mut executing), entered.cell);
+        let start = job_start(code, job, &window, (std::ptr::from_mut(pending), &raw mut executing), entered.cell);
         let mut context = self.context_for_start(start);
         let ip = self.drive_lane(&mut context, entered, |cx| match resume {
             JobResume::Sends(_) => window.enter(cx),
             JobResume::Throws(error) => window.enter_raising(cx, error),
         });
-        let end = self.job_end(code, job, &context, ip, &mut pending, executing);
+        let end = self.job_end(code, job, &context, ip, pending, executing);
         pending.clear();
-        self.pending_call_stacks.push(pending);
         self.active_registers = caller_registers;
-        Ok(end)
+        end
     }
 
     /// The window `job`'s activation runs over, once the lane admits the run, and the frame's
@@ -369,7 +404,7 @@ impl<H: Host> Vm<H> {
         let frame = unsafe { &*frame };
         let (program, function, this, pc) = (frame.program, frame.function, frame.this(), frame.pc);
         let cached = cached_window_plan(self, code, frame)?;
-        let WindowPlan { view, parent, locals, capture, environment, .. } = cached.0;
+        let (view, parent, locals, capture, environment) = (cached.0.view, cached.0.parent, cached.0.locals(), cached.0.capture, cached.0.environment);
         let this = self.window_this(code.function(function as usize), this, parent)?;
         let stack = crate::stack::StackGuard::enter().ok()?;
         self.check_execution_interrupt().ok()?;
@@ -380,11 +415,11 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: the owner keeps the frame, and so its registers, until the run ends.
         let record = unsafe { &mut *frame };
-        let (prefix, registers, size) = (record.prefix(), record.registers.as_mut_ptr(), record.registers.len());
+        let (receiver, registers, size) = (record.this().to_bits(), record.registers.as_mut_ptr(), record.registers.len());
         // SAFETY: the program store keeps a derived view alive with its program.
         let base = unsafe { (*view).records() };
         let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
-        let activation = job_activation(&entry, base, registers, job, prefix, environment, frame);
+        let activation = job_activation(&entry, base, registers, job, receiver, environment, frame);
         Some(JobWindow { frame, registers, base, pc, entry, activation, _stack: stack })
     }
 
@@ -453,7 +488,7 @@ impl JobWindow {
             let stack = &mut vm(cx).lane_stack;
             stack.push_generator_activation(self.activation);
             stack.restore_iterators(0, &mut (*self.frame).active_iterators);
-            stack.restore_with_objects(0, &mut (*self.frame).with_objects);
+            stack.restore_with_objects(0, &mut *self.frame);
             vm(cx).record_window_owner(&*(*cx).code, 0);
             enter_suspended_in_lane(cx, &self.entry, self.registers, self.pc)
         }
@@ -484,12 +519,11 @@ fn job_activation(
     base: Ip,
     window: *mut Value,
     job: JobRoot,
-    prefix: crate::vm::compiled::ShadowFrame,
+    receiver: u64,
     environment: bool,
     record: *mut FrameRecord,
 ) -> Activation {
-    Activation::of_parts(
-        prefix,
+    let mut activation = Activation::of_parts(
         entry.function,
         base,
         base,
@@ -504,5 +538,8 @@ fn job_activation(
             environment,
             record,
         }),
-    )
+    );
+    activation.this = receiver;
+    activation.window = window.addr();
+    activation
 }

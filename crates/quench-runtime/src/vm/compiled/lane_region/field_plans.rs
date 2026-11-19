@@ -91,14 +91,16 @@ fn inherited_pairs(load: &NativeFieldLoad, folds_stable: bool) -> Vec<(u32, u64)
         constant.values().iter().map(|(link, value)| (*link, value.to_bits())).collect()).unwrap_or_default()
 }
 
-/// Registers the heap values a folding division's inherited loads name with `roots`, which the
-/// publication keeps alive (`FoldedRoots::embed_heap_identity`); `inherited_pairs` then names
-/// them by their bits.
-pub(super) fn embed_inherited(links: &[LinkInput], roots: &mut crate::folded_roots::FoldedRoots) {
-    for load in links.iter().flat_map(|link| Fast::of(&link.loads).loads()) {
-        for (_, value) in load.inherited.iter().flat_map(|constant| constant.values().iter()) {
-            roots.embed_heap_identity(*value);
+/// Registers the heap values a folding division's inherited loads name with the lowering's
+/// roots, which the publication keeps alive (`FoldedRoots::embed_heap_identity`), and the chains
+/// they were read through with its chains, whose prototypes' layouts it holds
+/// (`StableFacts::chains`); `inherited_pairs` then names the values by their bits.
+pub(super) fn embed_inherited(links: &[LinkInput], stable: &mut super::stable::StableUses) {
+    for constant in links.iter().flat_map(|link| Fast::of(&link.loads).loads()).filter_map(|load| load.inherited) {
+        for (_, value) in constant.values() {
+            stable.roots.embed_heap_identity(*value);
         }
+        stable.chains.extend(constant.chains());
     }
 }
 
@@ -108,6 +110,15 @@ pub(super) fn embed_inherited(links: &[LinkInput], roots: &mut crate::folded_roo
 fn formed_id(load: &NativeFieldLoad) -> Option<u32> {
     load.formed.filter(|&id| load.holder.is_none() && (id as usize) < crate::heap::layouts::LAYOUT_CAPACITY
         && crate::staged::ic::layout_shape(id) == load.shape)
+}
+
+/// The layout id a holder read guards its prototype by (`NativeFieldLoad::holder_id`), where it is
+/// a real id of the holder's exact shape: one compare of the prototype's own word then proves that
+/// shape and the storage form, as `formed_id` does for a receiver. Id 0 names no holder.
+fn holder_id(load: &NativeFieldLoad) -> Option<u32> {
+    let holder = load.holder?;
+    load.holder_id.filter(|&id| id != 0 && (id as usize) < crate::heap::layouts::LAYOUT_CAPACITY
+        && crate::staged::ic::layout_shape(id) == holder)
 }
 
 /// The ops that read `load` once the receiver's shape is proved: its own slot, a prototype's
@@ -120,7 +131,15 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<
             form: formed.map_or_else(|| Form::of(load.storage, load.storage_len), crate::staged::ic::form_of_layout),
             storage_len: load.storage_len, rep: if load.raw_double { Representation::Float64 } else { Representation::Tagged } }],
         Some(_) if !pairs.is_empty() => vec![IcOp::PrototypeConstants(pairs)],
-        Some(holder) => vec![IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(load.slot)],
+        Some(holder) => {
+            // The prototype's layout id proves its shape (and storage form) in one compare where
+            // the entry kept it (`holder_id`); else its shape alone is compared.
+            let guard = match holder_id(load) {
+                Some(id) => IcOp::GuardLayout(id),
+                None => IcOp::GuardShape(holder),
+            };
+            vec![IcOp::Prototype, guard, IcOp::LoadPrototypeSlot(load.slot)]
+        }
     }
 }
 

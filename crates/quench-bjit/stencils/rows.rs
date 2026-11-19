@@ -10,7 +10,7 @@
 //! target's fixed rows (`entry*.rs`) belong to the shard built with `--cfg fixed_rows`.
 #![no_std]
 #![feature(explicit_tail_calls, rust_preserve_none_cc, core_float_math, stmt_expr_attributes)]
-#![allow(incomplete_features, non_upper_case_globals, dead_code, unused_imports)]
+#![allow(incomplete_features, non_upper_case_globals, unused_imports)]
 extern crate core as std;
 
 /// The row's staged work's word, or the row leaves through exit 0 with nothing written.
@@ -25,9 +25,13 @@ macro_rules! need {
 
 #[cfg(fixed_rows)]
 mod call_rows;
-#[cfg(all(fixed_rows, target_arch = "x86_64"))]
-mod builtin_rows;
-mod codes;
+#[macro_use]
+#[path = "row_catalog.rs"]
+mod row_catalog;
+use codes::TYPED_KINDS;
+pub mod codes;
+pub mod site_bits;
+pub mod row_names;
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod entry;
 #[cfg(all(fixed_rows, target_arch = "aarch64"))]
@@ -40,7 +44,7 @@ mod environment_rows;
 mod key_rows;
 mod name_rows;
 mod site_rows;
-mod layout;
+pub mod layout;
 mod numeric;
 mod places;
 mod places_call;
@@ -56,7 +60,8 @@ mod staged;
 mod staged_rows;
 mod supernode_rows;
 mod wasm;
-mod wasm_codes;
+mod wasm_kinds;
+mod wasm_layout;
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod wasm_entry;
 #[cfg(all(fixed_rows, target_arch = "aarch64", not(target_vendor = "apple")))]

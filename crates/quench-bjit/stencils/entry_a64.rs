@@ -24,7 +24,7 @@
 use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_RETURNED_PC};
 use crate::layout::call_record::NATIVE_JS_STOPPED;
 use crate::staged::frame;
-use crate::words::{HOLE_V0, hole64};
+use crate::words::HOLE_V0;
 use crate::Row;
 
 unsafe extern "C" {
@@ -192,10 +192,4 @@ pub unsafe extern "C" fn leave_returned() {
         payload = const CALL_CONTEXT_ADAPTER_PAYLOAD,
         returned = const JS_STEP_RETURNED_PC,
     )
-}
-
-/// `hole64` is the rows' spelling of a hole; the routines above spell theirs in assembly.
-#[allow(dead_code)]
-fn _holes() -> u64 {
-    hole64::<0>()
 }

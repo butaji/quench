@@ -45,13 +45,18 @@ pub(super) fn parse_program_with<'a>(
 ) -> ParserReturn<'a> {
     let flat = recognize == Recognize::Flat;
     let recognize = recognize != Recognize::No && lazy_body_check.is_some() && crate::trace::Dev::Recognize.value() != Some("off");
+    // A parse that skims without checking (a direct eval's, `BodyFacts::parse_collecting`) also
+    // skims its arrows and class methods: their bodies compile on first call, and a body the
+    // skim declines is parsed whole. A parse that checks its bodies keeps both whole.
+    let skim_only = lazy_body_skim.is_some() && lazy_body_check.is_none();
     let mut parsed = Parser::new(allocator, source, source_type)
         .with_options(ParseOptions {
             allow_call_assignment_targets: true,
             lazy_function_bodies: lazy_from,
             lazy_nested_bodies: nested && lazy_body_check.is_some(),
             lazy_body_check,
-            lazy_class_methods: lazy_body_skim.is_some(),
+            lazy_class_methods: skim_only,
+            lazy_skim_arrows: skim_only,
             lazy_body_skim,
             inherited_strict,
             lazy_recognize: recognize,

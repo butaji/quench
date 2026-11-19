@@ -88,7 +88,7 @@ impl<H: Host> Vm<H> {
         match self.live_owner(owner) {
             VarOwner::Frame(index) => Some(&mut self.frames[index].dynamic_bindings),
             // SAFETY: as `owner_locals_mut`.
-            VarOwner::Record(record) => Some(unsafe { &mut (*record).dynamic_bindings }),
+            VarOwner::Record(record) => Some(unsafe { (*record).dynamic_bindings_mut() }),
             VarOwner::Window => self.window().record_bindings(),
         }
     }
@@ -126,7 +126,7 @@ impl<H: Host> Vm<H> {
         match self.live_owner(owner) {
             VarOwner::Frame(index) => std::mem::replace(&mut self.frames[index].binding_site_pc, site),
             // SAFETY: as `owner_locals_mut`.
-            VarOwner::Record(record) => std::mem::replace(unsafe { &mut (*record).binding_site_pc }, site),
+            VarOwner::Record(record) => unsafe { (*record).replace_binding_site_pc(site) },
             VarOwner::Window => self.window_mut().replace_site(site),
         }
     }

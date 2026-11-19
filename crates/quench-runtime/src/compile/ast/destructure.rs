@@ -72,7 +72,19 @@ impl FunctionCompiler<'_, '_> {
             }
             let operator = value.operator as u8;
             if operator == 0 {
-                let right = self.expression(&value.right);
+                // A plain store to a promoted local is a `Move` after the value, so the value is
+                // computed straight into the local's register.
+                let local = match &reference {
+                    AssignmentReference::Name { atom, environment: None } => self.plain_store_register(*atom),
+                    _ => None,
+                };
+                let right = match local {
+                    Some(register) => {
+                        self.expression_into(&value.right, register);
+                        register
+                    }
+                    None => self.expression(&value.right),
+                };
                 if Self::anonymous_function_definition(&value.right)
                     && let Some(name) = self.assignment_identifier_name(&value.left)
                 {

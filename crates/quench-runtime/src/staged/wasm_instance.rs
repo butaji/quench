@@ -27,6 +27,18 @@ pub(crate) enum Instance {
     GlobalGet,
     /// The global bound in `b` `= a`.
     GlobalSet,
+    /// `a = frame local imm`: a block's saved input, or the thrown value a handler binds.
+    LoadLocal,
+    /// `frame local imm = a`.
+    StoreLocal,
+}
+
+/// The register holding frame local `slot` of a function with `registers` registers: the u-jit
+/// keeps its locals after its registers, in the same register file. A slot past the file's end
+/// saturates to the last register, which no state holds, so its use is rejected.
+#[cfg(not(stencil_build))]
+pub(crate) fn local_register(registers: u16, slot: u32) -> u16 {
+    u16::try_from(slot).map_or(u16::MAX, |slot| registers.saturating_add(slot))
 }
 
 #[cfg(not(stencil_build))]
@@ -39,6 +51,8 @@ impl Instance {
             Class::WasmInstanceBinding => Some(Self::Binding),
             Class::WasmGlobalGet => Some(Self::GlobalGet),
             Class::WasmGlobalSet => Some(Self::GlobalSet),
+            Class::LoadLocal => Some(Self::LoadLocal),
+            Class::StoreLocal => Some(Self::StoreLocal),
             _ => None,
         }
     }
@@ -106,4 +120,20 @@ pub(crate) fn global_get<S: WasmInstance>(stage: &mut S, slot: u32, storage: Sto
 #[inline(always)]
 pub(crate) fn global_set<S: WasmInstance>(stage: &mut S, slot: u32, storage: Storage, value: S::Word) {
     stage.global_store(slot, storage, value);
+}
+
+/// The instance fields a binding step reads: the environment slots its function's instance
+/// holds, each a handle the binding step copies into a register (`Instance::Binding`).
+#[cfg(not(stencil_build))]
+pub(crate) trait WasmBindings: WasmStage {
+    /// The word of the environment slot `slot`, or `None` where the instance holds no field there.
+    fn binding_word(&mut self, slot: u32) -> Option<Self::Word>;
+}
+
+/// `binding`: the word of the instance field at environment slot `slot`. A slot with no field
+/// is `None`, which the caller leaves for the general path to raise.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub(crate) fn binding_get<S: WasmBindings>(stage: &mut S, slot: u32) -> Option<S::Word> {
+    stage.binding_word(slot)
 }

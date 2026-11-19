@@ -37,15 +37,19 @@
 //! validity sends the call to the helper row, which resolves the target anew.
 
 pub(super) mod inline;
+mod chain;
 pub(super) mod builtin;
 use builtin::BuiltinCall;
+pub(super) use chain::ChainRead;
+use chain::chained_reads;
 use super::{Exit, SLOT};
 use super::super::direct_callee::DirectCallee;
-use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
-use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
+use super::super::{LaneHelper, LaneHelpers};
+use crate::bytecode::{Class, ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
+use crate::staged::frame::{ARGC_SHIFT, BODY_FLAG, PLAIN_FLAG};
 use quench_bjit::call::{self, CallRow, ThisRow};
-use quench_bjit::call_record::{CallRecord, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
+use quench_bjit::call_record::{CallRecord, DirectHole, HelperHole, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{HOLES, Stencil, padded_holes};
 use crate::vm::aot_image::Symbol;
@@ -65,6 +69,17 @@ pub(super) enum CallForm {
     /// callee to call by its entry cell, and a method call's callee is the method cache's lookup,
     /// which no register holds for a call row to read.
     Stepped,
+    /// `CallMethod` with a window of consecutive argument registers (`method_shape`): a site read writes the
+    /// method's value to a scratch register, which the checked direct row compares with the recorded callee.
+    Method,
+}
+
+/// A method call's site read (`plan::method_read`): the cache entry that answers the method, and the scratch register
+/// the read writes the callee to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Method {
+    pub(super) cache: u16,
+    pub(super) scratch: Register,
 }
 
 impl CallForm {
@@ -99,7 +114,7 @@ impl CallForm {
         match self {
             Self::Plain => LaneHelper::Call,
             Self::Construct => LaneHelper::ConstructCall,
-            Self::Stepped => LaneHelper::Step,
+            Self::Stepped | Self::Method => LaneHelper::Step,
         }
     }
 }
@@ -120,9 +135,8 @@ pub(super) struct CallShape {
     /// follows it does (`steps::completing`), and nothing is live after it.
     pub(super) returning: bool,
     pub(super) form: CallForm,
-    /// The opcode of the call record, which keys the fast-row counter of a planned direct call (`note_fast`).
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) op: crate::bytecode::Op,
+    /// The method site read a `Method` call makes before its direct row (`None` for the other forms).
+    pub(super) method: Option<Method>,
 }
 
 impl CallShape {
@@ -139,11 +153,38 @@ impl CallShape {
                 result,
                 returning,
                 form,
-                op,
+                method: None,
             },
-            CallForm::Construct | CallForm::Stepped => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form, op },
+            CallForm::Construct | CallForm::Stepped | CallForm::Method => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form, method: None },
         }
     }
+}
+
+/// The shape of the method call `instruction` at `call_pc` (`CallMethod`, a receiver register and a method site) as a
+/// `Method` chain: its receiver is the direct row's `this`, its callee the `scratch` register the site read writes,
+/// its arguments a window of consecutive registers the direct row reads. `None` for any other call, or one whose
+/// arguments are not consecutive (`Arguments::List` is a list of registers, not a window).
+pub(super) fn method_shape(program: &crate::bytecode::ResidualProgram, instruction: WideInstruction, call_pc: u32, scratch: Register, returning: bool) -> Option<CallShape> {
+    if instruction.op() != crate::bytecode::Op::CallMethod || instruction.writes_current_this() || instruction.resolves_dynamic_scope()
+        || instruction.direct_eval() || instruction.parameter_eval() {
+        return None;
+    }
+    let context = crate::staged::DecodeContext::of(program);
+    let invocation = crate::staged::Invocation::of(instruction, context)?;
+    let crate::staged::Receiver::Register(receiver) = invocation.receiver else { return None };
+    let crate::staged::Arguments::List(list) = invocation.arguments else { return None };
+    let start = list.start as usize;
+    let registers = program.method_arguments.get(start..start + usize::from(list.count))?;
+    let window = registers.first().copied().unwrap_or(0);
+    if !registers.iter().enumerate().all(|(k, &register)| register == window + k as Register) {
+        return None;
+    }
+    let crate::staged::Callee::Method { site, .. } = invocation.callee else { return None };
+    let cache = context.method_site(site as usize)?.cache;
+    Some(CallShape {
+        call_pc, callee: scratch, this: receiver, window, argc: list.count, result: instruction.result_register(), returning,
+        form: CallForm::Method, method: Some(Method { cache, scratch }),
+    })
 }
 
 /// What the call site's target record says of its callee, read once (`DirectFacts::of`).
@@ -153,7 +194,11 @@ pub(super) struct DirectFacts {
     pub(super) cell: usize,
     pub(super) validity: u64,
     pub(super) facts: CellFacts,
-    pub(super) descriptor: usize,
+    /// The caller's call record and base, and the callee's function: the header words (`CallRecord::call`,
+    /// `caller_base`, `packed`).
+    pub(super) call: u64,
+    pub(super) caller_base: u64,
+    pub(super) function: u32,
     pub(super) captures: u64,
     /// The global object a sloppy callee binds an `undefined` or `null` receiver to.
     pub(super) global_this: Option<u64>,
@@ -162,7 +207,6 @@ pub(super) struct DirectFacts {
     pub(super) registers: u16,
     /// A construction site's forwarding record: not a plain call.
     pub(super) construction: bool,
-    pub(super) frame_bytes: u64,
     /// The site's callee register holds this callee by a Stable fact (`Callees::stable`): the body
     /// subscribes to the fact, so its change retires the body, and the row need not check the register.
     pub(super) held: bool,
@@ -182,13 +226,14 @@ impl DirectFacts {
             cell: callee.cell,
             validity: word(ENTRY_CELL.validity_offset),
             facts: CellFacts::of_word(word(ENTRY_CELL.facts_offset)),
-            descriptor: std::ptr::from_ref(callee).addr(),
+            call: callee.call as u64,
+            caller_base: callee.caller_base as u64,
+            function: callee.target.function,
             captures: callee.capture_word(),
             global_this: callee.sloppy.map(|global| global.to_bits()),
             lexical: callee.lexical,
             registers: callee.registers,
             construction: callee.forwarder.is_some(),
-            frame_bytes: FRAME_BYTES as u64,
             held,
         }
     }
@@ -218,7 +263,7 @@ pub(super) enum Declined {
     /// The cell's facts do not describe the callee (not yet published, or another function's).
     Facts,
     /// A returning call: its callee's activation under a host that makes proper tail calls must not
-    /// grow the stack, which only the helper row's own admission (`returning_call_admitted_in_lane`) knows.
+    /// grow the stack, which only the helper row's own admission (`returning_call_admitted`) knows.
     Returning,
 }
 
@@ -231,7 +276,8 @@ pub(super) enum Choice {
 /// The row class of a call: direct when its target's cell is stable and describes the callee,
 /// else the helper row, with the first reason it cannot be direct.
 pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice {
-    if shape.form != CallForm::Plain {
+    let method = shape.form == CallForm::Method && shape.method.is_some();
+    if shape.form != CallForm::Plain && !method {
         return Choice::Helper(Declined::Form);
     }
     let Some(facts) = direct else { return Choice::Helper(Declined::NoTarget) };
@@ -240,8 +286,9 @@ pub(super) fn choose(shape: &CallShape, direct: Option<&DirectFacts>) -> Choice 
         (facts.construction, Declined::Construction),
         (facts.registers == 0, Declined::Window),
         (!facts.describes(shape.argc), Declined::Facts),
-        (shape.returning, Declined::Returning),
     ];
+    // A returning call is a candidate only where the helper would admit it: `lane_direct_callees` withholds
+    // returning sites under a host with proper tail calls and a strict body (`lane_returning_call_admitted`).
     declined.into_iter().find(|(declined, _)| *declined).map_or(Choice::Direct, |(_, why)| Choice::Helper(why))
 }
 
@@ -251,7 +298,7 @@ pub(super) struct CallPart {
     pub(super) holes: [u64; HOLES],
     pub(super) taken: Option<usize>,
     pub(super) exits: Vec<Exit>,
-    /// The hole whose run-time address is a symbol the loader resolves, and the symbol (`HelperHole::Symbol`).
+    /// The hole whose run-time address is a symbol the loader resolves, and the symbol (`HelperPlace::Symbol`).
     pub(super) symbol: Option<(u8, Symbol)>,
 }
 
@@ -270,9 +317,19 @@ pub(super) struct CallPlan<'a> {
     /// Each callee the site reached, latest first (`Layout::callees`).
     pub(super) direct: &'a [DirectFacts],
     /// The address of `body_call_helper` (`helper_address`).
-    pub(super) helper: HelperHole,
+    pub(super) helper: HelperPlace,
     pub(super) spills: &'a [(Place, Register)],
     pub(super) reloads: &'a [(Place, Register)],
+    /// The arguments the caller proves Numbers (bit `k`: argument `k`, `call_args::proven_arguments`), which the direct row
+    /// passes on to the callee's proven-arguments entry where its guards are covered (`CallRecord::proven_args`).
+    pub(super) proven_args: u64,
+    /// The site read a `Method` call's direct rows follow (`plan::method_read`): its stencil and holes. Planned only
+    /// where a direct row is, after the spills; its miss goes to the helper row behind the direct rows.
+    pub(super) read: Option<(&'static Stencil, [u64; HOLES])>,
+    /// The prototype-held entries of a method site (`plan::chain_reads`), each a read of the method at a receiver shape
+    /// with the value its holder held when planned. Where one pairs with a callee the site reached, the chain is its reads
+    /// and direct rows (`chained_reads`), and `read` is not planned.
+    pub(super) chain: Vec<ChainRead>,
     /// The builtin the callee is, where the site's native callee is one the b-jit runs on a row (`builtin::of`).
     pub(super) builtin: Option<BuiltinCall>,
 }
@@ -280,19 +337,16 @@ pub(super) struct CallPlan<'a> {
 /// Where a helper row's address goes: the address itself in a process helper table, or the symbol
 /// an image's loader resolves to it (`LaneHelpers::Ahead`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum HelperHole {
+pub(super) enum HelperPlace {
     Address(usize),
     Symbol(LaneHelper),
 }
 
-/// The hole of a helper row that names the helper (`CallRow::Helper`).
-const HELPER_HOLE: u8 = 1;
-
 /// The helper's place for `helper` under `helpers`: none for a linked or a frameless one.
-pub(super) fn helper_address(helpers: LaneHelpers, helper: LaneHelper) -> Option<HelperHole> {
+pub(super) fn helper_address(helpers: LaneHelpers, helper: LaneHelper) -> Option<HelperPlace> {
     match helpers {
-        LaneHelpers::Process(table) => Some(HelperHole::Address(table[helper as usize].addr())),
-        LaneHelpers::Ahead => Some(HelperHole::Symbol(helper)),
+        LaneHelpers::Process(table) => Some(HelperPlace::Address(table[helper as usize].addr())),
+        LaneHelpers::Ahead => Some(HelperPlace::Symbol(helper)),
         _ => None,
     }
 }
@@ -314,16 +368,26 @@ pub(super) fn reload_part(place: Place, register: Register) -> Result<CallPart, 
     Ok(part(call::stencil(CallRow::Reload(place))?, padded_holes([slot(register)]), Vec::new()))
 }
 
-fn helper_part(call_pc: u32, helper: HelperHole) -> Result<CallPart, String> {
+fn helper_part(call_pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>) -> Result<CallPart, String> {
     let (address, symbol) = match helper {
-        HelperHole::Address(0) => return Err("call: no helper address".to_string()),
-        HelperHole::Address(address) => (address as u64, None),
-        HelperHole::Symbol(helper) => (0, Some((HELPER_HOLE, Symbol::Helper(helper as u32)))),
+        HelperPlace::Address(0) => return Err("call: no helper address".to_string()),
+        HelperPlace::Address(address) => (address as u64, None),
+        HelperPlace::Symbol(helper) => (0, Some((HelperHole::Helper as u8, Symbol::Helper(helper as u32)))),
     };
-    let stencil = call::stencil(CallRow::Helper)?;
-    Ok(CallPart { symbol, ..part(stencil, padded_holes([u64::from(call_pc), address]), vec![Exit::At(call_pc), Exit::Status]) })
+    let exits = vec![Exit::At(call_pc), Exit::Status];
+    let mut holes = [0; HOLES];
+    holes[HelperHole::CallPc as usize] = u64::from(call_pc);
+    holes[HelperHole::Helper as usize] = address;
+    let row = match packed {
+        None => part(call::stencil(CallRow::Helper)?, holes, exits),
+        Some([first, imm]) => {
+            holes[HelperHole::PackedFirst as usize] = first;
+            holes[HelperHole::PackedImm as usize] = imm;
+            part(call::stencil(CallRow::HelperPacked)?, holes, exits)
+        }
+    };
+    Ok(CallPart { symbol, ..row })
 }
-
 
 /// The pinned register holding argument `k` of the call, where the call passes it by place (the leading
 /// `PLACED_ARGUMENTS` only) and the register is spilled: its place and its window register.
@@ -350,15 +414,19 @@ fn refusal_only(plan: &CallPlan, register: Register) -> bool {
 
 /// The direct row and the record it reads, whose address is its hole 0. `arguments` is the place each leading
 /// argument is passed from (`argument_places`).
-fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_ARGUMENTS]) -> Result<(CallPart, Box<CallRecord>), String> {
+fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_ARGUMENTS], proven_args: u64) -> Result<(CallPart, Box<CallRecord>), String> {
+    // The callee's plain header: a body frame (BODY) of `argc` arguments in the callee's function.
+    let packed = u64::from(facts.function) | PLAIN_FLAG | BODY_FLAG | ((shape.argc as u64) << ARGC_SHIFT);
     let record = Box::new(CallRecord {
+        proven_args,
         callee: facts.callee,
         cell: facts.cell as u64,
         expected: facts.validity,
-        descriptor: facts.descriptor as u64,
+        call: facts.call,
+        caller_base: facts.caller_base,
+        packed,
         captures: facts.captures,
         global_this: facts.global_this.unwrap_or_default(),
-        frame_bytes: facts.frame_bytes,
         callee_register: shape.callee,
         this_register: shape.this,
         args_register: shape.window,
@@ -368,7 +436,10 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
     let stencil = call::stencil(CallRow::Direct { argc, this, checked: !facts.held })?;
-    Ok((part(stencil, quench_bjit::padded_holes([std::ptr::from_ref(&*record).addr() as u64, u64::from(shape.call_pc)]), vec![Exit::Status]), record))
+    let mut holes = [0; HOLES];
+    holes[DirectHole::Record as usize] = std::ptr::from_ref(&*record).addr() as u64;
+    holes[DirectHole::CallPc as usize] = u64::from(shape.call_pc);
+    Ok((part(stencil, holes, vec![Exit::Status]), record))
 }
 
 /// The builtin row of a call of the builtin's arity whose callee is that builtin, and the record the row reads (its
@@ -379,8 +450,9 @@ fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Optio
         return Ok(None);
     }
     let record = Box::new(CallRecord {
-        callee: identity, cell: 0, expected: 0, descriptor: 0, captures: 0, global_this: 0, frame_bytes: 0,
+        proven_args: 0, callee: identity, cell: 0, expected: 0, call: 0, caller_base: 0, packed: 0, captures: 0, global_this: 0,
         callee_register: shape.callee, this_register: shape.this, args_register: shape.window, result_register: shape.result,
+        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS],
     });
     let stencil = call::stencil(CallRow::Builtin(row))?;
     Ok(Some((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), Vec::new()), record)))
@@ -388,9 +460,9 @@ fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Optio
 
 /// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):
 /// the spills, the helper row, the reloads.
-pub(super) fn plan_step(pc: u32, helper: HelperHole, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
+pub(super) fn plan_step(pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
     let mut parts = spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
-    parts.push(helper_part(pc, helper)?);
+    parts.push(helper_part(pc, helper, packed)?);
     for &(place, register) in reloads {
         parts.push(reload_part(place, register)?);
     }
@@ -402,25 +474,34 @@ pub(super) fn plan_step(pc: u32, helper: HelperHole, spills: &[(Place, Register)
 /// (NEXT), the last to the helper row, so a site alternating between known callees calls each by its
 /// entry, as the interpreter's own link does, and only an unknown one takes the helper.
 pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
-    let mut parts = plan.spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
-    let choice = choose(&plan.shape, plan.direct);
-    let direct = match (choice, plan.direct) {
-        (Choice::Direct, Some(facts)) => Some(direct_part(&plan.shape, facts)?),
-        _ => builtin_part(&plan.shape, plan.builtin)?,
-    };
-    let mut record = None;
-    if let Some((mut row, owned)) = direct {
-        // Past the direct row and the helper row that follows it: the first reload, or the next instruction.
-        row.taken = Some(parts.len() + ROWS_PAST_DIRECT);
-        parts.push(row);
-        record = Some(owned);
+    if let Some(chain) = chained_reads(plan)? {
+        return Ok(chain);
+    }
+    let choices: Vec<(Choice, &DirectFacts)> = plan.direct.iter().map(|facts| (choose(&plan.shape, Some(facts)), facts)).collect();
+    let choice = choices.iter().map(|(choice, _)| *choice).find(|choice| *choice == Choice::Direct)
+        .unwrap_or_else(|| choices.first().map_or_else(|| choose(&plan.shape, None), |(choice, _)| *choice));
+    let arguments = argument_places(plan);
+    let mut directs = Vec::new();
+    for (_, facts) in choices.into_iter().filter(|(choice, _)| *choice == Choice::Direct) {
+        directs.push(direct_part(&plan.shape, facts, arguments, plan.proven_args)?);
+    }
+    // A builtin callee's row stands where no direct row does: its miss is the helper row behind it.
+    if directs.is_empty() && let Some(builtin) = builtin_part(&plan.shape, plan.builtin)? {
+        directs.push(builtin);
     }
     // The spills before the direct rows; the spills of pinned arguments that only the refusal path reads
     // (`refusal_only`) follow them, where the rows' NEXT falls to the helper row. Without a direct row, all come first.
     let (mut parts, mut refusal) = (Vec::new(), Vec::new());
+    // A site read's miss leaves before any refusal spill runs, so with a read every spill comes first.
+    let read = plan.read.filter(|_| !directs.is_empty());
     for &(place, register) in plan.spills {
         let spill = spill_part(place, register)?;
-        if directs.is_empty() || !refusal_only(plan, register) { parts.push(spill) } else { refusal.push(spill) }
+        if directs.is_empty() || read.is_some() || !refusal_only(plan, register) { parts.push(spill) } else { refusal.push(spill) }
+    }
+    if let Some((stencil, holes)) = read {
+        // A miss takes the helper row behind the direct rows, as a refused direct call does: the spills ran, so the frame is canonical.
+        let helper = 1 + directs.len() + refusal.len();
+        parts.push(CallPart { stencil, holes, taken: None, exits: vec![Exit::Ahead(helper)], symbol: None });
     }
     // Past every direct row, the refusal spills and the helper row that follows them: the first reload, or the next instruction.
     let past = parts.len() + directs.len() + refusal.len() + 1;
@@ -431,163 +512,13 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
         records.push(owned);
     }
     parts.extend(refusal);
-    parts.push(helper_part(plan.shape.call_pc, plan.helper)?);
+    parts.push(helper_part(plan.shape.call_pc, plan.helper, None)?);
     for &(place, register) in plan.reloads {
         parts.push(reload_part(place, register)?);
     }
     Ok(CallChain { parts, records, choice })
 }
 
+
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use quench_bjit::call_record as protocol;
-
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain, op: crate::bytecode::Op::Call };
-
-    fn facts(registers: u16, params: u16) -> DirectFacts {
-        let cell = CellFacts { registers, room: registers, params, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers, construction: false, frame_bytes: 32, held: false }
-    }
-
-    /// Each call opcode has its form, and an instruction that is no call, or carries a result flag, has none.
-    #[test]
-    fn each_call_opcode_has_its_form() {
-        use crate::bytecode::{Op, RETURN_REGISTER};
-        let form = |op| CallForm::of(WideInstruction::new(op, 1, 2, 3, 0));
-        assert_eq!((form(Op::Call), form(Op::Construct)), (Some(CallForm::Plain), Some(CallForm::Construct)));
-        for op in [Op::CallMethod, Op::CallThisMethod, Op::CallArray, Op::CallSpread, Op::CallForwardingArguments] {
-            assert_eq!(form(op), Some(CallForm::Stepped), "{op:?}");
-        }
-        assert_eq!(form(Op::CallKnown), None, "the Wasm compiler's call is no JavaScript call form");
-        assert_eq!(form(Op::Move), None);
-        assert_eq!(CallForm::of(WideInstruction::new(Op::Call, 1 | RETURN_REGISTER, 2, 3, 0)), None);
-        let binds_this = WideInstruction::new(Op::Call, 1 | crate::bytecode::SET_THIS_REGISTER, 2, 3, 0);
-        assert_eq!(CallForm::of(binds_this), binds_this.writes_current_this().then_some(CallForm::Stepped), "a call that binds `this` is the helper step");
-        let [plain, construct, stepped] = [CallForm::Plain, CallForm::Construct, CallForm::Stepped].map(|form| form.helper() as usize);
-        assert!(plain != construct && construct != stepped && plain != stepped, "each form has its own helper");
-    }
-
-    #[test]
-    fn a_stable_cell_that_describes_the_callee_is_called_directly() {
-        assert_eq!(choose(&SHAPE, Some(&facts(4, 2))), Choice::Direct);
-        assert_eq!(choose(&SHAPE, Some(&facts(4, 5))), Choice::Direct, "fewer arguments than params");
-    }
-
-    #[test]
-    fn every_other_call_takes_the_helper_with_its_reason() {
-        let helper = |why| Choice::Helper(why);
-        assert_eq!(choose(&SHAPE, None), helper(Declined::NoTarget));
-        let many = CallShape { argc: MAX_DIRECT_ARGC as u16 + 1, ..SHAPE };
-        assert_eq!(choose(&many, Some(&facts(4, 9))), helper(Declined::Arguments));
-        assert_eq!(choose(&SHAPE, Some(&DirectFacts { construction: true, ..facts(4, 2) })), helper(Declined::Construction));
-        assert_eq!(choose(&SHAPE, Some(&facts(0, 2))), helper(Declined::Window));
-        assert_eq!(choose(&SHAPE, Some(&facts(4, 1))), helper(Declined::Facts), "more arguments than params");
-        let returning = CallShape { returning: true, ..SHAPE };
-        assert_eq!(choose(&returning, Some(&facts(4, 2))), helper(Declined::Returning));
-        for form in [CallForm::Construct, CallForm::Stepped] {
-            assert_eq!(choose(&CallShape { form, ..SHAPE }, Some(&facts(4, 2))), helper(Declined::Form));
-        }
-        let unpublished = DirectFacts { facts: CellFacts { room: 9, ..facts(4, 2).facts }, ..facts(4, 2) };
-        assert_eq!(choose(&SHAPE, Some(&unpublished)), helper(Declined::Facts), "the cell describes another window");
-        let other_kind = DirectFacts { facts: CellFacts { entry: 1, ..facts(4, 2).facts }, ..facts(4, 2) };
-        assert_eq!(choose(&SHAPE, Some(&other_kind)), helper(Declined::Facts), "not a plain activation");
-    }
-
-    fn plan<'a>(direct: Option<&'a DirectFacts>, spills: &'a [(Place, Register)], reloads: &'a [(Place, Register)]) -> CallPlan<'a> {
-        CallPlan { shape: SHAPE, direct, helper: HelperHole::Address(0x4000), spills, reloads, builtin: None }
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn a_direct_chain_is_spills_direct_helper_reloads_with_the_direct_row_skipping_the_helper() {
-        let (spills, reloads) = ([(Place::Pin(0), 1), (Place::PinF(2), 5)], [(Place::Pin(0), 1)]);
-        let direct = facts(4, 2);
-        let chain = plan_call(&plan(Some(&direct), &spills, &reloads)).expect("a plan");
-        assert_eq!(chain.choice, Choice::Direct);
-        assert_eq!(chain.parts.len(), spills.len() + 2 + reloads.len());
-        let (direct_at, helper_at) = (spills.len(), spills.len() + 1);
-        assert_eq!(chain.parts[direct_at].taken, Some(helper_at + 1), "completion skips the helper row");
-        assert_eq!(chain.parts[direct_at].exits, [Exit::Status]);
-        assert_eq!(chain.parts[helper_at].exits, [Exit::At(SHAPE.call_pc), Exit::Status]);
-        assert_eq!(chain.parts[helper_at].holes[..2], [u64::from(SHAPE.call_pc), 0x4000]);
-        let record = chain.records.into_iter().next().expect("the direct row's record");
-        assert_eq!(chain.parts[direct_at].holes[0], std::ptr::from_ref(&*record).addr() as u64);
-        assert_eq!((record.callee, record.cell, record.expected, record.result_register), (7, 0x1000, 5, 6));
-        assert_eq!(chain.parts[spills.len() + 2].holes[0], SLOT);
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn a_helper_chain_has_no_record_and_its_helper_row_is_last_before_the_reloads() {
-        let chain = plan_call(&plan(None, &[], &[(Place::PinF(0), 3)])).expect("a plan");
-        assert_eq!((chain.choice, chain.records.is_empty(), chain.parts.len()), (Choice::Helper(Declined::NoTarget), true, 2));
-        assert!(chain.parts.iter().all(|part| part.taken.is_none()));
-        let nowhere = CallPlan { helper: HelperHole::Address(0), ..plan(None, &[], &[]) };
-        assert!(plan_call(&nowhere).is_err(), "a helper row needs its address");
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn a_step_chain_is_spills_helper_reloads() {
-        let (spills, reloads) = ([(Place::Pin(0), 1)], [(Place::PinF(1), 5), (Place::Pin(0), 1)]);
-        let parts = plan_step(9, HelperHole::Address(0x4000), &spills, &reloads).expect("a chain");
-        assert_eq!(parts.len(), spills.len() + 1 + reloads.len());
-        assert_eq!(parts[spills.len()].holes[..2], [9, 0x4000]);
-        assert_eq!(parts[spills.len()].exits, [Exit::At(9), Exit::Status]);
-        assert!(plan_step(9, HelperHole::Address(0), &[], &[]).is_err(), "a helper row needs its address");
-    }
-
-    #[test]
-    fn a_sloppy_callee_takes_the_sloppy_row_with_its_global() {
-        let sloppy = DirectFacts { global_this: Some(0xabc), ..facts(4, 2) };
-        let chain = plan_call(&plan(Some(&sloppy), &[], &[])).expect("a plan");
-        assert_eq!(chain.records.into_iter().next().expect("a record").global_this, 0xabc);
-        let name = CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true }.name().expect("a row");
-        assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true }).expect(&name)));
-    }
-
-    /// A pinned argument dead after the call is read from its pin by the direct row (its place in the record), and its
-    /// spill moves behind the direct rows, to the refusal path; a live one keeps its spill before the call.
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn a_dead_pinned_argument_is_passed_by_its_pin_and_spilled_on_refusal_only() {
-        let spills = [(Place::Pin(1), SHAPE.window), (Place::PinF(0), 9)];
-        let reloads: [(Place, Register); 0] = [];
-        let direct = facts(4, 2);
-        let chain = plan_call(&plan(Some(&direct), &spills, &reloads)).expect("a plan");
-        assert_eq!(chain.parts.len(), 4, "the kept spill, the direct row, the refusal spill, the helper row");
-        assert_eq!(chain.parts[1].taken, Some(4), "completion skips the refusal spill and the helper row");
-        assert_eq!(chain.parts[2].holes[0], slot(SHAPE.window), "the refusal spill is the window argument's");
-        let record = chain.records.into_iter().next().expect("the direct row's record");
-        assert_eq!(record.argument_places, [Place::Pin(1).code(), Place::Mem.code()]);
-    }
-
-    /// The call protocol the stencils are compiled with (`quench_bjit::call_record`,
-    /// `stencils/layout.rs`) is the runtime's own.
-    #[test]
-    fn call_protocol_matches_the_runtime() {
-        use super::super::super as compiled;
-        use compiled::entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED};
-        #[allow(dead_code)]
-        mod stencil_layout {
-            include!("../../../../../quench-bjit/stencils/layout.rs");
-        }
-        use stencil_layout as mirror;
-        assert_eq!(
-            [compiled::LANE_CALL_COMPLETED, compiled::LANE_CALL_MISSED, compiled::LANE_CALL_LEFT, compiled::LANE_CALL_TERMINATED, compiled::LANE_CALL_BRANCHED, compiled::LaneExit::Callee.word()],
-            [protocol::LANE_CALL_COMPLETED, protocol::LANE_CALL_MISSED, protocol::LANE_CALL_LEFT, protocol::LANE_CALL_TERMINATED, protocol::LANE_CALL_BRANCHED, protocol::CALLEE_EXIT]
-        );
-        assert_eq!(
-            [compiled::RETURN_STATUS_BASE, compiled::LANE_BODY_RETURNED, LANE_BODY_NOT_ENTERED, compiled::NATIVE_JS_STOPPED, compiled::TERMINATED_STATUS as u32],
-            [protocol::GENERAL_RETURN_STATUS_BASE, protocol::LANE_BODY_RETURNED, protocol::LANE_BODY_NOT_ENTERED, protocol::NATIVE_JS_STOPPED, protocol::TERMINATED_STATUS]
-        );
-        assert_eq!(protocol::REGISTER_BYTES, std::mem::size_of::<crate::value::Value>());
-        assert_eq!(mirror::FRAME_CONTEXT_WORDS, crate::vm::register_file::FRAME_CONTEXT);
-        use crate::vm::dispatch_fast::LaneRecoverySpace;
-        assert_eq!(
-            [std::mem::offset_of!(EntryCell, entry), std::mem::offset_of!(EntryCell, recovery), std::mem::offset_of!(EntryCell, body), std::mem::offset_of!(LaneRecoverySpace, values), std::mem::offset_of!(LaneRecoverySpace, activations)],
-            [mirror::CELL_ENTRY_AT, mirror::CELL_RECOVERY_AT, mirror::CELL_BODY_AT, mirror::RECOVERY_VALUES_AT, mirror::RECOVERY_ACTIVATIONS_AT]
-        );
-    }
-}
+mod tests;

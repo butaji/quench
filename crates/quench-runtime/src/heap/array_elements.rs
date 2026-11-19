@@ -11,6 +11,7 @@
 //! survives (`ArrayElements::leave_nursery`), so every young run's owner is a young array
 //! record its sweep shows.
 use crate::staged::record_heads::ArrayHeaderHead;
+use super::growth::{GrowthPolicy, grown_capacity};
 use crate::value::Value;
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 use std::ptr::NonNull;
@@ -46,6 +47,29 @@ use crate::staged::elements::{concrete_other as other, concrete_recount as recou
 
 fn others(values: &[Value]) -> u32 {
     values.iter().map(|value| other(*value)).sum()
+}
+
+/// The total number of values in `parts`.
+fn parts_len(parts: &[&[Value]]) -> usize {
+    parts.iter().map(|part| part.len()).sum()
+}
+
+/// Copies `parts` in order to `values`, which starts room for their total length, and returns
+/// their count of other values, counted part by part as each is copied.
+///
+/// # Safety
+/// `values` starts `parts_len(parts)` slots that nothing else reads or writes during the call,
+/// and no part overlaps those slots.
+unsafe fn write_parts(values: *mut Value, parts: &[&[Value]]) -> u32 {
+    let mut counted = 0;
+    let mut offset = 0;
+    for &part in parts {
+        counted += others(part);
+        // SAFETY: the caller's contract; the slots from `offset` on hold exactly this part.
+        unsafe { std::slice::from_raw_parts_mut(values.add(offset), part.len()).copy_from_slice(part) };
+        offset += part.len();
+    }
+    counted
 }
 
 
@@ -217,6 +241,21 @@ impl ArrayElements {
         elements
     }
 
+    /// A backing of the values of `parts`, in order, copied into one allocation of their total
+    /// length, their count of other values taken by `others`'s rule, holes included.
+    pub(crate) fn from_parts(parts: &[&[Value]]) -> Self {
+        let len = parts_len(parts);
+        if len == 0 {
+            return Self::new();
+        }
+        let elements = Self::allocate(len, len);
+        // SAFETY: the new allocation holds `len` slots after the header, and no part aliases it.
+        let counted = unsafe { write_parts(elements.values(), parts) };
+        // SAFETY: the allocation is fresh and this array alone owns it.
+        unsafe { (*elements.header.as_ptr()).others = counted };
+        elements
+    }
+
     /// The `len` values `value` gives for each index in order, written straight into a
     /// backing allocated at its final size, with no intermediate buffer.
     pub(crate) fn from_fn(len: usize, mut value: impl FnMut(usize) -> Value) -> Self {
@@ -264,6 +303,31 @@ impl ArrayElements {
             });
         }
         elements
+    }
+
+    /// The young run at `run` for the values of `parts`, in order, as `from_parts` gives them:
+    /// admitting reads until a write or a survived collection copies it (`make_mut`,
+    /// `leave_nursery`).
+    ///
+    /// # Safety
+    /// As for `young`: `run` starts `HEADER_VALUES + len` values that nothing else holds, where
+    /// `len` is the parts' total, and the array record that takes these elements is made before
+    /// any collection.
+    pub(crate) unsafe fn young_from_parts(run: NonNull<Value>, parts: &[&[Value]]) -> Self {
+        let len = parts_len(parts);
+        debug_assert!(len > 0);
+        let header = run.cast::<Header>();
+        // SAFETY: the run starts with room for a header and holds `len` values after it.
+        let values = unsafe { run.as_ptr().cast::<u8>().add(VALUES_OFFSET).cast::<Value>() };
+        // SAFETY: the run holds `len` values after the header, and no part aliases it.
+        let counted = unsafe { write_parts(values, parts) };
+        // SAFETY: the run starts with room for a header, which no owner counts.
+        unsafe {
+            header.as_ptr().write(Header {
+                head: ArrayHeaderHead { owners: 0, len: len as u32, capacity: len as u32, others: counted },
+            });
+        }
+        Self { header }
     }
 
     /// Whether this backing is a young run (`ArrayElements::young`).
@@ -439,11 +503,6 @@ impl ArrayElements {
     #[inline]
     pub(crate) fn first(&self) -> Option<Value> {
         self.get(0)
-    }
-
-    #[inline]
-    pub(crate) fn last(&self) -> Option<Value> {
-        self.len().checked_sub(1).map(|index| self.read(index))
     }
 
     /// The values in order.
@@ -791,6 +850,14 @@ impl ArrayElements {
         unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() }
     }
 
+    /// `make_mut` of a backing already this array's own and wide, which copies nothing;
+    /// `None`, which changes nothing, where `make_mut` would copy it.
+    #[inline(always)]
+    pub(crate) fn unique_mut(&mut self) -> Option<&mut UniqueElements> {
+        // SAFETY: `UniqueElements` is a transparent wrapper; the backing is this array's own.
+        self.is_unique().then(|| unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() })
+    }
+
     #[cold]
     #[inline(never)]
     fn detach(&mut self) {
@@ -978,14 +1045,19 @@ impl UniqueElements {
         unsafe { self.0.values().add(index).write(value) };
     }
 
-    /// `value` at every index of `range`.
+    /// `value` at every index of `range`: one pass that counts the others it overwrites and
+    /// stores `value` over them.
     pub(crate) fn fill(&mut self, range: std::ops::Range<usize>, value: Value) {
         assert!(range.start <= range.end && range.end <= self.0.len(), "array fill out of bounds");
-        self.recount(other(value) * range.len() as u32, others(&self[range.clone()]));
-        for index in range {
-            // SAFETY: the range is within the length of this unique backing.
-            unsafe { self.0.values().add(index).write(value) };
+        let added = other(value) * range.len() as u32;
+        // SAFETY: the range is within the length of this unique backing, which owns its values.
+        let slots = unsafe { std::slice::from_raw_parts_mut(self.0.values().add(range.start), range.len()) };
+        let mut removed = 0;
+        for slot in slots {
+            removed += other(*slot);
+            *slot = value;
         }
+        self.recount(added, removed);
     }
 
     /// The values in reverse order; the count of other values is unchanged.

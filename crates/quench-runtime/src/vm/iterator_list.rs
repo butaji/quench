@@ -66,6 +66,22 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<Value>, JsError> {
         let receiver = self.heap.root_value(iterator).unwrap();
         let method = self.heap.root_value(next).unwrap();
+        // A built-in step that runs no guest code goes straight to its value, with no result
+        // object and no reads of its `done` and `value`, as the lane's for-of step makes it.
+        match self.iteration_step(receiver, method) {
+            super::iterators::IterationStep::Array => {
+                if let Some(step) = self.step_present_array_value(receiver) {
+                    return Ok(step);
+                }
+                return self.array_iterator_step(p, receiver);
+            }
+            super::iterators::IterationStep::Collection => {
+                if let Some(step) = self.step_collection(receiver) {
+                    return Ok(step);
+                }
+            }
+            _ => {}
+        }
         if self.steps_as_array_iterator(receiver, method) {
             return self.array_iterator_step(p, receiver);
         }

@@ -9,8 +9,13 @@ pub(crate) const NO_RECEIVER: u32 = u32::MAX;
 /// The holder word an own data field's entry names, and an empty entry's holder word.
 pub(crate) const NO_HOLDER: u32 = u32::MAX;
 
-/// One entry's three stored words, named and `repr(C)` with no padding. Each word is complemented
-/// against `EMPTY`, so the empty entry stores as zero words and a zeroed table reads as empty.
+/// The layout id of no holder: layout 0 is the all-zero header, which no holder record takes
+/// (`heap::layouts`), so a zero `holder_id` word names no id.
+pub(crate) const NO_HOLDER_LAYOUT: u32 = 0;
+
+/// One entry's four stored words, named and `repr(C)` with no padding. The first three are
+/// complemented against `EMPTY`, so the empty entry stores as zero words and a zeroed table reads
+/// as empty; `holder_id` is stored as is, its empty value being zero.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FieldCacheWords {
@@ -20,21 +25,24 @@ pub(crate) struct FieldCacheWords {
     pub(crate) holder: u32,
     /// The slot, complemented against `EMPTY.slot`.
     pub(crate) slot: u32,
+    /// The holder's layout id where the holder object was at hand when the entry was recorded,
+    /// else `NO_HOLDER_LAYOUT`. Its shape (`layouts::auxiliary`) is `holder`, when set.
+    pub(crate) holder_id: u32,
 }
 
-/// The empty entry: no receiver, no holder, slot zero.
-pub(crate) const EMPTY: FieldCacheWords = FieldCacheWords { receiver: NO_RECEIVER, holder: NO_HOLDER, slot: 0 };
+/// The empty entry: no receiver, no holder, slot zero, no holder layout.
+pub(crate) const EMPTY: FieldCacheWords = FieldCacheWords { receiver: NO_RECEIVER, holder: NO_HOLDER, slot: 0, holder_id: NO_HOLDER_LAYOUT };
 
 impl FieldCacheWords {
-    /// The stored words of an entry with the values `receiver`, `holder` and `slot`.
+    /// The stored words of an entry with the values `receiver`, `holder`, `slot` and `holder_id`.
     #[inline(always)]
-    pub(crate) const fn encode(receiver: u32, holder: u32, slot: u32) -> Self {
-        Self { receiver: receiver ^ EMPTY.receiver, holder: holder ^ EMPTY.holder, slot: slot ^ EMPTY.slot }
+    pub(crate) const fn encode(receiver: u32, holder: u32, slot: u32, holder_id: u32) -> Self {
+        Self { receiver: receiver ^ EMPTY.receiver, holder: holder ^ EMPTY.holder, slot: slot ^ EMPTY.slot, holder_id: holder_id ^ EMPTY.holder_id }
     }
 
-    /// The values a stored entry holds (`receiver`, `holder`, `slot`), the inverse of `encode`.
+    /// The values a stored entry holds (`receiver`, `holder`, `slot`, `holder_id`), the inverse of `encode`.
     #[inline(always)]
-    pub(crate) const fn decode(self) -> (u32, u32, u32) {
-        (self.receiver ^ EMPTY.receiver, self.holder ^ EMPTY.holder, self.slot ^ EMPTY.slot)
+    pub(crate) const fn decode(self) -> (u32, u32, u32, u32) {
+        (self.receiver ^ EMPTY.receiver, self.holder ^ EMPTY.holder, self.slot ^ EMPTY.slot, self.holder_id ^ EMPTY.holder_id)
     }
 }

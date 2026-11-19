@@ -20,16 +20,18 @@ pub(crate) fn realm_globals(s: &S) -> u64 {
     word_at(word_at(payload(s), JS_STEP_VM) as usize, hole::<HOLE_A>())
 }
 
-/// A taken backward edge counts in the run's counter, word 0 of the loop entry record: hole 1
-/// and 2 are the offsets of the context's payload pointer and of the entry pointer in the payload
-/// (`BackEdge`, after its poll).
+/// A taken backward edge spends one of the run's budget: word 0 of the loop entry record, primed with the budget and
+/// debited here (the lane's flush subtracts its trips the same way). Holes 1 and 2 are the offsets of the context's
+/// payload pointer and of the entry pointer in the payload (`BackEdge`, after its poll). False once the budget is
+/// spent: the edge then leaves through the row's exit, the jump not taken.
 #[inline(always)]
-pub(crate) fn count_edge(s: &S) {
+pub(crate) fn count_edge(s: &S) -> bool {
     // SAFETY: the payload and entry pointers the holes name are the activation's live records.
     unsafe {
         let payload = ((s.ctx + hole::<1>()) as *const usize).read();
         let entry = ((payload + hole::<HOLE_B>()) as *const usize).read();
-        let count = (entry as *const u64).read();
-        (entry as *mut u64).write(count.wrapping_add(1));
+        let left = (entry as *const i64).read().wrapping_sub(1);
+        (entry as *mut i64).write(left);
+        left >= 0
     }
 }

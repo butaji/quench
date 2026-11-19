@@ -1,6 +1,6 @@
 //! The `arguments` object of a suspending function rides its window as a local, a mapped one
 //! (`Function::arguments_alias_parameters`) too: its parameters live in the window's locals, and
-//! the window's reads and writes of one go through the object (`lane_load_mapped_parameter`),
+//! the window's reads and writes of one go through the object,
 //! as the general path's do (`Vm::mapped_argument_load`). Compiled runs agree with the
 //! interpreter's.
 use super::window_steps::tests::{agree, run};

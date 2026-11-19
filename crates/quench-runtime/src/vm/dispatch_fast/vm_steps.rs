@@ -74,8 +74,9 @@ pub(in crate::vm) unsafe extern "C" fn body_string_concat<H: Host>(_vm: u64, _re
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
     let r = unsafe { (*cx).registers };
-    let function = match vm.lane_stack.activations().last() {
-        Some(activation) => activation.function,
+    // Read where it is (no spill, one-frame-one-call.md F4).
+    let function = match vm.lane_stack.top_frame() {
+        Some(activation) => activation.function(),
         None => vm.frames[unsafe { (*cx).frame() }].function,
     };
     // SAFETY: the context's program outlives the lane run.
@@ -120,7 +121,7 @@ pub(in crate::vm) unsafe extern "C" fn decide_comparison<H: Host>(vm: u64, _resi
 /// none (a native callee, a lane callee): the lane's activations become the frames the interpreter would have run
 /// (`Vm::materialize_deferred_lane`), the step is made on the innermost as the general loop makes it, and the body
 /// leaves for the general path past the record (`LANE_CALL_LEFT`), which resumes in those frames. A record that returned
-/// its result is returned from its frame there (`frame_return_in_lane`), and an error the step raised is stashed for
+/// its result is returned from its frame there (`frame_return`), and an error the step raised is stashed for
 /// the general path to raise at the record (`in_place_in_lane`). `LANE_CALL_MISSED` where the record is no such step.
 ///
 /// # Safety
@@ -141,7 +142,7 @@ unsafe fn frames_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record:
         Ok((next, record.returns_from_frame().then(|| vm.read(frame, instruction.result_register()))))
     });
     let resume = match made {
-        Some((_, Some(value))) => frame_return_in_lane(unsafe { vm(cx) }, ip, value),
+        Some((_, Some(value))) => frame_return(unsafe { vm(cx) }, ip, value),
         Some((next, None)) => exit(unsafe { base.add(next) }),
         None => exit(ip),
     };
@@ -186,7 +187,7 @@ unsafe fn owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: 
         Some(None) => LANE_CALL_COMPLETED,
         Some(Some(returned)) => {
             let resume = match returned {
-                Some(value) => frame_return_in_lane(unsafe { vm(cx) }, ip, value),
+                Some(value) => frame_return(unsafe { vm(cx) }, ip, value),
                 None => exit(unsafe { base.add(pc + 1) }),
             };
             unsafe { left_operand_at(cx, resume) }
@@ -207,7 +208,7 @@ unsafe fn owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: 
 /// then. Where the body has no frame of its own (a native callee's activation) a step that needs
 /// one makes the activations frames and leaves past it (`frames_step_in`, `LANE_CALL_LEFT`). The step may have
 /// replaced the frame's environment, so the lane's capture caches, which name the old one, are
-/// dropped after it (`lane_clone_env`).
+/// dropped after it (`clone_env`).
 /// `lane_body_step_record`, then the heap bases the body's rows read through the payload reloaded
 /// (`Vm::refresh_body_bases`), and those of the loop region's payload the lane runs
 /// (`refresh_region_bases_of`): the step may have allocated or run guest code.
@@ -216,14 +217,29 @@ unsafe fn owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: 
 /// As `body_general_step_record`.
 pub(in crate::vm) unsafe extern "C" fn body_general_step<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
-    let status = unsafe { body_general_step_record::<H>(vm, residual, context, call_pc) };
+    let status = unsafe { lane_body_step_record::<H>(vm, residual, context, call_pc) };
     unsafe { refresh_body_bases::<H>(context) };
     // SAFETY: as `lane_body_step_record`; a region the lane runs reads its payload's bases after the step too.
     unsafe { refresh_region_bases_of::<H>(context) };
     status
 }
 
-unsafe fn body_general_step_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+/// `lane_body_step` for a row the planner packed (`LaneHelper::StepPacked`, `CallRow::HelperPacked`): its family
+/// runs the instruction the planner decoded, `first` and `imm` (`family_helpers::direct`), where it can; else the
+/// general step, which decodes the record at `call_pc` as `lane_body_step` does.
+///
+/// # Safety
+/// As `lane_body_step`, and `first` and `imm` are the packed words of the record at `call_pc`.
+pub(in crate::vm) unsafe extern "C" fn lane_body_step_packed<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64, first: u64, imm: u64) -> u64 {
+    let cx = context as usize as *mut LaneContext<H>;
+    // SAFETY: the caller's contract.
+    if let Some(status) = unsafe { family_helpers::direct::<H>(cx, first, imm) } {
+        return status;
+    }
+    unsafe { body_general_step::<H>(vm, residual, context, call_pc) }
+}
+
+unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     let cx = context as usize as *mut LaneContext<H>;
     native_frames::in_innermost_frame(cx, || unsafe { body_general_step_in(cx, call_pc) })
 }
@@ -257,7 +273,7 @@ unsafe fn body_general_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -
     use super::super::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run, and `call_pc` is a record of the running frame's function.
-    if !vm.lane_stack.activations().is_empty() {
+    if vm.lane_stack.has_frames() {
         return unsafe { activation_step_in(cx, call_pc) };
     }
     let (code, frame, ip) = unsafe { (&*(*cx).code, (*cx).frame(), (*cx).base.add(call_pc as usize)) };
@@ -282,4 +298,37 @@ unsafe fn body_general_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -
     // The dropped caches are derived again where the lane next needs them.
     handler_edges::drop_environment_caches(cx);
     branched.map_or(LANE_CALL_MISSED, |branched| if branched { LANE_CALL_BRANCHED } else { LANE_CALL_COMPLETED })
+}
+
+/// The allocation of the record at `call_pc`, a fixed-shape object the record defines (`Step::Allocate`): its value is
+/// written to the record's destination, `LANE_CALL_MISSED` where the lane's allocator declines, and the record is
+/// the interpreter's to make.
+pub(in crate::vm) unsafe extern "C" fn lane_allocate_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    if context == 0 { return super::super::compiled::LANE_CALL_MISSED; }
+    let cx = context as usize as *mut LaneContext<H>;
+    let status = native_frames::in_innermost_frame(cx, || unsafe { lane_allocate_in(cx, call_pc) });
+    // SAFETY: `context` is the running lane's; the allocation may have collected, which moves no register word.
+    unsafe { refresh_body_bases::<H>(context) };
+    // SAFETY: as above; a region the lane runs reads its payload's bases after the allocation too.
+    unsafe { refresh_region_bases_of::<H>(context) };
+    status
+}
+
+/// `lane_allocate_step` with the context of the running body (`native_frames::in_innermost_frame`).
+///
+/// # Safety
+/// As `lane_allocate_step`.
+unsafe fn lane_allocate_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
+    let r = unsafe { (*cx).registers };
+    let function = running_function_in_lane(cx);
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let body = code.function(function as usize);
+    let instruction = body.widened(body.code[call_pc as usize]);
+    let Some((destination, allocation)) = crate::staged::Allocation::decode(instruction, &[]) else { return LANE_CALL_MISSED };
+    let Some(value) = (unsafe { super::lane_frame::lane_allocation::<H>(cx.cast(), r, allocation) }) else { return LANE_CALL_MISSED };
+    // SAFETY: the allocation ran no guest code, so the lane's register file is `r`'s still.
+    unsafe { (*cx).registers }.set(destination, value);
+    LANE_CALL_COMPLETED
 }

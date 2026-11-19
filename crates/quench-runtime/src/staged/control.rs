@@ -5,6 +5,7 @@ use super::*;
 use crate::value::ValueLayout;
 
 use super::value::{TYPEOF_BOOLEAN, TYPEOF_NUMBER, TYPEOF_OBJECT, TYPEOF_UNDEFINED, typeof_classes};
+use super::value_encoding::ValueLayout;
 
 /// The `typeof` name index (int32) of `source`, into `destination`, where the value's own
 /// word decides it: a Number, a Boolean, `null`, `undefined` or the deleted marker. A heap

@@ -15,7 +15,10 @@ use super::*;
 /// defined the value (a copy's proof is its source's), the subset an access in the body proved (`established`,
 /// so `objects` minus `established` is the entry seed's alone), the copies still holding their source's value, and the
 /// class-typed receivers whose exact shape and prototype link hold here: the entry proved them, or a held read checked
-/// them, and no row since may change an object's shape (`may_reshape`). `stores`: the entry checked that the run stores
+/// them, and no row since may change an object's shape (`may_reshape`). `flats`: the loop-invariant receivers whose entry
+/// proved their exact shape in flat form too, held and killed with `shapes`. `loop_held`: every loop-invariant receiver whose
+/// entry checked its exact shape (`flats` among them), killed with `shapes`; the only shapes an access may leave unkilled
+/// (`shape_hit`). `stores`: the entry checked that the run stores
 /// specialized (`guard::stores`), and no row since has run code that could rewrite that word (`runs_code`): a store the
 /// proofs admit needs no test of its own. `released`: a call on some path cleared `stores`, and no store re-read the word
 /// since (`Decoded::recheck`).
@@ -25,6 +28,8 @@ struct Proved {
     established: Vec<Register>,
     copies: Vec<(Register, Register)>,
     shapes: Vec<Register>,
+    flats: Vec<Register>,
+    loop_held: Vec<Register>,
     stores: bool,
     released: bool,
 }
@@ -44,6 +49,8 @@ impl Proved {
         self.objects.retain(|held| *held != register);
         self.established.retain(|held| *held != register);
         self.shapes.retain(|held| *held != register);
+        self.flats.retain(|held| *held != register);
+        self.loop_held.retain(|held| *held != register);
         self.copies.retain(|(copy, source)| *copy != register && *source != register);
     }
 }
@@ -55,15 +62,16 @@ impl Proved {
 fn may_reshape(row: &Decoded) -> bool {
     let reads_alone = row.heap.is_some_and(|heap| matches!(heap, Heap::Held | Heap::ThisHeld | Heap::Declared | Heap::Prototype | Heap::Realm
         | Heap::TypedLength | Heap::TypedIndex(_) | Heap::TypedStore(_)));
-    (row.heap.is_some() && !reads_alone) || row.step.is_some_and(|step| !matches!(step, Step::Guard(_) | Step::Leave))
+    (row.heap.is_some() && !reads_alone) || row.step.is_some_and(|step| !matches!(step, Step::Guard(_) | Step::Leave | Step::Allocate))
         || row.add.is_some() || row.name.is_some() || row.instanceof.is_some() || row.holder.is_some() || row.global.is_some()
         || row.declined.is_some() || row.checked
 }
 
 /// Whether `row` may rewrite the run's stores word: code that may run in a nested run (a call, a helper, an `instanceof`,
-/// a checked conversion, a declined store's step).
+/// a checked conversion, a declined store's step). An allocation runs no guest code and rewrites no object, so it clears
+/// nothing.
 fn clears_stores(row: &Decoded) -> bool {
-    row.makes_calls() || row.instanceof.is_some() || row.checked || row.declined.is_some()
+    (row.makes_calls() && row.step != Some(Step::Allocate)) || row.instanceof.is_some() || row.checked || row.declined.is_some()
 }
 
 /// The receiver register an inline-cache access names.
@@ -81,11 +89,28 @@ fn copied(row: &Decoded) -> Option<Register> {
     (row.kind == Kind::Move && row.heap.is_none() && row.step.is_none() && !row.checked).then(|| row.a.and_then(register_of)).flatten()
 }
 
+/// Whether `row` is an inline-cache access the plan runs with its cache row (`Decoded::takes_ic_row`) whose receiver `held`
+/// proves an object of a loop receiver's shape (`loop_held`). Such a row cannot reshape: its cache hit compares the shape
+/// the entry checked, and the site row on a miss reads or writes an existing data slot. Only loop receivers qualify: their
+/// cache entry's shape is the one every read of the register saw (`osr_compile::loop_shapes`). A class receiver's entry shape
+/// is not recorded in the row, so it gets no exemption.
+fn shape_hit(row: &Decoded, held: &Proved) -> bool {
+    row.takes_ic_row() && receiver(row).is_some_and(|register| held.holds(register) && held.loop_held.contains(&register))
+}
+
 /// What holds after `row`, given what held before it.
 fn after(row: &Decoded, before: &Proved) -> Proved {
     let mut proved = before.clone();
     if may_reshape(row) {
-        proved.shapes.clear();
+        if !shape_hit(row, before) {
+            proved.shapes.clear();
+            proved.flats.clear();
+            proved.loop_held.clear();
+        } else if matches!(row.heap, Some(Heap::SiteStore)) {
+            // A store writes a slot a folded prototype read (`constant_read`) may hold, so the class shapes go; the
+            // loop receivers' flat shapes stay, the write changing no shape or form.
+            proved.shapes.clear();
+        }
     }
     if clears_stores(row) {
         proved.stores = false;
@@ -96,19 +121,12 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
         proved.stores = true;
         proved.released = false;
     }
-    if let Some(register) = receiver(row) {
-        let root = proved.root(register);
-        if !proved.objects.contains(&root) {
-            proved.objects.push(root);
-        }
-        if !proved.established.contains(&root) {
-            proved.established.push(root);
-        }
-    }
+    established(&mut proved, row);
     let source = copied(row).map(|source| proved.root(source));
     for written in [row.dst, row.also].into_iter().flatten() {
         proved.write(written);
     }
+    allocated(&mut proved, row);
     if let (Some(dst), Some(source)) = (row.dst, source) && dst != source {
         proved.copies.push((dst, source));
     }
@@ -119,6 +137,29 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
     proved
 }
 
+/// The receiver an inline-cache access names is a direct object after it, established by the body.
+fn established(proved: &mut Proved, row: &Decoded) {
+    if let Some(register) = receiver(row) {
+        let root = proved.root(register);
+        if !proved.objects.contains(&root) {
+            proved.objects.push(root);
+        }
+        if !proved.established.contains(&root) {
+            proved.established.push(root);
+        }
+    }
+}
+
+/// The proof an allocation row leaves: the object it defines is a direct object, as the record `Step::Allocate` makes is,
+/// so the rows after it test no family for it. Its exact shape is not proved here (the literal site's shape is a fact the
+/// code would have to depend on).
+fn allocated(proved: &mut Proved, row: &Decoded) {
+    if let Some(dst) = row.dst.filter(|_| row.step == Some(Step::Allocate)) {
+        proved.objects.push(dst);
+        proved.established.push(dst);
+    }
+}
+
 /// The meet of two paths' proofs: what both hold.
 fn meet(a: &Proved, b: &Proved) -> Proved {
     Proved {
@@ -126,6 +167,8 @@ fn meet(a: &Proved, b: &Proved) -> Proved {
         established: a.established.iter().filter(|held| b.established.contains(held)).copied().collect(),
         copies: a.copies.iter().filter(|copy| b.copies.contains(copy)).copied().collect(),
         shapes: a.shapes.iter().filter(|held| b.shapes.contains(held)).copied().collect(),
+        flats: a.flats.iter().filter(|held| b.flats.contains(held)).copied().collect(),
+        loop_held: a.loop_held.iter().filter(|held| b.loop_held.contains(held)).copied().collect(),
         stores: a.stores && b.stores,
         released: a.released || b.released,
     }
@@ -184,10 +227,11 @@ fn rechecks(rows: &[Decoded], span: &Span, before: &[Option<Proved>]) -> Vec<boo
 /// (`declared::exact_objects`): they are proved at every row, from the entry on, and a resume stub
 /// re-establishes them with the declared entry rows. `shaped` holds the class-typed receivers the entry checked for
 /// exact shape and prototype link (`declared::class_prototypes`): a held read of one becomes a constant load on every
-/// path where no row since may change the shape (`may_reshape`). Each proven store the run-level stores test admits, with no
+/// path where no row since may change the shape (`may_reshape`). `flat` holds the loop-invariant receivers the entry checked
+/// in flat form too (`Known::shapes`): a proven access of one of them is `Decoded::flat`, with no compare. Each proven store the run-level stores test admits, with no
 /// call since the entry, is marked `Decoded::admitted`; a store a call cleared the test for re-reads the word (`Decoded::recheck`)
 /// where a proven store follows it before the next such clear.
-pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[Register], shaped: &[Register]) {
+pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[Register], shaped: &[Register], loops: &[Register], flat: &[Register]) {
     let count = rows.len();
     // `None`: no path reaches the row yet (the top of the meet).
     let mut before: Vec<Option<Proved>> = vec![None; count];
@@ -195,7 +239,7 @@ pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[
         return;
     }
     // The entry tests the run's stores (`Heap::Stores`) wherever a row is admitted, so the seed holds it.
-    before[0] = Some(Proved { objects: entry.to_vec(), shapes: shaped.to_vec(), stores: true, ..Proved::default() });
+    before[0] = Some(Proved { objects: entry.to_vec(), shapes: shaped.to_vec(), flats: flat.to_vec(), loop_held: loops.to_vec(), stores: true, ..Proved::default() });
     let mut pending = vec![0];
     while let Some(k) = pending.pop() {
         let Some(held) = before[k].clone() else { continue };
@@ -229,6 +273,7 @@ fn settle(rows: &mut [Decoded], span: &Span, reached: &Bits, before: &mut [Optio
         }
         row.relies = !held.established.is_empty();
         row.proven = receiver(row).is_some_and(|register| held.holds(register));
+        row.flat = row.proven && receiver(row).is_some_and(|register| held.flats.contains(&register));
         row.recheck = rechecked[k];
         row.admitted = row.proven && matches!(row.heap, Some(Heap::SiteStore)) && (held.stores || row.recheck);
         if row.class_read && let Some(register) = row.a.and_then(register_of) && held.shapes.contains(&register) {

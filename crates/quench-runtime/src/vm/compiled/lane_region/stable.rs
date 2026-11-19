@@ -5,6 +5,7 @@ use crate::bytecode::Class;
 use super::*;
 use super::super::object_slots::emit;
 use crate::staged::machine::{Lane, MachineScalar, Relation};
+use crate::staged::property::StoreJoin;
 use crate::staged::{Region, Stage};
 
 /// The Stable facts a region's code folded (`typed_ir::BindingTime::Stable`), each the subject
@@ -13,6 +14,9 @@ use crate::staged::{Region, Stage};
 pub(crate) struct StableFacts {
     /// Exact shapes of prototypes whose values it holds (`heap::subscribe_prototype_values`).
     pub(crate) holders: Box<[u32]>,
+    /// The chains it read those values through, whose prototypes' layouts it holds
+    /// (`Heap::subscribe_prototype_chain`).
+    pub(crate) chains: Box<[crate::code_dependencies::PrototypeChain]>,
     /// Atoms it stores without a method-cache test (`MethodCacheAtoms::readers`).
     pub(crate) atoms: Box<[Atom]>,
     /// Global cells whose values it holds (`heap::subscribe_global_value`).
@@ -29,6 +33,9 @@ pub(crate) struct StableFacts {
     /// Exact shapes of objects whose layout it holds past a call (`Vm::shape_is_stable`): the
     /// first object to leave one retires it (`Heap::subscribe_shape`).
     pub(crate) shapes: Box<[u32]>,
+    /// The program whose root constant the code folds (`Lowering::root_constant_read`): its
+    /// publication subscribes the program's second root run (`ProgramStore::subscribe_root_constants`).
+    pub(crate) root_program: Option<crate::vm::program_store::ProgramId>,
 }
 
 /// The Stable facts a lowering folded so far.
@@ -36,6 +43,8 @@ pub(crate) struct StableFacts {
 pub(super) struct StableUses {
     /// Holder shapes whose prototypes' values the code took as constants.
     pub(super) holders: crate::bitset::BitSet,
+    /// The chains the code read those values through (`field_plans::embed_inherited`).
+    pub(super) chains: BTreeSet<crate::code_dependencies::PrototypeChain>,
     /// Exact shapes of the objects whose shape the code held past a call (`StableHold::hold_shape`).
     pub(super) shapes: crate::bitset::BitSet,
     /// Atoms it stores directly because no method cache named them.
@@ -50,6 +59,8 @@ pub(super) struct StableUses {
     slots: Vec<crate::code_dependencies::SlotDependency>,
     /// Constructors whose `prototype` the code took as a constant for an `instanceof`.
     instanceofs: BTreeSet<crate::code_dependencies::InstanceofFact>,
+    /// The program whose root constant the code folded, if any (`StableFacts::root_program`).
+    pub(super) root_program: Option<crate::vm::program_store::ProgramId>,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
     /// (`Lowering::hoist_stable`): their blocks hold the proof.
     realm_loops: Vec<(usize, usize)>,
@@ -65,11 +76,12 @@ impl StableUses {
     pub(super) fn take(&mut self) -> StableFacts {
         StableFacts { holders: std::mem::take(&mut self.holders).iter().map(|holder| holder as u32).collect(),
             shapes: std::mem::take(&mut self.shapes).iter().map(|shape| shape as u32).collect(),
+            chains: std::mem::take(&mut self.chains).into_iter().collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
             globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
             layouts: std::mem::take(&mut self.layouts).into_iter().collect(),
             slots: std::mem::take(&mut self.slots).into_iter().collect(),
-            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect() }
+            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect(), root_program: self.root_program.take() }
     }
 }
 
@@ -251,15 +263,30 @@ impl Lowering<'_, '_> {
     /// where it fails, rather than each store testing both and joining the VM's store.
     pub(super) fn online_store_held(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> Option<ir::Value> {
         self.vm.online.filter(|online| !online.names(atom))?;
-        if !state.proofs.specialized {
-            let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.stores_specialized));
-            let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
-            emit_js_guard(&mut self.builder, specialized, exit);
-            state.proofs.specialized = true;
-        }
+        self.hold_specialized(state, exit);
         self.hold_stable(state, exit);
         self.stable.atoms.insert(atom);
         Some(self.builder.ins().iconst(types::I8, 1))
+    }
+
+    /// The run's stores proved specialized (`stores_specialized`) where no block proof of it holds
+    /// yet: a guard leaving through `exit` where the run does not. The loop's entering edge makes
+    /// this proof once for a loop whose stores all hold it (`hoist_stable`).
+    pub(super) fn hold_specialized(&mut self, state: &mut State, exit: ir::Block) {
+        if state.proofs.specialized { return; }
+        let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.stores_specialized));
+        let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
+        emit_js_guard(&mut self.builder, specialized, exit);
+        state.proofs.specialized = true;
+    }
+
+    /// Whether the field store `instruction` at `pc` keeps every Stable fact in a loop: its join is
+    /// the host's (no entry binding, no adding entry) and its region is a loop not widened at `pc`,
+    /// so a store the in-place arms miss leaves (`store_leaves`, `field_store_host`) and runs no
+    /// guest code; the store changes no fact the loop holds beyond the invalidation word it reads.
+    pub(super) fn store_keeps_facts(&self, pc: usize, instruction: WideInstruction) -> bool {
+        let (_, join) = self.site_store_plan(instruction.cache_site_index(), Type::ANY);
+        join == StoreJoin::Host && matches!(self.coverage, Coverage::Loop { .. }) && !self.generic.contains(&pc)
     }
 
     /// Where offline code holds `atom` unnamed (`VmFacts::held_atoms`), the admission of its stores
@@ -325,13 +352,13 @@ impl Lowering<'_, '_> {
     /// Whether a run enters loop `header..=end` only at its header, by edges that each make the
     /// proofs hoisted there: no start lies past its header (a start at it hoists on its entry
     /// edge), every edge from outside it is a forward edge to its header (`continue_at`, which
-    /// hoists), and no branch table hides an edge.
+    /// hoists), and every branch table's entry is one.
     pub(super) fn enters_only_at_header(&self, header: usize, end: usize) -> bool {
         let inside = header..=end;
+        // A branch table's entries are among its successors, so an edge it makes is seen here too.
         let entered_within = self.unit.instructions.iter().enumerate().any(|(pc, instruction)|
-            instruction.op().control_flow_layout() == ControlFlowLayout::BranchTable
-                || (!inside.contains(&pc) && successors(pc, *instruction).into_iter().flatten()
-                    .any(|target| (target > header && target <= end) || (target == header && pc > end))));
+            !inside.contains(&pc) && successors(pc, *instruction).into_iter()
+                .any(|target| (target > header && target <= end) || (target == header && pc > end)));
         !entered_within && !(header < self.stable.start && self.stable.start <= end)
     }
 
@@ -343,6 +370,7 @@ impl Lowering<'_, '_> {
             _ if matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(crate::staged::Operation::LoadName { .. })) => self.global_reads.contains_key(&pc),
             _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) => !instruction.writes_current_this(),
             _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => true,
+            _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => self.store_keeps_facts(pc, instruction),
             _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call) => super::native_calls::keeps_arrays(&self.intrinsics, pc),
             _ if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary => true,
             _ => reads_only(&self.program.constants, instruction),

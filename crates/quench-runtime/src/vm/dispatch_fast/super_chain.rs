@@ -159,8 +159,8 @@ fn plan_super_parent<H: Host>(vm: &mut Vm<H>, callee: Value) {
 /// (`Vm::inline_construct_template_by`), and takes the chain's stores as cached adds that run
 /// no guest code (`initialize_stores_in_lane`), and which every body returns as it is. A plan
 /// recorded under `callee` (`ConstructPlan::super_parent`) makes later constructions at once:
-/// it holds while `callee`'s parent does, and a parent further up changes under a new
-/// prototype layout epoch, being the [[Prototype]] of the class below it. TypeScript's node
+/// it holds while `callee`'s chain does, every parent class on it included, each the
+/// [[Prototype]] of the class below it (`watch_construct_plan`). TypeScript's node
 /// classes (`class extends Node { constructor(k, p, e) { super(k, p, e) } }`) and WSL's
 /// (`constructor(origin, base) { super(origin); this.base = base; }`) otherwise left the lane
 /// at every node. `None` leaves the construction to the general path: another program's or
@@ -173,7 +173,7 @@ pub(super) fn super_construction<H: Host>(
     callee: Value,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
+    if !crate::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some()) {
         return None;
     }
     if let Some(this) = holding_construct_plan(vm, callee)

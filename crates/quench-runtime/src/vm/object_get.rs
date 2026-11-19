@@ -12,7 +12,9 @@ mod proxy_set;
 /// (`Vm::has_intrinsic_species_getter`) under one `prototype_layout_epoch`: the shape names
 /// the slot and that the slot holds the getter itself, and shape compaction advances the
 /// epoch, so a proof never names a renumbered shape. The getter may change in place, so each use
-/// reads the slot.
+/// reads the slot. It reads no prototype, so it keeps the global epoch, which only the events
+/// every proof shares advance (a compaction, a collection reusing a prototype's record), rather
+/// than a chain's cell.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct SpeciesSlotProof {
     shape: u32,
@@ -556,8 +558,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// `plain_symbol_get` past its proofs: the chain walk, recording where it found the key
-    /// when every object it passed is an ordinary, non-dictionary record whose shape alone
-    /// says what it holds. Every prototype passed becomes a prototype first, whose subject holds
+    /// when every object it passed is a non-dictionary object whose shape alone says what it
+    /// holds for the key (`proved_read_receiver`). Every prototype passed becomes a prototype first, whose subject holds
     /// the proof: a later change to one clears it.
     #[cold]
     #[inline(never)]
@@ -565,7 +567,7 @@ impl<H: Host> Vm<H> {
         match self.prove_load(object, key) {
             ProvedLoad::Value(value) => Some(value),
             ProvedLoad::Absent => Some(Value::UNDEFINED),
-            ProvedLoad::Getter => None,
+            ProvedLoad::Getter(_) => None,
             ProvedLoad::Unproved => self.plain_property_get(object, key),
         }
     }
@@ -583,12 +585,12 @@ impl<H: Host> Vm<H> {
         let mut current = object;
         let mut depth = 0u8;
         let (answer, value) = loop {
-            let link = if depth == 0 {
-                self.proved_read_receiver(current, key)
-            } else {
-                self.heap.object_record(current)
-            };
-            let Some(link) = link else {
+            // Every link, the receiver and each prototype alike, is one whose shape alone
+            // answers the key: an ordinary object or builtin, or an array for a name that is
+            // no index and not `length` (`Array.prototype` holding `constructor` or a
+            // method). A prototype's subject retires the proof on any change to its layout,
+            // whatever its kind (`Object::note_prototype_layout_change`).
+            let Some(link) = self.proved_read_receiver(current, key) else {
                 return Some(ProvedLoad::Unproved);
             };
             let link_shape = link.shape();
@@ -601,13 +603,19 @@ impl<H: Host> Vm<H> {
             }
             if let Some(slot) = self.property_shape_slot(link_shape, key) {
                 let accessors = self.shape_may_have_accessors(link_shape);
-                if accessors && self.slot_attributes(link, slot)?.accessor {
-                    if depth > 0 && let Ok(slot) = u32::try_from(slot) {
+                let attributes = if accessors { Some(self.slot_attributes(link, slot)?) } else { None };
+                if let Some(attributes) = attributes.filter(|attributes| attributes.accessor) {
+                    // An own accessor is a fact of the receiver's layout as an own data slot
+                    // is (a non-dictionary shape fixes each slot's kind); an inherited one
+                    // is held under the prototypes passed.
+                    if let Ok(slot) = u32::try_from(slot) {
                         let getter = SymbolLoadAnswer::Getter { hops: depth, slot };
-                        self.prove_symbol_chain(layout, key, prototype, depth, getter, current);
-                        self.refine_getter_fact(layout, key, depth, slot, current);
+                        // Only an entry the chain's subjects hold is refined.
+                        if self.prove_symbol_chain(layout, key, prototype, depth, getter, current) {
+                            self.refine_getter_fact(layout, key, depth, slot, current);
+                        }
                     }
-                    return Some(ProvedLoad::Getter);
+                    return Some(ProvedLoad::Getter(attributes.getter));
                 }
                 let value = self.heap.property_get(link, slot)?;
                 let slot = u32::try_from(slot).ok()?;
@@ -633,6 +641,8 @@ impl<H: Host> Vm<H> {
             depth = deeper;
             current = next;
         };
+        // The walk's answer stands whether or not it is recorded; an unrecorded one is walked
+        // again at its next miss.
         self.prove_symbol_chain(layout, key, prototype, depth, answer, current);
         Some(match answer {
             SymbolLoadAnswer::Absent => ProvedLoad::Absent,
@@ -641,7 +651,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// Records `answer` for `key` on receivers of `layout`, held under the subjects of the
-    /// `depth` prototypes from `prototype` the walk passed (`Vm::prove_fact_chain`).
+    /// `depth` prototypes from `prototype` the walk passed (`Vm::prove_fact_chain`): whether
+    /// it recorded the answer.
     fn prove_symbol_chain(
         &mut self,
         layout: u32,
@@ -650,27 +661,84 @@ impl<H: Host> Vm<H> {
         depth: u8,
         answer: super::symbol_load_proof::SymbolLoadAnswer,
         holder: Value,
-    ) {
-        let Some(subjects) = self.fact_chain_subjects(prototype, depth) else { return };
-        // A holder up the chain is an object record (`prove_load_walk`): its id, plus one.
+    ) -> bool {
+        // A chain met for the first time is only noted: the receiver's own shape lacks the key
+        // (`record_absent_own`, which no read answers by). Its second walk proves it. A
+        // receiver whose layout is met once, as an object made per call and used as a
+        // prototype at once (`Object.create(this)`), then marks no prototype and holds no
+        // fact under their subjects for a proof no later read would use.
+        if depth > 0
+            && let Some(key32) = key.key32()
+            && self.symbol_load_proofs.word(layout, key32).is_none()
+        {
+            self.symbol_load_proofs.record_absent_own(layout, key32);
+            return false;
+        }
+        let Some(subjects) = self.heap.chain_subjects(prototype, depth) else { return false };
+        // A holder up the chain that is an object record: its id, plus one; any other holder
+        // (an array's, a builtin's) is found by its hops (`Vm::proof_holder`).
         let holder = if depth > 0 { holder.direct_object_index().map_or(0, |id| id + 1) } else { 0 };
-        if let Some(entry) = self.symbol_load_proofs.record_with_holder(layout, key, answer, holder) {
-            self.hold_fact(entry, &subjects);
+        match self.symbol_load_proofs.record_with_holder(layout, key, answer, holder) {
+            Some(entry) => {
+                self.hold_fact(entry, &subjects);
+                true
+            }
+            None => false,
         }
     }
 
-    /// The subjects of the `depth` prototypes from `prototype`, each marked a prototype first;
-    /// `None` where one has none, so no proof is recorded for that chain.
-    pub(super) fn fact_chain_subjects(&mut self, prototype: Value, depth: u8) -> Option<smallvec::SmallVec<[u32; crate::heap::INHERITED_FIELD_CACHE_MAX_DEPTH]>> {
-        let mut subjects = smallvec::SmallVec::new();
+    /// The validity cell of the `depth` prototypes from `prototype` (`heap::ChainCell`), each
+    /// marked a prototype first: it holds while none of them changes its layout (shape,
+    /// prototype link, integrity, recorded descriptors) or dies, whatever other prototypes do.
+    /// `None` where one has no subject, so no proof is recorded for that chain.
+    pub(super) fn chain_cell(&mut self, prototype: Value, depth: u8) -> Option<crate::heap::ChainCell> {
+        let subjects = self.heap.chain_subjects(prototype, depth)?;
+        Some(self.heap.dependencies().chain_cell(&subjects))
+    }
+
+    /// `chain_cell` for a proof made without marking: every one of the `depth` links from
+    /// `prototype` must be a watched prototype already; `None` where one is not.
+    pub(super) fn watched_chain_cell(&self, prototype: Value, depth: u8) -> Option<crate::heap::ChainCell> {
+        let mut subjects = smallvec::SmallVec::<[u32; crate::heap::INHERITED_FIELD_CACHE_MAX_DEPTH]>::new();
         let mut link = prototype;
         for _ in 0..depth {
-            self.heap.mark_prototype(link);
-            let object = self.heap.object_record(link)?;
+            let object = self.heap.object(link)?;
+            if !object.was_used_as_prototype() {
+                return None;
+            }
             subjects.push(object.watched_subject()?);
             link = object.proto();
         }
-        Some(subjects)
+        Some(self.heap.dependencies().chain_cell(&subjects))
+    }
+
+    /// `chain_cell` of the whole chain from `prototype` to its end; `None` past `u8::MAX`
+    /// links or where a link is no object.
+    pub(super) fn chain_cell_to_end(&mut self, prototype: Value) -> Option<crate::heap::ChainCell> {
+        let depth = self.chain_depth(prototype)?;
+        self.chain_cell(prototype, depth)
+    }
+
+    /// The links of the chain from `prototype` to its end; `None` past `u8::MAX` or where a
+    /// link is no object.
+    fn chain_depth(&self, prototype: Value) -> Option<u8> {
+        let mut depth = 0u8;
+        let mut link = prototype;
+        while !link.is_null() {
+            link = self.heap.object(link)?.proto();
+            depth = depth.checked_add(1)?;
+        }
+        Some(depth)
+    }
+
+    /// Makes the data dependency `dependency` retire when a link of the whole chain from
+    /// `start` (itself included) changes its layout or dies, each marked a prototype first
+    /// (`Dependencies::hold_layouts`); `false` where a link has no subject or a table is full.
+    pub(super) fn hold_chain_layouts(&mut self, start: Value, dependency: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+        let Some(subjects) = self.chain_depth(start).and_then(|depth| self.heap.chain_subjects(start, depth)) else {
+            return false;
+        };
+        self.heap.dependencies().hold_layouts(&subjects, dependency)
     }
 
     /// Holds fact-table entry `entry` under `subjects`, whose change clears it.
@@ -685,7 +753,7 @@ impl<H: Host> Vm<H> {
     /// The rewrite takes the same entry, which the chain's subjects already hold.
     fn refine_getter_fact(&self, layout: u32, key: PropertyKey, depth: u8, slot: u32, holder: Value) {
         use super::symbol_load_proof::{KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT};
-        let (Some(key32), Some(data)) = (key.key32(), self.heap.object_record(holder)) else {
+        let (Some(key32), Some(data)) = (key.key32(), self.heap.object(holder)) else {
             return;
         };
         let kind = match self.slot_accessor(data.shape(), slot as usize) {
@@ -694,7 +762,8 @@ impl<H: Host> Vm<H> {
             super::SlotAccessor::Attributes => KIND_GETTER,
         };
         if kind != KIND_GETTER {
-            let holder_id = holder.direct_object_index().map_or(0, |id| id + 1);
+            // An own accessor's holder is each receiver itself, never the one recorded.
+            let holder_id = if depth == 0 { 0 } else { holder.direct_object_index().map_or(0, |id| id + 1) };
             self.symbol_load_proofs.record_accessor(layout, key32, depth, slot, kind, holder_id);
         }
     }
@@ -1317,8 +1386,8 @@ pub(in crate::vm) enum ProvedLoad {
     Value(Value),
     /// No link holds the key.
     Absent,
-    /// The key is an accessor.
-    Getter,
+    /// The key is an accessor, with its getter if it has one.
+    Getter(Option<Value>),
     /// A link no proof covers: exotic, dictionary or descriptor-held.
     Unproved,
 }

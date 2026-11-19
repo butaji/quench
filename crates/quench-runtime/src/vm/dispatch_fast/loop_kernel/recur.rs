@@ -254,10 +254,15 @@ fn cycle(shape: &Shape) -> Option<Vec<u16>> {
     })
 }
 
-/// Whether node `last` is `node(first) | 0`.
+/// Whether node `last` is `node(first) | c` for a constant `c` whose ToInt32 is zero (`| 0`): the
+/// staged bitwise row then yields ToInt32 of `node(first)`.
 fn is_int32_truncation(shape: &Shape, first: u16, last: u16) -> bool {
+    use crate::staged::NumericStage;
     let node = shape.nodes[usize::from(last)];
-    let zero = |arg: Arg| matches!(arg, Arg::Scalar(s) if shape.scalar_constant(s) == Some(0.0));
+    let zero = |arg: Arg| matches!(arg, Arg::Scalar(s) if shape.scalar_constant(s).is_some_and(|value| {
+        let mut stage = crate::staged::Concrete::new(std::ptr::null());
+        NumericStage::to_int32(&mut stage, value.to_bits(), ()) == Some(0)
+    }));
     matches!(node.op, NodeOp::Bits(NumberBitwise::Or))
         && ((node.a == Arg::Col(first) && zero(node.b)) || (node.b == Arg::Col(first) && zero(node.a)))
 }

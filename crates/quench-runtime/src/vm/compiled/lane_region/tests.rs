@@ -69,8 +69,8 @@ fn inlined_capture_reads_require_an_admitted_invariant_callee() {
         let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
             instruction.op().control_flow_layout().jumps()
                 .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
-        let loops = local_loops(&unit, &program.constants, header, &vec![None; unit.instructions.len()]);
-        let reads = invariant_reads(&program, &unit, &loops);
+        let loops = local_loops(&unit, &program.constants, header, &vec![None; unit.instructions.len()], &Default::default());
+        let reads = invariant_reads(&program, &unit, &loops, &vec![None; unit.instructions.len()], &|_| false);
         let captures: Vec<_> = reads.values().flatten().map(|read| read.pc).filter(|&pc|
             unit.instructions[pc].op().is_load_capture()
                 && matches!(unit.origins[pc], super::super::lane_unit::Origin::Inlined { .. })).collect();
@@ -213,9 +213,9 @@ fn capture_entry_does_not_follow_a_copy_across_a_diamond() {
                 .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
                 .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1, "exercise an actual inline marker: {name}");
-        let loops = local_loops(&unit, &program.constants, 0, &vec![None; unit.instructions.len()]);
+        let loops = local_loops(&unit, &program.constants, 0, &vec![None; unit.instructions.len()], &Default::default());
         assert!(!loops.is_empty(), "exercise an eligible loop: {name}");
-        let reads = invariant_reads(&program, &unit, &loops);
+        let reads = invariant_reads(&program, &unit, &loops, &vec![None; unit.instructions.len()], &|_| false);
         assert!(!reads.values().flatten().any(|read|
             unit.instructions[read.pc].op().is_load_capture()
                 && matches!(unit.origins[read.pc], super::super::lane_unit::Origin::Inlined { .. })),
@@ -376,3 +376,31 @@ fn native_to_int32_keeps_number_inputs_unboxed_and_misses_exactly() {
     }
 }
 
+
+#[test]
+fn a_masked_index_reads_the_element_it_names_whatever_the_array_length() {
+    // `i & 255` is at most 255: a 256-element array proves every access at the loop's entry, and a
+    // 16-element one fails that entry compare on every entry. Its loop runs interpreted, not wrong.
+    let source = r#"
+        function sum(arr, n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + arr[i & 255].v) | 0; } return a; }
+        const big = []; for (let i = 0; i < 256; i++) big.push({ v: i });
+        const small = []; for (let i = 0; i < 16; i++) small.push({ v: i });
+        for (let warm = 0; warm < 96; warm++) { sum(big, 256); sum(small, 10); }
+        if (sum(big, 256) !== 32640) throw 'big';
+        if (sum(big, 300) !== 33586) throw 'wrapped';
+        if (sum(small, 10) !== 45) throw 'small';
+        if (sum(small, 0) !== 0) throw 'empty';
+        throw 42;
+    "#;
+    let source = format!("(function(exports,require,module,__filename,__dirname){{{source}}})(undefined,undefined,undefined,undefined,undefined);");
+    let program = crate::Engine::specialize(&source, "masked-index.cjs").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(mode);
+        #[cfg(not(quench_profiled))]
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.enable_js_lane_methods();
+        let error = vm.execute(&program).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");
+    }
+}

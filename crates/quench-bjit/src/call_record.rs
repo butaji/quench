@@ -22,14 +22,40 @@ pub const MAX_DIRECT_ARGC: usize = 3;
 /// window slot (`CallRecord::argument_places`); the rest are always read from the window.
 pub const PLACED_ARGUMENTS: usize = 2;
 
+/// The value holes of a helper call row (`CallRow::Helper`, `CallRow::HelperPacked`), by position. The planner
+/// (`helper_part` in `call_plan.rs`) fills each at its index; `stencils/call_rows.rs` reads it by the same index.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelperHole {
+    /// The call pc the helper is told.
+    CallPc = 0,
+    /// The helper's address.
+    Helper = 1,
+    /// The packed row's instruction first word (its opcode and operands).
+    PackedFirst = 2,
+    /// The packed row's instruction immediate.
+    PackedImm = 3,
+}
+
+/// The value holes of a direct call row (`CallRow::Direct`), by position. The planner (`direct_part` in
+/// `call_plan.rs`) fills each at its index; `stencils/call_rows.rs` reads it by the same index.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirectHole {
+    /// The address of the site's `CallRecord`.
+    Record = 0,
+    /// The call's pc, which a raise names to the lane.
+    CallPc = 1,
+}
+
 /// Bytes of one register slot of the frame window (`size_of::<Value>()`, a word).
 pub const REGISTER_BYTES: usize = core::mem::size_of::<u64>();
 
 /// The per-site record of a direct-call row, two cache lines, patched into the row as the one
 /// 64-bit value hole 0 (its address). Everything a site knows that does not fit the three value
 /// holes: the callee's identity and cell, the cell's validity word the call was planned under,
-/// the descriptor the shadow frame names, the callee's capture word, the global object a sloppy
-/// callee binds an `undefined` or `null` receiver to, the stride of shadow frames, the caller
+/// the callee's header words (the caller's call record and base, the packed word), the callee's capture word, the global object a sloppy
+/// callee binds an `undefined` or `null` receiver to, the caller
 /// registers the call names, and where each leading argument's word is (`argument_places`: a place
 /// code, `MEM` for the caller's window slot, else the pinned register holding the value). The plan
 /// owns the record and must outlive the code.
@@ -39,15 +65,23 @@ pub struct CallRecord {
     pub callee: u64,
     pub cell: u64,
     pub expected: u64,
-    pub descriptor: u64,
+    /// The callee's capture word (`CONTEXT_BODY`).
     pub captures: u64,
     pub global_this: u64,
-    pub frame_bytes: u64,
+    /// The caller's call record the callee returns to (`CONTEXT_CALL`).
+    pub call: u64,
+    /// The caller's base instruction pointer (`CONTEXT_CALLER_BASE`).
+    pub caller_base: u64,
+    /// The packed word of the callee's plain header (`CONTEXT_PACKED`): function, flags, argc.
+    pub packed: u64,
     pub callee_register: u16,
     pub this_register: u16,
     pub args_register: u16,
     pub result_register: u16,
     pub argument_places: [u8; PLACED_ARGUMENTS],
+    /// The arguments the caller proves Numbers (bit `k`: argument `k`). The row enters the callee's proven-arguments
+    /// entry where every guard its cell names (`EntryCell::numbers`) is covered by these bits.
+    pub proven_args: u64,
 }
 
 /// Two cache lines: the record is aligned to one.

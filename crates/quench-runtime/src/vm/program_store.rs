@@ -13,6 +13,7 @@ mod eval_cache;
 mod js_jit_report;
 mod loops;
 mod residual;
+mod root_constants;
 mod snapshot;
 mod tier_census;
 mod wasm_tier;
@@ -628,6 +629,18 @@ impl JitTierManager {
     }
 }
 
+/// The one object a callee-argument RegExp literal site shares (`Vm::regexp_literal_argument_of`),
+/// and what keeps it unobservable: it is answered again only in `frame`, the frame (or the
+/// native activation's key, `lane_allocations::regexp_argument_key`) of the evaluation that made it, while the current realm is `realm`, `watch` (on the values of
+/// `RegExp.prototype`) is published and the `@@species` fuse of `constructor` holds.
+pub(crate) struct RegExpArgumentShare {
+    pub(crate) object: Value,
+    pub(crate) frame: usize,
+    pub(crate) realm: Value,
+    pub(crate) constructor: Value,
+    pub(crate) watch: crate::heap::PrototypeValueWatch,
+}
+
 struct ProgramEntry {
     residual: Residual,
     #[cfg(feature = "native-execution")]
@@ -648,11 +661,17 @@ struct ProgramEntry {
     /// The one object each receiver-only literal site evaluates to while it cannot escape
     /// (`RegExpLiteralSite::receiver`, `Vm::regexp_literal_receiver`).
     regexp_receivers: FxHashMap<u32, Value>,
+    /// The one object each callee-argument literal site shares while it cannot escape
+    /// (`Vm::regexp_literal_argument_of`).
+    regexp_arguments: FxHashMap<u32, RegExpArgumentShare>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
     /// Each root slot's rule, derived from the residual and `module_imports` on first read.
     root_slots: std::cell::OnceCell<Box<[crate::bytecode::RootSlotRule]>>,
+    /// Its root slots written once, the read records that keep their values, and how many
+    /// runs its root has made.
+    root_constants: root_constants::RootConstants,
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     views_in_lane: LaneViews,
@@ -881,9 +900,7 @@ impl ProgramStore {
     pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
         let entry = self.entry(id)?;
         let body = entry.residual.function_get(function as usize)?;
-        let cells = entry.js_entry_facts.0.get_or_init(|| {
-            (0..entry.residual.functions.capacity()).map(|_| std::cell::OnceCell::new()).collect()
-        });
+        let cells = entry.js_entry_facts.0.get_or_init(|| zeroed_entry_facts(entry.residual.functions.capacity()));
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
             let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body, !(self.tiers.stress || cfg!(test))); // tests pin tiny fixtures
             #[cfg(test)]
@@ -1291,10 +1308,12 @@ impl ProgramStore {
             function_sources,
             regexp_literals,
             regexp_receivers: FxHashMap::default(),
+            regexp_arguments: FxHashMap::default(),
             module_environment: None,
             import_meta: None,
             module_imports: Vec::new(),
             root_slots: std::cell::OnceCell::new(),
+            root_constants: root_constants::RootConstants::default(),
             module: false,
             views_in_lane,
             raw_masks: Default::default(),
@@ -1387,8 +1406,7 @@ impl ProgramStore {
                         .declarations
                         .descriptor_type(instruction.imm())
                         .is_some(),
-                    crate::bytecode::Class::WasmArrayNewData
-                    | crate::bytecode::Class::WasmArrayNewElem => {
+                    crate::staged::WasmRecordCheck::ArraySegment => {
                         use crate::wasm::gc::ArraySegmentInput;
                         instruction.register_window().count == ArraySegmentInput::COUNT
                             && signatures
@@ -2611,6 +2629,21 @@ impl ProgramStore {
         Some(entry.views_in_lane.of(&entry.residual))
     }
 
+    /// What a lane run's context reads of program `id` (`Vm::lane_context`), from one look at
+    /// its entry: its lane views (`lane_views`, none for a program linked to native entries or
+    /// one the store does not hold) and its constants (`constants`).
+    #[inline(always)]
+    pub(super) fn lane_tables(&self, id: ProgramId) -> (&[LaneViewCell], &[Value]) {
+        let Some(entry) = self.entry(id) else {
+            return (&[], &[]);
+        };
+        #[cfg(feature = "native-execution")]
+        if entry.native_js.is_some() {
+            return (&[], &entry.constants[..]);
+        }
+        (entry.views_in_lane.of(&entry.residual), &entry.constants[..])
+    }
+
     /// The lane view a general-loop entry of `function` runs with. A function that may loop
     /// gets it at its first entry; any other once its deferred runs are complete
     /// (`LANE_VIEW_DEFERRED_RUNS`), so code that runs a few times without looping (a module
@@ -2780,6 +2813,30 @@ impl ProgramStore {
         }
     }
 
+    /// The object callee-argument literal `site` of program `id` shares, with what its sharing
+    /// was proved under (`Vm::regexp_literal_argument_of`).
+    pub(crate) fn regexp_literal_argument(&self, id: ProgramId, site: usize) -> Option<&RegExpArgumentShare> {
+        self.entry(id)?.regexp_arguments.get(&u32::try_from(site).ok()?)
+    }
+
+    /// Keeps `share` as callee-argument literal `site`'s shared object, in place of any
+    /// object it shared before, which it never answers again.
+    pub(crate) fn cache_regexp_literal_argument(&mut self, id: ProgramId, site: usize, share: RegExpArgumentShare) {
+        if let (Some(entry), Ok(site)) = (self.entry_mut(id), u32::try_from(site)) {
+            entry.regexp_arguments.insert(site, share);
+        }
+    }
+
+    /// Drops callee-argument literal `site`'s shared object, which it never answers again.
+    pub(crate) fn forget_regexp_literal_argument(&mut self, id: ProgramId, site: usize) {
+        let Ok(site) = u32::try_from(site) else { return };
+        if self.entry(id).is_some_and(|entry| entry.regexp_arguments.contains_key(&site))
+            && let Some(entry) = self.entry_mut(id)
+        {
+            entry.regexp_arguments.remove(&site);
+        }
+    }
+
     pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
@@ -2828,7 +2885,9 @@ impl ProgramStore {
             roots.extend_from_slice(&entry.constants);
             roots.extend(entry.function_sources.values().copied());
             roots.extend(entry.regexp_receivers.values().copied());
+            roots.extend(entry.regexp_arguments.values().flat_map(|share| [share.object, share.realm, share.constructor]));
             roots.extend(entry.module_environment);
+            roots.extend(entry.root_constants.environment.get());
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {
                 ModuleImport::Value(value) => *value,
@@ -3218,6 +3277,23 @@ mod jit_code_cache_tests {
 pub(super) struct JsEntryFactsTable(
     std::cell::OnceCell<Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]>>,
 );
+
+// An empty cell is zero bits, which the zeroed table relies on.
+const _: () = assert!(
+    // SAFETY: a cell is one pointer-sized `Option<Rc<_>>`, whose `None` this reads.
+    unsafe { std::mem::transmute::<std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>, usize>(std::cell::OnceCell::new()) } == 0
+);
+
+/// `len` empty entry-fact cells on zero pages: a program's table takes a cell for each function
+/// it may append, and a filled table would touch every page of them at the first JavaScript
+/// tier entry of any function. Only the pages of functions that enter the tier become resident.
+fn zeroed_entry_facts(len: usize) -> Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]> {
+    let zeros: Box<[usize]> = vec![0; len].into_boxed_slice();
+    let cells = Box::into_raw(zeros) as *mut [std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>];
+    // SAFETY: the allocation is `len` words, the layout of `len` cells of one pointer each
+    // (asserted above), zeroed, so every cell is empty; the box alone owns it.
+    unsafe { Box::from_raw(cells) }
+}
 
 /// Counts a comparison in the guard census: strict (in)equality in its third column, an
 /// order (`<`, `<=`, `>`, `>=`) in its fourth.

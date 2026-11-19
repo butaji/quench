@@ -26,7 +26,7 @@ pub(crate) const KEPT_MASK_BYTES: usize = 64 * 1024;
 impl RegisterMasks {
     /// Whether `function`'s table, at the width its registers need, would pass
     /// `KEPT_MASK_BYTES`.
-    fn too_large_to_keep(function: &Function) -> bool {
+    pub(crate) fn too_large_to_keep(function: &Function) -> bool {
         let width = if u32::from(function.registers) <= u64::BITS {
             std::mem::size_of::<u64>()
         } else if u32::from(function.registers) <= u128::BITS {
@@ -41,7 +41,7 @@ impl RegisterMasks {
     /// of its frames) where they are not derived yet and would pass `KEPT_MASK_BYTES`.
     pub(crate) fn for_collection(program: &crate::bytecode::ResidualProgram, function: u32) -> Option<&Self> {
         let record = program.function_get(function as usize)?;
-        (record.register_roots.masks.get().is_some() || !Self::too_large_to_keep(record)).then(|| program.register_root_masks(function))?
+        (record.register_masks_derived() || !Self::too_large_to_keep(record)).then(|| program.register_root_masks(function))?
     }
 
     /// `masks` at the narrowest width that holds every one of them.

@@ -44,6 +44,16 @@ impl<H: Host> Vm<H> {
         if let Some(keys) = self.plain_object_keys(object) {
             return Some(keys);
         }
+        // The shape's key strings, made once per shape, copied into the result in one part; the
+        // allocation does not collect, so the memo's strings stay live through the copy.
+        if let Some(keys) = self.own_enumerable_key_values_cached(object) {
+            return Some(self.array_of(&keys));
+        }
+        // The shape's key strings, made once per shape, copied into the result in one part; the
+        // allocation does not collect, so the memo's strings stay live through the copy.
+        if let Some(keys) = self.own_enumerable_key_values_cached(object) {
+            return Some(self.array_of(&keys));
+        }
         let keys: EnumerableKeys<Value> =
             self.shape_enumerable_keys(object)?.into_iter().map(|atom| self.atom_string(atom)).collect();
         Some(self.array_of(&keys))
@@ -79,6 +89,54 @@ impl<H: Host> Vm<H> {
             return Some(slots.iter().map(|(atom, _)| *atom).collect());
         }
         self.shape_enumerable_key_walk(object).map(EnumerableKeys::from_vec)
+    }
+
+    /// The own enumerable string keys of `object` as atoms, in OrdinaryOwnPropertyKeys order,
+    /// memoized per shape (`enumerable_key_lists`). Shapes never change, so an entry holds for
+    /// the shape's life; compaction and `invalidate_field_caches` clear the list. `None` for
+    /// every object `shape_enumerable_slots` declines (Proxy, array, typed array, String
+    /// wrapper, module namespace, side descriptors, dictionary shapes), which keep the general path.
+    pub(crate) fn own_enumerable_keys_cached(&mut self, object: Value) -> Option<std::rc::Rc<[Atom]>> {
+        let data = self.object_data(object)?;
+        let shape = data.shape();
+        if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
+            return None;
+        }
+        if let Some(Some(keys)) = self.enumerable_key_lists.get(shape as usize) {
+            return Some(keys.clone());
+        }
+        let keys: std::rc::Rc<[Atom]> = self.shape_enumerable_slots(object)?.iter().map(|&(atom, _)| atom).collect();
+        let index = shape as usize;
+        if self.enumerable_key_lists.len() <= index {
+            self.enumerable_key_lists.resize(index + 1, None);
+        }
+        self.enumerable_key_lists[index] = Some(keys.clone());
+        Some(keys)
+    }
+
+    /// The same keys as `own_enumerable_keys_cached`, as string values, memoized per shape
+    /// (`enumerable_key_value_lists`). The heap does not keep an atom's string, so the memo
+    /// holds no string across a collection: `collect_inner` clears it with the constructed-shape
+    /// memo, as do compaction, `invalidate_field_caches` and program reset. A value is valid
+    /// until the next collection, and a caller that holds one across a collection roots it as
+    /// it would any other value. `None` wherever `own_enumerable_keys_cached` is `None`.
+    pub(crate) fn own_enumerable_key_values_cached(&mut self, object: Value) -> Option<std::rc::Rc<[Value]>> {
+        let data = self.object_data(object)?;
+        let shape = data.shape();
+        if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
+            return None;
+        }
+        if let Some(Some(values)) = self.enumerable_key_value_lists.get(shape as usize) {
+            return Some(values.clone());
+        }
+        let keys = self.own_enumerable_keys_cached(object)?;
+        let values: std::rc::Rc<[Value]> = keys.iter().map(|&atom| self.atom_string(atom)).collect();
+        let index = shape as usize;
+        if self.enumerable_key_value_lists.len() <= index {
+            self.enumerable_key_value_lists.resize(index + 1, None);
+        }
+        self.enumerable_key_value_lists[index] = Some(values.clone());
+        Some(values)
     }
 
     /// `shape_enumerable_keys` with each key's slot, for an object whose shape alone decides

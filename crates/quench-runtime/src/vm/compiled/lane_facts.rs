@@ -7,28 +7,41 @@ use std::collections::BTreeMap;
 /// The unit PCs of a previous body's leaves: the specialization's feedback.
 pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<usize> {
     let exits = ExitTable::of_unit(unit);
-    generic.iter().filter_map(|exit| exits.site(*exit).map(|site| site.unit_pc)).collect()
+    generic.iter().filter_map(|exit| exits.site(*exit).map(|site| site.unit_pc as usize)).collect()
 }
 
 /// The calls a unit still makes (none it inlines) whose callees have bodies. Each candidate
 /// owns one contiguous stable slice, which the code names by address. A site with several
-/// callees binds the first the unit does not inline: the calls its alternatives miss.
+/// callees binds every candidate the unit does not inline, in the order the candidates list them
+/// (a chain of identity tests takes them, `Lowering::polymorphic_call`); a construction binds only
+/// the first, and a site whose candidates are all inlined binds the first of them.
 pub(super) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidates])
-    -> (Box<[DirectCallee]>, BTreeMap<usize, *const DirectCallee>) {
-    let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
+    -> (Box<[DirectCallee]>, BTreeMap<usize, Vec<*const DirectCallee>>) {
+    let chosen: Vec<(usize, Vec<DirectCallee>)> = unit.instructions.iter().enumerate()
         .filter(|(_, instruction)| crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Call) || crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Construct))
-        .filter_map(|(pc, _)| match unit.origins[pc] {
+        .filter_map(|(pc, instruction)| match unit.origins[pc] {
             lane_unit::Origin::Caller(origin) => {
                 let inlined = |callee: &DirectCallee| unit.frames.iter()
                     .any(|frame| frame.parent.is_none() && frame.call == origin && frame.target.function == callee.target.function);
                 let candidates = direct.get(origin as usize)?;
-                candidates.iter().find(|callee| !inlined(callee)).or_else(|| candidates.first()).cloned().map(|callee| (pc, callee))
+                let mut bound: Vec<DirectCallee> = candidates.iter().filter(|callee| !inlined(callee)).cloned().collect();
+                if bound.is_empty() { bound.extend(candidates.first().cloned()); }
+                if crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Construct) { bound.truncate(1); }
+                (!bound.is_empty()).then_some((pc, bound))
             }
             lane_unit::Origin::Inlined { .. } => None,
         })
-        .unzip();
-    let direct: Box<[DirectCallee]> = direct.into_boxed_slice();
-    let sites = pcs.iter().zip(direct.iter()).map(|(pc, callee)| (*pc, std::ptr::from_ref(callee))).collect();
+        .collect();
+    let mut owned: Vec<DirectCallee> = Vec::new();
+    let mut spans: Vec<(usize, std::ops::Range<usize>)> = Vec::with_capacity(chosen.len());
+    for (pc, callees) in chosen {
+        let start = owned.len();
+        owned.extend(callees);
+        spans.push((pc, start..owned.len()));
+    }
+    let direct: Box<[DirectCallee]> = owned.into_boxed_slice();
+    // The pointers are taken once the slice is boxed, so they name its final elements.
+    let sites = spans.into_iter().map(|(pc, span)| (pc, direct[span].iter().map(std::ptr::from_ref).collect())).collect();
     (direct, sites)
 }
 
@@ -63,27 +76,27 @@ pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
     targets
 }
 
+/// Whether `code` jumps backward: it has a loop, whose iterations repay any entry.
+pub(super) fn closes_loop(code: &[crate::bytecode::WideInstruction]) -> bool {
+    code.iter().enumerate().any(|(pc, instruction)|
+        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc)
+}
+
 /// Whether a body has work that amortizes an entry, which costs a few hundred instructions
 /// the lane's own run of a short leaf never pays: a loop, an inlined call, a call of itself
 /// (its recursion runs natively inside the entry), or length (`Tiers::amortizing_instructions`).
 pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
-    let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
+    closes_loop(&unit.instructions) || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
 }
 
 /// Whether one entry of `unit` saves more interpreter time than the body's entry costs
 /// (`Priors::body_entry_ns`), its inlined callees' work included: a unit with a loop does, and
 /// so does one that calls itself (`calls_itself`).
 pub(super) fn entry_repays(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
-    let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || calls_itself(direct, function) || straight_line_repays(&tiers.priors, unit.instructions.len())
+    closes_loop(&unit.instructions) || calls_itself(direct, function) || straight_line_repays(&tiers.priors, unit.instructions.len())
 }
 
-/// The call depth `recursion_cycle` follows: a cycle through more functions than this is weighed as
-/// straight-line code.
-const RECURSION_DEPTH: usize = 4;
+use tier_policy::RECURSION_DEPTH;
 
 /// The functions that call `function` back through the targets their call sites linked
 /// (`targets`), each within `RECURSION_DEPTH` calls of it: `function` itself where it recurses
@@ -132,7 +145,7 @@ fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
 /// Whether a straight-line unit of `instructions` instructions repays its entry: the share of
 /// its interpreted time the body keeps exceeds the body's entry cost.
 fn straight_line_repays(priors: &tier_policy::Priors, instructions: usize) -> bool {
-    instructions as u64 * priors.interpreter_ns * (tier_policy::PER_MILLE - priors.body_share) / tier_policy::PER_MILLE > priors.body_entry_ns
+    instructions >= priors.repaying_length(priors.body_share)
 }
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
@@ -181,6 +194,19 @@ impl std::fmt::Write for Fnv {
 pub(super) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView, unplanned: bool, diagnostics: bool) -> super::tier_model::Pick {
     let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
     super::tier_model::decide(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir }, unplanned, diagnostics)
+}
+
+/// Whether `caller`'s body, compiled quick from a plan of `ir` instructions, moves to an
+/// optimizing compile now that it has run `entries` times (`tier_model::optimizes`).
+pub(in crate::vm) fn optimizes_quick_body(tiers: &Tiers, caller: &super::super::dispatch_fast::LaneView, length: u64, entries: u32, ir: usize) -> bool {
+    super::tier_model::optimizes(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir })
+}
+
+/// Whether `function`'s u-jit body, which `pays_compile` admitted at `entries`, compiles quick
+/// (`tier_model::compiles_quick`).
+pub(super) fn compiles_quick(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView) -> bool {
+    let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
+    super::tier_model::compiles_quick(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir }, true)
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a

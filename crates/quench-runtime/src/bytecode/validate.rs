@@ -266,6 +266,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             }
             FieldLayout::RegisterCount => true, // The associated window base owns the bounds check.
             FieldLayout::SignedConstant => true,
+            FieldLayout::WasmPayloadType => crate::staged::wasm_exception::PayloadType::of_code(value).is_some(),
             FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
@@ -518,6 +519,9 @@ impl ResidualProgram {
 
     pub(crate) fn validate(&self) -> Result<(), String> {
         if let Some(source) = &self.source { source.validate_call_sites()?; }
+        // The compiled-source bytes a position may name: those of the kept text, after its
+        // wrapper prefix. A program that keeps no text has none to bound them by.
+        let source_end = self.source.as_ref().map(|source| source.base as usize + source.text.len());
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }
@@ -550,21 +554,6 @@ impl ResidualProgram {
             // function's own derivation, as is every other fact an encoding keeps.
             if !function.derived_facts_hold(self) {
                 return Err(format!("function {index} carries facts its code does not derive"));
-            }
-            // A lane lets the callee of a dead result skip building it, so each claim is the
-            // compiler's own derivation (`liveness::register_roots`).
-            // An activation fills only the registers below the live entry bound, so that bound
-            // is the compiler's own derivation too.
-            if !function.register_roots.dead_call_results().is_empty()
-                || function.register_roots.entry_fill(function.registers) < function.registers
-            {
-                let derived = crate::compile::liveness::register_roots(function, self, &self.field_sites, &self.superinstructions);
-                if derived.dead_call_results() != function.register_roots.dead_call_results() {
-                    return Err(format!("function {index} claims dead call results its liveness does not prove"));
-                }
-                if derived.entry_fill(function.registers) > function.register_roots.entry_fill(function.registers) {
-                    return Err(format!("function {index} claims an entry liveness its liveness does not prove"));
-                }
             }
             if function
                 .self_binding_slot
@@ -644,7 +633,7 @@ impl ResidualProgram {
             } else {
 function.plain_local_slots(&self.superinstructions)
             };
-            if let Some(initializer) = function.instance_initializer {
+            if let Some(initializer) = function.instance_initializer() {
                 let valid = self
                     .functions
                     .get(initializer as usize)
@@ -654,7 +643,7 @@ function.plain_local_slots(&self.superinstructions)
                             && plan.parent == function.parent
                             && plan.class_initializer
                             && !plan.constructible
-                            && plan.instance_initializer.is_none()
+                            && plan.instance_initializer().is_none()
                     });
                 if !valid {
                     return Err(format!(
@@ -672,19 +661,18 @@ function.plain_local_slots(&self.superinstructions)
             }
             let code_len = function.code.len() as u32;
             // One decoding pass: entries strictly increase in pc, lie within the code and
-            // have a line and column, and the last decoded entry is the table's last.
+            // within the compiled source, and the last decoded entry is the table's last.
             let mut previous_pc = None;
             let mut decoded_last = None;
-            for position in function.source_positions.iter() {
-                if previous_pc.is_some_and(|pc| pc >= position.pc)
-                    || position.pc >= code_len
-                    || position.line == 0
-                    || position.column == 0
+            for entry in function.source_positions.iter() {
+                if previous_pc.is_some_and(|pc| pc >= entry.pc)
+                    || entry.pc >= code_len
+                    || source_end.is_some_and(|end| entry.offset as usize > end)
                 {
                     return Err(format!("function {index} has invalid source positions"));
                 }
-                previous_pc = Some(position.pc);
-                decoded_last = Some(position);
+                previous_pc = Some(entry.pc);
+                decoded_last = Some(entry);
             }
             if decoded_last != function.source_positions.last() {
                 return Err(format!("function {index} has invalid source positions"));
@@ -899,7 +887,7 @@ function.plain_local_slots(&self.superinstructions)
                 || (site.argument_start as usize)
                     .checked_add(site.argument_count as usize)
                     .is_none_or(|end| end > self.method_arguments.len())
-                || site.receiver_path.is_some_and(|(atom, cache)| {
+                || site.receiver_path.get().is_some_and(|(atom, cache)| {
                     !atom_in_bounds(atom, self.atoms.len())
                         || !cache_in_bounds(cache, self.cache_sites.get())
                 })
@@ -908,7 +896,7 @@ function.plain_local_slots(&self.superinstructions)
             }
         }
         for site in &self.field_sites {
-            if site.sources.iter().flatten().any(|(line, column)| *line == 0 || *column == 0)
+            if site.source_offsets().into_iter().flatten().any(|offset| source_end.is_some_and(|end| offset as usize > end))
                 || !field_base_in_bounds(site.base.0, REGISTER_MASK, 0)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
                 || !cache_in_bounds(site.first.1, self.cache_sites.get())
@@ -1309,13 +1297,14 @@ mod tests {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
@@ -1334,7 +1323,6 @@ mod tests {
             local_registers: vec![].into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -1344,16 +1332,9 @@ mod tests {
             registers,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(), exact_sums: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: crate::bytecode::RegisterRoots::new(root != u32::MAX),
             undefined_register: None,

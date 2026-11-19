@@ -38,7 +38,7 @@ pub(crate) mod string_form;
 #[path = "../../quench-runtime/src/staged/field_cache_layout.rs"]
 pub(crate) mod field_cache_layout;
 
-/// The typed-array kinds, the runtime's own enum (`TypedArrayKind`).
+/// The typed-array kinds, the runtime's own enum (`TypedArrayKind`, mounted by `codes.rs`).
 pub(crate) use crate::codes::typed_array_catalog;
 
 #[path = "../../quench-runtime/src/staged/layout_offsets.rs"]
@@ -47,7 +47,7 @@ pub(crate) use offsets::*;
 
 /// The lane-call protocol, shared with the host (`quench_bjit::call_record`).
 #[path = "../src/call_record.rs"]
-pub(crate) mod call_record;
+pub mod call_record;
 /// The words shared with the host (`quench_bjit::shared_words`).
 #[path = "../src/shared_words.rs"]
 pub(crate) mod shared_words;

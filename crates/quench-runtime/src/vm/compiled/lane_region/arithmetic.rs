@@ -51,7 +51,7 @@ impl Lowering<'_, '_> {
         (operation, exit): (NumberArithmetic, ir::Block)) {
         let truncated = match operation {
             NumberArithmetic::Add | NumberArithmetic::Subtract => self.truncated_through_sums(pc, operands.0),
-            NumberArithmetic::Multiply if self.truncated_through_sums(pc, operands.0) => {
+            NumberArithmetic::Multiply if self.truncated_through_sums(pc, operands.0) || self.truncated_through_int32_sum(state, pc, operands.0) => {
                 if !self.small_int32_factor(operands.1) && !self.ranges.overflow_free(pc) {
                     self.truncated_product(state, operands, exit);
                     return;

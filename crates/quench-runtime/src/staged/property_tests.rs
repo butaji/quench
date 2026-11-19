@@ -205,7 +205,7 @@ fn run(answers: bool, operation: Operation<u64, ()>) -> (Option<u64>, Vec<&'stat
 fn host_plans_and_callouts_reach_the_frame_and_a_declining_frame_leaves() {
     let lookup = FieldLookup::Atom { atom: 1, base: FieldBase::register(1), cache_site: 2 };
     let cases: [(Operation<u64, ()>, &str); 6] = [
-        (Operation::GetField { base: FieldBase::register(1), lookup }, "field_get_host"),
+        (Operation::GetField { base: FieldBase::register(1), lookup, destination: 0 }, "field_get_host"),
         (Operation::FieldGetHost { object: 0, atom: 1, site: 2 }, "field_get_host"),
         (Operation::FieldAdd { object: 0, atom: 1, site: 2, value: 5 }, "field_add"),
         (Operation::Delete { destination: 0, base: 1, key: 2, strict: true }, "delete_strict"),
@@ -239,7 +239,7 @@ fn the_property_instructions_decode_to_their_operations() {
     use crate::bytecode::{Op, WideInstruction};
     let decode = |instruction| Operation::<u64, ()>::decode(instruction, crate::staged::DecodeContext::EMPTY);
     let get = decode(WideInstruction::new(Op::GetField, 1, 2, 3, 4)).expect("a register-based read decodes");
-    assert!(matches!(get, Operation::GetField { base, lookup: FieldLookup::Atom { atom: 4, cache_site: 3, .. } } if base == FieldBase::register(2)));
+    assert!(matches!(get, Operation::GetField { base, lookup: FieldLookup::Atom { atom: 4, cache_site: 3, .. }, .. } if base == FieldBase::register(2)));
     let set = decode(WideInstruction::new(Op::SetField, 1, 2, 3, 9)).expect("a store decodes");
     assert!(matches!(set, Operation::SetField { value: 1, base: Some(2), atom: 9, site: 3, .. }));
     let this = decode(WideInstruction::new(Op::SetThisField, 1, 0, 3, 9)).expect("a store to this decodes");
@@ -260,7 +260,7 @@ fn read_owned_by(heap: &Heap, plan: FieldPlan<'static>, object: Value, proven: O
     let mut stage = Concrete::new(heap.property_values_base());
     let lookup = FieldLookup::Atom { atom: 0, base: FieldBase::register(1), cache_site: 0 };
     frame.registers = vec![0, object.to_bits()];
-    let word = match step(&mut stage, &mut frame, Operation::GetField { base: FieldBase::register(1), lookup }) {
+    let word = match step(&mut stage, &mut frame, Operation::GetField { base: FieldBase::register(1), lookup, destination: 0 }) {
         Step::Value(word) => Some(Value::from_bits(word)),
         _ => None,
     };

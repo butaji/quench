@@ -78,10 +78,9 @@ impl<H: Host> Vm<H> {
         }
         let template = if construct { NOT_A_CONSTRUCTOR } else { NOT_A_FUNCTION };
         let rendered = program
-            .source_position(function as u32, pc)
-            .and_then(|position| {
+            .source_offset(function as u32, pc)
+            .and_then(|offset| {
                 let source = program.source.as_ref()?;
-                let offset = source.byte_offset(position)?;
                 let span = program.functions[function].header().source_span;
                 function_sites::call_site_callee(source, span, (offset, construct))
             })
@@ -145,7 +144,9 @@ impl<H: Host> Vm<H> {
 
 fn call_kind(instruction: WideInstruction) -> Option<bool> {
     // merge: HEAD's named_callee_is_construction is replaced by the derivation's construction and makes_call tests.
-    if crate::staged::Operation::<u64, ()>::is_construction(instruction) && !instruction.is_super_construct() {
+    if crate::staged::Operation::<u64, ()>::is_construction(instruction)
+        && !matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::SuperCall { .. }))
+    {
         Some(true)
     } else if crate::staged::makes_call(instruction.op()) {
         Some(false)
@@ -190,7 +191,7 @@ pub(crate) fn freeze_source_call_sites(source: &crate::bytecode::ProgramSource) 
 /// consumes frozen facts; it never reconstructs syntax on a diagnostic path.
 pub(super) fn source_expression(program: &ResidualProgram, line: u32, column: u32) -> Option<String> {
     let source = program.source.as_ref()?;
-    let offset = source.byte_offset(crate::bytecode::SourcePosition { pc: 0, line, column })?;
+    let offset = source.byte_offset(crate::bytecode::SourcePosition { line, column })?;
     let sites = frozen_call_sites(source)?;
     let index = sites.binary_search_by_key(&offset, |site| site.offset).ok()?;
     let span = sites[index].expression?;
@@ -571,7 +572,7 @@ mod tests {
             for function in 0..program.function_count() {
                 for (pc, instruction) in program.function(function).instructions().enumerate() {
                     if let Some(construct) = call_kind(instruction)
-                        && let Some(offset) = program.source_position(function as u32, pc as u32).and_then(|position| source.byte_offset(position))
+                        && let Some(offset) = program.source_offset(function as u32, pc as u32)
                     { calls.insert((offset, construct)); }
                 }
             }

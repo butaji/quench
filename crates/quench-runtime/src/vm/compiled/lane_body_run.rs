@@ -102,6 +102,12 @@ impl<H: Host> Vm<H> {
             (*dispatch).lane_values_top = words.values_top;
             (*dispatch).lane_values_end = words.values_end;
             (*dispatch).lane_activations_top = words.activations_top;
+            (*dispatch).head.plain_depth = words.plain_depth;
+            (*dispatch).head.plain_depth_limit = words.plain_depth_limit;
+            (*dispatch).head.activation_count = words.activation_count;
+            (*dispatch).head.body_table = words.body_table;
+            (*dispatch).head.body_top = words.body_top;
+            (*dispatch).head.native_table = words.native_table;
             &raw mut (*frame).context
         }
     }

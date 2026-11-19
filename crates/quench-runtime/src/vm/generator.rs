@@ -1380,7 +1380,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         loop {
             let request = match self.generator_record_mut(generator) {
-                Some(record) if !record.is_executing() => record.requests.pop_front(),
+                Some(record) if !record.is_executing() => record.next_request(),
                 _ => None,
             };
             let Some(request) = request else {
@@ -1474,8 +1474,7 @@ impl<H: Host> Vm<H> {
                     return Ok(promise);
                 }
                 if record.is_completed() {
-                    let result = vm.iterator_result(Value::UNDEFINED, true)?;
-                    vm.promise_resolve_value(p, promise, result)?;
+                    vm.resolve_iterator_result(p, promise, Value::UNDEFINED, true)?;
                     return Ok(promise);
                 }
                 let Some(continuation) = record.suspended_continuation() else {
@@ -1548,8 +1547,7 @@ impl<H: Host> Vm<H> {
             }
         }
         if delegated {
-            let result = self.iterator_result(value, false)?;
-            self.promise_resolve_value(p, promise, result)?;
+            self.resolve_iterator_result(p, promise, value, false)?;
             return Ok(());
         }
         // The yield awaits its value first; its continuation stays in the record.
@@ -1566,8 +1564,7 @@ impl<H: Host> Vm<H> {
         if let Some(record) = self.generator_record_mut(generator) {
             record.complete();
         }
-        let result = self.iterator_result(value, true)?;
-        self.promise_resolve_value(p, promise, result)
+        self.resolve_iterator_result(p, promise, value, true)
     }
 
     pub(super) fn fail_async_generator(

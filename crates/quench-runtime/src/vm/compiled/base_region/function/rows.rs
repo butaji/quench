@@ -4,6 +4,13 @@
 
 use super::*;
 
+/// The method call `instruction` at `pc` as a `Method` chain, its callee read into the scratch register past the
+/// function's own (`Sites::scratch`), where the call is a method call of a window of consecutive registers (`call_plan::method_shape`).
+fn method_call(sites: &Sites, pc: u32, instruction: WideInstruction, returning: bool) -> Option<CallShape> {
+    let scratch = Register::try_from(sites.scratch).ok()?;
+    super::super::call_plan::method_shape(sites.known.program, instruction, pc, scratch, returning)
+}
+
 /// The row of `instruction` at `pc`, which carries no result flag (`cover` strips the return flag
 /// of a returning one, `returning`): a `Return` of a register, a `throw` a handler of the function
 /// catches natively (`throws::caught`), a call of a form no stitch plans (`Sites::plans`: the
@@ -16,6 +23,7 @@ pub(super) fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction,
     }
     if let Some(form) = CallForm::of(instruction) {
         let shape = CallShape { returning, ..CallShape::of(pc, instruction, form) };
+        let shape = method_call(sites, pc, instruction, returning).unwrap_or(shape);
         return Decoded::step(Step::Call(shape), Some(shape.result));
     }
     match instruction.op().class() {
@@ -35,7 +43,7 @@ pub(super) fn is_fast(row: &Decoded) -> bool {
 /// Whether a row may be followed by the completion of the activation with its result: it falls
 /// through to what follows it, and writes the register the completion reads.
 pub(super) fn completable(row: &Decoded) -> bool {
-    row.dst.is_some() && row.target.is_none() && row.step.is_none_or(|step| matches!(step, Step::Helper | Step::Fast(_) | Step::Call(_)))
+    row.dst.is_some() && row.target.is_none() && row.step.is_none_or(|step| matches!(step, Step::Helper | Step::Allocate | Step::Fast(_) | Step::Call(_)))
 }
 
 impl Sites<'_> {
@@ -64,7 +72,11 @@ pub(super) fn expanded(sites: &Sites, pc: u32, instruction: WideInstruction) -> 
 /// The registers the rows name above the function's own `registers`: the scratch the rows of `expanded` write, and inlined windows, whose
 /// frame slots the body's recovery room covers (`LaneRecoverySpace::reaching`).
 pub(super) fn scratch(rows: &[Decoded], registers: u16) -> usize {
-    let reach = rows.iter().flat_map(Decoded::registers).map(|register| usize::from(register) + 1).max().unwrap_or(0);
+    let method = rows.iter().filter_map(|row| match row.step {
+        Some(Step::Call(shape)) => shape.method.map(|method| method.scratch),
+        _ => None,
+    });
+    let reach = rows.iter().flat_map(Decoded::registers).chain(method).map(|register| usize::from(register) + 1).max().unwrap_or(0);
     reach.saturating_sub(usize::from(registers))
 }
 
@@ -138,7 +150,14 @@ pub(super) fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers
     let mut calls: Vec<Option<Vec<What>>> = region.instructions().iter().map(|_| None).collect();
     for (k, instruction) in planned {
         calls[k] = Some(match folds.iter().position(|pair| pair.call == at(k)) {
-            Some(index) => folds.swap_remove(index).whats(),
+            Some(index) => {
+                let mut pair = folds.swap_remove(index);
+                // The Number rows between the read and the call leave at the read, as the call's row does.
+                for (j, row) in std::mem::take(&mut pair.arithmetic) {
+                    calls[j] = Some(vec![What::Resume(row, pair.read)]);
+                }
+                pair.whats()
+            }
             None => call(region, at(k), sites, instruction),
         });
     }

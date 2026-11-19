@@ -89,8 +89,8 @@ mod tests {
     fn an_own_constant_read_needs_the_record_itself_and_the_watch() {
         let mut heap = Heap::new();
         heap.register_property_shape(1, 1, None);
-        let first = heap.alloc(Cell::Object(Object::new(Value::NULL)));
-        let second = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let first = heap.alloc_object(Object::new(Value::NULL));
+        let second = heap.alloc_object(Object::new(Value::NULL));
         heap.property_add(first, Value::integer(1), 1);
         heap.property_add(second, Value::integer(1), 1);
         let (one, other) = (heap.object(first).unwrap(), heap.object(second).unwrap());

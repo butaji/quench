@@ -73,8 +73,9 @@ pub(crate) const DIRECT_STRING_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DI
 pub(crate) const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
 /// The environment record family's code: the vector bit with the promise bit.
 pub(crate) const DIRECT_ENVIRONMENT_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_PROMISE_HANDLE_BIT;
-/// The collection record family's code (a Map or a Set): the vector bit with the promise and
-/// object bits. Like a vector, a collection is never narrow (`to_narrow` finds no upper word).
+/// The symbol record family's code: the vector bit with the object bit.
+pub(crate) const DIRECT_SYMBOL_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
+/// The Map and Set record family's code: the vector, promise and object bits.
 pub(crate) const DIRECT_COLLECTION_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
 /// The payload bits that code a heap value's reference family.
 pub(crate) const HEAP_REFERENCE_BITS: u64 = HEAP_FAMILY_BITS | DIRECT_V128_HANDLE_BIT;
@@ -99,10 +100,10 @@ pub(crate) const DIRECT_FUNCTION_TAG: u64 = TAG_HEAP | DIRECT_FUNCTION_HANDLE_BI
 pub(crate) const DIRECT_PROMISE_TAG: u64 = TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT;
 /// Tag and family bits that distinguish a direct iterator record.
 pub(crate) const DIRECT_ITERATOR_TAG: u64 = TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS;
+/// Tag and family bits that distinguish a direct collection record (a Map, Set, WeakMap or WeakSet).
+pub(crate) const DIRECT_COLLECTION_TAG: u64 = TAG_HEAP | DIRECT_COLLECTION_HANDLE_BITS;
 /// Tag and family bits that distinguish a direct string record.
 pub(crate) const DIRECT_STRING_TAG: u64 = TAG_HEAP | DIRECT_STRING_HANDLE_BITS;
-/// Tag and family bits that distinguish a direct collection (Map or Set) record.
-pub(crate) const DIRECT_COLLECTION_TAG: u64 = TAG_HEAP | DIRECT_COLLECTION_HANDLE_BITS;
 /// The upper word of a direct object handle, and its narrow code: its family bits, as `to_narrow`'s
 /// table names them; `to_narrow_reference` packs it without the lookup.
 pub(crate) const DIRECT_OBJECT_UPPER: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;

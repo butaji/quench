@@ -93,4 +93,25 @@ pub(crate) struct JsStepHead<V> {
     /// its word is the encoded link of `Array.prototype` while the held index-free chain proof covers
     /// its chain, else zero. Read at every use, so never stale.
     pub(crate) array_chain_index_free_address: usize,
+    /// The address of the lane run's plain-frame depth word (`PlainFrames`, `frame::PLAIN_DEPTH_AT`); its
+    /// registers word is `frame::PLAIN_REGISTERS_AT` past it. Emitted calls bump the depth and set the registers.
+    /// (reconciled with u-jit F5 on merge)
+    pub(crate) plain_depth: usize,
+    /// The plain depth's bound: a call whose header would pass it leaves to the helper row.
+    /// (reconciled with u-jit F5 on merge)
+    pub(crate) plain_depth_limit: usize,
+    /// The address of the word holding `frames_below_plain()` (records plus sealed headers): the body table
+    /// is indexed by `*activation_count + plain_depth`, since a record push resets the plain depth to 0.
+    pub(crate) activation_count: usize,
+    /// The running body (`LaneMethod`) of each native frame, indexed by `*activation_count + plain_depth`, and the address of
+    /// the table's top word. (reconciled with u-jit F5 on merge)
+    pub(crate) body_table: usize,
+    pub(crate) body_top: usize,
+    /// The DirectCallee descriptor of each native frame, indexed as `body_table` (the u-jit half of F5).
+    pub(crate) native_table: usize,
+    /// The array records' mark blocks and their count, which a store of a reference into a direct
+    /// array's elements reads as the object records' are (`RecordSpace::Array`, `Heap::store_logs`);
+    /// refreshed with the other bases, as a callout may move the block list.
+    pub(crate) array_mark_blocks: usize,
+    pub(crate) array_mark_block_count: usize,
 }

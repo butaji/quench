@@ -3,6 +3,7 @@
 
 use super::{Concrete, Stage};
 use super::region::Region;
+pub(crate) use super::double_view::{double_view, reloaded_double_view};
 
 /// Element `index` of the dense backing of `length` values at `values`, with its address:
 /// `None` (leaving at `miss`) past the backing or at a hole (`Value::DELETED`), which the
@@ -86,6 +87,11 @@ pub(crate) struct DenseView<W> {
     /// backing's form. `None` where the proof admitted a wide backing alone (a loop's hoisted
     /// view, a loop entry's).
     pub(crate) double: Option<W>,
+    /// Whether the backing counts no others for this view (`OTHERS_UNKNOWN`, as a loop's hoisted
+    /// writable view holds it: `emit_dense_array_uncounted`), so a store through it writes the
+    /// element alone (`replace_uncounted_element`). A view proved by a store's own check keeps the
+    /// count, `false`.
+    pub(crate) uncounted: bool,
 }
 
 /// The view of the direct array `base` among the array records at `records`, writable where
@@ -96,7 +102,7 @@ pub(crate) fn prove_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Wor
     miss: S::Miss) -> Option<DenseView<S::Word>> {
     let backing = if writable { writable_array_backing(stage, records, base, miss)? } else { flagged_backing(stage, records, base, miss)? };
     let (length, double) = wide_or_double(stage, backing.length, miss)?;
-    Some(DenseView { values: backing.values, length, packed: false, within: false, double: Some(double) })
+    Some(DenseView { values: backing.values, length, packed: false, within: false, double: Some(double), uncounted: false })
 }
 
 /// A backing's flagged length word (`ENCODED_LEN`) as a view reads it: the count, and the
@@ -162,7 +168,8 @@ fn replace_wide<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Wor
     miss: S::Miss) -> Option<()> {
     let (address, old) = if view.within { present_element(stage, view.values, index, miss)? }
         else { dense_element(stage, view.values, view.length, index, miss)? };
-    replace_element(stage, view.values, address, old, value);
+    if view.uncounted { replace_uncounted_element(stage, address, value); }
+    else { replace_element(stage, view.values, address, old, value); }
     Some(())
 }
 
@@ -213,7 +220,6 @@ pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base:
 /// decoded through the upper-word table at `upper_words` (`object::decode_narrow_through`);
 /// `None` (leaving at `miss`) past the backing's end or at a hole.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn record_element<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, index: S::Word, upper_words: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let backing = flagged_backing(stage, record_base, base, miss)?;
@@ -363,47 +369,23 @@ fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: 
 /// length past int32.
 #[inline(always)]
 pub(crate) fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
-    use crate::heap::{ENCODED_LEN, NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
-    let backing = flagged_backing(stage, record_base, base, miss)?;
-    let payload = stage.load_u64(Region::Payload.mutable(), backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
-    let plain = super::object::plain_payload(stage, payload);
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let is_array = super::value::is_direct_array(stage, base);
+    stage.guard(is_array, miss)?;
+    let present = stage.ne_imm(record_base, 0u32);
+    stage.guard(present, miss)?;
+    let record = array_record(stage, record_base, base);
+    // The record's payload word is the backing's header when it holds no extras, which is the only
+    // case this read takes: one load gives the plain test and the header, and extras miss at once.
+    let header = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let plain = super::object::plain_payload(stage, header);
     stage.guard(plain, miss)?;
-    // A narrow or double backing counts its values as a wide one does, under its form's flag.
-    let count = stage.and_imm(backing.length, u64::from(!ENCODED_LEN));
-    super::value::length_value(stage, count, miss)
-}
-
-/// The raw doubles of the direct array `base` among the array records at `records`, whose backing
-/// is double (`heap::DOUBLE_LEN`) and counts no hole, writable where `writable`: their first word
-/// and count, which a loop reads and writes as a `Float64Array`'s elements
-/// (`lane_region::ElementViews::Double`). `None` (leaving at `miss`) for any other value or backing.
-#[inline(always)]
-pub(crate) fn double_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Word, writable: bool,
-    miss: S::Miss) -> Option<(S::Word, S::Word)> {
-    let view = prove_view(stage, records, base, writable, miss)?;
-    let flag = view.double?;
-    let double = stage.ne_imm(flag, 0u32);
-    stage.guard(double, miss)?;
-    // A double backing's count of others is of its holes (`heap::DOUBLE_LEN`).
-    let holes = stage.load_u32(Region::Elements.mutable(), view.values, crate::heap::OTHERS_FROM_VALUES);
-    let packed = stage.eq_imm(holes, 0u32);
-    stage.guard(packed, miss)?;
-    Some((view.values, view.length))
-}
-
-/// A `double_view` of the array record `record` read again after a helper that may have changed
-/// its backing: its first word, and its count while the backing is still double, else zero (its
-/// words are `Value`s again, `ArrayElements::make_mut`), so every access through the view leaves
-/// at its bounds test. A double backing gains no hole in place: its writers write Numbers alone.
-#[inline(always)]
-pub(crate) fn reloaded_double_view<S: Stage>(stage: &mut S, record: S::Word) -> (S::Word, S::Word) {
-    use crate::heap::{DOUBLE_LEN, ENCODED_LEN};
-    let Backing { values, length, .. } = record_backing(stage, record);
-    let flag = stage.and_imm(length, u64::from(DOUBLE_LEN));
-    let double = stage.ne_imm(flag, 0u32);
-    let count = stage.and_imm(length, u64::from(!ENCODED_LEN));
-    let empty = stage.constant(0);
-    (values, stage.select(double, count, empty))
+    let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
+    // A narrow or double backing flags its length's top bits: it misses.
+    let encoded = stage.ugt_imm(length, u64::from(!crate::heap::ENCODED_LEN));
+    let wide = stage.not(encoded);
+    stage.guard(wide, miss)?;
+    super::value::length_value(stage, length, miss)
 }
 
 /// Replaces the present element at `address` of the dense backing at `values`, which held

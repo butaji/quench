@@ -8,6 +8,7 @@
 
 use super::*;
 use quench_bjit::HOLES;
+use super::link::Target;
 
 /// Where a region's code can be re-entered: the resume thunk and, sorted by PC, each stub.
 pub(in crate::vm) struct ResumeTable {
@@ -140,7 +141,7 @@ mod tests {
             (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.jump_target() as usize) <= pc)
                 .then(|| (instruction.jump_target(), pc as u32))
         }).expect("the function has a loop");
-        let region = super::super::super::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, super::super::super::osr_loop::MethodCalls::Inliner).expect("the loop is admitted");
+        let region = super::super::super::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, super::super::super::osr_loop::MethodCalls::Inliner, &|_| false).expect("the loop is admitted");
         (program, id, region)
     }
 
@@ -150,7 +151,7 @@ mod tests {
     #[test]
     fn a_built_region_has_a_stub_at_each_pc() {
         let (program, id, region) = loop_region("function f(n){let s=0;for(let i=0;i<n;i++){s=s+i;}return s;} f(4);", "f");
-        let known = Known { program: &program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: None, classes: &[], shapes: &[] };
+        let known = Known { program: &program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[] };
         let spec = function::BodySpec { function: id as u32, registers: program.function(id).registers, known, realm: Some(RealmProof::default()), widened: &[], seen: &[], kinds: &[] };
         let helpers = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
         // SAFETY: the region has no callees, so no entry cell is read.
@@ -168,7 +169,7 @@ mod tests {
 
     #[cfg(all(test, target_arch = "x86_64"))]
     fn thunk_len() -> usize {
-        thunk(Ending::Region, 0).unwrap().len()
+        thunk(Ending::Region, 0, 0).unwrap().len()
     }
 
     /// A loop whose operands change type mid-run leaves compiled code at a guard and resumes

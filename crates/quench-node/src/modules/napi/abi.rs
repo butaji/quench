@@ -10,10 +10,10 @@ pub(crate) const NULL_VALUE: NapiValue = std::ptr::null_mut();
 /// `NAPI_AUTO_LENGTH`: the string is NUL-terminated.
 pub(crate) const AUTO_LENGTH: usize = usize::MAX;
 
-/// `napi_status`, in header order; the discriminants are the ABI values. Every value is
-/// named, including those only other Node-API implementations produce.
+/// `napi_status`; the discriminants are the ABI values, in header order. 21
+/// (`napi_would_deadlock`) and 22 (`napi_no_external_buffers_allowed`) are only produced by
+/// other Node-API implementations, so they have no variant here.
 #[repr(C)]
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Status {
     Ok,
@@ -37,40 +37,40 @@ pub(crate) enum Status {
     DateExpected,
     ArraybufferExpected,
     DetachableArraybufferExpected,
-    WouldDeadlock,
-    NoExternalBuffersAllowed,
-    CannotRunJs,
+    CannotRunJs = 23,
 }
 
+/// Node's `error_messages` table (js_native_api_v8.cc), indexed by status.
+const MESSAGES: &[&CStr] = &[
+    c"",
+    c"Invalid argument",
+    c"An object was expected",
+    c"A string was expected",
+    c"A string or symbol was expected",
+    c"A function was expected",
+    c"A number was expected",
+    c"A boolean was expected",
+    c"An array was expected",
+    c"Unknown failure",
+    c"An exception is pending",
+    c"The async work item was cancelled",
+    c"napi_escape_handle already called on scope",
+    c"Invalid handle scope usage",
+    c"Invalid callback scope usage",
+    c"Thread-safe function queue is full",
+    c"Thread-safe function handle is closing",
+    c"A bigint was expected",
+    c"A date was expected",
+    c"An arraybuffer was expected",
+    c"A detachable arraybuffer was expected",
+    c"Main thread would deadlock",
+    c"External buffers are not allowed",
+    c"Cannot run JavaScript",
+];
+
 impl Status {
-    /// Node's `error_messages` table (js_native_api_v8.cc), indexed by status.
     fn message(self) -> &'static CStr {
-        match self {
-            Status::Ok => c"",
-            Status::InvalidArg => c"Invalid argument",
-            Status::ObjectExpected => c"An object was expected",
-            Status::StringExpected => c"A string was expected",
-            Status::NameExpected => c"A string or symbol was expected",
-            Status::FunctionExpected => c"A function was expected",
-            Status::NumberExpected => c"A number was expected",
-            Status::BooleanExpected => c"A boolean was expected",
-            Status::ArrayExpected => c"An array was expected",
-            Status::GenericFailure => c"Unknown failure",
-            Status::PendingException => c"An exception is pending",
-            Status::Cancelled => c"The async work item was cancelled",
-            Status::EscapeCalledTwice => c"napi_escape_handle already called on scope",
-            Status::HandleScopeMismatch => c"Invalid handle scope usage",
-            Status::CallbackScopeMismatch => c"Invalid callback scope usage",
-            Status::QueueFull => c"Thread-safe function queue is full",
-            Status::Closing => c"Thread-safe function handle is closing",
-            Status::BigintExpected => c"A bigint was expected",
-            Status::DateExpected => c"A date was expected",
-            Status::ArraybufferExpected => c"An arraybuffer was expected",
-            Status::DetachableArraybufferExpected => c"A detachable arraybuffer was expected",
-            Status::WouldDeadlock => c"Main thread would deadlock",
-            Status::NoExternalBuffersAllowed => c"External buffers are not allowed",
-            Status::CannotRunJs => c"Cannot run JavaScript",
-        }
+        MESSAGES[self as usize]
     }
 }
 

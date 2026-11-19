@@ -1,21 +1,32 @@
 //! Source position tables, delta-coded per function, and their decoding.
 
-use super::SourcePosition;
+use super::SourceOffset;
 
 /// A function's source positions in increasing pc order, each delta-coded against the one
-/// before it as LEB128 varints: the pc advance, the line change (zigzag), then the column,
-/// as a change (zigzag) on the same line and absolute on a new one. Most entries take three
-/// bytes, a quarter of a `SourcePosition`, and a function keeps one per source location
-/// change while it compiles and for as long as it lives.
+/// before it as LEB128 varints: the pc advance, then the source byte offset's change (zigzag).
+/// Most entries take two bytes; a function keeps one per source location change for as long as
+/// it lives. Lines and columns are derived from the offsets only when something asks for them
+/// (`ProgramSource::position`).
+///
+/// A frozen table: its coded bytes are boxed to their exact length. A compile grows them in a
+/// `SourcePositionsBuilder` first, and a rewrite that relocates the entries builds a new table.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SourcePositions {
-    bytes: Vec<u8>,
+    bytes: Box<[u8]>,
     /// The final entry, which the next one is coded against.
-    last: Option<SourcePosition>,
+    last: Option<SourceOffset>,
     /// Where decoding may start, made on the first lookup of a table longer than one interval
     /// (`SourcePositions::at`): a stack trace through a large function otherwise decoded its
     /// table from the start for every frame (Babel: about 20K instructions a frame).
     checkpoints: std::cell::OnceCell<Box<SourcePositionIndex>>,
+}
+
+/// The entries of a function being compiled: the coded bytes in a growable buffer, which
+/// `freeze` boxes.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SourcePositionsBuilder {
+    bytes: Vec<u8>,
+    last: Option<SourceOffset>,
 }
 
 /// A table's lookup memo: its checkpoints and its last lookup's pc and answer. A throw site
@@ -23,18 +34,18 @@ pub(crate) struct SourcePositions {
 #[derive(Clone, Debug)]
 struct SourcePositionIndex {
     checkpoints: Box<[SourcePositionCheckpoint]>,
-    recent: std::cell::Cell<Option<(u32, Option<SourcePosition>)>>,
+    recent: std::cell::Cell<Option<(u32, Option<u32>)>>,
 }
 
 /// The entries between two `SourcePositions` checkpoints.
 const SOURCE_POSITION_CHECKPOINT_INTERVAL: usize = 32;
 
-/// A point decoding may resume from: the byte offset of an entry, the entry before it
-/// (which it is coded against) and the entry's own pc.
+/// A point decoding may resume from: the byte offset of an entry in the coded bytes, the
+/// entry before it (which it is coded against) and the entry's own pc.
 #[derive(Clone, Copy, Debug)]
 struct SourcePositionCheckpoint {
-    offset: usize,
-    previous: SourcePosition,
+    at: usize,
+    previous: SourceOffset,
     pc: u32,
 }
 
@@ -51,48 +62,73 @@ const LEB128_PAYLOAD_BITS: u32 = 7;
 const LEB128_CONTINUATION: u8 = 1 << LEB128_PAYLOAD_BITS;
 
 impl SourcePositions {
-    pub(crate) fn last(&self) -> Option<SourcePosition> {
+    pub(crate) fn last(&self) -> Option<SourceOffset> {
         self.last
     }
 
     /// The coded entries and the final one, as a residual stores them
     /// (`BinaryWriter::source_positions`).
-    pub(crate) fn encoded(&self) -> (&[u8], Option<SourcePosition>) {
-        (&self.bytes, self.last)
+    pub(crate) fn encoded(&self) -> (&[u8], Option<SourceOffset>) {
+        (&self.bytes[..], self.last)
     }
 
     /// The table a residual stored (`encoded`); validation judges it against its function.
-    pub(crate) fn from_encoded(bytes: Vec<u8>, last: Option<SourcePosition>) -> Self {
-        Self { bytes, last, checkpoints: std::cell::OnceCell::new() }
+    pub(crate) fn from_encoded(bytes: Vec<u8>, last: Option<SourceOffset>) -> Self {
+        Self { bytes: bytes.into_boxed_slice(), last, checkpoints: std::cell::OnceCell::new() }
     }
 
-    /// Appends `position`. Compiled code orders positions by pc; a decoded table keeps any
-    /// order exactly, for validation to judge.
-    pub(crate) fn push(&mut self, position: SourcePosition) {
-        let previous = self.last.unwrap_or(SourcePosition { pc: 0, line: 0, column: 0 });
-        let line_change = i64::from(position.line) - i64::from(previous.line);
-        self.write(u64::from(position.pc.wrapping_sub(previous.pc)));
-        self.write(zigzag(line_change));
-        self.write(if line_change == 0 {
-            zigzag(i64::from(position.column) - i64::from(previous.column))
-        } else {
-            u64::from(position.column)
+    pub(crate) fn iter(&self) -> SourcePositionIter<'_> {
+        decode_from(&self.bytes, 0, SourceOffset { pc: 0, offset: 0 })
+    }
+
+    /// The source byte offset in effect at `pc`: the last entry at or before it, decoded from
+    /// the last checkpoint at or before it.
+    pub(crate) fn at(&self, pc: u32) -> Option<u32> {
+        let index = self.checkpoints.get_or_init(|| {
+            Box::new(SourcePositionIndex { checkpoints: make_checkpoints(&self.bytes), recent: std::cell::Cell::new(None) })
         });
-        self.last = Some(position);
-        // The checkpoints exist only once a lookup made them.
-        if self.checkpoints.get().is_some() {
-            self.checkpoints = std::cell::OnceCell::new();
+        if let Some((recent, offset)) = index.recent.get()
+            && recent == pc
+        {
+            return offset;
         }
-    }
-
-    /// An empty table with room for `bytes` coded bytes.
-    pub(crate) fn with_capacity(bytes: usize) -> Self {
-        Self { bytes: Vec::with_capacity(bytes), last: None, checkpoints: std::cell::OnceCell::new() }
+        let checkpoints = &index.checkpoints;
+        let start = checkpoints.partition_point(|checkpoint| checkpoint.pc <= pc);
+        let iter = match start.checked_sub(1) {
+            Some(index) => decode_from(&self.bytes, checkpoints[index].at, checkpoints[index].previous),
+            None => self.iter(),
+        };
+        let found = iter.take_while(|entry| entry.pc <= pc).last().map(|entry| entry.offset);
+        index.recent.set(Some((pc, found)));
+        found
     }
 
     /// The bytes the entries are coded in.
     pub(crate) fn coded_len(&self) -> usize {
         self.bytes.len()
+    }
+
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        self.bytes.len()
+    }
+}
+
+impl SourcePositionsBuilder {
+    pub(crate) fn last(&self) -> Option<SourceOffset> {
+        self.last
+    }
+
+    /// Appends `entry`. Compiled code orders entries by pc.
+    pub(crate) fn push(&mut self, entry: SourceOffset) {
+        let previous = self.last.unwrap_or(SourceOffset { pc: 0, offset: 0 });
+        self.write(u64::from(entry.pc.wrapping_sub(previous.pc)));
+        self.write(zigzag(i64::from(entry.offset) - i64::from(previous.offset)));
+        self.last = Some(entry);
+    }
+
+    /// An empty table with room for `bytes` coded bytes.
+    pub(crate) fn with_capacity(bytes: usize) -> Self {
+        Self { bytes: Vec::with_capacity(bytes), last: None }
     }
 
     #[inline(always)]
@@ -113,70 +149,48 @@ impl SourcePositions {
         }
     }
 
-    pub(crate) fn iter(&self) -> SourcePositionIter<'_> {
-        self.iter_from(0, SourcePosition { pc: 0, line: 0, column: 0 })
-    }
-
-    fn iter_from(&self, offset: usize, previous: SourcePosition) -> SourcePositionIter<'_> {
-        SourcePositionIter { bytes: &self.bytes[offset..], previous }
-    }
-
-    /// The position in effect at `pc`: the last entry at or before it, decoded from the last
-    /// checkpoint at or before it.
-    pub(crate) fn at(&self, pc: u32) -> Option<SourcePosition> {
-        let index = self.checkpoints.get_or_init(|| {
-            Box::new(SourcePositionIndex { checkpoints: self.make_checkpoints(), recent: std::cell::Cell::new(None) })
-        });
-        if let Some((recent, position)) = index.recent.get()
-            && recent == pc
-        {
-            return position;
-        }
-        let checkpoints = &index.checkpoints;
-        let start = checkpoints.partition_point(|checkpoint| checkpoint.pc <= pc);
-        let iter = match start.checked_sub(1) {
-            Some(index) => self.iter_from(checkpoints[index].offset, checkpoints[index].previous),
-            None => self.iter(),
-        };
-        let found = iter.take_while(|position| position.pc <= pc).last();
-        index.recent.set(Some((pc, found)));
-        found
-    }
-
-    /// A checkpoint at every `SOURCE_POSITION_CHECKPOINT_INTERVAL`th entry after the first;
-    /// none for a table shorter than one interval, which decodes as fast from its start.
-    fn make_checkpoints(&self) -> Box<[SourcePositionCheckpoint]> {
-        let mut checkpoints = Vec::new();
-        let mut iter = self.iter();
-        let mut entry = 0;
-        loop {
-            let offset = self.bytes.len() - iter.bytes.len();
-            let previous = iter.previous;
-            let Some(position) = iter.next() else { break };
-            if entry > 0 && entry % SOURCE_POSITION_CHECKPOINT_INTERVAL == 0 {
-                checkpoints.push(SourcePositionCheckpoint { offset, previous, pc: position.pc });
-            }
-            entry += 1;
-        }
-        checkpoints.into_boxed_slice()
-    }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.bytes.shrink_to_fit();
-    }
-
-    pub(crate) fn capacity_bytes(&self) -> usize {
-        self.bytes.capacity()
+    /// The table of the entries pushed so far, its bytes boxed to their exact length.
+    pub(crate) fn freeze(self) -> SourcePositions {
+        SourcePositions { bytes: self.bytes.into_boxed_slice(), last: self.last, checkpoints: std::cell::OnceCell::new() }
     }
 }
 
-impl FromIterator<SourcePosition> for SourcePositions {
-    fn from_iter<I: IntoIterator<Item = SourcePosition>>(positions: I) -> Self {
+/// Decodes `bytes` from byte `at`, where the entry before the one decoded first is `previous`.
+fn decode_from(bytes: &[u8], at: usize, previous: SourceOffset) -> SourcePositionIter<'_> {
+    SourcePositionIter { bytes: &bytes[at..], previous }
+}
+
+/// A checkpoint at every `SOURCE_POSITION_CHECKPOINT_INTERVAL`th entry after the first; none for
+/// a table shorter than one interval, which decodes as fast from its start.
+fn make_checkpoints(bytes: &[u8]) -> Box<[SourcePositionCheckpoint]> {
+    let mut checkpoints = Vec::new();
+    let mut iter = decode_from(bytes, 0, SourceOffset { pc: 0, offset: 0 });
+    let mut entry = 0;
+    loop {
+        let at = bytes.len() - iter.bytes.len();
+        let previous = iter.previous;
+        let Some(decoded) = iter.next() else { break };
+        if entry > 0 && entry % SOURCE_POSITION_CHECKPOINT_INTERVAL == 0 {
+            checkpoints.push(SourcePositionCheckpoint { at, previous, pc: decoded.pc });
+        }
+        entry += 1;
+    }
+    checkpoints.into_boxed_slice()
+}
+
+impl FromIterator<SourceOffset> for SourcePositionsBuilder {
+    fn from_iter<I: IntoIterator<Item = SourceOffset>>(positions: I) -> Self {
         let mut table = Self::default();
         for position in positions {
             table.push(position);
         }
         table
+    }
+}
+
+impl FromIterator<SourceOffset> for SourcePositions {
+    fn from_iter<I: IntoIterator<Item = SourceOffset>>(positions: I) -> Self {
+        positions.into_iter().collect::<SourcePositionsBuilder>().freeze()
     }
 }
 
@@ -192,7 +206,7 @@ fn unzigzag(value: u64) -> i64 {
 #[derive(Clone)]
 pub(crate) struct SourcePositionIter<'a> {
     bytes: &'a [u8],
-    previous: SourcePosition,
+    previous: SourceOffset,
 }
 
 impl SourcePositionIter<'_> {
@@ -226,23 +240,16 @@ impl SourcePositionIter<'_> {
 }
 
 impl Iterator for SourcePositionIter<'_> {
-    type Item = SourcePosition;
+    type Item = SourceOffset;
 
-    fn next(&mut self) -> Option<SourcePosition> {
+    fn next(&mut self) -> Option<SourceOffset> {
         if self.bytes.is_empty() {
             return None;
         }
         let previous = self.previous;
         let pc = previous.pc.wrapping_add(self.read() as u32);
-        let line_change = unzigzag(self.read());
-        let column = self.read();
-        let column = if line_change == 0 {
-            (i64::from(previous.column) + unzigzag(column)) as u32
-        } else {
-            column as u32
-        };
-        let line = (i64::from(previous.line) + line_change) as u32;
-        self.previous = SourcePosition { pc, line, column };
+        let offset = (i64::from(previous.offset) + unzigzag(self.read())) as u32;
+        self.previous = SourceOffset { pc, offset };
         Some(self.previous)
     }
 }

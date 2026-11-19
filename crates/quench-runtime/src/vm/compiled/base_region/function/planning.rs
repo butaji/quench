@@ -38,7 +38,8 @@ pub(super) fn live_guard(pc: u32, address: usize) -> Result<Planned, String> {
 /// A row that leaves at `pc` when an interrupt is requested, and continues.
 pub(super) fn poll_row(pc: u32) -> Result<Planned, String> {
     let interrupt = std::mem::offset_of!(super::super::super::CallContext, head.interrupt) as u64;
-    Ok(Planned::single(control(Kind::Poll)?, padded_holes([interrupt]), None, Some(pc)))
+    let attention = crate::execution_interrupt::attention_address();
+    Ok(Planned::single(control(Kind::Poll)?, padded_holes([interrupt, 0, 0, attention]), None, Some(pc)))
 }
 
 /// The rows that run before the row `pc`, at the same row: the check that a Stable fact the row
@@ -89,24 +90,29 @@ pub(super) fn leaves(layout: &Layout, row: &Decoded) -> bool {
 /// hundreds of instructions where the interpreter's quickened handler spends tens). The design is a
 /// ladder, b-jit at most the interpreter's instructions on every operation (b-jit is the interpreter
 /// with dispatch and decode folded), so a loop region holding one on its loop is not built and the
-/// interpreter runs the loop. A call keeps its call row (`region_call_rows`): a loop that calls is
-/// built, its calls direct rows into the callee's cell or the helper row, and the tier-ladder gate
+/// interpreter runs the loop. A helper step with a packed row (`Decoded::packed`: a family runs the
+/// instruction without the PC re-decode, `family_helpers`) is built; the others, and a call-out, are
+/// not. A call keeps its call row in every build: a loop that calls is built,
+/// its calls direct rows into the callee's cell or the helper row, and the tier-ladder gate
 /// (`quench-gate --only ir-budget`: call_direct, call_closure, k03_call_add) holds the call protocol
 /// at most the interpreter's. A fast arm's slow arm (`Step::Fast`), a throw and a leave are off the
 /// loop's steady path.
 pub(super) fn interprets(row: &Decoded) -> bool {
     match row.step {
-        Some(Step::Helper | Step::CallOut | Step::Generic) => true,
-        Some(Step::Call(_)) => !region_call_rows(),
+        Some(Step::Helper) => row.packed.is_none(),
+        Some(Step::CallOut | Step::Generic) => true,
         _ => false,
     }
 }
 
 /// The plan of row `pc`: nothing where control never reaches it, a leave row, or the row with the
 /// rows before it its kind needs.
-pub(super) fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), reached: bool, pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
+pub(super) fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), rows: &[Decoded], reached: bool, pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
     if !reached {
         return Ok(skipped());
+    }
+    if row.step == Some(Step::Switch) {
+        return super::switch::switch_run(layout, (reprs, kinds), rows, pc, row, helpers);
     }
     if leaves(layout, row) {
         return plan_step(&Decoded::step(Step::Leave, None), layout, pc, helpers);

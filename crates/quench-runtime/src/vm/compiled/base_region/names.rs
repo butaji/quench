@@ -19,7 +19,7 @@ pub(super) struct Name {
 }
 
 /// A function register's frame offset travels above `NAME_FUNCTION_AT` in hole 2.
-const _: () = assert!((Register::MAX as u64) * SLOT < 1 << (u64::BITS - numeric::library::NAME_FUNCTION_AT));
+const _: () = assert!((Register::MAX as u64) * SLOT < 1 << (u64::BITS - numeric::site_bits::NAME_FUNCTION_AT));
 
 impl Name {
     /// The heap row that runs it.
@@ -28,9 +28,9 @@ impl Name {
     }
 
     /// The row's holes: the before and after layouts (as an add's), the name's word, and the name slot
-    /// with the function register's frame offset above it (`library::NAME_FUNCTION_AT`).
+    /// with the function register's frame offset above it (`numeric::site_bits::NAME_FUNCTION_AT`).
     pub(super) fn holes(self, function: u64) -> [u64; HOLES] {
-        use numeric::library::{ADD_AFTER_AT, NAME_FUNCTION_AT};
+        use numeric::site_bits::{ADD_AFTER_AT, NAME_FUNCTION_AT};
         let [before, after] = self.transition.layouts.map(u64::from);
         padded_holes([before | after << ADD_AFTER_AT, self.word, u64::from(self.transition.slot) | function << NAME_FUNCTION_AT])
     }
@@ -72,7 +72,7 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, slow: Option<Pla
 #[cfg(test)]
 mod tests {
     use super::*;
-    use numeric::library::{ADD_AFTER_AT, NAME_FUNCTION_AT};
+    use numeric::site_bits::{ADD_AFTER_AT, NAME_FUNCTION_AT};
 
     /// The holes carry what `heap_rows::name_row` unpacks: shapes, the name word, the slot and the function offset.
     #[test]
@@ -80,7 +80,7 @@ mod tests {
         let name = Name { transition: Transition { before: 5, after: 9, slot: 1, layouts: [5, 9] }, word: 0xABCD };
         let [shapes, word, site, ..] = name.holes(24);
         assert_eq!((shapes & u64::from(u32::MAX), shapes >> ADD_AFTER_AT, word), (5, 9, 0xABCD));
-        assert_eq!((site & ((1 << numeric::library::ADD_SLOT_BITS) - 1), site >> NAME_FUNCTION_AT), (1, 24));
+        assert_eq!((site & ((1 << numeric::site_bits::ADD_SLOT_BITS) - 1), site >> NAME_FUNCTION_AT), (1, 24));
     }
 
     /// The name slot is an inline-or-arena slot below the inline count and an arena run past it.

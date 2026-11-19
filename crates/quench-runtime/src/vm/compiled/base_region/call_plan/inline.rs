@@ -404,7 +404,7 @@ mod tests {
     use oxc_ast::ast::BinaryOperator;
     use std::rc::Rc;
 
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: super::super::CallForm::Plain, op: Op::Call };
+    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: super::super::CallForm::Plain, method: None };
     /// The caller's registers: the callee's window starts here.
     const BASE: Register = 8;
     const IDENTITY: u64 = 7;
@@ -413,7 +413,7 @@ mod tests {
 
     fn facts() -> DirectFacts {
         let cell = CellFacts { registers: 4, room: 4, params: 2, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers: 4, construction: false, frame_bytes: 32, held: false }
+        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, global_this: None, lexical: false, registers: 4, construction: false, held: false }
     }
 
     fn operand(register: Register) -> u16 {

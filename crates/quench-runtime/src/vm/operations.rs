@@ -25,6 +25,14 @@ pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualTha
 macro_rules! number_relation_operators {
     ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {
         impl NumberRelation {
+            /// The binary operator a relation denotes, the first of its group. `Equal` and `NotEqual` name
+            /// two operators each (`==` and `===`), so a caller that needs one of them must not ask.
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$relation => [$(BinaryOperator::$operator as u32),+][0],)+
+                }
+            }
+
             #[inline(always)]
             pub(crate) fn from_operator(op: u32) -> Option<Self> {
                 $(
@@ -42,6 +50,13 @@ number_relation_rows!(number_relation_operators);
 macro_rules! number_arithmetic_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         impl NumberArithmetic {
+            /// The binary operator this arithmetic operation denotes (`from_operator`'s inverse).
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$operation => BinaryOperator::$operator as u32,)+
+                }
+            }
+
             #[inline(always)]
             pub(crate) fn from_operator(operator: u32) -> Option<Self> {
                 $(
@@ -81,7 +96,7 @@ impl NumberArithmetic {
     }
 
     /// Whether the result of two integers is an integer: all but a division.
-    pub(super) const fn integral(self) -> bool {
+    pub(crate) const fn integral(self) -> bool {
         !matches!(self, Self::Divide)
     }
 }
@@ -133,6 +148,13 @@ number_unary_rows!(number_unary_operators);
 macro_rules! number_bitwise_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
         impl NumberBitwise {
+            /// The binary operator this bitwise operation denotes (`from_operator`'s inverse).
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$operation => BinaryOperator::$operator as u32,)+
+                }
+            }
+
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
             pub(crate) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
@@ -538,27 +560,10 @@ fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Op
         BinaryOperator::Addition => numeric_integer_arithmetic_result(NumberArithmetic::Add, left, right),
         BinaryOperator::Subtraction => numeric_integer_arithmetic_result(NumberArithmetic::Subtract, left, right),
         BinaryOperator::Multiplication => numeric_integer_arithmetic_result(NumberArithmetic::Multiply, left, right),
-        BinaryOperator::Division => {
-            if right == 0 || (left == 0 && right < 0) {
-                return None;
-            }
-            let remainder = left.checked_rem(right)?;
-            if remainder != 0 {
-                return None;
-            }
-            Value::integer(left.checked_div(right)?)
-        }
-        BinaryOperator::Remainder => {
-            if right == 0 {
-                return None;
-            }
-            let remainder = left.checked_rem(right)?;
-            if remainder == 0 && left < 0 {
-                Value::number(-0.0)
-            } else {
-                Value::integer(remainder)
-            }
-        }
+        // The Number operations' own values: `Value::number` makes an integral quotient or remainder the
+        // integer it is, and -0 the double it is.
+        BinaryOperator::Division => Value::number(number_arithmetic_result(NumberArithmetic::Divide, f64::from(left), f64::from(right))),
+        BinaryOperator::Remainder => Value::number(number_remainder(f64::from(left), f64::from(right))),
         BinaryOperator::Exponential => return None,
         operator => number_bitwise_result(
             NumberBitwise::from_binary_operator(operator)
@@ -650,8 +655,39 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `native` called with `this` and `args`, rooting both for the native's run: the entry
+    /// for callers whose arguments nothing else holds (the embedding API, host callbacks,
+    /// natives calling natives, tests).
     #[inline(always)]
     pub(super) fn call_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.call_native_rooting::<true>(p, native, this, args)
+    }
+
+    /// `call_native` whose caller keeps every value of `args` reachable for the native's whole
+    /// run, so only the receiver is rooted here: a frame parked at the call (`pc_is_resume`),
+    /// which the collector scans at the call's own liveness (`Frame::source_instruction_pc`),
+    /// holding them in its argument registers, or a caller that roots them itself
+    /// (`call_value`, `spread_call`, a job's roots). The receiver stays rooted: a method
+    /// site's receiver may be a value its path loaded (`CallThisMethod`), held by no register.
+    #[inline(always)]
+    pub(super) fn call_native_arguments_held(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.call_native_rooting::<false>(p, native, this, args)
+    }
+
+    #[inline(always)]
+    fn call_native_rooting<const ROOT_ARGUMENTS: bool>(
         &mut self,
         p: &ResidualProgram,
         native: Native,
@@ -667,15 +703,27 @@ impl<H: Host> Vm<H> {
         {
             Ok(value)
         } else {
-            self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
-                let receiver = vm.string_method_receiver(p, native, this)?;
-                if receiver == this {
-                    return vm.call_native_dispatch(p, native, receiver, args);
+            // The receiver, and the arguments unless the caller holds them
+            // (`call_native_arguments_held`), are rooted for the native's run: the values may
+            // be a copy only this call holds. Pushed as a slice: the chained iterator's extend
+            // cost each call a callback per value (`call_value_with_target`).
+            let start = self.active_call_roots.len();
+            if ROOT_ARGUMENTS {
+                self.active_call_roots.reserve(args.len() + 2);
+                self.active_call_roots.push(this);
+                self.active_call_roots.extend_from_slice(args);
+            } else {
+                self.active_call_roots.push(this);
+            }
+            let result = self.string_method_receiver(p, native, this).and_then(|receiver| {
+                if receiver != this {
+                    // A boxed receiver only this call holds.
+                    self.active_call_roots.push(receiver);
                 }
-                vm.with_call_roots([receiver], |vm| {
-                    vm.call_native_dispatch(p, native, receiver, args)
-                })
-            })
+                self.call_native_dispatch(p, native, receiver, args)
+            });
+            self.active_call_roots.truncate(start);
+            result
         };
         // String natives make text on demand; charge it before the caller's next safepoint.
         self.heap.charge_materialized_text();
@@ -1897,11 +1945,15 @@ impl<H: Host> Vm<H> {
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
-    /// code units, which runs no guest code.
+    /// code units, which runs no guest code. Identical Values name the same string, so they
+    /// are equal without reading either; otherwise `order` compares them (in place when flat).
     pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
-        let (left, right) = (self.heap.string(left)?, self.heap.string(right)?);
-        let ordering = left.order(right);
-        NumberRelation::from_operator(op)?.of_ordering(ordering)
+        let relation = NumberRelation::from_operator(op)?;
+        let (left_string, right_string) = (self.heap.string(left)?, self.heap.string(right)?);
+        if left == right {
+            return relation.of_ordering(std::cmp::Ordering::Equal);
+        }
+        relation.of_ordering(left_string.order(right_string))
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.

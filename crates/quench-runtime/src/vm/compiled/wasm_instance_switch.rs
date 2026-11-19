@@ -19,14 +19,14 @@ fn field_width(ty: ir::Type) -> Width {
 
 impl<H: Host> Emitter<'_, '_, H> {
     /// The call of the function at index `entry` of the instance at `record`, a row's other
-    /// instance: its exit jumps to `done`; an instance this artifact cannot call across, or one
+    /// instance: its status jumps to `done`; an instance this artifact cannot call across, or one
     /// whose code table has no body for the function, leaves for `slow`.
     pub(super) fn foreign_call(
         &mut self,
         record: ir::Value,
         entry: ir::Value,
         signature: &crate::WasmSignature,
-        arguments: &[ir::Value],
+        buffers: (ir::Value, ir::Value),
         (slow, done): (ir::Block, ir::Block),
     ) {
         let context = self.body.core.context;
@@ -44,8 +44,8 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.enter(lookup);
         let table = self.load_word(Width::I64, flags, record, InstanceContext::TABLE);
         let body = self.entry_body(table, entry, slow);
-        let (status, result) = self.call_in_instance(record, body, signature, arguments);
-        self.goto_exit(done, status, result);
+        let status = self.call_in_instance(record, body, signature, buffers);
+        self.goto(done, &[status]);
     }
 
     /// The call of `body` with the context switched to the instance at `record` and restored
@@ -55,8 +55,8 @@ impl<H: Host> Emitter<'_, '_, H> {
         record: ir::Value,
         body: ir::Value,
         signature: &crate::WasmSignature,
-        arguments: &[ir::Value],
-    ) -> (ir::Value, Option<ir::Value>) {
+        buffers: (ir::Value, ir::Value),
+    ) -> ir::Value {
         let context = self.body.core.context;
         let flags = MemFlagsData::trusted();
         let mut saved = Vec::with_capacity(SWITCHED.len());
@@ -75,12 +75,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         let length = self.call_leaf(leaf, &[context]);
         let depth = self.push_root(record);
         let length = self.memory.length.then_some(length);
-        let exit = self.call_body(body, signature, arguments, (base, length));
+        let status = self.call_body(body, signature, buffers, (base, length));
         self.pop_root(depth);
         for ((at, _, _), word) in SWITCHED.iter().zip(saved) {
             self.store_word(flags, word, context, *at);
         }
-        exit
+        self.call_leaf(leaf, &[context]);
+        status
     }
 
     /// Holds the environment of the instance at `record` in the native roots: the depth before.

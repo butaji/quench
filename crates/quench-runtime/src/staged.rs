@@ -52,6 +52,7 @@ pub(crate) mod barrier;
 #[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's operations; the interpreter has native Numbers
 pub(crate) mod number_machine;
 mod heap;
+mod superinstructions;
 mod global;
 #[cfg_attr(not(test), allow(dead_code))] // the division is data the specializers will ask; today only its tests do
 pub(crate) mod division;
@@ -67,9 +68,11 @@ mod spread;
 mod admission;
 mod delete;
 mod operation;
-#[cfg(not(stencil_build))]
-mod operation_decode;
 pub(crate) use operation::Operation;
+mod binary_class;
+pub(crate) use binary_class::BinaryClass;
+mod edge;
+pub(crate) use edge::Edge;
 
 mod decode;
 pub(crate) mod meaning_fast;
@@ -90,6 +93,7 @@ pub(crate) mod builtins;
 pub(crate) mod add;
 pub(crate) mod add_plan;
 pub(crate) mod elements;
+pub(crate) mod double_view;
 pub(crate) mod element_rows;
 pub(crate) mod typed_elements;
 pub(crate) mod typed_view;
@@ -98,6 +102,8 @@ pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;
 pub(crate) mod environment;
 pub(crate) mod ic;
+pub(crate) mod ic_flat;
+pub(crate) mod ic_read;
 pub(crate) mod object;
 mod narrow;
 pub(crate) mod store;
@@ -113,9 +119,20 @@ pub(crate) mod naming;
 pub(crate) mod call; pub(crate) mod frame;
 pub(crate) mod forms;
 pub(crate) mod protocol;
+pub(crate) mod call_keeping;
+pub(crate) mod call_environment;
+pub(crate) mod call_leaf;
+pub(crate) mod call_construct;
+pub(crate) mod call_callback;
+pub(crate) mod call_body;
+pub(crate) mod call_native;
+pub(crate) mod call_complete;
+pub(crate) mod call_iteration;
 pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
 pub(crate) use protocol::CallOperation;
 pub(crate) mod invoke;
+pub(crate) mod prologue;
+pub(crate) use prologue::{step_entry, PrologueFrame};
 pub(crate) mod plan;
 mod native_call;
 pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, Resolved};
@@ -134,36 +151,41 @@ mod property_write;
 pub(crate) use property::{NoPlans, PropertyFrame};
 pub(crate) mod value;
 pub(crate) mod poll;
+mod guard;
 mod steps;
 mod control;
 mod generic;
 pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
 pub(crate) mod effects;
-#[allow(dead_code)] // the K-PLAN builder; its first consumer is the u-jit lowering (P4, TOD-1700)
 pub(crate) mod function_plan;
 pub(crate) mod region;
 pub(crate) mod wasm;
 pub(crate) mod wasm_float;
+pub(crate) mod wasm_access;
+pub(crate) mod wasm_int;
+pub(crate) mod wasm_jump;
+pub(crate) mod wasm_state;
+pub(crate) use wasm_jump::{BranchTable, WasmJump};
 pub(crate) mod wasm_concrete;
 pub(crate) mod wasm_gc;
-pub(crate) mod wasm_int;
 pub(crate) mod wasm_exception;
 pub(crate) mod wasm_call;
 pub(crate) mod wasm_roots;
 pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;
+#[cfg(not(stencil_build))]
+pub(crate) mod wasm_activation;
 pub(crate) mod wasm_machine;
 pub(crate) mod wasm_memory;
+pub(crate) mod wasm_memory_vector;
+pub(crate) mod wasm_memory_bytes;
 pub(crate) mod wasm_table_ops;
 pub(crate) mod wasm_operation;
 pub(crate) mod wasm_simd;
+pub(crate) mod wasm_simd_rules;
 pub(crate) mod wasm_simd_concrete;
 pub(crate) mod wasm_simd_lanes;
 pub(crate) mod wasm_step;
-pub(crate) mod wasm_jump;
-pub(crate) use wasm_jump::{BranchTable, WasmJump};
-pub(crate) mod wasm_state;
-pub(crate) mod wasm_access;
 pub(crate) mod wasm_atomic;
 pub(crate) mod wasm_emit;
 pub(crate) use wasm_concrete::ConcreteWasm;
@@ -181,10 +203,6 @@ pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, wo
 
 mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
-
-
-mod edge;
-pub(crate) use edge::Edge;
 
 /// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
 /// capture access whose scopes the frame does not hold, the walk over the scopes from the
@@ -1158,23 +1176,6 @@ pub(crate) mod emit {
     }
 }
 
-
-/// Which of an instruction's two control edges it takes.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Edge {
-    /// The jump target.
-    Target,
-    /// The record leaves the lane run: its activation suspended into its job (`Frame::suspend_await`).
-    Leave,
-    /// The record switched the running register file: its frame made a suspension that transfers
-    /// control to another activation (`Frame::suspend_yield`), which the frame holds for the lane to resume.
-    Transfer,
-    /// The instruction after this one.
-    Following,
-    /// The entry a branch table's index picks (`k`, clamped to the default entry): control goes to
-    /// the jump record `k` places after the table record.
-    Entry(u32),
-}
 
 #[cfg(test)]
 mod test_words;

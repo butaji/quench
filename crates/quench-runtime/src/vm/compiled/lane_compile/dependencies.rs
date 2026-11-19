@@ -41,6 +41,28 @@ impl LaneDependencies {
             && self.subscribe_callees(code, heap, method_atoms)
     }
 
+    /// Releases the capacity a publication's vectors hold past their length: they are built by
+    /// `collect` and `dedup`, and kept for as long as the body is, its callers' too.
+    pub(in crate::vm) fn trim(&mut self) {
+        self.slots.shrink_to_fit();
+        self.departure_shapes.shrink_to_fit();
+        self.callees.shrink_to_fit();
+    }
+
+    /// The programs whose root constants the code folds, its own and its direct callees' and theirs
+    /// in turn (`StableFacts::root_program`), each once: `ProgramStore::subscribe_root_constants`
+    /// subscribes the code to them.
+    pub(in crate::vm) fn root_programs(&self, stable: &lane_region::StableFacts) -> Vec<crate::vm::program_store::ProgramId> {
+        let mut programs: Vec<crate::vm::program_store::ProgramId> = Vec::new();
+        programs.extend(stable.root_program);
+        for callee in &self.callees {
+            for program in callee.dependencies.root_programs(&callee.stable) {
+                if !programs.contains(&program) { programs.push(program); }
+            }
+        }
+        programs
+    }
+
     /// Subscribes `code` to the Stable facts of its direct callees' bodies, and theirs in turn.
     fn subscribe_callees(&self, code: &Rc<dyn crate::code_dependencies::DependentCode>,
         heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
@@ -49,11 +71,15 @@ impl LaneDependencies {
     }
 }
 
-/// Subscribes `code` to the Stable facts it folded: prototype values, method atoms, shapes held past a
-/// call, globals, layouts, slot observations and instanceof facts; `false` where a reader table is full.
+/// Subscribes `code` to the Stable facts it folded: the prototype chains it read through, prototype
+/// values, method atoms, shapes held past a call, globals, layouts, slot observations and instanceof
+/// facts; `false` where a reader table is full. The chains come first: their walk marks a link that was
+/// no prototype yet (`Heap::chain_subjects`), a note a dependency subscribed before it would take for a
+/// change.
 fn subscribe_stable(stable: &lane_region::StableFacts, code: &Rc<dyn crate::code_dependencies::DependentCode>,
     heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
-    stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
+    stable.chains.iter().chain(stable.instanceofs.iter().map(|fact| &fact.chain)).all(|chain| heap.subscribe_prototype_chain(*chain, code))
+        && stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
         && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
         && stable.shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
         && stable.globals.iter().all(|fact| crate::heap::subscribe_global_value(*fact, code))

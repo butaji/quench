@@ -15,13 +15,13 @@
 
 use super::lane_unit::{Frame as InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
-use crate::bytecode::{Atom, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
+use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::code_dependencies::InstanceofFact;
 use crate::typed_ir::{Representation, Type};
 use crate::value::Value;
 use crate::vm::dispatch_fast::operand_feedback::OperandKinds;
 use crate::vm::in_presence::InPresence;
-use oxc_ast::ast::BinaryOperator;
+use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
 use super::{ElementViews, NativeFieldLoad};
 use quench_bjit::numeric::{self, Kind, Place};
@@ -31,6 +31,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 mod adds;
+mod call_args;
 mod names;
 mod call_plan;
 mod sites;
@@ -66,7 +67,7 @@ use decode::*;
 use entry_facts::*;
 use globals::*;
 use link::*;
-pub(in crate::vm::compiled) use link::rows_entry_offset;
+pub(in crate::vm::compiled) use link::{row_entries, rows_entry_offset};
 pub(in crate::vm) use link::SymbolSite;
 use plan::*;
 use repr::*;
@@ -91,8 +92,9 @@ pub(in crate::vm::compiled) struct Known<'a> {
     pub(in crate::vm::compiled) stores: Option<&'a crate::vm::method_cache::AtomBits>,
     /// The loads a cache site proves for a read (`Vm::native_field_read_descriptors`), where the VM and
     /// the program run specialized and the code may hold Stable facts: a read of a field its receiver's
-    /// prototype holds folds to the value the holder holds now (`folded_read`), which a change of the
-    /// holder's values retires the code over (`Body::holders`). `None` where no fact may be held.
+    /// prototype chain holds folds to the value the holder holds now (`folded_read`), which a change of the
+    /// holder's values or of a layout on the way retires the code over (`Body::holders`, `Body::chains`). `None`
+    /// where no fact may be held.
     pub(in crate::vm::compiled) reads: Option<&'a dyn Fn(u16) -> Vec<NativeFieldLoad>>,
     /// The add a cache site recorded for an atom, as a define's (`false`) or an adding store's (`true`,
     /// whose proved prototype chain is then a Stable fact) transition (`Vm::native_field_add`): a
@@ -119,9 +121,12 @@ pub(in crate::vm::compiled) struct Known<'a> {
     pub(in crate::vm::compiled) instanceofs: Option<&'a dyn Fn(usize) -> Option<(Value, InstanceofFact)>>,
     /// What `key in object` answered at the PC of an `in` whose key is a constant string (`Vm::membership_facts`), where
     /// the VM and the program run specialized and the code may hold Stable facts: the row answers the boolean while its
-    /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of any
-    /// prototype retires the code over (`Body::holders`). `None` where no fact may be held.
+    /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of a
+    /// prototype on its chain retires the code over (`Body::chains`). `None` where no fact may be held.
     pub(in crate::vm::compiled) presences: Option<&'a [Option<InPresence>]>,
+    /// Whether a field cache site's primary entry holds a receiver (`Vm::field_cache_filled`), where the VM runs
+    /// specialized: admits a field row's direct arm (`family_helpers::admits`). `None` where none may be held.
+    pub(in crate::vm::compiled) fields: Option<&'a dyn Fn(u16) -> bool>,
     /// What each by-name global access takes (`Vm::global_table`, the b-jit's), where the code may hold
     /// Stable facts: a global object's slot under its layout (`globals`). `None` where none may.
     pub(in crate::vm::compiled) globals: Option<&'a crate::vm::global_facts::GlobalReads>,
@@ -204,7 +209,7 @@ pub(in crate::vm) enum Event {
     BodyPlanned,
     /// What an attempt came to (`LaneBodyOutcome`): published, still compiling, refused for
     /// its cost (unpaid), for its length (short), declined, outrun by a lifecycle edge (stale),
-    /// or deferred.
+    /// deferred, or handed to a b-jit body (base).
     BodyPublished,
     BodyCompiling,
     BodyUnpaid,
@@ -212,10 +217,11 @@ pub(in crate::vm) enum Event {
     BodyDeclined,
     BodyStale,
     BodyDeferred,
+    BodyBase,
 }
 
 /// How many `Event`s there are.
-const EVENT_COUNT: usize = Event::BodyDeferred as usize + 1;
+const EVENT_COUNT: usize = Event::BodyBase as usize + 1;
 
 #[cfg(test)]
 thread_local! {
@@ -307,10 +313,10 @@ extern "C" fn report() {
     );
     let rows = (totals.covered + totals.exits).max(1);
     eprintln!("bjit-bodies bodies={} covered={} exits={} covered_share={:.1}% direct_calls={} helper_calls={}", totals.bodies, totals.covered, totals.exits, 100.0 * totals.covered as f64 / rows as f64, totals.direct_calls, totals.helper_calls);
-    let [entered, left, declined, compiled, bodies, recurrent, planned, published, compiling, unpaid, short, body_declined, stale, deferred] =
+    let [entered, left, declined, compiled, bodies, recurrent, planned, published, compiling, unpaid, short, body_declined, stale, deferred, base] =
         std::array::from_fn::<u64, EVENT_COUNT, _>(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
     eprintln!("bjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies} inlined_sites={}", inlined_sites());
-    eprintln!("lane-body-attempts started={bodies} recurrent={recurrent} planned={planned} published={published} compiling={compiling} unpaid={unpaid} short={short} declined={body_declined} stale={stale} deferred={deferred}");
+    eprintln!("lane-body-attempts started={bodies} recurrent={recurrent} planned={planned} published={published} compiling={compiling} unpaid={unpaid} short={short} declined={body_declined} stale={stale} deferred={deferred} base={base}");
     if let Ok(leaves) = LEAVES.lock() {
         let mut ranked: Vec<_> = leaves.iter().collect();
         ranked.sort_by(|a, b| (b.1).1.cmp(&(a.1).1).then(a.0.cmp(b.0)));

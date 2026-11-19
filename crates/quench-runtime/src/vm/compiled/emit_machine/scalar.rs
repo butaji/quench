@@ -33,7 +33,18 @@ fn integer_condition(relation: Relation) -> Option<IntCC> {
         Order::GreaterEqual => IntCC::UnsignedGreaterThanOrEqual,
         Order::Unordered | Order::UnorderedEqual => return None,
     };
-    Some(if relation.is_signed() { unsigned.signed() } else { unsigned })
+    Some(if relation.is_signed() { signed_of(unsigned) } else { unsigned })
+}
+
+/// The signed form of an unsigned order condition.
+fn signed_of(unsigned: IntCC) -> IntCC {
+    match unsigned {
+        IntCC::UnsignedLessThan => IntCC::SignedLessThan,
+        IntCC::UnsignedLessThanOrEqual => IntCC::SignedLessThanOrEqual,
+        IntCC::UnsignedGreaterThan => IntCC::SignedGreaterThan,
+        IntCC::UnsignedGreaterThanOrEqual => IntCC::SignedGreaterThanOrEqual,
+        other => other,
+    }
 }
 
 /// The float condition of `relation` (`Relation::order`); `None` for an integer relation.

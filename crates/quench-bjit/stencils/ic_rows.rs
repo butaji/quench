@@ -33,7 +33,7 @@
 //! covers every id a patch names. The entry's holes would move from `Planned::holes` into a
 //! per-row record of field offsets for this, which the stitcher keeps beside the code.
 
-use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM};
+use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_FLAT_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_FLAT_ADMITTED_ROW, IC_KNOWN_SET_FLAT_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM};
 use crate::heap_rows::{payload, word_at};
 use crate::layout::JS_STEP_OBJECT_RECORD_BASE;
 use crate::numeric::{HOLE_A, Out, S, deliver, is_int, number_word};
@@ -41,6 +41,7 @@ use crate::places::{Places, finish_chained, site_object};
 use crate::places_property::{Callout, planned_frame, receiver_read, receiver_set};
 use crate::stage::StencilStage;
 use crate::staged::ic::{self, IcOp};
+use crate::staged::ic_flat::own_field_flat;
 use crate::staged::object::{Form, direct_object_record, object_record_at};
 use crate::staged::slot_store::{own_flat_known, proved_flat_store, store_admitted};
 use crate::staged::value::direct_object_id;
@@ -121,19 +122,30 @@ fn known_get<const D: u8, const NUMBER: bool>(s: S, payload: usize) -> Out {
     finish_chained::<true>(s, word.map_or(Step::Unresolved, Step::Value), |s, word| deliver::<D>(s, word))
 }
 
-/// The Number in the value place stored to the flat slot (hole 4: its byte offset) of the receiver known
-/// to be a direct object where the atom (hole 2) is admitted (`store_admitted`) and the receiver is of the
-/// exact shape at hole 3; an int32 slot (`INT`) takes int32 words only.
+/// The own slot of the receiver known to be a direct object of the exact shape in flat form (`SHAPE_FLAT_ROW`,
+/// `base_region::proofs`): the arena run's slot at hole 3, its byte offset, with no compare; hole 2 is not read.
 #[inline(always)]
-fn known_set<const INT: bool, const A: u8, const ADMITTED: bool>(s: S, payload: usize) -> Out {
-    let stored = known_store::<INT, A, ADMITTED>(&s, payload);
+fn known_get_flat<const D: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::with_payload(ENTRY_HOLES + 1, payload as u64);
+    let record = known_record::<GET_RECEIVER>(&s, &mut stage, payload);
+    let word = own_field_flat(&mut stage, record, 0);
+    finish_chained::<true>(s, Step::Value(word), |s, word| deliver::<D>(s, word))
+}
+
+/// The Number in the value place stored to the flat slot (its byte offset is the last hole the row reads) of the receiver
+/// known to be a direct object where the atom (hole 2) is admitted (`store_admitted`) and the receiver is of the exact
+/// shape at hole 3; an int32 slot (`INT`) takes int32 words only. `FLAT`: the entry proved the shape and flat form
+/// (`SHAPE_FLAT_ROW`), so no shape is compared and the offset follows the atom (hole 3), or is hole 2 where `ADMITTED`.
+#[inline(always)]
+fn known_set<const INT: bool, const A: u8, const ADMITTED: bool, const FLAT: bool>(s: S, payload: usize) -> Out {
+    let stored = known_store::<INT, A, ADMITTED, FLAT>(&s, payload);
     finish_chained::<true>(s, stored.map_or(Step::Unresolved, Step::Value), |s, _| Out::Next(s))
 }
 
 /// The store `known_set` makes: the Number of its value place into the flat slot the receiver proves. The word it stored,
 /// or `None` where the row leaves with nothing written.
 #[inline(always)]
-fn known_store<const INT: bool, const A: u8, const ADMITTED: bool>(s: &S, payload: usize) -> Option<u64> {
+fn known_store<const INT: bool, const A: u8, const ADMITTED: bool, const FLAT: bool>(s: &S, payload: usize) -> Option<u64> {
     let word = number_word::<A, HOLE_A>(s).filter(|word| !INT || is_int(*word))?;
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
     // An admitted store's run-level test is the region's entry row (`STORES_ROW`), which held with no call since.
@@ -142,7 +154,9 @@ fn known_store<const INT: bool, const A: u8, const ADMITTED: bool>(s: &S, payloa
         store_admitted(&mut stage, specialized, ())?;
     }
     let record = known_record::<SET_RECEIVER>(s, &mut stage, payload);
-    own_flat_known(&mut stage, record, 0, ())?;
+    if !FLAT {
+        own_flat_known(&mut stage, record, 0, ())?;
+    }
     proved_flat_store(&mut stage, record, 0, (word, if INT { Representation::Int32 } else { Representation::Tagged }));
     Some(word)
 }
@@ -172,10 +186,15 @@ pub(crate) fn run<const KIND: u8, const CHAINED: bool, const D: u8, const A: u8>
         // fact store proved the slot a Number (`false`: proved; `base_region::plan::ic_plan`).
         IC_KNOWN_GET_ROW if CHAINED => known_get::<D, false>(s, payload),
         IC_KNOWN_GET_ROW => known_get::<D, true>(s, payload),
-        IC_KNOWN_SET_ROW => known_set::<false, A, false>(s, payload),
-        IC_KNOWN_SET_INT_ROW => known_set::<true, A, false>(s, payload),
-        IC_KNOWN_SET_ADMITTED_ROW => known_set::<false, A, true>(s, payload),
-        IC_KNOWN_SET_INT_ADMITTED_ROW => known_set::<true, A, true>(s, payload),
+        IC_KNOWN_SET_ROW => known_set::<false, A, false, false>(s, payload),
+        IC_KNOWN_SET_INT_ROW => known_set::<true, A, false, false>(s, payload),
+        IC_KNOWN_SET_ADMITTED_ROW => known_set::<false, A, true, false>(s, payload),
+        IC_KNOWN_SET_INT_ADMITTED_ROW => known_set::<true, A, true, false>(s, payload),
+        IC_KNOWN_GET_FLAT_ROW => known_get_flat::<D>(s, payload),
+        IC_KNOWN_SET_FLAT_ROW => known_set::<false, A, false, true>(s, payload),
+        IC_KNOWN_SET_INT_FLAT_ROW => known_set::<true, A, false, true>(s, payload),
+        IC_KNOWN_SET_FLAT_ADMITTED_ROW => known_set::<false, A, true, true>(s, payload),
+        IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW => known_set::<true, A, true, true>(s, payload),
         _ => set_row::<false, CHAINED, A>(s, payload),
     }
 }

@@ -1,4 +1,4 @@
-use super::{OCCUPANCY_WORD_BITS, PromotionAge, RECORDS_PER_BLOCK, RecordSpace, TEST_RECORD_CAPACITY};
+use super::{OCCUPANCY_WORD_BITS, PromotionAge, RECORDS_PER_BLOCK, RESERVE_MIN_BLOCKS, RecordSpace, TEST_RECORD_CAPACITY};
 use std::mem::size_of;
 
 #[test]
@@ -178,4 +178,28 @@ fn a_hole_keeps_its_ids_out_of_fresh_reused_and_restored_records() {
         let Ok(id) = restored.try_insert(value) else { break };
         assert!(!Holed::in_hole(id), "restored id {id} is in the hole");
     }
+}
+
+#[test]
+fn a_full_sweep_returns_empty_blocks_past_the_reserve_and_lowers_the_high_water() {
+    const BLOCKS: usize = 64;
+    let mut records: RecordSpace<u64, TEST_RECORD_CAPACITY> = RecordSpace::default();
+    let ids: Vec<_> = (0..BLOCKS * RECORDS_PER_BLOCK)
+        .map(|value| records.try_insert(value as u64).unwrap())
+        .collect();
+    for &id in &ids[..10] {
+        assert!(records.mark(id));
+    }
+    records.sweep(true, PromotionAge::First, false, |_| {});
+    // Block 0 keeps the survivors; the reserve keeps the blocks just above it, and the rest of
+    // the empty blocks go back to the kernel.
+    let returned = records.return_free_pages();
+    assert_eq!(records.next_id as usize, RECORDS_PER_BLOCK);
+    assert_eq!(returned, (BLOCKS - 1 - RESERVE_MIN_BLOCKS) * RECORDS_PER_BLOCK * size_of::<u64>());
+    assert_eq!(records.return_free_pages(), 0, "a returned block is not returned again");
+    // SAFETY: `ids[3]` is a live ID returned by the insertion above.
+    assert_eq!(unsafe { *records.get_live(ids[3]) }, 3);
+    // Allocation takes the free ids below the lowered high water mark first.
+    let reused = records.try_insert(99).unwrap();
+    assert!((reused as usize) < RECORDS_PER_BLOCK);
 }

@@ -1173,7 +1173,7 @@ pub(super) fn inline_region<'a>(
         Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks))),
         header_live,
         header,
-        &receivers, MethodCalls::Inliner,
+        &receivers, MethodCalls::Inliner, &|_| false,
     )
     .ok()?;
     // Dynamic receiver reads use the loop's caller registers and exact caller PCs. Keep
@@ -1247,8 +1247,8 @@ pub(crate) struct LoopEntry {
     /// An inlining region's callee registers, which leaving at an inlined instruction
     /// writes back here for its activation.
     scratch: [std::mem::MaybeUninit<u64>; MAX_REGION_REGISTERS],
-    /// What the backward-edge counter started at (`set_backedge_budget`), 0 by default.
-    seed: u64,
+    /// What the budget word was primed with for the current run (`set_backedge_budget`; `BACKEDGE_BUDGET` by default).
+    primed: i64,
 }
 
 /// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
@@ -1257,6 +1257,9 @@ pub(super) const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
 /// The first record word counts executions of the region's own backward edge: the iterations
 /// a run completed natively, which weigh what its entry paid for (`LoopSite::note_run`).
 const ENTRY_BACKEDGE_COUNT: usize = 0;
+/// The backward edges one native run may take before it leaves to the interpreter, which re-enters the loop (a run's
+/// budget is the record's first word, primed here and debited by the stencils' `count_edge` and the lane's flush).
+pub(crate) const BACKEDGE_BUDGET: i64 = 1 << 20;
 pub(super) const ENTRY_CAPTURES: usize = 1;
 
 /// The entry word of the region's `index`th field: the single home of the record's field
@@ -1282,26 +1285,25 @@ const ENTRY_WORDS: usize =
 impl LoopEntry {
     pub(crate) fn new() -> Self {
         let mut words = [std::mem::MaybeUninit::uninit(); ENTRY_WORDS];
-        // The backward-edge counter is the one leading word native code reads before any push.
-        words[ENTRY_BACKEDGE_COUNT].write(0);
-        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS], seed: 0 }
+        // The backward-edge budget is the one leading word native code reads before any push.
+        words[ENTRY_BACKEDGE_COUNT].write(BACKEDGE_BUDGET as u64);
+        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS], primed: BACKEDGE_BUDGET }
     }
 
-    /// Number of taken executions of this region's backward edge in the most recent run.
+    /// Number of taken executions of this region's backward edge in the most recent run: the budget the word was
+    /// primed with less what it has left.
     pub(crate) fn backedge_count(&self) -> u64 {
-        // SAFETY: `new` initializes the counter word.
-        unsafe { self.words[ENTRY_BACKEDGE_COUNT].assume_init() }.wrapping_sub(self.seed)
+        // SAFETY: `new` initializes the budget word.
+        let left = unsafe { self.words[ENTRY_BACKEDGE_COUNT].assume_init() } as i64;
+        (self.primed - left).max(0) as u64
     }
 
-    /// Lets a b-jit region's run take at most `budget` backward edges: the counter starts
-    /// `budget` below zero, and the stencil jump that counts it to zero leaves at the jump
-    /// (`quench-bjit`'s `count_backedge`), so a loop due to move to u-jit leaves its stencil
-    /// code mid-run instead of running it to the loop's end (`LoopTier::promote`). Cranelift
-    /// code counts on past zero; `backedge_count` reads from the seed either way.
+    /// Lets a b-jit region's run take at most `budget` backward edges (`LoopTier::backedge_budget`): the word is
+    /// primed with it, and the stencil edge that debits it to zero leaves at the jump, so a loop due to move to u-jit
+    /// leaves its stencil code mid-run. Never above `BACKEDGE_BUDGET`, the run's own bound.
     pub(crate) fn set_backedge_budget(&mut self, budget: u64) {
-        let budget = budget.max(1);
-        self.seed = 0u64.wrapping_sub(budget);
-        self.words[ENTRY_BACKEDGE_COUNT].write(self.seed);
+        self.primed = i64::try_from(budget).unwrap_or(BACKEDGE_BUDGET).clamp(1, BACKEDGE_BUDGET);
+        self.words[ENTRY_BACKEDGE_COUNT].write(self.primed as u64);
     }
 
     /// The record's words. Native OSR may also update the private first counter word.
@@ -1474,7 +1476,7 @@ impl Role {
             (Role::Array { elements: a, written }, Role::Array { elements: b, written: more })
                 if boxed(a) && boxed(b) =>
             {
-                Some(Role::Array { elements: a.join(b), written: written || more })
+                Some(Role::Array { elements: a.max(b), written: written || more })
             }
             (Role::Array { elements, written }, Role::Scalar(Tagged)) if boxed(elements) => {
                 Some(Role::Array { elements: Tagged, written })
@@ -1573,6 +1575,7 @@ pub(super) fn region(
     header: u32,
     backedge: u32,
     method_calls: MethodCalls,
+    native_call: &dyn Fn(usize) -> bool,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let (start, end) = (header as usize, backedge as usize);
     if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
@@ -1592,6 +1595,7 @@ pub(super) fn region(
         header,
         &std::collections::BTreeSet::new(),
         method_calls,
+        native_call,
     );
     // The BaseJIT tier proves each operand where its row reads it and needs no roles: its plan
     // lowers every instruction, so a loop the role analysis rejects is still its span.
@@ -1616,11 +1620,12 @@ fn admit_region(
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
     method_calls: MethodCalls,
+    native_call: &dyn Fn(usize) -> bool,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     // Under `--b-jit` a loop whose every iteration leaves (at a call, a throw) is still a region:
     // BaseJIT lowers each instruction (`base_region::steps`), and Cranelift never compiles the loop.
     if !crate::jit_mode::base_only()
-        && let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls)
+        && let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls, native_call)
     {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }

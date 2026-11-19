@@ -10,9 +10,9 @@ pub(super) use nested::{finish_forwarded_in_lane, nested_construction, nested_ro
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
 /// that prototype alone determine, ends at `shape`, its fields the arguments for
 /// `parameters[..fields]` in order, a defaulted one's fallback in place of a falsy argument.
-/// While the prototype layout keeps `epoch` (`prototype_layout_epoch`), which every
-/// collection advances, those adds would hit again with the same transitions, so the object
-/// can be allocated finished.
+/// While the plan's dependency holds (`watch_construct_plan`: the values and layouts of the
+/// objects it read and of the chains above them), those adds would hit again with the same
+/// transitions, so the object can be allocated finished.
 #[derive(Clone, Copy)]
 pub(super) struct ConstructPlan {
     pub(super) callee: Value,
@@ -68,8 +68,8 @@ pub(super) enum ConstructPlanKind {
 }
 
 impl ConstructPlan {
-    /// This plan, holding from the current prototype layout epoch, with its receiver
-    /// header derived from its prototype and shape.
+    /// This plan, with its receiver header derived from its prototype and shape; it holds
+    /// under the dependency `watch_construct_plan` then gives it.
     pub(super) fn finish(self) -> Self {
         self.derive_header()
     }
@@ -338,7 +338,7 @@ pub(super) fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argum
 pub(in crate::vm) unsafe fn context_constructs_in_lane<H: Host>(context: *mut ()) -> bool {
     if !crate::DYNAMIC_EXECUTION_ENABLED { return false; }
     let cx = context.cast::<LaneContext<H>>();
-    unsafe { (*cx).script_calls && (*cx).script_constructs }
+    crate::staged::call_construct::concrete_admits_construct_run(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs })
 }
 
 /// A lane body's `new callee(...)` of the `argc` arguments at `arguments`, in `code`, the
@@ -350,7 +350,7 @@ pub(in crate::vm) unsafe fn context_constructs_in_lane<H: Host>(context: *mut ()
 /// # Safety
 /// `arguments` are the body's `argc` registers.
 pub(in crate::vm) unsafe fn body_construction_in_lane<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
-    if vm.construct_target.is_some() || vm.heap.should_collect() {
+    if !crate::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.heap.should_collect() {
         return None;
     }
     // SAFETY: the caller passes the body's argument registers.
@@ -368,7 +368,7 @@ pub(in crate::vm) unsafe fn body_construction_in_lane<H: Host>(vm: &mut Vm<H>, c
 /// from the plan while it holds, whose forwarding has no fields of its own. `None` leaves
 /// the body to its helper path before any effect.
 pub(in crate::vm) fn body_receiver_in_lane<H: Host>(vm: &mut Vm<H>, callee: Value) -> Option<Value> {
-    if vm.construct_target.is_some() || vm.heap.should_collect() || vm.with_scope_entered {
+    if !crate::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.heap.should_collect() || vm.with_scope_entered {
         return None;
     }
     let index = holding_construct_plan_index(vm, callee)?;
@@ -484,10 +484,12 @@ pub(super) fn record_forwarded_resolution<H: Host>(vm: &mut Vm<H>, index: usize,
 
 /// Makes plan `index` hold only while `objects`, which its proof read besides the callee
 /// (the callee's own layout, so its `prototype` and [[Prototype]] among them), keep their
-/// values and layouts: `renew` starts the plan's dependency, else it adds to it. A write to
-/// a slot of any of them, or a layout change anywhere, retires it (`watch_prototype_values`),
-/// so a use compares no epoch, layout or shape. The plan never holds where the reader
-/// table is full.
+/// values and layouts, and so do the chains above them, which its adds' chain proofs and a
+/// forwarding's `apply` read: `renew` starts the plan's dependency, else it adds to it. A
+/// write to a slot of any of them (`hold_prototype_values`), or a layout change of any of them
+/// or of a prototype above one (`Vm::hold_chain_layouts`), retires it, so a use compares no
+/// epoch, layout or shape; a change to a prototype on none of those chains leaves it. The
+/// plan never holds where a reader table is full.
 pub(super) fn watch_construct_plan<H: Host>(vm: &mut Vm<H>, index: usize, renew: bool, objects: &[Value]) {
     use std::rc::Rc;
     use crate::code_dependencies::DependentCode;
@@ -497,11 +499,15 @@ pub(super) fn watch_construct_plan<H: Host>(vm: &mut Vm<H>, index: usize, renew:
     let Some(watch) = vm.lane_stack.construct_watches[index].clone() else { return };
     let code: Rc<dyn DependentCode> = watch.clone();
     for &object in objects {
-        vm.heap.mark_prototype(object);
-        let shape = vm.heap.function(object).map(|function| function.object.exact_shape())
-            .or_else(|| vm.heap.object(object).map(|data| data.exact_shape()));
-        if !shape.is_some_and(|shape| crate::heap::subscribe_prototype_values(shape, &code)) {
+        // Marks every link, the object first, so the shape below is the one marked.
+        if !vm.hold_chain_layouts(object, &code) {
             watch.retire();
+            return;
+        }
+        let shape = vm.heap.object(object).map(|data| data.exact_shape());
+        if !shape.is_some_and(|shape| crate::heap::hold_prototype_values(shape, &code)) {
+            watch.retire();
+            return;
         }
     }
 }
@@ -545,7 +551,7 @@ pub(super) fn initialize_stores_in_lane<H: Host>(
 
 /// Where the lane continues after a returned construction (`return new C(...)`) made `this`
 /// in place: the innermost activation completed with it (`complete_activation_in_lane`), else
-/// the frame's own return of it (`frame_return_in_lane`).
+/// the frame's own return of it (`frame_return`).
 #[inline(always)]
 pub(super) fn return_constructed_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
     // A running leaf's construction is its call's completion, as its return is
@@ -568,5 +574,5 @@ pub(super) fn return_constructed_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: I
     {
         return resumed;
     }
-    complete_activation_in_lane(cx, ip, this).unwrap_or_else(|| Resumed::Exit(frame_return_in_lane(unsafe { vm(cx) }, ip, this)))
+    complete_activation_in_lane(cx, ip, this).unwrap_or_else(|| Resumed::Exit(frame_return(unsafe { vm(cx) }, ip, this)))
 }

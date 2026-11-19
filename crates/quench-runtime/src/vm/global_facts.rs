@@ -38,7 +38,17 @@ pub(crate) struct LexicalSlot {
     pub(crate) realm_offset: i32,
 }
 
-/// What a lane body's by-name global read takes when it is compiled (`Vm::global_reads_in_lane`).
+/// The Stable cell a folded read of a global's member holds (`GlobalRead::NativeMember`'s `cell`): the cell's fact, and the global
+/// object and realm offset it is of (`GlobalRead::Stable`). A row that folds the read carries it, so its body subscribes to the
+/// fact (a reassignment retires the body) and proves the realm once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StableCell {
+    pub(crate) fact: GlobalFact,
+    pub(crate) global: Value,
+    pub(crate) realm_offset: i32,
+}
+
+/// What a lane body's by-name global read takes when it is compiled (`Vm::lane_global_reads`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GlobalRead {
     /// An immutable global's value (`builtins::immutable_globals`), which no binding changes.
@@ -67,11 +77,19 @@ pub(crate) enum GlobalRead {
     /// `folds` where the receiver is that global, so the read itself may fold to the value; a
     /// method read by name off an unknown receiver (`x.push`) only names the call's candidate,
     /// and the read still runs: the receiver may hold its own member of that name.
-    NativeMember { value: Value, native: super::Native, holder: u32, folds: bool },
+    NativeMember { value: Value, native: super::Native, holder: u32, folds: bool, cell: Option<StableCell> },
     /// A `Slot` read (the b-jit's) of a global name whose function is the native `native` (`parseInt`) when the body was
     /// compiled, held by the global object's watched exact shape `holder` (`NativeMember`'s code dependency). The read is the
     /// slot's; a call of the register it defines guards the function's identity (`base_region::function::native_call`).
     NativeSlot { slot: GlobalSlot, value: Value, native: super::Native, holder: u32 },
+}
+
+/// The natives whose call a loop or body runs in place on scalar arguments and whose result allocates nothing: they
+/// run no guest code, change no array and observe no frame (`dispatch_fast::in_place_natives::primitive_leaf`, with a
+/// Number or Boolean result), and the Math functions of Numbers (`number::math_function`), which a loop calling one
+/// (`sin`, `cos`, ...) otherwise declines to run natively. A global cell holding one of them is read as a `GlobalRead::NativeSlot`.
+pub(in crate::vm) fn scalar_native(native: super::Native) -> bool {
+    matches!(native, super::Native::ParseInt | super::Native::NumberParseFloat) || super::number::math_function(native).is_some()
 }
 
 /// Which tier a table of by-name global accesses is for (`Vm::global_table`): the lane specializer

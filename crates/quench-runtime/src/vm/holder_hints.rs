@@ -8,7 +8,9 @@ use crate::staged::holder::concrete_own_constant_read;
 /// shape and storage form, is `receiver` (`Object::hint_shape`), which lacks the name
 /// (`NO_FIELD_RECEIVER` for a string primitive, whose own names a site that reads
 /// `String.prototype` does not read), whose prototype is `holder`, read `value` under
-/// `watch`, which a change to the holder's slot values or any prototype's layout retires.
+/// `watch`, which a change to the holder's slot values or its own layout retires
+/// (`heap::watch_prototype_values`): the holder is the receiver's immediate prototype, so no
+/// other prototype stands between them.
 #[derive(Clone)]
 pub(super) struct HolderHint {
     /// The receiver's header words (`Object::guard_word`): its shape and storage form with

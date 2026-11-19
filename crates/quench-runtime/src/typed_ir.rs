@@ -5,7 +5,6 @@
 //! A representation is not a JavaScript type, and a profile observation is not
 //! a proof. A region may specialize an observed representation only by keeping
 //! the corresponding guard obligation in its verified entry/definition plan.
-#![allow(dead_code)]
 
 use crate::{Value, ValueType};
 
@@ -68,6 +67,7 @@ impl Type {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Projection {
     Exact,
+    #[cfg(test)]
     CheckedDefinitions,
 }
 
@@ -101,6 +101,7 @@ impl Fact {
     fn projection_holds(self) -> bool {
         match self.projection {
             Projection::Exact => self.representation.accepts(self.ty),
+            #[cfg(test)]
             Projection::CheckedDefinitions => {
                 self.binding == BindingTime::Dynamic
                     && self.proof == Proof::Definition
@@ -125,6 +126,7 @@ impl Fact {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn number(
         representation: Representation,
         binding: BindingTime,

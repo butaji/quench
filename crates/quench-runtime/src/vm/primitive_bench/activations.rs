@@ -17,13 +17,13 @@ fn activation(kinds: Kinds, index: usize) -> Activation {
         Kinds::Mixed => !index.is_multiple_of(2),
     };
     Activation {
-        native: crate::vm::compiled::ShadowFrame::EMPTY, function: index as u32,
+        callee: std::ptr::null(), this: 0, body: 0, window: 0, function: index as u32,
         call: std::ptr::null(),
         caller_base: std::ptr::null(),
         caller_registers: Registers(std::ptr::null_mut()),
         caller_program: ProgramId::MAIN,
         kind: if wasm {
-            ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: WASM_STORAGE_BYTES }
+            ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: WASM_STORAGE_BYTES, program: ProgramId::MAIN, pc: 0 }
         } else {
             ActivationKind::Script(ScriptActivation {
                 callee: Value::UNDEFINED,
@@ -58,10 +58,10 @@ fn activation_storage_tracks_mixed_push_pop_and_empty_stack() {
         }
         for index in (0..ACTIVATIONS).rev() {
             let entry = stack.pop_activation().unwrap();
-            assert_eq!(entry.function, index as u32);
+            assert_eq!(entry.function(), index as u32);
             assert_eq!(entry.window_ptr(), stack.values.as_mut_ptr().wrapping_add(index * WASM_REGISTERS));
-            assert_eq!(entry.caller_program, ProgramId::MAIN);
-            let bytes = if entry.script().is_some() { 0 } else { WASM_STORAGE_BYTES };
+            assert_eq!(entry.caller_program(), ProgramId::MAIN);
+            let bytes = if entry.completion().is_some() { 0 } else { WASM_STORAGE_BYTES };
             expected -= bytes;
             assert_eq!(stack.wasm_storage_bytes, expected);
         }

@@ -6,11 +6,27 @@
 #[path = "codes.rs"]
 mod codes;
 pub use codes::*;
+/// The heap rows' names (`row_names.rs`), mounted beside the library by the lib and the build script.
+pub use super::row_names::*;
 
 use std::collections::BTreeSet;
 
 /// A row as codes: kind, destination, operands, speculate.
 pub type Code = (u8, u8, u8, u8, bool);
+
+/// The operands a kind reads, the others fixed to `MEM`.
+fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
+    match kind {
+        _ if is_copy(kind) => (dst, a, MEM),
+        _ if is_compare(kind) => (MEM, a, b),
+        JUMP | JUMP_POLL | JUMP_WATCH | POLL | TAG_INIT => (MEM, MEM, MEM),
+        GUARD | UNBOX | UNBOX_INT | NOT | NEG | CLZ32 | MATH_FIRST..=MATH_LAST => (dst, a, MEM),
+        JUMP_TRUE | JUMP_FALSE | SPILL => (MEM, a, MEM),
+        BIT_TEST => (MEM, a, b),
+        NULLISH_EQ | NULLISH_NE | BOOL_TRUE | BOOL_FALSE => (MEM, a, MEM),
+        _ => (dst, a, b),
+    }
+}
 
 /// Whether the row speculates: double rows never do (a bitwise row reading a pinned double
 /// still speculates its int32 side), a copy or control row always does.
@@ -123,6 +139,12 @@ fn control(places: &Places, rows: &mut BTreeSet<Code>) {
     for &dst in places.floats_dst.iter().chain(&places.ints_dst) {
         rows.insert(canonical((GUARD, dst, MEM, MEM, true)));
     }
+    for dst in int_pins() {
+        rows.insert(canonical((UNBOX_INT, dst, MEM, MEM, true)));
+    }
+    for dst in double_pins() {
+        rows.insert(canonical((UNBOX, dst, MEM, MEM, true)));
+    }
     for a in int_pins().chain(double_pins()) {
         rows.insert(canonical((SPILL, MEM, a, MEM, true)));
     }
@@ -138,10 +160,30 @@ fn truthiness(places: &Places, rows: &mut BTreeSet<Code>) {
     }
     let dsts: Vec<u8> = places.ints_dst.iter().chain(&places.floats_dst).copied().collect();
     let srcs: Vec<u8> = places.ints_src.iter().copied().chain(double_pins()).collect();
-    product(rows, &[NEG, SQRT, FLOOR, CEIL, TRUNC, ABS, ROUND], &dsts, &srcs, &[true]);
+    product(rows, &[NEG, SQRT, FLOOR, CEIL, TRUNC, ABS, ROUND, FROUND, SIGN], &dsts, &srcs, &[true]);
     // `Math.clz32` writes an int32 (0..=32) to an int destination, from an int32 or a Number.
     for &dst in &places.ints_dst {
         rows.extend(srcs.iter().map(|&a| canonical((CLZ32, dst, a, MEM, true))));
+    }
+}
+
+/// The jumps a staged compare names with no Number relation: `if (a & b)` over the int32 and Number operands a
+/// bitwise row reads, and the nullish and identity tests over every operand a truthiness is read from.
+fn tests(places: &Places, rows: &mut BTreeSet<Code>) {
+    let bit_operands: Vec<u8> = places.ints_src.iter().copied().chain(double_pins()).collect();
+    product(rows, &[BIT_TEST], &[MEM], &bit_operands, &[true]);
+    let tested: Vec<u8> = [MEM, MEMINT].into_iter().chain(int_pins()).chain(double_pins()).collect();
+    for &a in &tested {
+        rows.extend([NULLISH_EQ, NULLISH_NE, BOOL_TRUE, BOOL_FALSE].map(|kind| canonical((kind, MEM, a, MEM, true))));
+    }
+}
+
+/// `switch`'s case slot (`INT_CASE`): an int destination and int operand, the minimum as the immediate.
+fn int_case(places: &Places, rows: &mut BTreeSet<Code>) {
+    for &dst in &places.ints_dst {
+        for &a in &places.ints_src {
+            rows.insert(canonical((INT_CASE, dst, a, IMM, true)));
+        }
     }
 }
 
@@ -153,7 +195,9 @@ pub fn library() -> Vec<Code> {
     products(&places, &mut rows);
     exact_arithmetic(&places, &mut rows);
     control(&places, &mut rows);
+    int_case(&places, &mut rows);
     truthiness(&places, &mut rows);
+    tests(&places, &mut rows);
     rows.into_iter().collect()
 }
 

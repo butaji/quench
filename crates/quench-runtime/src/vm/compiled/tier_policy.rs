@@ -29,7 +29,7 @@ pub(in crate::vm) struct Tiers {
 #[cfg(test)]
 pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500,
+    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, quick_body_share: 400, quick_compile_permille: 670, remaining_divisor: 4, plan_ns_per_ir: 1500,
 };
 
 /// The runs a loop-free function makes unlowered before a later call lowers it
@@ -90,11 +90,19 @@ pub(in crate::vm) struct Priors {
     /// (measured about 300 ns: some 1,100 instructions at 0.3 ns).
     pub(in crate::vm) region_entry_ns: u64,
     pub(in crate::vm) body_entry_ns: u64,
-    /// The same two for a b-jit body: stencil code runs about half the interpreter's time per
-    /// bytecode (values stay in the frame), and its entry is a lane record and a call into the
-    /// stitched code (a few dozen machine instructions), where a u-jit body's native entry crosses ABIs.
+    /// A b-jit body's per-bytecode time as a share of the interpreter's: stencil code runs about
+    /// half of it (values stay in the frame). Its entry is `body_entry_ns`, as a u-jit body's: both
+    /// publish a `LaneMethod` the one entry driver runs (`lane_body_entry`, `Vm::run_lane_body`),
+    /// whose binding of the lane frame is the crossing's cost, not the code the body enters.
     pub(in crate::vm) base_body_share: u64,
-    pub(in crate::vm) base_entry_ns: u64,
+    /// A u-jit body compiled without the mid-end (`CompileLevel::Quick`: no e-graph, no loop
+    /// unswitching), as a share of the interpreter's time per bytecode, and the share of an
+    /// optimized compile's time its compile takes, both per mille. Richards' compile profile
+    /// (Nov 18): of 972M Ir of Cranelift, the e-graph took 179M and poll unswitching 140M, so a
+    /// quick compile costs about two thirds; its code keeps the values the e-graph would have
+    /// folded, a third more time per bytecode than `body_share`.
+    pub(in crate::vm) quick_body_share: u64,
+    pub(in crate::vm) quick_compile_permille: u64,
     /// The divisor of the entries and the interpreter time so far that gives the credible lower
     /// bound of those to come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
@@ -168,9 +176,6 @@ pub(in crate::vm) struct LaneBody {
     /// runs: total Ir -2%, richards unchanged; Nov 18).
     pub(in crate::vm) max_callee_recompiles: u8,
     pub(in crate::vm) late_call_calls: u32,
-    /// The length below which a lane body without loops or inlined calls declines
-    /// (`Vm::compile_lane_method`).
-    pub(in crate::vm) min_instructions: usize,
     /// The longest callee body a unit or a call plan inlines (`staged::plan_entry`): each copy of it
     /// costs code and compile time at every call site, and short bodies (accessors, field updates)
     /// are where a call costs most relative to its work.
@@ -327,18 +332,25 @@ impl LaneBody {
 impl Tiers {
     /// The length a body without loops or calls needs for one entry to pay in the lane body
     /// `tier` compiles: none where every eligible compile is admitted (`Tiers::admits_all`), so
-    /// a fixture too short to repay one still gets its body. A Cranelift body asks
-    /// `min_instructions`; a stencil body asks the entries' crossing over the interpretation it saves per
-    /// bytecode (`interpreter_ns` less its `base_body_share`), a few bytecodes, as it compiles in microseconds.
+    /// a fixture too short to repay one still gets its body. Each tier asks the entry's crossing
+    /// (`body_entry_ns`, the one entry driver's) over the interpretation its code saves per
+    /// bytecode (`Priors::repaying_length`): a stencil body keeps `base_body_share` of it, a
+    /// Cranelift body `body_share`.
     pub(in crate::vm) fn amortizing_instructions(&self, tier: Tier) -> usize {
         if self.admits_all { return 0; }
         match tier {
-            Tier::Base => {
-                let saved = self.priors.interpreter_ns * (PER_MILLE - self.priors.base_body_share);
-                (self.priors.base_entry_ns * PER_MILLE).div_ceil(saved) as usize
-            }
-            Tier::Quick | Tier::Ultra => self.lane_body.min_instructions,
+            Tier::Base => self.priors.repaying_length(self.priors.base_body_share),
+            Tier::Quick | Tier::Ultra => self.priors.repaying_length(self.priors.body_share),
         }
+    }
+}
+
+impl Priors {
+    /// The fewest straight-line bytecodes whose interpretation, less the `share` per mille code
+    /// still takes of it, covers a body's entry (`body_entry_ns`): shorter, no entry repays itself.
+    pub(in crate::vm) fn repaying_length(&self, share: u64) -> usize {
+        let saved = (self.interpreter_ns * (PER_MILLE - share)).max(1);
+        (self.body_entry_ns * PER_MILLE).div_ceil(saved) as usize
     }
 }
 
@@ -373,7 +385,6 @@ const MEASURED: Tiers = Tiers {
         max_lifetimes: 8,
         max_callee_recompiles: 1,
         late_call_calls: 4096,
-        min_instructions: 40,
         max_inlined_instructions: 96,
         compile_poll_interval: 64,
         audit_period: 64,
@@ -388,7 +399,7 @@ const MEASURED: Tiers = Tiers {
         window_registers: 32,
         max_depth: 3,
     },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, quick_body_share: 400, quick_compile_permille: 670, remaining_divisor: 4, plan_ns_per_ir: 1500 },
     stress: false,
     admits_all: false,
     regexp_native_runs: 2000,
@@ -695,15 +706,20 @@ pub(in crate::vm) const JS_COMPILED_MAX_CODE_BYTES: usize = 64 * 1024;
 mod tests {
     use super::*;
 
-    /// A stencil body pays for its entry in a few bytecodes (it compiles in microseconds and runs near the interpreter's
-    /// speed), a Cranelift body in `min_instructions`.
+    /// A body pays for the one entry both tiers' bodies cross in the bytecodes whose saved
+    /// interpretation covers it: a stencil body needs more than a Cranelift body, which saves more
+    /// per bytecode behind the same entry.
     #[test]
     fn each_lane_body_tier_has_its_own_amortizing_length() {
         let tiers = TierRows::PROCESS.table();
         if tiers.admits_all { return; }
         let (base, ultra) = (tiers.amortizing_instructions(Tier::Base), tiers.amortizing_instructions(Tier::Ultra));
-        assert!(base > 0 && base < ultra, "{base} and {ultra}");
-        assert_eq!([ultra, tiers.amortizing_instructions(Tier::Quick)], [tiers.lane_body.min_instructions; 2]);
+        let priors = &tiers.priors;
+        let saves = |share: u64, length: usize| length as u64 * priors.interpreter_ns * (PER_MILLE - share) / PER_MILLE;
+        assert!(saves(priors.base_body_share, base) >= priors.body_entry_ns && saves(priors.base_body_share, base - 1) < priors.body_entry_ns, "{base}");
+        assert!(saves(priors.body_share, ultra) >= priors.body_entry_ns && saves(priors.body_share, ultra - 1) < priors.body_entry_ns, "{ultra}");
+        assert!(ultra <= base, "{base} and {ultra}");
+        assert_eq!(ultra, tiers.amortizing_instructions(Tier::Quick));
     }
 
     #[test]
@@ -722,6 +738,11 @@ mod tests {
         }
     }
 }
+
+/// The call depth a recursion is followed to: `lane_facts::recursion_cycle` weighs a cycle through
+/// more functions than this as straight-line code, and the audit counts an entry made within this
+/// many activations of another of its function as a recursive one (`LaneView::audit_entry`).
+pub(in crate::vm) const RECURSION_DEPTH: usize = 4;
 
 /// The uncounted entries other bodies make while one body's audit runs, after which that audit,
 /// if its body is no longer entered, gives way (`lane_body_audit`): a few audit epochs' worth.

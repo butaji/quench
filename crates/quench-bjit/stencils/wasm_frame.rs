@@ -4,7 +4,7 @@
 //! Not a rows file: every fn here is an accessor, shared by all `wasm_rows*.rs`.
 //!
 //! The decoders that read a stencil code (`W32`, `STORAGE_BITS32`, `ACCESSES`) live here, not in
-//! `staged`, which cannot name `wasm_codes.rs`; the tag decoders of the runtime's operators are the
+//! `staged`, which cannot name `wasm_kinds.rs`; the tag decoders of the runtime's operators are the
 //! staged ones (`staged::wasm::binary_operator` and kin).
 
 use super::wasm_stage::StencilMemory;
@@ -107,11 +107,21 @@ pub(crate) fn global_area(s: &S) -> usize {
 #[inline(always)]
 pub(crate) unsafe fn reload_memory(s: &mut S, length_at: usize) {
     unsafe {
-        let header = s.frame as *mut usize;
         let length = *((s.ctx + length_at) as *const u64) as usize;
-        *header.add(super::FRAME_LENGTH_WORD) = length;
+        *(s.frame as *mut usize).add(super::FRAME_LENGTH_WORD) = length;
+    }
+    unsafe { restore_memory(s) }
+}
+
+/// After a call that cannot have grown the memory (`CALL_KEEP`): the base and length pins are the
+/// frame header's, which hold the current length (the context's, by every growing call's reload).
+/// The rest is as `reload_memory` leaves it.
+#[inline(always)]
+pub(crate) unsafe fn restore_memory(s: &mut S) {
+    unsafe {
+        let header = s.frame as *const usize;
         s.p[1] = *header.add(super::FRAME_BASE_WORD);
-        s.p[2] = length;
+        s.p[2] = *header.add(super::FRAME_LENGTH_WORD);
     }
     // Wasm rows keep nothing in the other pins (the status pin is written only on a leave), so
     // a call row hands them on as constants: the call need not save them around itself.
@@ -143,7 +153,7 @@ pub(crate) unsafe fn vector_write<const H: u8>(s: &S, bits: u128) {
 /// The word at frame offset `offset`, or 0 where the operand is absent (`CALLOUT_ABSENT`).
 #[inline(always)]
 pub(crate) unsafe fn operand(frame: usize, offset: u32) -> u64 {
-    if offset == crate::wasm_codes::CALLOUT_ABSENT { 0 } else { unsafe { *((frame + offset as usize) as *const u64) } }
+    if offset == crate::wasm_layout::CALLOUT_ABSENT { 0 } else { unsafe { *((frame + offset as usize) as *const u64) } }
 }
 
 /// The `NativeRoots` the context names at byte offset `at` of `CallContext` (`native_roots`).

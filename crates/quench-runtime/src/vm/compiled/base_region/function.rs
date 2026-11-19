@@ -26,6 +26,7 @@ use quench_bjit::{padded_holes, HOLES};
 mod calls;
 mod planning;
 mod rows;
+mod switch;
 
 use calls::*;
 use planning::*;
@@ -51,6 +52,9 @@ pub(in crate::vm::compiled) struct Body {
     /// The exact shapes of the holders whose values its folded reads hold (a Stable fact): a change
     /// of a value a prototype of one holds retires the body (`StableFacts::holders`).
     pub(in crate::vm::compiled) holders: Box<[u32]>,
+    /// The prototype chains its folded reads, membership tests and adding stores read through (a
+    /// Stable fact): a layout change of a prototype on one retires the body (`StableFacts::chains`).
+    pub(in crate::vm::compiled) chains: Box<[crate::code_dependencies::PrototypeChain]>,
     /// What its `instanceof` fast arms hold of their constructors' `prototype`s (a Stable fact): a write of a `prototype`,
     /// a departure of a constructor's shape or a change of the `@@hasInstance` holder's values retires the body
     /// (`StableFacts::instanceofs`).
@@ -80,6 +84,10 @@ pub(in crate::vm::compiled) struct Body {
     pub(in crate::vm::compiled) entries: Box<[(u32, usize)]>,
     /// The PCs with no stencil row of their own, which take the generic row (`steps::generic_row`), ascending.
     pub(in crate::vm::compiled) generic: Box<[u32]>,
+    /// The parameter registers whose Number guards its proven-arguments entry skips (`RowEntries::numbers`).
+    pub(in crate::vm::compiled) number_guards: u64,
+    /// Whether the activation reads its `this` (`RowEntries::uses_this`), so a direct call writes the receiver for it.
+    pub(in crate::vm::compiled) uses_this: bool,
 }
 
 /// What a stitch decides its call sites by: the callees they recorded and the stitch's budget, the
@@ -106,32 +114,6 @@ struct Sites<'a> {
 pub(super) fn skipped() -> Planned {
     static EMPTY: Stencil = Stencil { code: Vec::new(), relocs: Vec::new(), imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 0, hot_len: 0 };
     Planned::single(&EMPTY, [0; HOLES], None, None)
-}
-
-/// Whether loop regions keep their call rows: always in a build; a test chooses (`with_region_call_rows`),
-/// as the protocol tests (a callee's throw, a callee changing what the entry recorded) do.
-#[cfg(not(test))]
-fn region_call_rows() -> bool {
-    true
-}
-
-#[cfg(test)]
-fn region_call_rows() -> bool {
-    REGION_CALL_ROWS.with(std::cell::Cell::get)
-}
-
-#[cfg(test)]
-thread_local! {
-    static REGION_CALL_ROWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Runs `body` with the calling thread's loop regions keeping their call rows.
-#[cfg(test)]
-pub(in crate::vm) fn with_region_call_rows<R>(body: impl FnOnce() -> R) -> R {
-    let previous = REGION_CALL_ROWS.with(|rows| rows.replace(true));
-    let result = body();
-    REGION_CALL_ROWS.with(|rows| rows.set(previous));
-    result
 }
 
 /// What a body is built for: its function and registers, the rows whose int32 speculation failed
@@ -169,10 +151,13 @@ pub(in crate::vm::compiled) struct ClassProto {
 
 /// A loop-invariant receiver and the exact shape its field accesses saw at the region's entry: the entry checks the shape
 /// once (`Heap::Shape`), and every access of the register the proofs carry takes its known-shape row (`proofs::prove`).
+/// `flat`: every access saw the shape in flat form too, so the entry checks the form (`Heap::ShapeFlat`) and the accesses
+/// take the flat rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::vm::compiled) struct ShapeProto {
     pub(in crate::vm::compiled) register: crate::bytecode::Register,
     pub(in crate::vm::compiled) shape: u32,
+    pub(in crate::vm::compiled) flat: bool,
 }
 
 /// The body of the function `spec` names that `region` spans, over the callees its call sites
@@ -227,8 +212,12 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
 unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, Views), callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
-    let facts = unsafe { callees.facts() };
-    let sites = Sites { function: spec.known.program.function(spec.function as usize), id: spec.function, callees, facts: &facts, context: Context::root(spec.function, spec.registers, spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
+    let (facts, targets) = unsafe { (callees.facts(), callees.targets()) };
+    let function = spec.known.program.function(spec.function as usize);
+    // The prototypes the entry may check and the rows may fold on: none where the function's rows reshape an object.
+    let classes = super::declared::class_prototypes(function, spec.known.classes);
+    let known = Known { classes: &classes, ..spec.known };
+    let sites = Sites { function, id: spec.function, callees, facts: &facts, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known, ending, views };
     let built = assemble(region, spec, sites, helpers).map(|body| with_native_holders(body, callees));
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built
@@ -244,6 +233,12 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
 /// `registers` overwrote the environment word (JetStream earley-boyer's "invalid local environment").
 fn inline_base(function: &crate::bytecode::Function, registers: u16) -> u16 {
     registers.saturating_add(crate::vm::dispatch_fast::WINDOW_LOCALS).saturating_add(function.locals)
+}
+
+/// `body` with the holders its builtin calls' guards depend on (`Callees::native_holders`) among its own.
+fn with_native_holders(mut body: Body, callees: &Callees) -> Body {
+    body.holders = body.holders.iter().copied().chain(callees.native_holders()).collect();
+    body
 }
 
 /// The bit of a widened key that says the instruction is an inlined callee's (`inlined_exit_key`).
@@ -275,10 +270,13 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let seen = super::declared::seen(function, ending, spec.seen);
     let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), &seen);
+    feedback_admits(&mut decoded, &kinds, spec.known.fields);
     let shaped: Vec<Register> = prototypes.iter().map(|proto| proto.register).collect();
     // The entry seeds the direct objects it checks: the declared ones, and each shape-checked receiver (`Heap::Shape`).
     let objects: Vec<Register> = super::declared::exact_objects(function, &prototypes).into_iter().chain(shapes.iter().map(|proto| proto.register)).collect();
-    proofs::prove(&span, &mut decoded, &reached, &objects, &shaped);
+    let loops: Vec<Register> = shapes.iter().map(|proto| proto.register).collect();
+    let flat: Vec<Register> = shapes.iter().filter(|proto| proto.flat).map(|proto| proto.register).collect();
+    proofs::prove(&span, &mut decoded, &reached, &objects, &shaped, &loops, &flat);
     // The run's stores word is checked at the entry where a store is admitted on it (`Heap::Stores`); a store that re-reads
     // the word itself (`Decoded::recheck`) needs no entry test, and the stores after it are admitted by that test.
     let stores = decoded.iter().any(|row| row.admitted && !row.recheck);
@@ -298,8 +296,15 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities().collect();
     identities.sort_unstable();
     identities.dedup();
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, guards, numbers, prototypes, shapes, stores, identities };
-    let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
+    // The entry guards hold the pinned int32 and double webs live at the header (`entry_rows`, which every entry runs), so
+    // the argument proof starts from them as well as from the declared Numbers.
+    let (pinned_ints, pinned_doubles) = super::call_args::entry_pins(&homes, &webs, &span);
+    let seeded: Vec<Register> = numbers.iter().copied().chain(pinned_doubles).collect();
+    let proven_args = super::call_args::proven_arguments(function, &spec.known.program.constants, &seeded, &pinned_ints).unwrap_or_default();
+    let chain_holders = std::cell::RefCell::new(Vec::new());
+    let builtins = sites.callees.builtins();
+    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
+    let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     let linked = link(&layout, &planned)?;
     residuals::report_rows(&layout, region.header, &decoded, &planned, linked.code.len());
@@ -312,11 +317,25 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let records = planned.iter_mut().flat_map(|row| std::mem::take(&mut row.owned)).collect();
     let atoms = held_atoms(&decoded);
     // A class-typed parameter's prototype shape joins the holders the body subscribes to, so a value change there retires it.
-    let holders: Box<[u32]> = held_holders(&decoded).iter().copied().chain(layout.prototypes.iter().map(|proto| proto.holder))
+    let holders: Box<[u32]> = held_holders(&decoded).iter().copied().chain(layout.prototypes.iter().map(|proto| proto.holder)).chain(layout.holders.borrow().iter().copied())
         .collect::<std::collections::BTreeSet<u32>>().into_iter().collect();
     let names_shapes = decoded.iter().any(|row| row.ic.is_some());
     Ok(Body { code: linked.code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region)).chain(sites.callees.held_facts())), atoms, holders,
-        instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
-        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes: linked.resumes, scratch, names_shapes,
+        chains: held_chains(&decoded), instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
+        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes: linked.resumes, scratch, names_shapes, number_guards: linked.number_guards,
+        uses_this: crate::bytecode::activation_reads_this(spec.known.program, function),
         symbols: linked.symbols.into(), entries: linked.entries.into(), generic })
+}
+
+/// Admits a packed helper row only where its site's feedback admits its direct arm (`family_helpers::admits`):
+/// a binary site met Number operands only, an element site met a dense or typed element. Another site would
+/// run the general step on every execution. An inlined row has no site of its own, and is not admitted.
+fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>], fields: Option<&dyn Fn(u16) -> bool>) {
+    for (row, site) in decoded.iter_mut().zip(kinds) {
+        if let Some(words) = row.packed
+            && !crate::vm::dispatch_fast::family_helpers::admits(words, *site, fields)
+        {
+            row.packed = None;
+        }
+    }
 }
