@@ -137,7 +137,7 @@ impl<H: Host> Vm<H> {
         // Flat ASCII text, pattern and replacement read in place, with no copy of any of them.
         let ascii = |value: Value| match self.heap.string(value)?.existing_flat()?.view() {
             Units::Ascii(bytes) => Some(bytes),
-            Units::Wide(_) => None,
+            Units::Latin1(_) | Units::Wide(_) => None,
         };
         if let (Some(text), Some(needle), Some(with)) = (ascii(receiver), ascii(*search), ascii(*replacement))
             && !needle.is_empty()

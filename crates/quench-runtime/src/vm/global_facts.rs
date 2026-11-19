@@ -223,6 +223,14 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Maps each of the root's declared global lexicals to the active realm's binding index of its
+    /// name (`GlobalDeclarations::slots`), at instantiation; a name not bound yet stays unmapped.
+    pub(super) fn map_global_lexical_slots(&self, program: &super::ResidualProgram) {
+        for (atom, slot) in program.function(0).global_lexical_slots() {
+            self.refresh_global_lexical_slot(slot, atom);
+        }
+    }
+
     /// A global lexical declaration may shadow a property of the active realm's global object
     /// that code holds: that code retires (`heap::note_global_shadowed`).
     pub(super) fn note_global_shadowing(&self) {

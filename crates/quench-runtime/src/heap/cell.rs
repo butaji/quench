@@ -1,7 +1,3 @@
-use super::records::{
-    ARRAY_RECORD_CAPACITY, COLLECTION_RECORD_CAPACITY, FUNCTION_RECORD_CAPACITY, ITERATOR_RECORD_CAPACITY,
-    OBJECT_RECORD_CAPACITY, PROMISE_RECORD_CAPACITY,
-};
 use super::root::WeakHandle;
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -1528,19 +1524,29 @@ pub(crate) struct Object {
 /// | window     | size (records)          | base (= sum of sizes before it) | end       |
 /// |------------|-------------------------|---------------------------------|-----------|
 /// | legacy     | `LEGACY_SLOT_CAPACITY`  | 0                               | 2^25      |
-/// | array      | `ARRAY_RECORD_CAPACITY` | 2^25                            | 2^26      |
-/// | object     | `OBJECT_RECORD_CAPACITY`| 2^26                            | 2^27      |
-/// | function   | `FUNCTION_RECORD_CAPACITY` | 2^27                         | 2^27+2^26 |
-/// | promise    | `PROMISE_RECORD_CAPACITY` | 3*2^26 = 201,326,592          | 218,103,808 |
-/// | iterator   | `ITERATOR_RECORD_CAPACITY` | 218,103,808                  | 234,881,024 |
-/// | collection | `COLLECTION_RECORD_CAPACITY` | 234,881,024               | 251,658,240 |
+/// | array      | `ARRAY_PROTO_WINDOW` | 2^25                            | 2^26      |
+/// | object     | `OBJECT_PROTO_WINDOW`| 2^26                            | 2^27      |
+/// | function   | `FUNCTION_PROTO_WINDOW` | 2^27                         | 2^27+2^26 |
+/// | promise    | `PROMISE_PROTO_WINDOW` | 3*2^26 = 201,326,592          | 218,103,808 |
+/// | iterator   | `ITERATOR_PROTO_WINDOW` | 218,103,808                  | 234,881,024 |
+/// | collection | `COLLECTION_PROTO_WINDOW` | 234,881,024               | 251,658,240 |
 /// | sentinels  | 2                       | 2^28-2 (undefined), 2^28-1 (null) | 2^28  |
 ///
 /// Sum check: 2^25 + 2^25 + 2^26 + 2^26 + 3 * 2^24 = 251,658,240, below the sentinels at
 /// 268,435,454. 16,777,214 codes stay free. Each direct window is aligned to its own size, so a
 /// link inside it is `base | id` with `id < size`: the object window is the one
-/// `staged/object.rs` masks. A record space never issues an id at or past its window size.
+/// `staged/object.rs` masks. A record past its window takes an overflow link instead (codes from
+/// `PROTO_RECORD_END` to the sentinels, `heap::prototypes`), so record spaces outgrow the windows.
 const PROTO_INDEX_BITS: u32 = (1 << 28) - 1;
+/// Window sizes of the prototype link space, one per family (the table above). A record space
+/// may grow past its window (`records.rs` capacities); a record past it that becomes a prototype
+/// takes an overflow link (`heap::prototypes`).
+const ARRAY_PROTO_WINDOW: usize = 1 << 25;
+const OBJECT_PROTO_WINDOW: usize = 1 << 26;
+const FUNCTION_PROTO_WINDOW: usize = 1 << 26;
+const PROMISE_PROTO_WINDOW: usize = 1 << 24;
+const ITERATOR_PROTO_WINDOW: usize = 1 << 24;
+const COLLECTION_PROTO_WINDOW: usize = 1 << 24;
 const PROTO_NULL: u32 = PROTO_INDEX_BITS;
 const PROTO_UNDEFINED: u32 = PROTO_INDEX_BITS - 1;
 /// The record count of the environment, symbol and string spaces, which no prototype link names.
@@ -1549,19 +1555,19 @@ pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
 /// exotic kinds (Proxy, TypedArray, Date, RegExp and the like) live there now.
 pub(crate) const LEGACY_SLOT_CAPACITY: usize = 1 << 25;
 const PROTO_ARRAY_RECORD_BASE: u32 = LEGACY_SLOT_CAPACITY as u32;
-const PROTO_OBJECT_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + ARRAY_RECORD_CAPACITY as u32;
-const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + OBJECT_RECORD_CAPACITY as u32;
-const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + FUNCTION_RECORD_CAPACITY as u32;
-const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + PROMISE_RECORD_CAPACITY as u32;
-const PROTO_COLLECTION_RECORD_BASE: u32 = PROTO_ITERATOR_RECORD_BASE + ITERATOR_RECORD_CAPACITY as u32;
-const PROTO_RECORD_END: u32 = PROTO_COLLECTION_RECORD_BASE + COLLECTION_RECORD_CAPACITY as u32;
+const PROTO_OBJECT_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + ARRAY_PROTO_WINDOW as u32;
+const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + OBJECT_PROTO_WINDOW as u32;
+const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + FUNCTION_PROTO_WINDOW as u32;
+const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + PROMISE_PROTO_WINDOW as u32;
+const PROTO_COLLECTION_RECORD_BASE: u32 = PROTO_ITERATOR_RECORD_BASE + ITERATOR_PROTO_WINDOW as u32;
+const PROTO_RECORD_END: u32 = PROTO_COLLECTION_RECORD_BASE + COLLECTION_PROTO_WINDOW as u32;
 const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
-const _: () = assert!(PROTO_OBJECT_RECORD_BASE.is_multiple_of(OBJECT_RECORD_CAPACITY as u32));
-const _: () = assert!(PROTO_ARRAY_RECORD_BASE.is_multiple_of(ARRAY_RECORD_CAPACITY as u32));
-const _: () = assert!(PROTO_FUNCTION_RECORD_BASE.is_multiple_of(FUNCTION_RECORD_CAPACITY as u32));
-const _: () = assert!(PROTO_PROMISE_RECORD_BASE.is_multiple_of(PROMISE_RECORD_CAPACITY as u32));
-const _: () = assert!(PROTO_ITERATOR_RECORD_BASE.is_multiple_of(ITERATOR_RECORD_CAPACITY as u32));
-const _: () = assert!(PROTO_COLLECTION_RECORD_BASE.is_multiple_of(COLLECTION_RECORD_CAPACITY as u32));
+const _: () = assert!(PROTO_OBJECT_RECORD_BASE.is_multiple_of(OBJECT_PROTO_WINDOW as u32));
+const _: () = assert!(PROTO_ARRAY_RECORD_BASE.is_multiple_of(ARRAY_PROTO_WINDOW as u32));
+const _: () = assert!(PROTO_FUNCTION_RECORD_BASE.is_multiple_of(FUNCTION_PROTO_WINDOW as u32));
+const _: () = assert!(PROTO_PROMISE_RECORD_BASE.is_multiple_of(PROMISE_PROTO_WINDOW as u32));
+const _: () = assert!(PROTO_ITERATOR_RECORD_BASE.is_multiple_of(ITERATOR_PROTO_WINDOW as u32));
+const _: () = assert!(PROTO_COLLECTION_RECORD_BASE.is_multiple_of(COLLECTION_PROTO_WINDOW as u32));
 const _: () = assert!(LEGACY_SLOT_CAPACITY <= PROTO_ARRAY_RECORD_BASE as usize);
 
 /// An object's encoded prototype reference (`PROTO_INDEX_BITS`). Equal links name the same
@@ -1587,10 +1593,11 @@ impl ProtoLink {
         self.0
     }
 
-    /// The link naming object record `id`.
+    /// The window link naming object record `id`; `None` past the object window, where the
+    /// record's link (if it is a prototype) is an overflow link (`heap::prototypes`).
     #[inline(always)]
-    pub(crate) fn object_record(id: u32) -> Self {
-        Self(PROTO_OBJECT_RECORD_BASE + id)
+    pub(crate) fn object_record(id: u32) -> Option<Self> {
+        ((id as usize) < OBJECT_PROTO_WINDOW).then_some(Self(PROTO_OBJECT_RECORD_BASE + id))
     }
 
     /// The object record this link names, if it names one.
@@ -1600,7 +1607,7 @@ impl ProtoLink {
         // link in it holds the record id in its low bits: a mask, which addresses the record
         // without the subtracted base as a 64-bit displacement.
         // `staged::object::proto_object_record_id` over u32, which keeps hot readers' registers free.
-        let span = OBJECT_RECORD_CAPACITY as u32;
+        let span = OBJECT_PROTO_WINDOW as u32;
         (self.0 & !(span - 1) == PROTO_OBJECT_RECORD_BASE).then_some(self.0 & (span - 1))
     }
 
@@ -1626,12 +1633,32 @@ impl ProtoLink {
             index if index < PROTO_COLLECTION_RECORD_BASE => {
                 Value::direct_iterator(index - PROTO_ITERATOR_RECORD_BASE)
             }
-            index => {
-                debug_assert!(index < PROTO_RECORD_END);
-                Value::direct_collection(index - PROTO_COLLECTION_RECORD_BASE)
-            }
+            index if index < PROTO_RECORD_END => Value::direct_collection(index - PROTO_COLLECTION_RECORD_BASE),
+            index => Value::from_bits(super::prototypes::bits(index - PROTO_RECORD_END)),
         }
     }
+}
+
+/// The link of `prototype`, record `id` of a family whose window starts at `base` and holds
+/// `window` links: its window link while `id` fits, else an overflow link (`heap::prototypes`),
+/// so a record space may grow past its window and its records still serve as prototypes.
+#[inline]
+fn windowed(prototype: Value, base: u32, window: usize, id: u32) -> u32 {
+    if (id as usize) < window {
+        base + id
+    } else {
+        overflow_link(prototype)
+    }
+}
+
+/// The overflow link of `prototype` (`heap::prototypes`): past every window, below the sentinels.
+#[cold]
+#[inline(never)]
+fn overflow_link(prototype: Value) -> u32 {
+    let codes = (PROTO_UNDEFINED - PROTO_RECORD_END) as usize;
+    let index = super::prototypes::intern(prototype.to_bits(), codes)
+        .expect("prototype links exhausted: 16,777,214 out-of-window prototypes");
+    PROTO_RECORD_END + index
 }
 
 const OBJECT_ARRAY: u32 = 1 << 28;
@@ -2302,8 +2329,8 @@ impl Object {
     #[inline(always)]
     fn encode_proto(proto: Value) -> u32 {
         match proto.direct_object_index() {
-            Some(id) => PROTO_OBJECT_RECORD_BASE + id,
-            None => Self::encode_other_proto(proto),
+            Some(id) if (id as usize) < OBJECT_PROTO_WINDOW => PROTO_OBJECT_RECORD_BASE + id,
+            _ => Self::encode_other_proto(proto),
         }
     }
 
@@ -2311,27 +2338,21 @@ impl Object {
     #[inline(always)]
     fn encode_array_proto(proto: Value) -> u32 {
         match proto.direct_array_index() {
-            Some(id) => PROTO_ARRAY_RECORD_BASE + id,
-            None => Self::encode_proto(proto),
+            Some(id) if (id as usize) < ARRAY_PROTO_WINDOW => PROTO_ARRAY_RECORD_BASE + id,
+            _ => Self::encode_proto(proto),
         }
     }
 
     #[inline]
     fn encode_other_proto(proto: Value) -> u32 {
         match proto.heap_reference() {
-            Some(HeapReference::LegacySlot(index)) => {
-                assert!(
-                    (index as usize) < LEGACY_SLOT_CAPACITY,
-                    "legacy slots exhausted: the prototype link holds 2^25 legacy slots"
-                );
-                index
-            }
-            Some(HeapReference::ObjectRecord(id)) => PROTO_OBJECT_RECORD_BASE + id,
-            Some(HeapReference::ArrayRecord(id)) => PROTO_ARRAY_RECORD_BASE + id,
-            Some(HeapReference::FunctionRecord(id)) => PROTO_FUNCTION_RECORD_BASE + id,
-            Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
-            Some(HeapReference::IteratorRecord(id)) => PROTO_ITERATOR_RECORD_BASE + id,
-            Some(HeapReference::CollectionRecord(id)) => PROTO_COLLECTION_RECORD_BASE + id,
+            Some(HeapReference::LegacySlot(index)) => windowed(proto, 0, LEGACY_SLOT_CAPACITY, index),
+            Some(HeapReference::ObjectRecord(id)) => windowed(proto, PROTO_OBJECT_RECORD_BASE, OBJECT_PROTO_WINDOW, id),
+            Some(HeapReference::ArrayRecord(id)) => windowed(proto, PROTO_ARRAY_RECORD_BASE, ARRAY_PROTO_WINDOW, id),
+            Some(HeapReference::FunctionRecord(id)) => windowed(proto, PROTO_FUNCTION_RECORD_BASE, FUNCTION_PROTO_WINDOW, id),
+            Some(HeapReference::PromiseRecord(id)) => windowed(proto, PROTO_PROMISE_RECORD_BASE, PROMISE_PROTO_WINDOW, id),
+            Some(HeapReference::IteratorRecord(id)) => windowed(proto, PROTO_ITERATOR_RECORD_BASE, ITERATOR_PROTO_WINDOW, id),
+            Some(HeapReference::CollectionRecord(id)) => windowed(proto, PROTO_COLLECTION_RECORD_BASE, COLLECTION_PROTO_WINDOW, id),
             Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
             Some(HeapReference::StringRecord(_)) => unreachable!("a string is never a prototype"),
             Some(HeapReference::V128Record(_)) => unreachable!("a Wasm vector is never a prototype"),
@@ -3389,13 +3410,13 @@ mod object_payload_tests {
             Value::heap(0),
             Value::heap(super::LEGACY_SLOT_CAPACITY as u32 - 1),
             Value::direct_array(0),
-            Value::direct_array(super::ARRAY_RECORD_CAPACITY as u32 - 1),
+            Value::direct_array(super::ARRAY_PROTO_WINDOW as u32 - 1),
             Value::direct_object(0),
-            Value::direct_object(super::OBJECT_RECORD_CAPACITY as u32 - 1),
-            Value::direct_function(super::FUNCTION_RECORD_CAPACITY as u32 - 1),
-            Value::direct_promise(super::PROMISE_RECORD_CAPACITY as u32 - 1),
-            Value::direct_iterator(super::ITERATOR_RECORD_CAPACITY as u32 - 1),
-            Value::direct_collection(super::COLLECTION_RECORD_CAPACITY as u32 - 1),
+            Value::direct_object(super::OBJECT_PROTO_WINDOW as u32 - 1),
+            Value::direct_function(super::FUNCTION_PROTO_WINDOW as u32 - 1),
+            Value::direct_promise(super::PROMISE_PROTO_WINDOW as u32 - 1),
+            Value::direct_iterator(super::ITERATOR_PROTO_WINDOW as u32 - 1),
+            Value::direct_collection(super::COLLECTION_PROTO_WINDOW as u32 - 1),
         ] {
             let mut object = Object::new(proto);
             assert_eq!(object.proto(), proto);

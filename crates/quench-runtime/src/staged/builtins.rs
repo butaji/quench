@@ -21,7 +21,7 @@ use crate::vm::wtf16::Units;
 /// The storage width of a flat string's units, a property of the string's form.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum UnitWidth {
-    /// ASCII text, a byte a unit (`Units::Ascii`).
+    /// ASCII or Latin-1 text, a byte a unit (`Units::Ascii`, `Units::Latin1`).
     Narrow,
     /// UTF-16 text (`Units::Wide`).
     Wide,
@@ -173,6 +173,11 @@ pub(crate) fn concrete_char_code_at(units: Units<'_>, index: Value) -> Option<Va
 /// The interpreter's `char_at_ascii` of a flat string's `units` at `index`: the ASCII byte.
 #[inline(always)]
 pub(crate) fn concrete_char_at_ascii(units: Units<'_>, index: Value) -> Option<u8> {
+    // A Latin-1 unit may be past ASCII, which the ASCII one-unit strings do not hold: a reader
+    // of those leaves to the general read.
+    if matches!(units, Units::Latin1(_)) {
+        return None;
+    }
     let (width, base, length) = unit_words(units);
     char_at_ascii(&mut Concrete::new(std::ptr::null()), width, base, length, index.to_bits(), ())
         .map(|unit| unit as u8)
@@ -210,7 +215,7 @@ pub(crate) fn concrete_array_pop(record_base: *const ArrayObject, array: Value) 
 #[inline(always)]
 fn unit_words(units: Units<'_>) -> (UnitWidth, u64, u64) {
     match units {
-        Units::Ascii(bytes) => (UnitWidth::Narrow, bytes.as_ptr() as u64, bytes.len() as u64),
+        Units::Ascii(bytes) | Units::Latin1(bytes) => (UnitWidth::Narrow, bytes.as_ptr() as u64, bytes.len() as u64),
         Units::Wide(units) => (UnitWidth::Wide, units.as_ptr() as u64, units.len() as u64),
     }
 }

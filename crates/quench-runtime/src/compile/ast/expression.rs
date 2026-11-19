@@ -252,30 +252,25 @@ impl FunctionCompiler<'_, '_> {
         self.load_atom_reference(atom, None)
     }
 
-    /// By-name fallback for a read the compiler cannot place in a slot.
-    ///
-    /// PLAN (not implemented): script-top-level let/const/class read from a nested function
-    /// should compile to a dedicated op carrying a declaration index, not `LoadName`.
-    /// 1. Compile time: when `static_atom_reference` misses, the name is not bound by any
-    ///    active `with` (`with_depth == inherited_with_depth`), `outer_names_static()` holds,
-    ///    and the name is in the root's `global_lexical_atoms()` as an immutable or mutable
-    ///    lexical, emit `LoadGlobalLexical dst, 0, cache, decl_index` where `decl_index` is the
-    ///    position in the root's `global_lexical_atoms()`. Do not use the realm index: the
-    ///    compiled program can run in another realm, and the realm IndexMap is not fixed
-    ///    (`vm/global_facts.rs::bind_global_lexical` can grow or shift it on rollback).
-    /// 2. Instantiation: when the root script is instantiated (`vm.rs` near
-    ///    `global_lexical_atoms`), fill a per-program table decl_index -> realm index, taken
-    ///    from `realm.global_lexical_bindings.get_full(atom)`. Rebuild it after any realm reset
-    ///    (`vm.rs` clear near the `global_lexical_bindings.clear()` call) and after a rollback.
-    /// 3. Run time: the handler reads that table, takes `get_index` with the atom check of
-    ///    `field_cache.rs::global_lexical_at` kept as a debug assertion only, and returns
-    ///    `ReferenceError` on a deleted (uninitialized, TDZ) value through the existing checked
-    ///    path. It needs no hint word, so no `requicken` step.
-    /// 4. Wiring: add the op to `bytecode/op_catalog.rs`, `bytecode/op_classes.rs`,
-    ///    `bytecode/validate.rs`, `bytecode/binary.rs` (encoding), the lane and base handler
-    ///    tables in `vm/dispatch_fast.rs` and `vm/compiled/`, and the staged tables in
-    ///    `staged/`. Each has an exhaustive match or generated table, so the change must be
-    ///    made together and compiled. It must not be landed without a build.
+    /// The declaration index of script-top-level lexical `atom` for a read or write of it from a
+    /// nested function that no `with` or sloppy direct eval can shadow. Such a name is the script's
+    /// own global binding, which `LoadGlobalLexical` and `StoreGlobalLexical` reach by index.
+    fn root_lexical_declaration(&self, atom: Atom) -> Option<u32> {
+        if self.function_id == 0
+            || self.with_depth != self.inherited_with_depth
+            || !self.outer_names_static()
+        {
+            return None;
+        }
+        self.owner
+            .root_lexical_atoms
+            .iter()
+            .position(|root| *root == atom)
+            .and_then(|index| u32::try_from(index).ok())
+    }
+
+    /// By-name fallback for a read the compiler cannot place in a slot. A nested function's read of
+    /// a script-top-level lexical takes `LoadGlobalLexical` by its declaration index instead.
     pub(super) fn load_atom_reference(
         &mut self,
         atom: Atom,
@@ -285,6 +280,14 @@ impl FunctionCompiler<'_, '_> {
             return register;
         }
         let atom = self.resolve_dynamic_reference_atom(atom);
+        if receiver.is_none()
+            && let Some(declaration) = self.root_lexical_declaration(atom)
+        {
+            let dst = self.reg();
+            let cache = self.owner.cache_site();
+            self.emit(Op::LoadGlobalLexical, dst, 0, cache, declaration);
+            return dst;
+        }
         let dst = self.reg();
         let cache = self.owner.cache_site();
         match receiver {
@@ -492,6 +495,9 @@ impl FunctionCompiler<'_, '_> {
                 0,
                 crate::bytecode::ImmediateLayout::capture_immediate(depth, slot),
             );
+        } else if let Some(declaration) = self.root_lexical_declaration(atom) {
+            let cache = self.owner.cache_site();
+            self.emit(Op::StoreGlobalLexical, value, u16::from(initializing), cache, declaration);
         } else {
             let cache = self.owner.cache_site();
             self.emit(Op::StoreName, value, u16::from(initializing), cache, atom);

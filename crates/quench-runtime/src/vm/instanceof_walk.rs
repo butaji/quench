@@ -64,7 +64,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: as `steady_instanceof`: the memo names the slot of `prototype` in the shape it holds.
         let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
         Some(crate::code_dependencies::InstanceofFact {
-            link: ProtoLink::object_record(prototype.direct_object_index()?).bits(),
+            link: ProtoLink::object_record(prototype.direct_object_index()?)?.bits(),
             shape: object.exact_shape(),
             slot: u16::try_from(slot).ok()?,
             holder: self.heap.object(holder)?.exact_shape(),

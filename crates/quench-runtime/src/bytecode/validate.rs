@@ -241,6 +241,7 @@ struct ValidationBounds {
     regexp_literal_sites: usize,
     literal_templates: usize,
     superinstructions: usize,
+    global_lexical: usize,
     code_len: u32,
 }
 
@@ -335,6 +336,7 @@ fn immediate_domains_in_bounds(
             (instruction.closure_function_index() as usize) < bounds.functions
         }
         super::ImmediateRole::LocalSlot => instruction.local_slot() < usize::from(bounds.locals),
+        super::ImmediateRole::GlobalLexicalIndex => (instruction.imm() as usize) < bounds.global_lexical,
         super::ImmediateRole::AtomIndex => atom_in_bounds(instruction.atom_index(), bounds.atoms),
         super::ImmediateRole::BooleanFlag => instruction.boolean_flag().is_some(),
         super::ImmediateRole::ArrayIndex => {
@@ -738,6 +740,7 @@ function.plain_local_slots(&self.superinstructions)
                 regexp_literal_sites: self.regexp_literal_sites.len(),
                 literal_templates: self.literal_templates.len(),
                 superinstructions: self.superinstructions.len(),
+                global_lexical: self.function_get(0).map_or(0, |root| root.global_lexical_atoms().len()),
                 code_len,
             };
             if function

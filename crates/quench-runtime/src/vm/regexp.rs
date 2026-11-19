@@ -945,8 +945,10 @@ impl<H: Host> Vm<H> {
             }
             FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => &*flat,
             // A matcher subject owns whole storage, so a run of shared storage is copied into
-            // one, once per run (`SubjectCache::run`).
-            FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) | FlatUnits::AsciiPrefix(..) => {
+            // one, once per run (`SubjectCache::run`). Latin-1 text is widened there too: the
+            // engine reads UTF-16 or ASCII subjects only.
+            FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) | FlatUnits::AsciiPrefix(..)
+            | FlatUnits::Latin1(_) | FlatUnits::Latin1Prefix(..) => {
                 return self.regexp_subjects.run(&flat);
             }
             FlatUnits::Parts(_) => unreachable!("a string of parts is written out before it is read"),
@@ -2516,7 +2518,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     match units {
                         super::wtf16::Units::Ascii(bytes) => self.heap.alloc_ascii_run(&bytes[range]),
-                        super::wtf16::Units::Wide(_) => self.heap.alloc_string(JsString::from_unit_run(units.slice(range))),
+                        super::wtf16::Units::Latin1(_) | super::wtf16::Units::Wide(_) => self.heap.alloc_string(JsString::from_unit_run(units.slice(range))),
                     }
                 }
             })

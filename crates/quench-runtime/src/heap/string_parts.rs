@@ -135,7 +135,7 @@ impl Heap {
                 // SAFETY: as above; written out by the pass before.
                 Part::Text(part_id) => match unsafe { self.written_out_string(part_id) }.units() {
                     Units::Ascii(bytes) => bytes,
-                    Units::Wide(_) => unreachable!("a part is ASCII (`Vm::string_of_parts`)"),
+                    Units::Latin1(_) | Units::Wide(_) => unreachable!("a part is ASCII (`Vm::string_of_parts`)"),
                 },
                 Part::Number(_) => numbers.next().expect("a text per number").as_slice(),
             }),

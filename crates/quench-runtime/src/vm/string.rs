@@ -823,7 +823,8 @@ fn map_case(units: super::wtf16::Units<'_>, map: impl Fn(&str) -> String) -> JsS
                 std::str::from_utf8(bytes).expect("ASCII units are UTF-8")
             ));
         }
-        super::wtf16::Units::Wide(units) => units,
+        // Latin-1 text is mapped as its UTF-16 units; the result is stored in canonical form.
+        units => units.wide(),
     };
     let mut output = Vec::with_capacity(units.len());
     let flush = |run: &[u16], output: &mut Vec<u16>| {

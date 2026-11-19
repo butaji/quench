@@ -36,9 +36,10 @@ impl JsString {
             Some(FlatUnits::WideSlice(_)) => std::mem::size_of::<WideSlice>(),
             Some(FlatUnits::AsciiPrefix(buffer, length)) => buffer.charge(*length),
             Some(FlatUnits::WidePrefix(buffer, length)) => buffer.charge(*length),
+            Some(FlatUnits::Latin1Prefix(buffer, length)) => buffer.charge(*length),
             Some(FlatUnits::Parts(_)) | None => 0,
             Some(units) => match units.view() {
-                Units::Ascii(bytes) => bytes.len(),
+                Units::Ascii(bytes) | Units::Latin1(bytes) => bytes.len(),
                 Units::Wide(units) => std::mem::size_of_val(units),
             },
         }

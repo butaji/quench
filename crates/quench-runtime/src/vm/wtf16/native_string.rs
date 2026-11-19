@@ -7,7 +7,7 @@ use super::{JsString, ShortAscii};
 use std::mem::offset_of;
 use std::rc::Rc;
 
-pub(crate) use quench_bjit::shared_words::string_tag::{TAG_ASCII, TAG_OFFSET, TAG_SHORT, TAG_WIDE};
+pub(crate) use quench_bjit::shared_words::string_tag::{TAG_ASCII, TAG_LATIN1, TAG_OFFSET, TAG_SHORT, TAG_WIDE};
 
 #[repr(C)]
 struct ShortForm {

@@ -561,7 +561,7 @@ impl Heap {
             // SAFETY: a part is a string its small string keeps alive.
             Some(Part::Text(id)) => match unsafe { self.written_out_string(id) }.units() {
                 Units::Ascii(bytes) => bytes,
-                Units::Wide(_) => unreachable!("a part is ASCII (`Vm::string_of_parts`)"),
+                Units::Latin1(_) | Units::Wide(_) => unreachable!("a part is ASCII (`Vm::string_of_parts`)"),
             },
             Some(Part::Number(value)) => {
                 crate::number_to_string::write(value, &mut number);

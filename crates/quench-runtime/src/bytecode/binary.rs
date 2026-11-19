@@ -1485,13 +1485,13 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             environment_clones,
             name_bindings: crate::bytecode::NameBindings::flat(name_bindings),
             lexical_atoms: lexical_atoms.into(),
-            global_declarations: super::GlobalDeclarations {
-                lexical: global_lexical_atoms,
-                var: global_var_atoms,
-                function: global_function_atoms,
-                annex_b_var: global_annex_b_var_atoms,
-                immutable: global_immutable_atoms,
-            }
+            global_declarations: super::GlobalDeclarations::new(
+                global_lexical_atoms,
+                global_var_atoms,
+                global_function_atoms,
+                global_annex_b_var_atoms,
+                global_immutable_atoms,
+            )
             .boxed(),
             binding_sites: binding_sites.into(),
             source_positions,

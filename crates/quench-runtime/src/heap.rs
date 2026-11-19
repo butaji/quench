@@ -161,6 +161,7 @@ pub use memory_stats::HeapMemoryComposition;
 mod memory_profile;
 mod pacing;
 mod parallel_mark; mod planned;
+mod prototypes;
 mod promise_record;
 pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState, StoredHostContext};
 mod rc_drop;
@@ -1254,7 +1255,7 @@ impl Heap {
 
     /// A new array record of `object`, admitted and charged as any allocation (its element
     /// storage through `charge_payload_allocation`). The array space holds
-    /// `ARRAY_RECORD_CAPACITY` (2^25) records, so a full space is a panic.
+    /// `ARRAY_RECORD_CAPACITY` (2^30) records, so a full space is a panic.
     #[inline(always)]
     pub(crate) fn alloc_array(&mut self, object: ArrayObject) -> Value {
         let prototype = object.proto();
@@ -1281,7 +1282,7 @@ impl Heap {
         #[cfg(feature = "profile-aggregate")]
         let bytes = object.allocated_extra_bytes() + object.elements().capacity() * size_of::<Value>();
         let Ok(record_id) = self.array_records.try_insert(object) else {
-            panic!("array records exhausted: the array space holds 2^25 records");
+            panic!("array records exhausted: the array space holds 2^30 records");
         };
         let value = Value::direct_array(record_id);
         #[cfg(feature = "profile-aggregate")]
@@ -1594,7 +1595,7 @@ impl Heap {
     /// with no payload or external bytes (`allocated += 1` only). The caller admits the
     /// object's initial values (`admit_object_contents`) and marks its prototype, or leaves them
     /// as they are where placeholders must record nothing. The object record space holds
-    /// `OBJECT_RECORD_CAPACITY` (2^26) records, so a full space is a panic; no legacy slot takes
+    /// `OBJECT_RECORD_CAPACITY` (2^30) records, so a full space is a panic; no legacy slot takes
     /// an object.
     #[inline(always)]
     fn insert_object_record(&mut self, object: Object) -> Value {
@@ -1604,7 +1605,7 @@ impl Heap {
         #[cfg(feature = "profile-aggregate")]
         self.profile_record_allocation(CellKind::Object, "object", 0);
         let Ok(record_id) = self.object_records.try_insert(object) else {
-            panic!("object records exhausted: the object space holds 2^26 records");
+            panic!("object records exhausted: the object space holds 2^30 records");
         };
         let value = Value::direct_object(record_id);
         #[cfg(feature = "profile-memory")]
@@ -1636,7 +1637,7 @@ impl Heap {
     }
 
     /// A new function record of `function`, with no payload or external bytes. The function
-    /// space holds `FUNCTION_RECORD_CAPACITY` (2^26) records, so a full space is a panic.
+    /// space holds `FUNCTION_RECORD_CAPACITY` (2^30) records, so a full space is a panic.
     /// Stores `realm` as `function`'s creation realm override. A narrow property run is widened
     /// first: an object with extras may not keep one (`Object::extras_mut`).
     pub(crate) fn set_function_realm_override(&mut self, function: &mut FunctionRecord, realm: Value) {
@@ -1665,7 +1666,7 @@ impl Heap {
         self.admit_object_contents(&function.object);
         self.allocated += 1;
         let Ok(record_id) = self.function_records.try_insert(function) else {
-            panic!("function records exhausted: the function space holds 2^26 records");
+            panic!("function records exhausted: the function space holds 2^30 records");
         };
         let value = Value::direct_function(record_id);
         #[cfg(feature = "profile-aggregate")]
@@ -1720,7 +1721,7 @@ impl Heap {
     }
 
     /// A new iterator record, admitted and charged as an object record is (`alloc_object_record`).
-    /// The iterator space holds `ITERATOR_RECORD_CAPACITY` (2^24) records, so a full space is a
+    /// The iterator space holds `ITERATOR_RECORD_CAPACITY` (2^28) records, so a full space is a
     /// panic.
     pub(crate) fn alloc_iterator(&mut self, iterator: IteratorRecord) -> Value {
         #[cfg(feature = "profile-aggregate")]
@@ -1729,7 +1730,7 @@ impl Heap {
         self.mark_prototype(iterator.object.proto());
         self.allocated += 1;
         let Ok(record_id) = self.iterator_records.try_insert(iterator) else {
-            panic!("iterator records exhausted: the iterator space holds 2^24 records");
+            panic!("iterator records exhausted: the iterator space holds 2^28 records");
         };
         let value = Value::direct_iterator(record_id);
         #[cfg(feature = "profile-aggregate")]

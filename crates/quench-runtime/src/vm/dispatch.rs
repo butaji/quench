@@ -601,15 +601,16 @@ impl<H: Host> Vm<H> {
                     RowRun::Stop(stop) => return stop,
                 }
             }
-            Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreEnvLocal | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
-            // Captures and name loads run their staged rows first; a row that leaves is the owner's step.
-            Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
-                    }
-                    RowRun::Stop(stop) => return stop,
+            Op::LoadLocal | Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreLocal | Op::StoreEnvLocal
+            | Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
+            | Op::StoreName | Op::LoadGlobalLexical | Op::StoreGlobalLexical => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
+            Op::StoreLocalPlain => {
+                let value = self.read(f, i.register_a());
+                // SAFETY: validated bytecode bounds the slot by Function.locals,
+                // and frame setup sizes locals to that count.
+                unsafe { self.write_validated_local(f, i.local_slot(), value) };
+                if let Some(register) = i.optional_register_b() {
+                    self.write(f, register, value);
                 }
             }
             Op::LoadThis => {

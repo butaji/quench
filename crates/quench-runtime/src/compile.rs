@@ -1906,6 +1906,9 @@ struct Compiler<'a> {
     /// of a copy of `text` (`source_text::kept_or_provided`).
     provided_text: Option<crate::bytecode::SourceText>,
     eval_annex_b_collisions: early::AnnexBCollisions,
+    /// The script's own global lexical names, in declaration order: a nested function's read or write
+    /// of one names it by that index (`LoadGlobalLexical`). Empty for a module or an eval.
+    root_lexical_atoms: Vec<Atom>,
     atoms: CompilerAtoms<'a>,
     /// The capture markers made so far by binding kind (`None` for a catch parameter's) and
     /// source atom (`capture_marker`).
@@ -2512,6 +2515,7 @@ impl<'a> Compiler<'a> {
             eval_context: None,
             provided_text: None,
             eval_annex_b_collisions: early::AnnexBCollisions::default(),
+            root_lexical_atoms: Vec::new(),
             atoms,
             capture_markers: FxHashMap::default(),
             private_name_references: 0,
@@ -3184,39 +3188,6 @@ impl<'a> Compiler<'a> {
         for error in errors {
             self.reject(Span::default(), error);
         }
-        self.compile_function(
-            None,
-            &[],
-            FunctionBody::Statements(&program.body),
-            &capture_scope::ScopeChain::new(Vec::new()),
-            None,
-            FunctionOptions {
-                defaults: None,
-                directive_completion: program.directives.last().map(|directive| &directive.expression),
-                source_span: None,
-                name_binding: None,
-                async_function: async_module,
-                generator: false,
-                class_constructor: false,
-                derived_constructor: false,
-                non_constructible: false,
-                prototype_unobservable: false,
-                class_initializer: self
-                    .eval_context
-                    .is_some_and(|context| context.class_initializer),
-                instance_fields: None,
-                instance_private_methods: None,
-                super_static: false,
-                super_home: self
-                    .eval_context
-                    .is_some_and(|context| context.home_atom.is_some()),
-                super_home_atom: self.eval_context.and_then(|context| context.home_atom),
-                rest_override: false,
-                implicit_body: None,
-                strict: self.root_strict,
-                with_depth: 0,
-            },
-        );
         let mut global_lexical_names = Vec::new();
         let mut global_immutable_names = Vec::new();
         for statement in &program.body {
@@ -3285,6 +3256,46 @@ impl<'a> Compiler<'a> {
             .iter()
             .map(|name| self.atom(name))
             .collect();
+        // The root's lexicals are known before its nested functions compile, which read them by
+        // declaration index (`LoadGlobalLexical`). Only a script's own are global.
+        self.root_lexical_atoms = if module_goal || self.eval_context.is_some() {
+            Vec::new()
+        } else {
+            global_lexical_atoms.clone()
+        };
+        self.compile_function(
+            None,
+            &[],
+            FunctionBody::Statements(&program.body),
+            &capture_scope::ScopeChain::new(Vec::new()),
+            None,
+            FunctionOptions {
+                defaults: None,
+                directive_completion: program.directives.last().map(|directive| &directive.expression),
+                source_span: None,
+                name_binding: None,
+                async_function: async_module,
+                generator: false,
+                class_constructor: false,
+                derived_constructor: false,
+                non_constructible: false,
+                prototype_unobservable: false,
+                class_initializer: self
+                    .eval_context
+                    .is_some_and(|context| context.class_initializer),
+                instance_fields: None,
+                instance_private_methods: None,
+                super_static: false,
+                super_home: self
+                    .eval_context
+                    .is_some_and(|context| context.home_atom.is_some()),
+                super_home_atom: self.eval_context.and_then(|context| context.home_atom),
+                rest_override: false,
+                implicit_body: None,
+                strict: self.root_strict,
+                with_depth: 0,
+            },
+        );
         let global_function_names: Vec<_> = program
             .body
             .iter()
@@ -3342,13 +3353,13 @@ impl<'a> Compiler<'a> {
             .map(|name| self.atom(name))
             .collect();
         if let Some(root) = self.functions.first_mut() {
-            root.global_declarations = crate::bytecode::GlobalDeclarations {
-                lexical: global_lexical_atoms,
-                var: global_var_atoms,
-                function: global_function_atoms,
-                annex_b_var: global_annex_b_var_atoms,
-                immutable: global_immutable_atoms,
-            }
+            root.global_declarations = crate::bytecode::GlobalDeclarations::new(
+                global_lexical_atoms,
+                global_var_atoms,
+                global_function_atoms,
+                global_annex_b_var_atoms,
+                global_immutable_atoms,
+            )
             .boxed();
             // A strict eval's vars are its own bindings, not the global object's.
             if !self.module_goal && !(self.eval_context.is_some() && strict_script) {
