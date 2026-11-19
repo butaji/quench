@@ -3564,14 +3564,6 @@ struct JsStepDispatch {
     native_end: usize,
     shadow_top: usize,
     shadow_end: usize,
-    /// A lane run's lane stack, where a direct call places its callee's registers and its
-    /// native frame (`DirectCallee`): the words that hold the values' and the activations'
-    /// tops, which the VM's `LaneStack` owns (`Vm::stack_words_in_lane`), the end of the values'
-    /// capacity, and the end of the frames the run nests (`SHADOW_FRAMES`).
-    lane_values_top: usize,
-    lane_values_end: usize,
-    lane_activations_top: usize,
-    lane_frames_end: usize,
     /// The element read past a present dense element (`general_elements`).
     element_get: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
@@ -3585,7 +3577,6 @@ struct JsStepDispatch {
     /// Whether the host makes a strict function's terminal calls proper tail calls
     /// (`Host::proper_tail_calls`), which leaves its returning calls to their exact step.
     proper_tail_calls: u64,
-    ascii_unit_strings: usize,
     /// The typed arrays' view record directory and its page count (`Heap::typed_view_directory`),
     /// refreshed with the other record bases, and the address of the process's buffer-relocation count
     /// (`buffer_relocations_address`): what a typed array's view proof reads
@@ -3593,24 +3584,6 @@ struct JsStepDispatch {
     typed_view_directory: usize,
     typed_view_pages: usize,
     buffer_relocations: usize,
-    /// The function records' mark blocks and their count, which a store into a function's own
-    /// properties reads as the object records' are (`StagedRecordSpace::Function`); and the empty
-    /// string's word, which a function's inferred name replaces (`staged::naming`).
-    function_mark_blocks: usize,
-    function_mark_block_count: usize,
-    empty_string: u64,
-    /// The word of the storage the running lane body's environment-owned locals live in, which its environment rows
-    /// read through (`staged::environment::environment_slot`): its activation's window, or storage that holds no
-    /// slot where it runs in a frame (`heap::absent_environment_storage`).
-    environment_storage: u64,
-    /// The address of the thread's armed array proofs word (`heap::array_proofs::armed_proofs_address`).
-    /// Its word is nonzero while a lane run's proofs are armed, which a row that shrinks an array's
-    /// backing must miss on: it cannot retire them. Read at every use, so never stale.
-    armed_array_proofs: usize,
-    /// The address of the thread's index-free chain link word (`heap::index_free_chain_link_address`):
-    /// its word is the encoded link of `Array.prototype` while the held index-free chain proof covers
-    /// its chain, else zero. Read at every use, so never stale.
-    array_chain_index_free_address: usize,
     outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
@@ -4274,7 +4247,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn publish_body_receiver(&self, receiver: Value) {
         let frame = frame_in_lane();
         // SAFETY: as `refresh_body_bases`.
-        unsafe { (*frame).dispatch.receiver = receiver.to_bits() }
+        unsafe { set_frame_word((*frame).dispatch.native_registers, CONTEXT_THIS, receiver.to_bits()) }
     }
 
     /// Reloads the heap bases of the payload of the native loop region the lane entered, whose address the
@@ -4577,26 +4550,20 @@ impl JsStepDispatch {
                 environment_storage: crate::heap::absent_environment_storage(),
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
+                object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
+                array_cursor: 0, empty_array_layout: 0, empty_array_payload: 0, empty_array_proto: 0,
+                ascii_unit_strings: 0,
+                armed_array_proofs: crate::heap::armed_proofs_address(),
+                array_chain_index_free_address: crate::heap::index_free_chain_link_address(),
             },
             program_id: ProgramId::MAIN, frame: usize::MAX, allow_inline_calls: false, start_pc: 0,
             #[cfg(feature = "native-execution")]
             stop_pc: JS_NO_STOP_PC,
             native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
-            capture_values: std::ptr::null(), capture_len: 0, capture_stores: 0,
-            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0,
-            object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
-            array_cursor: 0, empty_array_layout: 0, empty_array_payload: 0, empty_array_proto: 0,
-            object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
-            property_buffer: 0, field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
-            call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
-            loop_entry: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
-            empty_string: Value::DELETED.to_bits(),
-            environment_storage: crate::heap::absent_environment_storage(),
-            armed_array_proofs: crate::heap::armed_proofs_address(),
-            array_chain_index_free_address: crate::heap::index_free_chain_link_address(),
-            receiver: Value::DELETED.to_bits(),
-            vm: 0, residual: 0, body: std::ptr::null(), inlined: 0, exit_line: 0, lane_context: 0, returned_pc: 0,
+            typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
+            call_cache: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
+            body: std::ptr::null(), inlined: 0, exit_line: 0,
             native_top: 0, native_end: 0, shadow_top: 0, shadow_end: 0,
             outcome: None,
         }
@@ -4716,7 +4683,6 @@ impl JsStepDispatch {
     /// The run state a region's run leaves, reset to `idle`'s.
     #[inline(always)]
     fn reset_region_run(&mut self) {
-        (self.capture_values, self.capture_len, self.capture_stores) = (std::ptr::null(), 0, 0);
         (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
         (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
         self.environment_storage = crate::heap::absent_environment_storage();
