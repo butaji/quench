@@ -1928,7 +1928,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     fn number_fact(&self) -> Boxing { Boxing::Double }
 }
 
-#[path = "frame_in_lane/staged_ops.rs"]
+#[path = "lane_frame/staged_ops.rs"]
 mod staged_ops;
 pub(super) use staged_ops::*;
 
@@ -3624,6 +3624,6 @@ pub(super) fn staged_delete<H: Host>(cx: *mut LaneContext<H>, r: Registers, [des
 }
 
 // The fusion handlers and their install passes (`fuse_rows`, `fuse_chains`), in their own module.
-#[path = "frame_in_lane/fused.rs"]
+#[path = "lane_frame/fused.rs"]
 mod fused;
 pub(in crate::vm::dispatch_fast) use fused::{chain_row, fused_row, fused_rows, fuse_chains, fuse_rows, is_window_row};
