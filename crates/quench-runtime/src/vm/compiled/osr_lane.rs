@@ -124,6 +124,7 @@ pub(super) unsafe fn enter<H: Host>(
     dispatch: &mut JsStepDispatch, vm: &mut Vm<H>, program: ProgramId,
     (code, resume): (BodyEntry, u64), registers: *mut crate::value::Value,
     interrupt: *const crate::execution_interrupt::ExecutionInterrupt, (lane_context, lend): (usize, Option<bool>),
+    header_pc: u32,
 ) -> RegionRun {
     let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
     context.vm = std::ptr::from_mut(vm).cast();
@@ -134,11 +135,12 @@ pub(super) unsafe fn enter<H: Host>(
     // The region's call rows reload its payload's heap bases after the callee ran (`lane_region_call`).
     // SAFETY: `lane_context` is the running lane's.
     let outer = unsafe { super::dispatch_fast::lane_region_payload::<H>(lane_context, payload.addr()) };
+    let descriptor = super::entry_protocol::EntryDescriptor {
+        kind: super::entry_protocol::EntryKind::Region { header_pc }, receiver: 0, captures: resume, registers: registers.cast::<u64>().cast_const(), entry: code,
+    };
     // SAFETY: as the caller promises; the code reads the register file and returns
     // its status and result word.
-    let BodyReturn { status, value: word } = unsafe {
-        enter_body(&mut context, 0, resume, registers.cast::<u64>().cast_const(), code)
-    };
+    let returned = unsafe { super::entry_protocol::enter(&mut context, &descriptor) };
     // SAFETY: as above.
     unsafe { super::dispatch_fast::lane_region_payload::<H>(lane_context, outer) };
     if lend.is_some() {
@@ -148,7 +150,7 @@ pub(super) unsafe fn enter<H: Host>(
     if let Some(Raised::Panic(panic)) = context.raised.take() {
         std::panic::resume_unwind(panic);
     }
-    let exit = LaneExit::read(status, word, || dispatch.returned_pc);
+    let exit = super::entry_protocol::exit(&descriptor, returned, || native.dispatch.returned_pc);
     // A leave with native frames on the lane stack is read in the innermost of them.
     RegionRun { exit, nested: vm.lane_stack.activations().native_depth() != 0 }
 }

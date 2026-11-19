@@ -84,10 +84,32 @@ pub(in crate::vm) fn performed(instruction: impl std::borrow::Borrow<crate::byte
 #[path = "../staged/meaning_compiled.rs"]
 pub(in crate::vm) mod meaning_compiled;
 
+/// The Number unary operation a record denotes with its operator (`NumberUnary::from_js_instruction`
+/// asked of the record's opcode), so a tier passes the record and names no opcode.
+#[inline]
+pub(in crate::vm) fn number_unary(instruction: WideInstruction, operator: u32) -> Option<operations::NumberUnary> {
+    operations::NumberUnary::from_js_instruction(instruction.op(), operator)
+}
+
+/// The signed int32 bitwise operation a record denotes with its operator (`NumberBitwise::from_js_instruction`
+/// asked of the record's opcode).
+#[inline]
+pub(in crate::vm) fn number_bitwise(instruction: WideInstruction, operator: u32) -> Option<operations::NumberBitwise> {
+    operations::NumberBitwise::from_js_instruction(instruction.op(), operator)
+}
+
+/// The Number arithmetic operation a record denotes with its operator (`NumberArithmetic::from_js_instruction`
+/// asked of the record's opcode).
+#[inline]
+pub(in crate::vm) fn number_arithmetic(instruction: WideInstruction, operator: u32) -> Option<operations::NumberArithmetic> {
+    operations::NumberArithmetic::from_js_instruction(instruction.op(), operator)
+}
+
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 pub(in crate::vm) mod call_signature;
 mod exit_protocol;
+mod entry_protocol;
 mod region_lend;
 pub(super) use exit_protocol::{ExitTable, RegionRun};
 mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
@@ -124,8 +146,8 @@ mod site_posterior;
 #[path = "compiled/numeric_image.rs"] mod numeric_image; #[cfg(test)] pub(super) use numeric_image::compile_js_typed_numeric_region;
 pub(super) use numeric_image::NumericImage;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
-#[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, BodyEntry, BodyReturn};
-pub(super) use lane_body_abi::body_signature_in_lane;
+#[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
+pub(super) use lane_body_abi::lane_body_signature;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
 #[path = "compiled/tier_model.rs"] mod tier_model;
@@ -3358,47 +3380,15 @@ impl CompiledOsrRegion {
         // A region that calls callees by their entries runs on the lane frame's payload, which their
         // own helpers read (`region_lend`).
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
-        let outcome = match self.parked.take().filter(|_| self.crossing == Crossing::General) {
-            Some(mut dispatch) => unsafe {
-                let vm = &mut *vm;
-                let frame_record = vm.frames.get(frame).map_or(0, |record| std::ptr::from_ref::<super::Frame>(&**record).addr());
-                let warm = |specialized| EntryStamp { vm: std::ptr::from_ref(vm).addr(), program, function, frame, frame_record, lane_context,
-                    registers: registers.addr(), specialized };
-                // The same activation as the last full bind: rebind only what a run changes.
-                let stamp = self.stamp.get().filter(|stamp| *stamp == warm(stamp.specialized));
-                if let Some(stamp) = stamp {
-                    dispatch.rewarm_region(vm, stamp.specialized);
-                    osr_lane::bind_loop::<H>(&mut dispatch, region, entry, lane_context);
-                    osr_lane::bind_captures::<H>(&mut dispatch, region, entry, lane_context, calls, &mut dense);
-                    let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
-                    self.parked.set(Some(dispatch));
-                    run
-                } else {
-                    match vm.programs.get(program) {
-                        Some(residual) => {
-                            dispatch.rebind_region(vm, program, &residual, frame);
-                            bind(&mut dispatch, &residual, vm, true);
-                            self.stamp.set(Some(warm(residual.specialized)));
-                            let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
-                            self.parked.set(Some(dispatch));
-                            run
-                        }
-                        None => RegionRun::own(LaneExit::Terminated),
-                    }
-                }
-            },
-            None => unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
-                native.dispatch.bind_native_storage(vm);
-                bind(&mut native.dispatch, &native._program, vm, false);
-                let run = osr_lane::enter(&mut native.dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
-                // The first run of the region parks a dispatch for the runs after it.
-                if self.crossing == Crossing::General && !self.made.replace(true) {
-                    self.parked.set(Some(Box::new(JsStepDispatch::idle())));
-                }
-                run
-            }) }.unwrap_or(RegionRun::own(LaneExit::Terminated)),
-        };
-        self.dense.set(dense);
+        let outcome = unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
+            osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
+            let _captures = osr_lane::bind_captures::<H>(native, region, entry, lane_context);
+            osr_lane::bind_frame(native, vm, (program, function, lane_context), registers);
+            // A region that calls callees by their entries runs on the lane frame's payload, which their
+            // own helpers read (`region_lend`).
+            let lend = self.calls.enters_callees().then_some(direct_calls);
+            osr_lane::enter(native, vm, program, (code, resume), registers, interrupt, (lane_context, lend), region.header)
+        }) }.unwrap_or(RegionRun::own(LaneExit::Terminated));
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
@@ -7827,9 +7817,11 @@ fn run_numeric_entry(
     );
     let mut context = CallContext::native_adapter(std::ptr::null_mut(), flag, poll_page);
     context.interrupt_owner = interrupt;
+    let descriptor = entry_protocol::EntryDescriptor { kind: entry_protocol::EntryKind::Numeric, receiver: 0, captures: 0, registers: arguments, entry };
     // SAFETY: the region reads only its parameter slots, which `arguments` holds for the
     // call, and its ABI does not inspect the adapter payload.
-    unsafe { enter_body(&mut context, 0, 0, arguments, entry) }
+    let returned = unsafe { entry_protocol::enter(&mut context, &descriptor) };
+    entry_protocol::numeric_result(&descriptor, returned)
 }
 
 /// A fault inside the running compiled call's guard reservation resumes at

@@ -163,7 +163,7 @@ fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSi
 /// The registers an instruction of the unit reads as numbers, and the type each needs where it is
 /// a parameter: an int32 for a bitwise operator or a comparison with an integer, a Number for arithmetic.
 fn requirement(program: &ResidualProgram, instruction: WideInstruction) -> Option<([Operand; 2], Type)> {
-    let (operands, required) = match instruction.op() {
+    let (operands, required) = match () {
         _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })) => relation_requirement(program, instruction)?,
         _ if instruction.op().js_denotation() == JsDenotation::NumericBinary =>
             ([instruction.operand_b(), instruction.operand_c()], operator_requirement(instruction)?),
@@ -196,8 +196,8 @@ fn relation_requirement(program: &ResidualProgram, instruction: WideInstruction)
 /// What a numeric binary operator needs of its operands.
 fn operator_requirement(instruction: WideInstruction) -> Option<Type> {
     let operator = instruction.binary_operator();
-    if super::super::operations::NumberBitwise::from_js_instruction(instruction.op(), operator).is_some() { return Some(Type::INT32); }
-    super::super::operations::NumberArithmetic::from_js_instruction(instruction.op(), operator).map(|_| Type::NUMBER)
+    if crate::vm::compiled::number_bitwise(instruction, operator).is_some() { return Some(Type::INT32); }
+    crate::vm::compiled::number_arithmetic(instruction, operator).map(|_| Type::NUMBER)
 }
 
 /// Whether `register` holds a parameter of `function` at entry.

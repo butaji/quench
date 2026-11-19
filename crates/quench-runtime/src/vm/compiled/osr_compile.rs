@@ -190,7 +190,14 @@ fn unit_frames(region: &LoopRegion, inlining: &osr_loop::Inlining) -> Vec<lane_u
         parent: None,
         call: frame.call,
         target: lane_unit::CallTarget {
-            callee: lane_unit::CalleeBinding::Identity(frame.callee),
+            // A callee the loop holds in a register or reads from a capture may be a fresh
+            // closure of the same function on every entry (one a call makes before its loop):
+            // it binds the function, whose captures the entry reads from the closure it holds
+            // then. A callee read through fields keeps its identity, which the read guards.
+            callee: match frame.guard {
+                osr_loop::InlineGuard::Register(_) | osr_loop::InlineGuard::Capture(_) => lane_unit::CalleeBinding::Function,
+                _ => lane_unit::CalleeBinding::Identity(frame.callee),
+            },
             function: frame.function,
         },
         callee_register: frame.callee_register,

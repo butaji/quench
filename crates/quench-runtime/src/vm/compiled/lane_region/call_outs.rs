@@ -12,9 +12,10 @@ impl Lowering<'_, '_> {
     fn call_out_row(&self, instruction: WideInstruction) -> Option<crate::staged::Operation<ir::Value, EmitProof>> {
         let row = crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::of(self.program))?;
         let (call, result) = row.call_out()?;
-        // A comparison jump decides by its own lowering (`compare_jumps`).
+        // A comparison jump decides by its own lowering (`compare_jumps`); a spread or super call
+        // may return its result (`return f(...xs)`), which completes the activation after the call-out.
         (!matches!(row, crate::staged::Operation::CompareJump { .. })
-            && self.completion.status_and_pc() && instruction.result_flags() == 0
+            && self.completion.status_and_pc() && (instruction.result_flags() == 0 || returned_call(instruction, &row))
             && call.operands().registers(&[]).chain(result).all(|register| register < self.unit.registers))
             .then_some(row)
     }
@@ -47,9 +48,11 @@ impl Lowering<'_, '_> {
         let cell = self.global_cell(state, pc, &row, miss);
         let site = self.call_out_site(pc, record, cell);
         if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::ForInNext { .. })) {
+            let returns = returned_call(instruction, &row);
             self.step_with(state, frame::Edges::ValueGuarded { miss }, row, StepWith { sites: sites(&site), ..StepWith::default() });
             state.call_effect();
-            return true;
+            // A returned call's result is the activation's: the body completes with the register it defined.
+            return if returns { self.complete(state, pc, instruction.result_register()) } else { true };
         }
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
         self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss }, row, StepWith { sites: sites(&site), ..StepWith::default() });
@@ -97,6 +100,14 @@ impl Lowering<'_, '_> {
 /// The step's sites where the lowering made a call-out's record.
 fn sites(site: &frame::call_out::CallOutSite) -> frame::Sites<'_> {
     frame::Sites { call_out: Some(site), ..frame::Sites::default() }
+}
+
+/// Whether `instruction`, the spread or super call `row`, carries the return flag alone: its
+/// result is the activation's, so the body completes with the register it defines (`complete`).
+/// Any other row, a `Binary` included, is never a returned call.
+fn returned_call(instruction: WideInstruction, row: &crate::staged::Operation<ir::Value, EmitProof>) -> bool {
+    matches!(row, crate::staged::Operation::SpreadCall { .. } | crate::staged::Operation::SuperCall { .. })
+        && instruction.result_flags() == crate::bytecode::RETURN_REGISTER
 }
 
 /// Whether `row` is a `Binary` of two registers, equality or any other operator.

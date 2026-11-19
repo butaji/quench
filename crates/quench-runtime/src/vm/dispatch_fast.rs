@@ -279,6 +279,106 @@ impl LaneInstruction {
     }
 }
 
+/// Why a loop site's compiled region was not entered at its header on one attempt. Each decline is
+/// counted on its site (`LoopSite::declines`) and reported under `QUENCH_TRACE=js-jit`, the first of
+/// each reason as a trace line. An entry-contract decline also feeds back as a leave at the header
+/// (`lane_loop_run`), so the next compile widens the contract that failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RegionDecline {
+    /// The region's code is still awaited: its compile is under way and its poll waits (`LoopTier::awaits_code`).
+    Awaiting,
+    /// This attempt started the region's compile, so the interpreter runs the header meanwhile.
+    Compiling,
+    /// An inlined callee's capture has no environment or no value (`lane_loop_entry_checked`).
+    CalleeCapture,
+    /// A capture the region reads has no initialized value at entry.
+    Capture,
+    /// A field the region reads has no cached value for its receiver, or is a private name.
+    Field,
+    /// A dynamic field's entry value is not a Number its representation holds.
+    FieldNumber,
+    /// The entry record has no room left for a field value.
+    EntryFull,
+    /// The arrays do not match the region: a non-dense or prototype-indexed written array, a
+    /// typed array through a field, mixed views, or no record (`loop_tier::lane_loop_arrays`).
+    Array,
+    /// A field store's slot address is not admitted (`lane_loop_field_stores`).
+    FieldStore,
+    /// An inlined call's callee is not activated in place now (`lane_inlined_target`).
+    Inlined,
+    /// The entry's element views differ from the compiled code's, and no compilation remains (`LoopTier::select`).
+    Views,
+    /// The site may not compile here: its compilations ran out, or the memory policy compiles no loop regions (`LoopTier::may_run`).
+    NoCompile,
+    /// The region needs a VM frame the frameless lane lacks (`CompiledOsrRegion::needs_frame`).
+    Frame,
+    /// The lane has no room for the activations the region's calls would make; it grows for the next entry.
+    Room,
+    /// The activation keeps its locals in the window past its registers (`lane_context_locals_in_window`).
+    Locals,
+    /// The code left at its header before any iteration: an entry contract, the entry bounds, the
+    /// call budget or the fault guard failed. Fed back as a leave at the header.
+    EntryContract,
+    /// The region's entry cell held its stub, so its code did not run.
+    Stub,
+}
+
+impl RegionDecline {
+    /// Every decline, in the order the report lists them.
+    pub(super) const ALL: [Self; 17] = [
+        Self::Awaiting, Self::Compiling, Self::CalleeCapture, Self::Capture, Self::Field, Self::FieldNumber,
+        Self::EntryFull, Self::Array, Self::FieldStore, Self::Inlined, Self::Views, Self::NoCompile,
+        Self::Frame, Self::Room, Self::Locals, Self::EntryContract, Self::Stub,
+    ];
+    /// The number of declines.
+    pub(super) const COUNT: usize = Self::ALL.len();
+
+    fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The name the report and the trace give this decline.
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::Awaiting => "awaiting",
+            Self::Compiling => "compiling",
+            Self::CalleeCapture => "callee-capture",
+            Self::Capture => "capture",
+            Self::Field => "field",
+            Self::FieldNumber => "field-number",
+            Self::EntryFull => "entry-full",
+            Self::Array => "array",
+            Self::FieldStore => "field-store",
+            Self::Inlined => "inlined",
+            Self::Views => "views",
+            Self::NoCompile => "no-compile",
+            Self::Frame => "frame",
+            Self::Room => "room",
+            Self::Locals => "locals",
+            Self::EntryContract => "entry-contract",
+            Self::Stub => "stub",
+        }
+    }
+}
+
+impl LoopSite {
+    /// Counts an attempt that entered nothing for `reason`. Under `QUENCH_TRACE=js-jit` the first
+    /// of each reason on the site is printed.
+    fn count_decline(&self, reason: RegionDecline) {
+        let count = &self.declines[reason.index()];
+        if count.get() == 0 && self.diagnostics {
+            eprintln!("QUENCH_JS_JIT_REGION_DECLINE function={} header={} reason={}", self.function, self.header, reason.name());
+        }
+        count.set(count.get().saturating_add(1));
+    }
+
+    /// Counts an attempt that entered nothing for `reason`, and returns the interpreter's jump at the header.
+    fn declined(&self, reason: RegionDecline) -> LoopContinuation {
+        self.count_decline(reason);
+        LoopContinuation::Jump
+    }
+}
+
 /// A loop the shared compiler may run natively: the region its backward jump
 /// closes, the jump's distance to the header record, and the tier's state for it.
 pub(super) struct LoopSite {
@@ -352,6 +452,8 @@ pub(super) struct LoopSite {
     body_due: std::cell::Cell<u64>,
     /// Whether a call boundary no region runs made the loop a body's (`loop_body::offer_body`).
     body_offered: std::cell::Cell<bool>,
+    /// The attempts that entered no region code, by why (`RegionDecline`).
+    declines: [std::cell::Cell<u64>; RegionDecline::COUNT],
 }
 
 impl LoopSite {
@@ -477,6 +579,8 @@ pub(super) struct OsrDiagnostics {
     pub(super) entry_guard_misses: u64,
     pub(super) exits: u64,
     pub(super) widenings: u64,
+    /// The attempts that entered no region code, by why, over all sites.
+    pub(super) declines: [u64; RegionDecline::COUNT],
     pub(super) analysis_rejections: Vec<(super::compiled::RegionRejection, usize)>,
     pub(super) sites: Vec<OsrSiteDiagnostics>,
 }
@@ -508,6 +612,8 @@ pub(super) struct OsrSiteDiagnostics {
     pub(super) entry_guard_misses: u64,
     pub(super) exits: u64,
     pub(super) widenings: u64,
+    /// The attempts that entered no region code, by why.
+    pub(super) declines: [u64; RegionDecline::COUNT],
 }
 
 impl LaneView {
@@ -598,6 +704,7 @@ impl LaneView {
                 entry_guard_misses: site.entry_guard_misses.get(),
                 exits: site.native_exits.get(),
                 widenings: site.widenings.get(),
+                declines: std::array::from_fn(|index| site.declines[index].get()),
             }
         }).collect::<Vec<_>>();
         sites.sort_unstable_by_key(|site| (site.header_pc, site.backedge_pc));
@@ -615,6 +722,7 @@ impl LaneView {
             body_runs: self.loops.iter().map(|site| site.body_runs.get()).sum(),
             exits: self.loops.iter().map(|site| site.native_exits.get()).sum(),
             widenings: self.loops.iter().map(|site| site.widenings.get()).sum(),
+            declines: std::array::from_fn(|index| self.loops.iter().map(|site| site.declines[index].get()).sum()),
             analysis_rejections: self
                 .osr_rejections
                 .as_deref()
@@ -7473,11 +7581,16 @@ fn loop_run_native_in_lane<H: Host>(
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<LoopContinuation> {
     if site.tier.borrow_mut().awaits_code(unsafe { vm(cx) }, site) {
+        site.count_decline(RegionDecline::Awaiting);
         return None;
     }
-    let Some(views) = loop_entry_in_lane(cx, r, region, entry) else {
-        site.note_decline();
-        return None;
+    let views = match lane_loop_entry_checked(cx, r, region, entry) {
+        Ok(views) => views,
+        Err(decline) => {
+            site.count_decline(decline);
+            site.note_decline();
+            return None;
+        }
     };
     // The tier's state is borrowed only here, so the dispatch after it holds no borrow.
     let continuation = loop_run_in_lane(cx, r, site, region, entry, views, site.header);
@@ -7765,12 +7878,12 @@ fn loop_run_in_lane<H: Host>(
     use super::compiled::{LaneExit, RegionRun};
     let mut tier = site.tier.borrow_mut();
     if !tier.select(site.tiers, views) {
-        return LoopContinuation::Jump;
+        return site.declined(RegionDecline::Views);
     }
     if !tier.is_published() {
         // SAFETY: the lane's VM is live, and nothing borrows it across the read.
         if !tier.may_run(site.tiers, unsafe { vm(cx) }.heap.memory_policy()) {
-            return LoopContinuation::Jump;
+            return site.declined(RegionDecline::NoCompile);
         }
         let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
         let int_entries = loop_tier::int_entries(r, region);
@@ -7778,6 +7891,7 @@ fn loop_run_in_lane<H: Host>(
         let int_captures = loop_tier::int_capture_slots(cx);
         loop_compile_in_lane(cx, r, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
         if !tier.is_published() {
+            site.count_decline(RegionDecline::Compiling);
             return LoopContinuation::Compiling;
         }
     }
@@ -7807,7 +7921,11 @@ fn loop_run_in_lane<H: Host>(
     };
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
-    let run = unsafe { region_run_in_lane::<H>(cx, r, entry, (&*code, region), (site.function, from), (machine, program, interrupt)) };
+    let run = match unsafe { lane_region_run::<H>(cx, r, entry, (&*code, region), (site.function, from), (machine, program, interrupt)) } {
+        Ok(run) => run,
+        // The lane admitted no run, so the region's code entered nothing and the interpreter takes the jump.
+        Err(decline) => return site.declined(decline),
+    };
     if site.diagnostics {
         loop_diagnose_in_lane(cx, r, site, region, run, program);
     }
@@ -7815,7 +7933,7 @@ fn loop_run_in_lane<H: Host>(
     if exit.entered_nothing() {
         // An entry guard missed: registers are untouched, so the backward jump runs in the interpreter.
         site.tier.borrow_mut().missed_entry(site.tiers);
-        return LoopContinuation::Jump;
+        return site.declined(if matches!(exit, LaneExit::Stub) { RegionDecline::Stub } else { RegionDecline::EntryContract });
     }
     if matches!(exit, LaneExit::Terminated) {
         return LoopContinuation::Safepoint;
@@ -7904,8 +8022,8 @@ fn loop_trace_exit_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, site:
 }
 
 /// Runs `code`, the region of the loop of `function` over the activation with registers `r`, from
-/// its header or the record `from`, where the lane admits the run (`region_admits_in_lane`); a run it
-/// does not admit enters nothing, as an entry guard that missed.
+/// its header or the record `from`, where the lane admits the run (`lane_region_admits`); a run it
+/// does not admit enters nothing, and the `RegionDecline` names why.
 ///
 /// # Safety
 /// As `CompiledOsrRegion::run`: `machine` and `interrupt` belong to the running lane.
@@ -7916,29 +8034,40 @@ unsafe fn region_run_in_lane<H: Host>(
     (code, region): (&super::compiled::CompiledOsrRegion, &super::compiled::LoopRegion),
     (function, from): (u32, u32),
     (machine, program, interrupt): (*mut Vm<H>, ProgramId, *const crate::execution_interrupt::ExecutionInterrupt),
-) -> super::compiled::RegionRun {
-    use super::compiled::{LaneExit, RegionRun};
+) -> Result<super::compiled::RegionRun, RegionDecline> {
     // A job's frameless lane (a generator step) has no frame for the region's activation.
     if code.needs_frame() && !unsafe { &*cx }.has_frame() {
-        return RegionRun::own(LaneExit::Entry);
+        return Err(RegionDecline::Frame);
     }
-    if !region_admits_in_lane(cx, code) {
-        // A run the lane lacks room for grows it and leaves at the loop's header, so the next entry admits.
-        let grown = frame_holds_window_in_lane(cx, &code.calls) && lane_room_prepare(cx, code.calls.recovery_space());
-        return RegionRun::own(if grown { LaneExit::At(region.header as usize) } else { LaneExit::Entry });
+    if let Err(decline) = lane_region_admits(cx, code) {
+        // A run the lane lacks room for grows it, so the next entry admits. Nothing else grows it.
+        if decline == RegionDecline::Room && !unsafe { lane_context_locals_in_window::<H>(cx as usize) } {
+            lane_room_prepare(cx, code.calls.recovery_space());
+        }
+        return Err(decline);
     }
     // SAFETY: the caller's contract.
-    unsafe { code.run::<H>(r.0, entry, region, machine, program, function, (*cx).frame(), interrupt, (cx as usize, lane_direct_calls(cx)), from) }
+    Ok(unsafe { code.run::<H>(r.0, entry, region, machine, program, function, (*cx).frame(), interrupt, (cx as usize, lane_direct_calls(cx)), from) })
 }
 
 /// Whether a run of `code`, the region of the loop of `function` the lane is in, may start: the lane
 /// has the room to make the activations of the calls it inlines should it leave inside one
 /// (`lane_room_admits`), and the activation keeps its locals apart from the window past its
-/// registers, which the registers of those callees occupy (`CompiledOsrRegion::run_lane`).
+/// registers, which the registers of those callees occupy (`CompiledOsrRegion::run_lane`). The
+/// decline names the one that fails.
 #[inline(always)]
-fn region_admits_in_lane<H: Host>(cx: *mut LaneContext<H>, code: &super::compiled::CompiledOsrRegion) -> bool {
+fn lane_region_admits<H: Host>(cx: *mut LaneContext<H>, code: &super::compiled::CompiledOsrRegion) -> Result<(), RegionDecline> {
     let room = code.calls.recovery_space();
-    room.activations == 0 || (lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS) && frame_holds_window_in_lane(cx, &code.calls))
+    if room.activations == 0 {
+        return Ok(());
+    }
+    if !lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS) {
+        return Err(RegionDecline::Room);
+    }
+    if unsafe { lane_context_locals_in_window::<H>(cx as usize) } {
+        return Err(RegionDecline::Locals);
+    }
+    Ok(())
 }
 
 /// Whether the running activation's register storage holds the windows of the callees `calls` inlines,
@@ -8023,14 +8152,25 @@ fn inlined_continuation_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
 /// The entry record of `site`'s native code from the running activation, and the element
 /// views of its arrays (`loop_tier::loop_arrays_in_lane`), when its arrays and captures pass the
 /// region's guards: each capture an initialized binding resolved without guest code by the
-/// same lookup as LoadCapture (`capture_read_value`).
-#[inline(never)]
-fn loop_entry_in_lane<H: Host>(
+/// same lookup as LoadCapture (`lane_capture_value`).
+/// The entry record of `region` (`lane_loop_entry_checked`), without the reason of a decline.
+fn lane_loop_entry<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     region: &super::compiled::LoopRegion,
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<super::compiled::ElementViews> {
+    lane_loop_entry_checked(cx, r, region, entry).ok()
+}
+
+/// `lane_loop_entry`, where each check that fails names its `RegionDecline`.
+#[inline(never)]
+fn lane_loop_entry_checked<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    region: &super::compiled::LoopRegion,
+    entry: &mut super::compiled::LoopEntry,
+) -> Result<super::compiled::ElementViews, RegionDecline> {
     if !region.captures.is_empty() {
         let slots = capture_reads(unsafe { (*cx).registers }.capture());
         for slot in &region.captures {
@@ -8041,12 +8181,12 @@ fn loop_entry_in_lane<H: Host>(
             }
             // An inlined callee's capture reads its own environment (`Inlining::callee_captures`).
             if slot & super::compiled::CALLEE_CAPTURE != 0 {
-                let inlining = region.inlining.as_deref()?;
-                let &(frame, callee_slot) = inlining.callee_captures.get(usize::from(slot & !super::compiled::CALLEE_CAPTURE))?;
-                let callee = inlining.frames.get(frame)?.callee;
+                let inlining = region.inlining.as_deref().ok_or(RegionDecline::CalleeCapture)?;
+                let &(frame, callee_slot) = inlining.callee_captures.get(usize::from(slot & !super::compiled::CALLEE_CAPTURE)).ok_or(RegionDecline::CalleeCapture)?;
+                let callee = lane_inlined_callee(cx, r, inlining.frames.get(frame).ok_or(RegionDecline::CalleeCapture)?).ok_or(RegionDecline::CalleeCapture)?;
                 let vm = unsafe { vm(cx) };
                 // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
-                let env = unsafe { &*vm.script_call_entry(callee)? }.env;
+                let env = unsafe { &*vm.script_call_entry(callee).ok_or(RegionDecline::CalleeCapture)? }.env;
                 // A top-level binding the global object projects is its property, which the
                 // region keeps only while it stores no field (as the caller's own captures).
                 let value = vm.environment_capture(env, callee_slot).or_else(|| {
@@ -8054,7 +8194,7 @@ fn loop_entry_in_lane<H: Host>(
                         .then(|| vm.environment_capture_env(env, false, 0)
                             .and_then(|env| vm.plain_projected_root_binding(env, callee_slot)))
                         .flatten()
-                })?;
+                }).ok_or(RegionDecline::CalleeCapture)?;
                 entry.push_capture(value);
                 continue;
             }
@@ -8068,7 +8208,7 @@ fn loop_entry_in_lane<H: Host>(
                     (!region.writes_fields())
                         .then(|| projected_capture(cx, 0, *slot))
                         .flatten()
-                })?;
+                }).ok_or(RegionDecline::Capture)?;
             entry.push_capture(value);
         }
     }
@@ -8085,18 +8225,19 @@ fn loop_entry_in_lane<H: Host>(
         // now (a null child, another shape), or a value its Number representation does not
         // hold, seeds the representation's own placeholder.
         let blind = region.seeds_without_receiver(index);
-        let value = (!blind).then(|| region_field_in_lane(cx, r, field, |index| entry.field_value(region, index)))
-            .flatten()
-            .filter(|value| field.tagged || !region.is_dynamic_field(index) || value.as_number().is_some())
-            .or_else(|| {
-                (region.is_dynamic_field(index)
+        let read = (!blind).then(|| lane_region_field(cx, r, field, |index| entry.field_value(region, index))).flatten();
+        let read_some = read.is_some();
+        let value = match read {
+            Some(value) if field.tagged || !region.is_dynamic_field(index) || value.as_number().is_some() => value,
+            _ => (region.is_dynamic_field(index)
                     && (blind || vm.field_cache_entry(field.cache_site).receiver != super::NO_FIELD_RECEIVER))
                     .then(|| if field.tagged { Value::UNDEFINED } else { Value::integer(0) })
-            })?;
-        entry.push_field(value, field.tagged)?;
+                    .ok_or(if read_some { RegionDecline::FieldNumber } else { RegionDecline::Field })?,
+        };
+        entry.push_field(value, field.tagged).ok_or(RegionDecline::EntryFull)?;
     }
-    let views = loop_tier::loop_arrays_in_lane(vm, r, region, entry)?;
-    loop_field_stores(cx, r, region, entry)?;
+    let views = loop_tier::lane_loop_arrays(vm, r, region, entry).ok_or(RegionDecline::Array)?;
+    lane_loop_field_stores(cx, r, region, entry).ok_or(RegionDecline::FieldStore)?;
     if region.reads_heap_natively() {
         let object_base = vm.heap.object_record_base().unwrap_or(std::ptr::null());
         let (properties_base, properties_len) = vm.heap.native_property_values();
@@ -8107,10 +8248,10 @@ fn loop_entry_in_lane<H: Host>(
         // Leaving at an inlined instruction makes its callee's activation as the call would:
         // each call must still be one the lane activates in place (`inlined_activation_in_lane`).
         for frame in &inlining.frames {
-            inlined_target_in_lane(cx, r, inlined_receiver_in_lane(r, region, entry, frame), frame)?;
+            lane_inlined_target(cx, r, lane_inlined_receiver(r, region, entry, frame), frame).ok_or(RegionDecline::Inlined)?;
         }
     }
-    Some(views)
+    Ok(views)
 }
 
 /// A cached data field's value as the region's entry reads it: a hit of the field's cache
@@ -8159,14 +8300,12 @@ fn inlined_target_in_lane<H: Host>(
     receiver: Value,
     frame: &super::compiled::InlineFrame,
 ) -> Option<*const ScriptCallTarget> {
-    if let super::compiled::InlineGuard::Capture(slot) = frame.guard {
-        (capture_read_value(cx, 0, slot)? == frame.callee).then_some(())?;
-    }
     let vm = unsafe { vm(cx) };
-    let target_pointer = vm.script_call_entry(frame.callee)?;
+    let target_pointer = vm.script_call_entry(lane_inlined_callee(cx, r, frame)?)?;
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
     let target = unsafe { &*target_pointer };
-    (target.entry.activates()
+    (target.function == frame.function
+        && target.entry.activates()
         && target.program() == unsafe { (*cx).program }
         && unsafe { (*cx).script_calls }
         && !vm.with_scope_entered
@@ -8175,6 +8314,17 @@ fn inlined_target_in_lane<H: Host>(
             bound == receiver || matches!(frame.guard, super::compiled::InlineGuard::Capture(_) | super::compiled::InlineGuard::Register(_))
         }))
     .then_some(target_pointer)
+}
+
+/// The callee an inlined `frame`'s call binds now: the closure its register or capture holds,
+/// which the region binds by its function (a fresh closure of it on each entry is one case,
+/// `osr_compile::unit_frames`), else the identity its field read guards.
+fn lane_inlined_callee<H: Host>(cx: *mut LaneContext<H>, r: Registers, frame: &super::compiled::InlineFrame) -> Option<Value> {
+    match frame.guard {
+        super::compiled::InlineGuard::Capture(slot) => lane_capture_value(cx, 0, slot),
+        super::compiled::InlineGuard::Register(register) => Some(r.get(register)),
+        _ => Some(frame.callee),
+    }
 }
 
 /// The receiver of an inlined `frame`'s call: the field value a register the region writes
@@ -18391,6 +18541,7 @@ fn install_loop_sites<'live, H: Host>(
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
                     tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial(tiers)), body_seen: std::cell::Cell::new(0), body_due: std::cell::Cell::new(0), body_offered: std::cell::Cell::new(false),
+                    declines: std::array::from_fn(|_| std::cell::Cell::new(0)),
                 },
             )
         })

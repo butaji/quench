@@ -1,6 +1,7 @@
 //! The run of a stencil region that needs no activation: `Crossing::Bare`.
 
-use super::{enter_body, BodyEntry, BodyReturn, CallContext, LaneExit, LoopEntry, RegionRun, Raised};
+use super::entry_protocol::{self, EntryDescriptor, EntryKind};
+use super::{BodyEntry, CallContext, LoopEntry, RegionRun, Raised};
 
 
 /// A bare run's payload is the entry record's address alone, where the dispatch holds it.
@@ -34,10 +35,11 @@ pub(super) unsafe fn run_bare(
     context.adapter_payload = (&mut payload as *mut usize).cast();
     // SAFETY: as the caller promises; the code runs on the register file and returns its status and result
     // word. A resume entry takes its stub's address where a body takes its captures.
-    let BodyReturn { status, value: word } = unsafe { enter_body(&mut context, 0, resume, registers.cast::<u64>().cast_const(), entry_code) };
+    let descriptor = EntryDescriptor { kind: EntryKind::Stencil, receiver: 0, captures: resume, registers: registers.cast::<u64>().cast_const(), entry: entry_code };
+    let returned = unsafe { entry_protocol::enter(&mut context, &descriptor) };
     if let Some(Raised::Panic(panic)) = context.raised.take() {
         std::panic::resume_unwind(panic);
     }
-    RegionRun::own(LaneExit::read(status, word, || unreachable!("a bare region reads no heap row, so it completes no activation")))
+    RegionRun::own(entry_protocol::exit(&descriptor, returned, || unreachable!("a bare region reads no heap row, so it completes no activation")))
 }
 
