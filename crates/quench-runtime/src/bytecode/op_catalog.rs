@@ -356,6 +356,17 @@ impl Traits {
     /// A Wasm opcode (its catalog name begins `Wasm`): its own compiler owns the memory, tables and
     /// typed registers it reads, so the b-jit compiles no function holding one (`base_region::covers`).
     pub(crate) const WASM_OPCODE: Self = Self(1 << 43);
+    /// An op the general step does nothing for (`Nop`), or that is never dispatched (`Wide`, the wide marker).
+    pub(crate) const NO_STEP: Self = Self(1 << 44);
+    /// An op whose step is its owner's own (`Vm::owner_step`) alone, with no staged row first: an environment
+    /// local's load or store and a by-name store.
+    pub(crate) const OWNER_ONLY: Self = Self(1 << 45);
+    /// An op its staged row decides on the interpreter's frame alone, which never declines: the general step
+    /// runs the row and nothing else.
+    pub(crate) const ROW_ONLY: Self = Self(1 << 46);
+    /// A suspension (`Await`, `Yield`, `YieldStar`), which the general step runs as its suspension row
+    /// (`Vm::staged_suspend`).
+    pub(crate) const SUSPENDS: Self = Self(1 << 47);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }

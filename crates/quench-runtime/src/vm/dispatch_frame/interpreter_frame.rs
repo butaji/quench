@@ -6,7 +6,7 @@
 use crate::bytecode::{Operand, Register, ResidualProgram, WideInstruction};
 use crate::host::Host;
 use crate::staged::protocol_literals::LiteralStep;
-use crate::staged::{CallOut, Concrete, Constant, Edge, NumericFrame, Operation, Step};
+use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, NumericFrame, Operation, Step};
 use crate::staged::Frame as _;
 use crate::vm::call_out::CallSite;
 use crate::vm::var_owner::VarOwner;
@@ -421,6 +421,58 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
         }
         self.raised = Some(JsError("iterator cleanup stack underflow".into()));
         None
+    }
+
+    /// The heap value `allocation` makes, defined into `destination`: the VM's own allocation of each literal,
+    /// closure, regexp, template and concatenation (`Operation::Allocate`). A raise is stashed for the runner.
+    #[inline(always)]
+    fn allocate_value(&mut self, stage: &mut Concrete, destination: Register, allocation: Allocation, _proof: ()) -> Option<u64> {
+        let (program, call_site) = (self.program, self.site);
+        let VarOwner::Frame(frame) = call_site.owner else { return None };
+        let owner = VarOwner::Frame(frame);
+        let vm = self.vm();
+        let program_id = vm.frames[frame].program;
+        let made: Result<Value, JsError> = match allocation {
+            Allocation::Empty => Ok(vm.object()),
+            Allocation::Array { length } => Ok(vm.hole_array(length as usize)),
+            // An array literal's elements are defined after it (`DefineElement`), so `decode_literal` never makes it whole.
+            Allocation::ArrayOf { .. } => return None,
+            Allocation::RegExp { site } => vm.regexp_literal(program, frame, site as usize),
+            Allocation::ConstArray { constant, count } => vm
+                .const_array_value(program_id, constant as usize, usize::from(count))
+                .ok_or_else(|| JsError::validation("constant array is outside program".into())),
+            Allocation::ObjectPair { site, first, second } => {
+                let (first, second) = (vm.read(frame, first), vm.read(frame, second));
+                Ok(vm.object_pair(program, site as usize, first, second))
+            }
+            Allocation::ObjectLiteral { site, window } => {
+                let shape = vm.object_site_shape(program, site as usize);
+                let prototype = vm.object_proto;
+                let start = usize::from(window.base);
+                let end = start + usize::from(window.count);
+                let properties = &vm.frames[frame].registers[start..end];
+                Ok(vm.heap.alloc_object_with_properties(prototype, shape, properties))
+            }
+            Allocation::Closure { function } => {
+                // The closure's environment is captured at the instruction's resume PC, as the binding site.
+                let previous = vm.replace_binding_site(owner, Some(call_site.resume as u32));
+                let environment = vm.capture_binding_environment(owner);
+                vm.replace_binding_site(owner, previous);
+                environment.and_then(|env| vm.closure_over_environment(program, owner, function, env))
+            }
+            Allocation::Template { template } => vm.literal_template(program, frame, template as usize),
+            Allocation::Concat { window } => vm.frame_string_concat(program, frame, window),
+        };
+        match made {
+            Ok(value) => {
+                self.write(stage, destination, value.to_bits(), InterpreterFact::Value);
+                Some(value.to_bits())
+            }
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
     }
 }
 

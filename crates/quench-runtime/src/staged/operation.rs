@@ -262,6 +262,19 @@ impl<W, P> Operation<W, P> {
     /// record's result itself asks this instead of naming the opcode; `decode` alone stays the
     /// operation with no completion.
     pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
+        let (plain, flags) = Self::completion_split(instruction)?;
+        Some((Self::decode(plain, context)?, flags))
+    }
+
+    /// `decode_completed` of the literal operations (`decode_literal`) under the tier's `proof`: the operation
+    /// and the flags its record completes the frame by.
+    pub(crate) fn decode_literal_completed(instruction: WideInstruction, proof: P) -> Option<(Self, crate::bytecode::Register)> {
+        let (plain, flags) = Self::completion_split(instruction)?;
+        Some((Self::decode_literal(plain, proof)?, flags))
+    }
+
+    /// The record `instruction` is without its completion flags, and those flags: a return, or a `this` write.
+    fn completion_split(instruction: WideInstruction) -> Option<(WideInstruction, crate::bytecode::Register)> {
         use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
         // The returned flags are the completions only: a return, or a `this` write. A numeric local target
         // is where the result goes, not how it completes, so it is left to the record (`writes_numeric_local`);
@@ -274,7 +287,7 @@ impl<W, P> Operation<W, P> {
         // Every allowed flag is a completion or the numeric local target, which the row's caller writes
         // (`writes_numeric_local`), so the plain record carries none of them.
         let plain = if instruction.result_flags() != 0 { instruction.without_result_flags() } else { instruction };
-        Some((Self::decode(plain, context)?, flags))
+        Some((plain, flags))
     }
 
     /// The destination and constant index of an instruction `decode_flow` reads as `LoadConst`,
