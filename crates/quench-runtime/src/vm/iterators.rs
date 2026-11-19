@@ -252,13 +252,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         self.with_call_roots([iterator], |vm| {
-            if let Some(IteratorRecord {
-                source,
-                kind: IteratorKind::Protocol | IteratorKind::AsyncFromSync,
-                ..
-            }) = vm.heap.iterator(iterator)
-            {
-                return vm.iterator_close(p, *source);
+            let target = vm.iterator_close_target(iterator);
+            if target != iterator {
+                return vm.iterator_close(p, target);
             }
             let atom = vm.runtime_atoms.iterator_return;
             // GetMethod of an absent `return` yields undefined and the close ends (ECMA-262
