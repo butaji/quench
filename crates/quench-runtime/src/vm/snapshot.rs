@@ -124,6 +124,7 @@ impl<H: Host> Vm<H> {
             json_plain: _,
             species_slot_proof: _,
             iterator_absence_proof: _,
+            then_absence_proof: _,
             promise_species_proof: _,
             promise_then_memo: _,
             function_name_shapes: _,

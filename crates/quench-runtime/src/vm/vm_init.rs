@@ -126,6 +126,7 @@ impl<H: Host> Vm<H> {
             json_plain: Default::default(),
             species_slot_proof: Default::default(),
             iterator_absence_proof: Default::default(),
+            then_absence_proof: None,
             promise_species_proof: Default::default(),
             promise_then_memo: Default::default(),
             enumerable_keys: Default::default(),
