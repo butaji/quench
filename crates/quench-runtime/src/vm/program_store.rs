@@ -677,6 +677,9 @@ struct ProgramEntry {
     function_sources: FxHashMap<u32, Value>,
     /// Each RegExp literal site's record, shared by every object it evaluates to.
     regexp_literals: Vec<Option<Rc<crate::heap::RegExpMeta>>>,
+    /// The one object each receiver-only literal site evaluates to while it cannot escape
+    /// (`RegExpLiteralSite::receiver`, `Vm::regexp_literal_receiver`).
+    regexp_receivers: FxHashMap<u32, Value>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
@@ -685,6 +688,9 @@ struct ProgramEntry {
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     lane_views: LaneViews,
+    /// Per Wasm function a collection found on the stack: the live registers holding raw
+    /// words at each pc (`raw_webs::raw_live`), `None` for a function with no raw op.
+    raw_masks: std::cell::RefCell<FxHashMap<u32, Option<Rc<crate::compile::liveness::RegisterMasks>>>>,
     /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
     js_entry_facts: JsEntryFactsTable,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
@@ -1316,12 +1322,14 @@ impl ProgramStore {
             const_arrays: FxHashMap::default(),
             function_sources,
             regexp_literals,
+            regexp_receivers: FxHashMap::default(),
             module_environment: None,
             import_meta: None,
             module_imports: Vec::new(),
             root_slots: std::cell::OnceCell::new(),
             module: false,
             lane_views,
+            raw_masks: Default::default(),
             js_entry_facts: JsEntryFactsTable::default(),
             lane_deferred,
             compiled: None,
@@ -1616,6 +1624,26 @@ impl ProgramStore {
     /// The decoded residuals of the stored programs, a shared one once per program sharing it.
     pub(crate) fn decoded_residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
         self.programs.iter().flatten().filter_map(|entry| entry.residual.if_decoded().map(|program| &**program))
+    }
+
+    /// The registers of `function` of program `id` live before each pc that hold raw words,
+    /// which a collection reads past (`RegisterMasks::extend_live_except`); `None` for a
+    /// function with no raw op. Derived once per function, when a collection first asks.
+    pub(crate) fn raw_register_masks(&self, id: ProgramId, function: u32) -> Option<Rc<crate::compile::liveness::RegisterMasks>> {
+        let entry = self.entry(id)?;
+        if entry.residual.kind != crate::bytecode::ProgramKind::Wasm {
+            return None;
+        }
+        if let Some(masks) = entry.raw_masks.borrow().get(&function) {
+            return masks.clone();
+        }
+        let masks = entry
+            .residual
+            .function_get(function as usize)
+            .and_then(|record| crate::compile::liveness::raw_webs::raw_live(record))
+            .map(|live| Rc::new(crate::compile::liveness::RegisterMasks::new(live)));
+        entry.raw_masks.borrow_mut().insert(function, masks.clone());
+        masks
     }
 
     #[inline] pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
@@ -2768,6 +2796,18 @@ impl ProgramStore {
         self.entry(id)?.regexp_literals.get(site)?.clone()
     }
 
+    /// The object receiver-only literal `site` of program `id` shares, once one was made.
+    pub(crate) fn regexp_literal_receiver(&self, id: ProgramId, site: usize) -> Option<Value> {
+        self.entry(id)?.regexp_receivers.get(&u32::try_from(site).ok()?).copied()
+    }
+
+    /// Keeps `object` as the one object receiver-only literal `site` evaluates to.
+    pub(crate) fn cache_regexp_literal_receiver(&mut self, id: ProgramId, site: usize, object: Value) {
+        if let (Some(entry), Ok(site)) = (self.entry_mut(id), u32::try_from(site)) {
+            entry.regexp_receivers.insert(site, object);
+        }
+    }
+
     pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
@@ -2815,6 +2855,7 @@ impl ProgramStore {
             }
             roots.extend_from_slice(&entry.constants);
             roots.extend(entry.function_sources.values().copied());
+            roots.extend(entry.regexp_receivers.values().copied());
             roots.extend(entry.module_environment);
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {

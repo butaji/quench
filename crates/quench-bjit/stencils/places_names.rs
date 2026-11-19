@@ -8,7 +8,8 @@
 use crate::heap_rows::{payload, word_at};
 use crate::layout::{JS_STEP_EMPTY_STRING, JS_STEP_FUNCTION_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE};
 use crate::numeric::HOLE_B;
-use crate::places::{Places, Rep};
+use crate::typed_ir::Representation;
+use crate::places::{Places};
 use crate::staged::region::Region;
 use crate::staged::{CallOut, Concrete, Frame, Stage, iteration};
 use crate::words::hole64;
@@ -37,12 +38,12 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
     /// payload's record tables and epoch, `heap_records`); every other operation, and a state the
     /// memo does not prove, is `None` and leaves the row.
     #[inline(always)]
-    pub(crate) fn call_out_fast(&mut self, stage: &mut Concrete, operation: CallOut) -> Option<(u64, Rep)> {
+    pub(crate) fn call_out_fast(&mut self, stage: &mut Concrete, operation: CallOut) -> Option<(u64, Representation)> {
         match operation {
             CallOut::ForInNext { state } => {
                 let state = self.tagged(stage, state);
                 let (arrays, objects, epoch) = self.heap_records(stage)?;
-                iteration::for_in_next(stage, (arrays, objects), state, epoch, ()).map(|key| (key, Rep::Tagged))
+                iteration::for_in_next(stage, (arrays, objects), state, epoch, ()).map(|key| (key, Representation::Tagged))
             }
             _ => None,
         }
@@ -51,9 +52,9 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
     /// The interned `typeof` result string of the name index `name`: the entry at that index of the
     /// table of the eight result strings at hole 2 (`value::immediate_typeof_string`'s load).
     #[inline(always)]
-    pub(crate) fn typeof_entry(&mut self, stage: &mut Concrete, name: u64) -> Option<(u64, Rep)> {
+    pub(crate) fn typeof_entry(&mut self, stage: &mut Concrete, name: u64) -> Option<(u64, Representation)> {
         let offset = stage.mul_imm(name, core::mem::size_of::<crate::Value>() as u64);
         let entry = stage.add(hole64::<HOLE_B>(), offset);
-        Some((stage.load_table(Region::HeapMeta.readonly(), entry), Rep::Tagged))
+        Some((stage.load_table(Region::HeapMeta.readonly(), entry), Representation::Tagged))
     }
 }

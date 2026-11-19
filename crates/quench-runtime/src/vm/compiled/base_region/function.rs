@@ -171,7 +171,7 @@ fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Ve
     (shape.form == CallForm::Plain && (1..=2).contains(&shape.argc)).then_some(())?;
     let local = (shape.call_pc - region.header) as usize;
     let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
-    let GlobalRead::NativeMember { value, native, holder } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
+    let GlobalRead::NativeMember { value, native, holder, .. } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
     let kind = fold::math_kind(native)?;
     let binary = matches!(kind, Kind::Min | Kind::Max | Kind::Imul);
     (u16::from(binary) + 1 == shape.argc as u16).then_some(())?;
@@ -193,7 +193,7 @@ fn native_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<
     let local = (shape.call_pc - region.header) as usize;
     let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
     let (value, native, holder) = match *sites.known.globals?.get(&(region.header as usize + defined))? {
-        GlobalRead::NativeSlot { value, native, holder, .. } | GlobalRead::NativeMember { value, native, holder } => (value, native, holder),
+        GlobalRead::NativeSlot { value, native, holder, .. } | GlobalRead::NativeMember { value, native, holder, .. } => (value, native, holder),
         _ => return None,
     };
     let row = match native {
@@ -417,7 +417,7 @@ fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), re
 }
 
 /// What a body is built for: its function and registers, the rows whose int32 speculation failed
-/// (`widened`, by caller PC), the registers its entry held as ints and doubles (`seen`, its declared Numbers joining), and what
+/// (`widened`, by caller PC), the types its entry held by register (`seen`, its declared Numbers joining as Number types), and what
 /// the program holds Stable (`Known`), whose invalidation word its code reads where a call may
 /// have changed a fact it folded, and the realm its inlined callees belong to (`RealmProof`).
 pub(in crate::vm::compiled) struct BodySpec<'a> {
@@ -426,7 +426,9 @@ pub(in crate::vm::compiled) struct BodySpec<'a> {
     pub(in crate::vm::compiled) known: Known<'a>,
     pub(in crate::vm::compiled) realm: RealmProof,
     pub(in crate::vm::compiled) widened: &'a [usize],
-    pub(in crate::vm::compiled) seen: [&'a [Register]; SEEN],
+    /// The type each entry register held when the compile observed it, by register (a register past the slice
+    /// is no observation: `Type::ANY`).
+    pub(in crate::vm::compiled) seen: &'a [Type],
     /// What each of the spanned instructions' sites saw of its operands (`OperandKinds`), from the
     /// header: which variant of row an arithmetic or comparison site takes (`variant_of`) and whether it is
     /// widened. Empty where nothing was recorded.
@@ -571,8 +573,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
         .map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else { row })
         .collect();
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
-    let [ints, doubles] = super::declared::seen(function, ending, spec.seen);
-    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), [ints.as_slice(), doubles.as_slice()]);
+    let seen = super::declared::seen(function, ending, spec.seen);
+    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), &seen);
     proofs::prove(&span, &mut decoded, &reached, &super::declared::exact_objects(function));
     if ending == Ending::Region && let Some(generic) = decoded.iter().enumerate().find(|(k, row)| reached.contains(*k) && interprets(row)) {
         return Err(format!("interprets in the loop: row {} {:?}", generic.0, generic.1.step));

@@ -12,7 +12,7 @@
 //! never the body. Constants, definitions and joins use the one `crate::typed_ir` lattice.
 
 use crate::bytecode::{Class, Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};
-use crate::typed_ir::{Type, WIDENING_ROUNDS};
+use crate::typed_ir::Type;
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::num::NonZeroUsize;
 use lengths::Relations;
@@ -39,12 +39,6 @@ pub(super) struct Facts {
     /// The element reads observed to hold Numbers (sorted PCs): each defines a Number the
     /// lowering proves at the read.
     observed: Vec<ObservedRead>,
-    /// How often a merge changed each block's row: past `WIDENING_ROUNDS` a range that grows widens,
-    /// at a loop header alone (`headers`): a block inside the loop follows the header's finite rows
-    /// exactly, so the branch that guards it keeps the bound it proves.
-    rounds: Vec<u8>,
-    /// The leaders a backward edge reaches.
-    headers: CompoundBitSet,
     /// The length relations at each row, parallel to its types (empty where the run tracks none).
     length_of: Vec<Option<Register>>,
     below: Vec<Option<Register>>,
@@ -59,17 +53,15 @@ impl Facts {
     /// A run over `blocks` PCs of `registers` registers.
     fn new(blocks: usize, registers: usize, seeds: run::Seeds<'_>) -> Self {
         Self { offsets: vec![None; blocks], registers, reached: CompoundBitSet::with_capacity(blocks),
-            contracts: seeds.contracts.to_vec(), observed: seeds.observed.0.to_vec(), rounds: vec![0; blocks], headers: CompoundBitSet::with_capacity(blocks), ..Self::default() }
+            contracts: seeds.contracts.to_vec(), observed: seeds.observed.0.to_vec(), ..Self::default() }
     }
 
     /// The state on entry to the block led by `pc`.
     fn point_at(&self, pc: usize) -> run::Point {
         let start = self.offsets[pc].expect("a pending leader has facts").get() - 1;
         let relations = |rows: &[Option<Register>]| rows.get(start..start + self.registers).map_or_else(Vec::new, <[_]>::to_vec);
-        run::Point { types: self.types[start..start + self.registers].iter().copied().collect(),
-            relations: { let (length_of, below, under) = (relations(&self.length_of), relations(&self.below), relations(&self.under));
-                let held = [&length_of, &below, &under].iter().any(|rows| rows.iter().any(Option::is_some));
-                Relations { length_of, below, under, held } } }
+        run::Point { types: smallvec::SmallVec::from_slice(&self.types[start..start + self.registers]),
+            relations: Relations::of_rows(relations(&self.length_of), relations(&self.below), relations(&self.under)) }
     }
 
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
@@ -101,7 +93,7 @@ impl Facts {
         written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool) -> Type {
         let Some(start) = (0..=pc).rev().find(|pc| leaders.contains(*pc)) else { return Type::ANY };
         let Some(entry) = self.at(start) else { return Type::ANY };
-        let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = entry.iter().copied().collect();
+        let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = smallvec::SmallVec::from_slice(entry);
         for (at, instruction) in instructions.iter().enumerate().take(pc).skip(start) {
             if matches!(transfer_observed(&mut types, *instruction, constants, written, native_calls, self.observed_at(at)), Flow::Leaves) {
                 return Type::ANY;
@@ -134,59 +126,69 @@ impl Facts {
 
     #[cfg(test)]
     fn merge(&mut self, pc: usize, incoming: &[Type]) -> bool {
-        self.merge_row(pc, incoming, &Relations::default())
-    }
-
-    /// `merge` of the state `point`: its types, and the relations it keeps.
-    fn merge_point(&mut self, pc: usize, point: &run::Point) -> bool {
-        self.merge_row(pc, &point.types, &point.relations)
-    }
-
-    /// Joins `incoming` and the relations both it and the row keep into the row of `pc`;
-    /// whether the row changed. Past `WIDENING_ROUNDS` changes a range that grows widens at a loop header.
-    fn merge_row(&mut self, pc: usize, incoming: &[Type], relations: &Relations) -> bool {
-        let Some(slot) = self.offsets.get_mut(pc) else { return false };
-        let (start, mut changed) = match *slot {
-            None => {
-                *slot = NonZeroUsize::new(self.types.len() + 1);
-                self.types.extend_from_slice(incoming);
-                self.length_of.extend_from_slice(&relations.length_of);
-                self.below.extend_from_slice(&relations.below);
-                self.under.extend_from_slice(&relations.under);
-                (self.types.len() - incoming.len(), true)
-            }
-            Some(offset) => {
-                let start = offset.get() - 1;
-                let widening = self.headers.contains(pc) && self.rounds.get(pc).is_some_and(|rounds| *rounds >= WIDENING_ROUNDS);
-                let mut changed = false;
-                // Most edges bring a row equal to the one held, register by register: the
-                // join of equal types is the type, so only differing registers join.
-                for (known, incoming) in self.types[start..start + self.registers].iter_mut().zip(incoming) {
-                    if *known == *incoming { continue; }
-                    let joined = if widening { known.widen(*incoming) } else { known.join(*incoming) };
-                    changed |= joined != *known;
-                    *known = joined;
-                }
-                for (rows, theirs) in [(&mut self.length_of, &relations.length_of), (&mut self.below, &relations.below), (&mut self.under, &relations.under)] {
-                    let Some(known) = rows.get_mut(start..start + theirs.len()) else { continue };
-                    if known == theirs.as_slice() { continue; }
-                    for (known, theirs) in known.iter_mut().zip(theirs) {
-                        changed |= lengths::meet(known, *theirs);
-                    }
-                }
-                (start, changed)
-            }
+        let Some(slot) = self.offsets.get(pc) else { return false };
+        let Some(offset) = *slot else {
+            self.store_row(pc, incoming, &[], &[], &[]);
+            let start = self.types.len() - incoming.len();
+            hold_contracts(&self.contracts, pc, &mut self.types[start..]);
+            return true;
         };
-        for &(_, register, required) in self.contracts.iter().filter(|(at, _, _)| *at == pc) {
-            let known = &mut self.types[start + usize::from(register)];
-            if !known.is_subtype(required) {
-                *known = required;
-                changed = true;
-            }
-        }
-        if let Some(rounds) = self.rounds.get_mut(pc).filter(|_| changed) { *rounds = rounds.saturating_add(1); }
+        let start = offset.get() - 1;
+        let mut changed = join_types(&mut self.types[start..start + self.registers], incoming, false);
+        changed |= hold_contracts(&self.contracts, pc, &mut self.types[start..start + self.registers]);
         changed
     }
+
+    /// Stores the row of the block led by `pc`, which has none: its types and the relations the
+    /// run keeps (empty where it tracks none).
+    fn store_row(&mut self, pc: usize, types: &[Type], length_of: &[Option<Register>], below: &[Option<Register>], under: &[Option<Register>]) {
+        self.offsets[pc] = NonZeroUsize::new(self.types.len() + 1);
+        self.types.extend_from_slice(types);
+        self.length_of.extend_from_slice(length_of);
+        self.below.extend_from_slice(below);
+        self.under.extend_from_slice(under);
+    }
+}
+
+/// Joins the `incoming` types into the `known` row, widening a range that grows where `widening`;
+/// whether the row changed. Most edges bring a row equal to the one held, register by register:
+/// the join of equal types is the type, so only differing registers join.
+fn join_types(known: &mut [Type], incoming: &[Type], widening: bool) -> bool {
+    let mut changed = false;
+    for (known, incoming) in known.iter_mut().zip(incoming) {
+        if *known == *incoming { continue; }
+        let joined = if widening { known.widen(*incoming) } else { known.join(*incoming) };
+        changed |= joined != *known;
+        *known = joined;
+    }
+    changed
+}
+
+/// Meets the relation rows `known` with `theirs`, those of an incoming state, where both hold
+/// rows: a relation the incoming state does not keep is lost; whether one was.
+fn meet_relations(known: [&mut Vec<Option<Register>>; 3], theirs: [&[Option<Register>]; 3]) -> bool {
+    let mut changed = false;
+    for (rows, theirs) in known.into_iter().zip(theirs) {
+        let Some(known) = rows.get_mut(..theirs.len()) else { continue };
+        if known == theirs { continue; }
+        for (known, theirs) in known.iter_mut().zip(theirs) {
+            changed |= lengths::meet(known, *theirs);
+        }
+    }
+    changed
+}
+
+/// Narrows the row `types` of the block led by `pc` to the contracts held there; whether one did.
+fn hold_contracts(contracts: &[Contract], pc: usize, types: &mut [Type]) -> bool {
+    let mut changed = false;
+    for &(_, register, required) in contracts.iter().filter(|(at, _, _)| *at == pc) {
+        let known = &mut types[usize::from(register)];
+        if !known.is_subtype(required) {
+            *known = required;
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Where control goes after an instruction under the lowering this models.
@@ -394,7 +396,17 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
 /// and every backedge must preserve the entry hypothesis. Rejecting one input
 /// removes that assumption from all dependent proofs on the next iteration.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitSet,
+pub(super) fn inductive_int32(initial: &mut [Type], candidates: CompoundBitSet,
+    body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+    constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
+    inductive(initial, candidates, Type::INT32, body, instructions, leaders, constants, written, own_shape, native_calls, raises, observed)
+}
+
+/// `inductive_int32` for the header contract `required`: an int32, or a Number (an
+/// accumulator that enters as an int32 or a double and every definition keeps a Number).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, required: Type,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
@@ -402,15 +414,15 @@ pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitS
     // work is bounded by candidate count, without a semantic iteration cap.
     while !candidates.is_empty() {
         let mut inputs = initial.to_vec();
-        for register in candidates.iter() { inputs[register] = Type::INT32; }
+        for register in candidates.iter() { inputs[register] = required; }
         let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, raises, Seeds::observing(observed));
         let mut rejected: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
         for register in candidates.iter() {
-            if !facts.backedge().get(register).is_some_and(|ty| ty.is_int32()) { rejected.insert(register); }
+            if !facts.backedge().get(register).is_some_and(|ty| ty.is_subtype(required)) { rejected.insert(register); }
         }
         facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
             let index = usize::from(register);
-            if body.contains(&pc) && candidates.contains(index) && !ty.is_int32() { rejected.insert(index); }
+            if body.contains(&pc) && candidates.contains(index) && !ty.is_subtype(required) { rejected.insert(index); }
         });
         if rejected.is_empty() {
             initial.copy_from_slice(&inputs);

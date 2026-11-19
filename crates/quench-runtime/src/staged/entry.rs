@@ -4,7 +4,8 @@
 //! the entry's address, so the code never changes when the site's feedback does (the entry
 //! record is the one feedback authority).
 
-use super::object::{Form, Rep, arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload};
+use super::object::{Form, arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload};
+use crate::typed_ir::Representation;
 use super::slot_store::store_slot;
 use super::{RecordSpace, Stage};
 use super::region::Region;
@@ -91,7 +92,7 @@ fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
-    store_slot(stage, record, payload, slot, Form::Either, (value, Rep::Tagged), miss)
+    store_slot(stage, record, payload, slot, Form::Either, (value, Representation::Tagged), miss)
 }
 
 /// A store of `value` through the own cache entry `offset` bytes into the table of `tables`: the
@@ -211,25 +212,19 @@ fn site_record<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), 
     Some((id, record, entry))
 }
 
-/// The receiver a folded prototype-held read stands on: `object` is a direct object of the record
-/// table at `records` whose exact shape is `shape` and whose prototype link is `link`, so the holder
-/// is the one the read was folded against and its value is the folded constant (a Stable fact, held
-/// while no prototype of the holder's shape changes a value). `None` (leaving at `miss`) for any
-/// other receiver or where the table is absent. Both are per-site operands.
-/// The stencil build's alone (`quench-bjit/stencils/site_rows.rs`): the interpreter proves a held
-/// read's receiver through its own holder hints (`Vm::holder_hint_hit`).
-#[cfg(stencil_build)]
+/// The folded value of a prototype-held read (`PrototypeProof::Linked`): the receiver `record` has
+/// exact shape `shape` and prototype link `link`, so its holder is the one the read was folded
+/// against and `value` is the folded constant (a Stable fact a code's live check holds). `None`
+/// (leaving at `miss`) for any other receiver. Shape and link are the caller's values, compared here.
 #[inline(always)]
-pub(crate) fn held_receiver<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (shape, link): (S::Imm, S::Imm), miss: S::Miss) -> Option<()> {
-    let present = stage.ne_imm(records, 0u32);
-    stage.guard(present, miss)?;
-    let (_, record) = direct_record(stage, records, object, miss)?;
+pub(crate) fn held_constant<S: Stage>(stage: &mut S, record: S::Word, (shape, link): (u32, u32), value: u64, miss: S::Miss) -> Option<S::Word> {
     let exact = super::object::exact_shape(stage, record);
-    let same = stage.eq_imm(exact, shape);
+    let same = stage.eq_imm(exact, u64::from(shape));
     stage.guard(same, miss)?;
     let prototype = super::object::proto_link(stage, record);
-    let same = stage.eq_imm(prototype, link);
-    stage.guard(same, miss)
+    let same = stage.eq_imm(prototype, u64::from(link));
+    stage.guard(same, miss)?;
+    Some(stage.constant(value))
 }
 
 /// A field read through the cache entry `offset` bytes into the table `entries`, of the object

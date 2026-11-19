@@ -244,6 +244,10 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         self.loop_slot_store(stage, site, value, miss)
     }
 
+    fn entry_slot_raw(&self) -> bool {
+        self.fields.as_ref().and_then(|fields| fields.held.slot).is_some_and(|slot| slot.domain == Type::NUMBER)
+    }
+
     /// The direct store, and where it declines (a shape, the barrier or the storage does not
     /// admit it) the VM's store, which logs what it must; past the join only the proofs that
     /// held before the store do.

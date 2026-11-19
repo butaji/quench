@@ -205,20 +205,36 @@ fn is_parameter(function: &crate::bytecode::Function, register: Register) -> boo
         || function.local_registers.iter().any(|entry| entry.local < function.params && entry.register == register)
 }
 
+/// The language bits entry conformance checks exactly (`conform_language`): a Boolean,
+/// `undefined`, `null`, a direct object, a direct function, and a string (a direct string by its
+/// tag, any other string by the VM's `typeof`). A set with any other bit (Number, BigInt, Symbol)
+/// is not checkable here.
+const CHECKABLE: u16 = crate::typed_ir::language_bit(crate::ValueType::Boolean)
+    | crate::typed_ir::language_bit(crate::ValueType::Undefined)
+    | crate::typed_ir::language_bit(crate::ValueType::Null)
+    | crate::typed_ir::language_bit(crate::ValueType::Object)
+    | crate::typed_ir::language_bit(crate::ValueType::Function)
+    | crate::typed_ir::language_bit(crate::ValueType::String);
+
+/// Whether the non-empty language set `bits` is one entry conformance tests exactly.
+pub(super) fn checkable(bits: u16) -> bool {
+    bits != 0 && bits & !CHECKABLE == 0
+}
+
 /// Each parameter's declared TypeScript type (`Function::declared_parameters`) as its entry type
 /// where the unit never writes it and nothing narrower is required of it: the entry proves it
 /// once (conformance) and every later use trusts it. A value outside it leaves at the entry, so
-/// an annotation that lies costs an exit, never a wrong result. Number is the declared type
-/// entry conformance checks today; the language masks (`DeclaredFact::Languages`) stay `ANY`, since the
-/// conformance guards no language mask (`Lowering::proves` guards only String and BigInt).
+/// an annotation that lies costs an exit, never a wrong result. A Number set, or a set
+/// `checkable` names, is such a type; any other set stays `ANY`.
 pub(super) fn declared_entry_types(function: &crate::bytecode::Function, written: &CompoundBitSet, initial: &mut [Type]) {
     for (index, declared) in function.declared_parameters.iter().enumerate() {
-        if DeclaredFact::of(*declared) != Some(DeclaredFact::Number) { continue; }
+        let ty = Type::languages(*declared);
+        if ty != Type::NUMBER && !checkable(*declared) { continue; }
         let Some(register) = parameter_register(function, index) else { continue };
         let register = usize::from(register);
         if written.contains(register) { continue; }
         if let Some(entry) = initial.get_mut(register).filter(|entry| **entry == Type::ANY) {
-            *entry = Type::NUMBER;
+            *entry = ty;
         }
     }
 }

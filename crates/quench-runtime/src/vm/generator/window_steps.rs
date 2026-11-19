@@ -5,18 +5,6 @@ use super::*;
 use super::super::activation::FrameRecord;
 
 impl<H: Host> Vm<H> {
-    /// The frame of `generator` the lane resumes as an activation over its register file, which
-    /// `code`, the running program's, lays out as its registers or with an environment window
-    /// after them (`window_layout`, the `bool`): a suspended generator of this realm and
-    /// program that is not running or done.
-    pub(in crate::vm) fn generator_window_frame(&self, generator: Value, code: &ResidualProgram) -> Option<(&FrameRecord, bool)> {
-        let IteratorRecord { ext, .. } = self.heap.iterator(generator)?;
-        let record = ext.generator.as_deref()?;
-        let frame = &*record.suspended_continuation()?.frame;
-        let environment = self.window_layout(frame, code)?;
-        (record.realm == self.realm.globals).then_some((frame, environment))
-    }
-
     /// Whether the lane resumes `frame`, suspended by a function of `code`, over its register
     /// file, and whether its window carries an environment after the registers: a frame of the
     /// active program whose function lays out as its registers or with an environment window
@@ -41,18 +29,20 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Starts a windowed run of `generator`, which `generator_window_frame` admitted: the
+    /// Starts a windowed run of `generator`, which `lane_resume_generator` admitted: the
     /// frame stays in its record, `sent` is the value the suspending `yield` evaluates to, and
     /// the native activation roots the generator while the run lasts. The frame's address, which
     /// its box keeps until the run ends.
+    /// `record` is `generator`'s, which its cell keeps boxed while the generator lives.
     pub(in crate::vm) fn resume_generator_window(
         &mut self,
+        (generator, record): (Value, *mut GeneratorRecord),
         method: Value,
-        generator: Value,
         sent: Value,
         depth: usize,
     ) -> Option<*mut FrameRecord> {
-        let (frame, resume_register) = self.generator_record_mut(generator)?.resume_windowed()?;
+        // SAFETY: the caller's; nothing since its lookup freed the generator.
+        let (frame, resume_register) = unsafe { &mut *record }.resume_windowed()?;
         // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
         let epoch = self.heap.collection_epoch();
         let record = unsafe { &mut *frame };
@@ -81,15 +71,46 @@ impl<H: Host> Vm<H> {
         depth: usize,
     ) {
         self.realm.promise.active_native.pop();
-        let mut frame = self
-            .generator_record_mut(generator)
-            .and_then(GeneratorRecord::take_windowed)
-            .expect("a windowed yield belongs to a windowed generator");
+        let record = self.windowed_generator_record(generator);
+        // SAFETY: the generator's cell keeps its record boxed, and parking the frame frees no cell.
+        let mut frame = unsafe { &mut *record }.take_windowed().expect("a windowed yield belongs to a windowed generator");
         self.park_frame(&mut frame, pc, depth);
         let continuation = Continuation { frame, completion: Completion::Yield(value), resume_register: Some(destination), promise: Value::UNDEFINED };
-        if let Some(record) = self.generator_record_mut(generator) {
-            record.suspend(continuation);
+        unsafe { &mut *record }.suspend(continuation);
+    }
+
+    /// The generator record of `generator`. A record is boxed once at creation and freed only by
+    /// a collection, so the last one found is reused while no collection ran since
+    /// (`LaneStack::last_generator`): a step looks its generator up several times.
+    #[inline(always)]
+    pub(in crate::vm) fn generator_record_mut(
+        &mut self,
+        generator: Value,
+    ) -> Option<&mut GeneratorRecord> {
+        let (last, epoch, record) = self.lane_stack.last_generator;
+        if last == generator && epoch == self.heap.collection_epoch() {
+            // SAFETY: the record is boxed, never replaced, and freed only by a collection.
+            return Some(unsafe { &mut *record });
         }
+        self.looked_up_generator_record(generator)
+    }
+
+    #[inline(never)]
+    fn looked_up_generator_record(&mut self, generator: Value) -> Option<&mut GeneratorRecord> {
+        let epoch = self.heap.collection_epoch();
+        let record: *mut GeneratorRecord = match self.heap.iterator_mut(generator) {
+            Some(IteratorRecord { ext, .. }) => std::ptr::from_mut(ext.generator.as_deref_mut()?),
+            _ => return None,
+        };
+        self.lane_stack.last_generator = (generator, epoch, record);
+        // SAFETY: just found in the live heap.
+        Some(unsafe { &mut *record })
+    }
+
+    /// The record of `generator`, which runs as a lane window.
+    #[inline(always)]
+    fn windowed_generator_record(&mut self, generator: Value) -> *mut GeneratorRecord {
+        std::ptr::from_mut(self.generator_record_mut(generator).expect("a windowed yield belongs to a generator"))
     }
 
     /// Suspends the frame of a windowed run at `pc`: the environment window closed, its dead
@@ -97,10 +118,25 @@ impl<H: Host> Vm<H> {
     /// taken back.
     pub(in crate::vm) fn park_frame(&mut self, frame: &mut FrameRecord, pc: usize, depth: usize) {
         frame.close_environment_window();
-        let live = self.suspension_registers(frame.program, frame.function, pc);
+        let live = self.cached_suspension_registers(frame, pc);
         self.lane_stack.take_with_objects(depth, &mut frame.with_objects);
         self.lane_stack.take_iterators(depth, &mut frame.active_iterators);
         frame.suspend_at(pc, live);
+    }
+
+    /// `suspension_registers` of `frame` at `pc`, kept on the record for its next suspension
+    /// there: a generator or async body suspends at the same few points over and over, and its
+    /// function's code stays while the frame lives.
+    #[inline(always)]
+    fn cached_suspension_registers(&self, frame: &mut FrameRecord, pc: usize) -> (Option<crate::compile::liveness::RegisterSet>, u64) {
+        match frame.suspension_live {
+            Some((at, live)) if at == pc => (live, self.heap.collection_epoch()),
+            _ => {
+                let live = self.suspension_registers(frame.program, frame.function, pc);
+                frame.suspension_live = Some((pc, live.0));
+                live
+            }
+        }
     }
 
     /// Ends the windowed run of `generator` at its return: it completes, dropping its frame.

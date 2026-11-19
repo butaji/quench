@@ -200,7 +200,7 @@ impl NativeJsCompiler {
         &mut self, source: &str, name: &str, options: HostScriptOptions,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let mut program = Engine::specialize_host_script(
-            source, name, self, options, ReleasedRecords::Dropped,
+            source, name, self, options, ReleasedRecords::Dropped, false,
         )?;
         if let (Some(source), Some((line, column))) = (&mut program.source, options.origin) {
             source.line_offset = line;

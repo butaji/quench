@@ -46,6 +46,13 @@ use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
+/// The staged operation a record decodes to, with no constants or sites resolved: what a
+/// tier's analysis asks of a record instead of naming its opcode (`Operation::decode`).
+#[inline]
+pub(in crate::vm) fn decoded(instruction: impl std::borrow::Borrow<crate::bytecode::WideInstruction>) -> Option<crate::staged::Operation<(), ()>> {
+    crate::staged::Operation::decode(*instruction.borrow(), crate::staged::DecodeContext::EMPTY)
+}
+
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod exit_protocol;
@@ -1030,6 +1037,8 @@ lane_helper_inventory! { H;
     /// A planned construction (`lane_construct`).
     Construct => constructions::lane_construct::<H>,
     ConstructReceiver => constructions::lane_construct_receiver::<H>,
+    /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
+    ConstructPlanHolds => constructions::lane_construct_plan_holds::<H>,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
     ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
     /// A body's uncaught `throw`, stashed for its native callers and the lane (`lane_raise`).
@@ -1292,6 +1301,39 @@ pub(super) struct OnlineFacts<'a> {
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
     /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
     pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
+    /// The own member of a constant-marked object that the VM holds for `atom` (`Vm::own_constant_of`):
+    /// a read of it folds under an identity guard and a dependency on the object's exact shape.
+    pub(super) own_constant: &'a dyn Fn(Atom) -> Option<OwnConstant>,
+}
+
+/// An own member a constant-marked object holds (`Vm::own_constant_of`): the object a lane body
+/// guards by identity, the exact shape it depends on (whose write retires the body), and the
+/// value the member holds while the object is marked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct OwnConstant {
+    pub(super) object: Value,
+    pub(super) shape: u32,
+    pub(super) value: Value,
+}
+
+/// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its
+/// callee, its receiver's exact shape and, per field in slot order, the field's name and where
+/// its value comes from. A body that reads such a receiver's fields and lets it escape nowhere
+/// keeps the values and allocates the receiver only at a leave.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ScalarConstructPlan {
+    pub(super) callee: Value,
+    pub(super) shape: u32,
+    pub(super) fields: smallvec::SmallVec<[(Atom, ScalarField); 4]>,
+}
+
+/// Where a field of a `ScalarConstructPlan` takes its value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum ScalarField {
+    /// The argument of this parameter (`undefined` past the passed ones).
+    Parameter(u16),
+    /// This constant, whatever is passed.
+    Constant(Value),
 }
 
 impl OnlineFacts<'_> {
@@ -1343,6 +1385,11 @@ pub(super) struct VmFacts<'a> {
     /// the atoms it stores staying unnamed (`OsrFacts::stable`): a loop region compiled for a
     /// specialized run, which a cache naming one retires (`MethodCacheAtoms::name`).
     pub(super) held_atoms: Option<HeldAtoms<'a>>,
+    /// The construct plan a construction record of a function holds now, by function and PC
+    /// (`ScalarConstructPlan`): what code may keep as its field values while the object
+    /// escapes nowhere (`lane_region::virtual_objects`). The code tests that the plan still
+    /// holds where it would construct, so it takes no dependency on it.
+    pub(super) construct_plans: Option<&'a dyn Fn(u32, u32) -> Option<ScalarConstructPlan>>,
 }
 
 /// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
@@ -1358,14 +1405,14 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None }
     }
 }
 
@@ -1384,7 +1431,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
         fields: &[], global_reads, facts, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
         plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
             completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok().filter(|region| region.native != 0)
@@ -2667,7 +2714,7 @@ fn stitched_entry<H: Host>(
     program: ProgramId,
     code: &crate::bytecode::ResidualProgram,
     index: usize,
-    plan: &Plan,
+    (plans, cells): (&[Option<Plan>], &[std::cell::Cell<usize>]),
     memory_slot: Option<u32>,
 ) -> Option<Vec<u8>> {
     if !crate::jit_mode::base_only() {
@@ -2678,11 +2725,14 @@ fn stitched_entry<H: Host>(
         let value = vm.programs.constant(program, at)?;
         Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
     };
-    wasm_stitch::stitch(function, usize::from(function.params), plan.result.is_some(), &constant, memory_slot)
+    // A callee has an entry where it has a plan; its cell holds the entry once placed.
+    let callee = |callee: usize| plans.get(callee)?.as_ref().map(|_| cells[callee].as_ptr() as u64);
+    let world = wasm_stitch::World { constant: &constant, memory_slot, callee: &callee };
+    wasm_stitch::stitch(function, usize::from(function.params), plans[index].as_ref()?.result.is_some(), &world)
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: &Plan, _: Option<u32>) -> Option<Vec<u8>> {
+fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>]), _: Option<u32>) -> Option<Vec<u8>> {
     None
 }
 
@@ -2779,6 +2829,8 @@ fn compiled_reference_target<H: Host>(
 pub(super) struct CompiledProgram {
     _code: CodeMemory,
     table: Box<[usize]>,
+    /// Each function's entry address, which stitched rows call through (`wasm_stitch::World`).
+    _entry_cells: Box<[std::cell::Cell<usize>]>,
     /// The compiled functions in index order: a selective tier holds a few of a module's
     /// thousands, so only `positions` is as long as the module.
     functions: Box<[CompiledFunction]>,
@@ -3133,6 +3185,13 @@ pub(super) struct CompiledOsrRegion {
     /// What its code owns of its calls: the callees it runs as their own rows, whose registers
     /// follow the activation's (`CallCode`).
     pub(super) calls: CallCode,
+    /// The dispatch the region's runs reuse (`Crossing::General`): its last run's, put back as the
+    /// run returns, so an entry rebinds the words that change between runs instead of building
+    /// the dispatch again (`JsStepDispatch::rebind_region`). A run entered while another of the
+    /// region runs finds none here and builds its own.
+    parked: std::cell::Cell<Option<Box<JsStepDispatch>>>,
+    /// Whether the region has parked its dispatch (`parked`).
+    made: std::cell::Cell<bool>,
 }
 
 
@@ -3205,16 +3264,42 @@ impl CompiledOsrRegion {
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
         (lane_context, direct_calls): (usize, bool),
     ) -> RegionRun {
+        let lend = self.calls.enters_callees().then_some(direct_calls);
+        let mut bind = |dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm<H>| {
+            osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context);
+            // SAFETY: the caller's contract covers the context and `registers`.
+            let captures = unsafe { osr_lane::bind_captures::<H>(dispatch, region, entry, lane_context) };
+            unsafe { osr_lane::bind_frame(dispatch, residual, vm, (program, function, lane_context), registers) };
+            captures
+        };
+        // A region that calls callees by their entries runs on the lane frame's payload, which their
+        // own helpers read (`region_lend`).
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
-        let outcome = unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
-            osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
-            let _captures = osr_lane::bind_captures::<H>(native, region, entry, lane_context);
-            osr_lane::bind_frame(native, vm, (program, function, lane_context), registers);
-            // A region that calls callees by their entries runs on the lane frame's payload, which their
-            // own helpers read (`region_lend`).
-            let lend = self.calls.enters_callees().then_some(direct_calls);
-            osr_lane::enter(native, vm, program, (code, resume), registers, interrupt, (lane_context, lend))
-        }) }.unwrap_or(RegionRun::own(LaneExit::Terminated));
+        let outcome = match self.parked.take().filter(|_| self.crossing == Crossing::General) {
+            Some(mut dispatch) => unsafe {
+                let vm = &mut *vm;
+                match vm.programs.get(program) {
+                    Some(residual) => {
+                        dispatch.rebind_region(vm, program, &residual, frame);
+                        let _captures = bind(&mut dispatch, &residual, vm);
+                        let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
+                        self.parked.set(Some(dispatch));
+                        run
+                    }
+                    None => RegionRun::own(LaneExit::Terminated),
+                }
+            },
+            None => unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
+                native.dispatch.bind_native_storage(vm);
+                let _captures = bind(&mut native.dispatch, &native._program, vm);
+                let run = osr_lane::enter(&mut native.dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
+                // The first run of the region parks a dispatch for the runs after it.
+                if self.crossing == Crossing::General && !self.made.replace(true) {
+                    self.parked.set(Some(Box::new(JsStepDispatch::idle())));
+                }
+                run
+            }) }.unwrap_or(RegionRun::own(LaneExit::Terminated)),
+        };
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
@@ -4029,15 +4114,29 @@ impl<H: Host> Vm<H> {
     /// `generic`, where a previous body left on its runs: their proofs did not hold for the
     /// values they met (a function's own field, read through a plain object's proof), so
     /// they take the VM's cached read, which answers them (`lane_region::field_probe`).
-    fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize])
-        -> Vec<Option<Vec<NativeFieldLoad>>> {
+    /// `view` is the lane view of `function`, whose own instructions' records hold the own-field
+    /// hints (`LaneView::own_field_hint`); each own read's hint becomes its loads' `formed` layout
+    /// id, which a load names only where it is the load's shape (`lane_region::field_plans`). An
+    /// inlined instruction's record belongs to another body's view, so it takes no hint.
+    fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize],
+        view: Option<&super::dispatch_fast::LaneView>) -> Vec<Option<Vec<NativeFieldLoad>>> {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
             .map(|(site, _)| site).collect(), self.heap.function_shapes());
+        // Base regions read the live cache, whose entries name no form (`loop_tier::native_field_loads`).
+        let view = view.filter(|_| !crate::jit_mode::base_regions());
         let sites = unit.instructions
             .iter()
-            .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
-            .filter(|(site, _)| !generic.contains(site))
-            .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), ..load }).collect::<Vec<_>>()))
+            .enumerate()
+            .flat_map(|(pc, instruction)| Self::instruction_field_sites(program, instruction).into_iter().map(move |(site, read)| (pc, site, read)))
+            .filter(|(_, site, _)| !generic.contains(site))
+            .map(|(pc, site, read)| {
+                let formed = match (read, view, unit.origins.get(pc)) {
+                    (true, Some(view), Some(lane_unit::Origin::Caller(caller))) => view.own_field_hint(*caller as usize),
+                    _ => None,
+                };
+                let loads = if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) };
+                (site, loads.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), formed, ..load }).collect::<Vec<_>>())
+            })
             .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.programs.tiers(), self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
             .map(|(site, shapes)| (usize::from(site), shapes));
         lane_region::flat_table(sites)
@@ -4518,6 +4617,22 @@ impl JsStepDispatch {
         self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
+    }
+
+    /// Readies a region's parked dispatch (`CompiledOsrRegion::parked`) for a run of `program`
+    /// above VM frame `frame`: the words `JsNativeActivation::with_function` and
+    /// `bind_native_storage` bind, the run state the last run left reset to `idle`'s, and the
+    /// bases refreshed (`refresh_heap_bases`), which reread only what moved since the last run.
+    /// The words the run's binds set (`osr_lane`) are theirs.
+    fn rebind_region<H: Host>(&mut self, vm: &mut Vm<H>, program_id: ProgramId, program: &ResidualProgram, frame: usize) {
+        self.bind_lane_storage(std::ptr::from_mut(vm));
+        (self.program_id, self.frame) = (program_id, frame);
+        (self.capture_values, self.capture_len, self.capture_stores) = (std::ptr::null(), 0, 0);
+        (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
+        (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
+        self.environment_storage = crate::heap::absent_environment_storage();
+        self.outcome = None;
+        self.refresh_heap_bases(vm, program);
     }
 
     /// Refresh the additional frame and array views read by native code.
@@ -6327,6 +6442,8 @@ struct Emitter<'a, 'b, H: Host> {
     simd_words: Option<ir::StackSlot>,
     /// The table an indirect target is being emitted for (`WasmTable`).
     indirect: Option<wasm_table_stage::IndirectSite>,
+    /// The row an indirect target just checked, which the call that follows reads again.
+    checked_row: Option<wasm_table_stage::CheckedRow>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -7036,6 +7153,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             vectors: Vec::new(),
             simd_words: None,
             indirect: None,
+            checked_row: None,
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -8354,6 +8472,8 @@ impl<H: Host> Vm<H> {
         let mut offsets = vec![None; count];
         let mut spans = Vec::new();
         let mut entries = vec![None; count];
+        // Stitched rows call a function through its cell, filled once the code is placed.
+        let entry_cells: Box<[std::cell::Cell<usize>]> = (0..count).map(|_| std::cell::Cell::new(0)).collect();
         let mut calls = Vec::new();
         let place = |bytes: &mut Vec<u8>, code: Vec<u8>| {
             bytes.resize(bytes.len().next_multiple_of(FUNCTION_ALIGNMENT), 0);
@@ -8436,7 +8556,7 @@ impl<H: Host> Vm<H> {
             // `--b-jit` enters a function through its stitched rows where every instruction has
             // one (`wasm_stitch`): the interpreter's staged rules, copied and patched. Its
             // compiled body stays for the calls of the other functions until the rows take calls.
-            let entry = match stitched_entry(self, program, &code, index, plans[index].as_ref()?, memory_slot) {
+            let entry = match stitched_entry(self, program, &code, index, (&plans, &entry_cells), memory_slot) {
                 Some(stitched) => stitched,
                 None => entry,
             };
@@ -8449,6 +8569,9 @@ impl<H: Host> Vm<H> {
         let mapped_bytes = memory.length();
         let base = memory.pointer() as usize;
         write_perf_map("wasm-function", base, &bytes, &spans);
+        for (cell, entry) in entry_cells.iter().zip(&entries) {
+            cell.set(entry.map_or(0, |entry| base + entry));
+        }
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))
@@ -8525,6 +8648,7 @@ impl<H: Host> Vm<H> {
         Some(CompiledProgram {
             _code: memory,
             table,
+            _entry_cells: entry_cells,
             functions,
             positions,
             memory_slot,

@@ -11,10 +11,11 @@
 //! any write to a pinned register).
 
 use crate::bytecode::Operand;
-use crate::places::{DEST, LEFT, Places, RIGHT, Rep};
+use crate::places::{DEST, LEFT, Places, RIGHT};
+use crate::typed_ir::Representation;
 use crate::staged::math::FloatUnary;
 use crate::staged::{Comparison, Concrete, Domain, Frame, NegativeZero, NumberOperation, NumericFrame, Operation, Overflow, Step, numeric, step, step_arith, step_flow, step_generic};
-use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary, number_bitwise_f64_result};
+use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary, number_bitwise_f64_result};
 pub(crate) use crate::words::*;
 
 pub(crate) use crate::codes::*;
@@ -142,9 +143,15 @@ fn bitwise_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Pl
     let (Some(x), Some(y)) = (frame.int32_operand(&mut stage, left, ()), frame.int32_operand(&mut stage, right, ())) else {
         return Out::Exit(frame.s);
     };
-    // A Number past `i32::MAX` is no int word, so its bits are its tagged word.
-    let widened = number_bitwise_f64_result(operation, x as u32 as i32, y as u32 as i32).to_bits();
-    frame.write(&mut stage, DEST, widened, Rep::Tagged);
+    let (x, y) = (x as u32 as i32, y as u32 as i32);
+    let bits = operation.apply(&mut I32BitwiseStage, x, y);
+    let result = if operation.keeps_int32(bits) {
+        (u64::from(bits as u32), Representation::Int32)
+    } else {
+        // A Number past `i32::MAX` is no int word, so its bits are its tagged word.
+        (number_bitwise_f64_result(operation, x, y).to_bits(), Representation::Tagged)
+    };
+    frame.write(&mut stage, DEST, result.0, result.1);
     finish(frame, true)
 }
 
@@ -163,29 +170,16 @@ fn copy_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -
 fn guard_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let (mut stage, operand) = (Concrete::from_hole(0), Operand::register(LEFT));
     let proved = match D {
-        PIN..=LAST_INT_PIN => frame.int_operand(&mut stage, operand, ()).map(|word| (word, Rep::Int32)),
-        MEMINT => frame.int_operand(&mut stage, operand, ()).map(|_| (0, Rep::Tagged)),
-        PINF.. => frame.number_operand(&mut stage, operand, ()).map(|bits| (bits, Rep::Float64)),
-        _ => frame.prove_number(&mut stage, LEFT, ()).map(|()| (0, Rep::Tagged)),
+        PIN..=LAST_INT_PIN => frame.int_operand(&mut stage, operand, ()).map(|word| (word, Representation::Int32)),
+        MEMINT => frame.int_operand(&mut stage, operand, ()).map(|_| (0, Representation::Tagged)),
+        PINF.. => frame.number_operand(&mut stage, operand, ()).map(|bits| (bits, Representation::Float64)),
+        _ => frame.prove_number(&mut stage, LEFT, ()).map(|()| (0, Representation::Tagged)),
     };
     let Some((value, rep)) = proved else { return Out::Taken(frame.s) };
     if D != MEMINT && D != MEM {
         frame.write(&mut stage, DEST, value, rep);
     }
     Out::Next(frame.s)
-}
-
-/// A taken backward edge counts in the run's counter, word 0 of the loop entry record: hole 1
-/// and 2 are the offsets of the context's payload pointer and of the entry pointer in the payload.
-/// No staged operation counts edges, so this is the stencil's own.
-#[inline(always)]
-fn count_backedge(s: &S) {
-    unsafe {
-        let payload = ((s.ctx + hole::<1>()) as *const usize).read();
-        let entry = ((payload + hole::<HOLE_B>()) as *const usize).read();
-        let count = (entry as *const u64).read();
-        (entry as *mut u64).write(count.wrapping_add(1));
-    }
 }
 
 /// Whether an interrupt was requested: the context's pointer (at hole 0) to a byte, nonzero.
@@ -201,15 +195,23 @@ fn poll_step<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>)
     matches!(step(&mut Concrete::from_hole(0), frame, Operation::Safepoint { proof: () }), Step::Value(_))
 }
 
+/// The staged `Operation::BackEdge` over the row's places: polls the interrupt flag, then counts the taken edge.
+#[inline(always)]
+fn back_edge_step<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>) -> bool {
+    matches!(step(&mut Concrete::from_hole(0), frame, Operation::BackEdge { proof: () }), Step::Value(_))
+}
+
 /// A jump (`Operation::Jump`) that polls the interrupt flag first where `WATCHED`, and counts a
-/// taken edge where `COUNT`.
+/// taken edge where `COUNT` (`Operation::BackEdge`).
 #[inline(always)]
 fn jump_row<const WATCHED: bool, const COUNT: bool, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    if WATCHED && !poll_step(&mut frame) {
+    let proceed = match (WATCHED, COUNT) {
+        (true, true) => back_edge_step(&mut frame),
+        (true, false) => poll_step(&mut frame),
+        (false, _) => true,
+    };
+    if !proceed {
         return Out::Exit(frame.s);
-    }
-    if WATCHED && COUNT {
-        count_backedge(&frame.s);
     }
     match step_flow(&mut Concrete::from_hole(0), &mut frame, Operation::Jump) {
         Step::Control(()) => Out::Taken(frame.s),
@@ -342,7 +344,7 @@ fn clz32_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) 
         }),
     };
     let Some(uint32) = uint32 else { return Out::Exit(frame.s) };
-    frame.write(&mut stage, DEST, u64::from(crate::staged::math::leading_zeros(uint32)), Rep::Int32);
+    frame.write(&mut stage, DEST, u64::from(crate::staged::math::leading_zeros(uint32)), Representation::Int32);
     finish(frame, true)
 }
 

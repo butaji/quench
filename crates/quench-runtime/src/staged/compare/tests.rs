@@ -229,7 +229,7 @@ fn an_equality_of_a_constant_the_frame_has_no_word_for_is_unresolved() {
 }
 
 /// The nullish test of register 0 against `expected` (`Operand` 1 is its constant side).
-fn nullish_test(expected: Nullish, strict: bool, negated: bool) -> Comparison {
+fn nullish_test(expected: ValueType, strict: bool, negated: bool) -> Comparison {
     Comparison::Nullish { expected, strict, negated }
 }
 
@@ -239,7 +239,7 @@ fn nullish_test(expected: Nullish, strict: bool, negated: bool) -> Comparison {
 #[test]
 fn a_strict_nullish_test_is_identity_and_refines_the_edge_where_it_holds() {
     let values = [Value::NULL, Value::UNDEFINED, Value::integer(0), Value::TRUE, Value::number(0.5)];
-    for (expected, constant) in [(Nullish::Null, Value::NULL), (Nullish::Undefined, Value::UNDEFINED)] {
+    for (expected, constant) in [(ValueType::Null, Value::NULL), (ValueType::Undefined, Value::UNDEFINED)] {
         for (negated, negate) in [(false, false), (false, true), (true, false), (true, true)] {
             for value in values {
                 let mut frame = Probe::of(&[value, constant]);
@@ -249,7 +249,7 @@ fn a_strict_nullish_test_is_identity_and_refines_the_edge_where_it_holds() {
                 assert!(matches!(step, Step::Control(edge) if edge == if taken { Edge::Target } else { Edge::Following }),
                     "{expected:?} {negated} {negate} {value:?}");
                 let equal_edge = if negated == negate { Edge::Target } else { Edge::Following };
-                assert_eq!(frame.refined, [(0, expected.ty(), equal_edge)], "the equal edge carries the exact type");
+                assert_eq!(frame.refined, [(0, Type::language(expected), equal_edge)], "the equal edge carries the exact type");
                 assert!(frame.calls.is_empty());
             }
         }
@@ -261,7 +261,7 @@ fn a_strict_nullish_test_is_identity_and_refines_the_edge_where_it_holds() {
 #[test]
 fn a_loose_nullish_test_holds_for_both_nullish_values_and_leaves_a_cell_that_may_be_htmldda() {
     let cell = Value::from_bits(crate::value::ValueLayout::HEAP_TAG | 1);
-    for expected in [Nullish::Null, Nullish::Undefined] {
+    for expected in [ValueType::Null, ValueType::Undefined] {
         for value in [Value::NULL, Value::UNDEFINED, Value::integer(0), Value::FALSE, Value::number(0.5), Value::NAN] {
             let mut frame = Probe::of(&[value, Value::NULL]);
             let step = run(&mut frame, nullish_test(expected, false, false), true);
@@ -282,9 +282,9 @@ fn a_loose_nullish_test_holds_for_both_nullish_values_and_leaves_a_cell_that_may
 #[test]
 fn a_type_that_decides_a_nullish_test_folds_it() {
     let undefined = Type::language(ValueType::Undefined);
-    for (ty, strict, expected, equal) in [(undefined, true, Nullish::Undefined, true), (undefined, true, Nullish::Null, false),
-        (undefined, false, Nullish::Null, true), (Type::INT32, true, Nullish::Null, false), (Type::NUMBER, false, Nullish::Undefined, false),
-        (Type::DIRECT_OBJECT_FAMILY, false, Nullish::Null, false)] {
+    for (ty, strict, expected, equal) in [(undefined, true, ValueType::Undefined, true), (undefined, true, ValueType::Null, false),
+        (undefined, false, ValueType::Null, true), (Type::INT32, true, ValueType::Null, false), (Type::NUMBER, false, ValueType::Undefined, false),
+        (Type::DIRECT_OBJECT_FAMILY, false, ValueType::Null, false)] {
         let mut frame = Probe::of(&[Value::NULL, Value::NULL]);
         frame.types = vec![Some(ty)];
         let step = run(&mut frame, nullish_test(expected, strict, false), false);
@@ -293,16 +293,16 @@ fn a_type_that_decides_a_nullish_test_folds_it() {
     }
     let mut frame = Probe::of(&[Value::NULL, Value::NULL]);
     frame.types = vec![Some(Type::ANY)];
-    run(&mut frame, nullish_test(Nullish::Null, true, false), false);
+    run(&mut frame, nullish_test(ValueType::Null, true, false), false);
     assert_eq!(frame.refined.len(), 1, "an undecided type is tested by its tag");
 }
 
 /// The constants a nullish test names are exactly `null` and `undefined`.
 #[test]
 fn only_null_and_undefined_are_nullish_constants() {
-    assert_eq!(Nullish::of(Value::NULL), Some(Nullish::Null));
-    assert_eq!(Nullish::of(Value::UNDEFINED), Some(Nullish::Undefined));
-    assert_eq!(Nullish::of(Value::FALSE), None);
+    assert_eq!(nullish_of(Value::NULL), Some(ValueType::Null));
+    assert_eq!(nullish_of(Value::UNDEFINED), Some(ValueType::Undefined));
+    assert_eq!(nullish_of(Value::FALSE), None);
 }
 
 /// The int32 bits the language's own operators make of two int32 values, independent of the staged ones.

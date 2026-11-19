@@ -41,10 +41,11 @@ use crate::places::Places;
 use crate::places_property::{Callout, receiver_read, receiver_set, run_planned};
 use crate::stage::StencilStage;
 use crate::staged::ic::{self, IcOp};
-use crate::staged::object::{Form, Rep, direct_object_record, object_record_at};
+use crate::staged::object::{Form, direct_object_record, object_record_at};
 use crate::staged::region::Region;
 use crate::staged::slot_store::{own_flat_known, proved_flat_store};
 use crate::staged::value::direct_object_id;
+use crate::typed_ir::Representation;
 use crate::staged::Stage;
 use crate::words::{hole, hole64};
 
@@ -95,7 +96,7 @@ fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: 
         let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
         run_planned(&mut stage, &mut places, ops, Callout::Plan, receiver_read())
     } else {
-        let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Arena, storage_len: 1 }];
+        let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1, rep: Representation::Tagged }];
         run_planned(&mut stage, &mut places, ops, Callout::Plan, receiver_read())
     };
     match word {
@@ -168,7 +169,7 @@ fn known_set<const INT: bool, const A: u8>(s: S, payload: usize) -> Out {
     if own_flat_known(&mut stage, record, 0, ()).is_none() {
         return miss::<true>(s);
     }
-    proved_flat_store(&mut stage, record, 0, (word, if INT { Rep::Int32 } else { Rep::Tagged }));
+    proved_flat_store(&mut stage, record, 0, (word, if INT { Representation::Int32 } else { Representation::Tagged }));
     hit::<true>(Out::Next(s))
 }
 

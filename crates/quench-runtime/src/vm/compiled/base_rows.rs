@@ -110,7 +110,7 @@ pub(super) enum Heap {
     /// A prototype-held field folded to the value its holder held when the code was compiled (hole 2):
     /// the object register whose frame offset sits above the destination's in hole 0 is a direct object
     /// of the exact shape in hole 1's low half and the prototype link in its high half, else the row
-    /// leaves. A Stable fact holds the value (`entry::held_receiver`).
+    /// leaves. A Stable fact holds the value (`PrototypeProof::Linked`, `entry::held_constant`).
     Held,
     /// `Held` of the activation's receiver, which the payload holds: hole 0 is the destination alone.
     ThisHeld,

@@ -4679,7 +4679,7 @@ impl<H: Host> Vm<H> {
         for key in keys {
             let key_name = match self.heap.get(key) {
                 _ if let Some(value) = self.heap.string(key)  => Some(value.host_string().to_owned()),
-                Some(Cell::Symbol(_)) => continue,
+                _ if self.heap.is_symbol(key) => continue,
                 _ => return Err(JsError("invalid import attribute key".into())),
             };
             let descriptor = self.object_get_own_property_descriptor(p, &[attributes, key])?;

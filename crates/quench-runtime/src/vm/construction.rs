@@ -201,7 +201,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn set_function_name_key(&mut self, function: Value, key: Value, prefix: u32) {
         let name = match self.heap.get(key) {
             _ if let Some(value) = self.heap.string(key)  => value.to_string(),
-            Some(Cell::Symbol(description)) => description
+            _ if let Some(description) = self.heap.symbol_data(key) => description
                 .as_ref()
                 .map_or_else(String::new, |description| format!("[{}]", description)),
             _ => return,

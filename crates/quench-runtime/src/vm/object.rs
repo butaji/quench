@@ -1012,7 +1012,7 @@ impl<H: Host> Vm<H> {
         self.shared_entry_pair = Value::UNDEFINED;
         self.descriptor_shapes = [None; _];
         self.descriptor_layout = None;
-        self.regexp_object_shapes = None;
+        self.regexp_object_header = None;
         self.regexp_last_index_layouts.clear();
         self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();
@@ -1909,7 +1909,7 @@ impl<H: Host> Vm<H> {
         layout: crate::heap::PropertyStoreLayout,
     ) -> bool {
         if !LOGS && layout == crate::heap::PropertyStoreLayout::Preserve {
-            // The unlogged store `lane_set_this_field_own` makes through a hint: one compare
+            // The unlogged store the generated store row makes through a hint: one compare
             // proves the exact shape and the arena form (`Object::formed_plain_start`), then
             // the store gate; any other form takes the staged store. A refusal changes nothing,
             // so an observed arena's store goes on to the flat store below.
@@ -2245,6 +2245,18 @@ impl<H: Host> Vm<H> {
         Some(value)
     }
 
+    /// The hint of a generated own read (`CELL_OWN_SITE`) of `object`, a receiver outside the
+    /// object records, at `site`: the receiver's layout id and the slot, where the site's own
+    /// entry names the receiver's exact shape (`cell_own_field_hit`'s test).
+    pub(super) fn cell_own_hint(&self, object: Value, site: u16) -> Option<(u32, u16)> {
+        let receiver = self.heap.object(object)?;
+        let cache = self.field_cache_entry(site);
+        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
+            return None;
+        }
+        Some((self.receiver_layout_hint(object)?, cache.slot))
+    }
+
     /// `primary_holder_field_hit` for a receiver any heap cell holds, such as a function whose
     /// prototype holds the method (`f.apply`), which a direct object's record lookup misses.
     #[inline(always)]
@@ -2465,6 +2477,15 @@ impl<H: Host> Vm<H> {
     fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
         if let Some(record_id) = object.direct_object_index() { return Some(self.heap.object_record_by_id(record_id)); }
         self.heap.held_other_receiver(object)
+    }
+
+    /// The layout id (`Object::hint_shape`) of any receiver with an object part a hint reads
+    /// (`hinted_receiver`): a direct object or array, a function, a collection, DataView or
+    /// buffer. A generated read row guards it with `IcOp::GuardLayout`, one compare that
+    /// proves the shape, form and prototype link of a function's or cell's record too.
+    #[allow(dead_code)]
+    pub(super) fn receiver_layout_hint(&self, object: Value) -> Option<u32> {
+        self.hinted_receiver(object).map(crate::heap::Object::hint_shape)
     }
 
     /// Makes `value`, which the immediate prototype of the direct object or array `object`
@@ -3382,14 +3403,8 @@ impl<H: Host> Vm<H> {
                 let value = if native == Native::DataViewByteLengthGetter { length } else { offset };
                 Some(Value::number(value as f64))
             }
-            Native::MapSizeGetter => match self.heap.get(this) {
-                Some(Cell::Map { entries, .. }) => Some(Value::number(entries.len() as f64)),
-                _ => None,
-            },
-            Native::SetSizeGetter => match self.heap.get(this) {
-                Some(Cell::Set { entries, .. }) => Some(Value::number(entries.len() as f64)),
-                _ => None,
-            },
+            Native::MapSizeGetter => self.heap.map_entries(this).map(|entries| Value::number(entries.len() as f64)),
+            Native::SetSizeGetter => self.heap.set_entries(this).map(|entries| Value::number(entries.len() as f64)),
             _ => None,
         }
     }
@@ -4654,6 +4669,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         site: u16,
+        function: u32,
     ) -> Result<(), JsError> {
         let key = PropertyKey::string(atom);
         let cacheable = self.specialized && p.specialized && self.field_cache_atom_eligible(atom);
@@ -4683,6 +4699,11 @@ impl<H: Host> Vm<H> {
             && slot == self.shapes[shape as usize].storage_len()
             && let Ok(slot) = u16::try_from(slot)
         {
+            // Once per transition: the add that creates `target_shape` seeds its slot from the
+            // class's declared type; later adds of the shape reuse this entry and its seed.
+            if let Some(ty) = declared_field_type(p, function, atom) {
+                self.heap.seed_declared_slot(target_shape, usize::from(slot), ty);
+            }
             self.record_field_add_cache(
                 site,
                 FieldAddCache {
@@ -5212,4 +5233,20 @@ impl<H> Vm<H> {
             self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],
         )
     }
+}
+
+/// The slot type seed of `atom`, added to an instance of the class whose constructor is `function`
+/// of `p`, from its declared field type (`DeclaredTypes::declared_field`): the class's constructor
+/// carries the class's source span, whose start names the class. `None` where the declaration
+/// holds no fact: no declaration, an open set (`ANY_LANGUAGES`), an empty set, or a set whose
+/// slot class is `SlotType::Tagged` (exactly `Type::ANY`, which a seed would only widen to).
+fn declared_field_type(p: &ResidualProgram, function: u32, atom: Atom) -> Option<crate::typed_ir::Type> {
+    let declared = p.declared_types.as_deref()?;
+    let class_start = p.function_get(function as usize).and_then(|body| body.source_span).map(|span| span.start)?;
+    let bits = declared.declared_field(class_start, &p.atoms[atom as usize])?;
+    if bits == crate::typed_ir::ANY_LANGUAGES || bits == crate::typed_ir::Languages::EMPTY.bits() {
+        return None;
+    }
+    let ty = crate::typed_ir::Type::languages(bits);
+    (crate::typed_ir::SlotType::from_type(ty) != crate::typed_ir::SlotType::Tagged).then_some(ty)
 }

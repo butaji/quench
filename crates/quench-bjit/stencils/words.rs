@@ -2,8 +2,7 @@
 //! patched holes, tagged-word tests and the float to int conversions that need no constant pool.
 //! Value representation only: what a Number operation computes is `staged::numeric`'s.
 
-use crate::layout::shared_words::language;
-use crate::layout::words::{CANONICAL_NAN, DIRECT_ARRAY_TAG, DIRECT_FUNCTION_TAG, DIRECT_ITERATOR_TAG, DIRECT_OBJECT_TAG, DIRECT_PROMISE_TAG, FALSE, FIRST_TAG_FIELD, HEAP_FAMILY_MASK, INT_TAG, NULL, TAG_SHIFT, TRUE, UNDEFINED};
+use crate::layout::words::{CANONICAL_NAN, FIRST_TAG_FIELD, INT_TAG, TAG_SHIFT};
 
 pub(crate) const FIRST_TAG: u64 = FIRST_TAG_FIELD << TAG_SHIFT;
 pub(crate) const TAG_SPAN: u64 = 6 << TAG_SHIFT;
@@ -195,26 +194,6 @@ pub(crate) fn canonical(f: f64) -> u64 {
     }
 }
 
-/// The language bits (`shared_words::language`) a tagged word's tag alone sets: a Number (an int32 or a
-/// double), a Boolean, `null`, `undefined` (the deleted marker is none), a direct object family record
-/// (`Object`, a direct function included) and a direct function (`Function`). A heap value no tag decides
-/// (a string, a symbol, a BigInt, a legacy slot) sets none, so its mask test fails.
-#[inline(always)]
-pub(crate) fn tag_languages(word: u64) -> u64 {
-    let family = word & HEAP_FAMILY_MASK;
-    let object = [DIRECT_OBJECT_TAG, DIRECT_ARRAY_TAG, DIRECT_FUNCTION_TAG, DIRECT_PROMISE_TAG, DIRECT_ITERATOR_TAG].contains(&family);
-    let classes = [
-        (is_int(word) || is_double(word), language::NUMBER),
-        (word & !(TRUE ^ FALSE) == FALSE, language::BOOLEAN),
-        (word == NULL, language::NULL),
-        (word == UNDEFINED, language::UNDEFINED),
-        (object, language::OBJECT),
-        (family == DIRECT_OBJECT_TAG, language::OBJECT_PLAIN),
-        (family == DIRECT_ARRAY_TAG, language::ARRAY),
-        (family == DIRECT_FUNCTION_TAG, language::FUNCTION),
-    ];
-    classes.iter().fold(0, |languages, &(hit, bit)| if hit { languages | u64::from(bit) } else { languages })
-}
 
 #[inline(always)]
 pub(crate) fn f64_to_i32(f: f64) -> Option<i32> {

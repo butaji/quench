@@ -3,7 +3,10 @@ use smallvec::SmallVec;
 mod internal_bindings;
 mod module_records;
 mod declared_types;
-pub(crate) use declared_types::{Declared, DeclaredKind, DeclaredTypes, EnumConstant};
+pub(crate) use declared_types::{
+    Declared, DeclaredKind, DeclaredLocal, DeclaredMember, DeclaredParameterClass, DeclaredSignature, DeclaredTypes,
+    EnumConstant,
+};
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
 pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind};
 pub(crate) use internal_bindings::*;
@@ -836,8 +839,8 @@ opcodes!($;
     StoreVarBinding => CALL_EFFECT; layout Scalar; meaning LocalSlot; class StoreVarBinding; step Body; owned StoreVarBinding; traits NAME_OPERATION, @ Register, @ fields(Register, Unused, Unused),
     LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot; class LoadEnvLocal; staged Names; step Body; owned LoadLocal, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot; class StoreEnvLocal; staged Names; step Body; owned StoreEnvLocal, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
-    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot; js CapturedValue; class LoadCapture; staged Value; step Body; owned LoadCapture; traits BOXED_RESULT INLINABLE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot; class StoreCapture; staged Value; step Body; owned StoreCapture, @ Register, @ fields(Register, Unused, Unused),
+    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot; js CapturedValue; class LoadCapture; staged Value; step Body; owned LoadCapture; traits ROW_HANDLER BOXED_RESULT INLINABLE, @ Register, @ fields(ResultRegister, Unused, Unused),
+    StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot; class StoreCapture; staged Value; step Body; owned StoreCapture; traits ROW_HANDLER, @ Register, @ fields(Register, Unused, Unused),
     LoadName => READ_THROW; layout Scalar; meaning AtomIndex; class LoadName; staged Proved; step Body; owned LoadName; traits BOXED_RESULT UNIT_REWRITTEN NAME_LEAF NAME_OPERATION GLOBAL_NAME_ACCESS, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
     LoadNameCall => READ_THROW; layout Scalar; meaning AtomIndex; class LoadNameCall; staged Proved; step Body; owned LoadNameCall; traits NAME_OPERATION CALL_LINK GLOBAL_NAME_ACCESS, @ Register, @ fields(ResultRegister, WriteRegister, CacheSiteIndex),
     LoadNameTypeof => Effect::READS_HEAP; layout Scalar; meaning AtomIndex; class LoadNameTypeof; staged Names; step Body; owned LoadNameTypeof; traits NAME_OPERATION GLOBAL_NAME_ACCESS, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
@@ -1019,6 +1022,12 @@ opcodes!($;
     WasmI64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator; class WasmI64Binary, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI64BinaryImmediate => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryImmediate, @ Register, @ fields(ResultRegister, Register, SignedConstant),
     WasmI64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmI64UnaryOperator; class WasmI64Unary, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI64BinaryRaw => Effect::THROWS; layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryRaw, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64BinaryImmediateRaw => Effect::THROWS; layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryImmediateRaw, @ Register, @ fields(ResultRegister, Register, SignedConstant),
+    WasmI64UnaryRaw => Effect::PURE; layout Scalar; meaning WasmI64UnaryOperator; class WasmI64UnaryRaw, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmF64BinaryRaw => Effect::PURE; layout Scalar; meaning WasmF64BinaryOperator; class WasmFloatBinary64Raw, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmF64UnaryRaw => Effect::PURE; layout Scalar; meaning WasmF64UnaryOperator; class WasmFloatUnary64Raw, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmReturn64 => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; class WasmReturn64, @ Register, @ fields(Register, Unused, Unused),
     WasmScalarConvert => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmScalarConversionOperator; class WasmScalarConvert, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmF32Binary => Effect::PURE; layout Scalar; meaning WasmF32BinaryOperator; class WasmFloatBinary32, @ Register, @ fields(ResultRegister, Register, Register),
     WasmF32Unary => Effect::PURE; layout Scalar; meaning WasmF32UnaryOperator; class WasmFloatUnary32, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -2368,7 +2377,7 @@ impl Function {
     /// Whether a closure environment may hold local `slot`: the selective layout names it or,
     /// without one, the function captures its whole frame by creating closures or reaching its
     /// environment.
-    fn local_slot_captured(&self, slot: usize) -> bool {
+    pub(crate) fn local_slot_captured(&self, slot: usize) -> bool {
         match &self.selective_capture_slots {
             Some(captured) => {
                 u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
@@ -2554,6 +2563,18 @@ impl Function {
         CallPlan::from_bits(u32::from(*self.call_plan.get_or_init(|| u16::try_from(self.derive_call_plan(tables).to_bits()).expect("the plan's flags fit 16 bits"))))
     }
 
+    /// Whether an async body settles its call's promise from its activation: one that never
+    /// suspends runs to completion there, and one whose suspension keeps only its registers
+    /// (`suspended_registers`) leaves its caller the promise at its first `await`, its
+    /// registers becoming the continuation the reaction resumes.
+    fn settles_in_loop(&self, suspended_registers: bool) -> bool {
+        self.is_async
+            && !self.is_generator
+            && !self.is_class_constructor
+            && !self.derived_constructor
+            && (!self.suspends() || suspended_registers)
+    }
+
     fn derive_call_plan(&self, tables: &impl FactTables) -> CallPlan {
         {
             let promoted_parameters = self.local_registers.iter().filter(|entry| entry.local < self.params).count();
@@ -2594,11 +2615,6 @@ impl Function {
                 && !self.is_generator
                 && !self.is_class_constructor
                 && !self.derived_constructor;
-            let settles_in_loop = self.is_async
-                && !self.is_generator
-                && !self.is_class_constructor
-                && !self.derived_constructor
-                && !self.suspends();
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(tables);
             let kept_arguments = self.kept_arguments();
@@ -2629,6 +2645,7 @@ impl Function {
                 && self.arguments_slot.is_none()
                 && !addresses_locals
                 && !self.has_dynamic_scope_access();
+            let settles_in_loop = self.settles_in_loop(suspended_registers);
             // Its locals and closures ride an environment window as an ordinary body's do, and so
             // does the `arguments` object it made on entry (`arguments_ride_window`); so do its
             // `with` objects and dynamic bindings, which its record and activation carry.
@@ -3357,6 +3374,10 @@ pub(crate) enum LiteralStep {
 pub(crate) struct RegExpLiteralSite {
     pub pattern_constant: u32,
     pub flags_constant: u32,
+    /// The literal's only use is as the receiver of a `test` or `exec` call (`/re/.test(s)`):
+    /// while those builtins are intact the object never escapes, so one object per site
+    /// serves every evaluation (`Vm::regexp_literal_of`).
+    pub receiver: bool,
 }
 
 #[derive(Clone, Copy, Debug)]

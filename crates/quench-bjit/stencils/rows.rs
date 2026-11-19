@@ -42,6 +42,7 @@ mod layout;
 mod numeric;
 mod places;
 mod places_call;
+mod places_guard;
 mod places_property;
 mod places_environment;
 mod places_heap;
@@ -58,7 +59,7 @@ mod wasm_codes;
 mod wasm_entry;
 mod wasm_rows;
 mod words;
-pub(crate) use facade::{Value, bytecode, heap, operations, typed_ir, units, value, value_vec, vm};
+pub(crate) use facade::{Value, ValueType, bytecode, heap, operations, typed_ir, units, value, value_vec, vm};
 pub(crate) use wasm::{WasmTrap, WasmType};
 
 use numeric::{Out, S};

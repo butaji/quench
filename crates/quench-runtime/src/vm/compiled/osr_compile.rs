@@ -363,9 +363,9 @@ impl LoopPlanner<'_> {
         generic: &[usize], direct: &super::lane_region::DirectSites) -> Option<super::lane_region::LoweredRegion> {
         let number_reads = observed_reads(self.program, unit, self.observation.number_arrays, self.observation.abandoned, generic);
         super::lane_region::RegionSpecializer {
-            number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
+            number_reads: &number_reads, int_entries: self.observation.int_entries, number_entries: self.observation.double_registers, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
-            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, held_atoms: self.stores, ..VmFacts::STATIC }, generic,
+            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, held_atoms: self.stores, construct_plans: self.observation.construct_plans, ..VmFacts::STATIC }, generic,
             direct, frame_captures: self.observation.frame_captures, isa: self.isa,
             entry_fields,
             plan: super::lane_region::RegionPlan { entry_bounds: self.observation.entry_bounds,
@@ -392,7 +392,8 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
         return base_only.then_some(None);
     }
     let registers = known.program.function(function as usize).registers;
-    let spec = BodySpec { function, registers, known, realm: calls.realm, widened, seen: [observation.int_registers, observation.double_registers], kinds: observation.operand_kinds };
+    let seen = super::base_region::observed_types(registers, observation.int_registers, observation.double_registers);
+    let spec = BodySpec { function, registers, known, realm: calls.realm, widened, seen: &seen, kinds: observation.operand_kinds };
     // SAFETY: `calls` was made of the call sites' records this compile (`Vm::region_calls`), whose entry cells are live.
     let built = unsafe { build_region(region, &spec, views, &calls.callees, helpers) };
     let Ok(Body { code, bare, frames, records, stable, atoms, holders, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
@@ -519,7 +520,7 @@ impl PendingOsrRegion {
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
             dump_native_code(directory, DumpSite::Loop { header }, &memory, &clif);
         }
-        Ok(OsrCompile::Done(CompiledOsrRegion { code: memory, entry, facts, crossing, resumes, calls }))
+        Ok(OsrCompile::Done(CompiledOsrRegion { code: memory, entry, facts, crossing, resumes, calls, parked: std::cell::Cell::new(None), made: std::cell::Cell::new(false) }))
     }
 }
 

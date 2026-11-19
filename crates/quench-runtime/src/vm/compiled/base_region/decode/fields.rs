@@ -142,5 +142,7 @@ fn own_slot_type(known: Known, site: u16) -> Option<crate::typed_ir::Type> {
 
 /// Whether `instruction` is a field store a row makes (`field_store_row`).
 pub(in crate::vm::compiled::base_region) fn stores_field(known: Known, instruction: WideInstruction) -> bool {
-    instruction.result_flags() == 0 && instruction.op().is_field_store() && field_store_row(known, instruction).is_some()
+    instruction.result_flags() == 0
+        && matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. }))
+        && field_store_row(known, instruction).is_some()
 }

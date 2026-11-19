@@ -35,7 +35,7 @@ use crate::bytecode::Operand;
 use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
 use crate::ic_rows;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of};
-use crate::words::{hole, hole64, int_word, tag_languages};
+use crate::words::{hole, hole64, int_word};
 use crate::places::{DEST, LEFT, RIGHT, Places};
 use crate::stage::StencilStage;
 use crate::staged::{Operation, Stage, Step, step, step_local, step_value, string_length};
@@ -143,17 +143,28 @@ fn store_checked_row<const A: u8>(s: S) -> Out {
     finish_fast(frame, done)
 }
 
-/// The register at frame offset hole 1 holds exactly the word of hole 2.
+/// A tier guard's row: the guard's step over the row's frame. It continues where the proof holds and
+/// leaves with nothing written where it fails.
+#[inline(always)]
+fn guard_row(s: S, guard: Operation<u64, ()>) -> Out {
+    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let held = matches!(step(&mut StencilStage::from_hole(0), &mut frame, guard), Step::Value(_));
+    if held { Out::Next(frame.s) } else { Out::Exit(frame.s) }
+}
+
+/// The register at frame offset hole 1 holds exactly the word of hole 2 (`guard::identity`).
 #[inline(always)]
 fn identity_row(s: S) -> Out {
-    if word_at(s.frame, hole::<HOLE_A>()) == hole64::<HOLE_B>() { Out::Next(s) } else { Out::Exit(s) }
+    let guard = Operation::GuardIdentity { source: word_at(s.frame, hole::<HOLE_A>()), expected: hole64::<HOLE_B>() };
+    guard_row(s, guard)
 }
 
 /// A declared parameter's entry test: the frame slot at hole 0 holds a word whose tag-decided languages
-/// (`tag_languages`) meet the declared mask at hole 1; any other word leaves with nothing written.
+/// meet the declared mask at hole 1 (`guard::declared`); any other word leaves with nothing written.
 #[inline(always)]
 fn declared_row(s: S) -> Out {
-    if tag_languages(word_at(s.frame, hole::<0>())) & hole64::<HOLE_A>() != 0 { Out::Next(s) } else { Out::Exit(s) }
+    let guard = Operation::GuardDeclared { source: word_at(s.frame, hole::<0>()), mask: hole64::<HOLE_A>() };
+    guard_row(s, guard)
 }
 
 /// `DirectArray`: continues where the register at hole 1 holds a direct array.

@@ -86,6 +86,18 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }
 
+    /// The code's invalidation word (`code_dependencies::Invalidation`), zero while the facts it holds
+    /// still hold (`guard::live`); `None` where the frame has none to read.
+    fn invalidation(&mut self, _stage: &mut S) -> Option<S::Word> { None }
+
+    /// The active realm's global object word the code folded facts of (`guard::realm`); `None` where the
+    /// frame does not hold the realm.
+    fn realm_globals(&mut self, _stage: &mut S) -> Option<S::Word> { None }
+
+    /// Counts a taken back edge in the loop's counter (`guard::back_edge`); `None` where the frame keeps
+    /// no counter.
+    fn count_edge(&mut self, _stage: &mut S) -> Option<()> { None }
+
     /// The heap's array and object record tables and its collection epoch, where the frame reads
     /// live records (the interpreter's lane); `None` where it does not, leaving a row that needs
     /// them to its call-out.

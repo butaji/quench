@@ -29,12 +29,16 @@ const _: () = {
     assert!(language(ValueType::Object) == bits::OBJECT && language(ValueType::Function) == bits::FUNCTION);
     assert!(bits::ARRAY & bits::OBJECT_PLAIN == 0 && bits::ARRAY & (bits::OBJECT | bits::FUNCTION) == 0);
     assert!(bits::OBJECT_PLAIN & (bits::OBJECT | bits::FUNCTION) == 0);
+    use crate::staged::value::language as tier;
+    assert!(tier::UNDEFINED == bits::UNDEFINED && tier::NULL == bits::NULL && tier::BOOLEAN == bits::BOOLEAN);
+    assert!(tier::NUMBER == bits::NUMBER && tier::OBJECT == bits::OBJECT && tier::FUNCTION == bits::FUNCTION);
+    assert!(tier::ARRAY == bits::ARRAY && tier::OBJECT_PLAIN == bits::OBJECT_PLAIN);
 };
 
 /// The exact plain-object and array bits: each is a direct object family word too, so its `OBJECT`
 /// bit is set by `tag_languages` as well, and a set naming `object` admits both.
-const ARRAY: u16 = quench_bjit::shared_words::language::ARRAY;
-const OBJECT_PLAIN: u16 = quench_bjit::shared_words::language::OBJECT_PLAIN;
+const ARRAY: u16 = crate::staged::value::language::ARRAY;
+const OBJECT_PLAIN: u16 = crate::staged::value::language::OBJECT_PLAIN;
 
 /// The language types a value's tag word alone decides, with no heap read: the immediates (a
 /// Number, a Boolean, `null`, `undefined`) and the direct object and direct function families. A
@@ -78,20 +82,24 @@ fn written(function: &Function) -> Bits {
     written
 }
 
-/// The registers the entry holds as ints and as doubles (`BodySpec::seen`), each declared Number
-/// parameter a double where nothing observed it an int or a double. A body's entry web of the
-/// register ends at its first write; a region is entered at its loop's header, where only a
-/// parameter the function never writes still holds the value it entered with.
-pub(super) fn seen(function: &Function, ending: Ending, [ints, doubles]: [&[Register]; SEEN]) -> [Vec<Register>; SEEN] {
+/// The types the entry holds (`BodySpec::seen`, by register), each declared Number parameter a Number where
+/// nothing observed it as an int or another Number. A body's entry web of the register ends at its first
+/// write; a region is entered at its loop's header, where only a parameter the function never writes still
+/// holds the value it entered with.
+pub(super) fn seen(function: &Function, ending: Ending, seen: &[Type]) -> Vec<Type> {
     let written = (ending == Ending::Region).then(|| written(function));
-    let mut doubles = doubles.to_vec();
+    let mut types = seen.to_vec();
     for (register, _) in declared(function).filter(|(_, fact)| *fact == DeclaredFact::Number) {
         let kept = written.as_ref().is_none_or(|written| !written.contains(usize::from(register)));
-        if kept && !ints.contains(&register) && !doubles.contains(&register) {
-            doubles.push(register);
+        let slot = usize::from(register);
+        if kept && types.get(slot).copied().unwrap_or(Type::ANY) == Type::ANY {
+            if types.len() <= slot {
+                types.resize(slot + 1, Type::ANY);
+            }
+            types[slot] = Type::NUMBER;
         }
     }
-    [ints.to_vec(), doubles]
+    types
 }
 
 /// An entry test of a declared parameter that no Number guard covers. The entry row reads the

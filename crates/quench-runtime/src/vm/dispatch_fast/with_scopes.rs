@@ -12,6 +12,7 @@ const WITH_CHAIN_INLINE_OBJECTS: usize = 2;
 impl LaneStack {
     /// The objects of a resumed frame's chain, now the activation at `depth`'s, moved off its
     /// record.
+    #[inline(always)]
     pub(super) fn restore_with_objects(&mut self, depth: usize, held: &mut Vec<Value>) {
         if !held.is_empty() {
             self.with_objects.extend(held.drain(..).map(|object| (depth, object)));
@@ -20,6 +21,7 @@ impl LaneStack {
 
     /// The chain of the activation at `depth`, the innermost, moved off the stack to the end
     /// of `held`, the suspending frame's (`FrameRecord::with_objects`); usually none.
+    #[inline(always)]
     pub(in crate::vm) fn take_with_objects(&mut self, depth: usize, held: &mut Vec<Value>) {
         if self.with_objects.last().is_some_and(|(owner, _)| *owner >= depth) {
             let first = self.with_objects.partition_point(|(owner, _)| *owner < depth);

@@ -95,10 +95,15 @@ script_handler! {
     /// guest code included, takes the general path.
     #[inline(never)]
     fn lane_await<>(cx, r, ip, i, view) {
-        let LaneRoot::Job(job) = (unsafe { (*cx).root }) else {
+        let vm = unsafe { vm(cx) };
+        let completion = vm.lane_stack.activations().last().and_then(Activation::script).map(|script| script.completion);
+        if completion == Some(Completion::SettlesPromise) {
+            resume!(cx, lane_await_settling(cx, r, ip, i))
+        }
+        // Only the job's own activation suspends into its owner.
+        let (LaneRoot::Job(job), Some(Completion::ResumesJob)) = (unsafe { (*cx).root }, completion) else {
             return exit(ip);
         };
-        let vm = unsafe { vm(cx) };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let Some(value) = vm.lane_await_source(code, r.get(i.b)) else {
@@ -129,4 +134,61 @@ pub(super) const fn suspend_handler<H: Host>(opcode: Op) -> Option<Handler> {
         Class::Await => Some(lane_await::<H>),
         _ => None,
     }
+}
+
+/// `await` of an async body its caller's run called and settles (`Completion::SettlesPromise`,
+/// one whose suspension keeps only its registers): its registers become the frame of the
+/// continuation the awaited value's reaction resumes (a job, `Vm::run_lane_job`), the activation
+/// pops, and its caller goes on with the call's promise, as the general loop's in-place async
+/// call leaves it (`StepResult::Await`). A body that keeps more than its registers, or whose
+/// call returns its completion, takes the general path.
+#[inline(never)]
+fn lane_await_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let activation = *vm.lane_stack.activations().last().expect("a settling activation runs");
+    let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
+    // SAFETY: the call record belongs to the caller's live view.
+    let returns = unsafe { (*activation.call).a } & crate::bytecode::RETURN_REGISTER != 0;
+    let Some(value) = (!script.environment && !script.forwards && !returns).then(|| vm.lane_await_source(code, r.get(i.b))).flatten() else {
+        return Resumed::Exit(exit(ip));
+    };
+    note_allocation(vm);
+    // SAFETY: the record lies in the running view.
+    let pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let frame = settling_frame(vm, code, &activation, (r, pc + 1));
+    let root = vm.lane_stack.settling.pop().expect("each settling activation has its entry");
+    let root = vm.settling_root(root);
+    let promise = vm.release_settled_call_root(root);
+    let destination = i.a & crate::bytecode::REGISTER_MASK;
+    let continuation = vm.suspend_activation(frame, super::super::activation::Completion::Await(value), Some(destination), promise);
+    vm.lane_stack.pop_activation();
+    let (memory, _) = lane_restore_caller(cx, &activation);
+    match vm.enqueue_async_resume(code, crate::heap::AwaitKind::function(continuation), promise, value) {
+        Ok(()) => lane_resume_after_call(&activation, memory, promise),
+        Err(error) => {
+            vm.lane_completion.raise(error);
+            Resumed::Exit(exit(activation.call))
+        }
+    }
+}
+
+/// The frame of the settling `activation` running with registers `r`, which resumes at `pc`:
+/// its registers, receiver and environment, with the loops it opened (`LaneStack::iterators`).
+fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &Activation, (r, pc): (Registers, usize)) -> Box<super::super::Frame> {
+    let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
+    let count = usize::from(code.function(activation.function as usize).registers);
+    // SAFETY: the activation's window holds its registers, which nothing writes until the frame takes them.
+    let window = unsafe { activation.window(count) };
+    let context = CallContext::user_function(activation.function, script.callee);
+    vm.push_script_frame_with_registers(code, activation.function, r.env(), r.this(), context, &window[..usize::from(script.argc).min(count)], window);
+    let mut frame = vm.frames.pop().expect("the activation pushed a frame");
+    frame.pc = pc;
+    frame.pc_is_resume = true;
+    frame.with_objects = vm.with_stack.split_off(frame.with_base);
+    let depth = vm.lane_stack.activations().len() - 1;
+    vm.lane_stack.take_iterators(depth, &mut frame.active_iterators);
+    vm.persist_global_lexical_bindings(code, &frame);
+    frame
 }

@@ -33,10 +33,12 @@ use crate::bytecode::{
     OperandKind, Register, WideInstruction,
 };
 use crate::compile::liveness::RegisterSet;
+use crate::dataflow::{solve, Dataflow};
 use crate::value::Value;
 use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 
 use super::typed_ir::Type;
+use crate::typed_ir::Representation;
 use super::NativeFieldLoad;
 use oxc_ast::ast::UnaryOperator;
 
@@ -499,7 +501,7 @@ fn tagged_registers_with_failure(
     let numeric_uses: std::collections::BTreeSet<Register> = instructions
         .iter()
         .copied()
-        .filter(|instruction| !instruction.op().is_move())
+        .filter(|instruction| !matches!(super::decoded(*instruction), Some(crate::staged::Operation::Move { .. })))
         .flat_map(number_reads)
         .collect();
     let mut tagged: std::collections::BTreeSet<Register> = instructions
@@ -535,7 +537,7 @@ fn tagged_registers_with_failure(
         }))
         // A branch on a value only field reads give tests its truthiness tagged:
         // a field may hold an object.
-        .chain(instructions.iter().filter(|instruction| instruction.op().is_truthiness_jump()).filter_map(|instruction| {
+        .chain(instructions.iter().filter(|instruction| matches!(super::decoded(**instruction), Some(crate::staged::Operation::JumpIf { .. }))).filter_map(|instruction| {
             let value = instruction.register_a();
             field_reads_alone_define(instructions, value).then_some(value)
         }))
@@ -575,7 +577,7 @@ fn tag_definition(instruction: WideInstruction, offset: usize, (constants, heade
     let Some(result) = number_definition(instruction) else {
         return Ok(());
     };
-    if instruction.op().is_move() {
+    if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) {
         let source = instruction.register_b();
         if tagged.contains(&result) || tagged.contains(&source) {
             tagged.insert(result);
@@ -667,7 +669,7 @@ fn moved_without_numeric_use(instructions: &[WideInstruction], numeric_uses: &st
             return false;
         }
         let numeric_move_alias = instructions.iter().any(|candidate| {
-            candidate.op().is_move()
+            matches!(super::decoded(*candidate), Some(crate::staged::Operation::Move { .. }))
                 && candidate.register_b() == value
                 && numeric_uses.contains(&candidate.result_register())
         });
@@ -681,7 +683,7 @@ fn moved_without_numeric_use(instructions: &[WideInstruction], numeric_uses: &st
         else {
             break;
         };
-        if !definition.op().is_move() {
+        if !matches!(super::decoded(*definition), Some(crate::staged::Operation::Move { .. })) {
             break;
         }
         moved_argument = true;
@@ -815,7 +817,7 @@ fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option
 /// the computation and the `Return` it makes.
 pub(super) fn inlined_returning(instruction: WideInstruction) -> bool {
     instruction.result_flags() == crate::bytecode::RETURN_REGISTER
-        && !instruction.op().is_return()
+        && !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. }))
         && instruction.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
         && instruction.defined_register().is_some()
 }
@@ -1430,13 +1432,36 @@ fn unary(instruction: Op, operator: u32) -> Option<Unary> {
         .then_some(Unary::BitwiseNot)
 }
 
-/// What each register of a region holds.
+/// What each register of a region holds: a scalar in a representation, or an indexed array whose
+/// elements are held in `elements`, and whether the region stores into it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Role {
-    Number,
-    Tagged,
-    Array { written: bool },
-    TaggedArray { written: bool },
+    Scalar(Representation),
+    Array { elements: Representation, written: bool },
+}
+
+impl Role {
+    /// The role that holds both `self` and `other`, or `None` when no single role does. Only
+    /// Float64 and Tagged elements join; a Tagged scalar widens an array, and an array joins a
+    /// Tagged scalar's register as a Tagged array.
+    fn join(self, other: Role) -> Option<Role> {
+        use Representation::{Float64, Tagged};
+        let boxed = |elements: Representation| matches!(elements, Float64 | Tagged);
+        match (self, other) {
+            (Role::Scalar(Float64), Role::Scalar(Float64)) => Some(self),
+            (Role::Scalar(Tagged), Role::Scalar(Tagged)) => Some(self),
+            (Role::Array { elements: a, written }, Role::Array { elements: b, written: more })
+                if boxed(a) && boxed(b) =>
+            {
+                Some(Role::Array { elements: a.join(b), written: written || more })
+            }
+            (Role::Array { elements, written }, Role::Scalar(Tagged)) if boxed(elements) => {
+                Some(Role::Array { elements: Tagged, written })
+            }
+            (Role::Scalar(Tagged), Role::Array { written, .. }) => Some(Role::Array { elements: Tagged, written }),
+            _ => None,
+        }
+    }
 }
 
 struct Admission<'a> {
@@ -1461,34 +1486,16 @@ impl Admission<'_> {
                 *stored |= written;
                 Some(())
             }
-            None => self.note(register, Role::Array { written }),
+            None => self.note(register, Role::Array { elements: Representation::Float64, written }),
         }
     }
 
     fn note(&mut self, register: Register, role: Role) -> Option<()> {
-        match (self.roles.get(&register).copied(), role) {
-            (None, role) => {
-                self.roles.insert(register, role);
-            }
-            (Some(Role::Number), Role::Number) => {}
-            (Some(Role::Tagged), Role::Tagged) => {}
-            (Some(Role::Array { written }), Role::Array { written: more }) => {
-                self.roles.insert(register, Role::Array { written: written || more });
-            }
-            (Some(Role::Array { written }), Role::Tagged)
-            | (Some(Role::TaggedArray { written }), Role::Tagged) => {
-                self.roles.insert(register, Role::TaggedArray { written });
-            }
-            (Some(Role::Tagged), Role::Array { written }) | (Some(Role::Tagged), Role::TaggedArray { written }) => {
-                self.roles.insert(register, Role::TaggedArray { written });
-            }
-            (Some(Role::Array { written }), Role::TaggedArray { written: more })
-            | (Some(Role::TaggedArray { written }), Role::Array { written: more })
-            | (Some(Role::TaggedArray { written }), Role::TaggedArray { written: more }) => {
-                self.roles.insert(register, Role::TaggedArray { written: written || more });
-            }
-            _ => return None,
-        }
+        let joined = match self.roles.get(&register).copied() {
+            None => role,
+            Some(old) => old.join(role)?,
+        };
+        self.roles.insert(register, joined);
         Some(())
     }
 
@@ -1496,11 +1503,11 @@ impl Admission<'_> {
     /// its values its own representation.
     fn number(&mut self, register: Register) -> Option<()> {
         if self.boxed.contains(&register) { return self.tagged(register); }
-        self.note(register, Role::Number)
+        self.note(register, Role::Scalar(Representation::Float64))
     }
 
     fn tagged(&mut self, register: Register) -> Option<()> {
-        self.note(register, Role::Tagged)
+        self.note(register, Role::Scalar(Representation::Tagged))
     }
 
     fn any_constant(&mut self, index: usize) -> Option<Value> {
@@ -1907,7 +1914,7 @@ fn admit_register_roles(
         let reads = admission.fields.iter().filter(|field| field.atom == store.atom);
         for field in reads {
             if !store.matches(field) || field.tagged
-                || admission.roles.get(&instructions[*offset as usize].register_a()) != Some(&Role::Number)
+                || admission.roles.get(&instructions[*offset as usize].register_a()) != Some(&Role::Scalar(Representation::Float64))
             {
                 return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, *offset as usize));
             }
@@ -1961,27 +1968,26 @@ fn admit_register_roles(
     let numbers = admission
         .roles
         .iter()
-        .filter(|(_, role)| **role == Role::Number)
+        .filter(|(_, role)| **role == Role::Scalar(Representation::Float64))
         .map(|(register, _)| *register)
         .collect();
     let tagged: Vec<Register> = admission
         .roles
         .iter()
-        .filter(|(_, role)| matches!(role, Role::Tagged | Role::TaggedArray { .. }))
+        .filter(|(_, role)| matches!(role, Role::Scalar(Representation::Tagged) | Role::Array { elements: Representation::Tagged, .. }))
         .map(|(register, _)| *register)
         .collect();
     let mut arrays: Vec<ArrayUse> = admission
         .roles
         .iter()
         .filter_map(|(register, role)| match role {
-            Role::Array { written } | Role::TaggedArray { written }
+            Role::Array { written, .. }
                 if !dynamic_arrays.contains(register)
                     && instructions.iter().any(|instruction| {
                     instruction.op().is_indexed_access()
                         && object_reads(*instruction) == Some(*register)
                 }) => Some(ArrayUse { register: *register, written: *written, field: None }),
-            Role::Number | Role::Tagged => None,
-            Role::Array { .. } | Role::TaggedArray { .. } => None,
+            Role::Scalar(_) | Role::Array { .. } => None,
         })
         .collect();
     for (register, written) in &admission.field_arrays {
@@ -2061,7 +2067,7 @@ fn admit(
                 admission.result(instruction)?;
             }
         }
-        opcode if opcode.is_move() => {
+        _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) => {
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
                 admission.tagged(instruction.register_b())?;
@@ -2089,7 +2095,7 @@ fn admit(
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
         }
-        opcode if opcode.is_to_numeric() => {
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric { .. }))) => {
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
@@ -2110,7 +2116,7 @@ fn admit(
             }
         }
         // An array the entry guard proved is an object passes.
-        opcode if opcode.is_require_object_coercible() => {
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::RequireObjectCoercible { .. })) => {
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), false)?;
             }
@@ -2182,7 +2188,7 @@ fn admit(
         _ if exits_before_effects(instruction) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
-        opcode if opcode.is_return() || opcode.is_jump() => {}
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) => {}
         opcode if opcode.is_jump_binary_false() => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;
@@ -2213,12 +2219,12 @@ fn admit(
                 (instruction.operand_b().register_index(), instruction.operand_c().register_index())
                 && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some()
                 && [left, right].iter().any(|register| {
-                    tagged.contains(register) || matches!(admission.roles.get(register), Some(Role::Tagged))
+                    tagged.contains(register) || matches!(admission.roles.get(register), Some(Role::Scalar(Representation::Tagged)))
                 })
             {
                 // An (in)equality of tagged values, which boxes a Number operand.
                 for register in [left, right] {
-                    if !matches!(admission.roles.get(&register), Some(Role::Number)) {
+                    if !matches!(admission.roles.get(&register), Some(Role::Scalar(Representation::Float64))) {
                         admission.tagged(register)?;
                     }
                 }
@@ -2227,7 +2233,7 @@ fn admit(
                 admission.source(instruction.operand_c())?;
             }
         }
-        opcode if opcode.is_truthiness_jump() => {
+        _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::JumpIf { .. })) => {
             let register = instruction.register_a();
             // A tagged value's truthiness is decided natively where the value alone
             // decides it; any other value exits.
@@ -2277,6 +2283,9 @@ pub(crate) struct Observation<'a> {
     /// callee's environment (`Vm::lane_callee_captures`): where the frame's own capture reads
     /// load, its identity guard fixing the environment.
     pub(crate) frame_captures: &'a [(usize, usize)],
+    /// The construct plan each construction record holds now, by function and PC
+    /// (`VmFacts::construct_plans`).
+    pub(in crate::vm) construct_plans: Option<&'a dyn Fn(u32, u32) -> Option<super::ScalarConstructPlan>>,
 }
 
 
@@ -2361,7 +2370,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
         && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
             operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
-    let expected = if instruction.op().is_move() || instruction.op().is_truthiness_jump()
+    let expected = if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) || matches!(super::decoded(instruction), Some(crate::staged::Operation::JumpIf { .. }))
         || region.identity_branches.contains_key(&pc) || strict_number_test {
         Type::ANY
     } else {
@@ -2441,50 +2450,74 @@ fn successors(region: &LoopRegion, pc: u32) -> Vec<u32> {
     successors
 }
 
+/// Forward reaching definitions over a region's instructions: a block's input is the definitions
+/// reaching it, and its output replaces the register its instruction writes with that write.
+struct Reaching<'a> {
+    region: &'a LoopRegion,
+    /// Each definition of an entry register or a write is its index, `entries` plus the offset.
+    entries: usize,
+    /// The offsets reachable from the header inside the region.
+    reachable: Vec<bool>,
+    /// The offsets each instruction's control flows to inside the region.
+    edges: Vec<Vec<usize>>,
+}
+
+impl Dataflow for Reaching<'_> {
+    type State = std::collections::BTreeMap<Register, std::collections::BTreeSet<Definition>>;
+    fn blocks(&self) -> usize { self.edges.len() }
+    fn edges(&self, block: usize) -> &[usize] { &self.edges[block] }
+    fn entry_state(&self, block: usize) -> Option<Self::State> {
+        if !self.reachable[block] {
+            return None;
+        }
+        let mut state = std::collections::BTreeMap::new();
+        if block == 0 {
+            for (index, register) in self.region.entry_registers().enumerate() {
+                state.entry(register).or_insert_with(std::collections::BTreeSet::new).insert(index);
+            }
+        }
+        Some(state)
+    }
+    fn join(&self, into: &mut Self::State, incoming: &Self::State) -> bool {
+        let mut changed = false;
+        for (register, definitions) in incoming {
+            let set = into.entry(*register).or_default();
+            let before = set.len();
+            set.extend(definitions.iter().copied());
+            changed |= set.len() != before;
+        }
+        changed
+    }
+    fn transfer(&mut self, block: usize, state: &Self::State) -> Self::State {
+        let mut out = state.clone();
+        if let Some(register) = number_definition(self.region.instructions[block]) {
+            out.insert(register, std::collections::BTreeSet::from([self.entries + block]));
+        }
+        out
+    }
+}
+
 fn webs(region: &LoopRegion) -> Webs {
     use std::collections::{BTreeMap, BTreeSet};
     let count = region.instructions.len();
     let entries = region.entry_count();
     let inside = |pc: u32| (region.header..=region.backedge).contains(&pc);
+    let edges: Vec<Vec<usize>> = (0..count).map(|offset| {
+        let pc = region.header + offset as u32;
+        successors(region, pc).into_iter().filter(|pc| inside(*pc)).map(|pc| (pc - region.header) as usize).collect()
+    }).collect();
     let mut reachable = vec![false; count];
-    let mut pending = vec![region.header];
-    while let Some(pc) = pending.pop() {
-        let offset = (pc - region.header) as usize;
+    let mut pending = vec![0usize];
+    while let Some(offset) = pending.pop() {
         if std::mem::replace(&mut reachable[offset], true) {
             continue;
         }
-        pending.extend(successors(region, pc).into_iter().filter(|pc| inside(*pc)));
-    }
-    let mut reaching: Vec<BTreeMap<Register, BTreeSet<Definition>>> = vec![BTreeMap::new(); count];
-    for (index, register) in region.entry_registers().enumerate() {
-        reaching[0].entry(register).or_default().insert(index);
+        pending.extend(edges[offset].iter().copied());
     }
     // Forward reaching definitions to a fixpoint; regions are small.
-    loop {
-        let mut changed = false;
-        for offset in 0..count {
-            if !reachable[offset] {
-                continue;
-            }
-            let pc = region.header + offset as u32;
-            let mut out = reaching[offset].clone();
-            if let Some(register) = number_definition(region.instructions[offset]) {
-                out.insert(register, BTreeSet::from([entries + offset]));
-            }
-            for successor in successors(region, pc).into_iter().filter(|pc| inside(*pc)) {
-                let target = &mut reaching[(successor - region.header) as usize];
-                for (register, definitions) in &out {
-                    let set = target.entry(*register).or_default();
-                    let before = set.len();
-                    set.extend(definitions.iter().copied());
-                    changed |= set.len() != before;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let mut analysis = Reaching { region, entries, reachable, edges };
+    let reaching: Vec<BTreeMap<Register, BTreeSet<Definition>>> = solve(&mut analysis).into_iter().map(Option::unwrap_or_default).collect();
+    let Reaching { reachable, .. } = analysis;
     let mut webs = Webs {
         reachable,
         parent: (0..entries + count).collect(),

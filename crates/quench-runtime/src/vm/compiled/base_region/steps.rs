@@ -175,6 +175,7 @@ fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
         _ => match instruction.op().class() {
             // derivation debt: no staged::Operation for SetFunctionName (the naming is a recorded site, `names`)
             Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
+            Class::RequireIteratorResult => Some(Heap::Object),
             // derivation debt: no staged::Operation for the `typeof` string and `typeof` test operators
             Class::Unary => staged_unary_arm(instruction).or_else(|| typeof_arm(instruction.unary_operator())),
             Class::Binary => staged_binary_arm(instruction),

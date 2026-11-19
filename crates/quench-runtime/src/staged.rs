@@ -43,7 +43,7 @@ pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
 pub(crate) use spread::Passing;
 pub(crate) use decode::{DecodeContext, Fields};
-pub(crate) use compare::{Comparison, Nullish};
+pub(crate) use compare::{nullish_of, Comparison};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod builtins;
@@ -88,6 +88,7 @@ pub(crate) mod property;
 mod property_write;
 pub(crate) use property::{NoPlans, PropertyFrame};
 pub(crate) mod value;
+mod guard;
 mod steps;
 mod control;
 mod generic;
@@ -129,6 +130,22 @@ pub(crate) use operation::Operation;
 
 mod edge;
 pub(crate) use edge::Edge;
+
+/// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
+/// capture access whose scopes the frame does not hold, the walk over the scopes from the
+/// activation's environment (a read) or the store into the scope it finds (a write).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Miss { General, WalkScopes, StoreThroughScopes }
+
+/// The row of `op`'s miss route (`Miss`).
+pub(crate) const fn miss(op: Op) -> Miss {
+    match op {
+        Op::LoadCapture => Miss::WalkScopes,
+        Op::StoreCapture => Miss::StoreThroughScopes,
+        _ => Miss::General,
+    }
+}
+
 
 #[cfg(test)]
 mod test_words;

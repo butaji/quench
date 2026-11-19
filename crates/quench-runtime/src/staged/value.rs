@@ -43,6 +43,77 @@ pub(crate) fn is_heap<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     stage.eq_imm(tag, ValueLayout::HEAP_TAG)
 }
 
+/// The language bits of a declared parameter's mask (`quench_bjit::shared_words::language`, the
+/// order of `ValueType`'s discriminants; the runtime's `vm/compiled/base_region/declared.rs` asserts
+/// they are these types' bits).
+pub(crate) mod language {
+    pub(crate) const UNDEFINED: u16 = 1 << 0;
+    pub(crate) const NULL: u16 = 1 << 1;
+    pub(crate) const BOOLEAN: u16 = 1 << 2;
+    pub(crate) const NUMBER: u16 = 1 << 3;
+    pub(crate) const OBJECT: u16 = 1 << 7;
+    pub(crate) const FUNCTION: u16 = 1 << 8;
+    pub(crate) const ARRAY: u16 = 1 << 9;
+    pub(crate) const OBJECT_PLAIN: u16 = 1 << 10;
+}
+
+const FIRST_TAG: u64 = ValueLayout::FIRST_TAG_FIELD << ValueLayout::TAG_SHIFT;
+/// The span of the double tags, from `FIRST_TAG` (a word in it is a double).
+const TAG_SPAN: u64 = 6 << ValueLayout::TAG_SHIFT;
+
+/// The language bits (`language`) a word's tag alone sets: a Number (an int32 or a double), a Boolean,
+/// `null`, `undefined`, a direct object family record (`OBJECT`, and `OBJECT_PLAIN` for a plain one), a
+/// direct array (`ARRAY`, with the `OBJECT` bit, as the family test the object family makes), a direct
+/// function (`FUNCTION`). A heap value no tag decides (a string, a symbol, a BigInt) sets none.
+#[inline(always)]
+pub(crate) fn tag_languages<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
+    let mut object = family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG);
+    for tag in [ValueLayout::DIRECT_ARRAY_TAG, ValueLayout::DIRECT_FUNCTION_TAG, ValueLayout::DIRECT_PROMISE_TAG, ValueLayout::DIRECT_ITERATOR_TAG] {
+        let family = family_is(stage, bits, tag);
+        object = stage.any(object, family);
+    }
+    let int = is_int(stage, bits);
+    let shifted = stage.add_imm(bits, FIRST_TAG.wrapping_neg());
+    let double = stage.ugt_imm(shifted, TAG_SPAN - 1);
+    let number = stage.any(int, double);
+    let unflagged = stage.and_imm(bits, !(crate::Value::TRUE.to_bits() ^ crate::Value::FALSE.to_bits()));
+    let boolean = stage.eq_imm(unflagged, crate::Value::FALSE.to_bits());
+    let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+    let undefined = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
+    let plain = family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG);
+    let array = family_is(stage, bits, ValueLayout::DIRECT_ARRAY_TAG);
+    let function = family_is(stage, bits, ValueLayout::DIRECT_FUNCTION_TAG);
+    let classes = [(number, language::NUMBER), (boolean, language::BOOLEAN), (null, language::NULL), (undefined, language::UNDEFINED),
+        (object, language::OBJECT), (plain, language::OBJECT_PLAIN), (array, language::ARRAY), (function, language::FUNCTION)];
+    let mut languages = stage.constant(0);
+    for (hit, bit) in classes {
+        let flag = stage.constant(u64::from(bit));
+        let none = stage.constant(0);
+        let added = stage.select(hit, flag, none);
+        languages = stage.or(languages, added);
+    }
+    languages
+}
+
+/// Whether `bits` is `true` or `false` (`Value::as_bool`).
+#[inline(always)]
+pub(crate) fn is_boolean<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    let (truthy, falsy) = (stage.eq_imm(bits, crate::Value::TRUE.to_bits()), stage.eq_imm(bits, crate::Value::FALSE.to_bits()));
+    stage.any(truthy, falsy)
+}
+
+/// Whether `bits` is `undefined`.
+#[inline(always)]
+pub(crate) fn is_undefined<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits())
+}
+
+/// Whether `bits` is `null`.
+#[inline(always)]
+pub(crate) fn is_null<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    stage.eq_imm(bits, crate::Value::NULL.to_bits())
+}
+
 /// The value word of the int32 whose zero-extended payload is `payload` (`Value::integer`).
 #[inline(always)]
 pub(crate) fn int_word<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {

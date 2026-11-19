@@ -7,7 +7,7 @@ use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use std::collections::HashSet;
 
-mod subscribe; mod function_shapes; mod slot_types; mod remembered;
+mod subscribe; mod function_shapes; mod slot_types; mod remembered; mod collections;
 
 impl Heap {
     /// Return live JavaScript objects whose internal prototype chain contains `prototype`.
@@ -618,6 +618,13 @@ impl Heap {
         self.held_cell_receiver(value)
     }
 
+    /// The object part of a function, inline: the receiver an own read of a function's static
+    /// field guards (`CELL_OWN_SITE`); `None` for any other value.
+    #[inline(always)]
+    pub(crate) fn function_receiver(&self, value: Value) -> Option<&Object> {
+        value.direct_function_index().and_then(|_| self.function(value)).map(|function| &function.object)
+    }
+
     /// `held_other_receiver` of a function or ordinary builtin.
     #[cold]
     #[inline(never)]
@@ -644,6 +651,13 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn array_record_base(&self) -> Option<*const ArrayObject> {
         self.array_records.base_ptr()
+    }
+
+    /// `array_record_base` untested, for a read that proves its receiver a direct array before
+    /// it addresses the table.
+    #[inline(always)]
+    pub(crate) fn live_array_records(&self) -> *const ArrayObject {
+        self.array_records.live_base()
     }
 
     /// An array's dense element backing, whether it lives in a record or a slot.

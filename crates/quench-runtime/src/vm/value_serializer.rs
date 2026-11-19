@@ -816,8 +816,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::Date { milliseconds, .. }) => Kind::Date(*milliseconds),
             Some(Cell::RegExp { meta, .. }) => Kind::RegExp(meta.source.clone(), meta.flags.text()),
             // Copy the entries first: serializing them can run guest code.
-            Some(Cell::Map { entries, .. }) => Kind::Map(entries.iter().flat_map(|(key, value)| [key, value]).collect()),
-            Some(Cell::Set { entries, .. }) => Kind::Set(entries.iter().collect()),
+            _ if let Some(entries) = self.heap.map_entries(value) => Kind::Map(entries.iter().flat_map(|(key, value)| [key, value]).collect()),
+            _ if let Some(entries) = self.heap.set_entries(value) => Kind::Set(entries.iter().collect()),
             Some(Cell::ArrayBuffer { .. }) => Kind::ArrayBuffer,
             Some(Cell::TypedArray { .. } | Cell::DataView { .. }) => Kind::View,
             _ => Kind::Other,
@@ -839,7 +839,7 @@ impl<H: Host> Vm<H> {
                 Ok(())
             }
             Kind::Map(entries) | Kind::Set(entries) => {
-                let map = matches!(self.heap.get(value), Some(Cell::Map { .. }));
+                let map = self.heap.is_map(value);
                 let roots: Vec<RootId> = entries.into_iter().map(|entry| self.heap.root(entry)).collect();
                 put_tag(&output, if map { tag::BEGIN_JS_MAP } else { tag::BEGIN_JS_SET });
                 let written = self.wire_rooted_sequence(program, serializer, hooks, &roots);
@@ -1480,10 +1480,10 @@ impl<H: Host> Vm<H> {
                 let id = Self::wire_reserve_id(deserializer);
                 let collection = if map {
                     let prototype = self.intrinsic_builtin_prototype(Native::Map);
-                    self.heap.alloc(Cell::Map { object: Self::empty_object(prototype), entries: Default::default() })
+                    self.heap.alloc_map(Self::empty_object(prototype), Default::default())
                 } else {
                     let prototype = self.intrinsic_builtin_prototype(Native::Set);
-                    self.heap.alloc(Cell::Set { object: Self::empty_object(prototype), entries: Default::default() })
+                    self.heap.alloc_set(Self::empty_object(prototype), Default::default())
                 };
                 let root = self.wire_add_object(deserializer, id, collection);
                 let end = if map { tag::END_JS_MAP } else { tag::END_JS_SET };
@@ -1809,7 +1809,7 @@ impl<H: Host> Vm<H> {
         while let Some((target, _)) = self.proxy_parts(value) {
             value = target;
         }
-        if let Some(Cell::Symbol(description)) = self.heap.get(value) {
+        if let Some(description) = self.heap.symbol_data(value) {
             let description = description.as_deref().map(|text| shorten(text.to_string(), DESCRIPTION_END, DESCRIPTION_END));
             return format!("Symbol({})", description.unwrap_or_default());
         }
@@ -1899,8 +1899,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
             Some(Cell::Date { .. }) => "Date",
             Some(Cell::RegExp { .. }) => "RegExp",
-            Some(Cell::Map { .. }) => "Map",
-            Some(Cell::Set { .. }) => "Set",
+            _ if self.heap.is_map(value) => "Map",
+            _ if self.heap.is_set(value) => "Set",
             Some(Cell::WeakMap { .. }) => "WeakMap",
             Some(Cell::WeakSet { .. }) => "WeakSet",
             _ if self.is_function(value) => "Function",

@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 2144
+# total 2140
 <catalog> unstaged:ArgumentGet 1
 <catalog> unstaged:Await 1
 <catalog> unstaged:CacheTemplateObject 1
@@ -385,7 +385,6 @@ vm/compiled/osr_loop/inlining.rs op:SetField 2
 vm/compiled/osr_loop/iteration.rs is:is_ordinary_call 1
 vm/compiled/osr_loop/lifetime.rs is:is_get_index 3
 vm/compiled/osr_loop/lifetime.rs is:is_indexed_access 1
-vm/compiled/osr_loop/lifetime.rs is:is_move 1
 vm/compiled/residuals.rs is:is_call 1
 vm/compiled/static_loops.rs Class:IncDec 2
 vm/compiled/static_loops.rs Class:LoadConst 2
@@ -605,7 +604,7 @@ vm/dispatch_fast.rs Class:WasmSelect 1
 vm/dispatch_fast.rs Class:WasmSimd 2
 vm/dispatch_fast.rs Class:WasmSimdShuffle 2
 vm/dispatch_fast.rs JsDenotation:NumericBinary 1
-vm/dispatch_fast.rs fn:lane_* 605
+vm/dispatch_fast.rs fn:lane_* 600
 vm/dispatch_fast.rs is:is_await 2
 vm/dispatch_fast.rs is:is_binary 1
 vm/dispatch_fast.rs is:is_call 4
@@ -642,9 +641,11 @@ vm/dispatch_fast.rs is:is_wasm_memory_size 1
 vm/dispatch_fast.rs op:CallFirstChunk 1
 vm/dispatch_fast.rs op:IncDec 3
 vm/dispatch_fast.rs op:Jump 1
+vm/dispatch_fast.rs op:LoadCapture 1
 vm/dispatch_fast.rs op:LoadConst 3
 vm/dispatch_fast.rs op:LoadLocalPlain 2
 vm/dispatch_fast.rs op:Move 10
+vm/dispatch_fast.rs op:StoreCapture 1
 vm/dispatch_fast.rs op:StoreLocalPlain 1
 vm/dispatch_fast.rs op:ToNumeric 1
 vm/dispatch_fast.rs op:WasmBranchTable 1

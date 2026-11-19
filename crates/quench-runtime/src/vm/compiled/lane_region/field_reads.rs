@@ -82,9 +82,31 @@ impl Lowering<'_, '_> {
     /// to one retires this code rather than each run re-reading the member.
     /// `None` where the read is not one, or completes its frame or writes `this` besides.
     pub(super) fn fold_native_member(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        let Some(&crate::vm::global_facts::GlobalRead::NativeMember { value, holder, .. }) = self.global_reads.get(&pc) else { return None };
+        let Some(&crate::vm::global_facts::GlobalRead::NativeMember { value, native, holder, folds }) = self.global_reads.get(&pc) else { return None };
+        // A method read by name folds only where the receiver can hold no own member of that
+        // name: a string primitive, whose members are its prototype's. A string method's read
+        // proves its receiver a string by one tag test, as the call it names would.
+        let receiver = match instruction.field_lookup() {
+            Some(FieldLookup::Atom { base, .. }) => base.register_index().filter(|register| usize::from(*register) < state.values.len()),
+            _ => None,
+        };
+        let string = Type::language(crate::ValueType::String);
+        let string_method = matches!(native, crate::vm::Native::StringCharCodeAt | crate::vm::Native::StringCharAt);
+        let receiver = match (folds, receiver) {
+            (true, _) => None,
+            (false, Some(register)) if string_method && (string.is_subtype(state.values[usize::from(register)].value.ty) || state.values[usize::from(register)].value.ty.is_subtype(string)) => Some(register),
+            _ => return None,
+        };
         if !self.holds_holders() || instruction.returns_from_frame() || instruction.writes_current_this() { return None; }
         let exit = self.guard_exit(state, pc as u32);
+        if let Some(register) = receiver.filter(|register| !state.values[usize::from(*register)].value.ty.is_subtype(string)) {
+            let bits = self.tagged(state, register);
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let is_string = crate::staged::value::is_direct_string(&mut stage, bits);
+            emit_js_guard(&mut self.builder, is_string, exit);
+            state.values[usize::from(register)] = RegisterFact { tagged: state.values[usize::from(register)].tagged,
+                ..RegisterFact::definition(string, Representation::Tagged) };
+        }
         self.hold_holder_any(state, exit, holder);
         let constant = self.identity_constant(value);
         self.define(state, instruction.result_register(), constant, RegisterFact::definition(Type::immediate(value), Representation::Tagged));
@@ -182,3 +204,29 @@ impl Lowering<'_, '_> {
             ..RegisterFact::definition(Type::INT32, Representation::Int32) };
     }
 }
+
+impl Lowering<'_, '_> {
+    /// Whether the loop field `field`, whose first read is `instruction`, is carried as a raw
+    /// double: every read and store site names the one own slot of one shape, whose arena words
+    /// are raw doubles, and every store writes a Number. Its stores then write the binary64 word
+    /// through the slot the entry projected and its reads take the carried word, boxing nothing.
+    pub(super) fn carries_number(&self, field: &LoopField, instruction: WideInstruction, boundaries: &CompoundBitSet) -> bool {
+        let Some(FieldLookup::Atom { cache_site, .. }) = instruction.field_lookup() else { return false };
+        let raw_slot = |site: u16| match site_loads(self.fields, site).map(Vec::as_slice) {
+            Some([load]) if load.holder.is_none() && load.valid() && !load.function_shape && load.raw_double => Some((load.shape, load.slot)),
+            _ => None,
+        };
+        let Some(slot) = raw_slot(cache_site) else { return false };
+        let reads = field.reads.iter().all(|pc| match self.unit.instructions[*pc].field_lookup() {
+            Some(FieldLookup::Atom { cache_site, .. }) => raw_slot(cache_site) == Some(slot),
+            _ => false,
+        });
+        reads && field.stores.iter().all(|store| {
+            let instruction = self.unit.instructions[*store];
+            raw_slot(instruction.cache_site_index()) == Some(slot)
+                && self.facts.before(*store, instruction.register_a(), &self.unit.instructions, boundaries,
+                    &self.program.constants, &writes, self.native_calls).is_subtype(Type::NUMBER)
+        })
+    }
+}
+

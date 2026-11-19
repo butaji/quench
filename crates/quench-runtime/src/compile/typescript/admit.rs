@@ -13,6 +13,7 @@
 //! Every parse of typed text goes through `lazy_bodies::parse`, so a body compiled
 //! later (lazily, streamed, on first call) is admitted exactly as at load.
 
+use super::enum_folding;
 use super::enums::{self, Member, Value};
 use oxc_allocator::{Allocator, Box as ArenaBox, TakeIn, Vec as ArenaVec};
 use oxc_ast::ast::*;
@@ -26,10 +27,16 @@ mod decorators;
 
 /// Admit a typed tree: the declared environment out, run-time meaning in.
 pub(in crate::compile) fn admit<'a>(allocator: &'a Allocator, program: &mut Program<'a>, declarations: &mut DeclaredTypes) {
+    // Before the class bodies change: signature-only members and parameter modifiers are still in place.
+    super::fields::collect(program, declarations);
+    super::signatures::collect(program, declarations);
+    let bindings = if program.source_text.contains("enum") { binding_counts(program) } else { FxHashMap::default() };
+    let folded = enum_folding::foldable(program, &bindings);
     let mut admit = Admit {
         allocator, declarations, type_names: FxHashSet::default(), lexical: false,
-        bindings: if program.source_text.contains("const enum") { binding_counts(program) } else { FxHashMap::default() },
+        bindings,
         const_enums: FxHashMap::default(),
+        folded,
         imports: if program.source_text.contains('@') { decorators::import_bindings(program) } else { FxHashMap::default() },
         metadata_namespaces: Vec::new(),
     };
@@ -49,8 +56,12 @@ struct Admit<'a, 'd> {
     /// How many bindings of each name the program declares.
     bindings: FxHashMap<String, u32>,
     /// The folded members of each `const enum` whose name binds nothing else: tsc's
-    /// semantics inline their reads, so `E.X` is the constant (no load at run time).
+    /// semantics inline their reads, so `E.X` is the constant (no load at run time). A plain
+    /// enum in `folded` inlines the same way once its declaration is admitted, so the reads
+    /// after it see the constants.
     const_enums: FxHashMap<String, FxHashMap<String, String>>,
+    /// The plain enums whose member reads may fold (`enum_folding`).
+    folded: FxHashSet<String>,
     /// Value import bindings by local name: source, and imported name (`None`: a namespace).
     /// Decorator metadata reads an imported class through a namespace import of its module,
     /// so a name that turns out to be a type there links (as `Object`) instead of failing.
@@ -377,7 +388,12 @@ impl<'a> Admit<'a, '_> {
         }).collect();
         self.declarations.enum_constants.extend(constants.into_iter().map(|(member, value)| (Box::from(name.as_str()), Box::from(member), value)));
         self.declare(DeclaredKind::Enum, Some(&name), enumeration.span);
-        if enumeration.r#const && self.bindings.get(&name) == Some(&1) {
+        let inline = if enumeration.r#const {
+            self.bindings.get(&name) == Some(&1)
+        } else {
+            self.folded.contains(&name) && members.iter().all(|(_, value)| matches!(value, Member::Constant(_)))
+        };
+        if inline {
             let literals = members.iter().filter_map(|(member, value)| match value {
                 Member::Constant(value) => enums::literal(value).map(|literal| (member.clone(), literal)),
                 Member::Computed(_) => None,

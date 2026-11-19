@@ -12,19 +12,18 @@
 use crate::bytecode::{FieldBase, FieldLookup, Operand, Register};
 use crate::codes::CHAIN_SECOND_AT;
 use crate::heap_rows::{payload, stage_site, word_at};
-use crate::layout::{JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY, JS_STEP_METHOD_CACHE_ATOM_WORDS, JS_STEP_METHOD_CACHE_ATOMS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_RECEIVER, JS_STEP_STORES_SPECIALIZED};
-use crate::places::{DEST, LEFT, Places, Rep};
+use crate::layout::{JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_RECEIVER, JS_STEP_STORES_SPECIALIZED};
+use crate::typed_ir::Representation;
+use crate::places::{DEST, LEFT, Places};
 use crate::staged::ic::IcOp;
-use crate::staged::object::{Rep as ObjectRep, direct_object_record};
-use crate::staged::property::{FieldPlan, PlanSource, StorePlan};
+use crate::staged::object::direct_object_record;
+use crate::staged::property::{FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use crate::staged::region::Region;
 use crate::staged::slot_store::own_flat_store;
 use crate::staged::{CallFrame, Concrete, Constant, ElementFrame, Frame, GlobalBinding, GlobalFrame, NumericFrame, Operation, PropertyFrame, Stage, Step, entry, lexical_read, step_names, step_property};
 use crate::words::{HOLE_B, S, hole64, is_double, is_int};
 
 /// Bits in a method-cache bitset word, as a shift.
-const WORD_SHIFT: u32 = u64::BITS.trailing_zeros();
-const WORD_BITS: u64 = u64::BITS as u64;
 
 /// The VM callout a row's property frame answers beside its plan.
 #[derive(Clone, Copy)]
@@ -44,15 +43,31 @@ pub(crate) enum Callout {
     FlatStore { int: bool },
 }
 
+/// A prototype-held read a row folds (`HELD_ROW`), its operands read from the row's holes: the receiver
+/// word, the exact shape and prototype link hole 1 packs (low and high half), and the held value (hole 2).
+#[derive(Clone, Copy)]
+pub(crate) struct HeldRead {
+    pub(crate) object: u64,
+    pub(crate) shape: u32,
+    pub(crate) link: u32,
+    /// The held value, paired with `link` as the plan's constant.
+    pub(crate) constant: [(u32, u64); 1],
+}
+
 /// The plan a row's holes name, copied out of the frame for one staged read or store.
 #[derive(Clone, Copy)]
 pub(crate) struct RowPlans<const N: usize> {
     ops: [IcOp<'static>; N],
+    held: Option<HeldRead>,
 }
 
 impl<const N: usize> PlanSource for RowPlans<N> {
     fn field_plan(&self, _lookup: FieldLookup) -> Option<FieldPlan<'_>> {
-        Some(FieldPlan::Ops(&self.ops[..]))
+        Some(match &self.held {
+            Some(held) => FieldPlan::Inherited { shape: held.shape, constants: &held.constant[..],
+                proof: PrototypeProof::Linked { expected_link: held.link } },
+            None => FieldPlan::Ops(&self.ops[..]),
+        })
     }
 
     /// Every store of a row is the VM's callout (`StorePlan::Host`): the row's own store is
@@ -71,14 +86,16 @@ pub(crate) struct PlannedPlaces<'a, const D: u8, const A: u8, const B: u8, const
     pub(crate) ops: [IcOp<'static>; N],
     pub(crate) callout: Callout,
     pub(crate) lexical: Option<u64>,
+    /// The prototype-held read the row folds (`HELD_ROW`), whose receiver is `field_this`.
+    pub(crate) held: Option<HeldRead>,
 }
 
 impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> Frame<Concrete> for PlannedPlaces<'a, D, A, B, N> {
-    type Fact = Rep;
+    type Fact = Representation;
     type Control = ();
 
     #[inline(always)]
-    fn fact(&self, register: Register) -> Rep { self.places.fact(register) }
+    fn fact(&self, register: Register) -> Representation { self.places.fact(register) }
 
     #[inline(always)]
     fn read(&mut self, stage: &mut Concrete, register: Register) -> u64 { self.places.read(stage, register) }
@@ -87,7 +104,7 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> Frame<Concrete> 
     fn tagged(&mut self, stage: &mut Concrete, register: Register) -> u64 { self.places.tagged(stage, register) }
 
     #[inline(always)]
-    fn write(&mut self, stage: &mut Concrete, register: Register, value: u64, fact: Rep) {
+    fn write(&mut self, stage: &mut Concrete, register: Register, value: u64, fact: Representation) {
         self.places.write(stage, register, value, fact)
     }
 
@@ -100,7 +117,7 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> Frame<Concrete> 
     }
 
     #[inline(always)]
-    fn constant(&mut self, stage: &mut Concrete, constant: Constant) -> (u64, Rep) { self.places.constant(stage, constant) }
+    fn constant(&mut self, stage: &mut Concrete, constant: Constant) -> (u64, Representation) { self.places.constant(stage, constant) }
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> { self.places.truthiness(stage, register) }
@@ -112,10 +129,10 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> Frame<Concrete> 
     fn jump(&mut self, stage: &mut Concrete) { self.places.jump(stage) }
 
     #[inline(always)]
-    fn boolean(&mut self, stage: &mut Concrete, condition: bool) -> (u64, Rep) { self.places.boolean(stage, condition) }
+    fn boolean(&mut self, stage: &mut Concrete, condition: bool) -> (u64, Representation) { self.places.boolean(stage, condition) }
 
     #[inline(always)]
-    fn load_local(&mut self, stage: &mut Concrete, slot: u16, miss: Option<()>) -> Option<(u64, Rep)> {
+    fn load_local(&mut self, stage: &mut Concrete, slot: u16, miss: Option<()>) -> Option<(u64, Representation)> {
         self.places.load_local(stage, slot, miss)
     }
 
@@ -148,10 +165,10 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> NumericFrame<Con
     fn miss(&self) {}
 
     #[inline(always)]
-    fn int_fact(&self) -> Rep { self.places.int_fact() }
+    fn int_fact(&self) -> Representation { self.places.int_fact() }
 
     #[inline(always)]
-    fn number_fact(&self) -> Rep { self.places.number_fact() }
+    fn number_fact(&self) -> Representation { self.places.number_fact() }
 }
 
 impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> GlobalFrame<Concrete> for PlannedPlaces<'a, D, A, B, N> {
@@ -169,7 +186,7 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> GlobalFrame<Conc
     #[inline(always)]
     fn global_lexical(&mut self, stage: &mut Concrete, destination: Register, address: u64, _proof: ()) -> Option<()> {
         let word = lexical_read(stage, address, ())?;
-        Frame::write(self, stage, destination, word, Rep::Tagged);
+        Frame::write(self, stage, destination, word, Representation::Tagged);
         Some(())
     }
 
@@ -191,7 +208,7 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> PropertyFrame<Co
 
     #[inline(always)]
     fn plans(&self) -> RowPlans<N> {
-        RowPlans { ops: self.ops }
+        RowPlans { ops: self.ops, held: self.held }
     }
 
     /// The object record table, which a row's receiver and prototype reads address; a table the
@@ -204,10 +221,13 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> PropertyFrame<Co
         Some(records)
     }
 
-    /// The activation's bound receiver, from the payload (the `THIS_*` rows).
+    /// The activation's bound receiver, from the payload (the `THIS_*` rows); a held read's receiver.
     #[inline(always)]
     fn field_this(&mut self, _stage: &mut Concrete, _miss: ()) -> Option<u64> where Self: Sized {
-        Some(word_at(payload(&self.places.s), JS_STEP_RECEIVER))
+        match self.held {
+            Some(held) => Some(held.object),
+            None => Some(word_at(payload(&self.places.s), JS_STEP_RECEIVER)),
+        }
     }
 
     /// The loop entry's field (`FIELD_ROW`): the entry record's word at hole 1.
@@ -259,8 +279,21 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> PropertyFrame<Co
 #[inline(always)]
 pub(crate) fn run_planned<const D: u8, const A: u8, const B: u8, const N: usize>(stage: &mut Concrete,
     places: &mut Places<D, A, B>, ops: [IcOp<'static>; N], callout: Callout, operation: Operation<u64, ()>) -> Option<u64> {
-    let mut frame = PlannedPlaces { places, ops, callout, lexical: None };
+    let mut frame = PlannedPlaces { places, ops, callout, lexical: None, held: None };
     match step_property(stage, &mut frame, operation) {
+        Step::Value(word) => Some(word),
+        _ => None,
+    }
+}
+
+/// `GetField` of the receiver a held read names (`HeldRead`), its plan `PrototypeProof::Linked`: the
+/// held value, or `None` where the receiver is no exact-shape, exact-link direct object.
+#[inline(always)]
+pub(crate) fn run_held<const D: u8, const A: u8, const B: u8>(stage: &mut Concrete,
+    places: &mut Places<D, A, B>, held: HeldRead) -> Option<u64> {
+    let mut frame = PlannedPlaces { places, ops: [], callout: Callout::Plan, lexical: None, held: Some(held) };
+    let read = Operation::GetField { base: FieldBase::THIS, lookup: FieldLookup::Site(0) };
+    match step_property(stage, &mut frame, read) {
         Step::Value(word) => Some(word),
         _ => None,
     }
@@ -271,7 +304,7 @@ pub(crate) fn run_planned<const D: u8, const A: u8, const B: u8, const N: usize>
 #[inline(always)]
 pub(crate) fn run_lexical<const D: u8, const A: u8, const B: u8>(stage: &mut Concrete,
     places: &mut Places<D, A, B>, address: u64, operation: Operation<u64, ()>) -> Step<u64, ()> {
-    let mut frame = PlannedPlaces { places, ops: [], callout: Callout::Plan, lexical: Some(address) };
+    let mut frame = PlannedPlaces { places, ops: [], callout: Callout::Plan, lexical: Some(address), held: None };
     step_names(stage, &mut frame, operation)
 }
 
@@ -307,31 +340,19 @@ fn flat_store(stage: &mut Concrete, s: &S, object: u64, value: u64, int: bool) -
     method_cache_admits(stage, base as u64)?;
     let records = word_at(base, JS_STEP_OBJECT_RECORD_BASE);
     let (id, record) = direct_object_record(stage, object, records, ())?;
-    let rep = if int { ObjectRep::Int32 } else { ObjectRep::Tagged };
+    let rep = if int { Representation::Int32 } else { Representation::Tagged };
     own_flat_store(stage, record, id, 0, 0, (value, rep), ())
 }
 
-/// Whether the run stores in place (`JS_STEP_STORES_SPECIALIZED`) and no method cache names the
-/// atom at hole 2, an atom past the bitset being unnamed (the Cranelift reading of the same two
-/// payload words).
+/// Whether the run stores in place (`JS_STEP_STORES_SPECIALIZED`); the atom at hole 2 is read in
+/// hole order only.
 #[inline(always)]
 fn method_cache_admits(stage: &mut Concrete, payload: u64) -> Option<()> {
     let specialized = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_STORES_SPECIALIZED as i32);
     let on = stage.ne_imm(specialized, 0u32);
     stage.guard(on, ())?;
-    let atom = stage.site(0);
-    let index = stage.shr_imm(atom, WORD_SHIFT);
-    let length = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_METHOD_CACHE_ATOM_WORDS as i32);
-    let covered = stage.ult(index, length);
-    let named = stage.choose(covered, |stage| {
-        let words = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_METHOD_CACHE_ATOMS as i32);
-        let offset = stage.mul_imm(index, size_of::<u64>() as u64);
-        let address = stage.add(words, offset);
-        let word = stage.load_u64(Region::HeapMeta.mutable(), address, 0);
-        let position = stage.and_imm(atom, WORD_BITS - 1);
-        let shifted = stage.shr_imm(word, position);
-        stage.and_imm(shifted, 1u64)
-    }, |stage| stage.constant(0));
-    let unnamed = stage.eq_imm(named, 0u32);
-    stage.guard(unnamed, ())
+    // The atom hole stays read in order; a store to a method-cache atom is retired by the
+    // atom's Stable fact, not by a per-store bitset test.
+    let _atom = stage.site(0);
+    Some(())
 }

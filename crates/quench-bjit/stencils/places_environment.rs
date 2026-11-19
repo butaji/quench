@@ -5,7 +5,8 @@
 
 use crate::heap_rows::{payload, word_at};
 use crate::layout::{JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_ENV_STORAGE, JS_STEP_OBJECT_RECORD_BASE};
-use crate::places::{Places, Rep};
+use crate::typed_ir::Representation;
+use crate::places::{Places};
 use crate::stage::StencilStage;
 use crate::staged::object::{self, Layout, Slots};
 use crate::staged::region::Region;
@@ -38,13 +39,13 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
     /// `Frame::capture_slot`: the depth-0 dense run's slot, from the payload's capture values and
     /// length; a root read and deeper scopes are the interpreter's.
     #[inline(always)]
-    pub(crate) fn capture_read(&mut self, stage: &mut Concrete, depth: u16, slot: u16, root: bool) -> Option<(u64, Rep)> {
+    pub(crate) fn capture_read(&mut self, stage: &mut Concrete, depth: u16, slot: u16, root: bool) -> Option<(u64, Representation)> {
         if depth != 0 || root {
             return None;
         }
         let payload = payload(&self.s);
         let (values, len) = (word_at(payload, JS_STEP_CAPTURE_VALUES), word_at(payload, JS_STEP_CAPTURE_LEN));
-        environment::dense_capture(stage, values, len, slot, ()).map(|word| (word, Rep::Tagged))
+        environment::dense_capture(stage, values, len, slot, ()).map(|word| (word, Representation::Tagged))
     }
 
     /// `Frame::store_capture`: the direct store into the depth-0 dense run's slot, where the run's
@@ -62,8 +63,8 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
     /// `Frame::environment`: the environment window's storage word the payload holds, whose slots
     /// are read as tagged words.
     #[inline(always)]
-    pub(crate) fn environment_storage(&mut self) -> Option<(u64, Rep)> {
-        Some((word_at(payload(&self.s), JS_STEP_ENV_STORAGE), Rep::Tagged))
+    pub(crate) fn environment_storage(&mut self) -> Option<(u64, Representation)> {
+        Some((word_at(payload(&self.s), JS_STEP_ENV_STORAGE), Representation::Tagged))
     }
 
     /// `Frame::environment_write`: the store of `value` to environment slot `slot` of the window's
@@ -86,8 +87,8 @@ impl<const D: u8, const A: u8, const B: u8> GlobalFrame<Concrete> for Places<D, 
     #[inline(always)]
     fn global_read(&mut self, stage: &mut Concrete, destination: Register, _atom: u32, _site: u16, _ty: Type, _proof: ()) -> Option<()> {
         let layout = global_layout(stage, payload(&self.s), hole::<HOLE_A>() as u64)?;
-        let word = object::read_slot(stage, layout, 0, object::Rep::Tagged);
-        Frame::write(self, stage, destination, word, Rep::Tagged);
+        let word = object::read_slot(stage, layout, 0, object::Representation::Tagged);
+        Frame::write(self, stage, destination, word, Representation::Tagged);
         Some(())
     }
 

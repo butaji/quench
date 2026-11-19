@@ -11,7 +11,8 @@ use crate::bytecode::{Operand, Register};
 use crate::heap_rows::{payload, stage_site, word_at};
 use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_LOOP_ENTRY, LOOP_ENTRY_ARRAY_COUNT_AT};
 use crate::numeric::{HOLE_A, HOLE_B};
-use crate::places::{LEFT, RIGHT, Places, Rep, index_of};
+use crate::typed_ir::Representation;
+use crate::places::{LEFT, RIGHT, Places, index_of};
 use crate::staged::{Concrete, ElementFrame, Frame, elements, entry, value};
 use crate::words::{int_word, is_double, is_int};
 
@@ -60,22 +61,22 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
     /// `Frame::array_length`: the length of the direct array in `source`, as its int32 word, where
     /// it has a plain dense backing (`elements::array_length`).
     #[inline(always)]
-    pub(crate) fn heap_array_length(&mut self, stage: &mut Concrete, source: Register) -> Option<(u64, Rep)> {
+    pub(crate) fn heap_array_length(&mut self, stage: &mut Concrete, source: Register) -> Option<(u64, Representation)> {
         let records = record_table(payload(&self.s))?;
         let base = self.tagged(stage, source);
         let length = elements::array_length(stage, records, base, ())?;
-        Some((length, Rep::Tagged))
+        Some((length, Representation::Tagged))
     }
 
     /// `Frame::typed_length`: the count of the typed array the loop's entry proved, whose entry
     /// words lie at the site the row's stage names (hole 1 for the `TypedLength` row), as an int32.
     /// The entry proves the register's array, so `source` is not read.
     #[inline(always)]
-    pub(crate) fn heap_typed_length(&mut self, stage: &mut Concrete, _source: Register) -> Option<(u64, Rep)> {
+    pub(crate) fn heap_typed_length(&mut self, stage: &mut Concrete, _source: Register) -> Option<(u64, Representation)> {
         let offset = stage_site(stage);
         let record = word_at(payload(&self.s), JS_STEP_LOOP_ENTRY);
         let length = entry::entry_word(stage, record, offset + LOOP_ENTRY_ARRAY_COUNT_AT);
-        Some((int_word(length as u32 as i32), Rep::Tagged))
+        Some((int_word(length as u32 as i32), Representation::Tagged))
     }
 
     /// `Frame::array_append`: appends the Number `value` to the array in `array` where its backing

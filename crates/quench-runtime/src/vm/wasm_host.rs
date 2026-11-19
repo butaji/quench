@@ -989,6 +989,8 @@ mod tests {
         expired_gc: Option<RootId>,
     }
     impl Host for EchoHost {
+        // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
+        const RUNS_LANE: bool = false;
         fn write_line(&mut self, _: &str) {}
         fn clock_millis(&mut self) -> f64 {
             0.0

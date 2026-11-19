@@ -2,7 +2,7 @@
 //! subtype of `NUMBER`, and `INT32` is the range of the whole int32 span. The join of two ranges
 //! is their hull; widening (`Type::widen`) is the join that settles a growing range at int32's.
 
-use super::{IntRange, Type, TypeKind};
+use crate::typed_ir::{IntRange, Type, TypeKind};
 
 impl Type {
     /// The integers within `range`: any such range is a Number type, and one that fits int32

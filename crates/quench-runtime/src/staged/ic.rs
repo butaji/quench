@@ -7,8 +7,9 @@ use super::Stage;
 use super::region::Region;
 use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, formed_own_layout, has_extras, inline_storage, object_record_at, own_layout,
     recorded_shape,
-    proto_link, proto_object_record_id, read_slot, read_slot_value, Rep};
+    proto_link, proto_object_record_id, read_slot, read_slot_value};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+use crate::typed_ir::Representation;
 
 /// One step of a proved property read, over the record the read has reached.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,12 +21,15 @@ pub(crate) enum IcOp<'a> {
     /// shape, the storage form, the prototype link and the flags, and the `LoadSlot` after it
     /// reads the form's layout, which the id's table entry names, with no test.
     GuardLayout(u32),
+    /// `GuardLayout` of a layout whose storage form the site fixed (a generated row's site
+    /// fact): the form is a constant of the row, so the load after it reads no table entry.
+    GuardFormed { id: u32, form: u32 },
     /// The read moves to the record's prototype, an object record, else misses.
     Prototype,
     /// The value at `slot` of the record, whose guarded shapes keep at least `storage_len`
     /// values in `form`, an arena word of which encodes its value in `rep` (`read_slot`); it
     /// ends the read.
-    LoadSlot { slot: u16, form: Form, storage_len: usize, rep: Rep },
+    LoadSlot { slot: u16, form: Form, storage_len: usize, rep: Representation },
     /// The value at `slot` of a prototype record, which keeps its values in the arena past its
     /// extras (`Object::extras_storage_start`), else the read misses; it ends the read.
     LoadPrototypeSlot(u16),
@@ -78,6 +82,11 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
                 guard_layout(stage, &at, id, miss)?;
                 at.formed = Some(layout_form(id));
             }
+            IcOp::GuardFormed { id, form } => {
+                guard_layout(stage, &at, id, miss)?;
+                debug_assert_eq!(layout_form(id), form, "a fixed form's layout names it");
+                at.formed = Some(form);
+            }
             IcOp::Prototype => {
                 let link = proto_link(stage, at.record);
                 let id = proto_object_record_id(stage, link, miss)?;
@@ -106,6 +115,26 @@ pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, 
         crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
     let guard = stage.site(guard);
     let same = stage.eq_imm(words, guard);
+    stage.guard(same, miss)?;
+    let watch = stage.site(watch);
+    let holds = stage.assumption(watch);
+    stage.guard(holds, miss)?;
+    let zero = stage.constant(0);
+    let value = stage.site(value);
+    Some(stage.add_imm(zero, value))
+}
+
+/// The value the own-constant hint `(record, watch, value)` records for the object part at
+/// `at`: `None` (leaving at `miss`) for any record but the hinted one, or once the watch on its
+/// values no longer holds. A receiver that is always one object, whose slot the code reads and
+/// nothing rewrites (an enum, a namespace, a module's exports, a configuration object), reads
+/// as its value: one compare of the record's address and the watch's flag. Two objects of one
+/// layout (two enums with the same members) share a layout but never a record.
+#[inline(always)]
+pub(crate) fn own_constant_read<S: Stage>(stage: &mut S, at: S::Word, record: u64, watch: u64, value: u64,
+    miss: S::Miss) -> Option<S::Word> {
+    let record = stage.site(record);
+    let same = stage.eq_imm(at, record);
     stage.guard(same, miss)?;
     let watch = stage.site(watch);
     let holds = stage.assumption(watch);
@@ -169,9 +198,24 @@ pub(crate) fn layout_shape(id: u32) -> u32 {
 /// Every storage-form bit of an auxiliary word.
 pub(crate) const FORM_BITS: u32 = OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form;
 
+/// The `Form` layout `id` names: a fact of the id (its auxiliary word's form bits), so a caller
+/// holding the id at compile time passes it and the stage emits no run-time form test. Plain
+/// inline values are `Packed`, a plain arena run is `Arena`. A narrow run and values with extras
+/// have no `Form` of their own: a formed read takes them from the id (`proved_own_layout`), and
+/// the fallback reads them as `Either`. An id past the table names no layout and reads as `Arena`,
+/// which no guard of a cleared hint admits. Reads the auxiliary word, which bounds its id.
+#[inline(always)]
+pub(crate) fn form_of_layout(id: u32) -> Form {
+    match crate::heap::layouts::auxiliary(id) & FORM_BITS {
+        0 => Form::Arena,
+        bits if bits == OBJECT.inline_form => Form::Packed,
+        _ => Form::Either,
+    }
+}
+
 /// `IcOp::LoadSlot`: the value at `slot` of the reached record.
 #[inline(always)]
-fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Rep), form: Form, storage_len: usize,
+fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation), form: Form, storage_len: usize,
     miss: S::Miss) -> Option<S::Word> {
     let layout = slot_layout(stage, at, form, storage_len, miss)?;
     Some(read_slot_value(stage, layout, slot, rep))
@@ -259,13 +303,13 @@ pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, sl
         let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
         let run = super::object::arena_run(stage, payload);
         let layout = super::object::Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
-        Some(read_slot(stage, layout, slot, Rep::Tagged))
+        Some(read_slot(stage, layout, slot, Representation::Tagged))
     }, #[inline(always)] |stage| {
         let recorded = recorded_shape(stage, word);
         let same = stage.eq_imm(recorded, expected);
         stage.guard(same, miss)?;
         let layout = formed_own_layout(stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, miss)?;
-        Some(read_slot(stage, layout, slot, Rep::Tagged))
+        Some(read_slot(stage, layout, slot, Representation::Tagged))
     })
 }
 
@@ -306,8 +350,8 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
     guard_layout(&mut stage, &at, hint, ())?;
     debug_assert!(form == HINTED_FORM || layout_form(hint) == form, "a fixed form's matched hint names it");
     let bits = if form == HINTED_FORM { layout_form(hint) } else { form };
-    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), ..at }, Form::Either, usize::from(slot) + 1, ())?;
-    let word = read_slot(&mut stage, layout, slot, Rep::Tagged);
+    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), ..at }, form_of_layout(hint), usize::from(slot) + 1, ())?;
+    let word = read_slot(&mut stage, layout, slot, Representation::Tagged);
     // Packed and narrow slots hold narrow values, never a raw double (`packed_read`,
     // `narrow_read`), so a fixed one of those forms skips the float-slot decode.
     if tagged || form == OBJECT.inline_form || form == OBJECT.narrow_form {
@@ -399,7 +443,7 @@ mod tests {
         let (own, holder) = (heap.object(object).unwrap().exact_shape(), heap.object(prototype).unwrap().exact_shape());
         let read = |receiver, holder| [IcOp::GuardShape(receiver), IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(0)];
         assert_eq!(concrete(&heap, &read(own, holder), object), Some(Value::number(1.5)));
-        let load = IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: Rep::Tagged };
+        let load = IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: Representation::Tagged };
         assert_eq!(concrete(&heap, &[IcOp::GuardShape(own), load], object), Some(Value::number(8.0)));
         assert_eq!(concrete(&heap, &[IcOp::GuardShape(holder), load], object), None);
         assert_eq!(concrete(&heap, &read(holder, holder), object), None);
@@ -457,7 +501,7 @@ mod tests {
             let at = Reached::bare(0);
             let record = trace.constant(0);
             let at = Reached { record, ..at };
-            let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1, rep: Rep::Tagged }];
+            let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1, rep: Representation::Tagged }];
             run(&mut trace, &ops, at, None, ()).expect("a load ends the read");
             trace
         };

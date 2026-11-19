@@ -90,3 +90,27 @@ fn raw_double_slots_compute_what_tagged_slots_compute() {
         }
     }
 }
+
+/// A double-field dot product loop run hot under float slots: its own-field reads take the
+/// slots' raw doubles, and a string written to a double field mid-run widens the slot, which
+/// retires the loop's body, so the later iterations coerce the string as the interpreter does.
+#[test]
+fn a_double_field_loop_reads_raw_doubles_and_survives_a_widening() {
+    let source = r#"
+        var a = { x: 1.5, y: 2.5, z: 3.5 }, b = { x: 2, y: 0.5, z: 4 };
+        function dot(n) {
+            var s = 0;
+            for (var i = 0; i < n; i++) { s += a.x * b.x + a.y * b.y + a.z * b.z; }
+            return s;
+        }
+        for (var k = 0; k < 300; k++) dot(10);
+        var out = [dot(1000)];
+        a.x = "3";
+        out.push(dot(500));
+        globalThis.answer = out.join("|");
+    "#;
+    let expected = run(source, crate::ExecutionMode::Interpreted, false);
+    assert_eq!(expected, "18250|10625");
+    assert_eq!(run(source, crate::ExecutionMode::Interpreted, true), expected, "interpreted with raw doubles");
+    assert_eq!(run(source, crate::ExecutionMode::Compiled, true), expected, "compiled with raw doubles");
+}
