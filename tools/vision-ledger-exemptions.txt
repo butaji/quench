@@ -35,3 +35,4 @@ dead-code	src/bytecode\.rs$	.	opcodes! generated impl Op, InstructionField reach
 duplicate-lattice	vm/wtf16\.rs$	.	string storage form (Latin-1 vs UTF-16), not a value fact (Fact store triage)
 duplicate-lattice	typed_ir/representation\.rs$	.	machine-word axis carried by typed_ir::Fact next to Type; absorbed staged Rep, exit Repr, b-jit Rep and osr Role (Fact store triage)
 duplicate-lattice	typed_ir/slot_type\.rs$	.	1-byte storage projection of Type per shape slot; round-trips from_type/ty, join unit-tested equal to Type::join (Fact store triage)
+hand-table	quench-bjit/stencils/codes\.rs$	.	numbered_codes! is the place-code catalog itself (MEM, MEMINT, CONST, IMM, PIN/PINF counts from INT_PINS/DOUBLE_PINS), the single definition every reader uses, like the row catalog (b-jit triage)
