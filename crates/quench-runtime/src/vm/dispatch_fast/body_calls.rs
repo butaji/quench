@@ -246,7 +246,7 @@ fn body_construct<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, moved: &mut
     if let Err(refused) = construct_admitted(cx, vm) { return refused; }
     // The quick case, as the lane's own record makes it (`planned_construct_miss`): nothing out of
     // line, no base moved where no collection became due.
-    if let Some(this) = planned_inline_quick(vm, callee, call.argument()) {
+    if let Some(this) = super::construct_plan::planned_inline_quick(vm, callee, call.argument()) {
         call.registers.set(call.site.result, this);
         if vm.heap.should_collect() { note_allocation(vm); } else { *moved = false; }
         return LANE_CALL_COMPLETED;

@@ -129,7 +129,7 @@ impl ParkedLane {
     pub(in crate::vm) fn extend_roots(&self, programs: &crate::vm::program_store::ProgramStore, out: &mut Vec<Value>) {
         self.stack.extend_roots(programs, out);
         let [this, env] = self.innermost;
-        extend_this_env_roots(out, this, env);
+        crate::vm::activation::extend_this_env_roots(out, this, env);
     }
 }
 
@@ -201,6 +201,9 @@ impl<H: Host> Vm<H> {
             inline_calls: inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm,
             script_calls,
             script_constructs,
+            tiers_run: self.tier_may_run(crate::jit_mode::Tier::ANY),
+            // `script_calls` starts on only where `inline_calls` is.
+            returns_script_frame: false,
             instance: Value::DELETED,
             instance_slots: (Value::DELETED, std::ptr::null()),
             indirect: IndirectSlot::NONE,
