@@ -146,8 +146,14 @@ impl LoopTier {
     /// between looks count down, and a look publishes code that is ready.
     #[inline(always)]
     pub(super) fn awaits_code<H: Host>(&mut self, vm: &mut Vm<H>, site: &LoopSite) -> bool {
-        // A site with published code, or none under way, has nothing to wait for.
-        self.pending.is_some() && self.poll_pending(vm, site)
+        // A site with published code, or none under way, has nothing to wait for. A look still
+        // counting down is one decrement here; only the look itself leaves the inline path.
+        if self.pending.is_none() { return false; }
+        if self.wait > 0 {
+            self.wait -= 1;
+            return true;
+        }
+        self.poll_pending(vm, site)
     }
 
     #[cold]

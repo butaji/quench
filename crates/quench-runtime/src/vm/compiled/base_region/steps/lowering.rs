@@ -126,6 +126,14 @@ fn calls_out(instruction: WideInstruction) -> bool {
     instruction.result_flags() == 0 && matches!(call, Some((crate::staged::CallOut::GlobalWrite { .. } | crate::staged::CallOut::GlobalTypeof { .. }, _)))
 }
 
+/// Whether `instruction` makes a fixed-shape object by the lane's allocator (`Step::Allocate`): an empty object or an
+/// object literal of a site's shape over its registers, which runs no guest code and writes its one destination.
+fn allocates_object(instruction: WideInstruction) -> bool {
+    instruction.result_flags() == 0 && matches!(
+        crate::staged::Allocation::decode(instruction, &[]),
+        Some((_, crate::staged::Allocation::Empty | crate::staged::Allocation::ObjectPair { .. } | crate::staged::Allocation::ObjectLiteral { .. })))
+}
+
 /// The lowering of `instruction`, where helpers are `helpers` and `known` holds the sites' facts: where
 /// the helper table has the step helper's address, a `throw` is the raising step, and the other steps
 /// made in place are helper steps (behind their fast arm, where they have one); an add (`adds`) is a
@@ -134,6 +142,9 @@ fn calls_out(instruction: WideInstruction) -> bool {
 /// helper's address; every other instruction, and every one without the address, leaves.
 pub(in crate::vm::compiled::base_region) fn lowering(instruction: WideInstruction, known: Known, helpers: LaneHelpers) -> Step {
     let addressed = |helper| call_plan::helper_address(helpers, helper).is_some();
+    if addressed(LaneHelper::AllocateStep) && allocates_object(instruction) {
+        return Step::Allocate;
+    }
     let called_out = || if addressed(LaneHelper::VmStep) && calls_out(instruction) { Step::CallOut } else { Step::Leave };
     let in_place = addressed(LaneHelper::Step) && steps_in_place(instruction);
     let fast = fast_arm(instruction, known).or_else(|| adds::of(known, instruction).map(adds::Add::heap));

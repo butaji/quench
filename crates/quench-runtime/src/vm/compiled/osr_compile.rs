@@ -345,9 +345,13 @@ pub(in crate::vm) fn start_osr_region(
     let mut row_fields = fields.clone();
     stored_after_reads(region.instructions(), &mut row_fields);
     let reads = |site: u16| row_fields.get(usize::from(site)).cloned().flatten().unwrap_or_default();
+    // A field site the observation recorded a load for is filled, so its packed field rows may run direct
+    // (`function::feedback_admits`); a loop's rows need the same admission a body's do.
+    let filled = |site: u16| !reads(site).is_empty();
+    let filled = stores.is_some().then_some(&filled as &dyn Fn(u16) -> bool);
     let reads = stores.is_some().then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>);
     let shapes = loop_shapes(region, observation);
-    let known =super::base_region::Known { program, stores, reads, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: globals.as_ref(), stitch: &tiers.stitch, classes: &[], shapes: &shapes };
+    let known =super::base_region::Known { program, stores, reads, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: filled, globals: globals.as_ref(), stitch: &tiers.stitch, classes: &[], shapes: &shapes };
     let unit_calls = std::mem::take(&mut calls.direct);
     if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation.clone())) {
         return decided;

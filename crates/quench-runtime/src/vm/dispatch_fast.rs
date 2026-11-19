@@ -16733,7 +16733,7 @@ mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle
 mod vm_steps;
 pub(in crate::vm) mod family_helpers;
 mod value_steps;
-pub(in crate::vm) use vm_steps::{lane_body_step, lane_body_step_packed, lane_decide, lane_vm_step};
+pub(in crate::vm) use vm_steps::{lane_allocate_step, lane_body_step, lane_body_step_packed, lane_decide, lane_vm_step};
 mod handler_edges;
 pub(in crate::vm) use handler_edges::lane_handler_edge;
 use array_steps::*;

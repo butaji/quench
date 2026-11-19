@@ -43,7 +43,7 @@ pub(super) fn is_fast(row: &Decoded) -> bool {
 /// Whether a row may be followed by the completion of the activation with its result: it falls
 /// through to what follows it, and writes the register the completion reads.
 pub(super) fn completable(row: &Decoded) -> bool {
-    row.dst.is_some() && row.target.is_none() && row.step.is_none_or(|step| matches!(step, Step::Helper | Step::Fast(_) | Step::Call(_)))
+    row.dst.is_some() && row.target.is_none() && row.step.is_none_or(|step| matches!(step, Step::Helper | Step::Allocate | Step::Fast(_) | Step::Call(_)))
 }
 
 impl Sites<'_> {

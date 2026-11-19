@@ -57,7 +57,8 @@ fn fold_at(region: &LoopRegion, known: Known<'_>, plans: &impl Fn(WideInstructio
     let at = region.header + j as u32;
     let (plain, returning) = code[j].split_return();
     let shape = CallShape { returning, ..CallShape::of(at, plain, CallForm::Plain) };
-    (shape.callee == callee && shape.this == receiver && shape.argc == 1 && j + 1 < code.len() && !region.is_live(at + 1, callee)).then_some(())?;
+    // One or two arguments: `row_of` takes exactly the arity the native's operation reads (`Math.sqrt(x)`, `Math.min(i, 777)`).
+    (shape.callee == callee && shape.this == receiver && (1..=2).contains(&shape.argc) && j + 1 < code.len() && !region.is_live(at + 1, callee)).then_some(())?;
     (reads.iter().all(|register| !writes.contains(register)) && !writes.contains(&receiver) && !writes.contains(&callee) && !reads.contains(&callee)).then_some(())?;
     let row = Decoded { holder: Some(holder), ..row_of(native, &shape)? };
     let completion = shape.returning.then(|| Decoded { a: Some(Source::Register(shape.result)), ..Decoded::step(Step::Return, None) });

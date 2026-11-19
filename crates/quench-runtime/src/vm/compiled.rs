@@ -1070,6 +1070,8 @@ lane_helper_inventory! { H;
     TypedArrayView => lane_typed_array_view::<H>,
     /// A VM operation a staged row calls out for (`dispatch_fast::lane_vm_step`).
     VmStep => super::dispatch_fast::lane_vm_step::<H>,
+    /// A fixed-shape object the record defines, made by the lane's allocator (`dispatch_fast::lane_allocate_step`).
+    AllocateStep => super::dispatch_fast::lane_allocate_step::<H>,
     /// An instruction whose general step runs in place (`dispatch_fast::lane_body_step`), which the b-jit's
     /// helper steps and stepped calls make (`base_region::steps`).
     Step => super::dispatch_fast::lane_body_step::<H>,

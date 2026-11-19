@@ -270,3 +270,36 @@ unsafe fn lane_body_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u
     handler_edges::drop_environment_caches(cx);
     branched.map_or(LANE_CALL_MISSED, |branched| if branched { LANE_CALL_BRANCHED } else { LANE_CALL_COMPLETED })
 }
+
+/// The allocation of the record at `call_pc`, a fixed-shape object the record defines (`Step::Allocate`): its value is
+/// written to the record's destination, `LANE_CALL_MISSED` where the lane's allocator declines, and the record is
+/// the interpreter's to make.
+pub(in crate::vm) unsafe extern "C" fn lane_allocate_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    if context == 0 { return super::super::compiled::LANE_CALL_MISSED; }
+    let cx = context as usize as *mut LaneContext<H>;
+    let status = native_frames::in_innermost_frame(cx, || unsafe { lane_allocate_in(cx, call_pc) });
+    // SAFETY: `context` is the running lane's; the allocation may have collected, which moves no register word.
+    unsafe { refresh_body_bases::<H>(context) };
+    // SAFETY: as above; a region the lane runs reads its payload's bases after the allocation too.
+    unsafe { refresh_region_bases_of::<H>(context) };
+    status
+}
+
+/// `lane_allocate_step` with the context of the running body (`native_frames::in_innermost_frame`).
+///
+/// # Safety
+/// As `lane_allocate_step`.
+unsafe fn lane_allocate_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+    use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_MISSED};
+    let r = unsafe { (*cx).registers };
+    let function = lane_running_function(cx);
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let body = code.function(function as usize);
+    let instruction = body.widened(body.code[call_pc as usize]);
+    let Some((destination, allocation)) = crate::staged::Allocation::decode(instruction, &[]) else { return LANE_CALL_MISSED };
+    let Some(value) = (unsafe { super::lane_frame::lane_allocation::<H>(cx.cast(), r, allocation) }) else { return LANE_CALL_MISSED };
+    // SAFETY: the allocation ran no guest code, so the lane's register file is `r`'s still.
+    unsafe { (*cx).registers }.set(destination, value);
+    LANE_CALL_COMPLETED
+}

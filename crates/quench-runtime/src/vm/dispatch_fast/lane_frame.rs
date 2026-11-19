@@ -988,7 +988,7 @@ lane_handler! {
 /// `LaneHost::allocate`, a constant function pointer in the inlined frame `staged_allocate`
 /// builds, so the call inlines and each handler keeps only its allocation's arm.
 #[inline(always)]
-unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
+pub(super) unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
     let cx = cx.cast::<LaneContext<H>>();
     match allocation {
         Allocation::Empty => Some(lane_new_object(unsafe { vm(cx) })),

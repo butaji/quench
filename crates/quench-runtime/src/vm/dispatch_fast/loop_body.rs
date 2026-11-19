@@ -219,7 +219,9 @@ pub(super) fn header_for_tier_up<H: Host>(cx: *mut LaneContext<H>, own: &LaneVie
 pub(super) fn lane_loop_enter_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
     let vm = unsafe { vm(cx) };
     vm.execution_interrupt.clear_tier_up();
-    if !vm.programs.js_jit_lane_methods_enabled() || !site.is_hot() || site.tier.borrow().is_published() {
+    // A declined body is terminal: its dispatch has nothing to plan, run or count.
+    if !vm.programs.js_jit_lane_methods_enabled() || matches!(*site.body.borrow(), LoopBody::Declined)
+        || !site.is_hot() || site.tier.borrow().is_published() {
         return None;
     }
     lane_loop_body::<H>(cx, r, ip, site)
