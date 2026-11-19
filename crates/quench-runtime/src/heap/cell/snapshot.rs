@@ -5,9 +5,12 @@ use super::*;
 use crate::snapshot::{read_list, snap_struct, snapshot_enum, Reader, Snap, SnapshotError, SnapshotResult, Writer};
 
 snapshot_enum!(proxy_kind: ProxyKind { Object, Callable, Constructor });
-snapshot_enum!(typed_array_kind: TypedArrayKind {
-    Uint8, Uint8Clamped, Uint16, Uint32, Int8, Int16, Int32, BigInt64, BigUint64, Float16, Float32, Float64,
-});
+macro_rules! typed_array_kind_snapshot {
+    ($(($kind:ident, $native:ident, $name:literal, $width:literal)),* $(,)?) => {
+        snapshot_enum!(typed_array_kind: TypedArrayKind { $($kind),* });
+    };
+}
+for_each_typed_array!(typed_array_kind_snapshot);
 snapshot_enum!(iterator_kind: IteratorKind {
     Array, ArrayKeys, ArrayValues, ArrayEntries, String, MapKeys, MapValues, MapEntries, SetValues,
     SetEntries, Protocol, RegExpStringMatchAll, IntlSegments, Map, Filter, Take, Drop, FlatMap, Concat,

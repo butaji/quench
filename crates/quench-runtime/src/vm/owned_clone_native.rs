@@ -12,22 +12,6 @@ struct ViewSpan {
     tracking: bool,
 }
 
-/// The typed array kinds an owned clone names, by their name without the `Array` suffix.
-const OWNED_TYPED_ARRAY_KINDS: [(&str, TypedArrayKind); 12] = [
-    ("Uint8", TypedArrayKind::Uint8),
-    ("Uint8Clamped", TypedArrayKind::Uint8Clamped),
-    ("Uint16", TypedArrayKind::Uint16),
-    ("Uint32", TypedArrayKind::Uint32),
-    ("Int8", TypedArrayKind::Int8),
-    ("Int16", TypedArrayKind::Int16),
-    ("Int32", TypedArrayKind::Int32),
-    ("BigInt64", TypedArrayKind::BigInt64),
-    ("BigUint64", TypedArrayKind::BigUint64),
-    ("Float16", TypedArrayKind::Float16),
-    ("Float32", TypedArrayKind::Float32),
-    ("Float64", TypedArrayKind::Float64),
-];
-
 impl<H: Host> Vm<H> {
     pub(crate) fn embedding_clone_metadata(
         &mut self,
@@ -269,7 +253,12 @@ impl<H: Host> Vm<H> {
     fn embedding_clone_typed_view(&mut self, p: &ResidualProgram, kind: &str, span: &ViewSpan) -> Result<Value, JsError> {
         let ViewSpan { buffer, bytes_len, offset, length, tracking } = *span;
         let stem = kind.strip_suffix("Array").unwrap_or(kind);
-        let Some(&(_, kind)) = OWNED_TYPED_ARRAY_KINDS.iter().find(|(name, _)| *name == stem) else {
+        // The owned clone names a kind by its constructor's name without the `Array` suffix.
+        let Some(kind) = crate::heap::TYPED_ARRAYS
+            .iter()
+            .find(|row| row.name.strip_suffix("Array") == Some(stem))
+            .map(|row| row.kind)
+        else {
             return Err(self.type_error(p, "Unknown owned view kind".into()));
         };
         let width = kind.width();

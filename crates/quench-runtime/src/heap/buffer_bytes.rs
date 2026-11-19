@@ -208,7 +208,7 @@ impl BufferBytes {
 
     /// Whether dropping this handle may release memory other handles still reach: a
     /// shared store, or a view keeping its memory's bytes alive.
-    pub(crate) fn is_shared(&self) -> bool {
+    pub(crate) fn shares_memory(&self) -> bool {
         Rc::strong_count(&self.0) > 1 || self.holds_external_rc()
     }
 

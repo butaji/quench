@@ -84,7 +84,7 @@ pub(super) fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
 
 fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
     match cell {
-        Cell::ArrayBuffer { bytes, .. } => bytes.is_shared(),
+        Cell::ArrayBuffer { bytes, .. } => bytes.shares_memory(),
         Cell::WasmHostFunction { signature, .. } => Rc::strong_count(signature) > 1,
         _ => always_shares_rc_payload(cell),
     }
