@@ -13460,6 +13460,7 @@ fn lane_frame_state<H: Host>(
                 unreachable!("a host that runs no lane has no lane frame");
             }
             let (diagnostics, tiers) = (vm.programs.reports_on_drop(), vm.programs.tiers());
+            let step_atoms = StepAtoms { done: vm.runtime_atoms.done, value: vm.runtime_atoms.value };
             let Some(lane_view) = vm.programs.lane_view(program, function, |code, constants, kind, live, sites| {
                 derive_lane_view::<H>(
                     function,
@@ -13472,6 +13473,7 @@ fn lane_frame_state<H: Host>(
                     vm.tier_may_run(crate::jit_mode::Tier::ANY),
                     diagnostics,
                     tiers,
+                    step_atoms,
                 )
             }) else {
                 unreachable!("an inline Wasm frame runs a function of its program");
@@ -14390,6 +14392,7 @@ impl<H: Host> Vm<H> {
         if !H::RUNS_LANE || !self.execution_mode.allows_dynamic_execution() { return None; }
         let diagnostics = self.programs.reports_on_drop();
         let tiers = self.programs.tiers();
+        let step_atoms = StepAtoms { done: self.runtime_atoms.done, value: self.runtime_atoms.value };
         self.programs.lane_view(program, function, |code, constants, kind, live, sites| {
             derive_lane_view::<H>(
                 function,
@@ -14402,6 +14405,7 @@ impl<H: Host> Vm<H> {
                 self.tier_may_run(crate::jit_mode::Tier::ANY),
                 diagnostics,
                 tiers,
+                step_atoms,
             )
         })
     }
@@ -14443,7 +14447,8 @@ impl<H: Host> Vm<H> {
                 let Some(code) = residual.function_get(function as usize) else { continue };
                 let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
-                    derive_lane_view::<H>(function, code, constants, &self.heap, kind, live, sites, false, false, self.programs.tiers())
+                    derive_lane_view::<H>(function, code, constants, &self.heap, kind, live, sites, false, false, self.programs.tiers(),
+                        StepAtoms { done: self.runtime_atoms.done, value: self.runtime_atoms.value })
                 });
                 let Some((fresh, settled)) = plan else { continue };
                 eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
@@ -15046,12 +15051,13 @@ script_handler! {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
         // SAFETY: the view checked the step's records (`lane_for_of_step`).
         let (done_read, value_read) = unsafe { (&*ip.add(FOR_OF_DONE_READ), &*ip.add(form.value_read())) };
-        let reads_step = done_read.imm() == vm.runtime_atoms.done && value_read.imm() == vm.runtime_atoms.value;
+        // The view proved the reads name `done` and `value` (`lane_for_of_step`), once.
+        debug_assert!(done_read.imm() == vm.runtime_atoms.done && value_read.imm() == vm.runtime_atoms.value);
         let kind = vm.iteration_step(iterator, method);
         match kind {
-            super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
+            super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection => {}
             // A generator's step resumes it over its record, as `lane_iterator_step` makes it.
-            super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } && reads_step => {
+            super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
                 if THREADED {
                     sibling!(lane_generator_step::<H, STEP_READS_THREADED>, r, ip, Carried::script_in(cx, view))
                 }
@@ -15108,10 +15114,11 @@ script_handler! {
         // SAFETY: the view checked the step's records (`lane_binding_step`).
         let (done_read, flag, value_read) =
             unsafe { (&*ip.add(BINDING_DONE_READ), &*ip.add(BINDING_DONE_MOVE), &*ip.add(BINDING_VALUE_READ)) };
-        let reads_step = done_read.imm() == vm.runtime_atoms.done && value_read.imm() == vm.runtime_atoms.value;
+        // The view proved the reads name `done` and `value` (`lane_binding_step`), once.
+        debug_assert!(done_read.imm() == vm.runtime_atoms.done && value_read.imm() == vm.runtime_atoms.value);
         let kind = vm.iteration_step(iterator, method);
         match kind {
-            super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
+            super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection => {}
             _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view)),
         }
         let step = if kind == super::iterators::IterationStep::Array {
@@ -22313,17 +22320,28 @@ impl ForOfTest {
     }
 }
 
+/// The atoms an iteration step's reads name (`done`, `value`), which a view proves its for-of
+/// and destructuring steps read (`lane_for_of_step`, `lane_binding_step`) so their handlers
+/// need not compare them per step.
+#[derive(Clone, Copy)]
+pub(super) struct StepAtoms {
+    pub(super) done: crate::bytecode::Atom,
+    pub(super) value: crate::bytecode::Atom,
+}
+
 /// How the iteration step at `pc` (`lane_iteration_step`) begins a for-of step: after its
 /// `RequireIteratorResult`, a plain read of the result into a register, a test of that
 /// register (`ForOfTest`), and a second plain read of the result where the body begins.
-/// `lane_iterator_step_reads` then makes the reads from the step itself; their atoms it
-/// tests as it runs.
-fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest> {
+/// `lane_iterator_step_reads` then makes the reads from the step itself; their atoms
+/// (`StepAtoms`) are proved here, so it does not test them as it runs.
+fn lane_for_of_step(decoded: &[WideInstruction], pc: usize, step_atoms: StepAtoms) -> Option<ForOfTest> {
     let result = decoded[pc].result_register();
     let record = |offset: usize| decoded.get(pc + offset).copied();
     let reads_result = |offset: usize| {
         record(offset).is_some_and(|read| decoded_field_read(read) && read.result_flags() == 0 && read.b() == result)
     };
+    // The step's reads name the result's `done` and `value`, proved here once for every step.
+    record(FOR_OF_DONE_READ).filter(|read| read.imm() == step_atoms.done)?;
     record(FOR_OF_REQUIRE_RESULT).filter(|require| crate::staged::meaning_fast::require_iterator_result_operand(*require).is_some())?;
     let done = record(FOR_OF_DONE_READ).filter(|_| reads_result(FOR_OF_DONE_READ))?.result_register();
     let test = record(FOR_OF_DONE_TEST).filter(|test| test.a() == done)?;
@@ -22339,7 +22357,8 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
         _ => false,
     } && exit.jump_target() as usize > pc + form.value_read();
     let enters = form == ForOfTest::Threaded || test.jump_target() as usize == pc + form.value_read();
-    (leaves && enters && reads_result(form.value_read())).then_some(form)
+    (leaves && enters && reads_result(form.value_read()) && record(form.value_read()).is_some_and(|read| read.imm() == step_atoms.value))
+        .then_some(form)
 }
 
 /// The records of a destructuring step after its iteration `Call` (`lane_binding_step`), by
@@ -22355,7 +22374,7 @@ const BINDING_VALUE_READ: usize = 5;
 /// `done`, a move of it to another register, a `JumpTrue` of it past the step, and a plain
 /// read of the result's `value`. `lane_iterator_step_binding` then makes the reads and the
 /// move from the step itself; their atoms it tests as it runs.
-fn lane_binding_step(decoded: &[WideInstruction], pc: usize) -> bool {
+fn lane_binding_step(decoded: &[WideInstruction], pc: usize, step_atoms: StepAtoms) -> bool {
     let result = decoded[pc].result_register();
     let record = |offset: usize| decoded.get(pc + offset).copied();
     let reads_result = |offset: usize| {
@@ -22366,9 +22385,12 @@ fn lane_binding_step(decoded: &[WideInstruction], pc: usize) -> bool {
     else {
         return false;
     };
+    let done_atom = done.imm();
     let done = done.result_register();
     reads_result(BINDING_DONE_READ)
         && reads_result(BINDING_VALUE_READ)
+        && done_atom == step_atoms.done
+        && value.imm() == step_atoms.value
         && matches!(crate::vm::compiled::decoded(flag), Some(crate::staged::Operation::Move { .. }))
         && flag.result_flags() == 0
         && flag.b() == done
@@ -22525,6 +22547,7 @@ fn derive_lane_view<'live, H: Host>(
     loop_tier: bool,
     diagnostics: bool,
     tiers: &'static Tiers,
+    step_atoms: StepAtoms,
 ) -> LaneView {
     // Each pass below reads instructions by PC; they are decoded once, here.
     let decoded: Vec<WideInstruction> = function.instructions().collect();
@@ -22652,10 +22675,10 @@ fn derive_lane_view<'live, H: Host>(
                 })
             } else if op.is_call() && lane_iteration_step(&decoded, pc) {
                 Some(LaneHandler {
-                    handler: match lane_for_of_step(&decoded, pc) {
+                    handler: match lane_for_of_step(&decoded, pc, step_atoms) {
                         Some(ForOfTest::Emitted) => lane_iterator_step_reads::<H, false> as Handler,
                         Some(ForOfTest::Threaded) => lane_iterator_step_reads::<H, true> as Handler,
-                        None if lane_binding_step(&decoded, pc) => lane_iterator_step_binding::<H> as Handler,
+                        None if lane_binding_step(&decoded, pc, step_atoms) => lane_iterator_step_binding::<H> as Handler,
                         None => lane_iterator_step::<H> as Handler,
                     },
                     produces: false,
@@ -25401,6 +25424,7 @@ impl<H: Host> Vm<H> {
                     self.tier_may_run(crate::jit_mode::Tier::ANY),
                     diagnostics,
                     tiers,
+                    StepAtoms { done: self.runtime_atoms.done, value: self.runtime_atoms.value },
                 )
             })
             .unwrap_or(std::ptr::null())
