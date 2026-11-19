@@ -4179,17 +4179,9 @@ impl IteratorRecord {
 /// A function: its ordinary object, creation realm, code and closure environment. The
 /// heap keeps it in the function record family (`Heap::function`), where a dead closure
 /// costs its occupancy bit; a heap whose record range is unavailable boxes it in a
-/// `Cell::Function` slot.
-#[derive(Clone, Debug)]
-#[repr(C)]
-pub(crate) struct FunctionRecord {
-    pub(crate) object: Object,
-    /// Beside the object, whose 12 bytes it fills to the words after: after them, its 12
-    /// bytes and two of padding made the record 48 bytes (jsdom-d3: 114K records at its peak).
-    pub(crate) kind: FunctionKind,
-    pub(crate) realm: Value,
-    pub(crate) env: Value,
-}
+/// `Cell::Function` slot. Its layout is `staged::record_heads::FunctionRecord`, instantiated with the
+/// runtime's `Object`, `FunctionKind` and `Value`, so its fields are named there.
+pub(crate) type FunctionRecord = crate::staged::record_heads::FunctionRecord<Object, FunctionKind, Value>;
 
 const _: () = assert!(size_of::<FunctionRecord>() == 40);
 

@@ -102,6 +102,9 @@ pub enum Kind {
     Imul = library::IMUL,
     /// `Math.clz32` of one Number (`codes::CLZ32`).
     Clz32 = library::CLZ32,
+    /// int32 `+` and `-` a tier proved exact (`staged::Overflow::Impossible`): no overflow test, int operands only.
+    AddNoOverflow = library::ADD_NO_OVERFLOW,
+    SubNoOverflow = library::SUB_NO_OVERFLOW,
 }
 
 impl Kind {
@@ -113,7 +116,7 @@ impl Kind {
     /// Whether the int32 operation gives the same result with its operands swapped, so the planner
     /// may put an immediate second, where a row encodes it into the instruction.
     pub fn commutes(self) -> bool {
-        matches!(self, Kind::Add | Kind::Mul | Kind::And | Kind::Or | Kind::Xor)
+        matches!(self, Kind::Add | Kind::AddNoOverflow | Kind::Mul | Kind::And | Kind::Or | Kind::Xor)
     }
 
     /// The int32 second operand that makes the operation its first operand unchanged (`x | 0`,
@@ -121,7 +124,7 @@ impl Kind {
     /// to a move. `>>>` has none: `x >>> 0` is a uint32, which an int32 register cannot hold.
     pub fn neutral(self) -> Option<i32> {
         match self {
-            Kind::Add | Kind::Sub | Kind::Or | Kind::Xor | Kind::Shl | Kind::Shr => Some(0),
+            Kind::Add | Kind::Sub | Kind::AddNoOverflow | Kind::SubNoOverflow | Kind::Or | Kind::Xor | Kind::Shl | Kind::Shr => Some(0),
             Kind::Mul => Some(1),
             Kind::And => Some(-1),
             _ => None,

@@ -101,6 +101,10 @@ numbered_codes! {
     IMUL,
     /// `Math.clz32` of one Number: the leading zero bits of its ToUint32 (`staged::math::leading_zeros`), an int32.
     CLZ32,
+    /// int32 `+` and `-` the planner proved exact (a range fact of the operands): the staged int32 step
+    /// with `Overflow::Impossible`, so no overflow test. Int operands only; anything else leaves through exit 0.
+    ADD_NO_OVERFLOW,
+    SUB_NO_OVERFLOW,
 }
 
 /// The first and last of the Math rows of one Number.

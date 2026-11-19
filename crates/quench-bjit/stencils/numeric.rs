@@ -23,8 +23,8 @@ pub(crate) use crate::places::{deliver, index_of, number_word};
 
 const fn arithmetic_of(kind: u8) -> NumberArithmetic {
     match kind {
-        ADD => NumberArithmetic::Add,
-        SUB => NumberArithmetic::Subtract,
+        ADD | ADD_NO_OVERFLOW => NumberArithmetic::Add,
+        SUB | SUB_NO_OVERFLOW => NumberArithmetic::Subtract,
         MUL => NumberArithmetic::Multiply,
         _ => NumberArithmetic::Divide,
     }
@@ -99,6 +99,16 @@ fn arith_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: boo
         frame.prove_ints();
         (ints && arithmetic::<K, D, A, B>(&mut frame, Domain::Int32)) || arithmetic::<K, D, A, B>(&mut frame, Domain::Float64)
     };
+    finish(frame, done)
+}
+
+/// An int32 `+` or `-` the planner proved exact (`Overflow::Impossible`): the staged int32 step with no overflow
+/// test, over int32 operands only (any other leaves through exit 0 before any write).
+#[inline(always)]
+fn exact_arith_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
+    let operation = NumberOperation::Arithmetic { destination: DEST, left, right, operation: arithmetic_of(K), domain: Domain::Int32, overflow: Overflow::Impossible, zero: NegativeZero::Exit };
+    let done = staged(&mut frame, operation).is_some();
     finish(frame, done)
 }
 
@@ -357,6 +367,7 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
     match K {
         MOVE | COPY | SPILL => copy_row(frame),
         ADD..=DIV => arith_row::<K, D, A, B, SPEC>(frame),
+        ADD_NO_OVERFLOW | SUB_NO_OVERFLOW => exact_arith_row::<K, D, A, B>(frame),
         AND..=USHR => bitwise_row::<K, D, A, B>(frame),
         LT..=NE => compare_row::<K, D, A, B, SPEC>(frame),
         JUMP | JUMP_POLL | JUMP_WATCH | POLL => control_row::<K, D, A, B>(frame),

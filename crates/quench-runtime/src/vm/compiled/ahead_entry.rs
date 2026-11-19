@@ -77,7 +77,7 @@ fn emit_dispatch(
     body: &mut dyn FnMut(&mut FunctionBuilder<'_>, &[ir::Value]) -> (ir::Value, ir::Value),
 ) {
     let mut stage = super::object_slots::emit(builder);
-    let payload = stage.load_u64(DISPATCH, params[ENTRY_CONTEXT], std::mem::offset_of!(CallContext, adapter_payload) as i32);
+    let payload = stage.load_u64(DISPATCH, params[ENTRY_CONTEXT], std::mem::offset_of!(CallContext, head.adapter_payload) as i32);
     let start_pc = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, start_pc));
     let stop_pc = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, stop_pc));
     let starts = stage.eq_imm(start_pc, 0u32);

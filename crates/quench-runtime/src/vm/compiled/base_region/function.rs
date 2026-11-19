@@ -175,10 +175,28 @@ fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Ve
     let kind = fold::math_kind(native)?;
     let binary = matches!(kind, Kind::Min | Kind::Max | Kind::Imul);
     (u16::from(binary) + 1 == shape.argc as u16).then_some(())?;
-    let guard = Decoded { hole: value.to_bits(), holder: Some(holder), ..Decoded::heap(Heap::Identity, None, Some(Source::Register(shape.callee)), None) };
     let second = binary.then(|| Source::Register(shape.window + 1));
     let operation = Decoded::number(kind, Some(shape.result), Some(Source::Register(shape.window)), second, None);
+    // Where the read is the callee's only definition on every path to the call, the callee is the native while the code runs:
+    // the holder's exact shape is held (a change of its values retires the body, and a run inside it learns that from the
+    // invalidation word after a call), as `fold::pairs` holds it for a folded call. The identity guard is then none.
+    if sole_definition(region, defined, local, shape.callee) {
+        return Some(vec![Decoded { holder: Some(holder), ..operation }]);
+    }
+    let guard = Decoded { hole: value.to_bits(), holder: Some(holder), ..Decoded::heap(Heap::Identity, None, Some(Source::Register(shape.callee)), None) };
     Some(vec![guard, operation])
+}
+
+/// Whether the read at the local index `defined` of `region` is the only definition of `callee` that reaches the call at `local`:
+/// no instruction between writes `callee`, and no jump lands in the span from the read to the call (a path into the span would
+/// skip the read, and a resume stub at a PC in it runs what the interpreter reached only through the read).
+fn sole_definition(region: &LoopRegion, defined: usize, local: usize, callee: Register) -> bool {
+    let code = region.instructions();
+    let jumped_into = code.iter().filter(|instruction| instruction.op().control_flow_layout().jumps())
+        .filter_map(|instruction| (instruction.jump_target() as usize).checked_sub(region.header as usize))
+        .any(|target| (defined + 1..=local).contains(&target));
+    let written_between = code[defined + 1..local].iter().any(|instruction| instruction.written_registers().any(|register| register == callee));
+    !jumped_into && !written_between
 }
 
 /// A call of a native a row computes from its arguments, whose callee the call's definition holds by identity: `parseInt(s)` and
@@ -310,7 +328,7 @@ fn live_guard(pc: u32, address: usize) -> Result<Planned, String> {
 
 /// A row that leaves at `pc` when an interrupt is requested, and continues.
 fn poll_row(pc: u32) -> Result<Planned, String> {
-    let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
+    let interrupt = std::mem::offset_of!(super::super::CallContext, head.interrupt) as u64;
     Ok(Planned::single(control(Kind::Poll)?, padded_holes([interrupt]), None, Some(pc)))
 }
 

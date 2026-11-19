@@ -88,9 +88,14 @@ pub(crate) struct NativeFunctionLayout {
     pub(crate) object_offset: usize,
 }
 
+/// The function record as the stencils see it: the runtime's `FunctionRecord` with words of the same size and
+/// alignment in its fields (`Object` is an `ObjectHead`; `FunctionKind` is 12 bytes, align 4; `Value` a `u64`).
+/// `base_rows` checks each against the runtime type.
+pub(crate) type FunctionRecordWords = super::record_heads::FunctionRecord<super::record_heads::ObjectHead, [u32; 3], u64>;
+
 pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
-    record_size: 40,
-    object_offset: 0,
+    record_size: size_of::<FunctionRecordWords>(),
+    object_offset: core::mem::offset_of!(FunctionRecordWords, object),
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,7 +278,12 @@ pub(crate) mod words {
 
 /// Byte offsets of the fields of the compiled-code context (`CallContext`) and the dispatch
 /// payload (`JsStepDispatch`, behind the context's `adapter_payload`) the rows read.
-pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = 240;
+/// The call context's ABI prefix as the stencils see it: the runtime's `CallContextHead` with the environment
+/// and memory values as `u64`, the compiled artifact, table words and diagnostics as bytes (only their
+/// pointers are read), the program id as `u32` and the raised completion as three words (an `Option<Raised>`,
+/// 24 bytes). `base_rows` checks each against the runtime type.
+pub(crate) type CallContextWords = super::record_heads::CallContextHead<u64, u8, u8, u8, u32, [usize; 3]>;
+pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = core::mem::offset_of!(CallContextWords, adapter_payload);
 pub(crate) const JS_STEP_LOOP_ENTRY: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, loop_entry);
 pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_record_base);
 /// The storage word of the environment window the running activation holds its environment-owned locals in
