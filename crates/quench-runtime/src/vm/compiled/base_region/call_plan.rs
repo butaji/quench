@@ -38,6 +38,8 @@
 
 pub(super) mod inline;
 mod chain;
+pub(super) mod builtin;
+use builtin::BuiltinCall;
 pub(super) use chain::ChainRead;
 use chain::chained_reads;
 use super::{Exit, SLOT};

@@ -8,6 +8,7 @@
 
 use super::*;
 use quench_bjit::HOLES;
+use super::link::Target;
 
 /// Where a region's code can be re-entered: the resume thunk and, sorted by PC, each stub.
 pub(in crate::vm) struct ResumeTable {

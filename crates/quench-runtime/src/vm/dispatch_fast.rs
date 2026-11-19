@@ -3739,6 +3739,7 @@ lane_handler! {
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
 mod protocol_misses; use protocol_misses::*;
+mod frame_words; pub(in crate::vm) use frame_words::{frame_word, set_frame_word};
 mod local_fields;
 use local_fields::{local_field_handler, local_field_miss};
 mod window_bodies;
