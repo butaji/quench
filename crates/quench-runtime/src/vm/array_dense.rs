@@ -40,7 +40,8 @@ impl<H: Host> Vm<H> {
         let elements = self.array_search_elements(source).filter(|elements| range.end <= elements.len())?;
         if let Some(values) = elements.wide_values() {
             let values = &values[range];
-            if values.iter().any(|value| value.is_deleted()) {
+            // A backing whose every value is an int32 holds no hole: the count proves it.
+            if !elements.holds_only_int32() && values.iter().any(|value| value.is_deleted()) {
                 return None;
             }
             let (base, len) = (values.as_ptr(), values.len());
@@ -106,7 +107,7 @@ impl<H: Host> Vm<H> {
         let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
         let elements = array.elements();
         let segment = if let Some(values) = elements.wide_values() {
-            if values.iter().any(|value| value.is_deleted()) {
+            if !elements.holds_only_int32() && values.iter().any(|value| value.is_deleted()) {
                 return None;
             }
             ConcatSegment::Wide(values.as_ptr(), values.len())
@@ -157,7 +158,7 @@ impl<H: Host> Vm<H> {
         if let Some(values) = elements.wide_values() {
             let values = &values[range];
             append_values(out, values.len(), |index| values[index]);
-            return !values.iter().any(|value| value.is_deleted());
+            return elements.holds_only_int32() || !values.iter().any(|value| value.is_deleted());
         }
         if let Some(words) = elements.narrow_words() {
             let words = &words[range];

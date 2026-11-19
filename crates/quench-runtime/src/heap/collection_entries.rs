@@ -295,10 +295,13 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         };
         match self.index() {
             Some(index) => index.find(hash, matches),
-            None => {
-                let hashes = self.table.hashes();
-                (0..slots.len()).find(|&slot| hashes[slot] == hash && matches(slot))
-            }
+            None => self
+                .table
+                .hashes()
+                .iter()
+                .enumerate()
+                .find(|&(slot, &slot_hash)| slot_hash == hash && matches(slot))
+                .map(|(slot, _)| slot),
         }
     }
 

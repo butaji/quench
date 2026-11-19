@@ -190,11 +190,8 @@ impl<H: Host> Vm<H> {
     /// with its byte swap. `None` leaves the call to `data_view_native`, which raises what this
     /// declines.
     pub(super) fn plain_data_view_access(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
-        // One arm per element type, so each inlined copy folds its width and conversion.
-        if data_view_setter(native) { self.plain_data_view_set(native, this, args) } else { self.plain_data_view_get(native, this, args) }
-    }
-
-    fn plain_data_view_get(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
+        // One match, one arm per element type, so each inlined copy folds its width,
+        // direction and conversion; no second call level or setter test per access.
         match native {
             Native::DataViewGetUint8 => self.data_view_access_of(Native::DataViewGetUint8, this, args),
             Native::DataViewGetInt8 => self.data_view_access_of(Native::DataViewGetInt8, this, args),
@@ -205,12 +202,6 @@ impl<H: Host> Vm<H> {
             Native::DataViewGetFloat16 => self.data_view_access_of(Native::DataViewGetFloat16, this, args),
             Native::DataViewGetFloat32 => self.data_view_access_of(Native::DataViewGetFloat32, this, args),
             Native::DataViewGetFloat64 => self.data_view_access_of(Native::DataViewGetFloat64, this, args),
-            _ => None,
-        }
-    }
-
-    fn plain_data_view_set(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
-        match native {
             Native::DataViewSetUint8 => self.data_view_access_of(Native::DataViewSetUint8, this, args),
             Native::DataViewSetInt8 => self.data_view_access_of(Native::DataViewSetInt8, this, args),
             Native::DataViewSetUint16 => self.data_view_access_of(Native::DataViewSetUint16, this, args),
