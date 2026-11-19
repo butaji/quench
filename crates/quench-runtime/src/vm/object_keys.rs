@@ -34,6 +34,11 @@ impl<H: Host> Vm<H> {
         if kind != EnumerableOwnPropertyKind::Key {
             return self.shape_enumerable_data_items(object, kind);
         }
+        // The shape's key strings, made once per shape, copied into the result in one part; the
+        // allocation does not collect, so the memo's strings stay live through the copy.
+        if let Some(keys) = self.own_enumerable_key_values_cached(object) {
+            return Some(self.array_of(&keys));
+        }
         let keys: EnumerableKeys<Value> =
             self.shape_enumerable_keys(object)?.into_iter().map(|atom| self.atom_string(atom)).collect();
         Some(self.array_of(&keys))
@@ -100,7 +105,6 @@ impl<H: Host> Vm<H> {
     /// memo, as do compaction, `invalidate_field_caches` and program reset. A value is valid
     /// until the next collection, and a caller that holds one across a collection roots it as
     /// it would any other value. `None` wherever `own_enumerable_keys_cached` is `None`.
-    #[allow(dead_code)] // Read by the object-keys paths that come after this change.
     pub(crate) fn own_enumerable_key_values_cached(&mut self, object: Value) -> Option<std::rc::Rc<[Value]>> {
         let data = self.object_data(object)?;
         let shape = data.shape();
