@@ -1,6 +1,8 @@
 //! Math functions of Number arguments that a machine runs inline: their value once, for the
 //! interpreter (`Concrete`, `vm::number`) and for native code (`Emit`).
 use super::numeric::NumericStage;
+#[cfg(not(stencil_build))]
+use crate::float_layout::{BINARY16, BINARY64, power_of_two};
 
 /// The `f64` rounding and root operations as machine primitives: the standard library's methods in the
 /// runtime, `core`'s float math in the stencil build, which has no standard library.
@@ -113,7 +115,8 @@ pub(crate) fn float_unary(operation: FloatUnary, value: f64) -> f64 {
     }
 }
 
-/// The fraction at which `Math.round` rounds up.
+/// The fraction of the halfway point between two integers: `Math.round` rounds up at it, and
+/// binary16 rounds to even at it.
 pub(crate) const ROUND_HALF: f64 = 0.5;
 
 /// `Math.round`: the nearest integer, halves toward `+Infinity`, `-0` for a negative that rounds to zero.
@@ -177,6 +180,107 @@ pub(crate) fn multiply<S: NumericStage>(stage: &mut S, left: S::Word, right: S::
 #[inline(always)]
 pub(crate) fn extreme<S: NumericStage>(stage: &mut S, maximum: bool, left: S::Word, right: S::Word) -> S::Word {
     stage.float_extreme(maximum, left, right)
+}
+
+// The log1p forms meet at this magnitude. Below it, retain the correction
+// separately from 2x to avoid cancellation; above it, use 2x / (1 - x).
+#[cfg(not(stencil_build))]
+const ATANH_LOG_REDUCTION_BOUNDARY: f64 = 0.5;
+#[cfg(not(stencil_build))]
+const ATANH_DOMAIN_ENDPOINT: f64 = 1.0;
+#[cfg(not(stencil_build))]
+const ATANH_LOG_SCALE: f64 = 0.5;
+
+/// `Math.atanh`: an odd function, NaN beyond ±1, and ±Infinity at ±1.
+#[cfg(not(stencil_build))]
+pub(crate) fn atanh(value: f64) -> f64 {
+    if value.is_nan() || value == 0.0 {
+        return value;
+    }
+    let magnitude = value.abs();
+    if magnitude > ATANH_DOMAIN_ENDPOINT {
+        return f64::NAN;
+    }
+    if magnitude == ATANH_DOMAIN_ENDPOINT {
+        return f64::INFINITY.copysign(value);
+    }
+    let doubled = magnitude + magnitude;
+    let argument = if magnitude < ATANH_LOG_REDUCTION_BOUNDARY {
+        doubled + doubled * magnitude / (1.0 - magnitude)
+    } else {
+        doubled / (1.0 - magnitude)
+    };
+    (ATANH_LOG_SCALE * argument.ln_1p()).copysign(value)
+}
+
+/// `Math.f16round`: the nearest binary16, as a double.
+#[cfg(not(stencil_build))]
+pub(crate) fn f16_round(value: f64) -> f64 {
+    half_to_f64(f64_to_half(value))
+}
+
+/// The binary16 bits of `value`, rounded to nearest with ties to even; the conversion that
+/// Float16Array and DataView share with `Math.f16round`.
+#[cfg(not(stencil_build))]
+pub(crate) fn f64_to_half(value: f64) -> u16 {
+    let (wide, half) = (BINARY64, BINARY16);
+    let narrowing = wide.fraction_bits - half.fraction_bits;
+    let bits = value.to_bits();
+    let sign = ((bits >> wide.sign_shift()) as u16) << half.sign_shift();
+    let exponent = (bits >> wide.fraction_bits) & wide.exponent_mask();
+    let fraction = bits & wide.fraction_mask();
+    let infinity = half.infinity() as u16;
+    if exponent == wide.exponent_mask() {
+        // A NaN keeps its top payload bits, and at least one so it stays a NaN.
+        return sign
+            | if fraction == 0 { infinity } else { infinity | ((fraction >> narrowing) as u16).max(1) };
+    }
+    let absolute = value.abs();
+    if absolute < power_of_two(half.min_normal_exponent()) {
+        // Rounding up past the subnormals gives the smallest normal.
+        let rounded = round_half(absolute * power_of_two(-half.subnormal_exponent()));
+        return sign | rounded.min(half.implicit_bit() as u16);
+    }
+    let unbiased = exponent as i32 - wide.bias();
+    if unbiased > half.bias() {
+        return sign | infinity;
+    }
+    let mut significand = (fraction >> narrowing) as u16;
+    let remainder = fraction & ((1 << narrowing) - 1);
+    let halfway = 1 << (narrowing - 1);
+    if remainder > halfway || (remainder == halfway && significand & 1 != 0) {
+        significand += 1;
+    }
+    // A significand rounded up to the implicit bit carries into the exponent, and from the
+    // largest exponent into infinity.
+    let encoded = (((unbiased + half.bias()) as u16) << half.fraction_bits) + significand;
+    sign | encoded.min(infinity)
+}
+
+/// The integer nearest `value` (a binary16 subnormal's scaled magnitude), halves to even.
+#[cfg(not(stencil_build))]
+fn round_half(value: f64) -> u16 {
+    let lower = value.floor() as u64;
+    let fraction = value - lower as f64;
+    (lower + u64::from(fraction > ROUND_HALF || (fraction == ROUND_HALF && lower & 1 != 0))) as u16
+}
+
+/// The binary64 value of the binary16 `bits`, exact.
+#[cfg(not(stencil_build))]
+pub(crate) fn half_to_f64(bits: u16) -> f64 {
+    let (wide, half) = (BINARY64, BINARY16);
+    let bits = u64::from(bits);
+    let sign = (bits >> half.sign_shift()) << wide.sign_shift();
+    let magnitude = bits & !(1 << half.sign_shift());
+    let magnitude = if magnitude >= half.infinity() {
+        // Infinity and NaN keep their payload in the top fraction bits.
+        let payload = (magnitude & half.fraction_mask()) << (wide.fraction_bits - half.fraction_bits);
+        f64::from_bits(wide.infinity() | payload)
+    } else {
+        let (significand, exponent) = half.parts(magnitude);
+        significand as f64 * power_of_two(exponent)
+    };
+    f64::from_bits(magnitude.to_bits() | sign)
 }
 
 #[cfg(test)]

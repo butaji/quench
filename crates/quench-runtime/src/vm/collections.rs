@@ -1,4 +1,5 @@
 use super::*;
+use super::native_rows::Holder;
 
 pub(super) const MAP_ENTRY_KEY_INDEX: usize = 0;
 pub(super) const MAP_ENTRY_VALUE_INDEX: usize = 1;
@@ -349,13 +350,7 @@ impl<H: Host> Vm<H> {
         self.global(program, "WeakMap", weak_map)?;
         let weak_set = self.native_value(Native::WeakSet);
         self.weak_set_proto = self.object();
-        for (name, native) in [
-            ("add", Native::WeakSetAdd),
-            ("has", Native::WeakSetHas),
-            ("delete", Native::WeakSetDelete),
-        ] {
-            self.set_builtin_named(program, self.weak_set_proto, name, native)?;
-        }
+        self.install_native_rows(program, self.weak_set_proto, Holder::WeakSetPrototype)?;
         self.set_builtin_value_named(self.weak_set_proto, "constructor", weak_set)?;
         self.set_named(program, weak_set, "prototype", self.weak_set_proto)?;
         self.set_constructor_prototype_attributes(weak_set);
@@ -387,16 +382,7 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         prototype: Value,
     ) -> Result<(), JsError> {
-        for (name, native) in [
-            ("get", Native::WeakMapGet),
-            ("set", Native::WeakMapSet),
-            ("has", Native::WeakMapHas),
-            ("delete", Native::WeakMapDelete),
-            ("getOrInsert", Native::WeakMapGetOrInsert),
-            ("getOrInsertComputed", Native::WeakMapGetOrInsertComputed),
-        ] {
-            self.set_builtin_named(program, prototype, name, native)?;
-        }
+        self.install_native_rows(program, prototype, Holder::WeakMapPrototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)
     }
 
@@ -439,13 +425,7 @@ impl<H: Host> Vm<H> {
             .alloc_object(Self::empty_object(object_prototype));
         self.set_builtin_value_named(weak_set, "prototype", weak_set_prototype)?;
         self.set_builtin_value_named(weak_set_prototype, "constructor", weak_set)?;
-        for (name, native) in [
-            ("add", Native::WeakSetAdd),
-            ("has", Native::WeakSetHas),
-            ("delete", Native::WeakSetDelete),
-        ] {
-            self.set_builtin_named(program, weak_set_prototype, name, native)?;
-        }
+        self.install_native_rows(program, weak_set_prototype, Holder::WeakSetPrototype)?;
         self.set_constructor_prototype_attributes(weak_set);
         self.set_builtin_value_named(global, "WeakSet", weak_set)?;
 
@@ -482,21 +462,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::Map), map_proto);
-        for (name, native) in [
-            ("get", Native::MapGet),
-            ("set", Native::MapSet),
-            ("has", Native::MapHas),
-            ("delete", Native::MapDelete),
-            ("clear", Native::MapClear),
-            ("keys", Native::MapKeys),
-            ("values", Native::MapValues),
-            ("entries", Native::MapEntries),
-            ("forEach", Native::MapForEach),
-            ("getOrInsert", Native::MapGetOrInsert),
-            ("getOrInsertComputed", Native::MapGetOrInsertComputed),
-        ] {
-            self.set_builtin_named(program, map_proto, name, native)?;
-        }
+        self.install_native_rows(program, map_proto, Holder::MapPrototype)?;
         self.set_builtin_value_named(map_proto, "constructor", map)?;
         let size_getter = self.native_value(Native::MapSizeGetter);
         self.set_builtin_function_name(size_getter, "get size")?;
@@ -562,24 +528,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        for (name, native) in [
-            ("add", Native::SetAdd),
-            ("has", Native::SetHas),
-            ("delete", Native::SetDelete),
-            ("clear", Native::SetClear),
-            ("values", Native::SetValues),
-            ("entries", Native::SetEntries),
-            ("forEach", Native::SetForEach),
-            ("difference", Native::SetDifference),
-            ("intersection", Native::SetIntersection),
-            ("symmetricDifference", Native::SetSymmetricDifference),
-            ("union", Native::SetUnion),
-            ("isDisjointFrom", Native::SetIsDisjointFrom),
-            ("isSubsetOf", Native::SetIsSubsetOf),
-            ("isSupersetOf", Native::SetIsSupersetOf),
-        ] {
-            self.set_builtin_named(program, set_proto, name, native)?;
-        }
+        self.install_native_rows(program, set_proto, Holder::SetPrototype)?;
         let values = self.native_value(Native::SetValues);
         self.set_builtin_value_named(set_proto, "keys", values)?;
         self.set_builtin_value_named(set_proto, "constructor", set)?;
@@ -731,9 +680,15 @@ impl<H: Host> Vm<H> {
             Native::Iterator => {
                 Err(self.type_error(p, "Iterator constructor cannot be called".into()))
             }
-            Native::MapGet
-            | Native::MapSet
-            | Native::MapHas
+            Native::MapGet | Native::MapHas => {
+                let key = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if let Some(found) = self.pure_collection_lookup(native, this, key) {
+                    return Ok(found);
+                }
+                self.require_brand(p, this, Brand::Map, "Map method")?;
+                unreachable!("a Map receiver answers its lookup")
+            }
+            Native::MapSet
             | Native::MapDelete
             | Native::MapClear
             | Native::MapKeys
@@ -742,33 +697,10 @@ impl<H: Host> Vm<H> {
             | Native::MapForEach => {
                 self.require_brand(p, this, Brand::Map, "Map method")?;
                 match native {
-                    Native::MapGet => {
-                        let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-                        let Some(index) = self.map_entry_index(this, key) else {
-                            return Ok(Value::UNDEFINED);
-                        };
-                        let Some(entries) = self.heap.map_entries(this) else {
-                            unreachable!("receiver validated above")
-                        };
-                        Ok(entries.value_at(index))
-                    }
                     Native::MapSet => {
                         self.map_set(this, args);
                         Ok(this)
                     }
-                    Native::MapHas => Ok(
-                        if self
-                            .map_entry_index(
-                                this,
-                                args.first().copied().unwrap_or(Value::UNDEFINED),
-                            )
-                            .is_some()
-                        {
-                            Value::TRUE
-                        } else {
-                            Value::FALSE
-                        },
-                    ),
                     Native::MapDelete => {
                         let key = args.first().copied().unwrap_or(Value::UNDEFINED);
                         let Some(index) = self.map_entry_index(this, key) else {

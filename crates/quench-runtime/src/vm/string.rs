@@ -179,22 +179,6 @@ fn string_html_method(native: Native) -> Option<&'static StringHtmlMethod> {
         .find(|method| method.native == native)
 }
 
-pub(super) fn rfind_utf16(
-    text: super::wtf16::Units<'_>,
-    search: super::wtf16::Units<'_>,
-    position: usize,
-) -> Option<usize> {
-    if search.is_empty() {
-        return Some(position.min(text.len()));
-    }
-    (search.len() <= text.len())
-        .then_some(position.min(text.len() - search.len()))
-        .into_iter()
-        .flat_map(|end| 0..=end)
-        .rev()
-        .find(|index| text.slice(*index..*index + search.len()) == search)
-}
-
 impl<H: Host> Vm<H> {
     pub(super) fn string_build_result(
         &mut self,
@@ -583,35 +567,25 @@ impl<H: Host> Vm<H> {
         self.get_index(p, value, symbol)
     }
 
+    /// String.prototype.split: the in-place body (`split_in_place`) first, which takes a flat
+    /// string at a flat string separator with no limit; any other call runs the general steps
+    /// (the protocol lookups, ToUint32 of the limit, `split_runs`).
     pub(super) fn string_split_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if let Some(parts) = self.split_in_place(Native::StringSplit, this, args) {
+            return Ok(parts);
+        }
         self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             vm.require_object_coercible(p, this)?;
             let separator = args.first().copied().unwrap_or(Value::UNDEFINED);
             let limit = args.get(1).copied();
-            if vm.is_object_like(separator) {
-                let symbol =
-                    vm.well_known_symbols.get(WellKnownSymbol::Split).ok_or_else(|| {
-                        vm.type_error(p, "RegExp split symbol is unavailable".into())
-                    })?;
-                let method = vm.string_protocol_method(p, separator, symbol)?;
-                if !method.is_undefined() && !method.is_null() {
-                    if !vm.is_function(method) {
-                        return Err(vm.type_error(p, "String split method is not callable".into()));
-                    }
-                    return vm.call_protocol_method(
-                        p,
-                        method,
-                        separator,
-                        &[this, limit.unwrap_or(Value::UNDEFINED)],
-                    );
-                }
+            if let Some(delegated) = vm.split_by_protocol(p, this, separator, limit)? {
+                return Ok(delegated);
             }
-
             let input = vm.coerce_js_string(p, this)?;
             let limit = vm.regexp_split_limit(p, limit)?;
             let separator_string = vm.coerce_js_string(p, separator)?;
@@ -628,6 +602,33 @@ impl<H: Host> Vm<H> {
                     values,
                 )))
         })
+    }
+
+    /// The `@@split` protocol of `separator`: its method's result when the separator is an object
+    /// with one, `None` for a primitive or a separator without the method (the general steps run).
+    fn split_by_protocol(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        separator: Value,
+        limit: Option<Value>,
+    ) -> Result<Option<Value>, JsError> {
+        if !self.is_object_like(separator) {
+            return Ok(None);
+        }
+        let symbol = self
+            .well_known_symbols
+            .get(WellKnownSymbol::Split)
+            .ok_or_else(|| self.type_error(p, "RegExp split symbol is unavailable".into()))?;
+        let method = self.string_protocol_method(p, separator, symbol)?;
+        if method.is_undefined() || method.is_null() {
+            return Ok(None);
+        }
+        if !self.is_function(method) {
+            return Err(self.type_error(p, "String split method is not callable".into()));
+        }
+        self.call_protocol_method(p, method, separator, &[this, limit.unwrap_or(Value::UNDEFINED)])
+            .map(Some)
     }
 
     pub(super) fn string_match_or_search_native(
@@ -725,6 +726,9 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// String.prototype.replace and replaceAll: the in-place string-pattern body
+    /// (`replace_string_pattern`) first, which borrows the operands; a pattern that is not a flat
+    /// string, a function replacement or a rope takes the general steps below.
     pub(super) fn string_replace_native(
         &mut self,
         p: &ResidualProgram,
@@ -732,38 +736,16 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         replace_all: bool,
     ) -> Result<Value, JsError> {
+        let native = if replace_all { Native::StringReplaceAll } else { Native::StringReplace };
+        if let Some(replaced) = self.replace_string_pattern(p, native, this, args) {
+            return replaced;
+        }
         self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             vm.require_object_coercible(p, this)?;
             let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
             let replacement_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-            if vm.is_object_like(search_value) {
-                if replace_all && vm.regexp_is_regexp(p, search_value)? {
-                    let atom = vm.intern_atom("flags");
-                    let flags = vm.get_property(p, search_value, atom)?;
-                    vm.require_object_coercible(p, flags)?;
-                    let flags = vm.coerce_js_string(p, flags)?;
-                    if !flags.host_string().contains(MATCH_ALL_FLAGS) {
-                        return Err(vm.type_error(
-                            p,
-                            "String.prototype.replaceAll requires a global RegExp".into(),
-                        ));
-                    }
-                }
-                let symbol = vm
-                    .well_known_symbols
-                    .get(WellKnownSymbol::Replace)
-                    .ok_or_else(|| {
-                        vm.type_error(p, "RegExp replace symbol is unavailable".into())
-                    })?;
-                let method = vm.string_protocol_method(p, search_value, symbol)?;
-                if !method.is_undefined() && !method.is_null() {
-                    if !vm.is_function(method) {
-                        return Err(
-                            vm.type_error(p, "String replace method is not callable".into())
-                        );
-                    }
-                    return vm.call_protocol_method(p, method, search_value, &[this, replacement_value]);
-                }
+            if let Some(delegated) = vm.replace_by_protocol(p, this, search_value, replacement_value, replace_all)? {
+                return Ok(delegated);
             }
             let input = vm.coerce_js_string(p, this)?;
             let search = vm.coerce_js_string(p, search_value)?;
@@ -782,33 +764,90 @@ impl<H: Host> Vm<H> {
                     return vm.replace_units(p, Value::UNDEFINED, &input, &search, &template, replace_all),
                 StringReplacement::Callable(method) => method,
             };
-            let callback_inputs = Some([vm.heap.alloc_string(search.clone()), vm.heap.alloc_string(input.clone())]);
-            vm.with_call_roots(callback_inputs.into_iter().flatten(), |vm| {
-                let search_length = search.units().len();
-                // Empty matches occur at each code-unit boundary. The immutable
-                // input/search strings determine positions independently of callbacks.
-                let advance = search_length.max(1);
-                let mut position = Some(first);
-                let mut cursor = 0;
-                let mut output = super::wtf16::JsStringBuilder::default();
-                while let Some(index) = position {
-                    output.append_slice(&input, cursor..index);
-                    let [matched, whole] = callback_inputs.expect("callable replacement owns guest strings");
-                    let value = vm.call_value(p, method, Value::UNDEFINED, &[matched, Value::number(index as f64), whole])?;
-                    let text = vm.coerce_js_string(p, value)?;
-                    output.append(&text);
-                    cursor = index + search_length;
-                    let next = index + advance;
-                    position = if replace_all && next <= input.units().len() {
-                        input.find_units(search.units(), next)
-                    } else {
-                        None
-                    };
-                }
-                output.append_slice(&input, cursor..input.units().len());
-                let output = vm.string_build_result(p, output.finish())?;
-                Ok(vm.heap.alloc_string(output))
-            })
+            vm.replace_with_callback(p, &input, &search, first, method, replace_all)
+        })
+    }
+
+    /// The `@@replace` protocol of `search_value`: its method's result when it is an object with
+    /// one, `None` for a primitive or a pattern without the method. `replaceAll` first requires
+    /// a RegExp pattern to be global.
+    fn replace_by_protocol(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        search_value: Value,
+        replacement_value: Value,
+        replace_all: bool,
+    ) -> Result<Option<Value>, JsError> {
+        if !self.is_object_like(search_value) {
+            return Ok(None);
+        }
+        if replace_all && self.regexp_is_regexp(p, search_value)? {
+            self.require_global_regexp(p, search_value)?;
+        }
+        let symbol = self
+            .well_known_symbols
+            .get(WellKnownSymbol::Replace)
+            .ok_or_else(|| self.type_error(p, "RegExp replace symbol is unavailable".into()))?;
+        let method = self.string_protocol_method(p, search_value, symbol)?;
+        if method.is_undefined() || method.is_null() {
+            return Ok(None);
+        }
+        if !self.is_function(method) {
+            return Err(self.type_error(p, "String replace method is not callable".into()));
+        }
+        self.call_protocol_method(p, method, search_value, &[this, replacement_value]).map(Some)
+    }
+
+    /// `replaceAll`'s check of a RegExp pattern: its `flags` must hold `g`.
+    fn require_global_regexp(&mut self, p: &ResidualProgram, regexp: Value) -> Result<(), JsError> {
+        let atom = self.intern_atom("flags");
+        let flags = self.get_property(p, regexp, atom)?;
+        self.require_object_coercible(p, flags)?;
+        let flags = self.coerce_js_string(p, flags)?;
+        if flags.host_string().contains(MATCH_ALL_FLAGS) {
+            return Ok(());
+        }
+        Err(self.type_error(p, "String.prototype.replaceAll requires a global RegExp".into()))
+    }
+
+    /// The replacement of each match of `search` in `input` by `method`'s result (coerced to a
+    /// string), from the first match at `first`: every later match for `replaceAll`. The matches
+    /// are found in the immutable `input` and `search`, which the callbacks cannot change.
+    fn replace_with_callback(
+        &mut self,
+        p: &ResidualProgram,
+        input: &JsString,
+        search: &JsString,
+        first: usize,
+        method: Value,
+        replace_all: bool,
+    ) -> Result<Value, JsError> {
+        let callback_inputs = [self.heap.alloc_string(search.clone()), self.heap.alloc_string(input.clone())];
+        self.with_call_roots(callback_inputs, |vm| {
+            let search_length = search.units().len();
+            // Empty matches occur at each code-unit boundary.
+            let advance = search_length.max(1);
+            let mut position = Some(first);
+            let mut cursor = 0;
+            let mut output = super::wtf16::JsStringBuilder::default();
+            while let Some(index) = position {
+                output.append_slice(input, cursor..index);
+                let [matched, whole] = callback_inputs;
+                let value = vm.call_value(p, method, Value::UNDEFINED, &[matched, Value::number(index as f64), whole])?;
+                let text = vm.coerce_js_string(p, value)?;
+                output.append(&text);
+                cursor = index + search_length;
+                let next = index + advance;
+                position = if replace_all && next <= input.units().len() {
+                    input.find_units(search.units(), next)
+                } else {
+                    None
+                };
+            }
+            output.append_slice(input, cursor..input.units().len());
+            let output = vm.string_build_result(p, output.finish())?;
+            Ok(vm.heap.alloc_string(output))
         })
     }
 }

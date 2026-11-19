@@ -1,29 +1,5 @@
 use super::*;
-
-const DATA_VIEW_METHODS: &[(&str, Native)] = &[
-    ("getInt8", Native::DataViewGetInt8),
-    ("getUint8", Native::DataViewGetUint8),
-    ("getInt16", Native::DataViewGetInt16),
-    ("getUint16", Native::DataViewGetUint16),
-    ("getInt32", Native::DataViewGetInt32),
-    ("getUint32", Native::DataViewGetUint32),
-    ("getFloat16", Native::DataViewGetFloat16),
-    ("getFloat32", Native::DataViewGetFloat32),
-    ("getFloat64", Native::DataViewGetFloat64),
-    ("getBigInt64", Native::DataViewGetBigInt64),
-    ("getBigUint64", Native::DataViewGetBigUint64),
-    ("setInt8", Native::DataViewSetInt8),
-    ("setUint8", Native::DataViewSetUint8),
-    ("setInt16", Native::DataViewSetInt16),
-    ("setUint16", Native::DataViewSetUint16),
-    ("setInt32", Native::DataViewSetInt32),
-    ("setUint32", Native::DataViewSetUint32),
-    ("setFloat16", Native::DataViewSetFloat16),
-    ("setFloat32", Native::DataViewSetFloat32),
-    ("setFloat64", Native::DataViewSetFloat64),
-    ("setBigInt64", Native::DataViewSetBigInt64),
-    ("setBigUint64", Native::DataViewSetBigUint64),
-];
+use super::native_rows::Holder;
 
 const DATA_VIEW_ACCESSORS: &[(&str, Native)] = &[
     ("buffer", Native::DataViewBufferGetter),
@@ -80,11 +56,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        for (name, native) in DATA_VIEW_METHODS {
-            let method = self.native_with_realm(*native, global, global);
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(prototype, name, method)?;
-        }
+        self.install_realm_native_rows(prototype, Holder::DataViewPrototype, global)?;
         for (name, native) in DATA_VIEW_ACCESSORS {
             let getter = self.native_with_realm(*native, global, global);
             self.set_builtin_function_name(getter, &format!("get {name}"))?;
