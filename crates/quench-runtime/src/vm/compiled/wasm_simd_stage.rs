@@ -1,23 +1,24 @@
 //! The Wasm tier's vectors: the primitives of `WasmSimd` as Cranelift vector instructions (a
 //! native row) or a callout of the operator's kernel, the vector registers, and the lowering
-//! and analysis of each `Simd` step. A vector access checks through the staged memory rule.
+//! and analysis of each `Simd` step. A vector access checks and moves through the staged memory
+//! rules (`load_vector`, `store_vector`).
 
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{
-    Analysis, AnalysisState, Emitter, Host, Kind, Region, SIMD_KERNEL_LEFT, SIMD_KERNEL_RESULT,
+    Analysis, AnalysisState, Emitter, Host, Kind, SIMD_KERNEL_LEFT, SIMD_KERNEL_RESULT,
     SIMD_KERNEL_RIGHT, SIMD_KERNEL_WORDS, Slot, VECTOR_IR, compiled_simd_kernel,
 };
 use crate::WasmType;
 use crate::bytecode::{Function, WideInstruction};
-use crate::staged::wasm_memory::{effective_address, load_vector, store_vector};
-use crate::staged::machine::{MachineAccess, MachineStage, MachineVector};
+use crate::staged::machine::{MachineStage, MachineVector};
+use crate::staged::wasm_memory::effective_address;
+use crate::staged::wasm_memory_vector::{load_vector, store_vector};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_simd::{Lanes, Native, Simd, WasmSimd, simd, simd_scalar};
-use crate::wasm::integer::I64BinaryOperator as Binary;
 use crate::wasm::V128_BYTES;
 use crate::wasm::simd::SimdKernel;
-use cranelift_codegen::ir::{self, AbiParam, MemFlagsData, Signature, types};
+use cranelift_codegen::ir::{self, AbiParam, Signature, types};
 use cranelift_frontend::Variable;
 
 impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
@@ -172,13 +173,15 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Simd::Load => {
                 let index = self.read(c, Kind::I64);
-                let value = infallible(load_vector(self, index, 0, self.vector_proven(pc)));
+                let proven = self.vector_proven(pc);
+                let value = infallible(load_vector(self, index, 0, proven));
                 self.write_vector(a, value);
             }
             Simd::Store => {
                 let index = self.read(c, Kind::I64);
+                let proven = self.vector_proven(pc);
                 let value = self.read_vector(a);
-                infallible(store_vector(self, index, 0, value, self.vector_proven(pc)));
+                infallible(store_vector(self, index, 0, value, proven));
             }
         }
     }

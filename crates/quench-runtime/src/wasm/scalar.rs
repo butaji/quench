@@ -2,7 +2,7 @@
 
 use crate::bytecode::Constant;
 
-pub(crate) const V128_BYTES: usize = std::mem::size_of::<u128>();
+pub(crate) use crate::staged::wasm::V128_BYTES;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WasmType {

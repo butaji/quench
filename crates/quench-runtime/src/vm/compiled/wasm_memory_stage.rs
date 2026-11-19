@@ -14,8 +14,7 @@ use crate::staged::wasm::Width;
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::integer::I64BinaryOperator as Binary;
 use crate::staged::wasm_memory::{
-    Access, Memory, WasmMemory, WasmMemoryGrow, WasmMemoryWrite, copy, fill, load, load_vector, size,
-    store, store_vector,
+    Access, Memory, WasmMemory, WasmMemoryGrow, WasmMemoryWrite, copy, fill, load, size, store,
 };
 use crate::wasm::INDEX_GROW_FAILURE;
 use crate::wasm::memory::WASM_PAGE_BITS;

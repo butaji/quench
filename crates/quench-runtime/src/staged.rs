@@ -108,6 +108,8 @@ pub(crate) mod wasm_instance;
 pub(crate) mod wasm_activation;
 pub(crate) mod wasm_machine;
 pub(crate) mod wasm_memory;
+pub(crate) mod wasm_memory_vector;
+pub(crate) mod wasm_memory_bytes;
 pub(crate) mod wasm_table_ops;
 pub(crate) mod wasm_operation;
 pub(crate) mod wasm_simd;

@@ -161,6 +161,8 @@ impl Probe {
 }
 
 impl WasmMemory for Probe {
+    type Vector = ();
+
     fn guarded(&self) -> bool {
         self.guarded
     }
@@ -176,11 +178,19 @@ impl WasmMemory for Probe {
     fn memory_load(&mut self, _: Access, _: usize, _: u32) -> usize {
         self.trace("load")
     }
+
+    fn memory_load_vector(&mut self, _: usize, _: u32) {
+        self.trace("load vector");
+    }
 }
 
 impl WasmMemoryWrite for Probe {
     fn memory_store(&mut self, _: Access, _: usize, _: u32, _: usize) {
         self.trace("store");
+    }
+
+    fn memory_store_vector(&mut self, _: usize, _: u32, _: ()) {
+        self.trace("store vector");
     }
 
     fn memory_fill(&mut self, _: usize, _: usize, _: usize) {

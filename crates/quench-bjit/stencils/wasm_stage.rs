@@ -15,7 +15,7 @@ use crate::staged::wasm_memory::{Access, WasmMemory, WasmMemoryGrow, WasmMemoryW
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
-use crate::wasm::WasmTrap;
+use crate::wasm::{V128_BYTES, WasmTrap};
 use crate::words::{HOLE_B, S, hole64, slot};
 
 /// The linear memory a Wasm function runs over: its base in the second pin, its length in bytes
@@ -43,6 +43,8 @@ impl StencilMemory {
 }
 
 impl WasmMemory for StencilMemory {
+    type Vector = u128;
+
     fn guarded(&self) -> bool {
         false
     }
@@ -72,6 +74,19 @@ impl WasmMemory for StencilMemory {
         };
         access.loaded(raw)
     }
+
+    /// The 16 bytes at `index + offset`, one byte at a time: a stencil calls nothing, so no copy.
+    #[inline(always)]
+    fn memory_load_vector(&mut self, index: u64, offset: u32) -> u128 {
+        let at = self.at(index, offset);
+        let (mut word, mut byte) = (0u128, 0);
+        while byte < V128_BYTES {
+            // SAFETY: the rule checked the vector's bytes inside the memory.
+            word |= u128::from(unsafe { *at.add(byte) }) << (u8::BITS as usize * byte);
+            byte += 1;
+        }
+        word
+    }
 }
 
 impl WasmMemoryWrite for StencilMemory {
@@ -86,6 +101,18 @@ impl WasmMemoryWrite for StencilMemory {
                 4 => (at as *mut u32).write_unaligned(value as u32),
                 _ => (at as *mut u64).write_unaligned(value),
             }
+        }
+    }
+
+    /// The 16 bytes of `value` at `index + offset`, one byte at a time (as the load).
+    #[inline(always)]
+    fn memory_store_vector(&mut self, index: u64, offset: u32, value: u128) {
+        let at = self.at(index, offset);
+        let mut byte = 0;
+        while byte < V128_BYTES {
+            // SAFETY: the rule checked the vector's bytes inside the memory.
+            unsafe { *at.add(byte) = (value >> (u8::BITS as usize * byte)) as u8 };
+            byte += 1;
         }
     }
 

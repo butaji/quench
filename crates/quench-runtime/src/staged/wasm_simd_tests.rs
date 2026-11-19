@@ -72,6 +72,11 @@ struct Route(Vec<String>);
 
 impl WasmSimd for Route {
     type Value = ();
+    type Scalar = ();
+
+    fn constant_vector(&mut self, _: u128) {
+        self.0.push("constant".into());
+    }
 
     fn vector_native(&mut self, native: Native, _: (), _: Option<()>) {
         self.0.push(format!("native {native:?}"));
@@ -79,6 +84,10 @@ impl WasmSimd for Route {
 
     fn vector_kernel(&mut self, selector: u32, _: (), _: Option<()>) {
         self.0.push(format!("kernel {selector}"));
+    }
+
+    fn scalar_kernel(&mut self, selector: u32, _: (), _: Option<()>) {
+        self.0.push(format!("scalar {selector}"));
     }
 
     fn vector_shuffle(&mut self, _: [u8; V128_BYTES], _: (), _: ()) {
