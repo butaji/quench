@@ -419,3 +419,6 @@ mod tests;
 #[cfg(test)]
 #[path = "osr_compile/method_tests.rs"]
 mod method_tests;
+#[cfg(test)]
+#[path = "osr_compile/math_replacement_tests.rs"]
+mod math_replacement_tests;

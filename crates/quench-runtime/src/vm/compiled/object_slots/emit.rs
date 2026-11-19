@@ -359,6 +359,11 @@ impl NumericStage for Emit<'_, '_> {
     fn float_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
         numbers::float_remainder(self, left, right)
     }
+    fn integral_remainder(&mut self, left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
+        // The u-jit makes the float remainder for every operand (a leaf call it can hold), so its miss is never taken.
+        let value = numbers::float_remainder(self, left, right);
+        (value, self.i32_constant(0))
+    }
     fn int_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
         self.raw_binary(Binary::RemainderSigned, left, right)
     }
