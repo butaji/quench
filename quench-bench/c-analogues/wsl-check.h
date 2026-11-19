@@ -1461,9 +1461,18 @@ static void check_program_wrapped(Program *p) {
   for (int i = 0; i < p->statements.n; i++) fin_visit(p->statements.v[i]);
 }
 
+/* ---- HighZombieFinder.js: a dot or index expression must have been lowered before this point ---- */
+static void zombie_visit(Ast *n);
+static void zombie_child(void *cx, Ast *c) { (void)cx; zombie_visit(c); }
+static void zombie_visit(Ast *n) {
+  if (n->tag == A_DOT || n->tag == A_INDEX)
+    chk_error(cat(4, origin_string(n), ": High zombie: ", js_tostr(n), ""));
+  visit_children(n, zombie_child, NULL);
+}
+
 /* The post-check passes ported so far, in Prepare.js order: checkLiteralTypes, checkProgramWrapped,
- * checkReturns, checkUnreachableCode, checkLoops, checkRecursion, checkProgramWrapped (resolveProperties,
- * the zombie checks and inline are not ported yet). */
+ * checkReturns, checkUnreachableCode, checkLoops, checkRecursion, checkProgramWrapped. findHighZombies
+ * (zombie_visit) is ported but not wired in: it must run after resolveProperties, which is not ported. */
 static void post_check_passes(Program *p) {
   for (int i = 0; i < p->statements.n; i++) littype_visit(p->statements.v[i]);
   check_program_wrapped(p);
