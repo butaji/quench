@@ -35,6 +35,22 @@ impl<W, P> Operation<W, P> {
         })
     }
 
+    /// `IntCaseIndex`: the case slot of register `c` among the `b` dense int labels from `imm`.
+    fn decode_int_case(instruction: WideInstruction) -> Option<Self> {
+        let count = instruction.element_count();
+        if count == 0 { return None; }
+        let minimum = instruction.imm() as i32;
+        let maximum = minimum.checked_add(i32::from(count) - 1)?;
+        Some(Self::Number(NumberOperation::IntCase {
+            destination: instruction.result_register(),
+            source: crate::bytecode::Operand::register(instruction.register_c()),
+            minimum,
+            maximum,
+            count,
+        }))
+    }
+
+    /// `Binary` over two registers: equality as its own row, any other operator the VM's.
     /// `NumericAdd` and `NumericMultiply`: the Number arithmetic of their own operator (`+` or `*`)
     /// over their two operands, which `Binary` decodes to the same operation (`decode_binary`). A record
     /// whose operator field names another operator is none.

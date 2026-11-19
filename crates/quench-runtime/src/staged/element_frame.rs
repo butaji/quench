@@ -70,11 +70,6 @@ pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
     #[inline(always)]
     fn kept_view(&mut self, _stage: &mut S, _base: S::Word, _writable: bool) -> Option<ElementView<S::Word>> { None }
 
-    /// The dense view of the array in register `base` that a proof the frame holds gives, for a read
-    /// or (`writable`) a store; `None` leaves the access to prove the array itself.
-    #[inline(always)]
-    fn proved_view(&mut self, _stage: &mut S, _base: Register, _writable: bool) -> Option<DenseView<S::Word>> { None }
-
     /// Records the dense view an element access proved of the array `base`.
     #[inline(always)]
     fn keep_view(&mut self, _stage: &mut S, _base: S::Word, _writable: bool, _view: DenseView<S::Word>) {}

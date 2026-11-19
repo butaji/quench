@@ -467,8 +467,84 @@ pub unsafe extern "rust-preserve-none" fn exit_here(frame: usize, ctx: usize, p0
     unsafe { go!(HOLE_EXIT0, s) }
 }
 
+/// The direct-call rows and the reload rows, from one list of shapes. A `direct` shape is the
+/// arity and the receiver mode of one `call_direct_a<N>_<mode>` row; a `reload` shape is the pinned
+/// place one `reload_<n>` row restores. Each row is a `#[unsafe(no_mangle)]` function the stitcher
+/// finds by its name, so the names are listed here (no identifier concatenation).
+macro_rules! call_rows {
+    (
+        direct { $( $direct:ident : $argc:expr, $mode:expr ; )* }
+        reload { $( $reload:ident : $place:expr ; )* }
+    ) => {
+        $(
+            #[unsafe(no_mangle)]
+            pub unsafe extern "rust-preserve-none" fn $direct(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+                unsafe {
+                    let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
+                    match enter::<{ $argc }, { $mode }>(&s) {
+                        Entered::Returned => go!(HOLE_TAKEN, dead(&s)),
+                        Entered::Refused => {
+                            core::hint::cold_path();
+                            go!(HOLE_NEXT, dead(&s))
+                        }
+                        Entered::Raised => {
+                            core::hint::cold_path();
+                            go!(HOLE_EXIT0, raising(&s, payload(&s), hole64::<HOLE_DIRECT_PC>()))
+                        }
+                        Entered::Left(status, word) => {
+                            core::hint::cold_path();
+                            go!(HOLE_EXIT0, leaving(&s, status, word))
+                        }
+                    }
+                }
+            }
+        )*
+        $(
+            #[unsafe(no_mangle)]
+            pub unsafe extern "rust-preserve-none" fn $reload(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+                unsafe {
+                    let s = reload::<{ $place }>(S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] });
+                    go!(HOLE_NEXT, s)
+                }
+            }
+        )*
+    };
+}
+
+call_rows! {
+    direct {
+        call_direct_a0_strict: 0, STRICT;
+        call_direct_a1_strict: 1, STRICT;
+        call_direct_a2_strict: 2, STRICT;
+        call_direct_a3_strict: 3, STRICT;
+        call_direct_a0_sloppy: 0, SLOPPY;
+        call_direct_a1_sloppy: 1, SLOPPY;
+        call_direct_a2_sloppy: 2, SLOPPY;
+        call_direct_a3_sloppy: 3, SLOPPY;
+        call_direct_a0_lexical: 0, LEXICAL;
+        call_direct_a1_lexical: 1, LEXICAL;
+        call_direct_a2_lexical: 2, LEXICAL;
+        call_direct_a3_lexical: 3, LEXICAL;
+    }
+    reload {
+        reload_4: PIN;
+        reload_5: PIN + 1;
+        reload_6: PIN + 2;
+        reload_7: PIN + 3;
+        reload_8: PINF;
+        reload_9: PINF + 1;
+        reload_10: PINF + 2;
+        reload_11: PINF + 3;
+        reload_12: PINF + 4;
+        reload_13: PINF + 5;
+        reload_14: PINF + 6;
+        reload_15: PINF + 7;
+    }
+}
+
 /// A pinned register back from the tagged word a `Spill` row wrote to the frame slot at hole 0:
-/// the proof (an int word, a Number) was made by the spill, so it is not made again.
+/// the proof (an int word, a Number) was made by the spill, so it is not made again. Backend glue:
+/// the planner's spill slots, which no protocol row names.
 #[inline(always)]
 unsafe fn reload<const P: u8>(s: S) -> S {
     let mut s = s;
