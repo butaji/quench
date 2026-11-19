@@ -26,7 +26,7 @@
 //! (`RawWebs::raw_ops`).
 
 use super::RegisterSet;
-use crate::bytecode::{Class, Function, Op, Successors, Traits, WideInstruction};
+use crate::bytecode::{Function, Op, Successors, Traits, WideInstruction};
 use crate::compile::liveness::MethodSite;
 use crate::staged::wasm_operation::{Operand, WasmOperation};
 use crate::WasmType;
@@ -170,13 +170,21 @@ fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool,
         }
         return (!uses.is_empty() || !definitions.is_empty()).then_some(Roles::Wide { uses, definitions, neutral_uses: vec![] });
     }
-    match op.class() {
-        Class::Move => Some(Roles::Copy { destination: a, sources: vec![b] }),
-        Class::WasmSelect => Some(Roles::Copy { destination: a, sources: vec![b, instruction.c()] }),
-        Class::LoadConst | Class::WasmFillRegisters if rewritten || constant_neutral(instruction.constant_index()) => Some(Roles::Neutral),
-        Class::Return if returns_wide && !rewritten && op.traits().has(Traits::RETURN_VALUE) => Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] }),
-        Class::WasmReturn64 => Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] }),
-        _ => None,
+    let traits = op.traits();
+    if traits.has(Traits::REGISTER_COPY) {
+        Some(Roles::Copy { destination: a, sources: vec![b] })
+    } else if traits.has(Traits::WASM_SELECT) {
+        Some(Roles::Copy { destination: a, sources: vec![b, instruction.c()] })
+    } else if (traits.has(Traits::CONSTANT_LOAD) || traits.has(Traits::REGISTER_FILL))
+        && (rewritten || constant_neutral(instruction.constant_index()))
+    {
+        Some(Roles::Neutral)
+    } else if traits.has(Traits::RETURN_VALUE) && returns_wide && !rewritten {
+        Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] })
+    } else if traits.has(Traits::RETURN_FAMILY) && traits.has(Traits::RAW_FORM) {
+        Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] })
+    } else {
+        None
     }
 }
 

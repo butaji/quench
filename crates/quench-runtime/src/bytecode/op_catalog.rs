@@ -484,6 +484,10 @@ impl Traits {
     /// the slot its `LocalSlot` immediate names. Tagged: `LoadLocal`, `ArgumentsLength`, `ArgumentGet`.
     pub(crate) const FRAME_SLOT_READ: Self = Self(1 << 123);
     /// The op that appends an element window to an array under construction. Tagged: `AppendArray`.
+    /// The Wasm op that copies one of two registers by a condition. Tagged: `WasmSelect`.
+    pub(crate) const WASM_SELECT: Self = Self(1 << 64);
+    /// The Wasm op that fills a register run from one constant. Tagged: `WasmFillRegisters`.
+    pub(crate) const REGISTER_FILL: Self = Self(1 << 68);
     pub(crate) const ARRAY_APPEND: Self = Self(1 << 124);
     /// An op that reaches a binding by its name (an atom immediate): `LoadName`, `LoadNameCall`,
     /// `LoadNameTypeof`, `ResolveName`, `StoreName`, `DeleteName`.

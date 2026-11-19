@@ -991,8 +991,8 @@ opcodes!($;
     // `a = b + c`, then jump when `a` is nonzero: a counted loop's step and test.
     WasmI32AddImmediateJumpNonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmI32AddJump, @ Register, @ fields(ResultRegister, Register, SignedConstant),
     WasmInstanceBinding => Effect::READS_HEAP; layout Scalar; meaning WasmInstanceSlot; class WasmInstanceBinding, @ Register, @ fields(ResultRegister, Unused, Unused),
-    WasmFillRegisters => Effect::PURE; layout Scalar; meaning ConstantIndex; class WasmFillRegisters, @ Register, @ fields(Unused, RegisterWindowBase, RegisterCount),
-    WasmSelect => Effect::PURE; layout RegisterPair; class WasmSelect, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmFillRegisters => Effect::PURE; layout Scalar; meaning ConstantIndex; class WasmFillRegisters; traits REGISTER_FILL, @ Register, @ fields(Unused, RegisterWindowBase, RegisterCount),
+    WasmSelect => Effect::PURE; layout RegisterPair; class WasmSelect; traits WASM_SELECT, @ Register, @ fields(ResultRegister, Register, Register),
     WasmJumpI32Zero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32Zero, @ Register, @ fields(Register, Unused, Unused),
     WasmJumpI32NonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32NonZero, @ Register, @ fields(Register, Unused, Unused),
     WasmBranchTable => Effect::CONTROL; layout Scalar; meaning BranchTableCases; flow BranchTable; class WasmBranchTable, @ Register, @ fields(Register, Unused, Unused),
