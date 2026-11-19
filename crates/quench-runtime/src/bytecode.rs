@@ -1390,6 +1390,10 @@ pub struct Function {
     pub derived_constructor: bool,
     /// Instance-element initialization run when this derived constructor binds `this`.
     pub instance_initializer: Option<u32>,
+    /// A base class constructor's leading constant fields (`ConstantField`): the public fields
+    /// its first instructions define, in order, each with the primitive its initializer is;
+    /// empty for every other function.
+    pub(crate) constant_fields: crate::heap::ThinBoxSlice<ConstantField>,
     /// Lexical HomeObject captured by methods and arrows containing `super`.
     pub super_home_atom: Option<Atom>,
     pub constructible: bool,
@@ -1483,7 +1487,8 @@ pub struct Function {
 // compiler builds them: its passes rewrite them, and its rewrite loop measured slower when
 // their layout changed.
 // `declared_parameters` (8 bytes) carries TypeScript parameter types into the fact store.
-const _: () = assert!(size_of::<Function>() == 376);
+// `constant_fields` (8 bytes) carries a base class's constant fields to its receiver's allocation.
+const _: () = assert!(size_of::<Function>() == 384);
 
 /// The facts about a function that are read before its first call: when its closure is
 /// made, by `IsConstructor` and brand checks, by `Function.prototype.toString`, and by an
@@ -1846,6 +1851,29 @@ impl FactTables for ResidualProgram {
     fn superinstructions(&self) -> &[Superinstruction] {
         &self.superinstructions
     }
+}
+
+/// One of a base class constructor's leading constant fields (`Function::constant_fields`,
+/// `compile::class::emit_instance_fields`): a public field with a plain string key, neither
+/// `__proto__` nor numeric, whose initializer is absent or a primitive constant. The leading
+/// run of them is defined first thing by the constructor, before any code can observe the
+/// receiver, so its receiver may be allocated already holding them (`vm::preshaped_receiver`);
+/// the `DefineField`s still run and find each in place.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ConstantField {
+    pub(crate) atom: Atom,
+    pub(crate) value: FieldConstant,
+}
+
+/// The primitive a constant field holds; a string is named by its atom, whose string the VM
+/// keeps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum FieldConstant {
+    Undefined,
+    Null,
+    Boolean(bool),
+    Number(f64),
+    String(Atom),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

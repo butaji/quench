@@ -1328,6 +1328,7 @@ mod tests {
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: true,
             class_initializer: false,

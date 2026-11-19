@@ -4774,6 +4774,12 @@ impl<H: Host> Vm<H> {
         let Some(shape) = self.class_field_define_target(object).filter(|_| cacheable) else {
             return self.define_class_field(p, object, key, value);
         };
+        // The site's proved define, as the lane takes it inline: above all the plain value write
+        // over a name the receiver's exact shape already holds, as a receiver made in its
+        // constant layout does (`preshaped_receiver`).
+        if self.proved_field_define_hit(object, atom, value, site) {
+            return Ok(());
+        }
         let site = self.field_cache_index(site);
         if let Some((_, cache)) = self.field_add_entry(site, shape, atom) {
             let (target_shape, slot) = (cache.target_shape, cache.slot);

@@ -737,7 +737,7 @@ impl<H: Host> Vm<H> {
                     vm.capture_constructed_name(&mut object, callee, callee == new_target);
                     let start = object.shape();
                     let object = vm.heap.alloc(Cell::Object(object));
-                    // `callee`'s body runs next on it: its declared layout or the storage
+                    // `callee`'s body runs next on it: its constant layout and the storage
                     // `new_target`'s receivers reach (`preshaped_receiver`).
                     vm.preshape_receiver(object, start, callee, new_target);
                     object
@@ -850,7 +850,7 @@ impl<H: Host> Vm<H> {
 
     /// The receiver an in-place [[Construct]] of `callee` allocates: an ordinary object
     /// whose prototype is the callee's own data `prototype`, when that is an object, in the
-    /// callee's declared layout (`preshaped_receiver`), as every caller runs its body next.
+    /// callee's constant layout (`preshaped_receiver`), as every caller runs its body next.
     /// A construct plan's own allocations take the empty template (`inline_construct_template`):
     /// a plan records the stores its body adds from it.
     pub(super) fn inline_construct_receiver(&mut self, callee: Value) -> Option<Value> {

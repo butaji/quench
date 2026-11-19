@@ -747,6 +747,10 @@ impl FunctionCompiler<'_, '_> {
         for atom in private_methods {
             self.emit(Op::MarkPrivateName, 0, this, home, *atom);
         }
+        // The leading run of fields whose defines evaluate no code (`bytecode::ConstantField`):
+        // nothing before them observes the receiver, so its allocation may hold them already.
+        let mut leading = true;
+        self.constant_fields.clear();
         for field in fields {
             let span = class_field_span(*field);
             let initializer = class_field_value(*field);
@@ -806,8 +810,47 @@ impl FunctionCompiler<'_, '_> {
                 let field_atom = name.unwrap();
                 let cache = self.owner.cache_site();
                 self.emit(Op::DefineField, value, this, cache, field_atom);
+                if leading && let Some(constant) = self.leading_constant_field(*field, field_atom) {
+                    self.constant_fields.push(constant);
+                    continue;
+                }
             }
+            leading = false;
         }
+    }
+
+    /// The `ConstantField` a field whose `DefineField` of `atom` the run of leading constant
+    /// fields has reached adds to it: a public, non-computed, undecorated property whose key
+    /// is neither `__proto__` nor a numeric string and not already in the run, whose
+    /// initializer is absent (`undefined`) or folds to a primitive constant other than a
+    /// BigInt or a string with lone surrogates (`binding_time::expression`). Evaluating such an
+    /// initializer runs no code and its define (CreateDataPropertyOrThrow on the fresh,
+    /// extensible receiver) can neither fail nor run code; `None` ends the run.
+    fn leading_constant_field(&mut self, field: ClassField<'_>, atom: Atom) -> Option<crate::bytecode::ConstantField> {
+        use crate::bytecode::{ConstantField, FieldConstant};
+        let ClassField::Property(property) = field else { return None };
+        if property.computed || property.r#static || !property.decorators.is_empty() {
+            return None;
+        }
+        if !matches!(property.key, PropertyKey::StaticIdentifier(_) | PropertyKey::StringLiteral(_)) {
+            return None;
+        }
+        let key = &self.owner.atoms[atom as usize];
+        if key == "__proto__" || numeric_like_key(key) || self.constant_fields.iter().any(|constant| constant.atom == atom) {
+            return None;
+        }
+        let value = match class_field_value(field) {
+            None => FieldConstant::Undefined,
+            Some(initializer) => match super::binding_time::expression(initializer)? {
+                Constant::Undefined => FieldConstant::Undefined,
+                Constant::Null => FieldConstant::Null,
+                Constant::Boolean(value) => FieldConstant::Boolean(value),
+                Constant::Number(value) => FieldConstant::Number(value),
+                Constant::String(text) => FieldConstant::String(self.owner.atom(&text)),
+                _ => return None,
+            },
+        };
+        Some(ConstantField { atom, value })
     }
 
     fn set_class_field_function_name(&mut self, field: ClassField<'_>, value: Register) {
@@ -1236,6 +1279,13 @@ fn class_field_storage_name(compiler: &mut Compiler<'_>, key: &PropertyKey<'_>) 
         }
         _ => class_method_name(key),
     }
+}
+
+/// Whether a field key could name an array index or another canonical numeric string, which
+/// a receiver's layout of constant fields leaves out: every one starts with a digit or `-`,
+/// or is `Infinity` or `NaN`.
+fn numeric_like_key(key: &str) -> bool {
+    key.starts_with(|first: char| first.is_ascii_digit() || first == '-') || key == "Infinity" || key == "NaN"
 }
 
 pub(super) fn computed_field_key_name(start: u32) -> String {

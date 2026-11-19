@@ -1605,6 +1605,7 @@ impl ModuleBindings<'_> {
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: false,
             class_initializer: false,

@@ -953,6 +953,53 @@ const RECORD_INFERRED_NAME_AT: usize = 2 * size_of::<u32>();
 /// The size of the derived facts `write_function` ends a record with.
 const RECORD_DERIVED_FACTS_SIZE: usize = size_of::<u32>();
 
+/// A base class constructor's leading constant fields (`Function::constant_fields`): their
+/// count, then each field's atom and its primitive's tag, with the number's bits or the string's
+/// atom after the tags that carry one.
+fn write_constant_fields(out: &mut BinaryWriter, fields: &[super::ConstantField]) {
+    out.u32(fields.len() as u32);
+    for field in fields {
+        out.atom(field.atom);
+        match field.value {
+            super::FieldConstant::Undefined => out.u8(CONSTANT_FIELD_UNDEFINED),
+            super::FieldConstant::Null => out.u8(CONSTANT_FIELD_NULL),
+            super::FieldConstant::Boolean(false) => out.u8(CONSTANT_FIELD_FALSE),
+            super::FieldConstant::Boolean(true) => out.u8(CONSTANT_FIELD_TRUE),
+            super::FieldConstant::Number(number) => {
+                out.u8(CONSTANT_FIELD_NUMBER);
+                out.u64(number.to_bits());
+            }
+            super::FieldConstant::String(atom) => {
+                out.u8(CONSTANT_FIELD_STRING);
+                out.atom(atom);
+            }
+        }
+    }
+}
+
+fn read_constant_fields(input: &mut BinaryReader<'_>) -> Result<Vec<super::ConstantField>, String> {
+    input.list(|input| {
+        let atom = input.atom()?;
+        let value = match input.u8()? {
+            CONSTANT_FIELD_UNDEFINED => super::FieldConstant::Undefined,
+            CONSTANT_FIELD_NULL => super::FieldConstant::Null,
+            CONSTANT_FIELD_FALSE => super::FieldConstant::Boolean(false),
+            CONSTANT_FIELD_TRUE => super::FieldConstant::Boolean(true),
+            CONSTANT_FIELD_NUMBER => super::FieldConstant::Number(f64::from_bits(input.u64()?)),
+            CONSTANT_FIELD_STRING => super::FieldConstant::String(input.atom()?),
+            _ => return Err("invalid constant field tag".to_string()),
+        };
+        Ok(super::ConstantField { atom, value })
+    })
+}
+
+const CONSTANT_FIELD_UNDEFINED: u8 = 0;
+const CONSTANT_FIELD_NULL: u8 = 1;
+const CONSTANT_FIELD_FALSE: u8 = 2;
+const CONSTANT_FIELD_TRUE: u8 = 3;
+const CONSTANT_FIELD_NUMBER: u8 = 4;
+const CONSTANT_FIELD_STRING: u8 = 5;
+
 /// A function's record, which `read_function` decodes, with the projection of its plain local
 /// slots (`Function::plain_local_slots`) that the interpreter memoizes on first call and its
 /// `derived_facts`: a decoder sets the memos instead of running the analyses again in every
@@ -987,6 +1034,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.u8(u8::from(function.is_class_constructor));
         out.u8(u8::from(function.derived_constructor));
         out.option_u32(function.instance_initializer);
+        write_constant_fields(out, &function.constant_fields);
         out.option_atom(function.super_home_atom);
         out.u8(u8::from(function.constructible));
         out.u8(u8::from(function.class_initializer));
@@ -1188,6 +1236,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             _ => return Err("invalid derived constructor flag".into()),
         };
         let instance_initializer = input.option_u32()?;
+        let constant_fields = read_constant_fields(input)?;
         let super_home_atom = input.option_atom()?;
         let constructible = match input.u8()? {
             0 => false,
@@ -1366,6 +1415,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             is_class_constructor,
             derived_constructor,
             instance_initializer,
+            constant_fields: constant_fields.into(),
             super_home_atom,
             constructible,
             prototype_unobservable,

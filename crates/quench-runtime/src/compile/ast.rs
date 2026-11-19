@@ -174,6 +174,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// (`DeclaredTypes::declared_local`): `u32::MAX` at the top level, a nested function's source
     /// span start; `None` for a function without a source span, whose locals have none.
     pub(super) declared_key: Option<u32>,
+    /// The leading constant fields `emit_instance_fields` defined first thing
+    /// (`bytecode::ConstantField`), which a base class constructor's record keeps.
+    pub(super) constant_fields: Vec<crate::bytecode::ConstantField>,
 }
 
 #[derive(Default)]
@@ -283,6 +286,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             literal_singletons: Vec::new(),
             capture_folds: std::rc::Rc::new([]),
             declared_key: None,
+            constant_fields: Vec::new(),
         }
     }
 
