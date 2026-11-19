@@ -479,9 +479,14 @@ pub(super) fn method_call_region_in_lane<H: Host>(cx: *mut LaneContext<H>, site:
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let (function_index, function, decoded, constants) = loop_function_in_lane(cx, code)?;
+    // A native method the loop holds inline is run in place by the lane (`intrinsic_call`), so its call
+    // is no exit of the region (`native_method_call`). The lane run owns the VM here.
+    let machine = unsafe { vm(cx) };
+    let natives: Vec<bool> = (0..decoded.len())
+        .map(|pc| super::super::compiled::native_method_call(machine, &decoded, pc)).collect();
     super::super::compiled::analyze_osr_region_detailed(function, &decoded, &constants, &code.field_sites,
         code.shared_register_root_masks(function_index), site.header, site.backedge,
-        super::super::compiled::MethodCalls::Exit).ok()
+        super::super::compiled::MethodCalls::Exit, &|pc| natives.get(pc).copied().unwrap_or(false)).ok()
 }
 
 /// The depth-zero capture slots the running function reads that hold typed arrays now (an observation

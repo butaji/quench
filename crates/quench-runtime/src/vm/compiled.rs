@@ -115,7 +115,7 @@ mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_facts::bind_callees as bind_region_callees;
 pub(super) use lane_region::ElementViews;
-pub(in crate::vm) use lane_region::inlines_in_loop;
+pub(in crate::vm) use lane_region::{inlines_in_loop, native_method_call};
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 
@@ -3522,8 +3522,9 @@ pub(super) fn analyze_osr_region_detailed(
     header: u32,
     backedge: u32,
     method_calls: MethodCalls,
+    native_call: &dyn Fn(usize) -> bool,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
-    osr_loop::region(function, decoded, constants, sites, live, header, backedge, method_calls)
+    osr_loop::region(function, decoded, constants, sites, live, header, backedge, method_calls, native_call)
 }
 
 /// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_tier`).

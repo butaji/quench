@@ -20647,7 +20647,7 @@ fn install_loop_sites<'live, H: Host>(
                 sites,
                 live(),
                 header,
-                pc as u32, super::compiled::MethodCalls::Inliner,
+                pc as u32, super::compiled::MethodCalls::Inliner, &|_| false,
             ) {
                 Ok(region) => {
                     let call_boundary_pcs = region.call_boundary_pcs();

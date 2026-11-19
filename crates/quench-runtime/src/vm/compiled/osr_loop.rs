@@ -1573,6 +1573,7 @@ pub(super) fn region(
     header: u32,
     backedge: u32,
     method_calls: MethodCalls,
+    native_call: &dyn Fn(usize) -> bool,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     let (start, end) = (header as usize, backedge as usize);
     if start > end || end >= decoded.len() || end - start >= MAX_REGION_INSTRUCTIONS {
@@ -1592,6 +1593,7 @@ pub(super) fn region(
         header,
         &std::collections::BTreeSet::new(),
         method_calls,
+        native_call,
     );
     // The BaseJIT tier proves each operand where its row reads it and needs no roles: its plan
     // lowers every instruction, so a loop the role analysis rejects is still its span.
@@ -1616,11 +1618,12 @@ fn admit_region(
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
     method_calls: MethodCalls,
+    native_call: &dyn Fn(usize) -> bool,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
     // Under `--b-jit` a loop whose every iteration leaves (at a call, a throw) is still a region:
     // BaseJIT lowers each instruction (`base_region::steps`), and Cranelift never compiles the loop.
     if !crate::jit_mode::base_only()
-        && let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls)
+        && let Err(offset) = iteration::iterates_natively(&instructions, header, method_calls, native_call)
     {
         return Err(RegionAnalysisFailure::at(RegionRejection::UnsupportedInstruction(instructions[offset].op() as u16), header, offset));
     }

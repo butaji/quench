@@ -111,6 +111,24 @@ pub(in crate::vm) fn inlines_in_loop(native: Native) -> bool {
     Inline::of(native).is_some_and(Inline::holds_in_loop)
 }
 
+/// Whether a call of `native` with `count` arguments runs inline in a loop that holds it, the lane's test
+/// of `intrinsic_calls` (`accepts`, `holds_in_loop`) for the region analysis.
+pub(in crate::vm) fn inlines_in_loop_call(native: Native, count: u16) -> bool {
+    Inline::of(native).is_some_and(|inline| inline.accepts(count) && inline.holds_in_loop())
+}
+
+/// Whether the call at `pc` of `decoded` is a method call of a native that `inlines_in_loop_call` runs in place:
+/// its callee is the register a field read of the realm's native method defined last before it (as
+/// `intrinsic_calls` finds it), which `Vm::method_native` answers.
+pub(in crate::vm) fn native_method_call<H: Host>(machine: &mut Vm<H>, decoded: &[WideInstruction], pc: usize) -> bool {
+    let call = decoded[pc];
+    if !crate::staged::meaning::means(call, crate::staged::meaning::Meaning::Call) { return false; }
+    let callee = call.register_b();
+    let Some(definition) = (0..pc).rev().find(|at| decoded[*at].written_registers().any(|register| register == callee)) else { return false };
+    let Some(crate::vm::global_facts::GlobalRead::NativeMember { native, .. }) = machine.method_native(&decoded[definition]) else { return false };
+    inlines_in_loop_call(native, crate::bytecode::ImmediateLayout::argument_count(call.imm()))
+}
+
 /// Whether the by-name load at `pc` reads a global name held as a scalar native's slot (`GlobalRead::NativeSlot`): its read
 /// is a slot or a live load that leaves at a miss, and it changes nothing a loop holds.
 pub(super) fn scalar_name_read(global_reads: &crate::vm::global_facts::GlobalReads, pc: usize) -> bool {
