@@ -49,7 +49,11 @@ mod bigint;
 mod bitset;
 mod dense_map;
 mod bytecode;
+#[cfg(any(feature = "jit", feature = "aot"))]
 mod compile;
+/// RegExp pattern validation (`new RegExp` semantics): text a program supplies at run time, so
+/// an image with no compiler still validates it.
+mod regexp_syntax;
 /// The phases a compilation passes and the hook a profiler sets: named by the runtime, which
 /// reports them without naming the compiler.
 mod compile_phase;

@@ -219,7 +219,7 @@ fn regexp_literal_error_uncached(text: &str) -> Option<RegExpEarlyError> {
     if let Err(error) = validate_modifier_groups(pattern, flags.contains('v')) {
         return Some(RegExpEarlyError::Syntax(error));
     }
-    let error = super::regexp::validate_pattern(pattern, flags).err()?;
+    let error = crate::regexp_syntax::validate_pattern(pattern, flags).err()?;
     Some(if quench_regexp::is_stack_exhaustion_message(&error) { RegExpEarlyError::StackExhausted } else { RegExpEarlyError::Syntax(error) })
 }
 

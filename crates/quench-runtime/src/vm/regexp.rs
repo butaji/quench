@@ -3076,7 +3076,7 @@ impl<H: Host> Vm<H> {
         // The matcher's compilation parses the pattern with the checks
         // `validate_property_escapes` would parse it for.
         if pattern == PatternValidity::Unchecked {
-            crate::compile::regexp::validate_pattern_text(&parser_source, flags)
+            crate::regexp_syntax::validate_pattern_text(&parser_source, flags)
                 .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
         }
         let regex = catch_unwind(AssertUnwindSafe(|| {
