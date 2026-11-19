@@ -129,7 +129,11 @@ fn main() {
 /// compile weight (`shards::NUMBER_WEIGHT` and the weights beside it).
 fn instances(listed: &supernodes::Listed) -> Vec<(String, usize)> {
     let numbers = library::library().into_iter().map(|c| (format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4), shards::NUMBER_WEIGHT));
-    let heap_weight = |kind: u8| if matches!(kind, library::INDEX_ROW | library::STORE_ROW) { shards::ELEMENT_WEIGHT } else { shards::HEAP_WEIGHT };
+    let heap_weight = |kind: u8| match kind {
+        library::INDEX_ROW | library::STORE_ROW | library::TYPED_INDEX_ROW..=library::TYPED_INDEX_LAST
+        | library::TYPED_STORE_ROW..=library::TYPED_STORE_LAST => shards::ELEMENT_WEIGHT,
+        _ => shards::HEAP_WEIGHT,
+    };
     let heaps = library::heap_library().into_iter().map(|c| (format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4), heap_weight(c.0)));
     let supers = supernodes::instances(listed).into_iter().map(|nodes| (format!("supernode_row!({}, {});\n", supernode_rules::name(&nodes), supernode_rules::macro_args(&nodes)), shards::HEAP_WEIGHT));
     let wasm = wasm_library::wasm_library().into_iter().map(|c| (format!("wasm_row!({}, {}, {}, {}, {});\n", wasm_library::wasm_name(c), c.0, c.1, c.2, c.3), shards::NUMBER_WEIGHT));

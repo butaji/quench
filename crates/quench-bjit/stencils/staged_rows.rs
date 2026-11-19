@@ -43,20 +43,19 @@ const fn value_relation_of(kind: u8) -> NumberRelation {
     }
 }
 
-/// `Binary` `%` of the two operands into the destination (`NumberOperation::Remainder`). The int32
-/// computation leaves where its result is no int32 (a zero divisor's NaN, a negative dividend's
-/// `-0`), so the binary64 computation takes the row then, as the arithmetic rows do.
+/// `Binary` `%` of the two operands into the destination (`NumberOperation::Remainder`): the int32
+/// computation, while both operand words are ints. It leaves where its result is no int32 (a zero
+/// divisor's NaN, a negative dividend's `-0`) and for a double: the binary64 remainder is libm's
+/// `fmod`, a call a stencil cannot hold, so the VM's step takes the row then.
 #[inline(always)]
 pub(crate) fn remainder_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
-    let remainder = |domain: Domain| NumberOperation::Remainder { destination: DEST, left, right, domain };
-    let done = if any_double(D, A, B) {
-        number(&mut frame, remainder(Domain::Float64))
-    } else if frame.both_int() {
+    let remainder = NumberOperation::Remainder { destination: DEST, left, right, domain: Domain::Int32 };
+    let done = if !any_double(D, A, B) && frame.both_int() {
         frame.prove_ints();
-        number(&mut frame, remainder(Domain::Int32)) || number(&mut frame, remainder(Domain::Float64))
+        number(&mut frame, remainder)
     } else {
-        number(&mut frame, remainder(Domain::Float64))
+        false
     };
     finish(frame, done)
 }
