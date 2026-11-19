@@ -484,9 +484,10 @@ const REGION_CODE_BUDGET: usize = 2 * osr_loop::MAX_CODE_BYTES;
 /// region, `None` where Cranelift compiles it. A region BaseJIT builds skips Cranelift: every instruction has a lowering (`base_region::steps`).
 /// Its small monomorphic calls run as their callees' rows (`calls`, the function's and the realm's they were found in).
 fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::base_region::Known, widened: &[usize], observation: &Observation<'_>, helpers: LaneHelpers,
-    (function, calls, invalidation): (u32, RegionCalls, Invalidation)) -> Option<Option<PendingOsrRegion>> {
+    (function, calls, invalidation): (u32, RegionCalls, Invalidation), base: bool) -> Option<Option<PendingOsrRegion>> {
     let base_only = crate::jit_mode::base_only();
-    if !crate::jit_mode::base_regions() || region.inlining.is_some() {
+    // A b-jit region the default mode picked that BaseJIT declines falls to Cranelift.
+    if !base || region.inlining.is_some() {
         return base_only.then_some(None);
     }
     let registers = known.program.function(function as usize).registers;
@@ -553,12 +554,13 @@ pub(in crate::vm) fn start_osr_region(
     global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
     (widened, stores): (&[usize], Option<&crate::vm::method_cache::AtomBits>),
     mut calls: RegionCalls,
+    base: bool,
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     // The word the code reads where a call may have changed a Stable fact it folded (`Known::invalidation`).
     let invalidation = Invalidation::default();
     // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).
-    let globals = (crate::jit_mode::base_regions() && region.inlining.is_none() && stores.is_some()).then(|| global_reads(&loop_unit(program.function(function_id as usize)), GlobalTable::Base));
+    let globals = (base && region.inlining.is_none() && stores.is_some()).then(|| global_reads(&loop_unit(program.function(function_id as usize)), GlobalTable::Base));
     // The field sites' loads the observation recorded, which its facts name (`OsrFacts::observed`): a
     // shape compaction retires the region, so its inline-cache rows may patch these shapes in.
     let fields = loop_fields(region, observation);
@@ -568,7 +570,7 @@ pub(in crate::vm) fn start_osr_region(
     let reads = stores.is_some().then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>);
     let known = super::base_region::Known { program, stores, reads, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch };
     let unit_calls = std::mem::take(&mut calls.direct);
-    if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation.clone())) {
+    if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation.clone()), base) {
         return decided;
     }
     let (plans, directs) = loop_inputs(program, region, function_id, observation, global_reads, widened, &unit_calls);

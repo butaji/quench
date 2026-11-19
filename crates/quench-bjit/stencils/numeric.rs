@@ -178,14 +178,17 @@ fn guard_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) 
 
 /// A taken backward edge counts in the run's counter, word 0 of the loop entry record: hole 1
 /// and 2 are the offsets of the context's payload pointer and of the entry pointer in the payload.
-/// No staged operation counts edges, so this is the stencil's own.
+/// Whether the count reached zero: a run given a budget starts the counter that far below zero
+/// (`LoopEntry::set_backedge_budget`) and leaves there, to move to u-jit; one without starts at
+/// zero and never wraps.
 #[inline(always)]
-fn count_backedge(s: &S) {
+fn count_backedge(s: &S) -> bool {
     unsafe {
         let payload = ((s.ctx + hole::<1>()) as *const usize).read();
         let entry = ((payload + hole::<HOLE_B>()) as *const usize).read();
-        let count = (entry as *const u64).read();
-        (entry as *mut u64).write(count.wrapping_add(1));
+        let count = (entry as *const u64).read().wrapping_add(1);
+        (entry as *mut u64).write(count);
+        count == 0
     }
 }
 
@@ -198,16 +201,15 @@ pub(crate) fn interrupted(s: &S) -> bool {
 
 /// The staged `Operation::Safepoint` over the row's places: whether the row may continue.
 #[inline(always)]
-fn poll_step<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>) -> bool {
-    matches!(step(&mut Concrete::from_hole(0), frame, Operation::Safepoint { proof: () }), Step::Value(_))
-}
-
-/// A jump (`Operation::Jump`) that polls the interrupt flag first where `WATCHED`, and counts a
-/// taken edge where `COUNT`.
-#[inline(always)]
-fn jump_row<const WATCHED: bool, const COUNT: bool, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    if WATCHED && !poll_step(&mut frame) {
-        return Out::Exit(frame.s);
+fn jump<const WATCHED: bool, const COUNT: bool>(s: S) -> Out {
+    if WATCHED {
+        if interrupted(&s) {
+            return Out::Exit(s);
+        }
+        if COUNT && count_backedge(&s) {
+            // The run's budget is spent: it leaves at the jump, which the interpreter takes.
+            return Out::Exit(s);
+        }
     }
     if WATCHED && COUNT {
         count_backedge(&frame.s);

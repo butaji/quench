@@ -36,6 +36,13 @@ pub(super) struct LoopTier {
     /// bound misses every versioned entry.
     entry_misses: u16,
     pub(super) unbounded: bool,
+    /// Whether the current code (or the compile under way) is a b-jit region the default mode
+    /// picked (`loop_model::base_region`), which moves to u-jit once its iterations repay that
+    /// compile (`promote`).
+    pub(super) base: bool,
+    /// Whether the site moves from its b-jit region to u-jit (`promote`): the stencil code runs
+    /// until the u-jit region publishes in its place.
+    promoting: bool,
 }
 
 impl LoopTier {
@@ -43,6 +50,31 @@ impl LoopTier {
         self.runs = self.runs.saturating_add(1);
         self.entry_misses = 0;
         self.iterations = self.iterations.saturating_add(backedges);
+    }
+
+    /// Moves a b-jit region the default mode picked to u-jit once the loop's iterations repay
+    /// the u-jit compile over it (`loop_model::promotes`): the stencil code goes, and the next
+    /// entry compiles the u-jit region, where a compilation remains.
+    pub(super) fn promote(&mut self, tiers: &Tiers, span: u64) {
+        if !self.base || self.compilations >= tiers.loops.max_compilations
+            || !super::super::compiled::loop_model::promotes(tiers, span, self.iterations) { return; }
+        // The stencil code keeps running while the u-jit region compiles (`promoting`): the
+        // entry that finds it ready publishes it in the stencil code's place.
+        self.base = false;
+        self.promoting = true;
+    }
+
+    /// The backward edges a run of the current code may take before it leaves to move to u-jit
+    /// (`LoopEntry::set_backedge_budget`): for a b-jit region the default mode picked, the
+    /// iterations left until the u-jit region is ahead of it; none otherwise.
+    pub(super) fn backedge_budget(&self, tiers: &Tiers, span: u64) -> Option<u64> {
+        if !self.base || self.compilations >= tiers.loops.max_compilations { return None; }
+        super::super::compiled::loop_model::promotion_taken(tiers, span).map(|at| at.saturating_sub(self.iterations))
+    }
+
+    /// Whether the u-jit region of a promoted site is still to start compiling.
+    pub(super) fn promotion_due(&self) -> bool {
+        self.promoting && self.pending.is_none()
     }
 
     /// Counts an entry the published code's guards declined: past `widen_after_leaves` in a row,
@@ -146,8 +178,9 @@ impl LoopTier {
     /// between looks count down, and a look publishes code that is ready.
     #[inline(always)]
     pub(super) fn awaits_code<H: Host>(&mut self, vm: &mut Vm<H>, site: &LoopSite) -> bool {
-        // A site with published code, or none under way, has nothing to wait for.
-        self.pending.is_some() && self.poll_pending(vm, site)
+        // A site with none under way has nothing to wait for; one with published code (a b-jit
+        // region moving to u-jit) runs it while it looks.
+        self.pending.is_some() && self.poll_pending(vm, site) && !self.is_published()
     }
 
     #[cold]
@@ -171,7 +204,8 @@ impl LoopTier {
                 // A region that lowered no code (it is lowered off the loop's thread) or whose
                 // code failed retires the site, as one declined at the start does.
                 self.compilations = site.tiers.loops.max_compilations;
-                site.entering.set(false);
+                self.promoting = false;
+                if !self.is_published() { site.entering.set(false); }
             }
         }
         if site.diagnostics && self.is_published() {
@@ -187,14 +221,19 @@ impl LoopTier {
         self.wait = 0;
         if self.pending.is_none() {
             self.compilations = site.tiers.loops.max_compilations;
-            // A declined or failed region retires the site now: later entries build no entry record.
-            site.entering.set(false);
+            self.promoting = false;
+            // A declined or failed region retires the site now: later entries build no entry
+            // record. A promoted site keeps entering the stencil code it has.
+            if !self.is_published() { site.entering.set(false); }
         }
         self.awaits_code(vm, site);
     }
 
     /// Publishes `region` while the facts its code names hold (`ProgramStore::publish_region`).
     fn publish<H: Host>(&mut self, vm: &mut Vm<H>, region: super::super::compiled::CompiledOsrRegion) {
+        // A promoted site's stencil code goes as the u-jit region takes its place.
+        if let Some(replaced) = self.code.take() { replaced.retire(); }
+        self.promoting = false;
         self.code = Some(vm.programs.publish_region(region, &mut vm.heap, vm.method_cache_atoms.readers()));
     }
 }
@@ -246,14 +285,19 @@ pub(super) fn lane_loop_compile<H: Host>(
     count_compilation(tier, site);
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
+    // The tier of this compile: b-jit where the u-jit region is not yet ahead of it, counting
+    // the interpreter's jumps and the native iterations the loop took so far.
+    let base = super::super::compiled::loop_model::base_region(machine.programs.tiers(), site.span(),
+        u64::from(site.taken.get()).saturating_add(tier.iterations));
+    tier.base = base && !crate::jit_mode::base_regions();
     let program = machine.programs.get(machine.active_program);
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
-    let (native_field_loads, store_loads) = (native_field_loads(machine, own, region), native_store_loads(machine, region));
-    let types = entry_types(region, r);
+    let (native_field_loads, store_loads) = (native_field_loads(machine, own.filter(|_| !base), region), native_store_loads(machine, region));
+    let (ints, doubles) = entry_number_registers(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
         .map(|inlining| inlining.frames.iter().map(|frame| machine.lane_callee_captures(frame.callee)).collect()).unwrap_or_default();
@@ -266,13 +310,13 @@ pub(super) fn lane_loop_compile<H: Host>(
     let policy = machine.heap.memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
     // A Cranelift region calls the callees its sites reached by their entries.
-    let calls = program.as_deref().map(|program| if crate::jit_mode::base_regions() { region_calls(cx, machine, program, function) }
+    let calls = program.as_deref().map(|program| if base { region_calls(cx, machine, program, function) }
         else { unit_region_calls(cx, machine, program, function) }).unwrap_or_default();
     // Stores run in place for the atoms no method cache names, while the VM and the program run specialized.
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, (policy, machine.programs.tiers()), program, function, helpers,
-        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls));
+        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls, base));
     if let Some(pending) = &started {
         let (watch, callees) = pending.native_calls();
         machine.programs.note_pending_native_calls(&watch, callees);
@@ -311,8 +355,7 @@ fn native_field_loads<H: Host>(machine: &Vm<H>, own: Option<&super::LaneView>, r
     let available = machine.heap.object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
     // Each read's lane record hint names the storage form its receivers had (`own_field_hint`),
     // which code that embeds its shapes guards whole. Base regions read the live cache instead,
-    // whose entries name no form.
-    let own = own.filter(|_| !crate::jit_mode::base_regions());
+    // whose entries name no form (the caller passes no view for one).
     let reads: std::collections::HashMap<usize, usize> = region.field_reads().iter()
         .map(|(offset, index)| (*index, region.header as usize + *offset as usize)).collect();
     region.fields.iter().enumerate()
