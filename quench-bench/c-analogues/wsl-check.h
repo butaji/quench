@@ -1396,11 +1396,77 @@ static void rec_visit(Ast *n) {
   }
 }
 
-/* The post-check passes ported so far, in Prepare.js order: checkLiteralTypes, checkReturns,
- * checkUnreachableCode, checkLoops, checkRecursion (resolveProperties, the wrapped and zombie checks
- * and inline are not ported yet). */
+/* ---- ExpressionFinder.js: the expressions and types the wrapped check looks at ---- */
+typedef void (*ExprCb)(Ast *expr);
+static ExprCb FIN_CB;
+static void fin_visit(Ast *n);
+static void fin_child(void *cx, Ast *c) { (void)cx; fin_visit(c); }
+static void fin_func(Ast *n) {   /* ExpressionFinder.visitFunc: no body, the body is visited by visitFuncDef */
+  FIN_CB(n->u.func.returnType);
+  for (int i = 0; i < n->u.func.typeParameters.n; i++) fin_visit(n->u.func.typeParameters.v[i]);
+  for (int i = 0; i < n->u.func.parameters.n; i++) fin_visit(n->u.func.parameters.v[i]);
+}
+static void fin_visit(Ast *n) {
+  switch (n->tag) {
+  case A_FUNCDEF: fin_func(n); fin_visit(n->u.func.body); return;
+  case A_NATIVEFUNC: case A_PROTOCOLFUNCDECL: fin_func(n); return;
+  case A_FUNCPARAMETER: case A_CONSTEXPRTYPEPARAM: FIN_CB(n->u.named.type); return;
+  case A_ASSIGN: case A_RMW: case A_IDENTITY: case A_CALL: FIN_CB(n); return;
+  case A_RETURN: if (n->u.ret.value) FIN_CB(n->u.ret.value); return;
+  case A_WHILE: FIN_CB(n->u.loop.conditional); fin_visit(n->u.loop.body); return;
+  case A_DOWHILE: fin_visit(n->u.loop.body); FIN_CB(n->u.loop.conditional); return;
+  case A_IF:
+    FIN_CB(n->u.ifStmt.conditional);
+    fin_visit(n->u.ifStmt.body);
+    if (n->u.ifStmt.elseBody) fin_visit(n->u.ifStmt.elseBody);
+    return;
+  case A_FOR:
+    if (n->u.forLoop.initialization) fin_visit(n->u.forLoop.initialization);
+    if (n->u.forLoop.condition) FIN_CB(n->u.forLoop.condition);
+    if (n->u.forLoop.increment) FIN_CB(n->u.forLoop.increment);
+    fin_visit(n->u.forLoop.body);
+    return;
+  case A_VARIABLEDECL:
+    FIN_CB(n->u.varDecl.type);
+    if (n->u.varDecl.initializer) FIN_CB(n->u.varDecl.initializer);
+    return;
+  default:
+    visit_children(n, fin_child, NULL);
+  }
+}
+
+/* ---- WrapChecker.js: a wrapped expression holds no declarations, parameters or type variables ---- */
+static Ast *WRAP_START;
+static const char *origin_or_null(const Ast *n) { return n->origin < 0 ? "<null origin>" : origin_string(n); }
+static void wrap_visit(Ast *n);
+static void wrap_child(void *cx, Ast *c) { (void)cx; wrap_visit(c); }
+static void wrap_visit(Ast *n) {
+  switch (n->tag) {
+  case A_VARIABLEREF: case A_TYPEREF: return;
+  case A_CONSTEXPRTYPEPARAM: case A_FUNCPARAMETER: case A_VARIABLEDECL: case A_STRUCTTYPE:
+  case A_NATIVETYPE: case A_TYPEVARIABLE:
+    /* the JS reads node.origin.originString, and the start node's origin is a token, so its text is undefined */
+    chk_error(cat(10, "Found unwrapped ", ast_class_name(n), " at ", origin_or_null(n), ": ", js_tostr(n),
+                  "\nWhile visiting ", ast_class_name(WRAP_START), " at undefined: ", js_tostr(WRAP_START)));
+  default:
+    visit_children(n, wrap_child, NULL);
+  }
+}
+static void check_expression_wrapped(Ast *node) {
+  WRAP_START = node;
+  wrap_visit(node);
+}
+static void check_program_wrapped(Program *p) {
+  FIN_CB = check_expression_wrapped;
+  for (int i = 0; i < p->statements.n; i++) fin_visit(p->statements.v[i]);
+}
+
+/* The post-check passes ported so far, in Prepare.js order: checkLiteralTypes, checkProgramWrapped,
+ * checkReturns, checkUnreachableCode, checkLoops, checkRecursion, checkProgramWrapped (resolveProperties,
+ * the zombie checks and inline are not ported yet). */
 static void post_check_passes(Program *p) {
   for (int i = 0; i < p->statements.n; i++) littype_visit(p->statements.v[i]);
+  check_program_wrapped(p);
   RR_PROG = p;
   for (int i = 0; i < p->statements.n; i++) rr_visit(p->statements.v[i]);
   for (int i = 0; i < p->statements.n; i++) unreach_visit(p->statements.v[i]);
@@ -1408,6 +1474,7 @@ static void post_check_passes(Program *p) {
   for (int i = 0; i < p->statements.n; i++) loopchk_visit(&lc, p->statements.v[i]);
   RR_NSTACK = 0;
   for (int i = 0; i < p->statements.n; i++) rec_visit(p->statements.v[i]);
+  check_program_wrapped(p);
 }
 
 static void check_program(Program *p) {
