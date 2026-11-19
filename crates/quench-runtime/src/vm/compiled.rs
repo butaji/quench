@@ -1415,7 +1415,7 @@ pub(in crate::vm::compiled) fn ahead_loop_region(program: &ResidualProgram, func
     let constants: Vec<Value> = program.constants.iter()
         .map(|constant| super::compiled::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
     let region = osr_loop::region(function, &decoded, &constants, &program.field_sites,
-        program.shared_register_root_masks(function_id), header, backedge, osr_loop::MethodCalls::Exit)
+        program.shared_register_root_masks(function_id), header, backedge, osr_loop::MethodCalls::Ahead)
         .map_err(|failure| format!("region rejected: {:?}", failure.reason))?;
     let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
         &|callee| program.function_get(callee as usize)).ok_or("no unit")?;

@@ -223,6 +223,11 @@ pub(crate) struct RegionAnalysisFailure {
 pub(crate) enum MethodCalls {
     Inliner,
     Exit,
+    /// A region lowered ahead, which runs a call in place through the lane's call helper and
+    /// continues with its result (`lane_region::call_frames::call_helper`): no inliner owns a
+    /// call it keeps, so a method call is the helper's too.
+    #[cfg(feature = "aot")]
+    Ahead,
 }
 
 impl MethodCalls {
@@ -230,6 +235,17 @@ impl MethodCalls {
     /// call it kept) leaves its method calls to the inliner.
     fn inlined(self, objects: &std::collections::BTreeSet<Register>) -> bool {
         self == Self::Inliner && objects.is_empty()
+    }
+
+    /// Whether a call in the loop's body may run in place, so the iteration still reaches its
+    /// back edge (`iteration::iterates_natively`).
+    pub(super) const fn runs_calls(self) -> bool {
+        match self {
+            Self::Exit => false,
+            Self::Inliner => true,
+            #[cfg(feature = "aot")]
+            Self::Ahead => true,
+        }
     }
 }
 

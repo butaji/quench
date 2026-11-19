@@ -44,7 +44,7 @@ neg_op 11 6 24
 num_to_str - 569 1713
 parse_int - 196 594
 shl_shr 9 7 27
-str_charcodeat 74 9 33
+str_charcodeat 72 9 33
 str_compare - 4 18
 str_concat_acc - 7 27
 str_length 6 4 18
