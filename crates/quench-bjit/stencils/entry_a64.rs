@@ -124,7 +124,7 @@ pub unsafe extern "C" fn entry_resume() {
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_body() {
-    body_thunk!([], concat!(hole_into!("x16", "first"), "\nblr x16"), [], first = sym HOLE_NEXT)
+    body_thunk!([], "bl {first}", [], first = sym HOLE_NEXT)
 }
 
 /// The body's row entry (`EntryCell::rows`): a b-jit direct call row (`rust-preserve-none`: window x20,
@@ -137,8 +137,7 @@ pub unsafe extern "C" fn entry_rows() {
     core::arch::naked_asm!(
         "stp x29, x30, [sp, #-16]!",
         "mov x29, sp",
-        hole_into!("x16", "first"),
-        "blr x16",
+        "bl {first}",
         "ldp x29, x30, [sp], #16",
         "ret",
         first = sym HOLE_NEXT,

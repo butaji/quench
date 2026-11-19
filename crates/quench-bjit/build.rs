@@ -235,6 +235,12 @@ impl Shard {
 /// the stencil cfgs.
 fn base_args() -> Vec<String> {
     let mut args = vec!["--target".to_string(), env::var("TARGET").expect("cargo sets TARGET")];
+    // Every AArch64 target has NEON (ASIMD) in its architectural baseline, and an Apple one has no
+    // other vector unit: the stencil words name `vreg` operands for it, which rustc admits only
+    // where the feature is enabled for the crate it compiles.
+    if args[1].starts_with("aarch64") {
+        args.extend(["-C".to_string(), "target-feature=+neon".to_string()]);
+    }
     args.extend(rustc_flags());
     args.extend(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--cfg", "stencil_build"].map(String::from));
     args

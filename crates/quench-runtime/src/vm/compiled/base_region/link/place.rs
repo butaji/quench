@@ -32,7 +32,7 @@ fn symbol_sites(rows: &[Placed], symbols: &[Option<(u8, Symbol)>], head: usize) 
 /// in layout order: the hot rows first, so nothing cold sits between them. Also the code offset of
 /// each row and, for a loop region, of the resume thunk (`entry_resume`), which follows the stubs;
 /// each resume stub's `jumps` is patched to its row.
-pub(super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], proven_row: usize, symbols: &[Option<(u8, Symbol)>]) -> Result<(Vec<u8>, Vec<usize>, usize, Vec<SymbolSite>), String> {
+pub(in crate::vm::compiled::base_region) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], proven_row: usize, symbols: &[Option<(u8, Symbol)>]) -> Result<(Vec<u8>, Vec<usize>, usize, Vec<SymbolSite>), String> {
     let head = thunk(ending, 0, 0)?.len();
     let resume = if ending == Ending::Region { routine("entry_resume")?.code } else { Vec::new() };
     let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();

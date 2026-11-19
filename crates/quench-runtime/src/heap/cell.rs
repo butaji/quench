@@ -8,7 +8,7 @@ use crate::value_vec::{
 use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use super::{WeakMapEntries, WeakSetEntries};
-use super::{ArrayElements, BufferBytes, Entries, PromiseCell, array_elements, array_proofs, dependencies, layouts, thin_slice};
+use super::{ArrayElements, BufferBytes, PromiseCell, array_elements, array_proofs, dependencies, layouts, thin_slice};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 

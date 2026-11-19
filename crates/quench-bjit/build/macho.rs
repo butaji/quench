@@ -4,7 +4,7 @@
 //! (`ARM64_RELOC_UNSIGNED`, 8 bytes) and a successor is `ARM64_RELOC_BRANCH26`; a conditional
 //! branch to a hole has no relocation, so LLVM branches over an unconditional one.
 
-use crate::bytes::{ObjectReloc, ObjectRow, c_string, is_row_name, u32_at, u64_at};
+use crate::bytes::{ObjectReloc, ObjectRow, c_string, fixed_name, is_row_name, u32_at, u64_at};
 use crate::class::{ABS64, BRANCH26};
 use object::LittleEndian;
 use std::mem::{offset_of, size_of};
@@ -90,7 +90,7 @@ fn commands(data: &[u8]) -> (Text, [usize; 3]) {
             for k in 0..u32_at(data, at + SEGMENT_SECTION_COUNT_AT) as usize {
                 let section = at + SEGMENT_HEADER_SIZE + k * SECTION_SIZE;
                 section_index += 1;
-                if c_string(&data[section..section + SECTION_NAME_BYTES], 0) == TEXT_SECTION {
+                if fixed_name(&data[section..section + SECTION_NAME_BYTES]) == TEXT_SECTION {
                     let field = |f: usize| u32_at(data, section + f) as usize;
                     text = Some(Text {
                         index: section_index,

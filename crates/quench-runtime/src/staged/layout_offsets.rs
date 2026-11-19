@@ -11,7 +11,9 @@
 //
 // A stencil names nothing in the runtime except the frame words of `staged/frame.rs` and the entry
 // cell of `staged/call.rs`, which both builds compile.
-#![allow(dead_code)]
+// The table is one catalog of the layout's numbers; which of them this build's consumers read
+// varies by target and feature, so an entry no consumer of this build names is still the table's.
+#![allow(dead_code, unused_imports)]
 
 pub(crate) use crate::staged::frame::{ACTIVATION_BYTES, ACTIVATION_KIND_OFFSET, CONTEXT_WORDS as FRAME_CONTEXT_WORDS};
 use super::object_encoding::{
