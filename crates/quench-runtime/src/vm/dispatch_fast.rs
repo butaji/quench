@@ -10069,35 +10069,45 @@ script_handler! {
         // SAFETY: the view checked the step's records (`for_of_step_in_lane`).
         let (done_read, value_read) = unsafe { (&*ip.add(FOR_OF_DONE_READ), &*ip.add(form.value_read())) };
         let reads_step = done_read.imm() == vm.runtime_atoms.done && value_read.imm() == vm.runtime_atoms.value;
-        let kind = vm.iteration_step(iterator, method);
-        match kind {
-            super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
-            // A generator's step resumes it over its record, as `iterator_step_miss` makes it.
-            super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } && reads_step => {
-                if THREADED {
-                    sibling!(generator_step_miss::<H, STEP_READS_THREADED>, r, ip, Carried::script_in(cx, view))
+        // A plain array's step: one record read and the element, once the shared
+        // %ArrayIteratorPrototype%.next is the step's method (`array_values_step`). Any other
+        // step, or a hole, takes the general dispatch below, which decides it again.
+        let array_step = if reads_step { vm.array_values_step(iterator, method) } else { None };
+        let step = match array_step {
+            Some(step) => step,
+            None => {
+                let kind = vm.iteration_step(iterator, method);
+                match kind {
+                    super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
+                    // A generator's step resumes it over its record, as `iterator_step_miss` makes it.
+                    super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } && reads_step => {
+                        if THREADED {
+                            sibling!(generator_step_miss::<H, STEP_READS_THREADED>, r, ip, Carried::script_in(cx, view))
+                        }
+                        sibling!(generator_step_miss::<H, STEP_READS_EMITTED>, r, ip, Carried::script_in(cx, view))
+                    }
+                    super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
+                        sibling!(generator_step_miss::<H, 0>, r, ip, Carried::script_in(cx, view))
+                    }
+                    _ => sibling!(iterator_step_miss::<H>, r, ip, Carried::script_in(cx, view)),
                 }
-                sibling!(generator_step_miss::<H, STEP_READS_EMITTED>, r, ip, Carried::script_in(cx, view))
+                let step = if kind == super::iterators::IterationStep::Array {
+                    vm.step_present_array_value(iterator)
+                } else {
+                    // The compiler marks the step's `RequireIteratorResult` when its value goes only
+                    // to an array pattern: an entry pair may then be the shared one.
+                    // SAFETY: the view checked the step's records (`for_of_step_in_lane`).
+                    vm.share_entry_pair = unsafe { (*ip.add(FOR_OF_REQUIRE_RESULT)).a } != 0;
+                    let step = vm.step_collection(iterator);
+                    vm.share_entry_pair = false;
+                    note_allocation(vm);
+                    step
+                };
+                let Some(step) = step else {
+                    sibling!(iterator_step_miss::<H>, r, ip, Carried::script_in(cx, view))
+                };
+                step
             }
-            super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
-                sibling!(generator_step_miss::<H, 0>, r, ip, Carried::script_in(cx, view))
-            }
-            _ => sibling!(iterator_step_miss::<H>, r, ip, Carried::script_in(cx, view)),
-        }
-        let step = if kind == super::iterators::IterationStep::Array {
-            vm.step_present_array_value(iterator)
-        } else {
-            // The compiler marks the step's `RequireIteratorResult` when its value goes only
-            // to an array pattern: an entry pair may then be the shared one.
-            // SAFETY: the view checked the step's records (`for_of_step_in_lane`).
-            vm.share_entry_pair = unsafe { (*ip.add(FOR_OF_REQUIRE_RESULT)).a } != 0;
-            let step = vm.step_collection(iterator);
-            vm.share_entry_pair = false;
-            note_allocation(vm);
-            step
-        };
-        let Some(step) = step else {
-            sibling!(iterator_step_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         match step {
             Some(value) => {
