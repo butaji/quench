@@ -63,22 +63,24 @@ pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
     targets
 }
 
+/// Whether `code` jumps backward: it has a loop, whose iterations repay any entry.
+pub(super) fn closes_loop(code: &[crate::bytecode::WideInstruction]) -> bool {
+    code.iter().enumerate().any(|(pc, instruction)|
+        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc)
+}
+
 /// Whether a body has work that amortizes an entry, which costs a few hundred instructions
 /// the lane's own run of a short leaf never pays: a loop, an inlined call, a call of itself
 /// (its recursion runs natively inside the entry), or length (`Tiers::amortizing_instructions`).
 pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
-    let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
+    closes_loop(&unit.instructions) || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
 }
 
 /// Whether one entry of `unit` saves more interpreter time than the body's entry costs
 /// (`Priors::body_entry_ns`), its inlined callees' work included: a unit with a loop does, and
 /// so does one that calls itself (`calls_itself`).
 pub(super) fn entry_repays(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
-    let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || calls_itself(direct, function) || straight_line_repays(&tiers.priors, unit.instructions.len())
+    closes_loop(&unit.instructions) || calls_itself(direct, function) || straight_line_repays(&tiers.priors, unit.instructions.len())
 }
 
 /// The call depth `recursion_cycle` follows: a cycle through more functions than this is weighed as

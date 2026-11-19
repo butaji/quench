@@ -9446,7 +9446,13 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
 pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
-    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
+    body_may_amortize(tiers, body, tier_policy::lane_body_tier())
+}
+
+/// `lane_body_may_amortize` for a body `tier` compiles: a b-jit body the default mode picks
+/// (`tier_model::Pick::Base`) asks the stencil tier's length, whatever the process's lane tier.
+pub(super) fn body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function, tier: crate::jit_mode::Tier) -> bool {
+    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier)
         || body.code.iter().any(|packed| body.widened(*packed).op().is_call())
 }
 

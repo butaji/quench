@@ -68,11 +68,11 @@ fn saved_per_entry(priors: &Priors, share: u64, entry_ns: u64, observed: &Observ
 }
 
 /// The net gain in ns of a b-jit body of `observed`: stencil code at `base_body_share` per
-/// bytecode behind a `base_entry_ns` entry, stitched in microseconds on the program's thread,
+/// bytecode behind the same `body_entry_ns` entry a u-jit body pays, stitched in microseconds on the program's thread,
 /// so neither a plan nor a compile is charged (`Tiers::amortizing_instructions`' `Tier::Base`).
 pub(super) fn base_net_ns(priors: &Priors, observed: &Observed) -> i64 {
     let future = (u64::from(observed.entries) / priors.remaining_divisor) as i64;
-    future * saved_per_entry(priors, priors.base_body_share, priors.base_entry_ns, observed).max(0)
+    future * saved_per_entry(priors, priors.base_body_share, priors.body_entry_ns, observed).max(0)
 }
 
 /// The tier the model picks for a function.
@@ -83,19 +83,20 @@ pub(super) enum Pick {
     /// b-jit, for good: each entry of a u-jit body would save no more than a b-jit body's, so
     /// no number of entries repays a u-jit compile over it.
     Base,
-    /// u-jit: its net gain is positive and ahead of a b-jit body's.
+    /// u-jit: its net gain is positive, and it saves more per entry than a b-jit body would.
     Ultra,
 }
 
 /// The pick from the u-jit body's net gain `ultra` and, where the mode runs b-jit too, the
 /// b-jit body's net gain and each body's saving per entry (`base`: net, b-jit saving, u-jit
-/// saving). A u-jit compile is admitted only where it stays ahead of what b-jit gives the same
-/// entries, at the decision's own lower bound of them; until then it waits, unless it never
-/// gets ahead, when b-jit is the function's tier.
+/// saving). A function whose u-jit body would save no more per entry than its b-jit body takes
+/// b-jit for good, once that pays. Any other weighs u-jit against the interpreter alone: a body,
+/// unlike a loop region (`loop_model::promotes`), is never promoted from b-jit to u-jit, so the
+/// b-jit body it would wait beside is never built, and waiting for u-jit to get ahead of it only
+/// leaves the function interpreted the longer.
 pub(super) fn pick(ultra: i64, base: Option<(i64, i64, i64)>) -> Pick {
     match base {
         Some((net, base_saving, ultra_saving)) if base_saving >= ultra_saving => if net > 0 { Pick::Base } else { Pick::Interpreter },
-        Some((net, ..)) if ultra <= net => Pick::Interpreter,
         _ if ultra > 0 => Pick::Ultra,
         _ => Pick::Interpreter,
     }
@@ -108,9 +109,9 @@ pub(super) fn decide(tiers: &Tiers, observed: &Observed, unplanned: bool, diagno
     let priors = &tiers.priors;
     let plan = if unplanned { priors.plan_ns_per_ir } else { 0 };
     let net = net_planned_ns(priors, priors.body_share, (plan, priors.compile_ns_per_ir), compile_wall_permille(priors), observed);
-    // In the default mode b-jit is the tier below u-jit: a u-jit compile must beat it.
+    // In the default mode b-jit is the tier below u-jit: a function u-jit would not beat per entry takes it.
     let base = crate::jit_mode::tiers_allowed(&[crate::jit_mode::Tier::Base]).then(|| (base_net_ns(priors, observed),
-        saved_per_entry(priors, priors.base_body_share, priors.base_entry_ns, observed),
+        saved_per_entry(priors, priors.base_body_share, priors.body_entry_ns, observed),
         saved_per_entry(priors, priors.body_share, priors.body_entry_ns, observed)));
     let picked = if tiers.admits_all { Pick::Ultra } else { pick(net, base) };
     if diagnostics { shadow_log(priors, observed, net, base.map(|(net, ..)| net), picked); }
@@ -135,11 +136,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn u_jit_is_picked_only_ahead_of_b_jit() {
-        // u-jit saves more per entry: it waits until its net gain is ahead of b-jit's.
+    fn u_jit_is_weighed_against_the_interpreter_where_it_saves_more() {
+        // u-jit saves more per entry: no b-jit body is built beside it, so it compiles once it pays.
         assert_eq!(pick(100, Some((50, 5, 9))), Pick::Ultra);
-        assert_eq!(pick(50, Some((100, 5, 9))), Pick::Interpreter);
-        assert_eq!(pick(100, Some((100, 5, 9))), Pick::Interpreter);
+        assert_eq!(pick(50, Some((100, 5, 9))), Pick::Ultra);
+        assert_eq!(pick(-1, Some((100, 5, 9))), Pick::Interpreter);
         // u-jit saves no more per entry: b-jit is the tier for good.
         assert_eq!(pick(100, Some((60, 9, 9))), Pick::Base);
         assert_eq!(pick(-1, Some((-5, 9, 3))), Pick::Interpreter);

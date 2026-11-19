@@ -29,7 +29,7 @@ pub(in crate::vm) struct Tiers {
 #[cfg(test)]
 pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500,
+    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, remaining_divisor: 4, plan_ns_per_ir: 1500,
 };
 
 /// The runs a loop-free function makes unlowered before a later call lowers it
@@ -90,11 +90,11 @@ pub(in crate::vm) struct Priors {
     /// (measured about 300 ns: some 1,100 instructions at 0.3 ns).
     pub(in crate::vm) region_entry_ns: u64,
     pub(in crate::vm) body_entry_ns: u64,
-    /// The same two for a b-jit body: stencil code runs about half the interpreter's time per
-    /// bytecode (values stay in the frame), and its entry is a lane record and a call into the
-    /// stitched code (a few dozen machine instructions), where a u-jit body's native entry crosses ABIs.
+    /// A b-jit body's per-bytecode time as a share of the interpreter's: stencil code runs about
+    /// half of it (values stay in the frame). Its entry is `body_entry_ns`, as a u-jit body's: both
+    /// publish a `LaneMethod` the one entry driver runs (`lane_body_entry`, `Vm::run_lane_body`),
+    /// whose binding of the lane frame is the crossing's cost, not the code the body enters.
     pub(in crate::vm) base_body_share: u64,
-    pub(in crate::vm) base_entry_ns: u64,
     /// The divisor of the entries and the interpreter time so far that gives the credible lower
     /// bound of those to come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
@@ -328,14 +328,15 @@ impl Tiers {
     /// The length a body without loops or calls needs for one entry to pay in the lane body
     /// `tier` compiles: none where every eligible compile is admitted (`Tiers::admits_all`), so
     /// a fixture too short to repay one still gets its body. A Cranelift body asks
-    /// `min_instructions`; a stencil body asks the entries' crossing over the interpretation it saves per
-    /// bytecode (`interpreter_ns` less its `base_body_share`), a few bytecodes, as it compiles in microseconds.
+    /// `min_instructions`; a stencil body asks the entry's crossing (`body_entry_ns`, the one entry
+    /// driver's) over the interpretation it saves per bytecode (`interpreter_ns` less its
+    /// `base_body_share`), as it compiles in microseconds and charges no compile.
     pub(in crate::vm) fn amortizing_instructions(&self, tier: Tier) -> usize {
         if self.admits_all { return 0; }
         match tier {
             Tier::Base => {
                 let saved = self.priors.interpreter_ns * (PER_MILLE - self.priors.base_body_share);
-                (self.priors.base_entry_ns * PER_MILLE).div_ceil(saved) as usize
+                (self.priors.body_entry_ns * PER_MILLE).div_ceil(saved) as usize
             }
             Tier::Quick | Tier::Ultra => self.lane_body.min_instructions,
         }
@@ -388,7 +389,7 @@ const MEASURED: Tiers = Tiers {
         window_registers: 32,
         max_depth: 3,
     },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, remaining_divisor: 4, plan_ns_per_ir: 1500 },
     stress: false,
     admits_all: false,
     regexp_native_runs: 2000,
@@ -696,14 +697,18 @@ pub(in crate::vm) const JS_COMPILED_MAX_CODE_BYTES: usize = 64 * 1024;
 mod tests {
     use super::*;
 
-    /// A stencil body pays for its entry in a few bytecodes (it compiles in microseconds and runs near the interpreter's
-    /// speed), a Cranelift body in `min_instructions`.
+    /// A stencil body pays for the one entry both tiers' bodies cross in the bytecodes whose saved
+    /// interpretation covers it: more than a Cranelift body needs, which saves more per bytecode
+    /// behind the same entry; a Cranelift body asks `min_instructions`.
     #[test]
     fn each_lane_body_tier_has_its_own_amortizing_length() {
         let tiers = TierRows::PROCESS.table();
         if tiers.admits_all { return; }
         let (base, ultra) = (tiers.amortizing_instructions(Tier::Base), tiers.amortizing_instructions(Tier::Ultra));
-        assert!(base > 0 && base < ultra, "{base} and {ultra}");
+        let priors = &tiers.priors;
+        let saves = |share: u64, length: usize| length as u64 * priors.interpreter_ns * (PER_MILLE - share) / PER_MILLE;
+        assert!(saves(priors.base_body_share, base) >= priors.body_entry_ns && saves(priors.base_body_share, base - 1) < priors.body_entry_ns, "{base}");
+        assert!(saves(priors.body_share, base) >= saves(priors.base_body_share, base), "{base} and {ultra}");
         assert_eq!([ultra, tiers.amortizing_instructions(Tier::Quick)], [tiers.lane_body.min_instructions; 2]);
     }
 

@@ -386,7 +386,7 @@ impl LaneView {
             use super::super::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
             count(match &outcome {
                 O::Published(_) => Event::BodyPublished, O::Compiling(_) => Event::BodyCompiling, O::Unpaid => Event::BodyUnpaid,
-                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred,
+                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred, O::Base => Event::BodyBase,
             });
         }
         match outcome {
