@@ -9299,6 +9299,8 @@ impl<H: Host> Vm<H> {
             // them again.
             if !self.deferred_activations_run(program) && !self.frames.iter().any(|frame| frame.program == program) {
                 self.programs.release_lane_views(program);
+                // Their records' addresses name private-name sites' entries (`PrivateSiteHomes`).
+                self.private_site_homes.clear();
             }
             let started = jit_diagnostics_enabled().then(std::time::Instant::now);
             let compiled = self.compile_program(program, env).map(Rc::new);

@@ -2147,6 +2147,14 @@ pub(crate) struct Vm<H> {
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
     /// Lane private-name sites' homes (`private_site_home`).
     private_site_homes: private_site_home::PrivateSiteHomes,
+    /// Every class constructor a closure was made of, by program and function: each class
+    /// evaluation makes one, and with it the class's private-name homes
+    /// (`Vm::note_class_evaluation`).
+    class_evaluations: FxHashSet<(ProgramId, u32)>,
+    /// Whether some class was evaluated twice (`class_evaluations`), so a private-name site
+    /// may meet more than one home: until then each site's home is one value for good, and a
+    /// receiver shape alone proves its brand (`Vm::unique_private_homes`).
+    private_homes_shared: bool,
     /// An array shape with no own `@@iterator` (`Vm::array_iteration_intact`).
     array_iteration_shape: Option<u32>,
     /// A Set or Map shape with no own `@@iterator` (`Vm::intact_iteration_kind`).
@@ -3266,6 +3274,9 @@ impl<H: Host> Vm<H> {
         self.module_functions.clear();
         self.wasm_exported_functions.clear();
         self.private_homes.clear();
+        // The heap reset discards every class closure, and so every private home.
+        self.class_evaluations.clear();
+        self.private_homes_shared = false;
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.instanceof_inheriting_holders = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
@@ -3406,6 +3417,8 @@ impl<H: Host> Vm<H> {
             constants.push(value);
         }
         self.programs.set_constants(id, constants, program.constants.capacity() - program.constants.len());
+        // The dropped views' record addresses name private-name sites' entries.
+        self.private_site_homes.clear();
         // Lane views carry constants, so call targets naming the old views are stale.
         self.lane_stack.clear_script_targets();
         if id == self.active_program {

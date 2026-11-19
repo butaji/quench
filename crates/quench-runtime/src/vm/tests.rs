@@ -18512,6 +18512,73 @@ fn lane_in_place_steps_keep_private_brands_and_field_definitions() {
 }
 
 #[test]
+fn lane_private_sites_read_by_shape_while_homes_are_unique() {
+    // Warm private reads, stores, method reads and `#x in` answer from the receiver's shape
+    // while every class was evaluated once; a second evaluation of a class makes a second
+    // home, after which a warmed site still refuses an object of the first home's class.
+    let source = r#"
+      const out = [];
+      class V {
+        #x; #y;
+        constructor(x, y) { this.#x = x; this.#y = y; }
+        #mag() { return this.#x + this.#y; }
+        sum() { return this.#mag(); }
+        static x(o) { return o.#x; }
+        static has(o) { return #x in o; }
+        static hasMag(o) { return #mag in o; }
+        static setX(o, v) { o.#x = v; }
+      }
+      let total = 0;
+      for (let i = 0; i < 3000; i++) {
+        const v = new V(i, 1);
+        V.setX(v, i + 1);
+        total += V.x(v) + v.sum();
+        if (!V.has(v) || V.has({}) || !V.hasMag(v) || V.hasMag({})) throw Error("in");
+      }
+      out.push(total);
+      try { V.x({}); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      try { V.prototype.sum.call({}); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      class Outer {
+        #v = "o";
+        static inner() { return class Inner { #v = "i"; static read(o) { return o.#v; } }; }
+        static read(o) { return o.#v; }
+      }
+      const I = Outer.inner();
+      let w = "";
+      for (let i = 0; i < 2000; i++) w = Outer.read(new Outer()) + I.read(new I());
+      out.push(w);
+      try { I.read(new Outer()); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      class Base { constructor(o) { return o; } }
+      class Stamp extends Base { #t = 7; static t(o) { return o.#t; } }
+      const target = { a: 1 };
+      new Stamp(target);
+      let t = 0;
+      for (let i = 0; i < 2000; i++) t += Stamp.t(target);
+      out.push(t, Object.keys(target).join(), JSON.stringify(target), Reflect.ownKeys(target).length);
+      function make() { return class { #p = 1; static get(o) { return o.#p; } static has(o) { return #p in o; } }; }
+      const A = make();
+      const a = new A();
+      let s = 0;
+      for (let i = 0; i < 3000; i++) s += A.get(a) + (A.has(a) ? 1 : 0);
+      out.push(s);
+      const B = make();
+      try { B.get(a); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      out.push(B.has(a), A.has(a), B.get(new B()));
+      let after = 0;
+      for (let i = 0; i < 2000; i++) after += V.x(new V(1, 0));
+      out.push(after);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-private-unique-homes.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["9006000|TypeError|TypeError|oi|TypeError|14000|a|{\"a\":1}|1|6000|TypeError|false|true|1|2000"]
+    );
+}
+
+#[test]
 fn lane_in_place_steps_keep_property_definition_records() {
     // Class methods and accessors and object-literal accessors define their descriptors in
     // place; computed keys coerce in source order, setters and private methods stay exact, a

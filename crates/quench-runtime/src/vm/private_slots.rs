@@ -106,6 +106,12 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<usize> {
         let shape = self.object_data(object)?.shape();
+        // A site whose home is one value for good answers from the shape alone.
+        if self.unique_private_homes()
+            && let Some(slot) = self.private_site_homes.unique_field_slot(site, shape)
+        {
+            return Some(slot);
+        }
         if let Some(slot) = self.private_site_homes.field_slot(site, scope.0, shape) {
             return Some(slot);
         }

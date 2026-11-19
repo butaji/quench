@@ -368,6 +368,9 @@ impl<H: Host> Vm<H> {
         if reclaimed.is_empty() {
             return;
         }
+        // The reclaimed programs' lane records are freed, and a later view may take their
+        // addresses, which name the private-name sites' entries.
+        self.private_site_homes.clear();
         self.free_cache_layouts_of(reclaimed.iter().copied());
         let reclaimed = reclaimed.into_iter().collect::<FxHashSet<_>>();
         self.function_values

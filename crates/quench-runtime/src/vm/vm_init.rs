@@ -127,6 +127,8 @@ impl<H: Host> Vm<H> {
             symbol_write_proofs: Default::default(),
             symbol_load_proofs: Default::default(),
             private_site_homes: Default::default(),
+            class_evaluations: FxHashSet::default(),
+            private_homes_shared: false,
             array_iteration_shape: None,
             collection_iteration_shape: None,
             array_species_proof: None,
