@@ -2135,7 +2135,7 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), kept, environment: Some(environment), global_store, names: Some((cx.cast(), names)),
             clones, cleanups: Some(cleanups), scope: scope_reads::<H, FLAG>(cx, ip, i), ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
     }
-    if const { matches!(LaneFields::<OP>::OPCODE, Op::TierPrologue | Op::BodyEntry) } {
+    if const { OP == crate::bytecode::TIER_PROLOGUE as u16 || OP == crate::bytecode::BODY_ENTRY as u16 } {
         // A prologue record enters the activation's function in the lane context `cx` (`tier_prologue_resumed`,
         // `body_entry_resumed`), erased of its host so the frame names no `H`.
         let entry = EntryHost {
