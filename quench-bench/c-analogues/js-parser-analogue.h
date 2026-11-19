@@ -47,7 +47,8 @@ enum JsType {
   N_UnaryExpression, N_UpdateExpression, N_BinaryExpression, N_LogicalExpression, N_AssignmentExpression,
   N_ConditionalExpression, N_CallExpression, N_NewExpression, N_MemberExpression,
   N_OptionalMemberExpression, N_OptionalCallExpression, N_SequenceExpression, N_YieldExpression,
-  N_AwaitExpression, N_AssignmentPattern, N_ArrayPattern, N_ObjectPattern
+  N_AwaitExpression, N_AssignmentPattern, N_ArrayPattern, N_ObjectPattern,
+  N_ClassProperty   /* appended: class fields (key, optional initializer in b) */
 };
 
 enum { JF_COMPUTED = 1, JF_STATIC = 2, JF_ASYNC = 4, JF_GENERATOR = 8, JF_SHORTHAND = 16,
@@ -785,7 +786,16 @@ static JsNode *js_parse_class_member(JsContext *P) {
   js_member_mods(P, 1, &m);
   int computed;
   JsNode *key = js_parse_prop_key(P, &computed);
-  if (P->tt != TK_LPAREN) js_fail(P, "class fields are not supported by this parser");
+  if (P->tt != TK_LPAREN) {
+    /* a class field: key [= initializer] ; (ASI applies) */
+    JsNode *f = js_node(P, N_ClassProperty, start);
+    f->a = key;
+    if (computed) f->flags |= JF_COMPUTED;
+    if (m.is_static) f->flags |= JF_STATIC;
+    if (P->tt == TK_ASSIGN) { js_lex(P); f->b = js_parse_assign(P, 0); }
+    js_consume_semi(P);
+    return js_fin(P, f);
+  }
   if (!m.kind && !computed && !m.is_static && key->type == N_Identifier && key->len == 11 &&
       memcmp(key->str, "constructor", 11) == 0)
     m.kind = 3;
