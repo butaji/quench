@@ -293,6 +293,7 @@ impl Continuation {
     /// continuation's record: the frame's address, which its box keeps until the run ends,
     /// and the register that takes the value the run resumes with. Every register is live
     /// while it runs: the caller settles them (`FrameRecord::settle_registers`).
+    #[inline(always)]
     pub(crate) fn begin_window(&mut self) -> (*mut FrameRecord, Option<u16>) {
         (&raw mut *self.frame, self.resume_register)
     }
@@ -433,7 +434,7 @@ mod tests {
         assert!(roots.contains(&Value::heap(1)) && roots.contains(&Value::heap(3)) && !roots.contains(&Value::heap(2)));
         quiet.frame.settle_registers(4);
         assert_eq!(&quiet.frame.registers[..], [Value::heap(1), Value::heap(2), Value::heap(3)]);
-        assert!(quiet.frame.live_registers.is_none());
+        assert!(quiet.frame.live_registers().is_none());
         let mut collected = suspended(4);
         collected.frame.settle_registers(5);
         assert_eq!(&collected.frame.registers[..], [Value::heap(1), Value::UNDEFINED, Value::heap(3)]);
