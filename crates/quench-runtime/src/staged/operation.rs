@@ -145,7 +145,7 @@ pub(crate) enum Operation<W, P> {
     Nop,
     /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
     /// defines the result register.
-    GetField { base: FieldBase, lookup: FieldLookup },
+    GetField { base: FieldBase, lookup: FieldLookup, destination: Register },
     /// `base.atom = value` through cache `site`'s store plan (`property_write::set_field`);
     /// `base` is `this` for `None`.
     SetField { value: Register, base: Option<Register>, atom: u32, site: u16, strict: bool },
@@ -179,7 +179,7 @@ pub(crate) enum Operation<W, P> {
     Throw { source: Register },
     /// The value `base[key]` reads, a present dense element where the array and the key's int32
     /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
-    ElementRead { base: Register, key: Operand },
+    ElementRead { base: Register, key: Operand, destination: Register },
     /// An indexed read whose base is a frame local, not a register (`GetIndex` over a numeric
     /// local operand): the tier's exact path makes it (`element_rows::step` leaves it unresolved).
     ElementReadOperand { destination: Register, base: Operand, key: Operand },
@@ -188,7 +188,7 @@ pub(crate) enum Operation<W, P> {
     IncDecLocal { local: Register, source: Register, decrement: bool },
     /// `base[key] = value`, replacing a present dense element in place where the array owns its
     /// backing alone and the value needs no barrier log, else the VM's store.
-    ElementWrite { value: Register, base: Register, key: Register },
+    ElementWrite { value: Register, base: Register, key: Register, strict: bool },
     /// Define `destination` from the capture `slot`, `depth` scopes out, or from the root
     /// environment's projected binding where `root` (`Frame::capture_slot`). The decode never
     /// names a root: only a tier that found the walk end at one does.
@@ -374,7 +374,7 @@ impl<W, P> Operation<W, P> {
             FieldLookup::Atom { base, .. } => base,
             FieldLookup::Site(_) => FieldBase(FieldBase::NESTED),
         };
-        Some(Self::GetField { base, lookup })
+        Some(Self::GetField { base, lookup, destination: instruction.result_register() })
     }
 
     /// The value-level operations of `decode`.

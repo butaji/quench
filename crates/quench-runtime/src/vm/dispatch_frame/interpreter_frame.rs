@@ -8,7 +8,7 @@ use crate::host::Host;
 use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, NumericFrame, Operation, Step};
 use crate::staged::Frame as _;
-use crate::vm::call_out::CallSite;
+use crate::vm::call_out::{CallSite, Loaded};
 use crate::vm::var_owner::VarOwner;
 use crate::vm::{StepResult, Vm};
 use crate::{JsError, Value};
@@ -74,6 +74,11 @@ pub(in crate::vm) struct InterpreterFrame<'a, H: Host> {
     stashed: Value,
     /// The register an `Await` resumes into.
     resume: Option<Register>,
+    /// Whether a read's getter may run as an in-place activation (`Vm::load_field_step`): the caller's
+    /// `allow_inline_calls`, which `step` passes down.
+    allow_inline_calls: bool,
+    /// The activation a read's getter pushed, which the row stops the run on (`step_row`).
+    pushed: Option<StepResult>,
 }
 
 impl<'a, H: Host> InterpreterFrame<'a, H> {
@@ -82,7 +87,7 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
     /// which a `Yield` takes its destination from.
     #[inline(always)]
     pub(in crate::vm) fn step_row(vm: *mut Vm<H>, program: &'a ResidualProgram, frame: usize, pc: usize,
-        instruction: WideInstruction, operation: Operation<u64, ()>) -> RowRun {
+        allow_inline_calls: bool, instruction: WideInstruction, operation: Operation<u64, ()>) -> RowRun {
         // SAFETY: `vm` is the running VM, live for the row. The register and local pointers are the
         // running activation's, which stay allocated for the activation's run.
         let (registers, locals, locals_len, function) = unsafe {
@@ -100,10 +105,15 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
             raised: None,
             stashed: Value::UNDEFINED,
             resume: None,
+            allow_inline_calls,
+            pushed: None,
         };
         let step = crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut interpreted, operation);
         if let Some(error) = interpreted.raised.take() {
             return RowRun::Stop(Err(error));
+        }
+        if let Some(pushed) = interpreted.pushed.take() {
+            return RowRun::Stop(Ok(pushed));
         }
         match step {
             Step::Value(_) => RowRun::Done(Edge::Following),
@@ -138,6 +148,21 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
         // SAFETY: `vm` is the running VM, live for the row (`step_row`), and the row holds no other
         // reference into it while its calls run.
         unsafe { &mut *self.vm }
+    }
+
+    /// The value of a read the VM made, or the activation its getter pushed, which the run stops on (`pushed`).
+    fn loaded(&mut self, loaded: Result<Loaded, JsError>) -> Option<(u64, InterpreterFact)> {
+        match loaded {
+            Ok(Loaded::Value(value)) => Some((value.to_bits(), InterpreterFact::Value)),
+            Ok(Loaded::Pushed(step)) => {
+                self.pushed = Some(step);
+                None
+            }
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
     }
 
     /// The register `register` of the file.
@@ -252,11 +277,32 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
     /// The VM's operation for a name read, a global `typeof` or a store, a for-in step, an async
     /// iterator and a template object (`CallOut`), at the frame's site. A raise is stashed for the runner.
     #[inline(always)]
-    fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, InterpreterFact)> {
+    fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, result: Option<Register>) -> Option<(u64, InterpreterFact)> {
+        // A named read at the running frame: its getter may run in place, so the read is the VM's `load_field_step`.
+        if let CallOut::LoadField { lookup } = operation {
+            let VarOwner::Frame(frame) = self.site.owner else { return None };
+            let (program, site, allow) = (self.program, self.site, self.allow_inline_calls);
+            let loaded = self.vm().load_field_step(program, frame, site.resume, lookup, result, allow);
+            return self.loaded(loaded);
+        }
+        // An indexed read: the same, for a proved symbol key's getter.
+        if let CallOut::LoadElement { base, key } = operation {
+            let VarOwner::Frame(frame) = self.site.owner else { return None };
+            let (program, site, allow) = (self.program, self.site, self.allow_inline_calls);
+            let vm = self.vm();
+            let value = |operand: Operand| match operand.register_index() {
+                Some(register) => vm.owner_register(site.owner, register),
+                None => vm.active_constant(usize::from(operand.payload())).expect("a call-out's constant is in its program"),
+            };
+            let operands = (value(base), value(key));
+            let loaded = vm.load_element_step(program, frame, site.resume, operands, result, allow);
+            return self.loaded(loaded);
+        }
         if !matches!(operation,
             CallOut::LoadName { .. } | CallOut::GlobalTypeof { .. } | CallOut::GlobalWrite { .. } | CallOut::ForInNext { .. }
                 | CallOut::Binary { .. } | CallOut::Equality { .. } | CallOut::PropertyKey { .. } | CallOut::Decide { .. }
-                | CallOut::ToNumeric { .. } | CallOut::IncDec { .. }
+                | CallOut::ToNumeric { .. } | CallOut::IncDec { .. } | CallOut::Unary { .. }
+                | CallOut::StoreField { .. } | CallOut::StoreElement { .. }
                 | CallOut::Protocol { step: crate::staged::Protocol::Value(crate::staged::protocol_values::ValueStep::GetAsyncIterator)
                     | crate::staged::Protocol::Literal(crate::staged::protocol_literals::LiteralStep::CacheTemplate { .. }
                         | crate::staged::protocol_literals::LiteralStep::LoadTemplate { .. }), .. })
@@ -524,6 +570,14 @@ impl<H: Host> NumericFrame<Concrete> for InterpreterFrame<'_, H> {
     /// The interpreter takes the VM's general operator in place: a Number row its words leave is the VM's.
     #[inline(always)]
     fn general_operators(&self) -> bool { true }
+
+    /// The interpreter takes the VM's named and keyed stores in place, where a store row's plan leaves them.
+    #[inline(always)]
+    fn general_stores(&self) -> bool { true }
+
+    /// The interpreter takes the VM's named and indexed reads in place, where a read row's plan leaves them.
+    #[inline(always)]
+    fn general_loads(&self) -> bool { true }
 
     /// The local `local` takes `word` as `fact` boxes it: an int32 word as its value, a binary64 word as a Number.
     #[inline(always)]

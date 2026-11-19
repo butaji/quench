@@ -189,7 +189,7 @@ impl Point {
     /// length (`Proven`) or below another register's value (`Versioned`).
     pub(in crate::vm::compiled) fn index_proof(&self, model: &Model<'_>, pc: usize, instruction: WideInstruction) -> IndexProof {
         let (array, index) = match Operation::<u64, ()>::of(instruction) {
-            Some(Operation::ElementRead { base, key }) => (Some(base), key.register_index()),
+            Some(Operation::ElementRead { base, key, .. }) => (Some(base), key.register_index()),
             Some(Operation::ElementWrite { base, key, .. }) => (Some(base), Some(key)),
             _ => return IndexProof::Check,
         };

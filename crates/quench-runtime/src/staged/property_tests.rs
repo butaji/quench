@@ -205,7 +205,7 @@ fn run(answers: bool, operation: Operation<u64, ()>) -> (Option<u64>, Vec<&'stat
 fn host_plans_and_callouts_reach_the_frame_and_a_declining_frame_leaves() {
     let lookup = FieldLookup::Atom { atom: 1, base: FieldBase::register(1), cache_site: 2 };
     let cases: [(Operation<u64, ()>, &str); 6] = [
-        (Operation::GetField { base: FieldBase::register(1), lookup }, "field_get_host"),
+        (Operation::GetField { base: FieldBase::register(1), lookup, destination: 0 }, "field_get_host"),
         (Operation::FieldGetHost { object: 0, atom: 1, site: 2 }, "field_get_host"),
         (Operation::FieldAdd { object: 0, atom: 1, site: 2, value: 5 }, "field_add"),
         (Operation::Delete { destination: 0, base: 1, key: 2, strict: true }, "delete_strict"),
@@ -260,7 +260,7 @@ fn read_owned_by(heap: &Heap, plan: FieldPlan<'static>, object: Value, proven: O
     let mut stage = Concrete::new(heap.property_values_base());
     let lookup = FieldLookup::Atom { atom: 0, base: FieldBase::register(1), cache_site: 0 };
     frame.registers = vec![0, object.to_bits()];
-    let word = match step(&mut stage, &mut frame, Operation::GetField { base: FieldBase::register(1), lookup }) {
+    let word = match step(&mut stage, &mut frame, Operation::GetField { base: FieldBase::register(1), lookup, destination: 0 }) {
         Step::Value(word) => Some(Value::from_bits(word)),
         _ => None,
     };

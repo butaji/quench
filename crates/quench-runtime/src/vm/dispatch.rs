@@ -15,22 +15,21 @@
 // - Hand semantics with no staged row: CallFirstChunk (the first-call stub, `call_first_chunk`).
 // - Superinstruction: SuperConstArrayObject2 makes a constant array, runs two binary operations, then makes an
 //   object pair. No single `Allocation` decodes it, and its return is its own.
-// - Row, then a per-opcode miss: GetField, GetIndex, SetField, SetFieldStrict, SetIndex, Binary, NumericAdd,
-//   NumericMultiply, Unary, JumpBinaryFalse, InitializeTdz. Each miss is that opcode's own semantics, not a
-//   staged row's. What keeps each from its arm alone:
-//   - GetField, GetIndex: the interpreter's record has no read plan (`NoPlans`), and an accessor needs the
-//     inline getter (`try_inline_getter`), which takes `pc` and `allow_inline_calls` from `step`.
-//   - SetField, SetFieldStrict, SetIndex: the stores have no call-out (`CallOut`) yet.
+// - Row, then a per-opcode miss: Binary, NumericAdd, NumericMultiply, Unary, JumpBinaryFalse, InitializeTdz. Each
+//   miss is that opcode's own semantics, not a staged row's. What keeps each from its arm alone:
 //   - Binary, NumericAdd, NumericMultiply: `decode_binary` declines an operand that is neither a register nor
 //     a constant, and under `stencil_build` every operator that is no Number's.
-//   - Unary: `decode_unary` declines the operators the stencil build does not stage, and a non-int32 operand's
-//     update has no call-out.
-//   - JumpBinaryFalse: a constant operand, a nullish test, and a bitwise test have no call-out (`Decide` takes
-//     registers, and the nullish and bitwise decisions are not calls).
+//   - Unary: `decode_unary` declines the operators it does not stage: a `typeof` or `void` that returns from the
+//     frame, and any operator outside the unary family. A non-int32 operand is `CallOut::Unary`.
+//   - JumpBinaryFalse: a bitwise test of a constant operand whose word is no int32 has no call-out, since `Decide`
+//     takes registers and a `Binary` yields a Number whose truth a word cannot tell (a BigInt's zero is no int32 zero).
 //   - InitializeTdz: the row leaves for a slot it does not hold plainly, and the miss writes the TDZ marker there.
 // - Field stores to `this`: SetThisField, SetThisFieldStrict. The interpreter frame's property plans are
 //   `NoPlans`, so its store row always leaves; the miss must read `this` by `checked_this_binding`, which
-//   `set_field_miss` (it reads register B) does not.
+//   the named store's call-out (`CallOut::StoreField`, reading register B) does not.
+// - Run-only (`Declined` is unreachable): GetField, GetIndex, SetField, SetFieldStrict, SetIndex. Their misses are
+//   the call-outs `LoadField`, `LoadElement`, `StoreField` and `StoreElement`, which the interpreter frame answers;
+//   a read that writes `this` stores its value through `store_field_sink`.
 // - WasmBranchTable: its row's edge is a branch-table entry (`Edge::Entry`), which the interpreter frame's
 //   `step_row` refuses, so its case stays the hand body.
 // - Call forms with their own convention (spread, forwarded arguments, inline and known targets, per-form
@@ -189,7 +188,7 @@ impl<H: Host> Vm<H> {
     /// A field read's `getter`, a user function the loop may push in place, run as the next
     /// in-loop activation with receiver `this` and no arguments, writing `destination`.
     #[inline(never)]
-    fn try_inline_getter(
+    pub(super) fn try_inline_getter(
         &mut self,
         p: &ResidualProgram,
         f: usize,
@@ -605,7 +604,7 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError::validation("constant index is outside program".into()))?;
                 let operation = crate::staged::Operation::<u64, ()>::LoadConst {
                     destination: i.result_register(), constant: crate::staged::Constant::untyped(constant) };
-                match self.run_row(p, f, i, pc, operation) {
+                match self.run_row(p, f, i, pc, allow_inline_calls, operation) {
                     RowRun::Done(_) => {}
                     RowRun::Declined => unreachable!("the interpreter frame answers every constant load"),
                     RowRun::Stop(stop) => return stop,
@@ -618,26 +617,22 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::GetField => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.get_field_step_miss(p, f, i, pc, allow_inline_calls);
-                    }
+                    RowRun::Declined => unreachable!("the interpreter frame answers every named read"),
                     RowRun::Stop(stop) => return stop,
                 }
             }
             Op::GetIndex => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.get_index_miss(p, f, i, pc, allow_inline_calls);
-                    }
+                    RowRun::Declined => unreachable!("the interpreter frame answers every indexed read"),
                     RowRun::Stop(stop) => return stop,
                 }
             }
             // The TDZ opening runs its staged row first; a row that leaves (a slot it does not hold plainly) is the hand write.
             Op::InitializeTdz => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
                     RowRun::Declined => {
                         let slot = i.local_slot();
@@ -649,11 +644,9 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::SetField | Op::SetFieldStrict => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.set_field_miss(p, f, i);
-                    }
+                    RowRun::Declined => unreachable!("the interpreter frame answers every named store"),
                     RowRun::Stop(stop) => return stop,
                 }
             }
@@ -669,16 +662,14 @@ impl<H: Host> Vm<H> {
                 )?;
             }
             Op::SetIndex => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.set_index_miss(p, f, i);
-                    }
+                    RowRun::Declined => unreachable!("the interpreter frame answers every keyed store"),
                     RowRun::Stop(stop) => return stop,
                 }
             }
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
                     RowRun::Declined => {
                         return self.binary_miss(p, f, i, pc);
@@ -688,7 +679,7 @@ impl<H: Host> Vm<H> {
             }
             // merge: HEAD's inline Unary, Jump, JumpFalse/JumpTrue arms are dropped; the derivation runs them as staged rows (step_row_of).
             Op::Unary => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
                     RowRun::Declined => {
                         return self.unary_miss(p, f, i);
@@ -697,7 +688,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::JumpBinaryFalse => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
                     RowRun::Declined => {
                         return self.jump_binary_false_miss(p, f, i, pc);
@@ -1038,7 +1029,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
-            _ => return self.step_unlisted(p, f, i, pc),
+            _ => return self.step_unlisted(p, f, i, pc, allow_inline_calls),
         }
         Ok(StepResult::Continue)
     }
@@ -1047,13 +1038,13 @@ impl<H: Host> Vm<H> {
     /// `f` (`InterpreterFrame::step_row`). A taken jump sets `pc`, and a back-edge jump publishes its
     /// PC and checks for a due collection.
     #[inline(always)]
-    fn run_row(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
+    fn run_row(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool,
         operation: crate::staged::Operation<u64, ()>) -> RowRun {
         use crate::staged::{Edge, Operation};
         if !self.row_admitted(p, f, operation) {
             return RowRun::Declined;
         }
-        let run = InterpreterFrame::step_row(self as *mut Self, p, f, *pc, i, operation);
+        let run = InterpreterFrame::step_row(self as *mut Self, p, f, *pc, allow_inline_calls, i, operation);
         if matches!(run, RowRun::Done(Edge::Target)) {
             *pc = i.jump_target() as usize;
             if matches!(operation, Operation::Jump) {
@@ -1092,17 +1083,17 @@ impl<H: Host> Vm<H> {
     /// decoded this instruction and tried its row where it declined (`pending_row`): the arm runs its
     /// miss path without decoding or trying the row again.
     #[inline(always)]
-    fn step_row_of(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
+    fn step_row_of(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool,
         context: crate::staged::DecodeContext<'_>) -> RowRun {
         if self.pending_row.take().is_some() {
             return RowRun::Declined;
         }
-        // A record that writes `this` is the miss path's: its store into `this` is the arm's own.
-        if i.writes_current_this() {
+        // A record that writes `this` other than a read is the miss path's; a read's store into `this` is `run_row_completed`'s.
+        if i.writes_current_this() && i.op() != Op::GetField {
             return RowRun::Declined;
         }
         match Self::decode_row_completed(i, context) {
-            Some((operation, completes)) => self.run_row_completed(p, f, i, pc, operation, completes),
+            Some((operation, completes)) => self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes),
             None => RowRun::Declined,
         }
     }
@@ -1121,11 +1112,17 @@ impl<H: Host> Vm<H> {
     /// Runs `operation` as its staged row, then completes the frame as the record asks: a return of the
     /// value the row wrote to its result register, or the numeric local the result writes.
     #[inline(always)]
-    fn run_row_completed(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
+    fn run_row_completed(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool,
         operation: crate::staged::Operation<u64, ()>, completes: crate::bytecode::Register) -> RowRun {
-        let run = self.run_row(p, f, i, pc, operation);
+        // A read that writes `this` pushes no getter: its value is stored to `this` once it is read.
+        let run = self.run_row(p, f, i, pc, allow_inline_calls && !i.writes_current_this(), operation);
         if !matches!(run, RowRun::Done(_)) {
             return run;
+        }
+        if completes & crate::bytecode::SET_THIS_REGISTER != 0 {
+            if let Err(error) = self.store_field_sink(p, f, i) {
+                return RowRun::Stop(Err(error));
+            }
         }
         if completes & crate::bytecode::RETURN_REGISTER != 0 {
             return RowRun::Stop(Ok(StepResult::Return(self.read(f, i.result_register()))));
@@ -1137,6 +1134,20 @@ impl<H: Host> Vm<H> {
                 .virtual_opcode(self.frames[f].program.raw(), crate::staged::STORE_LOCAL_PLAIN_ROW as usize);
         }
         run
+    }
+
+    /// The value a read `i` wrote to its result register, stored to `this` through the fused field sink of its
+    /// nested lookup (the sink's cache site, under the frame's field source).
+    fn store_field_sink(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<(), JsError> {
+        let lookup = i.field_lookup().ok_or_else(|| JsError::validation("invalid nested field lookup encoding".into()))?;
+        let crate::bytecode::FieldLookup::Site(site) = lookup else {
+            unreachable!("field sink is only attached to nested field lookup")
+        };
+        let sink = p.field_sites[site].sink.expect("fused field sink");
+        let value = self.read(f, i.result_register());
+        let strict = p.function(self.frames[f].function as usize).strict;
+        self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
+            p, vm.frames[f].this, sink.0, value, sink.1, strict))
     }
 
     #[inline(never)]
@@ -1207,110 +1218,12 @@ impl<H: Host> Vm<H> {
         Ok(StepResult::Continue)
     }
 
-    #[inline(never)]
-    fn get_field_step_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
-        let lookup = i.field_lookup().ok_or_else(|| {
-            JsError::validation("invalid nested field lookup encoding".into())
-        })?;
-        let v = match lookup {
-            crate::bytecode::FieldLookup::Site(site) => self.resolve_field(p, f, site)?,
-            crate::bytecode::FieldLookup::Atom {
-                atom,
-                base,
-                cache_site,
-            } => {
-                let base = self.resolve_field_base(p, f, base)?;
-                // A read fused with its frame's return pushes the getter as a call
-                // whose completion returns from the frame (`PendingGeneralCall::returns`);
-                // a getter is no tail call, so a strict frame pushes it too.
-                if allow_inline_calls
-                    && !i.writes_current_this()
-                    && let Some(getter) =
-                        self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
-                    && let Some(result) =
-                        self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
-                {
-                    return result;
-                }
-                // A private field reads straight from the object's private elements;
-                // methods, accessors and a missing brand take the ordinary [[Get]].
-                match self.is_private_name(atom).then(|| self.private_field_value(p, base, atom)).flatten() {
-                    Some(value) => value,
-                    None => self.get_field_cached(p, base, atom, cache_site)?,
-                }
-            }
-        };
-        if i.writes_current_this() {
-            let crate::bytecode::FieldLookup::Site(site) = lookup else {
-                unreachable!("field sink is only attached to nested field lookup")
-            };
-            let sink = p.field_sites[site].sink.expect("fused field sink");
-            self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
-                p, vm.frames[f].this, sink.0, v, sink.1,
-                p.function(vm.frames[f].function as usize).strict,
-            ))?;
-        }
-        if i.returns_from_frame() {
-            return Ok(StepResult::Return(v));
-        }
-        self.write(f, i.result_register(), v);
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn get_index_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
-        #[cfg(feature = "profile-aggregate")]
-        self.profile.index_dispatch(false, false);
-        let base = self.resolve_operand(p, f, i.operand_b())?;
-        let key = self.resolve_operand(p, f, i.operand_c())?;
-        if allow_inline_calls
-            && let Some(getter) = self.proved_symbol_getter(base, key)
-            && let Some(result) =
-                self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
-        {
-            return result;
-        }
-        let v = self.get_index(p, base, key)?;
-        self.write(f, i.result_register(), v);
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn set_field_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        let object = self.read(f, i.register_b());
-        let value = self.read(f, i.register_a());
-        self.set_field_cached(
-            p,
-            object,
-            i.atom_index(),
-            value,
-            i.cache_site_index(),
-            i.op().field_store().is_some_and(|store| store.strict),
-        )?;
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn set_index_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        #[cfg(feature = "profile-aggregate")]
-        self.profile.index_dispatch(true, false);
-        self.set_index_mode(
-            p,
-            self.read(f, i.register_b()),
-            self.read(f, i.register_c()),
-            self.read(f, i.register_a()),
-            p.function(self.frames[f].function as usize).strict
-                || i.boolean_flag().expect("validated boolean immediate"),
-        )?;
-        Ok(StepResult::Continue)
-    }
-
     /// An opcode with no arm of its own in `step`, run by its catalog attributes (`Traits`, `Op::staged`,
     /// `Op::owned_step`): a no-op, a register or jump row, a suspension, a row that decides it alone, an
     /// owner's own step, a literal's allocation or element definition, a call-out the interpreter's stage
     /// answers in place. Any other is a Wasm step.
     #[inline(never)]
-    fn step_unlisted(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
+    fn step_unlisted(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
         // A no-op does nothing. The wide marker is a prefix of the instruction it extends, which dispatch never runs.
         if i.op().traits().has(crate::bytecode::Traits::NO_STEP) {
             if i.op().is_wide_marker() {
@@ -1325,7 +1238,7 @@ impl<H: Host> Vm<H> {
             | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. })) =
             crate::staged::Operation::<u64, ()>::of(i)
         {
-            match self.run_row(p, f, i, pc, operation) {
+            match self.run_row(p, f, i, pc, allow_inline_calls, operation) {
                 RowRun::Done(_) => return Ok(StepResult::Continue),
                 RowRun::Stop(stop) => return stop,
                 RowRun::Declined => {}
@@ -1345,7 +1258,7 @@ impl<H: Host> Vm<H> {
         }
         // A row that decides its opcode alone runs as its staged row on the frame, which never declines.
         if i.op().traits().has(crate::bytecode::Traits::ROW_ONLY) {
-            return match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+            return match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                 RowRun::Done(_) => Ok(StepResult::Continue),
                 RowRun::Stop(stop) => stop,
                 RowRun::Declined => unreachable!("a row-only opcode's staged row decides it"),
@@ -1360,7 +1273,7 @@ impl<H: Host> Vm<H> {
         // or a `staged` decoder), then the owner's own step on a miss.
         if i.op().owned_step().is_some() {
             if i.op().staged().is_some() || i.op().traits().has(crate::bytecode::Traits::ROW_HANDLER) {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => return Ok(StepResult::Continue),
                     RowRun::Declined => {}
                     RowRun::Stop(stop) => return stop,
@@ -1374,7 +1287,7 @@ impl<H: Host> Vm<H> {
         if i.op().staged() == Some(crate::bytecode::Decoder::Literal) {
             let (operation, completes) = crate::staged::Operation::<u64, ()>::decode_literal_completed(i, ())
                 .expect("a literal row decodes");
-            return match self.run_row_completed(p, f, i, pc, operation, completes) {
+            return match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
                 RowRun::Done(_) => Ok(StepResult::Continue),
                 RowRun::Stop(stop) => stop,
                 RowRun::Declined => unreachable!("the interpreter frame answers every literal row"),

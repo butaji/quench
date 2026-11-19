@@ -5,7 +5,7 @@
 
 use super::spread::Passing;
 use super::{Arguments, NumericFrame, NumericStage, Operation, Protocol, Register, Step};
-use crate::bytecode::Operand;
+use crate::bytecode::{FieldLookup, Operand};
 
 /// The tag byte of each `CallOut`, which a helper-call row passes as its immediate.
 pub(crate) const TAG_EQUALITY: u8 = 0;
@@ -30,6 +30,11 @@ pub(crate) const TAG_ARGUMENT_GET: u8 = 17;
 pub(crate) const TAG_ACCESSOR: u8 = 18;
 pub(crate) const TAG_TO_NUMERIC: u8 = 19;
 pub(crate) const TAG_INC_DEC: u8 = 20;
+pub(crate) const TAG_UNARY: u8 = 21;
+pub(crate) const TAG_STORE_FIELD: u8 = 22;
+pub(crate) const TAG_STORE_ELEMENT: u8 = 23;
+pub(crate) const TAG_LOAD_FIELD: u8 = 24;
+pub(crate) const TAG_LOAD_ELEMENT: u8 = 25;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -95,6 +100,21 @@ pub(crate) enum CallOut {
     /// The `++` (or `--`) of `source` (`decrement`) by the VM's update: a Number's step, else ToNumeric and
     /// the BigInt update (`Vm::inc_dec_value`). Defines the updated value.
     IncDec { source: Register, decrement: bool } = TAG_INC_DEC,
+    /// The unary operator `operator` (a `UnaryOperator`) of `value` by the VM's `unary`: a non-int32
+    /// operand's negation, plus or bitwise not. Defines the result.
+    Unary { operator: u32, value: Register } = TAG_UNARY,
+    /// `object.atom = value` through cache `site` by the VM's named store (`Vm::set_field_cached`), which
+    /// refuses by throwing where `strict`. Defines no register.
+    StoreField { object: Register, value: Register, atom: u32, site: u16, strict: bool } = TAG_STORE_FIELD,
+    /// `object[index] = value` by the VM's keyed store (`Vm::set_index_mode`), strict where `strict` or the
+    /// running function is. The value is the operand list's one register (`Arguments::Window`). Defines no register.
+    StoreElement { object: Register, index: Register, value: Register, strict: bool } = TAG_STORE_ELEMENT,
+    /// The named read `lookup` (`Vm::load_field_step`): a site's nested chain, or an atom read of its base
+    /// through the cache, a getter running in place where the frame takes it. Defines the read's value.
+    LoadField { lookup: FieldLookup } = TAG_LOAD_FIELD,
+    /// `base[key]` by the VM's indexed read (`Vm::load_element_step`), a symbol key's getter in place as
+    /// `LoadField`'s. Defines the read's value.
+    LoadElement { base: Operand, key: Operand } = TAG_LOAD_ELEMENT,
 }
 
 /// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
@@ -168,15 +188,22 @@ impl CallOut {
     /// list of arguments a call passes.
     pub(crate) fn operands(self) -> Operands {
         let fixed = match self {
-            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => return Operands::of_operands([Some(left), Some(right)]),
+            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::LoadElement { base: left, key: right } =>
+                return Operands::of_operands([Some(left), Some(right)]),
             Self::Delete { base: left, key: right, .. }
                 | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand }
-                | Self::ToNumeric { source: operand } | Self::IncDec { source: operand, .. } => [None, Some(operand)],
+                | Self::ToNumeric { source: operand } | Self::IncDec { source: operand, .. }
+                | Self::Unary { value: operand, .. } => [None, Some(operand)],
+            Self::StoreField { object, value, .. } => return Operands::of_fixed([Some(object), Some(value)]),
+            Self::StoreElement { object, index, value, .. } => return Operands {
+                fixed: [Some(Operand::register(object)), Some(Operand::register(index))],
+                list: Some(Arguments::Window { first: value, count: 1 }),
+            },
             Self::ArgumentGet { index, .. } => [Some(index), None],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. }
-                | Self::CloneEnv { .. } => [None, None],
+                | Self::CloneEnv { .. } | Self::LoadField { .. } => [None, None],
             Self::Accessor { receiver, .. } => [Some(receiver), None],
             Self::Protocol { operands, .. } => operands,
             Self::Spread { callee, receiver, arguments, .. } =>
@@ -235,6 +262,23 @@ impl<W, P> Operation<W, P> {
             _ => return None,
         })
     }
+}
+
+/// A store row's VM call-out where the frame takes the general operations in place
+/// (`NumericFrame::general_stores`): the word the store answers, else `None`, where the row leaves.
+#[inline(always)]
+pub(super) fn storing<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: CallOut) -> Option<S::Word> {
+    if !frame.general_stores() { return None; }
+    frame.vm_step(stage, call, None).map(|(word, _)| word)
+}
+
+/// A load row's VM call-out, defining `destination`, where the frame takes the general reads in place
+/// (`NumericFrame::general_loads`); otherwise the row leaves.
+#[inline(always)]
+pub(super) fn loading<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: CallOut,
+    destination: Register) -> Step<S::Word, F::Control> {
+    if !frame.general_loads() { return Step::Unresolved; }
+    calling(stage, frame, call, Some(destination))
 }
 
 /// A row whose operation is the VM's: the frame makes it, and the word it defines, if any, is

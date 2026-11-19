@@ -322,8 +322,8 @@ impl<'a> Graph<'a> {
             Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { source, decrement, .. })) => {
                 self.inc_dec(source, decrement, file)
             }
-            Some(crate::staged::Operation::ElementRead { base, key }) => self.get_index(base, key, file),
-            Some(crate::staged::Operation::ElementWrite { value, base, key }) => {
+            Some(crate::staged::Operation::ElementRead { base, key, .. }) => self.get_index(base, key, file),
+            Some(crate::staged::Operation::ElementWrite { value, base, key, .. }) => {
                 return self.set_index(value, base, key, file).map(|()| None).ok_or(());
             }
             _ => {

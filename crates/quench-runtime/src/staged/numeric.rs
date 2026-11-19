@@ -155,6 +155,16 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + supe
     /// `ToNumeric`, `IncDec`). A frame that keeps declining answers `false`, and the row stays unresolved.
     #[inline(always)]
     fn general_operators(&self) -> bool { false }
+
+    /// Whether a store row its plan leaves takes the VM's store in place (`CallOut::StoreField`,
+    /// `StoreElement`). A frame that keeps declining answers `false`, and the row stays unresolved.
+    #[inline(always)]
+    fn general_stores(&self) -> bool { false }
+
+    /// Whether a load row its plan leaves takes the VM's read in place (`CallOut::LoadField`, `LoadElement`).
+    /// A frame that keeps declining answers `false`, and the row stays unresolved.
+    #[inline(always)]
+    fn general_loads(&self) -> bool { false }
 }
 
 /// The int32 operation that leaves at an overflow and at a negative zero.
@@ -310,7 +320,9 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             Step::Value(result)
         }
         Domain::Int32 => {
-            let Some(value) = frame.int_operand(stage, source, miss) else { return Step::Unresolved };
+            let Some(value) = frame.int_operand(stage, source, miss) else {
+                return general_unary(stage, frame, unary_operator(operation), (destination, source));
+            };
             match operation {
                 NumberUnary::Plus => {
                     let fact = frame.int_fact();
@@ -318,17 +330,40 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
                     Step::Value(value)
                 }
                 NumberUnary::Negate => {
-                    // `-0` is no int32: a zero operand leaves, as `i32::MIN`'s overflow does.
+                    // `-0` is no int32: a zero operand leaves, as `i32::MIN`'s overflow does; the VM's negation takes both.
                     let zero_operand = stage.i32_is_zero(value);
                     if stage.guard_false(zero_operand, miss).is_none() {
-                        return Step::Unresolved;
+                        return general_unary(stage, frame, unary_operator(operation), (destination, source));
                     }
                     let zero = stage.i32_constant(0);
-                    int_arithmetic_result(stage, frame, destination, zero, value,
-                        NumberArithmetic::Subtract, LEAVES, miss)
+                    match int_arithmetic_result(stage, frame, destination, zero, value,
+                        NumberArithmetic::Subtract, LEAVES, miss) {
+                        Step::Unresolved => general_unary(stage, frame, unary_operator(operation), (destination, source)),
+                        step => step,
+                    }
                 }
             }
         }
+    }
+}
+
+/// The oxc unary operator `operation` names, which the VM's `unary` takes (`CallOut::Unary`).
+fn unary_operator(operation: NumberUnary) -> u32 {
+    match operation {
+        NumberUnary::Plus => oxc_ast::ast::UnaryOperator::UnaryPlus as u32,
+        NumberUnary::Negate => oxc_ast::ast::UnaryOperator::UnaryNegation as u32,
+    }
+}
+
+/// The VM's unary `operator` of the register `source`, defining `destination`, where the frame takes
+/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
+#[inline(always)]
+fn general_unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operator: u32,
+    (destination, source): (Register, Operand)) -> Step<S::Word, F::Control> {
+    match source.register_index() {
+        Some(value) if frame.general_operators() =>
+            super::callout::calling(stage, frame, super::CallOut::Unary { operator, value }, Some(destination)),
+        _ => Step::Unresolved,
     }
 }
 
@@ -337,7 +372,9 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 fn bitwise_not<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Operand) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    let Some(value) = frame.int_operand(stage, source, miss) else { return Step::Unresolved };
+    let Some(value) = frame.int_operand(stage, source, miss) else {
+        return general_unary(stage, frame, oxc_ast::ast::UnaryOperator::BitwiseNot as u32, (destination, source));
+    };
     let all_ones = stage.i32_constant(-1);
     int_arithmetic_result(stage, frame, destination, all_ones, value,
         NumberArithmetic::Subtract, LEAVES, miss)

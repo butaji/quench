@@ -3,7 +3,7 @@
 //! step by `Vm::call_out`, so every tier shares the one definition.
 
 use super::*;
-use crate::bytecode::{Operand, Register, WideInstruction};
+use crate::bytecode::{FieldLookup, Operand, Register, WideInstruction};
 use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};
 
 /// What the global-name rows did in a test: the call-outs that ran, and the direct global stores
@@ -24,6 +24,13 @@ pub(crate) mod counts {
     pub(crate) fn take(counter: &'static std::thread::LocalKey<Cell<usize>>) -> usize {
         counter.with(|count| count.replace(0))
     }
+}
+
+/// What a named or indexed read produced: its value, or the activation its getter pushed, which the
+/// read's destination takes when that activation returns.
+pub(super) enum Loaded {
+    Value(Value),
+    Pushed(StepResult),
 }
 
 /// Where a call-out runs: the owner of the running activation's variables and registers, the
@@ -51,6 +58,34 @@ impl<H: Host> Vm<H> {
             CallOut::PropertyKey { .. } => self.to_property_key(p, operand).map(Some),
             CallOut::ToNumeric { .. } => self.to_numeric(p, operand).map(Some),
             CallOut::IncDec { decrement, .. } => self.inc_dec_value(p, operand, decrement).map(Some),
+            CallOut::Unary { operator, .. } => self.unary(p, operator, operand).map(Some),
+            // A read without a destination inlines no getter (`Loaded::Pushed` is the interpreter's own).
+            CallOut::LoadField { lookup } => {
+                let frame = self.owner_frame(site.owner).expect("a field read names its frame");
+                match self.load_field_step(p, frame, site.resume, lookup, None, false)? {
+                    Loaded::Value(value) => Ok(Some(value)),
+                    Loaded::Pushed(_) => unreachable!("a read with no destination inlines no getter"),
+                }
+            }
+            CallOut::LoadElement { .. } => {
+                let frame = self.owner_frame(site.owner).expect("an element read names its frame");
+                let base = first.expect("an element read names its base");
+                match self.load_element_step(p, frame, site.resume, (base, operand), None, false)? {
+                    Loaded::Value(value) => Ok(Some(value)),
+                    Loaded::Pushed(_) => unreachable!("a read with no destination inlines no getter"),
+                }
+            }
+            // A named store is the field store the miss made: strict where the row says so (no function's strictness).
+            CallOut::StoreField { atom, site: cache, strict, .. } => {
+                let object = first.expect("a store names its object");
+                self.set_field_cached(p, object, atom, operand, cache, strict).map(|()| None)
+            }
+            // A keyed store: the value is the operand list's register, and strict where the row or the function is.
+            CallOut::StoreElement { strict, .. } => {
+                let (object, value) = (first.expect("a keyed store names its object"), list.first().copied().expect("a keyed store names its value"));
+                let strict = strict || p.function(site.function as usize).strict;
+                self.set_index_mode(p, object, operand, value, strict).map(|()| None)
+            }
             CallOut::Equality { .. } | CallOut::Binary { .. } | CallOut::Delete { .. } | CallOut::Decide { .. } =>
                 self.operator_step(p, site, operation, (first, operand)),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
@@ -64,6 +99,47 @@ impl<H: Host> Vm<H> {
                 self.get_field_cached(p, first.expect("an accessor read names its receiver"), atom, cache).map(Some),
             _ => self.name_step(p, site, operation, first),
         }
+    }
+
+    /// The named read `lookup` of frame `frame` at resume PC `pc`: a nested chain's value, or the atom's value
+    /// through its base. Where `destination` names the register the read writes and `allow_inline_calls` holds,
+    /// a cached getter runs as an in-place activation (`try_inline_getter`), which pushes.
+    pub(super) fn load_field_step(&mut self, p: &ResidualProgram, frame: usize, pc: usize, lookup: FieldLookup,
+        destination: Option<Register>, allow_inline_calls: bool) -> Result<Loaded, JsError> {
+        let (atom, base, cache_site) = match lookup {
+            FieldLookup::Site(site) => return self.resolve_field(p, frame, site).map(Loaded::Value),
+            FieldLookup::Atom { atom, base, cache_site } => (atom, base, cache_site),
+        };
+        let base = self.resolve_field_base(p, frame, base)?;
+        // A read fused with its frame's return pushes the getter as a call whose completion returns from the frame
+        // (`PendingGeneralCall::returns`); a getter is no tail call, so a strict frame pushes it too.
+        if allow_inline_calls
+            && let Some(destination) = destination
+            && let Some(getter) = self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
+            && let Some(result) = self.try_inline_getter(p, frame, pc, getter, base, destination)
+        {
+            return result.map(Loaded::Pushed);
+        }
+        // A private field reads straight from the object's private elements; methods, accessors and a missing
+        // brand take the ordinary [[Get]].
+        match self.is_private_name(atom).then(|| self.private_field_value(p, base, atom)).flatten() {
+            Some(value) => Ok(Loaded::Value(value)),
+            None => self.get_field_cached(p, base, atom, cache_site).map(Loaded::Value),
+        }
+    }
+
+    /// `base[key]` at resume PC `pc` of frame `frame`: a proved symbol key's getter runs in place where
+    /// `destination` and `allow_inline_calls` hold (`load_field_step`), else the VM's indexed read.
+    pub(super) fn load_element_step(&mut self, p: &ResidualProgram, frame: usize, pc: usize, (base, key): (Value, Value),
+        destination: Option<Register>, allow_inline_calls: bool) -> Result<Loaded, JsError> {
+        if allow_inline_calls
+            && let Some(destination) = destination
+            && let Some(getter) = self.proved_symbol_getter(base, key)
+            && let Some(result) = self.try_inline_getter(p, frame, pc, getter, base, destination)
+        {
+            return result.map(Loaded::Pushed);
+        }
+        self.get_index(p, base, key).map(Loaded::Value)
     }
 
     /// `++` (or `--`) of `input`: the Number step, else ToNumeric and the step of the converted value

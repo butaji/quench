@@ -136,7 +136,13 @@ impl<W, P> Operation<W, P> {
 pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let Operation::CompareJump { comparison, left, right, negate } = operation else { return Step::Unresolved };
-    let Some(holds) = outcome(stage, frame, comparison, [left, right], negate) else { return Step::Unresolved };
+    let holds = match outcome(stage, frame, comparison, [left, right], negate) {
+        Some(holds) => holds,
+        None => match by_vm(stage, frame, comparison, [left, right]) {
+            Some(holds) => holds,
+            None => return Step::Unresolved,
+        },
+    };
     let taken = if negate { stage.not(holds) } else { holds };
     Step::Control(frame.branch(stage, taken))
 }
@@ -164,6 +170,38 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
     }
 }
 
+/// Whether `comparison` of `[left, right]` holds where the words leave it, as the VM decides it, where the frame
+/// takes the general operators (`NumericFrame::general_operators`). A relation, an operator, or a comparison of a
+/// constant operand is `CallOut::Binary` (which takes constants); a bitwise test of two registers is
+/// `CallOut::Decide`. A comparison of two registers the VM already decided (`decided_by_vm`) is no second ask.
+/// `None` where the frame keeps declining.
+#[inline(always)]
+fn by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, comparison: Comparison,
+    [left, right]: [Operand; 2]) -> Option<S::Cond> {
+    if !frame.general_operators() { return None; }
+    let both_registers = left.register_index().is_some() && right.register_index().is_some();
+    match comparison {
+        Comparison::Relation { relation, .. } => binary_decision(stage, frame, [left, right], relation.binary_operator()),
+        Comparison::Operator(operator) => binary_decision(stage, frame, [left, right], operator),
+        Comparison::Instanceof | Comparison::Membership | Comparison::Decided(_) if !both_registers =>
+            binary_decision(stage, frame, [left, right], comparison.operator()?),
+        Comparison::Bitwise(operation) => {
+            let call = decision_call([left, right], operation.binary_operator())?;
+            let (decision, _) = frame.vm_step(stage, call, None)?;
+            Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
+        }
+        _ => None,
+    }
+}
+
+/// The VM's decision of `left operator right` by `CallOut::Binary`, whose operands may be constants: its boolean.
+#[inline(always)]
+fn binary_decision<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [left, right]: [Operand; 2],
+    operator: u32) -> Option<S::Cond> {
+    let (decision, _) = frame.vm_step(stage, CallOut::Binary { left, right, operator }, None)?;
+    Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
+}
+
 /// Whether the pair is equal (unequal for `negated`): the words decide it where they can
 /// (`generic::decide`), the VM's `CallOut::Decide` otherwise; an operand that is no register
 /// leaves a pair the words do not decide at the frame's miss edge.
@@ -177,6 +215,11 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [
     let value = match [left.register_index(), right.register_index()] {
         [Some(left), Some(right)] => {
             let call = CallOut::Decide { left, right, operator: equality_binary_operator(strict, negated) };
+            stage.choose_leaving(decided, |_| Some(decision), |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
+        }
+        // A constant operand the words do not decide: the VM's equality, which takes constants (`CallOut::Equality`).
+        _ if frame.general_operators() => {
+            let call = CallOut::Equality { left, right, strict, negated };
             stage.choose_leaving(decided, |_| Some(decision), |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
         }
         _ => {

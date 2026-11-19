@@ -636,8 +636,17 @@ pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let word = match operation {
-        Operation::GetField { base, lookup } => get_field(stage, frame, base, lookup, miss),
-        Operation::SetField { value, base, atom, site, .. } => super::property_write::set_field(stage, frame, (value, base), (atom, site), miss),
+        // A read its plan leaves is the VM's named read, where the frame takes it (`CallOut::LoadField`).
+        Operation::GetField { base, lookup, destination } => match get_field(stage, frame, base, lookup, miss) {
+            Some(word) => Some(word),
+            None => return super::callout::loading(stage, frame, super::CallOut::LoadField { lookup }, destination),
+        },
+        // A store its plan leaves is the VM's named store, where the frame takes it (`CallOut::StoreField`).
+        Operation::SetField { value, base, atom, site, strict } => match super::property_write::set_field(stage, frame, (value, base), (atom, site), miss) {
+            Some(word) => Some(word),
+            None => base.and_then(|object| super::callout::storing(stage, frame,
+                super::CallOut::StoreField { object, value, atom, site, strict })),
+        },
         Operation::StoreField { base, value, fact, atom, site } =>
             super::property_write::store_word(stage, frame, base, (value, fact), (atom, site), miss),
         Operation::FieldGetHost { object, atom, site } => frame.field_probe(stage, Owner::Temporary, object, atom, site, miss),
