@@ -17412,13 +17412,13 @@ fn derive_lane_view<'live, H: Host>(
     // A host that runs no lane (`Host::RUNS_LANE` false) never runs these records, so it instantiates no fusion
     // handler: the tables of `fuse_chains`, `fuse_target_backedges` and `fuse_rows` are gated on the host.
     let mut fused = if const { H::RUNS_LANE } {
-        lane_frame::fuse_chains::<H>(&mut records, live().map(|masks| &**masks), function.handlers.is_empty())
+        lane_frame::fuse_chains::<H>(&mut records, &decoded, live().map(|masks| &**masks), function.handlers.is_empty())
     } else {
         Vec::new()
     };
     if const { H::RUNS_LANE } {
         fuse_target_backedges::<H>(&mut records, loop_tier);
-        fused.extend(lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
+        fused.extend(lane_frame::fuse_rows::<H>(&mut records, &decoded, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
     }
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or

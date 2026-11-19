@@ -286,16 +286,63 @@ fn chain_link_raw(records: &[LaneInstruction], live: Option<&crate::compile::liv
     }
 }
 
+/// Records a raw result may pass over between its producer and its consumer (`raw_out_link`): the
+/// plain increment and element read rows (`plain_row`), at any flag. Neither jumps nor calls, and a
+/// jump row or a call row never matches these two opcodes' plain rows.
+fn passed_row<H: Host>(handler: *const ()) -> bool {
+    plain_row::<H, { crate::staged::INC_DEC_ROW }>(handler) || plain_row::<H, { crate::bytecode::Op::GetIndex as u16 }>(handler)
+}
+
+/// The jump targets of a function's decoded instructions, or `None` where one cannot be named: a Wasm
+/// branch table's entries are not its immediate, so no record between two others is then known to be
+/// unentered. A `JumpTarget` immediate names its target.
+fn jump_targets(decoded: &[crate::bytecode::WideInstruction]) -> Option<crate::bitset::BitSet> {
+    let mut targets = crate::bitset::BitSet::new(decoded.len());
+    for instruction in decoded {
+        let op = instruction.op();
+        if crate::staged::wasm_branch_table(op) { return None; }
+        if !op.control_flow_layout().jumps() { continue; }
+        if op.immediate_role() != crate::bytecode::ImmediateRole::JumpTarget { return None; }
+        let target = usize::try_from(instruction.jump_target()).ok()?;
+        if target >= decoded.len() { return None; }
+        targets.insert(target);
+    }
+    Some(targets)
+}
+
+/// How many records `raw_out_link` passes over at most, past the producer's next record.
+const RAW_PASS: usize = 6;
+
 /// Whether a fused record's last link `producer` keeps its double result raw (`FUSED_RAW_OUT`, `CHAIN_RAW_OUT`):
-/// the record after it is a Number binary row (`number_binary_row`) that reads the producer's register as an
-/// operand, and the register is dead after that record or that record writes it. Its raw bits are then only
-/// ever read as the Number operand of that row, which reads a raw double as a Number (`number_operand`).
-fn raw_out_link<H: Host>(records: &[LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, producer: usize) -> bool {
-    let Some(next) = records.get(producer + 1) else { return false };
+/// the first record after it that names the producer's register is a Number binary row (`number_binary_row`)
+/// that reads the register as an operand, and the register is dead after that record or that record writes it.
+/// The records between them name neither the register nor anything else that could read it: each is a
+/// `passed_row`, not a jump target (`targets`, from `jump_targets`), and none is a jump or a call. Its raw
+/// bits are then only ever read as the Number operand of that row, which reads a raw double as a Number
+/// (`number_operand`). `targets` is `None` where the function's jump targets are unknown: no record passes.
+fn raw_out_link<H: Host>(
+    records: &[LaneInstruction],
+    live: Option<&crate::compile::liveness::RegisterMasks>,
+    targets: Option<&crate::bitset::BitSet>,
+    producer: usize,
+) -> bool {
+    let Some(targets) = targets else { return false };
     let register = records[producer].a;
+    let names = |field: u16| field == register || Operand(field).register_index() == Some(register);
+    let names_record = |record: &LaneInstruction| names(record.a) || names(record.b) || names(record.c);
+    let mut consumer = producer + 1;
+    loop {
+        let Some(record) = records.get(consumer) else { return false };
+        if names_record(record) { break; }
+        if consumer - producer > RAW_PASS || !passed_row::<H>(record.handler) || targets.contains(consumer) {
+            return false;
+        }
+        consumer += 1;
+    }
+    let next = &records[consumer];
     let reads = [next.b, next.c].into_iter().any(|field| Operand(field).register_index() == Some(register));
     reads && number_binary_row::<H>(next.handler)
-        && (next.a == register || live.and_then(|masks| masks.get(producer + 2))
+        && (next.a == register || live.and_then(|masks| masks.get(consumer + 1))
             .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(register))))
 }
 
@@ -314,8 +361,10 @@ fn number_binary_row<H: Host>(handler: *const ()) -> bool {
 /// that record's own row. A link keeps its double result raw (`chain_mode`'s raw mask) where
 /// `chain_raw_links` allows it and `chain_link_raw` holds for the record; `raw_results` (no
 /// handler in the function) gates it, as for `fuse_rows`. Returns each fused record's head and last record.
-pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, raw_results: bool) -> Vec<(usize, usize)> {
+pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInstruction], decoded: &[crate::bytecode::WideInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, raw_results: bool) -> Vec<(usize, usize)> {
     if const { crate::staged::FUSED_CHAINS.is_empty() } { return Vec::new(); }
+    // The jump targets a raw result may not pass over (`raw_out_link`); a function with a handler has no raw results.
+    let targets = if raw_results { jump_targets(decoded) } else { None };
     macro_rules! link { ($chain:literal, $k:literal) => { crate::staged::FUSED_CHAINS[chain_index($chain)][$k] }; }
     // Chain `$chain`'s record handlers over the raw masks `$raw`, indexed by mask: `chain_mode` names the `MODE`
     // a mask takes, `$mode` the chain's staged mode. A mask past the chain's eligible bits (`staged::chain_raw_eligible`)
@@ -380,7 +429,7 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
             }
             // The last link's raw-out bit (`CHAIN_RAW_OUT`): the record after the chain reads it as a Number.
             let out = crate::staged::CHAIN_RAW_OUT;
-            if eligible & (1 << out) != 0 && raw_out_link::<H>(records, live, pc + length - 1) { raw |= 1 << out; }
+            if eligible & (1 << out) != 0 && raw_out_link::<H>(records, live, targets.as_ref(), pc + length - 1) { raw |= 1 << out; }
         }
         records[pc].handler = rows[raw] as *const ();
         fused_records.push((pc, pc + length - 1));
@@ -411,7 +460,7 @@ const fn fused_index(pair: usize) -> usize { if pair < crate::staged::FUSED_ROWS
 /// A `FUSED_RAW` pair takes its raw record only where `raw_results` (no handler in the function) and
 /// `B` reads `A`'s register with `A`'s register dead after it or overwritten by `B`. Returns each fused
 /// record's head and its last record, which `derive_lane_view` reads for the accumulator carry.
-pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, osr_loop: bool, raw_results: bool) -> Vec<(usize, usize)> {
+pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction], decoded: &[crate::bytecode::WideInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, osr_loop: bool, raw_results: bool) -> Vec<(usize, usize)> {
     macro_rules! pairs {
         ($($pair:literal),*) => {
             [$((
@@ -453,6 +502,8 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
     let window_pairs = window_pairs!(31, 34, 35, 63);
     let pairs = pairs!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127);
     const { assert!(crate::staged::FUSED_ROWS.len() <= 128, "`pairs!` covers 128 fused pairs; add indices") };
+    // The jump targets a raw-out record may not pass over (`raw_out_link`).
+    let targets = if raw_results { jump_targets(decoded) } else { None };
     let mut fused_records = Vec::new();
     for pc in 0..records.len().saturating_sub(1) {
         let (first, second) = (records[pc].handler, records[pc + 1].handler);
@@ -494,7 +545,7 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
                 || live.and_then(|masks| masks.get(pc + 2)).is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(producer.a))))
         };
         // `B`'s raw-out: its double result feeds the next record as a raw Number (`raw_out_link`).
-        let out = raw_results && *number_b && raw_out_link::<H>(records, live, pc + 1);
+        let out = raw_results && *number_b && raw_out_link::<H>(records, live, targets.as_ref(), pc + 1);
         let fused_mode = !((*mode == crate::staged::FUSED_DEAD_FIRST && !dead_first) || (*mode == crate::staged::FUSED_RAW && !raw));
         let handler = match (fused_mode, out) {
             (true, false) => fused[direction],
