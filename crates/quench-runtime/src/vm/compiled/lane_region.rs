@@ -1347,7 +1347,7 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
 }
 
 fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loops: &[(usize, usize)],
-    intrinsics: &native_calls::Intrinsics) -> BTreeMap<usize, Vec<InvariantRead>> {
+    intrinsics: &native_calls::Intrinsics, quiet_store: &dyn Fn(usize) -> bool) -> BTreeMap<usize, Vec<InvariantRead>> {
     let mut hoists = BTreeMap::new();
     let boundaries = leaders(&unit.instructions);
     for &(header, back) in loops {
@@ -1355,9 +1355,12 @@ fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loo
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
-        // An element store or an append may grow its array, which changes its `length`.
-        let resizes = body.iter().enumerate().any(|(offset, candidate)|
-            stores_element(*candidate) || native_calls::appends(intrinsics, header + offset));
+        // An element store or an append may grow its array, which changes its `length`; a store
+        // `quiet_store` proves through a typed view changes none.
+        let resizes = body.iter().enumerate().any(|(offset, candidate)| {
+            let pc = header + offset;
+            (stores_element(*candidate) && !quiet_store(pc)) || native_calls::appends(intrinsics, pc)
+        });
         let mut reads: Vec<InvariantRead> = body.iter().enumerate().filter_map(|(offset, candidate)| {
             let pc = header + offset;
             if matches!(crate::vm::compiled::performed(candidate), Some(crate::staged::Operation::LoadCapture { .. }))
@@ -1945,7 +1948,17 @@ pub(super) fn lower(
     lowering.require_object_latches(&instructions, &leaders, &loops);
     for &pc in generic { lowering.facts.widen(pc); }
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, &loops, &leaders)); }
-    lowering.hoists = invariant_reads(program, unit, &loops, &lowering.intrinsics);
+    // A preliminary run of the facts over the arrays the loops index without their captured reads
+    // (`loop_arrays` before the hoists): a typed or double view's store the run proves a Number store
+    // changes no length, so it does not keep a loop's `length` from its entry (`invariant_reads`).
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false,
+        lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+    lowering.entering = lowering.entering_ranges(entry_pc);
+    lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
+    let preliminary = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
+    let quiet_store = |pc: usize| preliminary.numeric_store(pc) && lowering.typed_access(pc) == Some(super::facts::TypedAccess::Store);
+    let hoists = invariant_reads(program, unit, &loops, &lowering.intrinsics, &quiet_store);
+    lowering.hoists = hoists;
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && matches!(crate::vm::compiled::performed(&instructions[at]), Some(crate::staged::Operation::LoadCapture { .. })))),
