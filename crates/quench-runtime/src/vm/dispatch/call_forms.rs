@@ -324,7 +324,7 @@ impl<H: Host> Vm<H> {
     fn call_this_method_form(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> Result<StepResult, JsError> {
         self.profile.call_source(CallSource::ThisMethod);
         let method_site = i.method_site_index();
-        let path = p.method_sites[method_site].receiver_path;
+        let path = p.method_sites[method_site].receiver_path.get();
         let this = if let Some((atom, cache)) = path {
             self.get_field_cached(p, self.frames[f].this, atom, cache)?
         } else {

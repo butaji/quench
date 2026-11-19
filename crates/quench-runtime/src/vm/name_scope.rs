@@ -146,7 +146,7 @@ impl<H: Host> Vm<H> {
             || p.function(function as usize).global_lexical_atoms().contains(&atom)
             || self.root_local_var_binding(p, function, atom)
             || lookup.static_owner(self).is_some()
-            || self.active_global_lexical_value(atom).is_some()
+            || self.realm.global_lexical_bindings.contains_key(&atom)
     }
 
     /// Where a by-name read of `atom` in `owner`, the executing activation, lands once no `with`

@@ -226,7 +226,7 @@ impl Lowering<'_, '_> {
             return Some((instruction.register_c(), crate::bytecode::ImmediateLayout::call_window_base(instruction.imm())));
         }
         match crate::staged::Operation::<u64, ()>::of(instruction) {
-            Some(crate::staged::Operation::ElementRead { base, key }) => Some((base, key.register_index()?)),
+            Some(crate::staged::Operation::ElementRead { base, key, .. }) => Some((base, key.register_index()?)),
             _ => None,
         }
     }

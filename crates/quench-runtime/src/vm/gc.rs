@@ -859,7 +859,11 @@ impl<H: Host> Vm<H> {
                 // runs and callers need not copy them into `active_call_roots`. The only register
                 // live after the call but not before it is the call's destination, which holds
                 // nothing the call reads and is written when the call returns.
-                Some(masks) => masks.extend_live(frame.source_instruction_pc(), &frame.registers, &mut roots),
+                // Past the registers that hold raw words, not `Value`s (a Wasm function's).
+                Some(masks) => {
+                    let raw = self.programs.raw_register_masks(frame.program, frame.function);
+                    masks.extend_live_except(frame.source_instruction_pc(), raw.as_deref(), &frame.registers, &mut roots)
+                }
                 None => roots.extend(frame.registers.iter().copied()),
             }
         }

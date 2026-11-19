@@ -7,7 +7,7 @@ use super::*;
 /// value it answers (the direct row that follows compares it by identity), and the holder whose slot it reads.
 pub(in crate::vm::compiled) struct ChainRead {
     pub(super) callee: u64,
-    pub(super) holder: u32,
+    pub(in crate::vm::compiled) holder: u32,
     pub(super) stencil: &'static Stencil,
     pub(super) holes: [u64; HOLES],
 }

@@ -696,7 +696,7 @@ impl<H: Host> Vm<H> {
     /// Whether the VM answers now what `pending`'s plan took from it (`TakenFacts`): the facts
     /// its lowering asked, its global reads, field proofs and inlined frames' captures, and no
     /// method cache naming an atom `lowered` stores in place.
-    fn lowering_holds(&self, program: &ResidualProgram, pending: &PendingLaneMethod, lowered: &lane_region::LoweredLane) -> bool {
+    fn lowering_holds(&mut self, program: &ResidualProgram, pending: &PendingLaneMethod, lowered: &lane_region::LoweredLane) -> bool {
         let (plan, taken) = (&pending.plan, &*pending.taken);
         // A construction's plan is asked of the callee it was planned for: its code tests the
         // callee, so another callee at the site only leaves.

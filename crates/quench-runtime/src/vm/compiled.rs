@@ -7501,7 +7501,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         // Registers start at i32 zero, as an activation's register file does, where an entry may
         // read them before writing (`entry_fill`), and the locals. Any other register is written
         // before a read on every path, so it needs no zero.
-        let zeroed = super::dispatch_fast::entry_fill(self.code, function);
+        let zeroed = super::dispatch_fast::entry_fill(function);
         for register in (0..zeroed).chain(function.registers..function.registers.saturating_add(function.locals)) {
             emitter.write_constant(register, Kind::I32, 0);
             emitter.write_constant(register, Kind::I64, 0);
@@ -7773,7 +7773,7 @@ std::arch::global_asm!(
     "jmp 2b",
     "int3",
     ".popsection",
-    entry_stack = const std::mem::offset_of!(CallContext, entry_stack),
+    entry_stack = const std::mem::offset_of!(CallContext, head.entry_stack),
     out_of_bounds = sym GUARD_OUT_OF_BOUNDS_STATUS,
     terminated = const TERMINATED_STATUS as u32,
 );
@@ -9667,7 +9667,12 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
 pub(super) fn body_may_amortize_in_lane(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
-    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
+    body_may_amortize(tiers, body, tier_policy::body_tier_in_lane())
+}
+
+/// `body_may_amortize_in_lane` for the body of `tier`, whose length that tier must reach.
+pub(super) fn body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function, tier: crate::jit_mode::Tier) -> bool {
+    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier)
         || body.code.iter().any(|packed| crate::staged::Operation::<u64, ()>::is_plain_call(super::dispatch_fast::decoded_instruction(body, *packed)))
 }
 

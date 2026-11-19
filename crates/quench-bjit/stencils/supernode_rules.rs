@@ -144,6 +144,11 @@ fn bitwise_kind(operation: NumberBitwise) -> u8 {
     }
 }
 
+/// The kinds whose two operands may be exchanged without changing the result (`tile::oriented`).
+pub const fn commutative(kind: u8) -> bool {
+    matches!(kind, ADD | MUL | AND | OR | XOR | EQ | NE)
+}
+
 /// What a pattern node is: a Number row of a kind, or a heap row of an operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Key {
@@ -163,6 +168,16 @@ pub enum Node {
 pub enum Operand {
     A,
     B,
+}
+
+impl Operand {
+    /// The other operand of a two-operand row, which a commutative row exchanges.
+    pub const fn other(self) -> Self {
+        match self {
+            Operand::A => Operand::B,
+            Operand::B => Operand::A,
+        }
+    }
 }
 
 /// The places each operand of a row may take (library codes), and for a heap row whether its
