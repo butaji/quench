@@ -27,11 +27,17 @@
  *     and requires the same hash, so a missed dependency shows up as a
  *     failure.
  *
- * Simplifications: Map and Set are tracked as whole collections, not per key.
- * Computed getters are recomputed on each read, not cached. List names are
- * synthetic ("day NN") instead of Date.toDateString(), so output does not
- * depend on the clock. Math.random() is a fixed-seed xorshift64* generator,
- * reset at the start of each iteration, so every iteration is identical.
+ * Validation: List names are Date.toDateString() and Math.random() is the
+ * seeded generator of the JetStream composition, reset at the start of each
+ * iteration. A build with -DPROXY_TRACE prints each iteration's final render
+ * and its autorun and watch-effect counts. Under a seeded node run of this
+ * row, the renders and counts match for all 120 iterations (10 renders and
+ * 134 effects per iteration, the 100 immediate watch calls included).
+ *
+ * Remaining simplification: Map and Set are tracked as whole collections, not
+ * per key. Vue does not cache class getters, so recomputing them on each read
+ * matches Vue. Per-key tracking would not change the run counts, because
+ * render reads every key.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -46,7 +52,7 @@
 #define LIST_COUNT 10
 #define REMINDERS_PER_LIST 10
 #define MAX_DISTINCT_TAGS 16
-#define RNG_SEED UINT64_C(0x9E3779B97F4A7C15)
+#define RNG_SEED UINT32_C(49734321) /* JetStream's deterministic Math.random seed */
 
 static const char *const nouns[] = {"magazine", "passion", "statement", "extent", "judgment", "setting", "piano", "control", "employer", "speech", "presence", "indication", "philosophy", "worker", "supermarket", "atmosphere", "actor", "chest", "garbage", "feedback", "pizza", "speaker", "selection", "effort", "math", "gate", "profession", "recognition", "software", "coffee", "reading", "hotel", "concept", "poem", "population", "property", "office", "phone", "suggestion", "theory", "drawer", "death", "cigarette", "alcohol", "marketing", "session", "cheek", "establishment", "family", "revenue", "location", "mode", "awareness", "preference", "consequence", "cookie", "loss", "poetry", "cabinet", "difference", "story", "penalty", "king", "opinion", "climate", "imagination", "criticism", "meal", "desk", "dealer", "introduction", "physics", "customer", "child", "problem", "medicine", "church", "unit", "tongue", "communication", "storage", "stranger", "presentation", "discussion", "excitement", "role", "ladder", "estate", "town", "proposal", "employee", "administration", "variety", "television", "president", "inspector", "negotiation", "height", "comparison", "decision"};
 static const char *const adjectives[] = {"fast", "cheerful", "hungry", "fantastic", "squealing", "critical", "yielding", "abashed", "shocking", "quickest"};
@@ -56,23 +62,22 @@ static const char *const adjectives[] = {"fast", "cheerful", "hungry", "fantasti
 
 /* ---- deterministic randomness (replaces Math.random) ---- */
 
-static uint64_t g_rng;
+static uint32_t g_rng;
 
-static uint64_t rng_next(void)
-{
-    uint64_t x = g_rng;
-
-    x ^= x >> 12;
-    x ^= x << 25;
-    x ^= x >> 27;
-    g_rng = x;
-    return x * UINT64_C(0x2545F4914F6CDD1D);
-}
-
-/* Uniform in [0, 1), like Math.random(). */
+/* Uniform in [0, 1): the same 32-bit mixing as the seeded Math.random of the JetStream
+ * composition (compose_row.py SEEDED_RANDOM), so a seeded run draws the same values. */
 static double random01(void)
 {
-    return (double)(rng_next() >> 11) * (1.0 / 9007199254740992.0);
+    uint32_t s = g_rng;
+
+    s = (s + UINT32_C(0x7ed55d16)) + (s << 12);
+    s = (s ^ UINT32_C(0xc761c23c)) ^ (s >> 19);
+    s = (s + UINT32_C(0x165667b1)) + (s << 5);
+    s = (s + UINT32_C(0xd3a2646c)) ^ (s << 9);
+    s = (s + UINT32_C(0xfd7046c5)) + (s << 3);
+    s = (s ^ UINT32_C(0xb55a4f09)) ^ (s >> 16);
+    g_rng = s;
+    return (double)s / 4294967296.0;
 }
 
 /* ---- allocation helpers ---- */
@@ -554,12 +559,24 @@ static size_t g_nreminders, g_capreminders;
 static List **g_lists;
 static size_t g_nlists, g_caplists;
 
+/* listName(index): new Date().toDateString() plus index days, e.g. "Thu Nov 19 2026". */
+static void list_name(char *out, size_t n, size_t index)
+{
+    time_t now = time(NULL);
+    struct tm tm;
+
+    localtime_r(&now, &tm);
+    tm.tm_mday += (int)index;
+    mktime(&tm);
+    strftime(out, n, "%a %b %d %Y", &tm);
+}
+
 static List *list_new(Store *s, size_t index)
 {
     List *l = xalloc(sizeof *l);
 
     l->store = s;
-    snprintf(l->name, sizeof l->name, "day %02zu", index);
+    list_name(l->name, sizeof l->name, index);
     PUSH(g_lists, g_nlists, g_caplists, l);
     return l;
 }
@@ -573,10 +590,13 @@ static intptr_t reminder_completed_data(void *ctx)
 }
 
 /* _isCompletedChanged: credit each tag of a newly completed reminder. */
+static size_t g_effect_runs;
+
 static void reminder_completed_changed(void *ctx, intptr_t completed)
 {
     Reminder *r = ctx;
 
+    g_effect_runs++;
     if (!completed)
         return;
     for (size_t i = 0; i < r->tags.len; i++)
@@ -1006,6 +1026,7 @@ static int run_iteration(uint64_t *hash_out)
     int ok;
 
     g_rng = RNG_SEED;
+    g_effect_runs = 0;
     s = xalloc(sizeof *s);
     make_autorun(render_effect, s);     /* autorun(() => store.render()) */
     run_test(s);
@@ -1013,6 +1034,10 @@ static int run_iteration(uint64_t *hash_out)
     /* No derivation is running here, so this render reads untracked. */
     render_store(s, &fresh);
     *hash_out = fnv1a(fresh.p, fresh.len);
+#ifdef PROXY_TRACE
+    printf("@@RENDER@@\n%.*s\n@@END@@ autorun=%d effects=%zu\n", (int)fresh.len, fresh.p, s->render_runs,
+           g_effect_runs);
+#endif
     ok = s->render_runs > 1 && *hash_out == s->last_hash;
 
     free(fresh.p);
@@ -1031,7 +1056,7 @@ int main(void)
         uint64_t h = 0;
 
         if (!run_iteration(&h)) {
-            fprintf(stderr, "proxy-mobx: validation failed in iteration %d\n", it);
+            fprintf(stderr, "proxy-vue: validation failed in iteration %d\n", it);
             return 1;
         }
         checksum = (checksum ^ h) * UINT64_C(1099511628211);
@@ -1040,7 +1065,7 @@ int main(void)
 
     ms = (double)(t1.tv_sec - t0.tv_sec) * 1000.0
        + (double)(t1.tv_nsec - t0.tv_nsec) / 1e6;
-    printf("proxy-mobx: %d iterations in %.3f ms\n", ITERATIONS, ms);
+    printf("proxy-vue: %d iterations in %.3f ms\n", ITERATIONS, ms);
     printf("checksum: %016llx, validation: ok\n", (unsigned long long)checksum);
     return 0;
 }
