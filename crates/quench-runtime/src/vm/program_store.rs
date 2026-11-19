@@ -13,6 +13,7 @@ mod eval_cache;
 mod js_jit_report;
 mod loops;
 mod residual;
+mod root_constants;
 mod snapshot;
 mod tier_census;
 mod wasm_tier;
@@ -653,6 +654,8 @@ struct ProgramEntry {
     module_imports: Vec<(u16, ModuleImport)>,
     /// Each root slot's rule, derived from the residual and `module_imports` on first read.
     root_slots: std::cell::OnceCell<Box<[crate::bytecode::RootSlotRule]>>,
+    /// Its root slots written once, and how many runs its root has made.
+    root_constants: root_constants::RootConstants,
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     views_in_lane: LaneViews,
@@ -1295,6 +1298,7 @@ impl ProgramStore {
             import_meta: None,
             module_imports: Vec::new(),
             root_slots: std::cell::OnceCell::new(),
+            root_constants: root_constants::RootConstants::default(),
             module: false,
             views_in_lane,
             raw_masks: Default::default(),

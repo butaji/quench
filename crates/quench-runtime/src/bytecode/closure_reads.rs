@@ -171,6 +171,14 @@ impl ClosureReads {
         }
     }
 
+    /// The (distance, slot) pairs `function` and the functions nested in it capture, sorted, and
+    /// its parent; `None` where the table does not describe the function or it reads its whole
+    /// chain (`FunctionReads::reads`).
+    pub(crate) fn captures(&self, function: u32) -> Option<(&[(u32, u16)], Option<u32>)> {
+        let reads = self.functions.get(function as usize)?;
+        Some((reads.reads.as_deref()?, reads.parent))
+    }
+
     /// What a closure of `function` needs of the environment `distance` (at least 1)
     /// activations out of its own.
     pub(crate) fn demand(&self, function: u32, distance: u32) -> EnvironmentDemand<'_> {

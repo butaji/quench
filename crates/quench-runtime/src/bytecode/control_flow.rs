@@ -227,3 +227,30 @@ impl Successors {
 fn pc_index(pc: usize) -> u32 {
     u32::try_from(pc).expect("a function's pcs fit u32")
 }
+
+impl Function {
+    /// Every control transfer of the function to an instruction at or before its source, as
+    /// (target, source): jumps, branch table entries (which are jumps), and exception and
+    /// `finally` continuations, taken from the last instruction their range covers.
+    pub(crate) fn backward_transfers(&self) -> Vec<(usize, usize)> {
+        // The jumps are the body's back edges, listed by source; the handler edges below are the
+        // transfers `back_edges` does not cover.
+        let mut transfers: Vec<(usize, usize)> = self.back_edges().map(|(source, target)| (target, source)).collect();
+        for handler in self.handlers.iter() {
+            let last = handler.end.saturating_sub(1) as usize;
+            for target in std::iter::once(handler.target).chain(handler.return_target) {
+                if target as usize <= last {
+                    transfers.push((target as usize, last));
+                }
+            }
+        }
+        transfers
+    }
+}
+
+/// Whether the instruction at `pc` may run more than once in one activation. A cycle through
+/// `pc` must leave it for an instruction before it, by a transfer from at or after `pc` to at
+/// or before it, which `backward` (`Function::backward_transfers`) lists.
+pub(crate) fn may_repeat(backward: &[(usize, usize)], pc: usize) -> bool {
+    backward.iter().any(|&(target, source)| target <= pc && pc <= source)
+}
