@@ -351,7 +351,9 @@ fn number_plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): 
     let counter = [std::mem::offset_of!(super::super::CallContext, head.adapter_payload) as u64, std::mem::offset_of!(super::super::JsStepDispatch, head.loop_entry) as u64];
     // A poll reads the process-wide attention byte first (hole 3), so its common case is one byte load.
     let attention = crate::execution_interrupt::attention_address();
-    let holes = padded_holes(if polls { [interrupt, counter[0], counter[1], attention] } else { [dst_hole, a_hole, b_hole, 0] });
+    // A case slot's maximum rides in hole 3 (`Decoded::hole`); no other numeric row names a fourth hole.
+    let bound = if decoded.kind == Kind::IntCase { decoded.hole } else { 0 };
+    let holes = padded_holes(if polls { [interrupt, counter[0], counter[1], attention] } else { [dst_hole, a_hole, b_hole, bound] });
     Ok(Planned { node: Some(Node::Number(numeric::library::canonical(row.code()))), ..Planned::single(stencil, holes, decoded.target, exits.then_some(pc)) })
 }
 

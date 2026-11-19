@@ -414,6 +414,9 @@ macro_rules! catalog {
     IMUL,
     /// `Math.clz32` of one Number: the leading zero bits of its ToUint32 (`staged::math::leading_zeros`), an int32.
     CLZ32,
+    /// `switch`'s case slot (`NumberOperation::IntCase`): the slot of the first operand among the labels from the
+    /// second's immediate to the maximum at hole 3, an int32 into the destination. Never leaves.
+    INT_CASE,
     /// int32 `+` and `-` the planner proved exact (a range fact of the operands): the staged int32 step
     /// with `Overflow::Impossible`, so no overflow test. Int operands only; anything else leaves through exit 0.
     ADD_NO_OVERFLOW,

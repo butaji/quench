@@ -393,6 +393,16 @@ fn store_local_row(instruction: WideInstruction) -> Option<Decoded> {
     Some(Decoded::heap(Heap::StoreLocal(slot), None, Some(Source::Register(instruction.register_a())), None))
 }
 
+/// `WasmBranchTable` (`Step::Switch`): the selector register (`a`) and the table's slot count (`hole`). Its entries are
+/// the `Jump`s after it, slots `0..=hole`; the planner lays a compare tree over them (`function::switch`).
+fn switch_row(instruction: WideInstruction) -> Option<Decoded> {
+    (instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::BranchTable).then(|| Decoded {
+        hole: u64::from(instruction.imm()),
+        a: Some(Source::Register(instruction.register_a())),
+        ..Decoded::step(Step::Switch, None)
+    })
+}
+
 /// The heap instructions: a capture, a dense element read or store, the proof that a base is an
 /// array, the activation's `this` and its local slots, and the named ones (`named_row`).
 pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
@@ -437,6 +447,7 @@ pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u3
     numeric_row(&|index| region.number_constant(index), instruction)
         .flatten()
         .or_else(|| test_row(&|index| region.number_constant(index), known, instruction))
+        .or_else(|| switch_row(instruction))
         .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0)
             .map(|row| Decoded { declined: row.stored_slot_type().map(|_| lowering(instruction, known, helpers)), ..row }))
         .or_else(|| value_row(known, instruction))

@@ -27,6 +27,7 @@ use quench_bjit::{padded_holes, HOLES};
 mod calls;
 mod planning;
 mod rows;
+mod switch;
 
 use calls::*;
 use planning::*;

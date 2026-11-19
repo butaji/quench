@@ -88,6 +88,8 @@ pub(super) enum Step {
     /// handler's register (the row's destination, from its operand) and control to its block (the
     /// row's branch).
     Catch,
+    /// A `WasmBranchTable`: a compare tree on the selector over the table's `Jump` rows (`function::switch`).
+    Switch,
 }
 
 impl Step {
@@ -172,6 +174,7 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::CallOut => plan_helper(layout, pc, decoded, (LaneHelper::VmStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
+        Step::Switch => Err("switch: planned as a compare tree (plan_row)".into()),
         Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
         Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
         Step::Return => {

@@ -69,7 +69,13 @@ impl Decoded {
     pub(super) fn successors(&self, k: usize, count: usize, span: &Span) -> impl Iterator<Item = Next> {
         let fall = (self.kind != Kind::Jump && !self.completes && self.step.is_none_or(Step::falls)).then(|| if k + 1 < count { Next::Row(k + 1) } else { Next::Leave(span.backedge + 1) });
         let branch = self.target.map(|target| row_at(span, target).map_or(Next::Leave(target), Next::Row));
-        fall.into_iter().chain(branch)
+        // A switch's entries are the `Jump`s after it: slots `0..=hole`, the last the no-match entry.
+        let table: Vec<Next> = if matches!(self.step, Some(Step::Switch)) {
+            (k + 1..=k + 1 + self.hole as usize).map(|at| if at < count { Next::Row(at) } else { Next::Leave(span.backedge + 1) }).collect()
+        } else {
+            Vec::new()
+        };
+        fall.into_iter().chain(branch).chain(table)
     }
 }
 

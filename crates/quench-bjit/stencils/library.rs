@@ -176,6 +176,15 @@ fn tests(places: &Places, rows: &mut BTreeSet<Code>) {
     }
 }
 
+/// `switch`'s case slot (`INT_CASE`): an int destination and int operand, the minimum as the immediate.
+fn int_case(places: &Places, rows: &mut BTreeSet<Code>) {
+    for &dst in &places.ints_dst {
+        for &a in &places.ints_src {
+            rows.insert(canonical((INT_CASE, dst, a, IMM, true)));
+        }
+    }
+}
+
 /// Every row the library holds, canonical, once.
 pub fn library() -> Vec<Code> {
     let places = Places::all();
@@ -184,6 +193,7 @@ pub fn library() -> Vec<Code> {
     products(&places, &mut rows);
     exact_arithmetic(&places, &mut rows);
     control(&places, &mut rows);
+    int_case(&places, &mut rows);
     truthiness(&places, &mut rows);
     tests(&places, &mut rows);
     rows.into_iter().collect()

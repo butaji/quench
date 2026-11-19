@@ -107,6 +107,8 @@ pub enum Kind {
     Clz32 = library::CLZ32,
     /// int32 `+` and `-` a tier proved exact (`staged::Overflow::Impossible`): no overflow test, int operands only.
     AddNoOverflow = library::ADD_NO_OVERFLOW,
+    /// `switch`'s case slot over dense int labels (`stencils/numeric.rs` `int_case_row`).
+    IntCase = library::INT_CASE,
     SubNoOverflow = library::SUB_NO_OVERFLOW,
     /// The jumps of the tests a staged compare names with no Number relation (`library::BIT_TEST` and the rest).
     BitTest = library::BIT_TEST,

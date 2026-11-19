@@ -407,6 +407,18 @@ fn clz32_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) 
     finish(frame, true)
 }
 
+/// `switch`'s case slot (`NumberOperation::IntCase`): the minimum is the second operand's immediate (hole 2), the maximum hole 3
+/// (the planner's `Decoded::hole`). The slot is written to the destination; every value is decided, so the row never leaves.
+#[inline(always)]
+fn int_case_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let minimum = hole::<HOLE_B>() as u32 as i32;
+    let maximum = hole64::<HOLE_FOURTH>() as u32 as i32;
+    let count = (i64::from(maximum) - i64::from(minimum) + 1) as u16;
+    let operation = NumberOperation::IntCase { destination: DEST, source: Operand::register(LEFT), minimum, maximum, count };
+    let done = staged(&mut frame, operation).is_some();
+    finish(frame, done)
+}
+
 /// The unary rows: logical and Number negation.
 #[inline(always)]
 fn unary_row<const K: u8, const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>) -> Out {
@@ -438,6 +450,7 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         MIN | MAX => extreme_row::<K, D, A, B>(frame),
         IMUL => imul_row::<D, A, B, SPEC>(frame),
         CLZ32 => clz32_row::<D, A, B>(frame),
+        INT_CASE => int_case_row::<D, A, B>(frame),
         BIT_TEST => bit_test_row::<D, A, B>(frame),
         NULLISH_EQ => nullish_row::<false, D, A, B>(frame),
         NULLISH_NE => nullish_row::<true, D, A, B>(frame),
