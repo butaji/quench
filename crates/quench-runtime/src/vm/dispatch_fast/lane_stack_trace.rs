@@ -45,9 +45,9 @@ impl<H: Host> Vm<H> {
         let DeferredLaneCall { cx, call_pc, frames } = self.lane_deferred?;
         let cx = cx.cast::<LaneContext<H>>();
         // SAFETY: the deferred call's lane runs, so its context lives.
-        let (root, innermost_program, leaf) = unsafe { ((*cx).root, (*cx).program, (*cx).leaf.call) };
+        let (root, innermost_program) = unsafe { ((*cx).root, (*cx).program) };
         let root_frame = root.frame()?;
-        if frames != self.frames.len() || root_frame + 1 != frames || self.lane_stack.native_boundary.is_some() || !leaf.is_null() {
+        if frames != self.frames.len() || root_frame + 1 != frames || self.lane_stack.native_boundary.is_some() {
             return None;
         }
         self.link_natives(cx);
@@ -107,5 +107,63 @@ impl<H: Host> Vm<H> {
             pc,
             source_field: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Engine, test_host::TestHost};
+    use std::{cell::RefCell, rc::Rc};
+
+    /// frame-switches.md §5: every trace a warmed lane captures beside its activations (nested
+    /// calls, a getter, an array callback, a constructor, `Error` called without `new`, a method,
+    /// a direct eval, an async function before its first `await`, and `Error.captureStackTrace`
+    /// trimmed through a function on the stack, as chai's AssertionError does) is byte-identical
+    /// to the one the first, cold round captured, and the frames are Node's (v22).
+    #[test]
+    fn lane_stack_captures_match_materialized_traces() {
+        let source = r#"
+          function Assertion(message, ssf) { this.message = message; Error.captureStackTrace(this, ssf || Assertion); }
+          Assertion.prototype = Object.create(Error.prototype);
+          function assertOk(v) { return v ? null : new Assertion("not ok", assertOk); }
+          function viaCapture() { return assertOk(false).stack; }
+          function inner() { return new Error("inner").stack; }
+          function middle() { return inner(); }
+          function outer() { return middle(); }
+          var holder = { get prop() { return new TypeError("getter").stack; } };
+          function viaGetter() { return holder.prop; }
+          function viaCallback() { var s; [1].forEach(function each() { s = new RangeError("cb").stack; }); return s; }
+          function Thing() { this.trace = new Error("ctor").stack; }
+          function viaConstructor() { return new Thing().trace; }
+          function viaCall() { return Error("call").stack; }
+          function viaMethod() { return { m: function m() { return new Error("m").stack; } }.m(); }
+          function viaEval() { return eval("new Error('ev').stack"); }
+          var asyncTrace;
+          async function settles() { asyncTrace = new Error("async").stack; }
+          function viaAsync() { settles(); return asyncTrace; }
+          function round() {
+            return [outer(), viaCapture(), viaGetter(), viaCallback(), viaConstructor(), viaCall(), viaMethod(), viaEval(), viaAsync()];
+          }
+          function names(trace, n) {
+            return trace.split("\n").slice(1, 1 + n).map(function (l) { return l.trim().split(" ")[1]; }).join(",");
+          }
+          function run() {
+            var first = round();
+            for (var i = 0; i < 3000; i++) {
+              var got = round();
+              for (var k = 0; k < got.length; k++) {
+                if (got[k] !== first[k]) return "round " + i + " case " + k + "\n" + first[k] + "\n--\n" + got[k];
+              }
+            }
+            return names(first[0], 5) + "|" + names(first[1], 3);
+          }
+          print(run());
+        "#;
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        let program = Engine::specialize(source, "lane-stack-captures.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["inner,middle,outer,round,run|viaCapture,round,run"]);
     }
 }
