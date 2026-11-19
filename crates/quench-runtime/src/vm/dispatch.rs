@@ -813,7 +813,7 @@ impl<H: Host> Vm<H> {
                     }
                     Ok(StepResult::Continue)
                 }
-                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it: {:?}", i.op()),
+                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it: {:?} a={:?}", i.op(), self.read(f, i.a())),
             },
             // An arithmetic binary: its staged row first, then the record's general `Binary` on a miss. The Number
             // relation of `==` or `===` leaves a pair that is no Number, and that relation names both operators, so

@@ -537,9 +537,11 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
         let program_id = vm.frames[frame].program;
         let made: Result<Value, JsError> = match allocation {
             Allocation::Empty => Ok(vm.object()),
-            Allocation::Array { length, numbers } => Ok(vm.make_array(length as usize, numbers)),
-            // A regexp literal that is a String method's first argument may answer the site's
-            // shared object while that callee is the realm's own (`Vm::regexp_literal_argument_of`).
+            Allocation::Array { length, numbers: false } => Ok(vm.hole_array(length as usize)),
+            // A Number-element array: its element kind is the allocation's (`Vm::make_array`).
+            Allocation::Array { length, numbers: true } => Ok(vm.make_array(length as usize, true)),
+            // A regexp literal that is a call's first argument: the site's shared object while the callee
+            // is the realm's String method (`Vm::regexp_literal_argument_of`), else a fresh one.
             Allocation::RegExp { site, callee: Some(callee) } => {
                 let callee = vm.read(frame, callee);
                 vm.regexp_literal_argument_of(program, program_id, frame, site as usize, callee)
