@@ -514,7 +514,7 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
 /// locals) right past its registers, in a lane activation's value stack or a VM frame's register file
 /// (`context_locals_in_window_in_lane`); the rows' registers start past it, so they never overlap it
 /// whatever the activation, and the run is admitted only where the storage reaches them
-/// (`dispatch_fast::frame_holds_window_in_lane`, `lane_body_admits`). A body's scratch written at
+/// (`dispatch_fast::frame_holds_window_in_lane`, `body_admits_in_lane`). A body's scratch written at
 /// `registers` overwrote the environment word (JetStream earley-boyer's "invalid local environment").
 fn inline_base(function: &crate::bytecode::Function, registers: u16) -> u16 {
     registers.saturating_add(crate::vm::dispatch_fast::WINDOW_LOCALS).saturating_add(function.locals)

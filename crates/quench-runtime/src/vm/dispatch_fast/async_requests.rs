@@ -52,7 +52,7 @@ pub(super) fn async_generator_throw_in_lane<H: Host>(cx: *mut LaneContext<H>, r:
     vm.lane_completion.raise(JsError::thrown(thrown, "async generator throw".into()));
     vm.lane_raise_site = super::super::compiled::raise_site(function, suspended as u32);
     // SAFETY: the resumed function's view is the running one, whose records start at `base`.
-    Some(Resumed::Exit(lane_raised_exit(cx, unsafe { (*cx).base.add(suspended) })))
+    Some(Resumed::Exit(raised_exit_in_lane(cx, unsafe { (*cx).base.add(suspended) })))
 }
 
 /// The request of `generator`, whose `next` or `throw` the call at `ip` with registers `r`

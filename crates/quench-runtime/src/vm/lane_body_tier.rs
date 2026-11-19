@@ -346,7 +346,7 @@ impl LaneView {
     /// Counts an entry toward the frameless body and specializes it at the warm-up; whether
     /// the body is still warming or specialized, so its prologue stays. A specialized body is
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
-    /// tests nothing the specialization proved (`lane_body_entry`).
+    /// tests nothing the specialization proved (`body_entry_in_lane`).
     pub(super) fn specialize_lane_body(&self, entry: Handler, work: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) -> bool {
         if self.declined_by_mode() { return false; }
         self.settle_retired_body();
@@ -451,16 +451,16 @@ impl LaneView {
 }
 
 /// The target of the callee the call at `pc` of `view` last reached itself, by the site's own
-/// record (`lane_site_targets`): the entry its record links is another callee's once the
+/// record (`site_targets_in_lane`): the entry its record links is another callee's once the
 /// target cache replaced it.
 pub(super) fn site_target<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, pc: usize) -> Option<super::ScriptCallTarget> {
     site_targets(vm, view, pc).next()
 }
 
-/// Every callee the call at `pc` of `view` reached (`lane_site_targets`), by its target, the
+/// Every callee the call at `pc` of `view` reached (`site_targets_in_lane`), by its target, the
 /// latest first.
 pub(super) fn site_targets<'a, H: super::Host>(vm: &'a super::Vm<H>, view: &LaneView, pc: usize) -> impl Iterator<Item = super::ScriptCallTarget> + 'a {
-    super::lane_site_targets(vm, view, pc as u32).into_iter().filter(|site| site.through().is_none()).filter_map(|site| {
+    super::site_targets_in_lane(vm, view, pc as u32).into_iter().filter(|site| site.through().is_none()).filter_map(|site| {
         // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
         vm.script_call_entry(site.identity()?).map(|target| unsafe { *target })
     })

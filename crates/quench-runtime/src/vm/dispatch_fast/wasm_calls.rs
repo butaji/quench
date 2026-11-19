@@ -133,7 +133,7 @@ lane_handler! {
     /// callee. Validation proved the callee's type. Any other callee leaves for the general loop.
     fn lane_call_wasm_reference<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let running = (unsafe { (*cx).program }, Some(lane_instance_env(cx)));
+        let running = (unsafe { (*cx).program }, Some(instance_env_in_lane(cx)));
         let callee = match vm.heap.function(r.get(i.b)) {
             Some(FunctionRecord { kind: FunctionKind::User(program, function), env, .. })
                 if (*program, Some(*env)) == running => u16::try_from(*function).ok(),
@@ -212,7 +212,7 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
     // runs, so before guest code could make the activations frames.
     let args = unsafe { lane_call_window(r, i) };
     let vm = unsafe { vm(cx) };
-    let (program, env) = (unsafe { (*cx).program }, lane_instance_env(cx));
+    let (program, env) = (unsafe { (*cx).program }, instance_env_in_lane(cx));
     let Some(called) = lane_in_place(cx, ip, |vm, _| vm.run_compiled(program, env, function, args).transpose()) else {
         return Some(Resumed::Exit(exit(ip)));
     };
@@ -348,7 +348,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     } else {
         return None;
     };
-    if lane_constructing(vm, callee) || vm.with_scope_entered {
+    if constructing_in_lane(vm, callee) || vm.with_scope_entered {
         return None;
     }
     let target = match vm.cross_call_entry(callee) {
@@ -361,7 +361,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
         || !target.entry.activates_across()
         || target.forwards()
         || !(argc16 <= target.params || target.drops_extra_arguments())
-        || !lane_activation_room(vm, &target)
+        || !activation_room_in_lane(vm, &target)
     {
         return None;
     }

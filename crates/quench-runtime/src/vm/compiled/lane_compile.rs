@@ -658,7 +658,7 @@ impl<H: Host> Vm<H> {
         FactTables::of(self, plan.function, &plan.unit, &plan.fields, &taken.global_reads, &construct) == taken.tables
             && self.global_reads_in_lane(program, plan.function, &plan.unit) == taken.global_reads
             && unformed(&self.unit_fields_in_lane(program, &plan.unit, &taken.left_at, None)) == unformed(&plan.fields)
-            && plan.unit.frames.iter().map(|frame| frame.target.identity().map_or((0, 0), |callee| self.lane_callee_captures(callee)))
+            && plan.unit.frames.iter().map(|frame| frame.target.identity().map_or((0, 0), |callee| self.callee_capture_slots(callee)))
                 .eq(taken.frame_captures.iter().copied())
             && lowered.region.stable.atoms.iter().all(|atom| !self.method_cache_atoms.bits().contains(*atom as usize))
     }

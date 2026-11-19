@@ -52,7 +52,7 @@ script_handler! {
         debug_assert!(!crosses_in_lane::<H, true>(cx, target));
         // An admitted target runs under no `with` scope (`LaneStack::refuse_cached_calls`).
         debug_assert!(!vm.with_scope_entered);
-        if !lane_admits_window(vm, target, ARGC) {
+        if !admits_window_in_lane(vm, target, ARGC) {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
         vm.programs.record_js_jit_lane_entry(target.program(), target.function);
@@ -161,7 +161,7 @@ pub(super) fn complete_leaf_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Val
     let caller = leaf.caller_registers;
     if let Some(program) = leaf.caller_program.take() {
         std::hint::cold_path();
-        lane_enter_program(cx, program);
+        enter_program_in_lane(cx, program);
     }
     // SAFETY: the call record belongs to the caller's live view; the target stays cached.
     unsafe {
@@ -214,7 +214,7 @@ pub(super) fn cross_leaf_call_in_lane<H: Host>(
     } else {
         binds_directly_in_lane(target, receiver).then_some(receiver)?
     };
-    if !lane_admits_window(vm, target, argc) {
+    if !admits_window_in_lane(vm, target, argc) {
         return None;
     }
     vm.programs.record_js_jit_lane_entry(target.program(), target.function);
@@ -243,7 +243,7 @@ pub(super) fn cross_leaf_call_in_lane<H: Host>(
             registers.set_env(target.env);
             registers.set_capture(target.capture);
         }
-        lane_enter_program(cx, target.program());
+        enter_program_in_lane(cx, target.program());
         (*cx).registers = registers;
         (*cx).base = base;
     }

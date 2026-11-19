@@ -245,9 +245,9 @@ pub(super) fn loop_compile_in_lane<H: Host>(
     let (ints, doubles) = entry_number_registers(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
-        .map(|inlining| inlining.frames.iter().map(|frame| machine.lane_callee_captures(frame.callee)).collect()).unwrap_or_default();
+        .map(|inlining| inlining.frames.iter().map(|frame| machine.callee_capture_slots(frame.callee)).collect()).unwrap_or_default();
     // A construction site's plan, where the region may keep its receiver as its field values.
-    let construct_plans = |function: u32, pc: u32| super::lane_unit_targets(cx, function, pc).first().and_then(|target| target.identity())
+    let construct_plans = |function: u32, pc: u32| super::unit_targets_in_lane(cx, function, pc).first().and_then(|target| target.identity())
         .and_then(|callee| super::scalar_construct_plan(unsafe { vm(cx) }, callee));
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
         int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
@@ -271,12 +271,12 @@ pub(super) fn loop_compile_in_lane<H: Host>(
 }
 
 /// The calls of `function` that a BaseJIT region of it may inline: the callees its call sites
-/// reached, which the lane would activate in place (`lane_direct_callees`).
+/// reached, which the lane would activate in place (`direct_callees_in_lane`).
 fn region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: &ResidualProgram, function: u32) -> super::super::compiled::RegionCalls {
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
     let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
-    let candidates = lane_direct_callees(machine, own, function, body);
+    let candidates = direct_callees_in_lane(machine, own, function, body);
     machine.region_calls(program, function, own, &candidates)
 }
 
@@ -288,7 +288,7 @@ fn unit_region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, prog
     let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
     // A callee with no published body yet is called through its entry cell, which holds its body
     // once that publishes: the region compiled before its callees still calls them natively.
-    let candidates = lane_direct_callees(machine, own, function, body);
+    let candidates = direct_callees_in_lane(machine, own, function, body);
     for callees in &candidates { super::super::compiled::bind_region_callees(callees, own); }
     super::super::compiled::RegionCalls::direct(candidates)
 }

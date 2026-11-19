@@ -1528,7 +1528,7 @@ fn string_method_reads_follow_the_prototype_values() {
 #[test]
 fn lane_array_callback_sites_keep_iteration_semantics() {
     // A call site of an array's callback method calls the native straight from the lane
-    // (`lane_call_array_callback`), whose callbacks run in that lane from their first call
+    // (`call_array_callback_miss`), whose callbacks run in that lane from their first call
     // (`Vm::call_prepared`): the arguments and thisArg passed, holes skipped and the length
     // read once, a throwing and a non-callable callback, an inherited index seen mid-loop, map
     // and some, a strict callback's this, a redefined forEach, an array-like receiver, a native
@@ -13044,7 +13044,7 @@ fn js_jit_compiles_straight_line_plain_local_temporaries() {
 }
 
 /// A function the tier claims stays a frameless lane target: its activations start at the
-/// tier prologue (`lane_tier_prologue`), which enters the compiled body and completes the
+/// tier prologue (`tier_prologue_in_lane`), which enters the compiled body and completes the
 /// activation at its `Return`.
 #[test]
 #[cfg(not(quench_profiled))]
@@ -20716,7 +20716,7 @@ fn inlined_recovery_keeps_parameters_observable_through_legacy_arguments() {
         let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
         let mut targets = vec![None; body.code.len()];
         targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
-        let callee_captures = vm.lane_callee_captures(callee);
+        let callee_captures = vm.callee_capture_slots(callee);
         let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| callee_captures, Vec::new(), &[])
             .expect("legacy-observable inlined unit");
         let mut registers = vec![Value::UNDEFINED; usize::from(body.registers)];
@@ -20881,7 +20881,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         let mut targets = vec![None; body.code.len()];
         let call = body.instructions().position(|instruction| instruction.op() == crate::bytecode::Op::Call).unwrap();
         targets[call] = Some(super::compiled::CallTarget { callee: super::compiled::CalleeBinding::Identity(callee), function: callee_id });
-        let callee_captures = vm.lane_callee_captures(callee);
+        let callee_captures = vm.callee_capture_slots(callee);
         let method = vm.compile_lane_method(&program, caller_id, &|function, pc| if function == caller_id { targets.get(pc as usize).copied().flatten().into_iter().collect() } else { Vec::new() }, &|_| callee_captures, Vec::new(), &[])
             .expect("closure capture unit compiles");
         assert_eq!(method.inlined.len(), 1, "callee captures must not retain a guest call");
@@ -23135,7 +23135,7 @@ fn lane_leaf_calls_that_throw_keep_their_frames() {
 
 #[test]
 fn lane_leaf_calls_reach_the_recursion_limit_as_activations() {
-    // A leaf call takes the room its activation would (`lane_activation_room`), so recursion
+    // A leaf call takes the room its activation would (`activation_room_in_lane`), so recursion
     // through leaf calls overflows as it would without them, and recovers.
     let source = r#"
       function leafInc(x) { return (x + 1) | 0; }

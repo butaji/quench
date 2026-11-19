@@ -15,7 +15,7 @@ fn reads_this_or_parameter(base: FieldBase, body: &Function) -> bool {
 /// kept arguments) decides further: the first form it has of those a call answers without
 /// activating it, else `CallEntry::Activates`. A class constructor's calls throw on the
 /// general path, so they take a frame; only its constructions activate frameless
-/// (`lane_script_construct`).
+/// (`script_construct_miss`).
 pub(super) fn body_entry(body: &Function, constants: &[crate::bytecode::Constant]) -> CallEntry {
     if body.is_class_constructor {
         CallEntry::Frame

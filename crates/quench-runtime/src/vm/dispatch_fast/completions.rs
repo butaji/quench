@@ -56,7 +56,7 @@ fn complete_trapped_read_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value
     let activation = vm.lane_stack.pop_activation()?;
     let (caller_memory, _) = restore_caller_in_lane(cx, &activation);
     if activation.caller_program() != unsafe { (*cx).program } {
-        lane_enter_program(cx, activation.caller_program());
+        enter_program_in_lane(cx, activation.caller_program());
     }
     Some(resume_after_call_in_lane(&activation, caller_memory, value))
 }
@@ -105,7 +105,7 @@ pub(super) fn returning_call_admitted_in_lane<H: Host>(cx: *mut LaneContext<H>) 
 }
 
 /// The frame's own call record at `call` returns `value`, its callee's completion: the
-/// general loop returns it from the frame at that instruction (`Vm::lane_returned`).
+/// general loop returns it from the frame at that instruction (`Vm::returned_in_lane`).
 #[inline(always)]
 pub(super) fn frame_return_in_lane<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
     vm.lane_completion.set(LaneCompletion::Returned(value));
@@ -165,7 +165,7 @@ pub(super) fn complete_plain_chain_in_lane<H: Host>(cx: *mut LaneContext<H>, val
         return complete_cross_activation_in_lane(cx, value);
     }
     if crossed {
-        lane_enter_program(cx, top.caller_program());
+        enter_program_in_lane(cx, top.caller_program());
         unsafe { (*cx).memory = MemoryView::script(cx) };
     }
     complete_plain_activation_in_lane::<H, NOT_LEAF>(cx, value)

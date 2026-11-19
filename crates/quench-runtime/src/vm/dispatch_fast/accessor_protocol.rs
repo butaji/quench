@@ -77,7 +77,7 @@ impl<H: Host> AccessorCall<H> {
         if let Some(value) = (unsafe { vm(self.cx) }).pure_native_getter_value(getter, object) {
             return Some(value);
         }
-        let target = lane_script_target(self.cx, getter)?;
+        let target = script_target_in_lane(self.cx, getter)?;
         unsafe { self.script_getter_answer(&target, object) }
     }
 
@@ -108,7 +108,7 @@ impl<H: Host> AccessorCall<H> {
     /// (`lane_activate_getter`), whose completion is the read's value. Only a read that writes its
     /// register is answered in place: a returning read (`RETURN_REGISTER`) completes its
     /// activation, which only the getter's activation does. A native getter is called in place
-    /// (`lane_call_native`); `Err` after such a call that raised leaves the error in
+    /// (`call_native_in_lane`); `Err` after such a call that raised leaves the error in
     /// `Vm::lane_raised`. The answer's read may have made the activations frames, so the
     /// registers are the context's again.
     pub(super) fn read_getter(&self, r: Registers, ip: Ip, i: &LaneInstruction, getter: Value, base: Value) -> Result<(Registers, Ip), Ip> {
@@ -127,7 +127,7 @@ impl<H: Host> AccessorCall<H> {
             }
             return lane_activate_getter(self.cx, r, ip, getter, base, None);
         }
-        let target = lane_script_target(self.cx, getter);
+        let target = script_target_in_lane(self.cx, getter);
         if reads
             && let Some(target) = &target
             && let Some(value) = unsafe { self.script_getter_answer(target, base) }
@@ -148,7 +148,7 @@ impl<H: Host> AccessorCall<H> {
     #[cold]
     #[inline(never)]
     fn native_getter(&self, ip: Ip, i: &LaneInstruction, native: Native, getter: Value, base: Value) -> Result<(Registers, Ip), Ip> {
-        match lane_native_complete(self.cx, ip, i, lane_call_native(self.cx, ip, native, getter, base, &[])) {
+        match native_complete_in_lane(self.cx, ip, i, call_native_in_lane(self.cx, ip, native, getter, base, &[])) {
             Resumed::At(r, next, _) => Ok((r, next)),
             Resumed::Exit(next) => Err(next),
         }
@@ -177,7 +177,7 @@ impl<H: Host> AccessorCall<H> {
     /// The own slot of `base` that `getter`, a frameless read body, returns (`return this.field`),
     /// by the field cache entry its record answers with.
     fn getter_field_slot(&self, getter: Value, base: Value) -> Option<u16> {
-        let target = lane_script_target(self.cx, getter).filter(|target| target.entry == CallEntry::Reads)?;
+        let target = script_target_in_lane(self.cx, getter).filter(|target| target.entry == CallEntry::Reads)?;
         let vm = unsafe { vm(self.cx) };
         (direct_call_this_in_lane(vm, &target, base)? == base).then_some(())?;
         // SAFETY: a `CallEntry::Reads` target of the running program.
@@ -265,13 +265,13 @@ impl<H: Host> AccessorCall<H> {
     /// a library loaded as its own script, as Vue's and MobX's handlers are, activates as one of
     /// the running program's does. `None` for a trap the lane does not activate.
     pub(super) fn trap_target(&self, trap: Value) -> Option<(ScriptCallTarget, bool)> {
-        if let Some(target) = lane_script_target(self.cx, trap) {
+        if let Some(target) = script_target_in_lane(self.cx, trap) {
             return (!target.forwards()).then_some((target, false));
         }
         let vm = unsafe { vm(self.cx) };
         // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
         let target = vm.cross_call_entry(trap).map(|target| unsafe { *target })?;
-        (target.entry.activates() && !target.forwards() && !lane_constructing(vm, trap)).then_some((target, true))
+        (target.entry.activates() && !target.forwards() && !constructing_in_lane(vm, trap)).then_some((target, true))
     }
 
     /// The activation of the trap `target` (`trap_target`) called on `handler` with
@@ -365,7 +365,7 @@ impl<H: Host> AccessorCall<H> {
             return None;
         }
         let setter = stored_setter(vm, object, i.imm(), site)?;
-        let target = lane_script_target(self.cx, setter).filter(|target| !target.forwards())?;
+        let target = script_target_in_lane(self.cx, setter).filter(|target| !target.forwards())?;
         let this = lane_call_this(vm, &target, object)?;
         // SAFETY: the record's value register is one of the running function's.
         let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };

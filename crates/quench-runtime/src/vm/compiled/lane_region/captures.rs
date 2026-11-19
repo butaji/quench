@@ -105,7 +105,7 @@ fn capture_miss(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureS
     read
 }
 
-/// A capture's read by the lane's own lookup (`dispatch_fast::lane_body_capture`); a miss leaves.
+/// A capture's read by the lane's own lookup (`dispatch_fast::body_capture_in_lane`); a miss leaves.
 fn capture_get(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), exit: ir::Block) -> ir::Value {
     let (context, packed) = capture_operands(builder, reach.0, at);
     let value = call_helper(builder, reach, LaneHelper::CaptureGet, &[context, packed]);
@@ -114,7 +114,7 @@ fn capture_get(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), 
     value
 }
 
-/// A capture's store by the lane's own store (`dispatch_fast::lane_body_capture_store`); a binding
+/// A capture's store by the lane's own store (`dispatch_fast::body_capture_store_in_lane`); a binding
 /// it does not take leaves at `exit`.
 pub(super) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), value: ir::Value,
     exit: ir::Block) {

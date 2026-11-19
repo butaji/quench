@@ -19,7 +19,7 @@ lane_handler! {
         let op = const { gc_op::<OP>() };
         // SAFETY: the context outlives the lane run.
         let program = unsafe { (*cx).program };
-        let env = if const { wasm_gc_reads_instance(gc_op::<OP>()) } { lane_instance_env(cx) } else { Value::UNDEFINED };
+        let env = if const { wasm_gc_reads_instance(gc_op::<OP>()) } { instance_env_in_lane(cx) } else { Value::UNDEFINED };
         let instruction = WideInstruction::new(op, i.a, i.b, i.c, i.imm());
         // A field access allocates nothing and reads no instance state: a miss, which traps,
         // takes the general path, which raises it.

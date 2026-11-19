@@ -627,7 +627,7 @@ pub(in crate::vm) const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; cra
 /// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
 /// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
 /// The lane records a loop-free body runs below which a frameless activation is cheaper than
-/// the JavaScript tier's native entry of it. A direct native entry (`lane_tier_prologue`,
+/// the JavaScript tier's native entry of it. A direct native entry (`tier_prologue_in_lane`,
 /// `direct_call`, the shared entry) costs about 380 machine instructions past the
 /// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
 /// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as

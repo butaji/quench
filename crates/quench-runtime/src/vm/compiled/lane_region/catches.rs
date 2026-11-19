@@ -41,7 +41,7 @@ pub(super) enum Bind {
 /// Whether an exception no handler of a body covers unwinds through its native callers alone: a
 /// generator or async function ends in its promise or generator state, and a dynamic scope in the
 /// `with` scopes of its frame, which only the lane's own unwinding settles. A loop region's
-/// exception leaves to the lane, which settles any function's (`dispatch_fast::lane_raised_exit`).
+/// exception leaves to the lane, which settles any function's (`dispatch_fast::raised_exit_in_lane`).
 fn unwinds_natively(function: &Function) -> bool {
     !(function.is_generator || function.is_async || function.has_dynamic_scope_access())
 }

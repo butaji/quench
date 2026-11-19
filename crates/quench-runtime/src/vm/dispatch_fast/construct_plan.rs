@@ -42,8 +42,8 @@ pub(super) struct ConstructPlan {
     pub(super) operators: [u8; CONSTRUCT_PLAN_FIELDS],
     pub(super) fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
     /// For a forwarding constructor's plan, where its body's reads resolved
-    /// (`lane_forwarded_construction`), which the plan's own proof keeps. Its fields, if any, are
-    /// those its forwarded initializer stores (`lane_record_forwarded_fields`).
+    /// (`forwarded_construction_in_lane`), which the plan's own proof keeps. Its fields, if any, are
+    /// those its forwarded initializer stores (`record_forwarded_fields_in_lane`).
     pub(super) forwarded: Option<ForwardedResolution>,
     /// The field a nested construction gives a fresh object each time (`NestedField`).
     pub(super) nested: Option<NestedField>,
@@ -63,7 +63,7 @@ pub(super) enum ConstructPlanKind {
     /// (`ConstructPlan::defaulted`, `ConstructPlan::computed`).
     Defaulted,
     /// A forwarding constructor's plan (`planned_receiver_in_lane`), which holds only with its
-    /// forwarding (`lane_forwarded_fields`).
+    /// forwarding (`forwarded_fields_in_lane`).
     Forwarding,
 }
 
@@ -164,7 +164,7 @@ impl ConstructPlan {
     }
 
     /// This plan holding the fields `fields` that a forwarded initializer's adds gave a receiver
-    /// of `shape` (`lane_record_forwarded_fields`), forwarding as `forwarded`.
+    /// of `shape` (`record_forwarded_fields_in_lane`), forwarding as `forwarded`.
     pub(super) fn with_recorded(&self, fields: &Self, shape: u32, forwarded: ForwardedResolution) -> Self {
         Self {
             shape,
@@ -357,7 +357,7 @@ pub(in crate::vm) unsafe fn body_construction_in_lane<H: Host>(vm: &mut Vm<H>, c
     let argument = |parameter: u16| if parameter < argc { unsafe { *arguments.add(usize::from(parameter)) } } else { Value::UNDEFINED };
     // A forwarding constructor's plan (`this.initialize(...)`) holds with its forwarding.
     let this = planned_construction(vm, callee, argument)
-        .or_else(|| lane_forwarded_fields(vm, callee, argument))
+        .or_else(|| forwarded_fields_in_lane(vm, callee, argument))
         .or_else(|| initializer_construction(vm, code, callee, argument))?;
     note_allocation(vm);
     Some(this)
@@ -401,7 +401,7 @@ fn initializer_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, cal
 
 /// `planned_construction_in_lane` under the plan at `index` with defaulted fields, whose values
 /// it computes first; `None` for a forwarding constructor's plan, which holds only with its
-/// forwarding (`lane_forwarded_fields`). Out of line, so plans of plain fields keep their
+/// forwarding (`forwarded_fields_in_lane`). Out of line, so plans of plain fields keep their
 /// code.
 #[inline(never)]
 fn defaulted_construction_in_lane<H: Host>(vm: &mut Vm<H>, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {

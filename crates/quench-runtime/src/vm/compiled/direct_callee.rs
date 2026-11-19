@@ -35,7 +35,7 @@ pub(in crate::vm) struct DirectCallee {
     /// For a construction site, the forwarding constructor whose activation the call skips:
     /// `callee` is that constructor, which the call guards, and `target` its forwarded
     /// initializer, which runs with the receiver the constructor's plan allocates and
-    /// whose result the construction ignores (`lane_construct_keeping_activation`).
+    /// whose result the construction ignores (`construct_keeping_activation_in_lane`).
     pub(in crate::vm) forwarder: Option<super::super::dispatch_fast::SkippedForwarder>,
 }
 

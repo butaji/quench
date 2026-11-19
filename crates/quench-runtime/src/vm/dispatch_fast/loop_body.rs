@@ -150,7 +150,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
         *body = LoopBody::Declined;
         return;
     }
-    let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
+    let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, body)).unwrap_or_default();
     // The loop's arrays are the activation's registers live at its header now: sampled, as an
     // OSR loop samples its own. A dead register may hold any value a window held before
     // (`RegisterRoots::entry_fill`), so it reads as `undefined`.
@@ -162,8 +162,8 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
         Some(pending) => LaneBodyWork::Poll(pending),
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
     };
-    let outcome = vm.body_work_in_lane(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
-        &|function, header| lane_unit_trips(cx, function, header), &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));
+    let outcome = vm.body_work_in_lane(code, function, &|function, pc| unit_targets_in_lane(cx, function, pc),
+        &|function, header| unit_trips_in_lane(cx, function, header), &|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));
     // A body its iterations have not paid for waits until they would at its planned size.
     if matches!(outcome, LaneBodyOutcome::Unpaid) {
         let ir = vm.programs.planned_lane_ir(&(vm.active_program.raw(), function, Some(site.header)))
@@ -245,16 +245,16 @@ fn run_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &
         if !matches!(*site.body.borrow(), LoopBody::Declined | LoopBody::Compiling { wait: 1.., .. }) { plan_loop_body(cx, r, own, site); }
         return None;
     };
-    if !lane_body_admits(cx, &method, NO_PENDING_ACTIVATIONS) { return None; }
+    if !body_admits_in_lane(cx, &method, NO_PENDING_ACTIVATIONS) { return None; }
     // SAFETY: the context's program outlives the lane run; the activation owns its receiver
     // and captures, as at its body's prologue.
     let (program, code, receiver) = unsafe { ((*cx).program, &*(*cx).code, this_in_lane(cx, r).unwrap_or(Value::DELETED)) };
     let captures = capture_reads(unsafe { (*cx).registers }.capture());
-    let exit = vm.run_lane_method(&method, lane_direct_calls(cx), program, code, r.0, receiver, captures, cx.cast());
+    let exit = vm.run_lane_method(&method, direct_calls_in_lane(cx), program, code, r.0, receiver, captures, cx.cast());
     unsafe { (*cx).callee_warming = false };
     // A failed entry contract resumes at the loop's header, not at the function's first record.
     let resume = if exit.entered_nothing() { LaneExit::At(site.header as usize) } else { exit };
-    let (resumed, _) = lane_body_left(cx, r, own, &method, resume);
+    let (resumed, _) = body_left_in_lane(cx, r, own, &method, resume);
     if resume.inside(site.header..=site.backedge) { site.body.borrow_mut().note_leave(exit); }
     drop(method);
     if site.diagnostics { site.body_runs.set(site.body_runs.get().saturating_add(1)); }
@@ -262,7 +262,7 @@ fn run_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &
 }
 
 /// What a loop site's attempt leaves the lane to do after native code of its loop left, and the lane
-/// recovered `resumed` (`lane_body_left`, `lane_body_inlined_activation`): `ip` is the record the run
+/// recovered `resumed` (`body_left_in_lane`, `body_inlined_activation_in_lane`): `ip` is the record the run
 /// was reached at.
 pub(super) fn loop_attempt<H: Host>(cx: *mut LaneContext<H>, ip: Ip, resumed: LaneBodyLeft) -> LoopAttempt {
     match resumed {
@@ -270,7 +270,7 @@ pub(super) fn loop_attempt<H: Host>(cx: *mut LaneContext<H>, ip: Ip, resumed: La
         // A callee's run that left the lane for the general path leaves it at its record.
         LaneBodyLeft::Resume(_, next, _) if body_calls::left_lane(next) => LoopAttempt::Leave(next),
         LaneBodyLeft::Resume(registers, next, carried) => LoopAttempt::Carry(registers, next, carried),
-        LaneBodyLeft::Raised(record) => LoopAttempt::Leave(lane_raised_exit(cx, record)),
+        LaneBodyLeft::Raised(record) => LoopAttempt::Leave(raised_exit_in_lane(cx, record)),
         LaneBodyLeft::Completed(record, value) => LoopAttempt::Resumed(return_value_general_in_lane::<H>(cx, record, value)),
     }
 }

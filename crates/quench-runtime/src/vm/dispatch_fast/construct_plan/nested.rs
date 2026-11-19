@@ -44,7 +44,7 @@ fn capture_value<H: Host>(vm: &mut Vm<H>, env: Value, capture: u32) -> Option<Va
 /// guest code: `None` where it has no holding plan.
 pub(in super::super) fn nested_construction<H: Host>(vm: &mut Vm<H>, constructor: Value, arguments: &[Value; NESTED_ARGUMENTS]) -> Option<Value> {
     let argument = |parameter: u16| arguments.get(usize::from(parameter)).copied().unwrap_or(Value::UNDEFINED);
-    planned_construction(vm, constructor, argument).or_else(|| super::super::lane_forwarded_fields(vm, constructor, argument))
+    planned_construction(vm, constructor, argument).or_else(|| super::super::forwarded_fields_in_lane(vm, constructor, argument))
 }
 
 /// The value `construct` gives its field, built from the constructor its capture and chain

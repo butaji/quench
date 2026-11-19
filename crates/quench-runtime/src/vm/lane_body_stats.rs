@@ -19,10 +19,10 @@ pub(in crate::vm) struct LaneBodyStats {
     ends: [std::cell::Cell<u32>; Event::END_COUNT],
     /// The PCs it left at, and inside inlined frames as `frame:pc`, with their counts.
     leaves: std::cell::RefCell<Vec<(String, u32)>>,
-    /// Entries of the specialized body that ran in the lane instead (`lane_body_admits`).
+    /// Entries of the specialized body that ran in the lane instead (`body_admits_in_lane`).
     pub(in crate::vm) refused: std::cell::Cell<u32>,
     /// The leaves into a callee that only lacked a body while warming toward one, which count
-    /// toward nothing (`dispatch_fast::lane_leave_counts`).
+    /// toward nothing (`dispatch_fast::leave_counts_in_lane`).
     pub(in crate::vm) warming_leaves: std::cell::Cell<u32>,
     /// Why its body declined (`decline`).
     pub(in crate::vm) declined: std::cell::Cell<&'static str>,

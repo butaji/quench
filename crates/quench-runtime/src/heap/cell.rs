@@ -1071,7 +1071,7 @@ impl Native {
         )
     }
 
-    /// Natives a lane `Call` makes in place from the running frame (`lane_call_native`),
+    /// Natives a lane `Call` makes in place from the running frame (`call_native_in_lane`),
     /// as the general loop's native branch makes them once lane activations are frames:
     /// every native but those whose call the general loop takes as its own step. The
     /// call-forwarding natives push their target as a frame there (and run under a
@@ -1099,7 +1099,7 @@ impl Native {
     }
 
     /// Natives a lane `new` constructs in place from the running frame
-    /// (`lane_construct_native`): the keyed collections, `Date`, `Promise`, `Object`,
+    /// (`construct_native_in_lane`): the keyed collections, `Date`, `Promise`, `Object`,
     /// `RegExp`, the buffers, typed arrays and errors and the primitive wrappers and `Proxy`, whose
     /// [[Construct]] reads no caller state beyond the frame's published PC and runs guest
     /// code only through ordinary nested calls.

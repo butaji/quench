@@ -2290,7 +2290,7 @@ pub(crate) struct Observation<'a> {
     /// Whether loops may version their bounds on entry (`RegionPlan::entry_bounds`).
     pub(crate) entry_bounds: bool,
     /// Per inlined frame of the region (`Inlining::frames`), the dense capture slots of its
-    /// callee's environment (`Vm::lane_callee_captures`): where the frame's own capture reads
+    /// callee's environment (`Vm::callee_capture_slots`): where the frame's own capture reads
     /// load, its identity guard fixing the environment.
     pub(crate) frame_captures: &'a [(usize, usize)],
     /// The construct plan each construction record holds now, by function and PC

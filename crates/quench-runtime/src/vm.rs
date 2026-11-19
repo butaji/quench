@@ -1958,7 +1958,7 @@ pub(crate) struct Vm<H> {
     lane_completion: LaneCompletion,
     /// Where a lane body's native `throw` raised the error in `lane_completion`
     /// (`compiled::raise_site`), which the lane gives it as its source location once it
-    /// escapes the native frames (`dispatch_fast::lane_raised_exit`).
+    /// escapes the native frames (`dispatch_fast::raised_exit_in_lane`).
     lane_raise_site: u64,
     /// A lane native call running with its activations still frameless
     /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
@@ -1979,7 +1979,7 @@ pub(crate) struct Vm<H> {
     /// name, and resolving it again after a collection read its file anew. typescript.js
     /// (9 MB) imported from an ES module was read and wrapped again at the run's peak.
     resolved_module_names: rustc_hash::FxHashMap<(String, String), String>,
-    /// The native a lane call is running from its caller's frame (`dispatch_fast::lane_call_native`),
+    /// The native a lane call is running from its caller's frame (`dispatch_fast::call_native_in_lane`),
     /// whose calls of JavaScript run frameless in that lane (`Vm::native_callback_in_lane`).
     lane_native: Option<dispatch_fast::LaneNativeCall>,
     /// The active program's context (`program_contexts`), kept by `set_active_program`: its

@@ -1,6 +1,6 @@
 //! A function's BaseJIT body (`--b-jit`): the whole function stitched from stencils
 //! (`base_region::function`) and published as a lane body, so the tier prologue enters it and
-//! its leaves resume the interpreter as a Cranelift body's do (`lane_body_entry`,
+//! its leaves resume the interpreter as a Cranelift body's do (`body_entry_in_lane`,
 //! `LaneExit`). A call site that recorded a stable callee calls its entry cell (the direct row,
 //! the callee's descriptor owned by the method like a Cranelift body's `direct`), any other call
 //! takes the helper row, and an instruction with no row leaves the body at its PC.

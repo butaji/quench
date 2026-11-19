@@ -113,7 +113,7 @@ unsafe fn payload_for<H: Host>(vm: &mut Vm<H>, dispatch: &mut JsStepDispatch, le
 
 /// Enters the region's body over the activation's dispatch and maps its exit. A region that calls
 /// callees by their entries (`lend`: whether the lane may make their activations) runs on the lane
-/// frame's payload, which is named to the lane's helpers for the run (`dispatch_fast::lane_region_payload`):
+/// frame's payload, which is named to the lane's helpers for the run (`dispatch_fast::region_payload_in_lane`):
 /// a leave inside a callee stays on the lane stack as its native frames (`RegionRun::nested`).
 ///
 /// # Safety
@@ -130,16 +130,16 @@ pub(super) unsafe fn enter<H: Host>(
     // SAFETY: the region runs on the lane's activation at the lane stack's top, and `reclaim` follows the run.
     let payload = unsafe { payload_for(vm, dispatch, lend) };
     context.adapter_payload = payload.cast();
-    // The region's call rows reload its payload's heap bases after the callee ran (`lane_region_call`).
+    // The region's call rows reload its payload's heap bases after the callee ran (`region_call_in_lane`).
     // SAFETY: `lane_context` is the running lane's.
-    let outer = unsafe { super::dispatch_fast::lane_region_payload::<H>(lane_context, payload.addr()) };
+    let outer = unsafe { super::dispatch_fast::region_payload_in_lane::<H>(lane_context, payload.addr()) };
     // SAFETY: as the caller promises; the code reads the register file and returns
     // its status and result word.
     let BodyReturn { status, value: word } = unsafe {
         enter_body(&mut context, 0, resume, registers.cast::<u64>().cast_const(), code)
     };
     // SAFETY: as above.
-    unsafe { super::dispatch_fast::lane_region_payload::<H>(lane_context, outer) };
+    unsafe { super::dispatch_fast::region_payload_in_lane::<H>(lane_context, outer) };
     if lend.is_some() {
         // SAFETY: `payload` is the one `lend` was given, and the run it lent for is over.
         unsafe { region_lend::reclaim(dispatch) };

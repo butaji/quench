@@ -129,7 +129,7 @@ pub(super) fn spread_native_call_in_lane<H: Host>(
     }
     let args = vm.heap.array_elements(list)?.iter().collect::<smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]>>();
     let value = native_value_in_lane(cx, ip, i, native, callee, receiver, &args);
-    Some(lane_native_complete(cx, ip, i, value))
+    Some(native_complete_in_lane(cx, ip, i, value))
 }
 
 /// The native `spread_native_call_in_lane` calls in place: any but a forwarding one or `eval`.
@@ -167,5 +167,5 @@ pub(super) fn spread_set_native_call_in_lane<H: Host>(
     }
     let args = vm.heap.set_entries(list)?.to_vec();
     let value = native_value_in_lane(cx, ip, i, native, callee, receiver, &args);
-    Some(lane_native_complete(cx, ip, i, value))
+    Some(native_complete_in_lane(cx, ip, i, value))
 }

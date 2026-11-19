@@ -1602,7 +1602,7 @@ impl<H: Host> Vm<H> {
 
     /// The outcome of frame `frame`, whose lane run stopped in it at `instruction` at `pc`
     /// with no call pending, where the general loop's step there would end its run: the
-    /// frame's return, or the completion a call it made returned from it (`Vm::lane_returned`),
+    /// frame's return, or the completion a call it made returned from it (`Vm::returned_in_lane`),
     /// a generator's plain `yield`, or an async function's observation-free `await`
     /// (`stop_awaits_in_lane`). `None` leaves the instruction to the general loop.
     #[inline(always)]
@@ -1725,7 +1725,7 @@ impl<H: Host> Vm<H> {
         let mut frame = frame;
         // The completion a call the lane made returned from the frame it left in, taken once
         // per lane exit (`LaneCompletion::Returned`) and returned at that instruction.
-        let mut lane_returned = self.lane_completion.take_returned();
+        let mut returned_in_lane = self.lane_completion.take_returned();
         // The initial Wasm activation is allocated before the dispatch loop and has no
         // caller guard. Account it here so root and reentrant Wasm entries obey the same
         // frame-payload limit as Wasm calls pushed by the loop.
@@ -1850,7 +1850,7 @@ impl<H: Host> Vm<H> {
             if !resumed && native_step.is_none() && Self::enters_in_lane(cursor.lane, pc, entering_after_lane_exit) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut frame, pc, pending_calls, &mut executing, allow_inline_calls);
-                lane_returned = self.lane_completion.take_returned();
+                returned_in_lane = self.lane_completion.take_returned();
                 crate::clock::note_lane_run();
                 after_lane_exit = self.heap.should_collect();
                 // The lane may leave in a frame of another program, its activations' calls
@@ -2391,7 +2391,7 @@ impl<H: Host> Vm<H> {
             // general `step` dispatch.
             match crate::staged::frame_arm::arm(ins.op()) {
                 // A call the lane made returned its callee's completion from this frame.
-                _ if let Some(value) = lane_returned.take() => Ok(StepResult::Return(value)),
+                _ if let Some(value) = returned_in_lane.take() => Ok(StepResult::Return(value)),
                 FrameArm::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
                 FrameArm::Call if allow_inline_calls => {
                     match self.try_inline_reflect_apply(p, frame, ins, pc) {

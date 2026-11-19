@@ -147,7 +147,7 @@ pub(in super::super) struct InlineSite {
     /// interpreter's activation expects it in its own.
     pub(in super::super) copies: Vec<(Register, Register)>,
     /// The call as the method's inlined frame, which a leave inside the callee recovers
-    /// (`Vm::lane_body_inlined_activation`).
+    /// (`Vm::body_inlined_activation_in_lane`).
     pub(in super::super) frame: Frame,
 }
 

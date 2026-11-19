@@ -99,7 +99,7 @@ pub(super) unsafe fn run<H: Host>(
     }
     // This leaf allocates, so retain the call's ordinary collection/stack gate even
     // though a hit writes no activation. A due collection must reach the general path.
-    if !lane_activation_room(unsafe { vm(cx) }, target) {
+    if !activation_room_in_lane(unsafe { vm(cx) }, target) {
         return None;
     }
     let (storage, slot, previous) = unsafe { writable_binding(target) }?;

@@ -14,7 +14,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `in_place_native_value` inlined into its caller: the lane's native call
-    /// (`lane_string_or_native_call`) enters the family function from its own frame.
+    /// (`string_or_native_call_in_lane`) enters the family function from its own frame.
     #[inline(always)]
     pub(in crate::vm) fn in_place_native_value_inline(&mut self, code: &ResidualProgram, native: Native, callee: Value,
         receiver: Value, args: &[Value]) -> Option<Value> {

@@ -39,7 +39,7 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
         }
         _ => {
             vm.finish_generator_window(script.callee);
-            lane_raised_exit(cx, activation.call())
+            raised_exit_in_lane(cx, activation.call())
         }
     })
 }

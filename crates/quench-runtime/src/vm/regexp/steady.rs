@@ -5,7 +5,7 @@ use super::steady_ascii::IndexStore;
 
 impl<H: Host> Vm<H> {
     /// `RegExp.prototype.exec` or `test` when the call runs no guest code and raises
-    /// nothing, so it observes no frame (`lane_regexp_call`): a RegExp receiver, a string
+    /// nothing, so it observes no frame (`regexp_call_in_lane`): a RegExp receiver, a string
     /// subject, an own writable data `lastIndex` holding a Number (`regexp_last_index_slot`,
     /// so its conversion and any store run no guest code), and for `test` the builtin `exec`
     /// (`regexp_builtin_exec_matcher`). The call is the native's own; `None` leaves any other

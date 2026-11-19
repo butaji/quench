@@ -2623,7 +2623,7 @@ impl Function {
             // (`CallEntry::Gathers`) and a plain frame does not.
             let ordinary_with_rest = registers_layout && !self.activation_binding_reads(tables);
             // A base class constructor laid out as an ordinary function runs frameless when
-            // constructed (`lane_script_construct`); its calls, which throw, keep a frame.
+            // constructed (`script_construct_miss`); its calls, which throw, keep a frame.
             let constructs_frameless = registers_layout
                 && self.is_class_constructor
                 && !self.rest

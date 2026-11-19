@@ -6,7 +6,7 @@ use super::*;
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub(super) enum CallEntry {
-    /// Its activation holds its registers alone (`lane_activate`).
+    /// Its activation holds its registers alone (`activate_in_lane`).
     Activates,
     /// It keeps the values it was passed for a forwarded `arguments`
     /// (`CallPlan::forwards_arguments`, `activate_keeping_in_lane`).
@@ -19,7 +19,7 @@ pub(super) enum CallEntry {
     Reads,
     /// It needs a VM frame (`CallPlan::registers_only` fails, or its view has no
     /// activation): a call takes `lane_frame_call`. Only the cache and the call's own
-    /// out-of-line form see such a target (`lane_script_target` leaves it out).
+    /// out-of-line form see such a target (`script_target_in_lane` leaves it out).
     Frame,
     /// Its body reads a field of `this` or a parameter, then an element of that by a
     /// parameter, and returns it (`element_read_body`), which a call answers likewise.
@@ -64,7 +64,7 @@ pub(super) enum CallEntry {
 
 impl CallEntry {
     /// Whether a call that does not answer it otherwise activates the target as its registers
-    /// alone (`lane_activate`): a leaf's every call but the plain one does.
+    /// alone (`activate_in_lane`): a leaf's every call but the plain one does.
     #[inline(always)]
     pub(super) fn activates(self) -> bool {
         matches!(self, Self::Activates | Self::Leaf | Self::CaptureLeaf | Self::ContextLeaf | Self::ThisLeaf)
@@ -97,7 +97,7 @@ impl CallEntry {
     /// Whether a plain call's activation of the target holds its registers alone: the
     /// entries whose calls a read answers activate like `Activates` once the read misses,
     /// which is the activation a lane body's inlined call materializes
-    /// (`lane_body_inlined_activation`).
+    /// (`body_inlined_activation_in_lane`).
     pub(super) fn activates_registers_only(self) -> bool {
         self.activates() || matches!(self, Self::Reads | Self::ReadsElement | Self::ForwardsRead | Self::ReadsCapture | Self::ReadsThis)
     }

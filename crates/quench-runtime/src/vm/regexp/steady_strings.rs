@@ -122,7 +122,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `String.prototype.replace(regexp, string)` when the call runs no guest code, so it
-    /// observes no frame (`lane_regexp_call`): a string receiver and replacement, and a
+    /// observes no frame (`regexp_call_in_lane`): a string receiver and replacement, and a
     /// RegExp whose `@@replace` is this realm's builtin (`regexp_proven_symbol_method`) and
     /// whose exec, flags and lastIndex are builtin (`regexp_builtin_receiver_matcher`).
     /// Those make the native's steps the builtin `@@replace`'s fast path, which this runs;

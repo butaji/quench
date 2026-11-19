@@ -33,7 +33,7 @@ builtin_rows!(
 /// The Math functions whose call a site makes under its own handler, one instantiation of
 /// `math_native_miss` per row: the native is a constant, so the site tests the callee's
 /// identity and runs the operation inline (`number::math_inline_call` folds to it) with no
-/// dispatch on the native. Every other inline Math native keeps `lane_call_math`.
+/// dispatch on the native. Every other inline Math native keeps `call_math_miss`.
 macro_rules! math_rows {
     ($($row:literal => $native:ident),* $(,)?) => {
         const fn math_row_native(row: u8) -> Native {
@@ -65,7 +65,7 @@ pub(super) fn math_field_call_handlers<H: Host>() -> [*const (); 3] {
 script_handler! {
     /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): its
     /// value of Number arguments in place (`number::math_inline_call`). Any other callee or
-    /// argument takes `lane_call_math`.
+    /// argument takes `call_math_miss`.
     pub(super) fn math_native_miss<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { math_row_native(ROW) };
@@ -76,7 +76,7 @@ script_handler! {
             None
         };
         let Some(value) = value else {
-            sibling!(lane_call_math::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(call_math_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -190,7 +190,7 @@ script_handler! {
                 Some(Err(error)) => {
                     note_allocation(vm);
                     vm.lane_completion.raise(error);
-                    resume!(cx, lane_native_complete(cx, ip, i, None))
+                    resume!(cx, native_complete_in_lane(cx, ip, i, None))
                 }
                 None => None,
             }
@@ -214,7 +214,7 @@ script_handler! {
 /// `lane_native_call`, the handler of every other native. A call returning its result
 /// completes its caller, which only `lane_native_call` makes. An array callback method's site
 /// whose result nothing reads (`result_dead`, asked only there) takes the form that may
-/// discard it (`lane_call_array_callback`'s `DISCARDS`).
+/// discard it (`call_array_callback_miss`'s `DISCARDS`).
 pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool) -> Handler {
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return lane_native_call::<H>;
@@ -222,9 +222,9 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
     match native {
         native if let Some(row) = builtin_row(native) => builtin_handler::<H>(row),
         native if let Some(handler) = math_handler::<H>(native) => handler,
-        native if super::number::math_numbers_inline(native) => lane_call_math::<H>,
-        native if native.is_array_callback() && result_dead() => lane_call_array_callback::<H, true>,
-        native if native.is_array_callback() => lane_call_array_callback::<H, false>,
+        native if super::number::math_numbers_inline(native) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_MATH as u16 }>,
+        native if native.is_array_callback() && result_dead() => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK_DISCARDING as u16 }>,
+        native if native.is_array_callback() => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK as u16 }>,
         _ => lane_native_call::<H>,
     }
 }
@@ -271,8 +271,8 @@ script_handler! {
             _ => None,
         };
         match read {
-            Some((ChainRead::Value(value), _)) => resume!(cx, lane_native_complete(cx, ip, i, Some(value))),
-            Some((ChainRead::Absent, _)) => resume!(cx, lane_native_complete(cx, ip, i, Some(Value::UNDEFINED))),
+            Some((ChainRead::Value(value), _)) => resume!(cx, native_complete_in_lane(cx, ip, i, Some(value))),
+            Some((ChainRead::Absent, _)) => resume!(cx, native_complete_in_lane(cx, ip, i, Some(Value::UNDEFINED))),
             Some((ChainRead::Getter(Some(getter)), receiver)) if !getter.is_undefined() => {
                 match lane_activate_getter(cx, r, ip, getter, receiver, None) {
                     Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
@@ -290,7 +290,7 @@ pub(super) fn reflect_get_call_handler<H: Host>() -> Handler {
 }
 
 /// `body_native_call_in_lane` of a native that is not in place: the lane's own call of it
-/// (`lane_call_native`), beside the body's activations where the native allows, else from the
+/// (`call_native_in_lane`), beside the body's activations where the native allows, else from the
 /// frame, so the callbacks it makes run as activations of the lane above the body
 /// (`Vm::deferred_callback_in_lane`, `Vm::native_callback_in_lane`) and their returns go back to the
 /// native, which returns to the body. `LANE_CALL_COMPLETED` with the value in the call's
@@ -306,7 +306,7 @@ fn body_native_out_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &super::body_
     if native.is_array_callback() && let Some(status) = body_array_iteration_in_lane(cx, ip, native, receiver, args) {
         return status;
     }
-    let Some(value) = lane_call_native(cx, ip, native, callee, receiver, args) else {
+    let Some(value) = call_native_in_lane(cx, ip, native, callee, receiver, args) else {
         return super::lane_body_stats::miss(unsafe { vm(cx) }, super::lane_body_stats::Miss::NativeNotCompleted);
     };
     // Guest code the native ran may have made the activations frames, whose registers these are.

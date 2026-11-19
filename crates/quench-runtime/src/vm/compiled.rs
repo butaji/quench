@@ -1010,14 +1010,14 @@ lane_helper_inventory! { H;
     /// A leave's boxing of an unboxed double (`box_number_in_lane`): out of line, as leaves are cold.
     BoxNumber => box_number_in_lane,
     FieldGet => field_get_in_lane::<H>,
-    /// The count of the entry function's `arguments` (`lane_body_arguments_length`).
-    ArgumentsLength => super::dispatch_fast::lane_body_arguments_length::<H>,
-    /// One kept `arguments` element (`lane_body_argument_get`).
-    ArgumentGet => super::dispatch_fast::lane_body_argument_get::<H>,
+    /// The count of the entry function's `arguments` (`body_arguments_length_in_lane`).
+    ArgumentsLength => super::dispatch_fast::body_arguments_length_in_lane::<H>,
+    /// One kept `arguments` element (`body_argument_get_in_lane`).
+    ArgumentGet => super::dispatch_fast::body_argument_get_in_lane::<H>,
     FieldSet => field_set_in_lane::<H>,
     Call => super::dispatch_fast::body_call_helper::<H>,
-    /// A loop region's call (`dispatch_fast::lane_region_call`).
-    RegionCall => super::dispatch_fast::lane_region_call::<H>,
+    /// A loop region's call (`dispatch_fast::region_call_in_lane`).
+    RegionCall => super::dispatch_fast::region_call_in_lane::<H>,
     IndexSet => index_set_in_lane::<H>,
     /// Room for a loop's append to a dense array (`array_append_room_in_lane`).
     AppendRoom => array_append_room_in_lane::<H>,
@@ -1027,10 +1027,10 @@ lane_helper_inventory! { H;
     FieldWriteAdmission => field_write_admission_in_lane::<H>,
     CallBudget => call_budget_in_lane,
     AdmittedFunctionBinding => admitted_function_binding_in_lane::<H>,
-    /// An outer capture's read (`dispatch_fast::lane_body_capture`).
-    CaptureGet => super::dispatch_fast::lane_body_capture::<H>,
-    /// A capture's store (`dispatch_fast::lane_body_capture_store`).
-    CaptureSet => super::dispatch_fast::lane_body_capture_store::<H>,
+    /// An outer capture's read (`dispatch_fast::body_capture_in_lane`).
+    CaptureGet => super::dispatch_fast::body_capture_in_lane::<H>,
+    /// A capture's store (`dispatch_fast::body_capture_store_in_lane`).
+    CaptureSet => super::dispatch_fast::body_capture_store_in_lane::<H>,
     /// Strict equality of two distinct strings or BigInts (`strict_equal_cells_in_lane`).
     StrictEqual => strict_equal_cells_in_lane::<H>,
     /// `instanceof` by its steady case (`instance_of_in_lane`).
@@ -3770,7 +3770,7 @@ impl LaneMethod {
 pub(super) type PublishedLaneMethod = crate::code_dependencies::PublishedCode<LaneMethod>;
 
 /// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
-/// whose activation the lane then makes (`Vm::lane_body_inlined_activation`).
+/// whose activation the lane then makes (`Vm::body_inlined_activation_in_lane`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneExit {
     At(usize),
@@ -3955,7 +3955,7 @@ pub(super) fn raise_site_parts(site: u64) -> (u32, u32) {
 /// A lane body's `throw` of `value` that no handler of its function takes: the exception in
 /// `Vm::lane_raised`, with where it was thrown, for native callers and then the lane to find.
 /// The interpreter's `Throw` makes the same error; its source location is captured only if it
-/// escapes native code (`dispatch_fast::lane_raised_exit`).
+/// escapes native code (`dispatch_fast::raised_exit_in_lane`).
 unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, site: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`; the message of a value reads no guest code.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
@@ -4311,7 +4311,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Reloads the heap bases of the payload of the native loop region the lane entered, whose address the
-    /// lane context holds (`dispatch_fast::lane_region_payload`; zero where none runs), as
+    /// lane context holds (`dispatch_fast::region_payload_in_lane`; zero where none runs), as
     /// `refresh_body_bases` does the body frame's, and the lane stack's room the call may have moved
     /// (`region_lend::bind_stacks`, `direct_calls` as the region was entered with).
     pub(super) fn refresh_region_bases(&mut self, payload: usize, direct_calls: bool) {
