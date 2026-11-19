@@ -124,6 +124,10 @@ impl<W, P> Operation<W, P> {
             Self::FieldGetHost { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE), ("site", SITE)]),
             Self::FieldAdd { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE), ("site", SITE),
                 ("value", VALUE)]),
+            Self::GlobalLexicalLoad { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("declaration", BYTECODE),
+                ("site", SITE)]),
+            Self::GlobalLexicalStore { .. } => SmallVec::from_slice(&[("source", REGISTER), ("declaration", BYTECODE),
+                ("site", SITE), ("initialize", BYTECODE)]),
             Self::LoadName { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("atom", BYTECODE),
                 ("site", SITE), ("receiver", REGISTER), ("proof", PROOF)]),
             Self::FieldStoreMiss { .. } => SmallVec::from_slice(&[("object", VALUE), ("atom", BYTECODE),
@@ -196,6 +200,8 @@ mod tests {
             Op::Safepoint { proof: () },
             Op::IndexSetHelper { base: 0, key: 1, value: 2, proof: () },
             Op::LoadName { destination: 0, atom: 0, site: 0, receiver: None, proof: () },
+            Op::GlobalLexicalLoad { destination: 0, declaration: 0, site: 0 },
+            Op::GlobalLexicalStore { source: 0, declaration: 0, site: 0, initialize: false },
             Op::FieldStoreMiss { object: 0, atom: 0, site: 0, value: 1, proof: () },
         ]
     }

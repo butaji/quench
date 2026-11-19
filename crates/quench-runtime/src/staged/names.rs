@@ -46,6 +46,10 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
         Op::StoreName => Operation::GlobalWrite { source: instruction.register_a(), atom: instruction.atom_index(),
             site: instruction.cache_site_index(),
             initialize: instruction.boolean_field(crate::bytecode::InstructionField::B)? },
+        Op::LoadGlobalLexical => Operation::GlobalLexicalLoad { destination: destination(), declaration: instruction.imm(),
+            site: instruction.cache_site_index() },
+        Op::StoreGlobalLexical => Operation::GlobalLexicalStore { source: instruction.register_a(), declaration: instruction.imm(),
+            site: instruction.cache_site_index(), initialize: instruction.boolean_field(crate::bytecode::InstructionField::B)? },
         Op::ForInNext => Operation::ForInNext { destination: destination(), state: instruction.register_b() },
         Op::GetEnumerated => Operation::EnumeratedGet { destination: destination(), base: instruction.register_b(),
             key: instruction.register_c(), state: crate::bytecode::ImmediateLayout::register_pair(instruction.imm()).0 },
@@ -99,6 +103,10 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::GlobalTypeof { destination, atom, site } => global_typeof(stage, frame, destination, (atom, site)),
         Operation::GlobalWrite { source, atom, site, initialize } =>
             global_write(stage, frame, source, (atom, site, initialize)),
+        Operation::GlobalLexicalLoad { destination, declaration, site } =>
+            calling(stage, frame, CallOut::GlobalLexicalLoad { declaration, site }, Some(destination)),
+        Operation::GlobalLexicalStore { source, declaration, site, initialize } =>
+            calling(stage, frame, CallOut::GlobalLexicalStore { source, declaration, site, initialize }, None),
         Operation::LoadName { destination, atom, site, receiver, proof } =>
             load_name(stage, frame, (destination, receiver), (atom, site), proof),
         // A frame's in-place rest read answers the value; its runner defines the destination, as

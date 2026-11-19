@@ -202,11 +202,12 @@ pub(super) fn calls_in_place(instruction: WideInstruction, helpers: LaneHelpers)
     chains(instruction) && instruction.result_flags() == 0 && call_plan::helper_address(helpers, LaneHelper::RegionCall).is_some()
 }
 
-/// Whether `instruction` is a global name store or `typeof`, a call-out the VM makes in place
-/// (`LaneHelper::VmStep`) that writes at most one register.
+/// Whether `instruction` is a global name store or `typeof`, or a script-top-level lexical's load or store,
+/// a call-out the VM makes in place (`LaneHelper::VmStep`) that writes at most one register.
 fn calls_out(instruction: WideInstruction) -> bool {
     let call = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::EMPTY).and_then(|row| row.call_out());
-    instruction.result_flags() == 0 && matches!(call, Some((crate::staged::CallOut::GlobalWrite { .. } | crate::staged::CallOut::GlobalTypeof { .. }, _)))
+    instruction.result_flags() == 0 && matches!(call, Some((crate::staged::CallOut::GlobalWrite { .. } | crate::staged::CallOut::GlobalTypeof { .. }
+        | crate::staged::CallOut::GlobalLexicalLoad { .. } | crate::staged::CallOut::GlobalLexicalStore { .. }, _)))
 }
 
 /// The lowering of `instruction`, where helpers are `helpers` and `known` holds the sites' facts: where

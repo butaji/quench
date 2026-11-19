@@ -852,8 +852,8 @@ opcodes!($;
     // `imm` is the declaration index of a script-top-level lexical in the root's
     // `global_declarations.lexical`, read through its realm index slot (`Function::global_lexical_declaration`).
     // Each falls back to the by-name operation of its atom, which settles TDZ and const rules.
-    LoadGlobalLexical => READ_THROW; layout Scalar; meaning GlobalLexicalIndex; step Body; owned LoadGlobalLexical; traits BOXED_RESULT UNIT_REWRITTEN, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
-    StoreGlobalLexical => WRITE_THROW; layout Scalar; meaning GlobalLexicalIndex; step Body; owned StoreGlobalLexical, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
+    LoadGlobalLexical => READ_THROW; layout Scalar; meaning GlobalLexicalIndex; staged Names; step Body; owned LoadGlobalLexical; traits BOXED_RESULT UNIT_REWRITTEN, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
+    StoreGlobalLexical => WRITE_THROW; layout Scalar; meaning GlobalLexicalIndex; staged Names; step Body; owned StoreGlobalLexical, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
     StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex; step Body; traits NAME_OPERATION, @ Register, @ fields(Register, Register, BooleanFlag),
     LoadThis => READ_THROW; layout Scalar; meaning Unused; class LoadThis; staged Value; traits UNIT_REWRITTEN THIS_LEAF ROW_HANDLER, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCallee => Effect::PURE; layout Scalar; meaning Unused; class LoadCallee; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),

@@ -10,10 +10,10 @@ use super::*;
 use crate::bytecode::{InstructionField, OwnedStep, WideInstruction, NO_REALM_BINDING};
 use std::cell::Cell;
 
-/// The atom and realm index slot of the declaration `i` (a `LoadGlobalLexical` or
-/// `StoreGlobalLexical`) names in the root's declarations, which validation bounds.
-fn global_lexical_declaration(p: &ResidualProgram, i: WideInstruction) -> (Atom, &Cell<u16>) {
-    p.function(0).global_lexical_declaration(i.imm()).expect("validated global lexical index")
+/// The atom and realm index slot of `declaration` (the immediate of a `LoadGlobalLexical` or
+/// `StoreGlobalLexical`), a position in the root's declarations, which validation bounds.
+fn global_lexical_declaration(p: &ResidualProgram, declaration: u32) -> (Atom, &Cell<u16>) {
+    p.function(0).global_lexical_declaration(declaration).expect("validated global lexical index")
 }
 
 impl<H: Host> Vm<H> {
@@ -36,33 +36,49 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `LoadGlobalLexical`: the script-top-level binding the declaration names, read through its
-    /// realm index slot while that index holds the name's initialized binding. Any other read (a
-    /// temporal dead zone, a stale or unmapped index, an enclosing scope that may declare the name
-    /// dynamically) takes the by-name read, which settles it, and then refreshes the slot.
     fn load_global_lexical_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {
-        let (atom, slot) = global_lexical_declaration(p, i);
-        let static_scopes = self.global_scope_names_resolve_statically(p, owner) && !self.scope_names.declared(atom);
-        let value = match static_scopes.then(|| self.global_lexical_at(atom, slot.get())).flatten() {
-            Some(value) => value,
-            None => {
-                let cache = i.cache_site_index();
-                let value = self.at_binding_site(owner, pc, |vm| vm.load_name(p, owner, atom, Some(cache)))?;
-                self.refresh_global_lexical_slot(slot, atom);
-                value
-            }
-        };
+        let value = self.global_lexical_load(p, owner, (i.imm(), i.cache_site_index()), pc)?;
         self.set_owner_register(owner, i.result_register(), value);
         Ok(())
     }
 
-    /// `StoreGlobalLexical`: the by-name store of the declaration's atom, which makes the TDZ and
-    /// const rules and the code-dependency notices of a binding write.
     fn store_global_lexical_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction, pc: usize) -> Result<(), JsError> {
-        let (atom, _) = global_lexical_declaration(p, i);
-        let (cache, value) = (i.cache_site_index(), self.owner_register(owner, i.register_a()));
+        let value = self.owner_register(owner, i.register_a());
         let initializing = i.boolean_field(InstructionField::B).expect("validated initialization flag");
-        self.at_binding_site(owner, pc, |vm| vm.store_name(p, owner, atom, value, cache, initializing))
+        self.global_lexical_store(p, owner, (i.imm(), i.cache_site_index(), initializing), value, pc)
+    }
+
+    /// `LoadGlobalLexical` of `declaration` through cache `cache`, at the binding site `pc` names: the
+    /// script-top-level binding the declaration names, read through its realm index slot while that
+    /// index holds the name's initialized binding. Any other read (a temporal dead zone, a stale or
+    /// unmapped index, an enclosing scope that may declare the name dynamically) takes the by-name read,
+    /// which settles it, and then refreshes the slot.
+    pub(super) fn global_lexical_load(&mut self, p: &ResidualProgram, owner: VarOwner, (declaration, cache): (u32, u16), pc: usize)
+        -> Result<Value, JsError> {
+        let (atom, slot) = global_lexical_declaration(p, declaration);
+        let static_scopes = self.global_scope_names_resolve_statically(p, owner) && !self.scope_names.declared(atom);
+        if static_scopes && let Some(value) = self.global_lexical_at(atom, slot.get()) {
+            return Ok(value);
+        }
+        let value = self.at_binding_site(owner, pc, |vm| vm.load_name(p, owner, atom, Some(cache)))?;
+        self.refresh_global_lexical_slot(slot, atom);
+        Ok(value)
+    }
+
+    /// `StoreGlobalLexical` of `value` to `declaration` through cache `cache`, at the binding site `pc`
+    /// names: the write of an initialized, mutable binding through its realm index slot, under the same
+    /// guards as the read. Any other write (a temporal dead zone, a const, a stale or unmapped index, a
+    /// shadowing scope) takes the by-name store, which makes the errors, and then refreshes the slot.
+    pub(super) fn global_lexical_store(&mut self, p: &ResidualProgram, owner: VarOwner, (declaration, cache, initializing): (u32, u16, bool),
+        value: Value, pc: usize) -> Result<(), JsError> {
+        let (atom, slot) = global_lexical_declaration(p, declaration);
+        let static_scopes = self.global_scope_names_resolve_statically(p, owner) && !self.scope_names.declared(atom);
+        if static_scopes && self.global_lexical_store_at(atom, slot.get(), value)? {
+            return Ok(());
+        }
+        self.at_binding_site(owner, pc, |vm| vm.store_name(p, owner, atom, value, cache, initializing))?;
+        self.refresh_global_lexical_slot(slot, atom);
+        Ok(())
     }
 
     /// Points a declaration's realm index slot at the active realm's binding of `atom`, or at none.

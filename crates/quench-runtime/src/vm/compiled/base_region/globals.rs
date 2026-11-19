@@ -108,9 +108,11 @@ fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decode
 }
 
 /// Whether `instruction` stores to a global name, which may write a field of the global object that a
-/// loop's entry record holds (`Facts::Entry`).
+/// loop's entry record holds (`Facts::Entry`), or to a script-top-level lexical, which writes the realm's record.
 pub(super) fn stores_name(instruction: WideInstruction) -> bool {
     instruction.op().class() == Class::StoreName
+        || matches!(crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::EMPTY),
+            Some(crate::staged::Operation::GlobalLexicalStore { .. }))
 }
 
 /// The register a name call's `undefined` receiver is defined in.

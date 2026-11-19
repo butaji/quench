@@ -1356,20 +1356,27 @@ impl<H: Host> Vm<H> {
         if self.realm.immutable_global_lexical_bindings.contains(&atom) {
             return Err(self.type_error(p, "assignment to constant binding".into()));
         }
-        let active = self.active_global_lexical_binding(atom);
-        if let Some((index, slot)) = active {
-            let frame = &mut self.frames[index];
-            if frame.captured {
-                *self.heap.environment_slot_mut(frame.env, slot)
-                    .ok_or_else(|| JsError("invalid global lexical environment".into()))? = value;
-            } else {
-                frame.locals[slot] = value;
-            }
-        }
-        if active.is_none() || self.realm.global_lexical_bindings.contains_key(&atom) {
+        let active = self.store_active_global_lexical(atom, value)?;
+        if !active || self.realm.global_lexical_bindings.contains_key(&atom) {
             self.bind_global_lexical(atom, value);
         }
         Ok(())
+    }
+
+    /// Writes `value` into the slot of the running script root that declares global lexical `atom`,
+    /// if one runs (the root's locals, or its environment once captured); whether one does.
+    pub(super) fn store_active_global_lexical(&mut self, atom: Atom, value: Value) -> Result<bool, JsError> {
+        let Some((index, slot)) = self.active_global_lexical_binding(atom) else {
+            return Ok(false);
+        };
+        let frame = &mut self.frames[index];
+        if frame.captured {
+            *self.heap.environment_slot_mut(frame.env, slot)
+                .ok_or_else(|| JsError("invalid global lexical environment".into()))? = value;
+        } else {
+            frame.locals[slot] = value;
+        }
+        Ok(true)
     }
 
     /// The environment `depth` function layers out from an activation's captures

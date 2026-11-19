@@ -23,6 +23,8 @@ pub(crate) const TAG_LOAD_NAME: u8 = 12;
 pub(crate) const TAG_SUPER_CALL: u8 = 13;
 pub(crate) const TAG_DECIDE: u8 = 14;
 pub(crate) const TAG_ENUMERATED_GET: u8 = 15;
+pub(crate) const TAG_GLOBAL_LEXICAL_LOAD: u8 = 16;
+pub(crate) const TAG_GLOBAL_LEXICAL_STORE: u8 = 17;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -72,6 +74,11 @@ pub(crate) enum CallOut {
     Decide { left: Register, right: Register, operator: u32 } = TAG_DECIDE,
     /// `base[key]` of a for-in's enumerated read whose state's memo did not answer: the element read.
     EnumeratedGet { base: Register, key: Register } = TAG_ENUMERATED_GET,
+    /// The script-top-level binding `declaration` names, read through cache `site` (`LoadGlobalLexical`).
+    GlobalLexicalLoad { declaration: u32, site: u16 } = TAG_GLOBAL_LEXICAL_LOAD,
+    /// `source` to the script-top-level binding `declaration` names, through cache `site`, `initialize`
+    /// for a declaration (`StoreGlobalLexical`).
+    GlobalLexicalStore { source: Register, declaration: u32, site: u16, initialize: bool } = TAG_GLOBAL_LEXICAL_STORE,
 }
 
 /// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
@@ -129,7 +136,7 @@ impl CallOut {
     /// activations is their caller's.
     pub(crate) fn names_activation(self) -> bool {
         matches!(self, Self::LoadEnvLocal { .. } | Self::StoreEnvLocal { .. } | Self::LoadName { .. }
-            | Self::GlobalTypeof { .. } | Self::GlobalWrite { .. })
+            | Self::GlobalTypeof { .. } | Self::GlobalWrite { .. } | Self::GlobalLexicalLoad { .. } | Self::GlobalLexicalStore { .. })
     }
 
     /// The registers the VM reads, in the order its operation takes them: the first operand
@@ -140,8 +147,10 @@ impl CallOut {
             Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::Delete { base: left, key: right, .. }
                 | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
-            Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
-            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. } => [None, None],
+            Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. }
+                | Self::GlobalLexicalStore { source: operand, .. } => [Some(operand), None],
+            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. }
+                | Self::GlobalLexicalLoad { .. } => [None, None],
             Self::Protocol { operands, .. } => operands,
             Self::Spread { callee, receiver, arguments, .. } =>
                 return Operands { fixed: [Some(callee), Some(receiver)], list: Some(arguments) },
@@ -177,6 +186,10 @@ impl<W, P> Operation<W, P> {
             Self::GlobalWrite { source, atom, site, initialize } =>
                 (CallOut::GlobalWrite { source, atom, site, initialize }, None),
             Self::GlobalTypeof { destination, atom, site } => (CallOut::GlobalTypeof { atom, site }, Some(destination)),
+            Self::GlobalLexicalLoad { destination, declaration, site } =>
+                (CallOut::GlobalLexicalLoad { declaration, site }, Some(destination)),
+            Self::GlobalLexicalStore { source, declaration, site, initialize } =>
+                (CallOut::GlobalLexicalStore { source, declaration, site, initialize }, None),
             Self::Delete { destination, base, key, strict } => (CallOut::Delete { base, key, strict }, Some(destination)),
             Self::CompareJump { comparison, left, right, .. } => (CallOut::Decide { left: left.register_index()?,
                 right: right.register_index()?, operator: comparison.operator()? }, None),

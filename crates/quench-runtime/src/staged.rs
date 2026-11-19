@@ -216,6 +216,12 @@ pub(crate) enum Operation<W, P> {
     /// The global-name store of `source` to `atom` through cache `site`, an initialization
     /// where `initialize`; a binding the lane's store does not take leaves at the miss edge.
     GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool },
+    /// Define `destination` with the script-top-level binding the declaration `declaration` names (its
+    /// position in the root's global lexicals), through cache `site`; a temporal dead zone is the VM's to raise.
+    GlobalLexicalLoad { destination: Register, declaration: u32, site: u16 },
+    /// The store of `source` to the script-top-level binding the declaration `declaration` names, through
+    /// cache `site`, an initialization where `initialize`; the VM makes it (const and dead zone rules included).
+    GlobalLexicalStore { source: Register, declaration: u32, site: u16, initialize: bool },
     /// An iteration or spread step (`Protocol`) over the `operands` registers, defining
     /// `destination` where it has one; the generic protocol runs guest code, a callout.
     Protocol { step: Protocol, destination: Option<Register>, operands: [Option<Register>; 2] },
