@@ -148,8 +148,8 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
         match step {
             Step::Value(_) => RowRun::Done(Edge::Following),
             Step::Unresolved => RowRun::Declined,
-            Step::Control(InterpreterControl::Edge(Edge::Leave | Edge::Transfer | Edge::Entry(_))) =>
-                unreachable!("the interpreter frame neither suspends the lane nor enters a branch table"),
+            Step::Control(InterpreterControl::Edge(Edge::Leave | Edge::Transfer)) =>
+                unreachable!("the interpreter frame neither suspends the lane nor transfers it"),
             Step::Control(InterpreterControl::Edge(edge)) => RowRun::Done(edge),
             Step::Control(InterpreterControl::Return(value)) => RowRun::Stop(Ok(StepResult::Return(value))),
             Step::Control(InterpreterControl::Throw(value)) => RowRun::Stop(Err(Self::thrown(vm, value))),
@@ -290,6 +290,13 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
 
     #[inline(always)]
     fn jump(&mut self, _stage: &mut Concrete) -> InterpreterControl { InterpreterControl::Edge(Edge::Target) }
+
+    /// The entry a branch table's selector picks, the last one past the cases (`branch_table_case`): `step_row`
+    /// leaves the table at it as `Edge::Entry`, and `run_row` takes it.
+    #[inline(always)]
+    fn branch_table(&mut self, _stage: &mut Concrete, index: u64, entries: u32) -> Option<InterpreterControl> {
+        Some(InterpreterControl::Edge(Edge::Entry((index as u32).min(entries - 1))))
+    }
 
     #[inline(always)]
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, InterpreterFact) {

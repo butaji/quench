@@ -890,3 +890,12 @@ fn load_encoded_records_decode_as_records_compiled_again() {
         assert_eq!(decode(&encoded).1, atoms);
     }
 }
+
+#[test]
+fn register_row_trait_tags_exactly_the_register_move_local_and_jump_rows() {
+    let tagged: Vec<Op> = (0..Op::COUNT)
+        .filter_map(Op::from_index)
+        .filter(|op| op.traits().has(Traits::REGISTER_ROW))
+        .collect();
+    assert_eq!(tagged, [Op::Move, Op::LoadLocalPlain, Op::StoreLocalPlain, Op::Jump, Op::JumpFalse, Op::JumpTrue]);
+}

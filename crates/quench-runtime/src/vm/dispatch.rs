@@ -1,29 +1,28 @@
-// Hand arms left: the arms of `Vm::step` that still name an opcode, and why `step_unlisted` does not take them.
-// `step` carries `#[quench_macros::operation_semantics]`, which rejects match guards ("semantic dispatch
-// guards must live inside the operation"), so no family arm can be written here. `step_unlisted` takes the
-// rest by catalog attribute: `NO_STEP` (Nop; the wide marker is never dispatched), `SUSPENDS` (Await, Yield,
-// YieldStar: `staged_suspend`), `ROW_ONLY` (a staged row that decides its opcode: IteratorCleanupPush,
-// IteratorCleanupPop, ForInNext, GetAsyncIterator, StringCaseIndex, CacheTemplateObject,
-// LoadCachedTemplateObject, ToNumeric, IncDec, Return, Throw, SetThisField, SetThisFieldStrict), `OWNER_ONLY`
-// (LoadEnvLocal, StoreEnvLocal, StoreName: `owner_step` alone), an owned step (`Op::owned_step`: its row first where the catalog marks one,
-// then `owner_step`), `Decoder::Literal` (`decode_literal` run completed on the frame, whose
-// `allocate_value` and element definer answer it), and the Names, Generic, Property and Value call-outs
-// (`staged_value_step`).
-// What is left, and why:
-// - Row, then a per-opcode miss: InitializeTdz. The row leaves for a slot it does not hold plainly, and the miss
-//   writes the TDZ marker there. (Binary, NumericAdd, NumericMultiply, Unary and JumpBinaryFalse run only their
-//   rows: the interpreter frame answers each through `CallOut::Binary`, `Unary`, `Decide`/`DecideOperand` and
-//   `Equality`. Their one leave is the Number relation of `==` or `===`, which `Binary` answers as the general row.)
-// - Run-only (`Declined` is unreachable): GetField, GetIndex, SetField, SetFieldStrict, SetIndex. A read or store its
-//   plan leaves is `CallOut::LoadField`, `LoadElement`, `StoreField` or `StoreElement`, which the interpreter frame
-//   answers; a read that writes `this` stores its value through `store_field_sink`. SetThisField and
-//   SetThisFieldStrict have no arm: `ROW_ONLY` runs them through `step_unlisted`, and their store to `this` is the
-//   `CallOut::StoreField` with no object register, which takes `this` from the frame's `this_value`.
-// - WasmBranchTable: its row's edge is a branch-table entry (`Edge::Entry`), which the interpreter frame's
-//   `step_row` refuses, so its case stays the hand body.
-// Call-family records (`staged::invoke::general_call_form`: Call, CallArray, CallSpread, CallForwardingArguments,
-// CallKnown, CallMethod, CallThisMethod, Construct, CallFirstChunk) are no arms: `step_unlisted` runs their staged
-// row, then the form's general body (`call_forms.rs`) on the interpreter frame (`InterpreterFrame::call_row`).
+// What `Vm::step` runs an opcode as: its one arm is the wildcard, `step_unlisted`, which runs each opcode as its
+// catalog runner (`RUNNERS`, decided once per opcode by `runner_of`). `step` keeps
+// `#[quench_macros::operation_semantics]`: `resolve_step_operation` (compiled.rs) selects each opcode's semantic
+// from it, and the attribute takes only a `match` on the opcode, so that match holds the wildcard alone. (The
+// attribute rejects match guards.) The runners, in `runner_of`'s priority order:
+// - `NO_STEP` (Nop; the wide marker is never dispatched).
+// - `REGISTER_ROW` (Move, LoadLocalPlain, StoreLocalPlain, Jump, JumpFalse, JumpTrue): `register_row_step`.
+// - A call-family record (`staged::invoke::general_call_form`: Call, CallArray, CallSpread, CallForwardingArguments,
+//   CallKnown, CallMethod, CallThisMethod, Construct, CallFirstChunk): its staged row, then the call's general form
+//   on the frame (`call_forms.rs`, `InterpreterFrame::call_row`).
+// - `SUSPENDS` (Await, Yield, YieldStar): `staged_suspend`.
+// - `ROW_ONLY`: a staged row that decides its opcode on the frame alone, which never declines: GetField, GetIndex,
+//   SetField, SetFieldStrict, SetIndex, Unary, JumpBinaryFalse, WasmBranchTable, IteratorCleanupPush,
+//   IteratorCleanupPop, ForInNext, GetAsyncIterator, StringCaseIndex, CacheTemplateObject, LoadCachedTemplateObject,
+//   ToNumeric, IncDec, Return, Throw, SetThisField, SetThisFieldStrict. A read or store its plan leaves is answered by
+//   the frame's `CallOut::LoadField`, `LoadElement`, `StoreField` or `StoreElement`; a read that writes `this` stores
+//   its value through `store_field_sink`. A branch table's edge is an entry (`Edge::Entry`), which `run_row` takes.
+// - `ARITHMETIC_BINARY` (Binary, NumericAdd, NumericMultiply): the staged row, then the record's general `Binary` on
+//   a miss (`run_row_completed`). The Number relation of `==` or `===` is that miss, which `Binary` answers.
+// - `OWNER_ONLY` (LoadEnvLocal, StoreEnvLocal, StoreName): `owner_step` alone.
+// - An owned step (`Op::owned_step`) whose catalog marks a row (InitializeTdz): its row first, then `owner_step` on a
+//   miss; an owned step with no row: `owner_step` alone.
+// - `Decoder::Literal` (`decode_literal`, run completed on the frame), the Names, Generic, Property and Value
+//   call-outs (`staged_value_step`), `Decoder::Flow` (`LoadConst`, over the active program's constants), and any
+//   other opcode: a Wasm step (`step_wasm`).
 
 use super::*;
 use super::dispatch_frame::{InterpreterFrame, RowRun};
@@ -588,72 +587,8 @@ impl<H: Host> Vm<H> {
         allow_inline_calls: bool,
     ) -> Result<StepResult, JsError> {
         match i.op() {
-            Op::GetField => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every named read"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::GetIndex => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every indexed read"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::SetField | Op::SetFieldStrict => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every named store"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::SetIndex => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every keyed store"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    // The Number relation of `==` or `===` leaves a pair that is no Number. That relation names
-                    // both operators, so the general `Binary` of the record (`CallOut::Binary`) answers it.
-                    RowRun::Declined => {
-                        let operation = crate::staged::Operation::<u64, ()>::Binary {
-                            destination: i.result_register(), left: i.operand_b(), right: i.operand_c(), operator: i.binary_operator(),
-                        };
-                        let completes = i.result_flags() & crate::bytecode::RETURN_REGISTER;
-                        match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
-                            RowRun::Done(_) => {}
-                            RowRun::Stop(stop) => return stop,
-                            RowRun::Declined => unreachable!("the interpreter frame answers the general binary row"),
-                        }
-                    }
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            // merge: HEAD's inline Unary, Jump, JumpFalse/JumpTrue arms are dropped; the derivation runs them as staged rows (step_row_of).
-            Op::Unary => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every unary row"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::JumpBinaryFalse => {
-                match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => unreachable!("the interpreter frame answers every comparison jump"),
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
             _ => return self.step_unlisted(p, f, i, pc, allow_inline_calls),
         }
-        Ok(StepResult::Continue)
     }
 
     /// Runs `operation`, decoded from `i` at resume PC `pc`, as its staged row on the running frame
@@ -667,6 +602,11 @@ impl<H: Host> Vm<H> {
             return RowRun::Declined;
         }
         let run = InterpreterFrame::step_row(self as *mut Self, p, f, *pc, allow_inline_calls, i, operation);
+        // A branch table's entry: `pc` names the table's first entry, and the entry its selector picks lies that far on
+        // (`branch_table_case`).
+        if let RowRun::Done(Edge::Entry(entry)) = run {
+            *pc += entry as usize;
+        }
         if matches!(run, RowRun::Done(Edge::Target)) {
             *pc = i.jump_target() as usize;
             if matches!(operation, Operation::Jump) {
@@ -711,7 +651,7 @@ impl<H: Host> Vm<H> {
             return RowRun::Declined;
         }
         // A record that writes `this` other than a read is the miss path's; a read's store into `this` is `run_row_completed`'s.
-        if i.writes_current_this() && i.op() != Op::GetField {
+        if i.writes_current_this() && !i.op().traits().has(crate::bytecode::Traits::FIELD_LEAF) {
             return RowRun::Declined;
         }
         match Self::decode_row_completed(i, context) {
@@ -790,6 +730,24 @@ impl<H: Host> Vm<H> {
                 RowRun::Done(_) => Ok(StepResult::Continue),
                 RowRun::Stop(stop) => stop,
                 RowRun::Declined => unreachable!("a row-only opcode's staged row decides it"),
+            },
+            // An arithmetic binary: its staged row first, then the record's general `Binary` on a miss. The Number
+            // relation of `==` or `===` leaves a pair that is no Number, and that relation names both operators, so
+            // the general `Binary` of the record (`CallOut::Binary`) answers it.
+            Runner::RowThenGeneralBinary => match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
+                RowRun::Done(_) => Ok(StepResult::Continue),
+                RowRun::Stop(stop) => stop,
+                RowRun::Declined => {
+                    let operation = crate::staged::Operation::<u64, ()>::Binary {
+                        destination: i.result_register(), left: i.operand_b(), right: i.operand_c(), operator: i.binary_operator(),
+                    };
+                    let completes = i.result_flags() & crate::bytecode::RETURN_REGISTER;
+                    match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
+                        RowRun::Done(_) => Ok(StepResult::Continue),
+                        RowRun::Stop(stop) => stop,
+                        RowRun::Declined => unreachable!("the interpreter frame answers the general binary row"),
+                    }
+                }
             },
             // A call-family record: its staged row first, then the call's general form on the running frame (`call_forms`).
             Runner::Call => {
@@ -970,6 +928,8 @@ enum Runner {
     Suspend,
     /// A row that decides its opcode alone (`ROW_ONLY`): its staged row on the frame, which never declines.
     RowOnly,
+    /// An arithmetic binary (`ARITHMETIC_BINARY`): its staged row, then the record's general `Binary` on a miss.
+    RowThenGeneralBinary,
     /// A call-family record (`invoke::general_call_form`): its staged row, then the call's general form on the frame.
     Call,
     /// An owner's own step with no row first (`OWNER_ONLY`, or an owned step whose catalog marks no row): `owner_step`.
@@ -997,11 +957,7 @@ const fn runner_of(op: Op) -> Runner {
             Runner::Nop
         };
     }
-    // Only these opcodes decode to a register row (`Operation::decode_flow`, `decode_local`).
-    if matches!(
-        op,
-        Op::Move | Op::LoadLocalPlain | Op::StoreLocalPlain | Op::Jump | Op::JumpFalse | Op::JumpTrue
-    ) {
+    if traits.has(crate::bytecode::Traits::REGISTER_ROW) {
         return Runner::RegisterRow;
     }
     if crate::staged::invoke::general_call_form(op).is_some() {
@@ -1012,6 +968,9 @@ const fn runner_of(op: Op) -> Runner {
     }
     if traits.has(crate::bytecode::Traits::ROW_ONLY) {
         return Runner::RowOnly;
+    }
+    if traits.has(crate::bytecode::Traits::ARITHMETIC_BINARY) {
+        return Runner::RowThenGeneralBinary;
     }
     if traits.has(crate::bytecode::Traits::OWNER_ONLY) {
         return Runner::Owner;
