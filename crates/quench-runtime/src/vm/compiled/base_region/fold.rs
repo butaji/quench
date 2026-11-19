@@ -125,6 +125,8 @@ pub(super) fn math_kind(native: crate::vm::Native) -> Option<Kind> {
         Native::MathMax => Kind::Max,
         Native::MathImul => Kind::Imul,
         Native::MathClz32 => Kind::Clz32,
+        Native::MathFround => Kind::Fround,
+        Native::MathSign => Kind::Sign,
         _ => return None,
     })
 }

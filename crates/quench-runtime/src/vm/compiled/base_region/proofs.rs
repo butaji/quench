@@ -121,6 +121,24 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
         proved.stores = true;
         proved.released = false;
     }
+    established(&mut proved, row);
+    let source = copied(row).map(|source| proved.root(source));
+    for written in [row.dst, row.also].into_iter().flatten() {
+        proved.write(written);
+    }
+    allocated(&mut proved, row);
+    if let (Some(dst), Some(source)) = (row.dst, source) && dst != source {
+        proved.copies.push((dst, source));
+    }
+    // A held read checked its receiver's shape and link, which hold after it (the check left the body otherwise).
+    if row.class_read && let Some(register) = row.a.and_then(register_of) && !proved.shapes.contains(&register) {
+        proved.shapes.push(register);
+    }
+    proved
+}
+
+/// The receiver an inline-cache access names is a direct object after it, established by the body.
+fn established(proved: &mut Proved, row: &Decoded) {
     if let Some(register) = receiver(row) {
         let root = proved.root(register);
         if !proved.objects.contains(&root) {
@@ -130,24 +148,16 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
             proved.established.push(root);
         }
     }
-    // A fresh object the allocation made is a direct object, as the record it defines is (`Step::Allocate`): the rows after
-    // it test no family for it.
+}
+
+/// The proof an allocation row leaves: the object it defines is a direct object, as the record `Step::Allocate` makes is,
+/// so the rows after it test no family for it. Its exact shape is not proved here (the literal site's shape is a fact the
+/// code would have to depend on).
+fn allocated(proved: &mut Proved, row: &Decoded) {
     if let Some(dst) = row.dst.filter(|_| row.step == Some(Step::Allocate)) {
         proved.objects.push(dst);
         proved.established.push(dst);
     }
-    let source = copied(row).map(|source| proved.root(source));
-    for written in [row.dst, row.also].into_iter().flatten() {
-        proved.write(written);
-    }
-    if let (Some(dst), Some(source)) = (row.dst, source) && dst != source {
-        proved.copies.push((dst, source));
-    }
-    // A held read checked its receiver's shape and link, which hold after it (the check left the body otherwise).
-    if row.class_read && let Some(register) = row.a.and_then(register_of) && !proved.shapes.contains(&register) {
-        proved.shapes.push(register);
-    }
-    proved
 }
 
 /// The meet of two paths' proofs: what both hold.

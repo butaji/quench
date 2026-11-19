@@ -86,7 +86,7 @@ impl LoopBody {
 impl LoopSite {
     /// The iterations the loop has taken, as far as the lane sees them: the interpreter's
     /// warm-up, its regions' iterations, and the idle body's header dispatches since.
-    fn body_iterations(&self) -> u64 {
+    pub(super) fn body_iterations(&self) -> u64 {
         u64::from(self.taken.get()) + self.tier.borrow().iterations() + self.body_seen.get()
     }
 }
@@ -132,11 +132,8 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
     let mut body = site.body.borrow_mut();
     let (pending, stuck, attempts) = match std::mem::replace(&mut *body, LoopBody::Declined) {
         LoopBody::Compiling { pending, stuck, attempts, .. } => (Some(pending), stuck, attempts),
-        LoopBody::Idle { stuck, attempts } => {
-            site.body_seen.set(site.body_seen.get().saturating_add(1));
-            if site.body_iterations() < site.body_due.get() { *body = LoopBody::Idle { stuck, attempts }; return; }
-            (None, stuck, attempts)
-        }
+        // The idle body's waiting is counted at its header dispatch (`lane_loop_enter_body`): here its wait is over.
+        LoopBody::Idle { stuck, attempts } => (None, stuck, attempts),
         settled => { *body = settled; return; }
     };
     let function = site.function;
@@ -164,7 +161,8 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
     if matches!(outcome, LaneBodyOutcome::Unpaid) {
         let ir = vm.programs.planned_lane_ir(&(vm.active_program.raw(), function, Some(site.header)))
             .unwrap_or_else(|| usize::try_from(site.span().saturating_mul(vm.programs.tiers().loops.ir_per_bytecode)).unwrap_or(usize::MAX));
-        site.body_due.set(super::super::compiled::loop_model::body_taken(vm.programs.tiers(), site.span(), ir, true));
+        let due = super::super::compiled::loop_model::body_taken(vm.programs.tiers(), site.span(), ir, true);
+        site.body_wait.set(due.saturating_sub(site.body_iterations()));
     }
     *body = LoopBody::after(outcome, stuck, attempts);
     if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
@@ -224,6 +222,8 @@ pub(super) fn lane_loop_enter_body<H: Host>(cx: *mut LaneContext<H>, r: Register
         || !site.is_hot() || site.tier.borrow().is_published() {
         return None;
     }
+    // An idle body counts its dispatches down to its plan: until then, no view or plan is touched.
+    if matches!(*site.body.borrow(), LoopBody::Idle { .. }) && site.body_waits() { return None; }
     lane_loop_body::<H>(cx, r, ip, site)
 }
 

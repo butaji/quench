@@ -46,7 +46,6 @@ mod name_rows;
 mod site_rows;
 pub mod layout;
 mod numeric;
-mod remainder;
 mod places;
 mod places_call;
 mod places_guard;

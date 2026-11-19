@@ -324,6 +324,8 @@ pub(super) struct LoopSite {
     /// The body epoch (`LaneView::body_epoch`) a refused compile was refused under, and the back
     /// edges still plain under it, and the wait that last refusal set (`LoopSite::refuse_warming`).
     refused_epoch: std::cell::Cell<u32>,
+    /// The view that refused it: the site lies in that view, so its epoch is read through this pointer.
+    refused_view: std::cell::Cell<*const LaneView>,
     refused_wait: std::cell::Cell<u32>,
     refused_span: std::cell::Cell<u32>,
     /// Whether an enclosing admitted loop still enters (`LoopSite::inside_admitted_loop`); false once none does.
@@ -10695,7 +10697,7 @@ script_handler! {
             return lane_safepoint::<H>(ip, header, Slot::unset());
         }
         // A refused compile (`LoopSite::refuse_warming`) is one epoch compare and a countdown: the back edge is a plain jump.
-        if site.refused_now(view.body_epoch()) {
+        if site.refused_now() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
         // A loop inside an admitted loop that still enters native code runs as plain jumps there: the outermost
@@ -11011,7 +11013,7 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)
     {
         lane_specialize(cx, own, site.function, true, &[], Some((site.span(), site.body_iterations())));
-        if own.warming() { return site.refuse_warming(own.body_epoch(), site.tiers.loops.warmup_taken); }
+        if own.warming() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).
@@ -24104,7 +24106,7 @@ fn install_loop_sites<'live, H: Host>(
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
                     tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial(tiers)), body_seen: std::cell::Cell::new(0), body_wait: std::cell::Cell::new(0), body_offered: std::cell::Cell::new(false),
-                    refused_epoch: std::cell::Cell::new(loop_runs::NO_REFUSAL), refused_wait: std::cell::Cell::new(0), refused_span: std::cell::Cell::new(0), enclosed: std::cell::Cell::new(true),
+                    refused_epoch: std::cell::Cell::new(loop_runs::NO_REFUSAL), refused_view: std::cell::Cell::new(std::ptr::null()), refused_wait: std::cell::Cell::new(0), refused_span: std::cell::Cell::new(0), enclosed: std::cell::Cell::new(true),
                 },
             )
         })
