@@ -126,7 +126,16 @@ impl<H: Host> Vm<H> {
     /// unobserved context ends and is entered (whose released roots free nothing before a
     /// collection, and none runs), and the job's call roots are written, none of which touches
     /// the state.
+    ///
+    /// Each check stays per job: a job runs guest code, which may allocate (a collection then
+    /// due), request termination, import a module, or call into a host that starts observing
+    /// promises, and may leave the queue or the call roots otherwise. All of them only read, so
+    /// the queue's front is looked at first: an empty or unchainable front, where every chain
+    /// ends, answers before the loop's checks.
     fn chained_front(&self, program: ProgramId, ended: AwaitResume) -> Option<(AwaitRole, Value, *const FrameRecord)> {
+        let Some(PendingJob::Reaction(reaction)) = self.realm.jobs.front() else {
+            return None;
+        };
         if self.host.observes_promise_lifecycle()
             || !self.unobserved_jobs_entered
             || self.check_execution_interrupt().is_err()
@@ -136,9 +145,6 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let Some(PendingJob::Reaction(reaction)) = self.realm.jobs.front() else {
-            return None;
-        };
         let realm = self.realm.globals;
         if reaction.execution_context.get().is_some() || !reaction.next.is_undefined() || reaction.realm != realm {
             return None;
