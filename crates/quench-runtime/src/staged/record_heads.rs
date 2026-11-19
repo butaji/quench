@@ -135,7 +135,4 @@ pub(crate) struct CallContextHead<E, C, T, D, P, R> {
     /// A stack-owned adapter payload for JS and OSR entries that use this
     /// module's common native-entry trampoline without Wasm callouts.
     pub(crate) adapter_payload: *mut (),
-    /// The program whose functions this call runs: a lane call of its own functions
-    /// (`lane_call_known`, `lane_call_wasm_reference`) records it on the activation it pushes.
-    pub(crate) program: P,
 }

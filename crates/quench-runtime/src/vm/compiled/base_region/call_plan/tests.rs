@@ -54,7 +54,7 @@ fn every_other_call_takes_the_helper_with_its_reason() {
 
 fn plan<'a>(direct: Option<&'a DirectFacts>, spills: &'a [(Place, Register)], reloads: &'a [(Place, Register)]) -> CallPlan<'a> {
     let direct = direct.map_or(&[][..], std::slice::from_ref);
-    CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads, proven_args: 0, read: None, chain: Vec::new() }
+    CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads, proven_args: 0, read: None, chain: Vec::new(), builtin: None }
 }
 
 #[cfg(target_arch = "x86_64")]

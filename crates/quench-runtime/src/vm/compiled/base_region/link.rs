@@ -206,6 +206,8 @@ pub(super) struct Layout<'a> {
     pub(super) stores: bool,
     /// The captured declarations the body calls by identity, each with the function its entry checks (`Callees::captured_identities`).
     pub(super) identities: Vec<(u16, u64)>,
+    /// Per caller PC, the builtin its callee is, where the b-jit runs it on a row (`Callees::builtins`).
+    pub(super) builtins: &'a [Option<super::call_plan::builtin::BuiltinCall>],
 }
 
 impl Layout<'_> {

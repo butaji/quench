@@ -3,7 +3,7 @@
 //! as a call site names them. The array builtins (`push`, `pop`) run on their staged rows too, which
 //! miss to the helper row where the staged body leaves.
 
-use crate::vm::Native;
+use crate::heap::Native;
 use crate::vm::number::{MathFunction, math_function};
 use quench_bjit::call::BuiltinRow;
 

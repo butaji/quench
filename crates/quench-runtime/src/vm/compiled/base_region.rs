@@ -15,13 +15,13 @@
 
 use super::lane_unit::{Frame as InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
-use crate::bytecode::{Atom, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
+use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::code_dependencies::InstanceofFact;
 use crate::typed_ir::{Representation, Type};
 use crate::value::Value;
 use crate::vm::dispatch_fast::operand_feedback::OperandKinds;
 use crate::vm::in_presence::InPresence;
-use oxc_ast::ast::BinaryOperator;
+use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
 use super::{ElementViews, NativeFieldLoad};
 use quench_bjit::numeric::{self, Kind, Place};
