@@ -1,11 +1,11 @@
 //! The file form of an `AotImage`: magic, build id, fingerprint, the recipe tables and atom
-//! texts, the base PC labels and operand records, then per function its base and lane code with
+//! texts, the base PC labels, operand records and proven call sites, then per function its base and lane code with
 //! relocations. Every number is
 //! little-endian; `Words` reads it back and rejects a file that ends early or names an unknown tag.
 //!
 //! Owner: one pipeline.
 
-use super::{AotFunction, AotImage, LaneImage, OperandRecord, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
+use super::{AotFunction, AotImage, CallSite, LaneImage, OperandRecord, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::vm::compiled::AHEAD_BUILD_ID;
 use crate::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
@@ -50,9 +50,10 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
     let (shapes, heap_values, atoms) = read_recipes(&mut words)?;
     let labels = (0..words.half()?).map(|_| Ok((words.half()?, words.half()?))).collect::<Result<_, String>>()?;
     let operands = (0..words.half()?).map(|_| read_operands(&mut words)).collect::<Result<_, String>>()?;
+    let calls = (0..words.half()?).map(|_| read_call(&mut words)).collect::<Result<_, String>>()?;
     let count = words.half()?;
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
-    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, operands })
+    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, operands, calls })
 }
 
 /// The recipe tables and atom texts of `image` as they are in the file, for an object's data
@@ -96,6 +97,31 @@ fn put_sites(out: &mut Vec<u8>, image: &AotImage) {
         out.extend(record.pc.to_le_bytes());
         record.words.iter().for_each(|word| out.extend(word.to_le_bytes()));
     }
+    put_count(out, image.calls.len());
+    for call in &image.calls {
+        put_call(out, call);
+    }
+}
+
+/// A proven call site: its site and callee, and its record's words the plan fixed (the frame stride,
+/// the registers it names, its argument places); the run-time words are the loader's (`read_call`).
+fn put_call(out: &mut Vec<u8>, call: &CallSite) {
+    let record = &call.record;
+    [call.function, call.pc, call.callee].iter().for_each(|half| out.extend(half.to_le_bytes()));
+    out.extend(record.frame_bytes.to_le_bytes());
+    [record.callee_register, record.this_register, record.args_register, record.result_register].iter().for_each(|register| out.extend(register.to_le_bytes()));
+    out.extend(record.argument_places);
+}
+
+/// The call site `put_call` wrote, its record bound to no closure (`super::unbound_callee`).
+fn read_call(words: &mut Words<'_>) -> Result<CallSite, String> {
+    let (function, pc, callee) = (words.half()?, words.half()?, words.half()?);
+    let frame_bytes = words.quad()?;
+    let [callee_register, this_register, args_register, result_register] = [words.pair()?, words.pair()?, words.pair()?, words.pair()?];
+    let argument_places = words.take()?;
+    let record = quench_bjit::call_record::CallRecord { callee: super::unbound_callee(), frame_bytes, callee_register, this_register,
+        args_register, result_register, argument_places, ..Default::default() };
+    Ok(CallSite { function, pc, callee, record })
 }
 
 fn read_operands(words: &mut Words<'_>) -> Result<OperandRecord, String> {
@@ -284,6 +310,9 @@ impl<'a> Words<'a> {
     }
     pub(crate) fn byte(&mut self) -> Result<u8, String> {
         Ok(u8::from_le_bytes(self.take()?))
+    }
+    pub(crate) fn pair(&mut self) -> Result<u16, String> {
+        Ok(u16::from_le_bytes(self.take()?))
     }
     pub(crate) fn half(&mut self) -> Result<u32, String> {
         Ok(u32::from_le_bytes(self.take()?))

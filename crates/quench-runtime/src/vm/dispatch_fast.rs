@@ -862,6 +862,7 @@ mod indexed_compositions;
 pub(super) mod lane_body_stats;
 mod body_calls;
 mod body_forms;
+mod proven_callees;
 pub(super) use body_calls::{body_call_helper, body_construct_helper};
 #[path = "lane_leaves.rs"]
 mod lane_leaves;

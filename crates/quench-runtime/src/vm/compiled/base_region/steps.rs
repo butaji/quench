@@ -54,7 +54,7 @@
 
 use super::*;
 use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
-use super::callees::chains;
+use super::callees::{chains, name_records};
 use super::decode::staged_of;
 use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::{InstructionField, Op};
@@ -480,13 +480,13 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     let helper = call_plan::helper_address(helpers, helper).ok_or("call: no helper address")?;
     let (spills, reloads) = (layout.spills(pc), if shape.returning { Vec::new() } else { layout.spills(pc + 1) });
     let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads, builtin: layout.builtin(shape.call_pc) };
-    let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;
+    let CallChain { mut parts, records, choice } = call_plan::plan_call(&plan)?;
+    // An image's direct rows name the site's record (`name_records`).
+    if helpers == LaneHelpers::Ahead { name_records(&mut parts, &records, crate::vm::aot_image::Symbol::CallRecord { function: layout.id, pc: shape.call_pc }); }
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     #[cfg(test)]
-    if choice == Choice::Direct {
-        super::note_fast(shape.op);
-    }
-    chained(parts, spills.len(), record)
+    if choice == Choice::Direct { super::note_fast(shape.op); }
+    chained(parts, spills.len(), records)
 }
 
 #[path = "steps/branches.rs"]
