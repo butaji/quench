@@ -252,7 +252,7 @@ static void vt_node(VTrace *t, Ast *n) {
     /* visitGenericLiteralType: Node.visit(node.type) (none), then node.preferredType */
     Ast *o = n->u.litType.owner;
     vt_opt(t, n->type);
-    vt_req(t, o->tag == A_INTLITERAL || o->tag == A_UINTLITERAL ? o->u.intLit.preferred : o->u.fltLit.preferred);
+    vt_req(t, literal_preferred(o));    /* created on first use (wsl-prep.h), as the JS constructor does */
     break;
   }
   case A_NULLTYPE:         /* visitNullType: Node.visit(node.type) */

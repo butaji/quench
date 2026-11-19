@@ -20,7 +20,16 @@ static Ast *ast_clone(const Ast *n) {
   if (!n) return NULL;
   Ast *c = arena_alloc(sizeof(Ast));
   memcpy(c, n, sizeof(Ast));
-  if (n->type) c->type = lit_type_new(n->type->tag, c);   /* a literal's type is its own node */
+  if (n->type) {
+    AstTag tt = n->type->tag;
+    if (tt == A_INTLITERALTYPE || tt == A_UINTLITERALTYPE || tt == A_FLOATLITERALTYPE || tt == A_DOUBLELITERALTYPE || tt == A_NULLTYPE) {
+      /* a literal's type is its own node; its committed type (commit_ctx_nodes) is visited too */
+      c->type = lit_type_new(tt, c);
+      if (n->type->type) c->type->type = ast_clone(n->type->type);
+    } else {
+      c->type = ast_clone(n->type);   /* a typeref wrap (withType literals): an ordinary type node */
+    }
+  }
   switch (n->tag) {
   case A_FUNCDEF:
   case A_NATIVEFUNC:
@@ -123,8 +132,11 @@ static Ast *ast_clone(const Ast *n) {
     c->u.deref.ptr = ast_clone(n->u.deref.ptr);
     break;
   case A_MAKEPTR:
-  case A_MAKEARRAYREF:
     c->u.lvalueRef.lValue = ast_clone(n->u.lvalueRef.lValue);
+    break;
+  case A_MAKEARRAYREF:   /* Rewriter.visitMakeArrayRefExpression: the numElements (set by the checker) is visited too */
+    c->u.lvalueRef.lValue = ast_clone(n->u.lvalueRef.lValue);
+    c->u.lvalueRef.numElements = ast_clone(n->u.lvalueRef.numElements);
     break;
   case A_LOGICALNOT:
     c->u.notExpr.operand = ast_clone(n->u.notExpr.operand);
