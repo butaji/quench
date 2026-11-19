@@ -2138,6 +2138,11 @@ impl<H: Host> Vm<H> {
         {
             return false;
         }
+        let layout = receiver.layout_id();
+        if layout != transition.layouts[0] && Self::adopts_wide_run_layout(layout, transition) {
+            let (shape, link) = (receiver.exact_shape(), receiver.proto_link());
+            self.adopt_wide_run_add_layouts(self.field_cache_index(site), shape, atom, Some(link), layout);
+        }
         self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
@@ -2147,8 +2152,10 @@ impl<H: Host> Vm<H> {
     /// (`Object::admits_cached_add`), along the cached `transition`: the staged add row first
     /// (`staged::add`, which proves the before-shape and plain storage and needs no call), then,
     /// where the store gate is closed (slot representations are tracked, or the barrier would log
-    /// the value), the plain append that observes the write, else the add that moves storage or
-    /// allocates (`Heap::record_property_add_moving`).
+    /// the value), the plain append that observes the write, then the append into a learned
+    /// receiver's reserved run past its length's class (`Heap::record_property_append_reserved`,
+    /// `preshaped_receiver`), else the add that moves storage or allocates
+    /// (`Heap::record_property_add_moving`).
     #[inline(always)]
     fn add_by_transition(&mut self, object: Value, record_id: u32, transition: Transition, value: Value) {
         // SAFETY: `record_id` names the live record of `object`; the row proves the rest.
@@ -2158,6 +2165,7 @@ impl<H: Host> Vm<H> {
         let (slot, shape) = (usize::from(transition.slot), transition.after);
         if !(self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
             && self.heap.record_property_append_plain(record_id, slot, value, shape))
+            && !self.heap.record_property_append_reserved(record_id, slot, value, shape)
         {
             self.heap.record_property_add_moving(object, slot, value, shape);
         }
@@ -2198,9 +2206,48 @@ impl<H: Host> Vm<H> {
         if self.method_caches_may_name(atom) {
             return false;
         }
+        let layout = receiver.layout_id();
+        if layout != transition.layouts[0] && Self::adopts_wide_run_layout(layout, transition) {
+            let shape = receiver.exact_shape();
+            self.adopt_wide_run_add_layouts(self.field_cache_index(site), shape, atom, None, layout);
+        }
         self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// Whether an add entry whose `transition` a receiver of another `layout` hit moves to
+    /// that receiver's layouts (`adopt_wide_run_add_layouts`): the receiver's values are in a
+    /// wide arena run, as a learned receiver's are (`preshaped_receiver`), and the entry
+    /// recorded other storage, as its constructor's first receiver, made before the count was
+    /// learned, had. One way only, so receivers of both kinds never move the entry back and
+    /// forth.
+    #[inline(always)]
+    fn adopts_wide_run_layout(layout: u32, transition: Transition) -> bool {
+        Object::layout_is_wide_run(layout) && !Object::layout_is_wide_run(transition.layouts[0])
+    }
+
+    /// Moves the add entry of cache site index `site` for receivers of `shape` adding `atom`
+    /// (for an adding store, the one whose chain proof holds for prototype `link`) to the
+    /// layouts of a receiver of `layout`, where it adopts them (`adopts_wide_run_layout`). The
+    /// staged add row (`add_by_transition`), which guards the layout it recorded, then takes the
+    /// learned receivers' adds; any other receiver's take the plain or moving add, as every add
+    /// the row leaves.
+    #[cold]
+    #[inline(never)]
+    fn adopt_wide_run_add_layouts(&mut self, site: usize, shape: u32, atom: Atom, link: Option<ProtoLink>, layout: u32) {
+        let set = self.field_add_indices.get(site);
+        if set == NO_FIELD_ADD_SET {
+            return;
+        }
+        let set = &mut self.field_add_sets[set as usize];
+        let Some(index) = set.matching(shape, atom).find(|&index| link.is_none_or(|link| set.entry(index).proof_holds(link))) else {
+            return;
+        };
+        let entry = set.entry_mut(index);
+        if Self::adopts_wide_run_layout(layout, entry.transition()) {
+            entry.layouts = Object::add_layouts(layout, entry.target_shape);
+        }
     }
 
     /// The add `atom`'s site recorded that compiled code may run (`staged::add::site_add`): a define's
@@ -4685,11 +4732,24 @@ impl<H: Host> Vm<H> {
         let Some((set, cache)) = self.field_add_entry_for(site, shape, atom, link) else {
             return false;
         };
-        let (target_shape, slot) = (cache.target_shape, cache.slot);
+        let (target_shape, slot, transition) = (cache.target_shape, cache.slot, cache.transition());
         if !cache.proof_holds(link) && !self.prove_field_add_chain(set, shape, atom, link) {
             return false;
         }
-        self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);
+        // An object record outside dictionary storage, whose exact shape is the entry's source
+        // (`proved_field_add_hit`), takes the add as the proved hit does (`add_by_transition`):
+        // the staged row, the plain or reserved append, else the moving add
+        // `apply_cached_field_add` makes.
+        let Some(record_id) = object.direct_object_index().filter(|&id| self.heap.object_record_by_id(id).exact_shape() == shape) else {
+            self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);
+            return true;
+        };
+        debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
+        self.add_by_transition(object, record_id, transition, value);
+        if self.method_caches_may_name(atom) {
+            self.invalidate_method_caches_for_prototype_add(object, atom);
+        }
+        self.profile.field_cache_hit(0, 0);
         true
     }
 

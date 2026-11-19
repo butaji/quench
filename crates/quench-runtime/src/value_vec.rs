@@ -219,6 +219,33 @@ impl YoungRuns {
     }
 }
 
+/// Entries in the direct-mapped `ValueArena::reservations` table; a power of two.
+const RESERVATIONS: usize = 16;
+
+/// A young run taken past the class of its length for a constructor's receiver
+/// (`ValueArena::young_reserved_run`): `[start, end)` was bumped from the nursery whole, so no
+/// other run holds any of it until the young cycle ends, and the run's owner may grow into it
+/// without moving (`ValueArena::reserved_room`). A run's capacity is otherwise a fact of its
+/// length (`ordered_capacity`), which every other reader still sees: the words past it are
+/// only the owner's to append into, and a release, an evacuation or a compaction moves or
+/// frees no more than that capacity, leaving the rest as dead nursery words. Valid while
+/// `cycle` is the arena's `reservation_cycle`, which every event that frees or moves young
+/// runs advances; an entry another reservation evicts only loses the room, never a value.
+#[derive(Clone, Copy, Debug, Default)]
+struct Reservation {
+    start: u32,
+    end: u32,
+    cycle: u32,
+}
+
+impl Reservation {
+    #[inline(always)]
+    fn index(start: usize) -> usize {
+        // Fibonacci hashing: reserved runs lie a few classes apart.
+        ((start as u32).wrapping_mul(0x9E37_79B9) >> (32 - RESERVATIONS.trailing_zeros())) as usize
+    }
+}
+
 /// Compact per-object shape, integrity, and property-storage metadata.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ValueVec {
@@ -409,6 +436,10 @@ pub(crate) struct ValueArena {
     /// Values the arena held, past its idle nursery and released runs, after the last full
     /// collection (`GenerationalPacing::arena_growth_reached`).
     settled_values: usize,
+    /// Young runs reserved for constructors' receivers (`Reservation`).
+    reservations: [Reservation; RESERVATIONS],
+    /// The young cycle the valid `reservations` belong to (`Reservation::cycle`).
+    reservation_cycle: u32,
 }
 
 impl Default for ValueArena {
@@ -434,6 +465,8 @@ impl Default for ValueArena {
             next_dictionary: 0,
             nursery: Nursery::default(),
             settled_values: 0,
+            reservations: [Reservation::default(); RESERVATIONS],
+            reservation_cycle: 0,
         }
     }
 }
@@ -455,7 +488,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, float: _, widened: _, owner_epoch: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _ } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, float: _, widened: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _, reservations: _, reservation_cycle: _ } = self;
         writer.values(values);
         for bucket in 0..BUCKETS {
             writer.u32s(&self.free_starts(bucket));
@@ -528,6 +561,7 @@ impl ValueArena {
         self.free_dictionaries.clear();
         self.next_dictionary = 0;
         self.nursery = Nursery::default();
+        self.forget_reservations();
     }
 
     pub(crate) fn register_shape(&mut self, shape: u32, length: usize) {
@@ -1086,6 +1120,45 @@ impl ValueArena {
         Some(start as u32)
     }
 
+    /// The start of an empty young run reserved for `slots` values (`Reservation`): the run
+    /// of a constructor's receiver whose fields its learned count says will reach `slots`,
+    /// bumped from the nursery's range whole, so the adds that follow append in place up to
+    /// that count (`reserved_room`) where the class of each length would move the run. Its
+    /// owner must be a direct object record, as for every young run. `None`, taking nothing,
+    /// where the nursery's range lacks the room: a reservation never grows the arena.
+    #[inline(always)]
+    pub(crate) fn young_reserved_run(&mut self, slots: usize) -> Option<u32> {
+        let capacity = capacity_class(slots);
+        let start = self.nursery.top;
+        if capacity > self.nursery.end - start {
+            return None;
+        }
+        self.nursery.top = start + capacity;
+        self.reservations[Reservation::index(start)] =
+            Reservation { start: start as u32, end: (start + capacity) as u32, cycle: self.reservation_cycle };
+        Some(start as u32)
+    }
+
+    /// Whether `vector`, a young run outside dictionary and narrow storage, may hold `len`
+    /// values in place, past the capacity its current length gives it: its reservation
+    /// (`young_reserved_run`) still holds, from its start, the whole capacity of `len` values
+    /// (`ordered_capacity`), which every later reader takes as the run's.
+    #[inline(always)]
+    pub(crate) fn reserved_room(&self, vector: ValueVec, len: usize) -> bool {
+        if vector.is_narrow() || vector.is_dictionary() || vector.has_inline_property_storage() || !self.holds_young_run(vector) {
+            return false;
+        }
+        let start = vector.start();
+        let entry = self.reservations[Reservation::index(start)];
+        entry.cycle == self.reservation_cycle && entry.start as usize == start && start + capacity_class(len) <= entry.end as usize
+    }
+
+    /// Ends every reservation (`Reservation`): the young runs they name may move or be reused.
+    #[inline(always)]
+    fn forget_reservations(&mut self) {
+        self.reservation_cycle = self.reservation_cycle.wrapping_add(1);
+    }
+
     /// A young run of `capacity`, bumped from the nursery's range.
     #[inline(always)]
     fn young_run(&mut self, capacity: usize) -> Option<usize> {
@@ -1146,6 +1219,7 @@ impl ValueArena {
         let tail = self.values.len();
         if self.nursery.end == self.nursery.floor {
             self.nursery = Nursery { floor: tail, top: tail, end: tail };
+            self.forget_reservations();
         }
         let end = self.nursery.top + capacity.max(NURSERY_GROWTH);
         // Every young run is written whole before it is read, as a range reused after a young
@@ -1178,6 +1252,8 @@ impl ValueArena {
     /// one moved to the floor lands at or below its source.
     pub(crate) fn evacuate_young(&mut self, vector: &mut ValueVec, narrows: bool) {
         debug_assert!(self.holds_young_run(*vector));
+        // Survivors land below their sources, perhaps at a reserved run's start.
+        self.forget_reservations();
         let length = self.len(*vector);
         let source = vector.start();
         if narrows && length > 0 && self.narrows_to_fewer_words(*vector, length) {
@@ -1273,6 +1349,7 @@ impl ValueArena {
     /// dead young runs are free at once.
     pub(crate) fn finish_young_cycle(&mut self) {
         self.nursery.top = self.nursery.floor;
+        self.forget_reservations();
     }
 
     /// The heap references among a vector's values: the edges a collector traces. Numbers,
@@ -1545,6 +1622,7 @@ impl ValueArena {
         self.released_values = 0;
         // Compaction moved every live run below `length`, young ones too.
         self.nursery = Nursery::default();
+        self.forget_reservations();
     }
 
     pub(crate) fn memory_bytes(&self) -> usize {
@@ -1585,6 +1663,10 @@ impl ValueArena {
         let capacity = self.capacity(*vector);
         let next = grown_capacity(capacity, capacity + 1, GrowthPolicy::SizeClass);
         let young = self.holds_young_run(*vector);
+        // A reserved run (`Reservation`) takes the next class from its reservation.
+        if young && self.reserved_room(*vector, capacity + 1) {
+            return;
+        }
         if young && vector.start() + capacity == self.nursery.top && vector.start() + next <= self.nursery.end {
             self.nursery.top = vector.start() + next;
             return;
@@ -1684,6 +1766,19 @@ impl ValueArena {
         debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
         debug_assert!(len == self.len(vector) && Self::appends_in_place(vector, len));
         // SAFETY: the range from `start` holds its capacity, past `len`, reserved in `values`.
+        unsafe { self.set_flat_at(vector.start(), len, value, self.word_type(shape, len)) };
+    }
+
+    /// `push` of `value` to `vector` of `len` values, moving to `shape`, where its reservation
+    /// has the room (`reserved_room` of `len + 1`): the store alone.
+    ///
+    /// # Safety
+    /// `vector` is a young arena run outside dictionary storage of `len` values whose
+    /// reservation holds the capacity of `len + 1`.
+    #[inline(always)]
+    pub(crate) unsafe fn push_reserved(&mut self, vector: ValueVec, len: usize, value: Value, shape: u32) {
+        debug_assert!(len == self.len(vector) && self.reserved_room(vector, len + 1));
+        // SAFETY: the reservation holds the range from `start` past `len`, reserved in `values`.
         unsafe { self.set_flat_at(vector.start(), len, value, self.word_type(shape, len)) };
     }
 

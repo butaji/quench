@@ -87,6 +87,60 @@ impl Heap {
         Some((Value::direct_object(id), self.object_records.record_ptr(id)))
     }
 
+    /// Gives `object`, a constructor's receiver that no code has seen, allocated from a template
+    /// of layout `template` (no properties, inline storage, no extras: `Vm::reserve_learned_receiver`
+    /// derives it so), the header `header` of the same prototype and shape over arena storage,
+    /// an empty young run reserved for the `slots` values its constructor's receivers reached
+    /// (`ValueArena::young_reserved_run`). The receiver's shape, prototype and properties are as
+    /// before; only where its values will go changes, so the adds its construction makes append
+    /// in place, from the first, up to `slots` (`record_property_append_reserved`), where the
+    /// inline slots and each length's class would move them. `false` changes nothing: a
+    /// receiver of another layout, or a nursery without the room.
+    pub(crate) fn reserve_receiver_run(&mut self, object: Value, template: u32, header: InlineObjectHeader, slots: usize) -> bool {
+        // As `alloc_planned_object`, an aggregate profile takes no young run for a new object.
+        let Some(record_id) = object.direct_object_index().filter(|_| !cfg!(feature = "profile-aggregate")) else {
+            return false;
+        };
+        let Self { object_records, properties, .. } = &mut *self;
+        // SAFETY: direct-object Values name live records; nothing is stored, so the barrier
+        // logs nothing.
+        let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
+        if data.layout_id() != template {
+            return false;
+        }
+        let Some(start) = properties.young_reserved_run(slots) else {
+            return false;
+        };
+        // The template's inline storage holds no values and it has no extras, so nothing is
+        // lost: the record is rewritten whole, as a planned allocation writes it.
+        *data = Object::from_run_header(header, start);
+        true
+    }
+
+    /// The cached add of `value` at `slot` to object record `record_id`, moving to `shape`, into
+    /// the run reserved for it (`reserve_receiver_run`, `Object::admits_reserved_append`): the
+    /// store alone, where `record_property_append_plain` would find no room. A store the write
+    /// barrier would log, or a record without the reservation's room, is left to the caller
+    /// (`false`, nothing changed).
+    #[inline(always)]
+    pub(crate) fn record_property_append_reserved(&mut self, record_id: u32, slot: usize, value: Value, shape: u32) -> bool {
+        if self.object_records.store_logs(record_id, value) {
+            return false;
+        }
+        let Self { object_records, properties, .. } = &mut *self;
+        // SAFETY: the caller read the record from a direct-object Value; `&mut self` is
+        // exclusive, and the barrier logs nothing for this store.
+        let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
+        if !data.admits_reserved_append(properties, slot) {
+            return false;
+        }
+        data.append_reserved(properties, slot, value, shape);
+        self.settle_widened();
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(Value::direct_object(record_id), slot + 1);
+        true
+    }
+
     /// `alloc_object` of a fresh object of `prototype` with no properties (`Object::new`),
     /// which admits no slot values: the prototype as given, not decoded back from the layout.
     #[inline(always)]

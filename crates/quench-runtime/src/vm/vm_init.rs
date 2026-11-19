@@ -209,6 +209,7 @@ impl<H: Host> Vm<H> {
             runtime_atoms: RuntimeAtoms::default(),
             constructed_shapes: [provenance::ConstructedShape::EMPTY; provenance::CONSTRUCTED_SHAPE_ENTRIES],
             preshaped_receivers: Box::new([preshaped_receiver::PreshapedReceiver::EMPTY; preshaped_receiver::PRESHAPED_RECEIVER_ENTRIES]),
+            learned_receivers: Box::new([preshaped_receiver::LearnedReceiver::EMPTY; preshaped_receiver::LEARNED_RECEIVER_ENTRIES]),
             object_templates: Vec::new(),
             method_caches: Default::default(),
             megamorphic_methods: vec![],

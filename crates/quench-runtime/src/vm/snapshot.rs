@@ -204,6 +204,8 @@ impl<H: Host> Vm<H> {
             constructed_shapes: _,
             // Names constructors and shapes of the running heap; a restored heap derives its own.
             preshaped_receivers: _,
+            // Names constructors and layouts of the running heap; a restored heap learns its own.
+            learned_receivers: _,
             // Templates name roots of the running heap; a restored heap starts without any,
             // and its hosts capture them again.
             object_templates: _,
@@ -401,6 +403,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_atoms");
         self.heap = Heap::read_snapshot(&mut reader, self.heap.memory_policy())?;
+        self.forget_learned_receivers();
         self.intern_typeof_names();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_heap");

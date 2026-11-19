@@ -1312,6 +1312,1130 @@ impl std::ops::DerefMut for FinalizationEntries {
         &mut self.0
     }
 }
+impl Object {
+    /// An object of header words `meta` and `auxiliary` (`layout`) and `payload`.
+    #[inline(always)]
+    fn from_header(meta: u32, auxiliary: u32, payload: u64) -> Self {
+        Self { payload, layout: super::layouts::intern(header_word(meta, auxiliary)) }
+    }
+
+    /// The header words as one: the auxiliary word low, which shape tests read most, and
+    /// `meta` high (`header_word`).
+    #[inline(always)]
+    fn header(&self) -> u64 {
+        super::layouts::word(self.layout)
+    }
+
+    #[inline(always)]
+    fn meta(&self) -> u32 {
+        (self.header() >> u32::BITS) as u32
+    }
+
+    #[inline(always)]
+    fn aux(&self) -> u32 {
+        self.header() as u32
+    }
+
+    /// The interned layout id (`heap::layouts`): equal ids mean equal prototype links, flags,
+    /// shapes and storage forms, so one compare proves what comparing each would.
+    #[inline(always)]
+    pub(crate) fn layout_id(&self) -> u32 {
+        self.layout
+    }
+
+    /// Sets both header words: the layout of the pair.
+    #[inline(always)]
+    fn set_header(&mut self, meta: u32, auxiliary: u32) {
+        let word = header_word(meta, auxiliary);
+        if word != self.header() {
+            self.layout = super::layouts::intern(word);
+        }
+    }
+
+    #[inline(always)]
+    fn set_meta(&mut self, meta: u32) {
+        let auxiliary = self.aux();
+        self.set_header(meta, auxiliary);
+    }
+
+    #[inline(always)]
+    pub(super) fn set_aux(&mut self, auxiliary: u32) {
+        let meta = self.meta();
+        self.set_header(meta, auxiliary);
+    }
+
+    #[inline(always)]
+    pub(crate) fn new(proto: Value) -> Self {
+        // `with_property_storage` of empty inline storage, written out as `with_inline_values`
+        // does: one header word, one intern.
+        let object = Self::with_inline_values(proto, 0, &[]).expect("undefined is narrow");
+        debug_assert!({
+            let slow = std::mem::ManuallyDrop::new(Self::with_property_storage(proto, ValueVec::inline_property_storage(0), [Value::UNDEFINED; INLINE_PROPERTY_COUNT]));
+            slow.layout == object.layout && { slow.payload } == { object.payload }
+        });
+        object
+    }
+
+    /// A direct object, the usual prototype, is tested first: its record id and its range's
+    /// base alone, before the decode of every other reference family.
+    #[inline(always)]
+    fn encode_proto(proto: Value) -> u32 {
+        match proto.direct_object_index() {
+            Some(id) => PROTO_OBJECT_RECORD_BASE + id,
+            None => Self::encode_other_proto(proto),
+        }
+    }
+
+    /// `encode_proto` of a direct array, as every realm's `Array.prototype` is.
+    #[inline(always)]
+    fn encode_array_proto(proto: Value) -> u32 {
+        match proto.direct_array_index() {
+            Some(id) => PROTO_ARRAY_RECORD_BASE + id,
+            None => Self::encode_proto(proto),
+        }
+    }
+
+    #[inline]
+    fn encode_other_proto(proto: Value) -> u32 {
+        match proto.heap_reference() {
+            Some(HeapReference::LegacySlot(index)) => {
+                assert!(
+                    (index as usize) < MAX_HEAP_CELLS,
+                    "heap exhausted the prototype index space"
+                );
+                index
+            }
+            Some(HeapReference::ObjectRecord(id)) => PROTO_OBJECT_RECORD_BASE + id,
+            Some(HeapReference::ArrayRecord(id)) => PROTO_ARRAY_RECORD_BASE + id,
+            Some(HeapReference::FunctionRecord(id)) => PROTO_FUNCTION_RECORD_BASE + id,
+            Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
+            Some(HeapReference::IteratorRecord(id)) => PROTO_ITERATOR_RECORD_BASE + id,
+            Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
+            Some(HeapReference::StringRecord(_)) => unreachable!("a string is never a prototype"),
+            Some(HeapReference::V128Record(_)) => unreachable!("a Wasm vector is never a prototype"),
+            Some(HeapReference::EnvironmentRecord(_)) => unreachable!("an environment is never a prototype"),
+            None if proto.is_null() => PROTO_NULL,
+            None => {
+                debug_assert!(proto.is_undefined(), "a prototype is an object or null");
+                PROTO_UNDEFINED
+            }
+        }
+    }
+
+
+
+
+
+    /// The prototype reference as stored (`ProtoLink`), undecoded.
+    #[inline(always)]
+    pub(crate) fn proto_link(&self) -> ProtoLink {
+        ProtoLink(self.meta() & PROTO_INDEX_BITS)
+    }
+
+    #[inline(always)]
+    pub(crate) fn proto(&self) -> Value {
+        self.proto_link().prototype()
+    }
+
+    pub(crate) fn set_proto(&mut self, proto: Value) {
+        self.note_constant_write();
+        self.note_prototype_layout_change();
+        self.set_meta((self.meta() & !PROTO_INDEX_BITS) | Self::encode_proto(proto));
+    }
+
+    /// A change to what this object offers its inheritors, if it has any.
+    #[inline(always)]
+    fn note_prototype_layout_change(&self) {
+        if self.was_used_as_prototype() {
+            advance_prototype_layout_epoch();
+            self.retire_watch();
+        }
+    }
+
+    /// Retires the proofs that read this prototype's elements (`Heap::note_prototype_elements`).
+    #[inline(always)]
+    pub(crate) fn note_prototype_elements_change(&self) {
+        if self.was_used_as_prototype() {
+            self.retire_watch();
+        }
+    }
+
+    fn retire_watch(&self) {
+        if let Some(extras) = self.extras() {
+            extras.watch.retire();
+        }
+    }
+
+    /// This prototype's subject in its heap's dependency table (`Heap::mark_prototype`).
+    pub(crate) fn watch_as(&mut self, watch: super::dependencies::Watch) {
+        self.extras_mut().watch = watch;
+    }
+
+    /// This watched prototype's subject, if a heap's dependency table gave it one.
+    pub(crate) fn watched_subject(&self) -> Option<u32> {
+        self.extras().and_then(|extras| extras.watch.subject())
+    }
+
+    /// Whether this object is an array's, which keeps named properties in the arena.
+    pub(crate) fn is_array(&self) -> bool {
+        self.meta() & OBJECT_ARRAY != 0
+    }
+
+    /// The property storage descriptor, assembled from the header and, without inline
+    /// storage, the payload.
+    #[inline(always)]
+    pub(crate) fn properties(&self) -> ValueVec {
+        let integrity = self.meta() & VALUE_VEC_INTEGRITY_BITS;
+        let position = if self.meta() & OBJECT_INLINE_STORAGE != 0 {
+            ValueVec::inline_property_storage(0).into_parts().0 & VALUE_VEC_START_BITS
+        } else {
+            self.storage_position()
+        };
+        ValueVec::from_parts(integrity | position, self.aux())
+    }
+
+    /// Stores `properties`. A change from inline to other storage overwrites the payload
+    /// word that held an inline value, so callers move inline values out first.
+    pub(crate) fn set_properties(&mut self, properties: ValueVec, arena: &mut ValueArena) {
+        arena.note_shape_transition(self.shape(), properties.auxiliary());
+        self.initialize_properties(properties);
+    }
+
+    /// Construction before publication has no shape dependents.
+    #[inline(always)] fn initialize_properties(&mut self, properties: ValueVec) {
+        let (start, auxiliary) = properties.into_parts();
+        // Exotic access is a fact of the object, not of the storage that replaces its own.
+        // A storage change ends the object's constancy (`note_constant_write`): its readers
+        // retire here, and the new word carries no mark.
+        self.note_constant_write();
+        let (meta, current) = (self.meta(), self.aux());
+        let auxiliary = (auxiliary & !crate::value_vec::CONSTANT_FORM) | (current & crate::value_vec::EXOTIC_ACCESS);
+        let flags = meta & !(VALUE_VEC_INTEGRITY_BITS | OBJECT_INLINE_STORAGE);
+        let position = start & VALUE_VEC_START_BITS;
+        if properties.has_inline_property_storage() {
+            let meta = flags | (start & VALUE_VEC_INTEGRITY_BITS) | OBJECT_INLINE_STORAGE;
+            // Inline storage leaves the payload word alone, and its form is decided here.
+            let extras = if self.extras_pointer().is_some() { crate::value_vec::EXTRAS_FORM } else { 0 };
+            let form = OBJECT_INLINE_STORAGE | extras;
+            self.set_header(meta, (auxiliary & !crate::value_vec::STORAGE_FORM) | form);
+        } else {
+            self.set_header(flags | (start & VALUE_VEC_INTEGRITY_BITS), auxiliary);
+            self.set_storage_position(position);
+            if properties.is_narrow() {
+                // Only a plain object's values take a narrow run: its payload is the position.
+                debug_assert!(self.extras_pointer().is_none() && self.meta() & OBJECT_ARRAY == 0);
+                self.payload |= NARROW_RUN_TAG;
+            }
+            let form = self.storage_form();
+            self.set_aux((self.aux() & !crate::value_vec::STORAGE_FORM) | form);
+        }
+    }
+
+    /// The whole auxiliary word, its storage form (`storage_form`) included: what a lane
+    /// record's own-field hint holds (`Vm::form_hint`), so that one compare proves the exact
+    /// shape, no dictionary, no exotic access and where the values live. Every cache records
+    /// `exact_shape`, which leaves the form out.
+    #[inline(always)]
+    pub(crate) fn guard_word(&self) -> u64 {
+        u64::from(self.layout)
+    }
+
+    /// What a lane record's own-field hint and a call memo's step hold: the record's layout id
+    /// (`layout_id`), so that one compare of the record's own word, with no table load, proves
+    /// its exact shape, storage form, prototype link and flags. The auxiliary word a hint names
+    /// is `heap::layouts::auxiliary(hint)`.
+    #[inline(always)]
+    pub(crate) fn hint_shape(&self) -> u32 {
+        debug_assert_eq!(self.aux() & crate::value_vec::STORAGE_FORM, self.storage_form());
+        self.layout
+    }
+
+    /// The storage-form bits of the auxiliary word (`value_vec::STORAGE_FORM`) the header's
+    /// inline flag and the payload's extras tag decide. The word keeps them current: every
+    /// change of either (`initialize_properties`, `extras_mut`) rewrites them, and the
+    /// constructors that write the header words directly derive them the same way.
+    /// Whether the payload word names a narrow run (`NARROW_RUN_TAG` beside its start): only
+    /// a plain object's payload outside inline storage is a start; inline values, an array's
+    /// backing and an extras word are other words.
+    #[inline(always)]
+    fn holds_narrow_run(&self) -> bool {
+        self.meta() & (OBJECT_INLINE_STORAGE | OBJECT_ARRAY) == 0 && self.payload >> u32::BITS == NARROW_RUN_TAG >> u32::BITS
+    }
+
+    #[inline(always)]
+    fn storage_form(&self) -> u32 {
+        let extras = if self.extras_pointer().is_some() { crate::value_vec::EXTRAS_FORM } else { 0 };
+        let narrow = if self.holds_narrow_run() { crate::value_vec::NARROW_FORM } else { 0 };
+        (self.meta() & OBJECT_INLINE_STORAGE) | extras | narrow
+    }
+
+
+    /// The storage start of an object whose values live in the arena and that has no
+    /// extras: its payload word is then that start alone (`set_properties`), and its upper
+    /// half is zero, which an extras word (`EXTRAS_TAG`) never is. `None` for inline storage
+    /// or extras, whose start `storage_position` decodes.
+    #[inline(always)]
+    pub(crate) fn plain_storage_start(&self) -> Option<usize> {
+        // An array's word is its backing; one with values in the arena has extras.
+        let plain = self.meta() & (OBJECT_INLINE_STORAGE | OBJECT_ARRAY) == 0 && self.payload >> u32::BITS == 0;
+        debug_assert!(!plain || self.extras_pointer().is_none());
+        plain.then_some(self.payload as usize)
+    }
+    /// `hinted_plain_start` of a narrow run (`value_vec::NARROW_FORM`): the run's first word
+    /// where the layout id equals `hint` (`hint_shape`), a narrow form without inline storage
+    /// or extras, so slot `i` is half `i` of the run counted in `u32`s from twice that word.
+    #[inline(always)]
+    pub(crate) fn formed_narrow_start(&self, hint: u32) -> Option<usize> {
+        use crate::value_vec::{NARROW_FORM, STORAGE_FORM};
+        let narrow = self.layout == hint && super::layouts::auxiliary(hint) & STORAGE_FORM == NARROW_FORM
+            && self.payload >> u32::BITS == NARROW_RUN_TAG >> u32::BITS;
+        narrow.then_some(self.payload as u32 as usize)
+    }
+
+
+    /// The arena storage start of an object whose layout's form a hint proved the arena form
+    /// (`staged::ic::layout_form` 0): its payload word.
+    #[inline(always)]
+    pub(crate) fn proved_arena_start(&self) -> usize {
+        debug_assert_eq!(self.plain_arena_start(), Some(self.payload as usize));
+        self.payload as usize
+    }
+
+    /// The arena storage start of an object whose auxiliary word is `shape` whole, an exact
+    /// shape, which only the arena form's word equals; `None` for any other word or form.
+    #[inline(always)]
+    pub(crate) fn formed_plain_start(&self, hint: u32) -> Option<usize> {
+        // The arena form (`STORAGE_FORM` clear) has neither inline storage nor extras, so the
+        // payload is the start (`plain_arena_start`) once the whole word matches.
+        let plain = hint & crate::value_vec::STORAGE_FORM == 0 && self.aux() == hint;
+        debug_assert!(!plain || self.plain_arena_start() == Some(self.payload as usize));
+        plain.then_some(self.payload as usize)
+    }
+
+    /// `plain_storage_start` as one compare of the payload: a start never exceeds
+    /// `VALUE_VEC_START_BITS`, and an extras word always does, so without inline storage a
+    /// payload at most that bound is the start itself.
+    #[inline(always)]
+    pub(crate) fn plain_arena_start(&self) -> Option<usize> {
+        let plain = self.meta() & OBJECT_INLINE_STORAGE == 0 && self.payload <= u64::from(VALUE_VEC_START_BITS);
+        debug_assert_eq!(plain.then_some(self.payload as usize), self.plain_storage_start());
+        plain.then_some(self.payload as usize)
+    }
+
+    pub(crate) fn plain_property_storage(&self) -> Option<PlainPropertyStorage> {
+        if self.properties().is_dictionary() || self.extras_pointer().is_some() {
+            return None;
+        }
+        Some(if self.meta() & OBJECT_INLINE_STORAGE != 0 {
+            PlainPropertyStorage::PackedInline
+        } else {
+            PlainPropertyStorage::Arena
+        })
+    }
+
+    /// The storage start of an object whose values live in the arena behind extras, as a
+    /// prototype's do (its `PrototypeLookupState` lives there): the start the extras hold
+    /// (`storage_position`). `None` for inline storage or no extras.
+    #[inline(always)]
+    pub(crate) fn extras_storage_start(&self) -> Option<usize> {
+        if self.meta() & OBJECT_INLINE_STORAGE != 0 {
+            return None;
+        }
+        // SAFETY: an extras pointer names the extras this object owns.
+        self.extras_pointer().map(|extras| unsafe { (*extras).arena_start } as usize)
+    }
+
+    /// `plain_storage_start` of an object outside dictionary storage, whose start bits are
+    /// then an arena start rather than a dictionary id (`ValueVec::is_dictionary`): the
+    /// fast case of a read that also serves dictionaries (`Heap::property_get_shaped`).
+    #[inline(always)]
+    pub(crate) fn plain_shaped_start(&self) -> Option<usize> {
+        if self.aux() & crate::value_vec::DICTIONARY_STORAGE != 0 {
+            return None;
+        }
+        self.plain_storage_start()
+    }
+
+    #[inline(always)]
+    fn storage_position(&self) -> u32 {
+        match self.extras() {
+            Some(extras) => extras.arena_start,
+            None => self.payload_position(),
+        }
+    }
+
+    /// The storage position an object without extras keeps: its payload word, or for an
+    /// array, whose word holds its backing, the empty position (`set_storage_position`).
+    #[inline(always)]
+    fn payload_position(&self) -> u32 {
+        if self.meta() & OBJECT_ARRAY != 0 { EMPTY_POSITION } else { self.payload as u32 }
+    }
+
+    #[inline]
+    fn set_storage_position(&mut self, position: u32) {
+        if let Some(extras) = self.extras_mut_existing() {
+            extras.arena_start = position;
+        } else if self.meta() & OBJECT_ARRAY != 0 && self.array_store_needs_extras(position) {
+            self.extras_mut().arena_start = position;
+        } else {
+            self.payload = u64::from(position);
+        }
+    }
+
+    /// Whether an array's property store at `position`, under its current auxiliary word,
+    /// holds anything: an array keeps its payload word for its elements, so such a store,
+    /// or dictionary storage, lives behind extras.
+    #[inline(always)]
+    fn array_store_needs_extras(&self, position: u32) -> bool {
+        position != EMPTY_POSITION || self.aux() & crate::value_vec::DICTIONARY_STORAGE != 0
+    }
+
+    fn tag_extras(extras: Box<ObjectExtras>) -> u64 {
+        let address = Box::into_raw(extras) as usize as u64;
+        assert_eq!(
+            address & EXTRAS_TAG_MASK,
+            0,
+            "object extras outside 48-bit space"
+        );
+        EXTRAS_TAG | address
+    }
+
+    #[inline] fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
+        let word = self.payload;
+        (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
+            .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
+    }
+
+    /// Releases a dead object's storage in `arena` (`ValueArena::release`), and answers
+    /// whether it owns extras, which its drop frees. Inline values hold no arena words;
+    /// without extras the payload word is the storage position alone, upper half zero
+    /// (`plain_storage_start`).
+    #[inline(always)]
+    pub(crate) fn release_storage(&self, arena: &mut ValueArena) -> bool {
+        // An array's sweep releases its properties (`ValueArena::release_ordinary`).
+        debug_assert!(!self.is_array());
+        if self.meta() & OBJECT_INLINE_STORAGE != 0 {
+            return self.extras_pointer().is_some();
+        }
+        if self.payload >> u32::BITS == 0 {
+            arena.release(ValueVec::from_parts(self.payload as u32, self.aux()));
+            return false;
+        }
+        arena.release(self.properties());
+        true
+    }
+
+    /// Whether the object owns extras (`ObjectExtras`): the data a plain object lacks.
+    #[inline(always)]
+    pub(crate) fn has_extras(&self) -> bool {
+        self.extras_pointer().is_some()
+    }
+
+    #[inline] fn extras(&self) -> Option<&ObjectExtras> {
+        // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime.
+        self.extras_pointer().map(|extras| unsafe { &*extras })
+    }
+
+    fn extras_mut(&mut self) -> &mut ObjectExtras {
+        let extras = match self.extras_pointer() {
+            Some(extras) => extras,
+            None => {
+                // The payload word moves into the extras: the inline values, or the storage
+                // position.
+                // Extras hold a wide run's start only: a narrow run's owner widens first
+                // (`access::widen_narrow_run`).
+                assert!(!self.holds_narrow_run(), "a narrow run widens before its owner takes extras");
+                let (inline, arena_start) = if self.meta() & OBJECT_INLINE_STORAGE != 0 {
+                    (Self::unpack_inline(self.payload), 0)
+                } else {
+                    ([Value::UNDEFINED; INLINE_PROPERTY_COUNT], self.payload_position())
+                };
+                // An array's word is its backing, which moves into the extras with it.
+                let elements = if self.meta() & OBJECT_ARRAY != 0 {
+                    // SAFETY: without extras, an array's payload word is the backing it owns,
+                    // and the word is overwritten below.
+                    unsafe { super::ArrayElements::from_raw(self.payload) }
+                } else {
+                    super::ArrayElements::new()
+                };
+                self.payload = Self::tag_extras(Box::new(ObjectExtras {
+                    inline_properties: DisplacedInline(inline),
+                    arena_start,
+                    elements,
+                    ..ObjectExtras::default()
+                }));
+                // Extras are never dropped while the object lives, so the bit only sets.
+                self.set_aux(self.aux() | crate::value_vec::EXTRAS_FORM);
+                self.extras_pointer().expect("extras just installed")
+            }
+        };
+        // SAFETY: owned by this object, and `&mut self` makes the borrow unique.
+        unsafe { &mut *extras }
+    }
+
+    #[inline] fn extras_mut_existing(&mut self) -> Option<&mut ObjectExtras> {
+        // SAFETY: as in `extras`, with `&mut self` making the borrow unique.
+        self.extras_pointer().map(|extras| unsafe { &mut *extras })
+    }
+
+    /// The payload word of inline `values`, when each has a narrow form.
+    #[inline(always)]
+    fn pack_inline(values: [Value; INLINE_PROPERTY_COUNT]) -> Option<u64> {
+        let mut word = 0;
+        for (slot, value) in values.into_iter().enumerate() {
+            word |= u64::from(value.to_narrow_reference()?) << (slot as u32 * u32::BITS);
+        }
+        Some(word)
+    }
+
+    #[inline(always)]
+    fn unpack_inline(word: u64) -> [Value; INLINE_PROPERTY_COUNT] {
+        std::array::from_fn(|slot| Value::from_narrow((word >> (slot as u32 * u32::BITS)) as u32))
+    }
+
+    /// An object of `proto` and inline `shape` holding `values`, at most the inline slots and
+    /// `undefined` past them; `None` when a value has no narrow form.
+    #[inline(always)]
+    pub(crate) fn with_inline_values(proto: Value, shape: u32, values: &[Value]) -> Option<Self> {
+        debug_assert!(values.len() <= INLINE_PROPERTY_COUNT);
+        // A loop over the fixed bound unrolls to element moves, where one over `values`
+        // becomes a `memcpy` call.
+        let inline = std::array::from_fn(|slot| values.get(slot).copied().unwrap_or(Value::UNDEFINED));
+        let payload = Self::pack_inline(inline)?;
+        // `initialize_properties` of inline storage on a fresh object, which leaves the payload
+        // word alone, written out: the object has no exotic access to keep.
+        let (start, auxiliary) = ValueVec::inline_property_storage(shape).into_parts();
+        let meta = Self::encode_proto(proto) | (start & VALUE_VEC_INTEGRITY_BITS) | OBJECT_INLINE_STORAGE;
+        // Inline and no extras: its storage form (`storage_form`).
+        let auxiliary = auxiliary | crate::value_vec::INLINE_FORM;
+        Some(Self::from_header(meta, auxiliary, payload))
+    }
+
+    /// Whether inline `values` fit the payload word without moving into extras.
+    #[inline(always)]
+    pub(crate) fn inline_values_narrow(values: &[Value]) -> bool {
+        values.iter().all(|value| value.to_narrow().is_some())
+    }
+
+    /// The inline property slots, wherever they live.
+    #[inline(always)]
+    fn inline_values(&self) -> [Value; INLINE_PROPERTY_COUNT] {
+        match self.extras() {
+            Some(extras) => extras.inline_properties.0,
+            None => Self::unpack_inline(self.payload),
+        }
+    }
+
+    /// Stores the inline property slots: in the payload word when each value has a narrow
+    /// form and the object has no extras, else in the extras.
+    /// Stores `values` in the inline slots as one payload word, when the object keeps them
+    /// there (inline storage, no extras) and each has a narrow form; `false` otherwise,
+    /// changing nothing.
+    pub(crate) fn store_packed_inline_values(&mut self, values: [Value; INLINE_PROPERTY_COUNT]) -> bool {
+        if !self.properties().has_inline_property_storage() || self.extras_pointer().is_some() {
+            return false;
+        }
+        match Self::pack_inline(values) {
+            Some(word) => {
+                self.payload = word;
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn store_inline_values(&mut self, values: [Value; INLINE_PROPERTY_COUNT]) {
+        // An array keeps no inline storage (`Heap::initialize_object_properties`).
+        debug_assert!(!self.is_array());
+        match (self.extras_mut_existing(), Self::pack_inline(values)) {
+            (Some(extras), _) => extras.inline_properties.0 = values,
+            (None, Some(word)) => self.payload = word,
+            (None, None) => self.extras_mut().inline_properties.0 = values,
+        }
+    }
+
+    /// Inlined: most callers pass constant inline values (`Object::new`), which then pack
+    /// to a constant payload word.
+    #[inline(always)]
+    pub(crate) fn with_property_storage(
+        proto: Value,
+        properties: ValueVec,
+        inline_properties: [Value; INLINE_PROPERTY_COUNT],
+    ) -> Self {
+        let mut object = Self::from_header(Self::encode_proto(proto), 0, 0);
+        object.initialize_properties(properties);
+        // A new object has no extras: its payload word holds the values when each is narrow.
+        if properties.has_inline_property_storage() {
+            match Self::pack_inline(inline_properties) {
+                Some(word) => object.payload = word,
+                None => object.extras_mut().inline_properties.0 = inline_properties,
+            }
+        }
+        object
+    }
+
+    /// An object of `header`'s prototype and inline shape holding `inline`: what
+    /// `with_property_storage` makes, from header words derived once. `None` when a value
+    /// has no narrow form, so the payload word cannot hold it.
+    #[inline(always)]
+    pub(crate) fn from_inline_header(
+        header: InlineObjectHeader,
+        inline: [Value; INLINE_PROPERTY_COUNT],
+    ) -> Option<Self> {
+        Some(Self { payload: Self::pack_inline(inline)?, layout: header.layout })
+    }
+
+    /// An object of a run header (`InlineObjectHeader::of_run`) whose values start at arena
+    /// position `start`: what `with_property_storage` makes of that run, which has no extras.
+    #[inline] pub(crate) fn from_run_header(header: InlineObjectHeader, start: u32) -> Self {
+        Self { payload: u64::from(start), layout: header.layout }
+    }
+
+    #[inline(always)]
+    pub(crate) fn inline_properties(&self) -> Option<[Value; INLINE_PROPERTY_COUNT]> {
+        (self.meta() & OBJECT_INLINE_STORAGE != 0).then(|| self.inline_values())
+    }
+
+    /// What a mark visit needs of an object that stores its properties inline and has no
+    /// extras: its prototype link and its inline values' narrow forms, first slot first. Such
+    /// an object holds no extras roots and was never used as a prototype (both live in
+    /// extras), so its visit is its prototype, its shape's roots and these values. `None`
+    /// for any other object.
+    #[inline(always)]
+    pub(crate) fn plain_inline_trace(&self) -> Option<(ProtoLink, [u32; INLINE_PROPERTY_COUNT])> {
+        let meta = self.meta();
+        if meta & OBJECT_INLINE_STORAGE == 0 || self.payload & EXTRAS_TAG_MASK == EXTRAS_TAG {
+            return None;
+        }
+        Some((ProtoLink(meta & PROTO_INDEX_BITS), Self::unpack_narrow(self.payload)))
+    }
+
+    /// The narrow inline values of a payload word that holds them (`unpack_inline`).
+    #[inline(always)]
+    fn unpack_narrow(word: u64) -> [u32; INLINE_PROPERTY_COUNT] {
+        std::array::from_fn(|slot| (word >> (slot as u32 * u32::BITS)) as u32)
+    }
+
+    /// The inline property at `slot`, when the object stores its properties inline.
+    #[inline(always)]
+    pub(crate) fn inline_property(&self, slot: usize) -> Option<Value> {
+        if self.meta() & OBJECT_INLINE_STORAGE == 0 {
+            return None;
+        }
+        debug_assert!(slot < INLINE_PROPERTY_COUNT);
+        Some(match self.extras() {
+            Some(extras) => extras.inline_properties.0[slot],
+            None => Value::from_narrow(self.payload_narrow(slot)),
+        })
+    }
+
+    /// Stores `value` at inline `slot`, moving the inline values into extras when the payload
+    /// word cannot hold it.
+    #[cfg(test)]
+    pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
+        // A cached slot past the inline values is a caller bug, not a reason to panic here.
+        if slot < INLINE_PROPERTY_COUNT && !self.store_inline_narrow(slot, value) {
+            self.set_inline_property_wide(slot, value);
+        }
+    }
+
+    /// Stores `value` at inline `slot` unless the payload word holds the inline values and
+    /// cannot hold `value`; `false` leaves the object unchanged for the caller to move its
+    /// values to the arena.
+    #[inline(always)]
+    pub(crate) fn store_inline_narrow(&mut self, slot: usize, value: Value) -> bool {
+        debug_assert!(self.properties().has_inline_property_storage());
+        debug_assert!(slot < INLINE_PROPERTY_COUNT);
+        match (self.extras_pointer(), value.to_narrow()) {
+            (None, Some(narrow)) => {
+                self.store_payload_narrow(slot, narrow);
+                true
+            }
+            (None, None) => false,
+            (Some(_), _) => {
+                self.set_inline_property_wide(slot, value);
+                true
+            }
+        }
+    }
+
+    /// Whether a cached add of `value` at `slot`, the length of this object's storage under
+    /// a shape outside dictionary storage, to this object, which admits it
+    /// (`admits_cached_add`), is a plain append (`append_plain`): the object has no extras,
+    /// so it was never a prototype, and its storage takes the value without moving: a narrow
+    /// value into a free inline slot, or any value into its arena range's spare capacity.
+    #[inline(always)]
+    pub(crate) fn admits_plain_append(&self, slot: usize, value: Value) -> bool {
+        debug_assert!(self.admits_cached_add());
+        if self.extras_pointer().is_some() {
+            return false;
+        }
+        if self.meta() & OBJECT_INLINE_STORAGE != 0 {
+            return slot < INLINE_PROPERTY_COUNT && value.to_narrow().is_some();
+        }
+        ValueArena::appends_in_place(self.properties(), slot)
+    }
+
+    /// Whether a cached add at `slot`, as for `admits_plain_append`, to this object, which has
+    /// no extras, appends into the young run reserved for it past its length's class
+    /// (`ValueArena::reserved_room`): the receiver of a constructor whose learned field count
+    /// reserved that run (`Heap::reserve_receiver_run`).
+    #[inline(always)]
+    pub(crate) fn admits_reserved_append(&self, properties: &ValueArena, slot: usize) -> bool {
+        debug_assert!(self.admits_cached_add());
+        self.extras_pointer().is_none()
+            && self.meta() & OBJECT_INLINE_STORAGE == 0
+            && properties.reserved_room(self.properties(), slot + 1)
+    }
+
+    /// Appends `value` at `slot` and moves to `shape`, the add `admits_reserved_append`
+    /// admitted: `append_plain` into the reservation.
+    #[inline(always)]
+    pub(crate) fn append_reserved(&mut self, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+        properties.note_shape_value(shape, slot, value);
+        debug_assert!(self.admits_reserved_append(properties, slot));
+        // SAFETY: `admits_reserved_append` found the reservation's room for the value.
+        unsafe { properties.push_reserved(self.properties(), slot, value, shape) };
+        self.set_shape(shape, properties);
+    }
+
+    /// Appends `value` at `slot` and moves to `shape`, the add `admits_plain_append` admitted.
+    /// Without extras it was never a prototype; the move still retires shape readers.
+    #[inline(always)]
+    pub(crate) fn append_plain(&mut self, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+        properties.note_shape_value(shape, slot, value);
+        debug_assert!(self.admits_plain_append(slot, value));
+        match value.to_narrow().filter(|_| self.meta() & OBJECT_INLINE_STORAGE != 0) {
+            Some(narrow) => self.store_payload_narrow(slot, narrow),
+            // SAFETY: `admits_plain_append` found the arena range's room for the value.
+            None => unsafe { properties.push_in_place(self.properties(), slot, value, shape) },
+        }
+        self.set_shape(shape, properties);
+    }
+
+    /// The half of the payload word that holds inline `slot`, the first the lower: one
+    /// half-word access, which neither shifts nor touches the other slot.
+    #[inline(always)]
+    fn payload_half(slot: usize) -> usize {
+        debug_assert!(slot < INLINE_PROPERTY_COUNT);
+        if cfg!(target_endian = "little") { slot } else { INLINE_PROPERTY_COUNT - 1 - slot }
+    }
+
+    /// The narrow form at inline `slot` of the payload word, which holds the inline values.
+    #[inline(always)]
+    fn payload_narrow(&self, slot: usize) -> u32 {
+        // SAFETY: `payload` is a `u64`, two in-bounds `u32` halves.
+        unsafe { (&raw const self.payload).cast::<u32>().add(Self::payload_half(slot)).read() }
+    }
+
+    /// Stores the narrow form `narrow` at inline `slot` of the payload word, which holds the
+    /// inline values.
+    #[inline(always)]
+    fn store_payload_narrow(&mut self, slot: usize, narrow: u32) {
+        // SAFETY: `payload` is a `u64`, two in-bounds `u32` halves; `&mut self` is exclusive.
+        unsafe { (&raw mut self.payload).cast::<u32>().add(Self::payload_half(slot)).write(narrow) };
+    }
+
+    /// Where the values of an object outside dictionary storage live, decoded from its
+    /// payload word once (`ExactStorage`).
+    #[inline(always)]
+    pub(crate) fn exact_storage(&self) -> ExactStorage {
+        // The auxiliary word's form bits, which the shape compare already loaded, stand for
+        // the header's inline flag and the payload's extras tag (`storage_form`).
+        let form = self.aux() & crate::value_vec::STORAGE_FORM;
+        debug_assert_eq!(form, self.storage_form());
+        match form {
+            0 => ExactStorage::Plain(self.payload_position() as usize),
+            crate::value_vec::INLINE_FORM => ExactStorage::PackedInline,
+            crate::value_vec::NARROW_FORM => ExactStorage::Narrow,
+            _ => ExactStorage::Extended { inline: form & crate::value_vec::INLINE_FORM != 0 },
+        }
+    }
+
+    /// Stores a value's narrow form `narrow` (`Value::to_narrow`) into inline `slot` of a
+    /// `PackedInline` object (`exact_storage`), that half of the payload word; `false` for a
+    /// value without one, changing nothing.
+    #[inline(always)]
+    pub(crate) fn store_packed_narrow(&mut self, slot: usize, narrow: Option<u32>) -> bool {
+        debug_assert!(matches!(self.exact_storage(), ExactStorage::PackedInline));
+        narrow.map(|narrow| self.store_payload_narrow(slot, narrow)).is_some()
+    }
+
+    /// Stores `value` into inline `slot` of an `Extended` object (`exact_storage`), whose
+    /// extras hold its inline values.
+    #[inline(always)]
+    pub(crate) fn store_extended_inline(&mut self, slot: usize, value: Value) {
+        let extras = self.extras_pointer().expect("an extended object has extras");
+        // SAFETY: owned by this object, and `&mut self` makes the borrow unique.
+        unsafe { (*extras).inline_properties.0[slot] = value };
+    }
+
+    /// `set_inline_property` into extras: the object has them, or `value` has no narrow form.
+    #[cold]
+    fn set_inline_property_wide(&mut self, slot: usize, value: Value) {
+        let mut values = self.inline_values();
+        values[slot] = value;
+        self.store_inline_values(values);
+    }
+
+    pub(crate) fn replace_property_storage(
+        &mut self,
+        mut properties: ValueVec,
+        inline_properties: [Value; INLINE_PROPERTY_COUNT],
+        arena: &mut ValueArena,
+    ) -> ValueVec {
+        let previous = self.properties();
+        properties.preserve_integrity_from(previous);
+        self.set_properties(properties, arena);
+        // Arena storage keeps its position in the payload word (or the extras) instead.
+        if properties.has_inline_property_storage() {
+            self.store_inline_values(inline_properties);
+        }
+        previous
+    }
+
+    /// Takes `source`'s property values, given `properties`, the arena's duplicate of
+    /// `source.properties()`, and returns the storage this object held before.
+    pub(crate) fn copy_property_storage_from(&mut self, source: &Self, properties: ValueVec, arena: &mut ValueArena) -> ValueVec {
+        let previous = self.properties();
+        self.set_properties(properties, arena);
+        if properties.has_inline_property_storage() {
+            self.store_inline_values(source.inline_values());
+        }
+        previous
+    }
+
+    /// Presence of [[ErrorData]] is the unforgeable Error brand.
+    pub(crate) fn error(proto: Value) -> Self {
+        let mut object = Self::new(proto);
+        object.extras_mut().rare_mut().brand = ObjectBrand::Error;
+        object
+    }
+
+    /// How structured serialization treats this object.
+    pub(crate) fn set_structured_serialization(&mut self, policy: StructuredSerialization) {
+        self.extras_mut().rare_mut().structured_serialization = policy;
+    }
+
+    pub(crate) fn structured_serialization(&self) -> StructuredSerialization {
+        self.extras().and_then(ObjectExtras::rare).map_or(StructuredSerialization::Ordinary, |rare| rare.structured_serialization)
+    }
+
+    pub(crate) fn forbid_structured_transfer(&mut self) {
+        self.extras_mut().rare_mut().structured_transfer_forbidden = true;
+    }
+
+    pub(crate) fn is_structured_transfer_forbidden(&self) -> bool {
+        self.extras()
+            .and_then(ObjectExtras::rare).is_some_and(|rare| rare.structured_transfer_forbidden)
+    }
+
+    pub(crate) fn has_error_data(&self) -> bool {
+        self.brand() == ObjectBrand::Error
+    }
+
+    /// Genuine primitive-wrapper data; guest properties cannot supply this slot.
+    #[inline]
+    pub(crate) fn boxed_primitive(&self) -> Option<Value> {
+        self.extras()?.rare()?.boxed_primitive
+    }
+
+    pub(crate) fn set_boxed_primitive(&mut self, value: Value) {
+        self.extras_mut().rare_mut().boxed_primitive = Some(value);
+    }
+
+    pub(crate) fn stack_data(&self) -> Option<&StackData> {
+        self.extras()?.rare()?.stack_data.as_ref()
+    }
+
+    pub(crate) fn set_stack_data(&mut self, data: StackData) {
+        self.extras_mut().rare_mut().stack_data = Some(data);
+    }
+
+    /// Visit internal primitive data, private-name homes and captured stack roots.
+    #[inline(always)] pub(crate) fn visit_extras_roots(&self, visit: impl FnMut(Value)) { if self.extras_pointer().is_some() { self.visit_extras_values(visit) } }
+
+    #[inline(never)] fn visit_extras_values(&self, mut visit: impl FnMut(Value)) {
+        let Some(extras) = self.extras().and_then(ObjectExtras::rare) else { return };
+        if let Some(value) = extras.boxed_primitive {
+            visit(value);
+        }
+        match extras.stack_data.as_ref() {
+            Some(StackData::Captured { records, .. }) => {
+                for record in records {
+                    record.visit_roots(&mut visit);
+                }
+            }
+            Some(StackData::CallSite(record)) => {
+                record.visit_roots(&mut visit);
+            }
+            Some(StackData::Formatted(value)) => visit(*value),
+            None => {}
+        }
+    }
+
+    #[inline] pub(crate) fn was_used_as_prototype(&self) -> bool {
+        self.extras()
+            .is_some_and(|extras| extras.prototype_lookup != PrototypeLookupState::Ordinary)
+    }
+
+    pub(crate) fn mark_as_prototype(&mut self) {
+        if !self.was_used_as_prototype() {
+            // A prototype's elements answer its dependents' reads: no proof replaces them.
+            super::array_proofs::retire_array_storage_proofs();
+            self.note_global_layout_change();
+            self.extras_mut().prototype_lookup = PrototypeLookupState::Setup;
+        }
+    }
+
+    pub(crate) fn prototype_lookup_ready(&self) -> bool {
+        self.extras()
+            .is_some_and(|extras| extras.prototype_lookup == PrototypeLookupState::Ready)
+    }
+
+    pub(crate) fn prepare_prototype_lookup(&mut self) {
+        if self.was_used_as_prototype() {
+            self.extras_mut().prototype_lookup = PrototypeLookupState::Ready;
+        }
+    }
+
+    #[inline] pub(crate) fn shape(&self) -> u32 {
+        ValueVec::from_parts(0, self.aux()).auxiliary()
+    }
+    /// The shape with its dictionary and exotic bits (`ValueVec::exact_auxiliary`): a cache
+    /// entry, which records only shapes, matches it exactly when it matches the shape of an
+    /// ordinary object outside dictionary storage.
+    #[inline(always)]
+    pub(crate) fn exact_shape(&self) -> u32 {
+        ValueVec::from_parts(0, self.aux()).exact_auxiliary()
+    }
+    /// The shape with its exotic bit and without its dictionary bit: a recorded shape
+    /// matches it exactly when it matches the shape of an ordinary object, in whatever
+    /// storage (`ValueVec::EXOTIC_ACCESS`).
+    #[inline(always)]
+    pub(crate) fn ordinary_shape(&self) -> u32 {
+        self.aux() & !(crate::value_vec::DICTIONARY_STORAGE | crate::value_vec::STORAGE_FORM | crate::value_vec::CONSTANT_FORM)
+    }
+
+    /// Whether code holds this object's values as constants (`value_vec::CONSTANT_FORM`).
+    #[inline(always)]
+    pub(crate) fn holds_constant_mark(&self) -> bool {
+        self.aux() & crate::value_vec::CONSTANT_FORM != 0
+    }
+
+    /// Marks this object's values as held by code (`value_vec::CONSTANT_FORM`): until the bit
+    /// clears, every raw-word guard misses it and its stores go through the VM, which clears
+    /// it (`note_constant_write`). The caller subscribes its reader under `exact_shape`, which
+    /// the mark leaves unchanged.
+    pub(crate) fn mark_constant(&mut self) {
+        self.set_aux(self.aux() | crate::value_vec::CONSTANT_FORM);
+    }
+
+    /// A write to one of this object's values, or a change of its layout or storage: where
+    /// code holds its values (`holds_constant_mark`), that code retires, by the object's exact
+    /// shape as it subscribed (`watch_prototype_values`), and the mark clears, so later stores
+    /// take every fast path again. One test of the header word otherwise.
+    #[inline(always)]
+    pub(crate) fn note_constant_write(&mut self) {
+        if self.holds_constant_mark() {
+            self.clear_constant_mark();
+        }
+    }
+
+    #[inline(never)]
+    fn clear_constant_mark(&mut self) {
+        prototype_values::retire(self.exact_shape());
+        self.set_aux(self.aux() & !crate::value_vec::CONSTANT_FORM);
+    }
+    #[inline(always)]
+    pub(crate) fn set_shape(&mut self, shape: u32, arena: &mut ValueArena) {
+        self.note_constant_write();
+        arena.note_shape_transition(self.shape(), shape);
+        self.note_prototype_layout_change();
+        self.note_global_layout_change();
+        self.renumber_shape(shape);
+    }
+    #[inline] pub(crate) fn is_extensible(&self) -> bool {
+        self.properties().is_extensible()
+    }
+    /// Whether a cached add transition (`FieldAddCache`) applies to this object as to the
+    /// ordinary object that recorded it: it is extensible, and no arguments object or module
+    /// namespace, whose exotic own properties its shape does not describe.
+    #[inline(always)]
+    pub(crate) fn admits_cached_add(&self) -> bool {
+        self.is_extensible() && !self.has_exotic_access()
+    }
+    /// Whether the object's property access is not the ordinary one its shape describes: an
+    /// arguments object, a module namespace or a proxy's own object. A header bit, so fast
+    /// paths need not read the extras (`ObjectBrand`).
+    #[inline(always)]
+    pub(crate) fn has_exotic_access(&self) -> bool {
+        self.aux() & crate::value_vec::EXOTIC_ACCESS != 0
+    }
+    #[inline(always)]
+    fn brand(&self) -> ObjectBrand {
+        self.extras().and_then(ObjectExtras::rare).map_or(ObjectBrand::Ordinary, |rare| rare.brand)
+    }
+    #[inline(always)]
+    fn element_facts(&self) -> ElementFacts {
+        self.extras().map_or(ElementFacts(0), |extras| extras.element_facts)
+    }
+    fn mark_element_fact(&mut self, bit: u8) {
+        self.extras_mut().element_facts.0 |= bit;
+    }
+    pub(crate) fn set_extensible(&mut self, value: bool) {
+        let mut properties = ValueVec::from_parts(self.meta() & VALUE_VEC_INTEGRITY_BITS, 0);
+        properties.set_extensible(value);
+        self.set_meta((self.meta() & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0);
+    }
+    #[inline]
+    pub(crate) fn is_frozen(&self) -> bool {
+        self.properties().is_frozen()
+    }
+    pub(crate) fn set_frozen(&mut self, value: bool) {
+        self.note_prototype_layout_change();
+        self.note_global_layout_change();
+        super::array_proofs::retire_array_storage_proofs();
+        let mut properties = ValueVec::from_parts(self.meta() & VALUE_VEC_INTEGRITY_BITS, 0);
+        properties.set_frozen(value);
+        self.set_meta((self.meta() & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0);
+    }
+    #[inline]
+    pub(crate) fn arguments_map(&self) -> Option<&[u16]> {
+        self.extras()?.rare()?.arguments_map.as_deref()
+    }
+    pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
+        self.extras_mut_existing()?.rare_mut_existing()?.arguments_map.as_mut()
+    }
+    pub(crate) fn window_depth(&self) -> Option<usize> {
+        self.extras()?.rare()?.window_depth.map(|depth| depth as usize)
+    }
+    pub(crate) fn set_window_depth(&mut self, depth: usize) {
+        if let Some(rare) = self.extras_mut_existing().and_then(ObjectExtras::rare_mut_existing) {
+            rare.window_depth = u32::try_from(depth).ok();
+        }
+    }
+    pub(crate) fn mapped_argument_slot(&self, index: usize) -> Option<usize> {
+        self.arguments_map()?
+            .get(index)
+            .copied()
+            .filter(|slot| *slot != u16::MAX)
+            .map(usize::from)
+    }
+    pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
+        super::array_proofs::retire_array_storage_proofs();
+        self.extras_mut().rare_mut().arguments_map = Some(mapping);
+    }
+    pub(crate) fn set_arguments_object(&mut self) {
+        self.extras_mut().rare_mut().brand = ObjectBrand::Arguments;
+        self.set_aux(self.aux() | crate::value_vec::EXOTIC_ACCESS);
+    }
+    /// Whether the object's elements are ordinary and all dense, as `dense_array_length`
+    /// needs them: it is extensible and not frozen, and holds no indexed or `length`
+    /// descriptor, no arguments mapping and never held sparse elements
+    /// (`mark_sparse_elements`, which every sparse write makes). Read from the header bits
+    /// and one mask of the extras' element facts.
+    #[inline(always)]
+    pub(crate) fn holds_ordinary_elements(&self) -> bool {
+        self.meta() & VALUE_VEC_INTEGRITY_BITS == 0
+            && !self.has_exotic_access()
+            && !self.element_facts().has(ElementFacts::NOT_ORDINARY)
+    }
+    #[inline] pub(crate) fn is_arguments_object(&self) -> bool {
+        self.brand() == ObjectBrand::Arguments
+    }
+    #[inline]
+    pub(crate) fn has_indexed_descriptors(&self) -> bool {
+        self.element_facts().has(ElementFacts::INDEXED_DESCRIPTORS)
+    }
+    pub(crate) fn mark_indexed_descriptors(&mut self) {
+        self.note_prototype_layout_change();
+        super::array_proofs::retire_array_storage_proofs();
+        self.mark_element_fact(ElementFacts::INDEXED_DESCRIPTORS);
+    }
+    /// Whether the object ever held sparse elements (`mark_sparse_elements`).
+    #[inline(always)]
+    pub(crate) fn has_sparse_elements(&self) -> bool {
+        self.element_facts().has(ElementFacts::SPARSE_ELEMENTS)
+    }
+    pub(crate) fn mark_sparse_elements(&mut self) {
+        self.mark_element_fact(ElementFacts::SPARSE_ELEMENTS);
+    }
+    pub(crate) fn has_length_descriptor(&self) -> bool {
+        self.element_facts().has(ElementFacts::LENGTH_DESCRIPTOR)
+    }
+    pub(crate) fn mark_length_descriptor(&mut self) {
+        self.mark_element_fact(ElementFacts::LENGTH_DESCRIPTOR);
+    }
+    /// Whether the VM's descriptor table may hold an entry for this object: lookups of an
+    /// object without one need not probe the table.
+    #[inline(always)]
+    pub(crate) fn has_side_descriptors(&self) -> bool {
+        self.element_facts().has(ElementFacts::SIDE_DESCRIPTORS)
+    }
+    /// A prototype's side descriptors can name keys its shape lacks, which retires the
+    /// proofs (`prototype_layout_epoch`) that found them absent.
+    pub(crate) fn mark_side_descriptors(&mut self) {
+        self.note_prototype_layout_change();
+        self.mark_element_fact(ElementFacts::SIDE_DESCRIPTORS);
+    }
+    pub(crate) fn is_raw_json(&self) -> bool {
+        self.brand() == ObjectBrand::RawJson
+    }
+    pub(crate) fn set_raw_json(&mut self) {
+        self.extras_mut().rare_mut().brand = ObjectBrand::RawJson;
+    }
+
+    pub(crate) fn external_address(&self) -> Option<usize> {
+        self.extras()?.rare()?.external_address
+    }
+    pub(crate) fn set_external_address(&mut self, address: usize) {
+        let extras = self.extras_mut().rare_mut();
+        extras.external_address = Some(address);
+        extras.structured_serialization = StructuredSerialization::Forbidden;
+    }
+
+    /// A namespace is exotic (`set_module_namespace`), so the flag in the object's own word
+    /// rules out every other object without reading its extras.
+    #[inline(always)]
+    pub(crate) fn is_module_namespace(&self) -> bool {
+        self.has_exotic_access() && self.brand() == ObjectBrand::ModuleNamespace
+    }
+    /// A proxy's own object: the handler answers every access, so no shape a cache records
+    /// may match it.
+    pub(crate) fn proxy(proto: Value) -> Self {
+        let mut object = Self::new(proto);
+        object.set_aux(object.aux() | crate::value_vec::EXOTIC_ACCESS);
+        object
+    }
+    pub(crate) fn set_module_namespace(&mut self) {
+        self.extras_mut().rare_mut().brand = ObjectBrand::ModuleNamespace;
+        self.set_aux(self.aux() | crate::value_vec::EXOTIC_ACCESS);
+    }
+    pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
+        self.extras().and_then(ObjectExtras::rare).map_or(&[], |rare| &rare.module_bindings)
+    }
+    pub(crate) fn set_module_bindings(&mut self, bindings: Vec<(Atom, ProgramId, u16)>) {
+        self.extras_mut().rare_mut().module_bindings = bindings;
+    }
+    #[inline]
+    pub(crate) fn deferred_module(&self) -> Option<&crate::ModuleSource> {
+        self.extras()?.rare()?.deferred_module.as_ref()
+    }
+    pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
+        self.extras_mut().rare_mut().deferred_module = module;
+    }
+    pub(crate) fn allocated_extra_bytes(&self) -> usize {
+        self.extras().map_or(0, ObjectExtras::allocated_bytes)
+    }
+
+    pub(crate) fn module_binding(&self, atom: Atom) -> Option<(ProgramId, u16)> {
+        self.module_bindings()
+            .iter()
+            .find_map(|(name, program, slot)| (*name == atom).then_some((*program, *slot)))
+    }
+}
+
 /// An object is its header word and one payload word.
 const _: () = assert!(std::mem::size_of::<Object>() == 12);
 /// The payload word holds every inline slot as a narrow value.
