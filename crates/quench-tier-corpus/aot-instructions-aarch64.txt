@@ -1,0 +1,17 @@
+# The produced image's ahead code (`_quench_unit_*_body`), instructions per iteration of
+# its hottest loop, against the C twin's scalar loop (`cparity-c-aarch64.txt`); `-` is a
+# body that lowers no loop, i.e. the image hands that loop back. Measured by building each
+# kernel with `quench-node build --dynamic-source --keep-symbols` and disassembling the
+# body (`quench-gate --only aot-instructions`). Counts only shrink.
+# `bodies` counts the functions the image lowers ahead; `aot` is the hottest loop of
+# those bodies. A kernel whose own function has no body shows its top level's loop, so
+# its `aot` is not the kernel loop: the image compiles that at run time.
+# kernel bodies aot c-aot
+crc 1 33 14
+dot 1 44 8
+fib 1 - 8
+matmul 1 59 6
+nbody 1 77 34
+qsort 1 21 4
+structs 1 42 17
+sum 1 19 7

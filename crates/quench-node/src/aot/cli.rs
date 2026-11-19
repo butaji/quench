@@ -31,6 +31,9 @@ struct Options {
     profile: String,
     strict: bool,
     support: SourceSupport,
+    /// Keep the produced image's symbol table: a produced image is measured and debugged by
+    /// symbol (`quench-gate --only aot-instructions`), and stripping is what removes them.
+    keep_symbols: bool,
 }
 
 impl Options {
@@ -43,8 +46,10 @@ impl Options {
         let mut profile = None;
         let mut strict = false;
         let mut support = None;
+        let mut keep_symbols = false;
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
+                "--keep-symbols" => keep_symbols = true,
                 "-o" | "--output" | "--report" | "--profile" | "--sdk-report" => {
                     let value = arguments
                         .next()
@@ -100,6 +105,7 @@ impl Options {
             profile,
             strict,
             support: support.unwrap_or(SourceSupport::Automatic),
+            keep_symbols,
         })
     }
 }
@@ -327,9 +333,14 @@ fn compile(options: Options) -> Result<(), String> {
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
-    let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
+    let payload = if options.keep_symbols {
+        report["symbols"] = json!("kept (--keep-symbols)");
+        None
+    } else {
+        Some(quench_runtime::native_link::remove_offline_symbols(&staged)?)
+    };
     report["symbol_audit_stage"] = json!("before_symbol_removal");
-    report["binary_bytes"] = json!(payload.binary_bytes);
+    report["binary_bytes"] = json!(payload.as_ref().map_or_else(|| std::fs::metadata(&staged).map(|m| m.len()).unwrap_or(0), |payload| payload.binary_bytes));
     report["payload_reduction"] = json!(payload);
     report["native_dependencies"] = json!(native_dependencies(&staged)?);
     report["status"] = json!("compiled");
