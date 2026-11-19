@@ -301,6 +301,10 @@ impl AwaitSource {
 impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
     /// Whether `value` is an object, by the lane context's VM; `None` without a context.
     fn object_like(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
+        // A value outside the heap is no object; only a cell asks the lane context.
+        if !Value::from_bits(value).is_heap() {
+            return Some(false);
+        }
         let host = self.host?;
         Some((host.awaits.object_like)(host.cx, Value::from_bits(value)))
     }
