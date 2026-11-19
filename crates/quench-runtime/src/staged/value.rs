@@ -191,14 +191,14 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
         let integer_truthy = stage.ne_imm(payload, 0u32);
         let past = is_double(stage, bits);
         let tagged = stage.not(past);
-        // Written out, not folded over an array: a stencil row must not call out or keep a panic path.
+        // Written out, not an iterator fold: a stencil inlines every step (no call to `reduce` or `expect`).
         let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
         let undefined = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
         let deleted = stage.eq_imm(bits, crate::Value::DELETED.to_bits());
-        let false_ = stage.eq_imm(bits, crate::Value::FALSE.to_bits());
+        let false_word = stage.eq_imm(bits, crate::Value::FALSE.to_bits());
         let nullish = stage.any(null, undefined);
-        let unset = stage.any(deleted, false_);
-        let falsy = stage.any(nullish, unset);
+        let absent = stage.any(deleted, false_word);
+        let falsy = stage.any(nullish, absent);
         let immediate_truthy = stage.not(falsy);
         let double_truthy = stage.number_truthy(bits);
         let tagged_truthy = stage.pick(integer, integer_truthy, immediate_truthy);

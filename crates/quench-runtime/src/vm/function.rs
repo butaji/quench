@@ -158,10 +158,7 @@ impl<H: Host> Vm<H> {
             return Value::NULL;
         };
         loop {
-            if self.realm.promise.active_native.iter().any(|activation| {
-                activation.frame_depth == index
-                    && activation.boundary == super::activation::NativeCallBoundary::Opaque
-            }) {
+            if self.host_frame_hides_caller(index) {
                 return Value::NULL;
             }
             let Some(parent) = index.checked_sub(1) else {

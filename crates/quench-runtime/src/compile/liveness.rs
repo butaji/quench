@@ -90,17 +90,35 @@ pub(crate) fn derive_entry_live(function: &Function, methods: &(impl MethodArgum
 }
 
 /// `function`'s register roots, given the live sets `solved` that the lowering solved for `function`
-/// as it stands (`analyze`, `None` where it was not solved). The entry bound is taken from `solved`
-/// where it is at hand. Otherwise the bound and the masks are derived on first ask from the
-/// program's tables (`ResidualProgram::entry_fill`, `ResidualProgram::shared_register_root_masks`),
-/// so a function nothing activates or collects is never analysed.
+/// as it stands (`analyze`, `None` where it was not solved). The entry bound and the masks are both
+/// built from `solved`, so the function is solved once; the masks are kept for the first mask ask
+/// where a collection would keep them (`RegisterRoots::keep_solved`). Otherwise the bound and the
+/// masks are derived on first ask from the program's tables (`ResidualProgram::entry_fill`,
+/// `ResidualProgram::shared_register_root_masks`), so a function nothing activates or collects is
+/// never analysed.
 pub(crate) fn register_roots_from(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction], solved: Option<Vec<RegisterSet>>) -> crate::bytecode::RegisterRoots {
     // `RegisterMasks::of` declines over the budget and solves windows past the root map's width.
     let Some(live) = solved.filter(|_| budget::admits(function) && function.registers <= ROOT_MAP_REGISTERS) else {
         return crate::bytecode::RegisterRoots::new(true);
     };
     debug_assert!(analyze(function, methods, fields, superinstructions).as_ref() == Some(&live), "the solved live sets match the code");
-    crate::bytecode::RegisterRoots::with_entry_live(true, entry_live(function, &RegisterMasks::new(live)))
+    let masks = RegisterMasks::new(live);
+    let entry = entry_live(function, &masks);
+    crate::bytecode::RegisterRoots::with_solved(entry, (!RegisterMasks::too_large_to_keep(function)).then_some(masks))
+}
+
+/// `derive_entry_live` for a function whose entry bound is derived on its first activation: the
+/// masks it solves are kept for the first mask ask where a collection would keep them, so that
+/// ask does not solve the function again.
+pub(crate) fn derive_entry_live_keeping(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> u16 {
+    let Some(masks) = RegisterMasks::of(function, methods, fields, superinstructions) else {
+        return crate::bytecode::RegisterRoots::ALL_LIVE_AT_ENTRY;
+    };
+    let entry = entry_live(function, &masks);
+    if !RegisterMasks::too_large_to_keep(function) {
+        function.register_roots.keep_solved(masks);
+    }
+    entry
 }
 
 /// `function`'s live registers before each instruction, solved at the width `M`, which holds

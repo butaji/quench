@@ -2659,7 +2659,7 @@ pub(super) struct LaneStack {
     /// The headers the segments hold, which `activation_count` counts.
     sealed: std::cell::Cell<usize>,
     /// The admission bound emitted code checks native headers against (`JsStepDispatch::plain_depth_limit`):
-    /// the activation limit while the frames are bound (`NATIVE_FRAMES_ENABLED`), else 0. Rust's frame
+    /// the activation limit while the frames are bound (`native_frames_enabled`), else 0. Rust's frame
     /// changes void it (`frames_changed`), so emitted calls take the helper row until the next binding.
     plain_depth_limit: Box<std::cell::Cell<usize>>,
     /// The frames below the plain headers, records and sealed alike (`frames_below_plain`), as of the last
@@ -2851,9 +2851,12 @@ pub(in crate::vm) struct LaneStackWords {
 }
 
 /// Whether emitted code may push native headers at all (one-frame-one-call.md F5). Off until the
-/// emitted push, its readers and the body table are verified: the bound stays 0, so every call takes
-/// the helper row.
-const NATIVE_FRAMES_ENABLED: bool = false;
+/// emitted push, its readers and the body table are verified (`QUENCH_DEV=native-frames` turns it on):
+/// the bound stays 0, so every call takes the helper row.
+fn native_frames_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::trace::Dev::NativeFrames.on())
+}
 
 impl LaneStack {
     /// The activation records, every frame among them (call protocol v2 stage C,
@@ -4571,12 +4574,16 @@ lane_handler! {
         };
         let function = code.function(vm.frames[frame].function as usize);
         let instruction = function.widened(function.code[pc]);
+        // A record that returns its result (`RETURN_REGISTER`) completes the frame, which the general path does.
+        if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
+            return exit(ip);
+        }
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
         let mut next = pc + 1;
         match vm.step(code, frame, instruction, &mut next, false) {
             Ok(StepResult::Continue) => {}
-            Ok(_) => unreachable!("an in-place step only continues"),
+            Ok(other) => unreachable!("an in-place step only continues: {:?} gave {}", instruction.op(), match other { StepResult::Return(_) => "Return", _ => "another result" }),
             Err(error) => {
                 vm.lane_completion.raise(error);
                 return exit(ip);
@@ -9504,17 +9511,6 @@ impl<H: Host> Vm<H> {
         self.frames[frame].pc_is_resume = true;
     }
 
-    /// Running natives, innermost of the first `natives`, that recorded `depth` frames beside
-    /// activations now `added` frames above it: their caller is the innermost of those.
-    fn shift_beside_natives(&mut self, natives: usize, depth: usize, added: usize) {
-        for native in self.realm.promise.active_native[..natives].iter_mut().rev() {
-            if native.frame_depth != depth {
-                break;
-            }
-            native.frame_depth += added;
-        }
-    }
-
     /// The lane's exit (`dispatch_in_lane`'s exit record): a running leaf, whose records may
     /// leave the lane (`materialize_leaf_in_lane`), then every activation becomes a frame the
     /// general path runs. Nothing else materializes while a leaf runs: its records call
@@ -10281,9 +10277,9 @@ impl<H: Host> Vm<H> {
         // The bound is set last: `plain_frames_word` above voids it.
         stack.frames_below.set(stack.frames_below_plain());
         // Once native headers are enabled, emitted pushes keep body_top equal to the total count between bindings.
-        debug_assert!(!NATIVE_FRAMES_ENABLED || stack.body_top.get() == stack.activation_count(), "body_top names the total frame count at binding");
+        debug_assert!(!native_frames_enabled() || stack.body_top.get() == stack.activation_count(), "body_top names the total frame count at binding");
         stack.body_top.set(stack.activation_count());
-        stack.plain_depth_limit.set(if NATIVE_FRAMES_ENABLED { stack.activation_limit.get().min(LANE_STACK_ACTIVATIONS) } else { 0 });
+        stack.plain_depth_limit.set(if native_frames_enabled() { stack.activation_limit.get().min(LANE_STACK_ACTIVATIONS) } else { 0 });
         words
     }
 

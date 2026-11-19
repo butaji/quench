@@ -268,8 +268,10 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let objects: Vec<Register> = super::declared::exact_objects(function, &prototypes).into_iter().chain(shapes.iter().map(|proto| proto.register)).collect();
     let loops: Vec<Register> = shapes.iter().map(|proto| proto.register).collect();
     let flat: Vec<Register> = shapes.iter().filter(|proto| proto.flat).map(|proto| proto.register).collect();
-    proofs::prove(&span, &mut decoded, &reached, &objects, &shaped, &loops, &flat);
+    // The slot-type proofs a row keeps (`Decoded::typed`) are settled before the receiver proofs, which an object read's
+    // destination joins (`proofs::typed_object`).
     super::repr::keep_typed_reads(&homes, &mut decoded);
+    proofs::prove(&span, &mut decoded, &reached, &objects, &shaped, &loops, &flat);
     // The run's stores word is checked at the entry where a store is admitted on it (`Heap::Stores`); a store that re-reads
     // the word itself (`Decoded::recheck`) needs no entry test, and the stores after it are admitted by that test.
     let stores = decoded.iter().any(|row| row.admitted && !row.recheck);
