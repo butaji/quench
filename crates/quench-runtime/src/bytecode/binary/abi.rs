@@ -5,7 +5,7 @@ use crate::bytecode::{CALL_PLAN_FLAG_COUNT, DERIVED_FACT_COUNT};
 impl crate::bytecode::ResidualProgram {
     /// 147: `LoadGlobalLexical` and `StoreGlobalLexical` address a script's lexicals by declaration index.
     /// 146: function records lost their realm word; a function's realm override is written in its extras.
-    pub const FORMAT_VERSION: u8 = 152;
+    pub const FORMAT_VERSION: u8 = 153;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
