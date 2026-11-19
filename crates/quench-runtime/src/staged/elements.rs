@@ -275,12 +275,23 @@ fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: 
 /// past int32.
 #[inline(always)]
 pub(crate) fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
-    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
-    let backing = array_backing(stage, record_base, base, miss)?;
-    let payload = stage.load_u64(Region::Payload.mutable(), backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
-    let plain = super::object::plain_payload(stage, payload);
+    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+    let is_array = super::value::is_direct_array(stage, base);
+    stage.guard(is_array, miss)?;
+    let present = stage.ne_imm(record_base, 0u32);
+    stage.guard(present, miss)?;
+    let record = array_record(stage, record_base, base);
+    // The record's payload word is the backing's header when it holds no extras, which is the only
+    // case this read takes: one load gives the plain test and the header, and extras miss at once.
+    let header = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let plain = super::object::plain_payload(stage, header);
     stage.guard(plain, miss)?;
-    super::value::length_value(stage, backing.length, miss)
+    let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
+    // A narrow or double backing flags its length's top bits: it misses.
+    let encoded = stage.ugt_imm(length, u64::from(!crate::heap::ENCODED_LEN));
+    let wide = stage.not(encoded);
+    stage.guard(wide, miss)?;
+    super::value::length_value(stage, length, miss)
 }
 
 /// Replaces the present element at `address` of the dense backing at `values`, which held
