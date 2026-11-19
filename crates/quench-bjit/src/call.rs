@@ -24,6 +24,10 @@ pub enum CallRow {
     /// The pinned register `Place::Pin` or `Place::PinF` back from the tagged word a spill wrote
     /// to the frame slot at hole 0; successor NEXT.
     Reload(Place),
+    /// The semantic row (`stencils/call_rows.rs`, `call_semantic`): value holes 0 (the record's pc), 1 (the
+    /// opcode's semantic entry), 2 (the record's operands) and 3 (its jump target, `u64::MAX` for none);
+    /// successors NEXT (the next record), TAKEN (the jump's target), EXIT0 (a stop, with (status, word)).
+    Semantic,
     /// The unconditional leave at the instruction: successor EXIT0 alone, every register as it
     /// came (the exit stub writes the live pinned ones back).
     Here,
@@ -122,6 +126,7 @@ impl CallRow {
         match self {
             CallRow::Helper => Ok("call_helper".to_string()),
             CallRow::Here => Ok("exit_here".to_string()),
+            CallRow::Semantic => Ok("call_semantic".to_string()),
             CallRow::Direct { argc, this, checked } if usize::from(argc) <= MAX_DIRECT_ARGC => {
                 let mode = match this { ThisRow::Strict => "strict", ThisRow::Sloppy => "sloppy", ThisRow::Lexical => "lexical" };
                 Ok(format!("call_direct_a{argc}_{mode}{}", if checked { "" } else { "_unchecked" }))
@@ -157,7 +162,7 @@ mod tests {
             .flat_map(move |this| [true, false].map(|checked| CallRow::Direct { argc, this, checked })));
         let pins = (0..crate::PINNED as u8).map(Place::Pin).chain((0..crate::PINNED_F as u8).map(Place::PinF)).map(CallRow::Reload);
         let builtins = BuiltinRow::ALL.into_iter().map(CallRow::Builtin);
-        [CallRow::Helper, CallRow::Here].into_iter().chain(direct).chain(pins).chain(builtins).collect()
+        [CallRow::Helper, CallRow::Semantic, CallRow::Here].into_iter().chain(direct).chain(pins).chain(builtins).collect()
     }
 
     /// Every row the planner can name was built, and its successors and holes are the contract's.
@@ -171,6 +176,10 @@ mod tests {
                 CallRow::Helper => {
                     assert!([NEXT, TAKEN, EXIT, EXIT + 1].iter().all(|s| successors.contains(s)), "{successors:?}");
                     assert!(values.contains(&0) && values.contains(&1), "{values:?}");
+                }
+                CallRow::Semantic => {
+                    assert!([NEXT, TAKEN, EXIT].iter().all(|s| successors.contains(s)), "{successors:?}");
+                    assert!((0..4).all(|hole| values.contains(&hole)), "{values:?}");
                 }
                 CallRow::Here => {
                     assert_eq!(successors, [EXIT]);

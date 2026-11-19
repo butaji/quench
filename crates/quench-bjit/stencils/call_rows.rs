@@ -21,6 +21,12 @@
 //! (a step that took its conditional jump) continues at TAKEN, the reloads of the registers live
 //! at the jump's target.
 //!
+//! Semantic row `call_semantic`: holes V0 = the record's pc, V1 = the opcode's semantic entry, V2 = the
+//! record's operands, V3 = the jump target of the record (`u64::MAX` where it has none). The entry
+//! (`native_js_operation_entry`) runs the record on the activation's frame and writes its next PC to
+//! a word of this row's frame. Status 0 continues at TAKEN where the next PC is the target, else NEXT;
+//! any other status is a stop, which leaves through EXIT0 with (status, word) in r14, r15.
+//!
 //! Direct row `call_direct_a<N>_<strict|sloppy|lexical>`: hole V0 = the address of the site's
 //! `CallRecord`. It checks the callee word and (sloppy) the receiver (an arrow, lexical, binds
 //! none: its body finds its `this` in its environment, as `body_call_helper` passes it), admits the call with the
@@ -65,6 +71,10 @@ const HOLE_HELPER: u8 = 1;
 const HOLE_RECORD: u8 = 0;
 /// A direct row's call record index in the caller, which a raise names to the lane (`raising`).
 const HOLE_DIRECT_PC: u8 = 1;
+/// The semantic row's entry, operand record and jump target holes.
+const HOLE_SEMANTIC: u8 = 1;
+const HOLE_OPERANDS: u8 = 2;
+const HOLE_TARGET: u8 = 3;
 /// Shift from a word count to bytes.
 const WORD_SHIFT: u32 = REGISTER_BYTES.trailing_zeros();
 
@@ -106,6 +116,8 @@ struct RowsReturn {
 }
 /// A semantic helper (`body_call_helper`): (vm, residual, lane context, call pc) -> status.
 type Helper = unsafe extern "C" fn(u64, u64, u64, u64) -> u64;
+/// A semantic entry (`native_js_operation_entry`): (context, pc, operands, result word address) -> status.
+type SemanticEntry = unsafe extern "C" fn(usize, u64, usize, usize) -> i64;
 
 /// `dead` with a (status, word) for `leave_status` in the first two pinned ints.
 #[inline(always)]
@@ -187,6 +199,25 @@ pub unsafe extern "rust-preserve-none" fn call_helper(frame: usize, ctx: usize, 
                 core::hint::cold_path();
                 go!(HOLE_EXIT1, leaving(&s, LaneStatus::Terminated as u32, 0))
             }
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "rust-preserve-none" fn call_semantic(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+    unsafe {
+        let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
+        let entry: SemanticEntry = transmute(hole64::<HOLE_SEMANTIC>() as usize);
+        let mut word: u64 = 0;
+        let status = entry(s.ctx, hole64::<HOLE_CALL_PC>(), hole64::<HOLE_OPERANDS>() as usize, &raw mut word as usize);
+        if status != 0 {
+            core::hint::cold_path();
+            go!(HOLE_EXIT0, leaving(&s, status as u32, word));
+        }
+        if word == hole64::<HOLE_TARGET>() {
+            go!(HOLE_TAKEN, dead(&s))
+        } else {
+            go!(HOLE_NEXT, dead(&s))
         }
     }
 }
