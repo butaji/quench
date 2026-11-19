@@ -136,7 +136,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{binary_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
+use lane_allocations::{binary_in_lane, concat_pair_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
@@ -1141,6 +1141,8 @@ lane_helper_inventory! { H;
     NewTemplate => new_template_in_lane::<H>,
     /// A string concatenation of pure parts (`new_concat_in_lane`).
     NewConcat => new_concat_in_lane::<H>,
+    /// `+` of two operands that become strings without guest code (`concat_pair_in_lane`).
+    ConcatPair => concat_pair_in_lane::<H>,
     /// A regexp literal's fresh object of its site's template (`new_regexp_in_lane`).
     NewRegExp => new_regexp_in_lane::<H>,
     /// A decision of two words the call-out carries, which needs no VM record

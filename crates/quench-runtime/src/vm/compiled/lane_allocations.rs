@@ -185,3 +185,18 @@ pub(super) unsafe extern "C" fn new_concat_in_lane<H: Host>(vm: u64, residual: u
     dispatch.refresh_object_bases(vm);
     value.to_bits()
 }
+
+/// A lane body's `+` of two operands that become strings without guest code (`Vm::primitive_concatenation`,
+/// the interpreter's rule for `+` once a string operand is present): the joined string, which
+/// appends in place where the left operand is the accumulator its buffer ends at. `DELETED` where
+/// the pair is another, a result is past the string limit, or a collection is due; nothing has
+/// changed then, so the interpreter takes the operator.
+pub(super) unsafe extern "C" fn concat_pair_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, left: u64, right: u64) -> u64 {
+    // SAFETY: as `compiled_new_object`; the residual is the running program.
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let Some(value) = vm.primitive_concatenation(residual, Value::from_bits(left), Value::from_bits(right)) else { return Value::DELETED.to_bits() };
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    value.to_bits()
+}
