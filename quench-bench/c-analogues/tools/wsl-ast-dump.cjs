@@ -52,8 +52,32 @@ const run = code => vm.runInContext(code, ctx);
 // 60 types in the order: struct fields (statement order), function parameter and return types
 // (functions map order), protocol signature types (statement order). One character per ordered
 // pair: bit 0 is Node.unify, bit 1 is Node.equals.
-const unifyMode = process.argv.includes("--unify");
-if (unifyMode) run(`function __unifyHarness(p) {
+const resolveMode = process.argv.includes("--resolve");
+const unifyMode = process.argv.includes("--unify") || resolveMode;
+// --resolve: for each function in map order, its own parameter types (AutoWrapped) resolved against
+// its overload list: "index bit" (index -1 with "-" when nothing resolves; bit is whether the
+// substituted return type equals the declared one).
+if (resolveMode) run(`function __resolveHarness(p) {
+    const NL = String.fromCharCode(10);
+    let count = 0;
+    for (const funcs of p.functions.values()) count += funcs.length;
+    let text = "funcs " + count + NL;
+    for (const funcs of p.functions.values()) for (const f of funcs) {
+        const fresh = f.typeParameters.map(t => new TypeVariable(t.origin, t.name, t.protocol));
+        const args = f.parameters.map(q => q.type.visit(new Substitution(f.typeParameters, fresh)).visit(new AutoWrapper()));
+        try {
+            const o = resolveOverloadImpl(p.functions.get(f.name), [], args, null);
+            if (!o.func) { text += "-1 -" + NL; continue; }
+            const sub = o.func.returnType.substituteToUnification(o.func.typeParameters, o.unificationContext).visit(new AutoWrapper());
+            text += p.functions.get(f.name).indexOf(o.func) + " " + (sub.equals(f.returnType) ? 1 : 0) + NL;
+        } catch (e) {
+            if (!(e instanceof RangeError)) throw e;
+            text += "E" + NL;
+        }
+    }
+    return text;
+}`);
+if (unifyMode && !resolveMode) run(`function __unifyHarness(p) {
     const NL = String.fromCharCode(10);
     const plain = t => {
         if (t instanceof TypeRef) return t.typeArguments.every(plain);
@@ -68,7 +92,11 @@ if (unifyMode) run(`function __unifyHarness(p) {
     let text = "types " + out.length + NL;
     for (const a of out) {
         let row = "";
-        for (const b of out) row += String.fromCharCode(48 + (a.unify(new UnificationContext(), b) ? 1 : 0) + (a.equals(b) ? 2 : 0));
+        for (const b of out) {
+            // a unification that does not terminate overflows the stack: E, as in the C harness
+            try { row += String.fromCharCode(48 + (a.unify(new UnificationContext(), b) ? 1 : 0) + (a.equals(b) ? 2 : 0)); }
+            catch (e) { if (!(e instanceof RangeError)) throw e; row += "E"; }
+        }
         text += row + NL;
     }
     return text;
@@ -295,7 +323,7 @@ const rows = inputs.map((input, i) => {
     try {
         if (unifyMode) {
             if (input.kind === "doLex") { dump = ""; }
-            else { anonRoles.clear(); resolveInput(input, stage); dump = run("__unifyHarness(__p)"); }
+            else { anonRoles.clear(); resolveInput(input, stage); dump = run(resolveMode ? "__resolveHarness(__p)" : "__unifyHarness(__p)"); }
         } else if (input.kind === "doLex") {
             const toks = lexTokens(input.text);
             dump = toks.join("\n");

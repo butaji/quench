@@ -6,6 +6,7 @@
 #ifndef WSL_TYPES_H
 #define WSL_TYPES_H
 
+#include <setjmp.h>
 #include "wsl-synth.h"
 
 /* ---- classification ---- */
@@ -302,7 +303,26 @@ static int ut_unify_impl(UCtx *c, Ast *self, Ast *other) {
   }
 }
 
+/* A unification that does not terminate (there is no occurs check, so a variable can be bound to a
+ * type that contains it) overflows the stack in JS. The harness reports those as E; here a depth
+ * limit stands in for the stack overflow. */
+static int UT_DEPTH = 0;
+static jmp_buf UT_JMP;
+static int UT_ARMED = 0;
+static int ut_unify_inner(UCtx *c, Ast *self, Ast *other);
 static int ut_unify(UCtx *c, Ast *self, Ast *other) {
+  if (UT_DEPTH >= 2000) {
+    /* the RangeError unwinds to the caller at once, as in JS */
+    if (UT_ARMED) longjmp(UT_JMP, 1);
+    fatal_unsupported("unification depth", self);
+  }
+  UT_DEPTH++;
+  int r = ut_unify_inner(c, self, other);
+  UT_DEPTH--;
+  return r;
+}
+
+static int ut_unify_inner(UCtx *c, Ast *self, Ast *other) {
   if (!other) fatal_unsupported("null other in unify", self);
   Ast *a = ut_unify_node(self);
   Ast *b = ut_unify_node(other);
@@ -479,14 +499,76 @@ static void unify_harness(Program *p, Buf *b) {
   buf_str(b, head);
   for (int i = 0; i < tl.n; i++) {
     for (int j = 0; j < tl.n; j++) {
-      UCtx *c = uc_new(NULL, 0);
-      int u = ut_unify(c, tl.out[i], tl.out[j]);
-      int e = ut_equals(tl.out[i], tl.out[j]) != NULL;
-      char one[2] = {(char)('0' + (u ? 1 : 0) + (e ? 2 : 0)), 0};
+      char one[2] = {'E', 0};
+      UT_DEPTH = 0;
+      UT_ARMED = 1;
+      if (setjmp(UT_JMP) == 0) {
+        UCtx *c = uc_new(NULL, 0);
+        int u = ut_unify(c, tl.out[i], tl.out[j]);
+        int e = ut_equals(tl.out[i], tl.out[j]) != NULL;
+        one[0] = (char)('0' + (u ? 1 : 0) + (e ? 2 : 0));
+      }
+      UT_ARMED = 0;
       buf_str(b, one);
     }
     buf_str(b, "\n");
   }
+}
+
+/* ---- resolve harness (--resolve): for each function in map order, resolve its own parameter types
+ * (AutoWrapped, as CallExpression.resolve does) against its overload list. One line per function:
+ * the chosen overload's index in the list (-1 if none) and 1 if the substituted return type equals
+ * the declared one (0 otherwise, or "-" with no choice). */
+typedef struct { Program *p; Buf *b; int n; } ResCx;
+static void resolve_fn(void *cx, Ast *f) {
+  ResCx *r = cx;
+  AstList ovs = {0};
+  for (int i = 0; i < r->p->statements.n; i++) {
+    Ast *st = r->p->statements.v[i];
+    if ((st->tag == A_FUNCDEF || st->tag == A_NATIVEFUNC) && strcmp(st->u.func.name, f->u.func.name) == 0)
+      list_push(&ovs, st);
+  }
+  int np = f->u.func.parameters.n;
+  Ast **args = arena_alloc(sizeof(Ast *) * (np ? np : 1));
+  /* the arguments get fresh type variables for the function's own type parameters (a call never passes
+   * them), so that no variable is unified with a type that contains it */
+  int ntp = f->u.func.typeParameters.n;
+  Ast **fresh = arena_alloc(sizeof(Ast *) * (ntp ? ntp : 1));
+  for (int i = 0; i < ntp; i++) {
+    Ast *tp = f->u.func.typeParameters.v[i];
+    fresh[i] = mk_from(A_TYPEVARIABLE, tp);
+    fresh[i]->u.typeVariable.name = tp->u.typeVariable.name;
+    fresh[i]->u.typeVariable.protocol = tp->u.typeVariable.protocol;
+  }
+  for (int i = 0; i < np; i++)
+    args[i] = rw_aw(subst_rw(f->u.func.parameters.v[i]->u.named.type, f->u.func.typeParameters.v, fresh, ntp));
+  r->n++;
+  UT_DEPTH = 0;
+  UT_ARMED = 1;
+  if (setjmp(UT_JMP)) { UT_ARMED = 0; buf_str(r->b, "E\n"); return; }
+  Overload o = resolve_overload(&ovs, NULL, 0, args, np, NULL, 0);
+  if (!o.func) { UT_ARMED = 0; buf_str(r->b, "-1 -\n"); return; }
+  int index = -1;
+  for (int i = 0; i < ovs.n; i++) if (ovs.v[i] == o.func) index = i;
+  Ast *sub = subst_unif(o.func->u.func.returnType, o.func->u.func.typeParameters.v, o.func->u.func.typeParameters.n, o.ctx);
+  Ast *res = rw_aw(sub);
+  char line[64];
+  int eq = ut_equals(res, f->u.func.returnType) != NULL;
+  UT_ARMED = 0;
+  snprintf(line, sizeof line, "%d %d\n", index, eq);
+  buf_str(r->b, line);
+}
+static void resolve_harness(Program *p, Buf *b) {
+  ResCx cx = {p, b, 0};
+  char head[32];
+  int count = 0;
+  for (int i = 0; i < p->statements.n; i++) {
+    Ast *st = p->statements.v[i];
+    if (st->tag == A_FUNCDEF || st->tag == A_NATIVEFUNC) count++;
+  }
+  snprintf(head, sizeof head, "funcs %d\n", count);
+  buf_str(b, head);
+  each_func_in_map_order(p, resolve_fn, &cx);
 }
 
 #endif

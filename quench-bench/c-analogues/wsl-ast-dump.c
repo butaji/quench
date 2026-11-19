@@ -120,7 +120,7 @@ static void bench_parse(int iterations) {
  * parses a doPrep input into the clone and reduces it with programWithUnnecessaryThingsRemoved),
  * then folds constexprs. The standard library is parsed once and kept below the arena mark. */
 static int STAGE = 0;
-static int UNIFY_MODE = 0;   /* --unify: the pairwise unification harness instead of the dump */
+static int UNIFY_MODE = 0;   /* --unify (1): the pairwise unification harness; --resolve (2): the overload harness */
 static Program STD_PROG, PREP_IN, PREP_OUT;
 static size_t STD_MARK;
 
@@ -191,7 +191,7 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
   }
   WSL_NH = 0;
   if (UNIFY_MODE) {
-    unify_harness(&PREP_OUT, b);
+    if (UNIFY_MODE == 2) resolve_harness(&PREP_OUT, b); else unify_harness(&PREP_OUT, b);
     WSL_NH = 0;
     return 0;
   }
@@ -209,6 +209,7 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--stage") == 0 && i + 1 < argc) STAGE = atoi(argv[++i]);
     else if (strcmp(argv[i], "--unify") == 0) UNIFY_MODE = 1;
+    else if (strcmp(argv[i], "--resolve") == 0) UNIFY_MODE = 2;
     else if (strcmp(argv[i], "--clone") == 0) CLONE_FLAG = 1;
     else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
     else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc) benchIterations = atoi(argv[++i]);
