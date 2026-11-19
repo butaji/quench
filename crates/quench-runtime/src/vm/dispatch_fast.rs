@@ -21003,6 +21003,20 @@ fn lane_return_script_frame<H: Host>(
         // names the register file `active_registers` holds.
         vm.active_registers = vm.frames[frame].registers.as_mut_ptr();
         value = vm.completed_call_value(&call.completion, frame, call.destination, value);
+        // A call the general loop made (`caller_cursor`) resumes there: no lane view runs its
+        // caller, so the lane delivers the completion and stops at the record after the call,
+        // which the general loop decodes (a `returns` call's `Return` reads the same register).
+        if call.caller_cursor.is_some() {
+            vm.write(frame, call.destination, value);
+            vm.frames[frame].pc = call.call_pc as usize + 1;
+            vm.frames[frame].pc_is_resume = true;
+            unsafe {
+                (*cx).root = LaneRoot::Frame(frame);
+                (*cx).registers = Registers(vm.frames[frame].registers.as_mut_ptr());
+            }
+            let next = unsafe { (*cx).base.add(call.call_pc as usize + 1) };
+            return exit(next);
+        }
         if !call.returns {
             vm.write(frame, call.destination, value);
             return lane_enter_script_frame(cx, frame).into_loop();
