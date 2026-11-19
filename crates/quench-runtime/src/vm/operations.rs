@@ -1940,35 +1940,14 @@ impl<H: Host> Vm<H> {
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
     /// code units, which runs no guest code. Identical Values name the same string, so they
-    /// are equal without reading either; flat operands compare in place, and a rope not yet
-    /// flat takes the general `order`.
+    /// are equal without reading either; otherwise `order` compares them (in place when flat).
     pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let relation = NumberRelation::from_operator(op)?;
         let (left_string, right_string) = (self.heap.string(left)?, self.heap.string(right)?);
         if left == right {
             return relation.of_ordering(std::cmp::Ordering::Equal);
         }
-        let ordering = match (left_string.existing_flat(), right_string.existing_flat()) {
-            (Some(left_units), Some(right_units)) => Self::flat_code_unit_order(left_units, right_units),
-            _ => left_string.order(right_string),
-        };
-        relation.of_ordering(ordering)
-    }
-
-    /// IsLessThan's code-unit order of two flat strings, read in place: ASCII units compare as
-    /// bytes (a memcmp), wide units as `u16` slices, and a mixed pair unit by unit. Inline text
-    /// is read from its own bytes, never materialised.
-    #[inline(always)]
-    fn flat_code_unit_order(
-        left: &crate::vm::wtf16::FlatUnits,
-        right: &crate::vm::wtf16::FlatUnits,
-    ) -> std::cmp::Ordering {
-        use crate::vm::wtf16::Units;
-        match (left.view(), right.view()) {
-            (Units::Ascii(left), Units::Ascii(right)) => left.cmp(right),
-            (Units::Wide(left), Units::Wide(right)) => left.cmp(right),
-            (left, right) => left.iter().cmp(right.iter()),
-        }
+        relation.of_ordering(left_string.order(right_string))
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.

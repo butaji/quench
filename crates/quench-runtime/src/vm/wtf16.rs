@@ -931,12 +931,16 @@ impl JsString {
     }
 
     /// IsLessThan's order of two strings, by code units: the one definition every string
-    /// comparison (relational operators, the default sort) takes. Two inline ASCII texts
-    /// compare in place, without forming their unit views.
-    #[inline]
+    /// comparison (relational operators, the default sort, JIT helpers) takes. Two inline
+    /// ASCII texts compare in place; two strings already flat compare their views in place
+    /// (`Units::cmp`), never flattening a rope; only a rope not yet flat is flattened first.
+    #[inline(always)]
     pub(crate) fn order(&self, other: &Self) -> std::cmp::Ordering {
         if let (Repr::Flat(FlatUnits::Short(left)), Repr::Flat(FlatUnits::Short(right))) = (&self.repr, &other.repr) {
             return left.order(right);
+        }
+        if let (Some(left), Some(right)) = (self.existing_units(), other.existing_units()) {
+            return left.cmp(&right);
         }
         self.units().cmp(&other.units())
     }
