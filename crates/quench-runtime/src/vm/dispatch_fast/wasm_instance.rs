@@ -1,10 +1,11 @@
 //! Lane handlers of a Wasm instance's state: its bindings, linear memory, SIMD values and
 //! globals.
 use super::*;
-use crate::staged::wasm_memory::scalar_address;
-use crate::staged::wasm_instance::binding_get;
-use crate::staged::wasm_simd::WasmSimd as _;
-use crate::staged::wasm_simd_concrete::ConcreteSimd;
+use crate::staged::wasm_instance::{Storage, binding_get, global_get, global_set};
+use crate::staged::wasm_machine::{ConcreteBytes, ConcreteInstance};
+use crate::staged::wasm_memory::{Access, load, scalar_address};
+use crate::staged::wasm_memory_vector::{load_lane, load_vector};
+use crate::staged::wasm_simd_rules::shuffle_bits;
 use crate::staged::ConcreteWasm;
 use crate::vm::wasm_global::InstanceBindings;
 
@@ -60,6 +61,21 @@ lane_handler! {
     }
 }
 
+/// `MemoryLoad::read`'s staged rules over the bytes of a memory: `load` for a scalar access,
+/// `load_vector` for a v128, `load_lane` for the widening and splat loads. Each checks its access
+/// before it reads, so an out-of-bounds read traps and writes nothing.
+#[inline(always)]
+fn lane_memory_read(memory: &[u8], operator: crate::wasm::memory::MemoryLoad, address: u64) -> Result<crate::WasmValue, crate::WasmTrap> {
+    let mut stage = ConcreteBytes { memory };
+    match Access::of_load(operator) {
+        Some(access) => load(&mut stage, access, address, 0, false).map(|word| crate::WasmValue::from_bits(access.ty, word)),
+        None if matches!(operator, crate::wasm::memory::MemoryLoad::V128Load) => {
+            load_vector(&mut stage, address, 0, false).map(crate::WasmValue::V128)
+        }
+        None => load_lane(&mut stage, operator.width(), address, 0, false).map(|word| operator.vector_of_word(word)),
+    }
+}
+
 lane_handler! {
     /// A generic Wasm memory load (`crate::wasm::memory::MemoryLoad`), as vectors and the
     /// accesses no direct op names take: in place when it reads in bounds; a trap, or an
@@ -73,7 +89,7 @@ lane_handler! {
             return exit(ip);
         };
         let loaded = match vm.wasm_memory_bytes(r.get(i.b)) {
-            Ok(bytes) => operator.read(&bytes, address as u64),
+            Ok(bytes) => lane_memory_read(&bytes, operator, address as u64),
             Err(_) => return exit(ip),
         };
         let Ok(value) = loaded else {
@@ -159,7 +175,7 @@ lane_handler! {
             return exit(ip);
         };
         let (left, right) = (u128::from_le_bytes(left), u128::from_le_bytes(right));
-        let shuffled = ConcreteSimd.vector_shuffle(indices, left, right);
+        let shuffled = shuffle_bits(left, right, indices);
         let value = vm.encode_wasm_value(crate::WasmValue::V128(shuffled));
         note_allocation(vm);
         r.set(i.a, value);
@@ -168,11 +184,21 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// A global's load (`Vm::wasm_global_load`, the staged rule): the slot's word under its
-    /// type's storage. Anything but a global binding takes the general path.
+    /// A global's load: the staged `global_get` over the global's native slot on
+    /// `ConcreteInstance`, its word encoded as a register. Anything but a global binding takes
+    /// the general path.
     pub(super) fn lane_global_get<>(cx, r, ip, i, view) {
-        let Ok(value) = unsafe { vm(cx) }.wasm_global_load(r.get(i.b)) else {
+        let vm = unsafe { vm(cx) };
+        let Some(Cell::WasmGlobal { bits, ty, .. }) = vm.heap.get(r.get(i.b)) else {
             return exit(ip);
+        };
+        let (mut bits, storage) = (*bits, Storage::of(*ty));
+        let mut instance = ConcreteInstance { globals: std::slice::from_mut(&mut bits), memory: &mut [] };
+        let word = global_get(&mut instance, 0, storage);
+        let value = match storage {
+            Storage::Bits32 => Value::integer(word as u32 as i32),
+            Storage::Bits64 => vm.encode_bits64(word),
+            Storage::Handle => Value::from_bits(word),
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
@@ -180,12 +206,25 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// A global's store (`Vm::wasm_global_store`, the staged rule); a binding that is no
-    /// mutable global takes the general path, which raises.
+    /// A global's store: the staged `global_set` over the mutable global's native slot. A
+    /// binding that is no mutable global, or a value of another representation, takes the
+    /// general path, which raises.
     pub(super) fn lane_global_set<>(cx, r, ip, i, view) {
-        if unsafe { vm(cx) }.wasm_global_store(r.get(i.b), r.get(i.a)).is_err() {
+        let vm = unsafe { vm(cx) };
+        let Some(Cell::WasmGlobal { ty, mutable: true, .. }) = vm.heap.get(r.get(i.b)) else {
             return exit(ip);
-        }
+        };
+        let (storage, value) = (Storage::of(*ty), r.get(i.a));
+        let word = match storage {
+            Storage::Bits32 => Some(u64::from(value.wasm_bits32())),
+            Storage::Bits64 => vm.decode_bits64(value),
+            Storage::Handle => Some(value.to_bits()),
+        };
+        let (Some(word), Some(Cell::WasmGlobal { bits, .. })) = (word, vm.heap.get_mut(r.get(i.b))) else {
+            return exit(ip);
+        };
+        let mut instance = ConcreteInstance { globals: std::slice::from_mut(bits), memory: &mut [] };
+        global_set(&mut instance, 0, storage, word);
         next!(cx, r, following(ip), view)
     }
 }

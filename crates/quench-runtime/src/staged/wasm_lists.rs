@@ -3,8 +3,13 @@
 //! `MemoryLoad` tag order (each with its family), and the scalar accesses in the b-jit's
 //! `ACCESSES` order (each with the load it is, its value type, its bytes and whether it sign-extends).
 //!
+//! The I64 and float operator lists and the scalar conversions (`i64_binary_list!` and the rest) are
+//! the selector lists of `wasm/integer.rs`, `wasm/float.rs` and `wasm/conversion.rs`, which expand
+//! them; `wasm_codes.rs` counts them and derives the comparison bounds from their entries.
+//!
 //! This file is pure `macro_rules!`: no `use`, no items. It is included with `#[path]` by
-//! `staged/wasm_simd_lanes.rs` and `wasm/memory.rs` (the runtime), and by `quench-bjit`'s
+//! `staged/wasm_simd_lanes.rs`, `wasm/memory.rs`, `wasm/integer.rs`, `wasm/float.rs` and
+//! `wasm/conversion.rs` (the runtime), and by `quench-bjit`'s
 //! `stencils/wasm_codes.rs`, which the stencil crate, the lib and the build script all compile. A
 //! callback that needs only names (the b-jit's codes) ignores each row's body, which names runtime
 //! items that only the runtime resolves. A row's position is its tag, so reordering a list renumbers
@@ -302,6 +307,173 @@ macro_rules! scalar_access_list {
             F32Load: F32, 4, false;
             F64Load: F64, 8, false;
         }
+    };
+}
+
+/// The I64 binary operators, one list every family expands (`wasm/integer.rs`, `wasm_codes.rs`): each
+/// entry is its name, its i32 and i64 wasm operators and its semantics over `left` and `right`. The shared
+/// entries come first (the i32 family is their prefix); the wide ones follow `@i64`.
+macro_rules! i64_binary_list {
+    ($callback:ident) => {
+        $callback! { (Signed, Unsigned), (left, right);
+            Add, I32Add, I64Add => Ok(NumericResult::Value(left.wrapping_add(right)));
+            Subtract, I32Sub, I64Sub => Ok(NumericResult::Value(left.wrapping_sub(right)));
+            Multiply, I32Mul, I64Mul => Ok(NumericResult::Value(left.wrapping_mul(right)));
+            DivideSigned, I32DivS, I64DivS => {
+                if right == 0 { Err(WasmTrap::IntegerDivideByZero) }
+                else { left.checked_div(right).map(NumericResult::Value).ok_or(WasmTrap::IntegerOverflow) }
+            };
+            DivideUnsigned, I32DivU, I64DivU => {
+                (left as Unsigned).checked_div(right as Unsigned).map(|v| NumericResult::Value(v as Signed))
+                    .ok_or(WasmTrap::IntegerDivideByZero)
+            };
+            RemainderSigned, I32RemS, I64RemS => {
+                if right == 0 { Err(WasmTrap::IntegerDivideByZero) }
+                else { Ok(NumericResult::Value(left.wrapping_rem(right))) }
+            };
+            RemainderUnsigned, I32RemU, I64RemU => {
+                (left as Unsigned).checked_rem(right as Unsigned).map(|v| NumericResult::Value(v as Signed))
+                    .ok_or(WasmTrap::IntegerDivideByZero)
+            };
+            And, I32And, I64And => Ok(NumericResult::Value(left & right));
+            Or, I32Or, I64Or => Ok(NumericResult::Value(left | right));
+            Xor, I32Xor, I64Xor => Ok(NumericResult::Value(left ^ right));
+            ShiftLeft, I32Shl, I64Shl => Ok(NumericResult::Value(left.wrapping_shl(right as u32)));
+            ShiftRightSigned, I32ShrS, I64ShrS => Ok(NumericResult::Value(left.wrapping_shr(right as u32)));
+            ShiftRightUnsigned, I32ShrU, I64ShrU => Ok(NumericResult::Value((left as Unsigned).wrapping_shr(right as u32) as Signed));
+            RotateLeft, I32Rotl, I64Rotl => Ok(NumericResult::Value(left.rotate_left(right as u32)));
+            RotateRight, I32Rotr, I64Rotr => Ok(NumericResult::Value(left.rotate_right(right as u32)));
+            Equal, I32Eq, I64Eq => Ok(NumericResult::Comparison(left == right));
+            NotEqual, I32Ne, I64Ne => Ok(NumericResult::Comparison(left != right));
+            LessSigned, I32LtS, I64LtS => Ok(NumericResult::Comparison(left < right));
+            LessUnsigned, I32LtU, I64LtU => Ok(NumericResult::Comparison((left as Unsigned) < (right as Unsigned)));
+            GreaterSigned, I32GtS, I64GtS => Ok(NumericResult::Comparison(left > right));
+            GreaterUnsigned, I32GtU, I64GtU => Ok(NumericResult::Comparison((left as Unsigned) > (right as Unsigned)));
+            LessEqualSigned, I32LeS, I64LeS => Ok(NumericResult::Comparison(left <= right));
+            LessEqualUnsigned, I32LeU, I64LeU => Ok(NumericResult::Comparison((left as Unsigned) <= (right as Unsigned)));
+            GreaterEqualSigned, I32GeS, I64GeS => Ok(NumericResult::Comparison(left >= right));
+            GreaterEqualUnsigned, I32GeU, I64GeU => Ok(NumericResult::Comparison((left as Unsigned) >= (right as Unsigned)));
+            @i64
+            MultiplyHighSigned, I64MulWideS => Ok(NumericResult::Value(((i128::from(left) * i128::from(right)) >> i64::BITS) as i64));
+            MultiplyHighUnsigned, I64MulWideU => Ok(NumericResult::Value(((u128::from(left as u64) * u128::from(right as u64)) >> u64::BITS) as i64));
+        }
+    };
+}
+
+/// The I64 unary operators, one list every family expands: the shared entries, then the i64-only ones
+/// after `@i64`, each with its i32 and i64 wasm operators and its semantics over `value`.
+macro_rules! i64_unary_list {
+    ($callback:ident) => {
+        $callback! { Signed, value;
+            EqualZero, I32Eqz, I64Eqz => NumericResult::Comparison(value == 0);
+            LeadingZeros, I32Clz, I64Clz => NumericResult::Value(value.leading_zeros() as Signed);
+            TrailingZeros, I32Ctz, I64Ctz => NumericResult::Value(value.trailing_zeros() as Signed);
+            PopulationCount, I32Popcnt, I64Popcnt => NumericResult::Value(value.count_ones() as Signed);
+            ExtendSigned8, I32Extend8S, I64Extend8S => NumericResult::Value(value as i8 as Signed);
+            ExtendSigned16, I32Extend16S, I64Extend16S => NumericResult::Value(value as i16 as Signed);
+            @i64 ExtendSigned32, I64Extend32S => NumericResult::Value(value as i32 as Signed);
+        }
+    };
+}
+
+/// The float binary operators, one list every family expands (`wasm/float.rs`, `wasm_codes.rs`): each
+/// entry is its name, its f32 and f64 wasm operators and its semantics over `left` and `right`.
+macro_rules! float_binary_list {
+    ($callback:ident) => {
+        $callback! { (Float, Bits, SIGN_MASK, CANONICAL_NAN), (left, right);
+            Add, F32Add, F64Add => NumericResult::Value(left + right);
+            Subtract, F32Sub, F64Sub => NumericResult::Value(left - right);
+            Multiply, F32Mul, F64Mul => NumericResult::Value(left * right);
+            Divide, F32Div, F64Div => NumericResult::Value(left / right);
+            Minimum, F32Min, F64Min => NumericResult::Value({
+                if left.is_nan() || right.is_nan() { CANONICAL_NAN }
+                else if left == right { Float::from_bits(left.to_bits() | right.to_bits()) }
+                else { left.min(right) }
+            });
+            Maximum, F32Max, F64Max => NumericResult::Value({
+                if left.is_nan() || right.is_nan() { CANONICAL_NAN }
+                else if left == right { Float::from_bits(left.to_bits() & right.to_bits()) }
+                else { left.max(right) }
+            });
+            CopySign, F32Copysign, F64Copysign => NumericResult::Value(Float::from_bits(
+                (left.to_bits() & !SIGN_MASK) | (right.to_bits() & SIGN_MASK)));
+            Equal, F32Eq, F64Eq => NumericResult::Comparison(left == right);
+            NotEqual, F32Ne, F64Ne => NumericResult::Comparison(left != right);
+            Less, F32Lt, F64Lt => NumericResult::Comparison(left < right);
+            Greater, F32Gt, F64Gt => NumericResult::Comparison(left > right);
+            LessEqual, F32Le, F64Le => NumericResult::Comparison(left <= right);
+            GreaterEqual, F32Ge, F64Ge => NumericResult::Comparison(left >= right);
+        }
+    };
+}
+
+/// The float unary operators, one list every family expands: each entry is its name, its f32 and f64
+/// wasm operators and its semantics over `value`.
+macro_rules! float_unary_list {
+    ($callback:ident) => {
+        $callback! { (Float, Bits, SIGN_MASK), value;
+            Absolute, F32Abs, F64Abs => Float::from_bits(value.to_bits() & !SIGN_MASK);
+            Negate, F32Neg, F64Neg => Float::from_bits(value.to_bits() ^ SIGN_MASK);
+            Ceiling, F32Ceil, F64Ceil => value.ceil();
+            Floor, F32Floor, F64Floor => value.floor();
+            Truncate, F32Trunc, F64Trunc => value.trunc();
+            Nearest, F32Nearest, F64Nearest => value.round_ties_even();
+            SquareRoot, F32Sqrt, F64Sqrt => value.sqrt();
+        }
+    };
+}
+
+/// The scalar conversions, one list every family expands (`wasm/conversion.rs`, `wasm_codes.rs`): each
+/// entry is its name, its wasm operator, its source and result types and its semantics over `value`.
+macro_rules! scalar_conversion_list {
+    ($callback:ident) => {
+        $callback! { value;
+            WrapI64, I32WrapI64, I64 => I32, WasmValue::I32(value as i32);
+            ExtendI32Signed, I64ExtendI32S, I32 => I64, WasmValue::I64(i64::from(value));
+            ExtendI32Unsigned, I64ExtendI32U, I32 => I64, WasmValue::I64(i64::from(value as u32));
+
+            TruncateF32SignedI32, I32TruncF32S, F32 => I32, WasmValue::I32(trunc_to_integer(f64::from(f32::from_bits(value)), i32::BITS, true, false)? as i32);
+            TruncateF32UnsignedI32, I32TruncF32U, F32 => I32, WasmValue::I32(trunc_to_integer(f64::from(f32::from_bits(value)), i32::BITS, false, false)? as i32);
+            TruncateF64SignedI32, I32TruncF64S, F64 => I32, WasmValue::I32(trunc_to_integer(f64::from_bits(value), i32::BITS, true, false)? as i32);
+            TruncateF64UnsignedI32, I32TruncF64U, F64 => I32, WasmValue::I32(trunc_to_integer(f64::from_bits(value), i32::BITS, false, false)? as i32);
+            TruncateF32SignedI64, I64TruncF32S, F32 => I64, WasmValue::I64(trunc_to_integer(f64::from(f32::from_bits(value)), i64::BITS, true, false)?);
+            TruncateF32UnsignedI64, I64TruncF32U, F32 => I64, WasmValue::I64(trunc_to_integer(f64::from(f32::from_bits(value)), i64::BITS, false, false)?);
+            TruncateF64SignedI64, I64TruncF64S, F64 => I64, WasmValue::I64(trunc_to_integer(f64::from_bits(value), i64::BITS, true, false)?);
+            TruncateF64UnsignedI64, I64TruncF64U, F64 => I64, WasmValue::I64(trunc_to_integer(f64::from_bits(value), i64::BITS, false, false)?);
+
+            SaturateF32SignedI32, I32TruncSatF32S, F32 => I32, WasmValue::I32(trunc_to_integer(f64::from(f32::from_bits(value)), i32::BITS, true, true)? as i32);
+            SaturateF32UnsignedI32, I32TruncSatF32U, F32 => I32, WasmValue::I32(trunc_to_integer(f64::from(f32::from_bits(value)), i32::BITS, false, true)? as i32);
+            SaturateF64SignedI32, I32TruncSatF64S, F64 => I32, WasmValue::I32(trunc_to_integer(f64::from_bits(value), i32::BITS, true, true)? as i32);
+            SaturateF64UnsignedI32, I32TruncSatF64U, F64 => I32, WasmValue::I32(trunc_to_integer(f64::from_bits(value), i32::BITS, false, true)? as i32);
+            SaturateF32SignedI64, I64TruncSatF32S, F32 => I64, WasmValue::I64(trunc_to_integer(f64::from(f32::from_bits(value)), i64::BITS, true, true)?);
+            SaturateF32UnsignedI64, I64TruncSatF32U, F32 => I64, WasmValue::I64(trunc_to_integer(f64::from(f32::from_bits(value)), i64::BITS, false, true)?);
+            SaturateF64SignedI64, I64TruncSatF64S, F64 => I64, WasmValue::I64(trunc_to_integer(f64::from_bits(value), i64::BITS, true, true)?);
+            SaturateF64UnsignedI64, I64TruncSatF64U, F64 => I64, WasmValue::I64(trunc_to_integer(f64::from_bits(value), i64::BITS, false, true)?);
+
+            ConvertI32SignedF32, F32ConvertI32S, I32 => F32, WasmValue::F32((value as f32).to_bits());
+            ConvertI32UnsignedF32, F32ConvertI32U, I32 => F32, WasmValue::F32((value as u32 as f32).to_bits());
+            ConvertI64SignedF32, F32ConvertI64S, I64 => F32, WasmValue::F32((value as f32).to_bits());
+            ConvertI64UnsignedF32, F32ConvertI64U, I64 => F32, WasmValue::F32((value as u64 as f32).to_bits());
+            ConvertI32SignedF64, F64ConvertI32S, I32 => F64, WasmValue::F64((value as f64).to_bits());
+            ConvertI32UnsignedF64, F64ConvertI32U, I32 => F64, WasmValue::F64((value as u32 as f64).to_bits());
+            ConvertI64SignedF64, F64ConvertI64S, I64 => F64, WasmValue::F64((value as f64).to_bits());
+            ConvertI64UnsignedF64, F64ConvertI64U, I64 => F64, WasmValue::F64((value as u64 as f64).to_bits());
+            PromoteF32, F64PromoteF32, F32 => F64, WasmValue::F64(f64::from(f32::from_bits(value)).to_bits());
+            DemoteF64, F32DemoteF64, F64 => F32, WasmValue::F32((f64::from_bits(value) as f32).to_bits());
+
+            ReinterpretF32I32, I32ReinterpretF32, F32 => I32, WasmValue::I32(value as i32);
+            ReinterpretF64I64, I64ReinterpretF64, F64 => I64, WasmValue::I64(value as i64);
+            ReinterpretI32F32, F32ReinterpretI32, I32 => F32, WasmValue::F32(value as u32);
+            ReinterpretI64F64, F64ReinterpretI64, I64 => F64, WasmValue::F64(value as u64);
+        }
+    };
+}
+
+/// The log2 of a Wasm page, which the runtime and the b-jit both name. `wasm_codes.rs` expands it;
+/// the runtime asserts its own `WASM_PAGE_BITS` equal (`vm/compiled/wasm_codes_check.rs`).
+macro_rules! wasm_page_bits {
+    ($callback:ident) => {
+        $callback! { 16 }
     };
 }
 

@@ -1,5 +1,9 @@
 //! Float width projections share declarations while preserving IEEE bits.
 
+#[macro_use]
+#[path = "../staged/wasm_lists.rs"]
+mod wasm_lists;
+
 #[cfg(not(stencil_build))]
 use super::WasmValue;
 #[cfg(test)]
@@ -106,40 +110,9 @@ macro_rules! float_unary_operators {
     };
 }
 
-float_binary_operators! { (Float, Bits, SIGN_MASK, CANONICAL_NAN), (left, right);
-    Add, F32Add, F64Add => NumericResult::Value(left + right);
-    Subtract, F32Sub, F64Sub => NumericResult::Value(left - right);
-    Multiply, F32Mul, F64Mul => NumericResult::Value(left * right);
-    Divide, F32Div, F64Div => NumericResult::Value(left / right);
-    Minimum, F32Min, F64Min => NumericResult::Value({
-        if left.is_nan() || right.is_nan() { CANONICAL_NAN }
-        else if left == right { Float::from_bits(left.to_bits() | right.to_bits()) }
-        else { left.min(right) }
-    });
-    Maximum, F32Max, F64Max => NumericResult::Value({
-        if left.is_nan() || right.is_nan() { CANONICAL_NAN }
-        else if left == right { Float::from_bits(left.to_bits() & right.to_bits()) }
-        else { left.max(right) }
-    });
-    CopySign, F32Copysign, F64Copysign => NumericResult::Value(Float::from_bits(
-        (left.to_bits() & !SIGN_MASK) | (right.to_bits() & SIGN_MASK)));
-    Equal, F32Eq, F64Eq => NumericResult::Comparison(left == right);
-    NotEqual, F32Ne, F64Ne => NumericResult::Comparison(left != right);
-    Less, F32Lt, F64Lt => NumericResult::Comparison(left < right);
-    Greater, F32Gt, F64Gt => NumericResult::Comparison(left > right);
-    LessEqual, F32Le, F64Le => NumericResult::Comparison(left <= right);
-    GreaterEqual, F32Ge, F64Ge => NumericResult::Comparison(left >= right);
-}
+float_binary_list!(float_binary_operators);
 
-float_unary_operators! { (Float, Bits, SIGN_MASK), value;
-    Absolute, F32Abs, F64Abs => Float::from_bits(value.to_bits() & !SIGN_MASK);
-    Negate, F32Neg, F64Neg => Float::from_bits(value.to_bits() ^ SIGN_MASK);
-    Ceiling, F32Ceil, F64Ceil => value.ceil();
-    Floor, F32Floor, F64Floor => value.floor();
-    Truncate, F32Trunc, F64Trunc => value.trunc();
-    Nearest, F32Nearest, F64Nearest => value.round_ties_even();
-    SquareRoot, F32Sqrt, F64Sqrt => value.sqrt();
-}
+float_unary_list!(float_unary_operators);
 
 impl F64BinaryOperator {
     pub(crate) const fn widen(self) -> Self {

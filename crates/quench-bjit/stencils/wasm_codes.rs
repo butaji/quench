@@ -169,11 +169,86 @@ pub enum StorageCode {
 pub const STORAGE_BITS32: u32 = StorageCode::Bits32 as u32;
 pub const STORAGE_BITS64: u32 = StorageCode::Bits64 as u32;
 
-/// The float operators, the conversions. `FLOAT_BINARY_COUNT` is `F64BinaryOperator`'s selectors
-/// (13: `Add` through `GreaterEqual`); the runtime asserts it.
-pub const FLOAT_BINARY_COUNT: u32 = 13;
-pub const FLOAT_UNARY_COUNT: u32 = 7;
-pub const CONVERT_COUNT: u32 = 33;
+/// The position of `name` in `names`, in a constant: the comparison bounds are the positions of two
+/// named operators in their list.
+const fn position_of(names: &[&str], name: &str) -> u32 {
+    let mut index = 0;
+    while index < names.len() {
+        if str_eq(names[index], name) {
+            return index as u32;
+        }
+        index += 1;
+    }
+    panic!("the named operator is not in its list")
+}
+
+/// Whether two strings are equal, in a constant.
+const fn str_eq(left: &str, right: &str) -> bool {
+    let (left, right) = (left.as_bytes(), right.as_bytes());
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+// The counts and bounds of the operator lists (`wasm_lists.rs`), counted from the list's entries:
+// the runtime's families expand the same lists, and `wasm_codes_check.rs` asserts each count equals
+// its family's.
+macro_rules! i64_binary_counts {
+    ($aliases:tt, $arguments:tt; $($name:ident, $i32:ident, $i64:ident => $body:expr;)+ @i64 $($wide:ident, $wide_wasm:ident => $wide_body:expr;)+) => {
+        /// The i32 operators' count: the shared operators, which the i64 family starts with.
+        pub const SHARED_BINARY: u32 = [$(stringify!($name)),+].len() as u32;
+        pub const BINARY_COUNT: u32 = [$(stringify!($name),)+ $(stringify!($wide),)+].len() as u32;
+        /// The comparisons, `Equal` through `GreaterEqualUnsigned`.
+        pub const FIRST_COMPARISON: u32 = position_of(&[$(stringify!($name),)+ $(stringify!($wide),)+], "Equal");
+        pub const LAST_COMPARISON: u32 = position_of(&[$(stringify!($name),)+ $(stringify!($wide),)+], "GreaterEqualUnsigned");
+    };
+}
+macro_rules! i64_unary_counts {
+    ($signed:ident, $argument:ident; $($name:ident, $i32:ident, $i64:ident => $body:expr;)+ @i64 $($wide:ident, $wide_wasm:ident => $wide_body:expr;)+) => {
+        /// The unary operators both widths have; the i64 family adds the i64-only `ExtendSigned32`.
+        pub const SHARED_UNARY: u32 = [$(stringify!($name)),+].len() as u32;
+        pub const UNARY_COUNT: u32 = [$(stringify!($name),)+ $(stringify!($wide),)+].len() as u32;
+    };
+}
+macro_rules! float_binary_counts {
+    ($aliases:tt, $arguments:tt; $($name:ident, $f32:ident, $f64:ident => $body:expr;)+) => {
+        /// `F64BinaryOperator`'s selectors, `Add` through `GreaterEqual`.
+        pub const FLOAT_BINARY_COUNT: u32 = [$(stringify!($name)),+].len() as u32;
+    };
+}
+macro_rules! float_unary_counts {
+    ($aliases:tt, $argument:ident; $($name:ident, $f32:ident, $f64:ident => $body:expr;)+) => {
+        /// `F64UnaryOperator`'s selectors.
+        pub const FLOAT_UNARY_COUNT: u32 = [$(stringify!($name)),+].len() as u32;
+    };
+}
+macro_rules! conversion_counts {
+    ($value:ident; $($name:ident, $wasm:ident, $source:ident => $result:ident, $body:expr;)+) => {
+        /// `ScalarConversionOperator`'s selectors.
+        pub const CONVERT_COUNT: u32 = [$(stringify!($name)),+].len() as u32;
+    };
+}
+macro_rules! page_bits_constant {
+    ($bits:expr) => {
+        /// The log2 of a Wasm page. The runtime asserts it equals its `WASM_PAGE_BITS`
+        /// (`wasm_codes_check.rs`).
+        pub const WASM_PAGE_BITS: u32 = $bits;
+    };
+}
+i64_binary_list!(i64_binary_counts);
+i64_unary_list!(i64_unary_counts);
+float_binary_list!(float_binary_counts);
+float_unary_list!(float_unary_counts);
+scalar_conversion_list!(conversion_counts);
+wasm_page_bits!(page_bits_constant);
 
 /// The rows that once compiled with a constant-pool load: none now, since their float bounds and
 /// masks are built from integer immediates (`wasm_rows_convert.rs`). Kept so the library and its
@@ -195,10 +270,6 @@ pub const FRAME_BASE_WORD: usize = FrameWord::Base as usize;
 pub const FRAME_LENGTH_WORD: usize = FrameWord::Length as usize;
 pub const FRAME_HEADER_WORDS: u64 = (FrameWord::Length as usize + 1) as u64;
 
-/// The log2 of a Wasm page. The stencil build cannot see `crate::wasm::memory`, so the runtime
-/// asserts it equals `WASM_PAGE_BITS` (`wasm_codes_check.rs`).
-pub const WASM_PAGE_BITS: u32 = 16;
-
 /// `CallContext`'s byte offsets the `call_indirect` row reads (`wasm_rows_indirect.rs`). The
 /// runtime's `offset_of!` values are asserted equal to these in `wasm_codes_check.rs`.
 pub const CONTEXT_TABLE_WORDS_AT: usize = 0x48;
@@ -212,7 +283,6 @@ pub const CONTEXT_INSTANCE_AT: usize = 0x100;
 /// `TableTarget`'s layout as a row reads it: `#[repr(C)]` with the runtime struct's fields
 /// (`heap/cell/wasm_fields.rs`), the signature one word. The runtime asserts each offset and the size.
 #[repr(C)]
-#[allow(dead_code)]
 struct TableTargetLayout {
     signature: u32,
     entry: u32,
@@ -226,7 +296,6 @@ pub const TARGET_INSTANCE_AT: usize = core::mem::offset_of!(TableTargetLayout, i
 pub const TARGET_BODY_AT: usize = core::mem::offset_of!(TableTargetLayout, body);
 /// `TableWords`' layout as a row reads it: `#[repr(C)]`, the base then the length.
 #[repr(C)]
-#[allow(dead_code)]
 struct TableWordsLayout {
     base: usize,
     length: u64,
@@ -235,18 +304,6 @@ pub const TABLE_WORDS_BASE_AT: usize = core::mem::offset_of!(TableWordsLayout, b
 pub const TABLE_WORDS_LENGTH_AT: usize = core::mem::offset_of!(TableWordsLayout, length);
 /// `TableTarget::NO_ENTRY`: an element that is no module function's body.
 pub const NO_ENTRY: u32 = u32::MAX;
-
-/// The width-independent counts of the integer families: the i32 operators are the first
-/// `SHARED_*` tags of the i64 families, which have the wide operators after them. The runtime
-/// asserts each count and the comparison bounds.
-pub const SHARED_BINARY: u32 = 25;
-pub const BINARY_COUNT: u32 = 27;
-/// The comparisons, `Equal` through `GreaterEqualUnsigned`.
-pub const FIRST_COMPARISON: u32 = 15;
-pub const LAST_COMPARISON: u32 = 24;
-/// The unary operators: those both widths have, then the i64-only `ExtendSigned32`.
-pub const SHARED_UNARY: u32 = 6;
-pub const UNARY_COUNT: u32 = 7;
 
 /// The row kinds, in table order. Each family says what the library builds for its kind: the
 /// stencil symbol of every row is `w_<kind>_<op>_<width>_<shape>`, or `call_w_...` for a row that

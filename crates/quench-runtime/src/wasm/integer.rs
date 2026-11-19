@@ -1,6 +1,10 @@
 //! Integer rules have one declaration; width-specific selectors and execution
 //! are macro-derived. Selector order is the residual ABI, not a Wasm opcode.
 
+#[macro_use]
+#[path = "../staged/wasm_lists.rs"]
+mod wasm_lists;
+
 use super::WasmTrap;
 #[cfg(not(stencil_build))]
 use super::WasmValue;
@@ -75,58 +79,9 @@ macro_rules! integer_unary_operators {
     };
 }
 
-integer_binary_operators! { (Signed, Unsigned), (left, right);
-    Add, I32Add, I64Add => Ok(NumericResult::Value(left.wrapping_add(right)));
-    Subtract, I32Sub, I64Sub => Ok(NumericResult::Value(left.wrapping_sub(right)));
-    Multiply, I32Mul, I64Mul => Ok(NumericResult::Value(left.wrapping_mul(right)));
-    DivideSigned, I32DivS, I64DivS => {
-        if right == 0 { Err(WasmTrap::IntegerDivideByZero) }
-        else { left.checked_div(right).map(NumericResult::Value).ok_or(WasmTrap::IntegerOverflow) }
-    };
-    DivideUnsigned, I32DivU, I64DivU => {
-        (left as Unsigned).checked_div(right as Unsigned).map(|v| NumericResult::Value(v as Signed))
-            .ok_or(WasmTrap::IntegerDivideByZero)
-    };
-    RemainderSigned, I32RemS, I64RemS => {
-        if right == 0 { Err(WasmTrap::IntegerDivideByZero) }
-        else { Ok(NumericResult::Value(left.wrapping_rem(right))) }
-    };
-    RemainderUnsigned, I32RemU, I64RemU => {
-        (left as Unsigned).checked_rem(right as Unsigned).map(|v| NumericResult::Value(v as Signed))
-            .ok_or(WasmTrap::IntegerDivideByZero)
-    };
-    And, I32And, I64And => Ok(NumericResult::Value(left & right));
-    Or, I32Or, I64Or => Ok(NumericResult::Value(left | right));
-    Xor, I32Xor, I64Xor => Ok(NumericResult::Value(left ^ right));
-    ShiftLeft, I32Shl, I64Shl => Ok(NumericResult::Value(left.wrapping_shl(right as u32)));
-    ShiftRightSigned, I32ShrS, I64ShrS => Ok(NumericResult::Value(left.wrapping_shr(right as u32)));
-    ShiftRightUnsigned, I32ShrU, I64ShrU => Ok(NumericResult::Value((left as Unsigned).wrapping_shr(right as u32) as Signed));
-    RotateLeft, I32Rotl, I64Rotl => Ok(NumericResult::Value(left.rotate_left(right as u32)));
-    RotateRight, I32Rotr, I64Rotr => Ok(NumericResult::Value(left.rotate_right(right as u32)));
-    Equal, I32Eq, I64Eq => Ok(NumericResult::Comparison(left == right));
-    NotEqual, I32Ne, I64Ne => Ok(NumericResult::Comparison(left != right));
-    LessSigned, I32LtS, I64LtS => Ok(NumericResult::Comparison(left < right));
-    LessUnsigned, I32LtU, I64LtU => Ok(NumericResult::Comparison((left as Unsigned) < (right as Unsigned)));
-    GreaterSigned, I32GtS, I64GtS => Ok(NumericResult::Comparison(left > right));
-    GreaterUnsigned, I32GtU, I64GtU => Ok(NumericResult::Comparison((left as Unsigned) > (right as Unsigned)));
-    LessEqualSigned, I32LeS, I64LeS => Ok(NumericResult::Comparison(left <= right));
-    LessEqualUnsigned, I32LeU, I64LeU => Ok(NumericResult::Comparison((left as Unsigned) <= (right as Unsigned)));
-    GreaterEqualSigned, I32GeS, I64GeS => Ok(NumericResult::Comparison(left >= right));
-    GreaterEqualUnsigned, I32GeU, I64GeU => Ok(NumericResult::Comparison((left as Unsigned) >= (right as Unsigned)));
-    @i64
-    MultiplyHighSigned, I64MulWideS => Ok(NumericResult::Value(((i128::from(left) * i128::from(right)) >> i64::BITS) as i64));
-    MultiplyHighUnsigned, I64MulWideU => Ok(NumericResult::Value(((u128::from(left as u64) * u128::from(right as u64)) >> u64::BITS) as i64));
-}
+i64_binary_list!(integer_binary_operators);
 
-integer_unary_operators! { Signed, value;
-    EqualZero, I32Eqz, I64Eqz => NumericResult::Comparison(value == 0);
-    LeadingZeros, I32Clz, I64Clz => NumericResult::Value(value.leading_zeros() as Signed);
-    TrailingZeros, I32Ctz, I64Ctz => NumericResult::Value(value.trailing_zeros() as Signed);
-    PopulationCount, I32Popcnt, I64Popcnt => NumericResult::Value(value.count_ones() as Signed);
-    ExtendSigned8, I32Extend8S, I64Extend8S => NumericResult::Value(value as i8 as Signed);
-    ExtendSigned16, I32Extend16S, I64Extend16S => NumericResult::Value(value as i16 as Signed);
-    @i64 ExtendSigned32, I64Extend32S => NumericResult::Value(value as i32 as Signed);
-}
+i64_unary_list!(integer_unary_operators);
 
 /// Wide arithmetic has its own multi-register lowering ahead of scalar operators.
 #[cfg(not(stencil_build))]

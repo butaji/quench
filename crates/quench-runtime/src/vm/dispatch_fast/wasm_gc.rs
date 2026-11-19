@@ -2,6 +2,8 @@
 //! (`Vm::wasm_gc_value_step`), rather than leaving for the general loop at each.
 use super::*;
 use super::super::dispatch_wasm::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance};
+use super::super::wasm_gc::stage::HeapStage;
+use crate::staged::wasm_gc::{Aggregate, field_read};
 
 /// The `wasm_gc_value_op` numbered `OP`.
 const fn gc_op<const OP: u16>() -> Op {
@@ -53,19 +55,19 @@ lane_handler! {
     #[inline(never)]
     fn lane_wasm_field_read<ARRAY: bool>(cx, r, ip, i, view) {
         use crate::wasm::gc::{GcField, GcFieldAccess};
-        use super::super::wasm_gc::GcFieldIndex;
         let vm = unsafe { vm(cx) };
         let field = GcField::from_tag(i.imm()).expect("validated field operand");
-        let location = if ARRAY {
+        let (aggregate, index) = if ARRAY {
             let Some(index) = r.get(i.c).as_int() else { return exit(ip) };
-            GcFieldIndex::Array(index as u32)
+            (Aggregate::Array, index as u32)
         } else {
-            GcFieldIndex::Struct(field.index())
+            (Aggregate::Struct, field.index())
         };
-        let Some(Some(value)) = vm.wasm_field_access(r.get(i.b), location, field, GcFieldAccess::Read, None) else {
+        let reference = r.get(i.b).to_bits();
+        let Ok(word) = field_read(&mut HeapStage { vm }, aggregate, reference, u64::from(index), field, GcFieldAccess::Read) else {
             return exit(ip);
         };
-        r.set(i.a, value);
+        r.set(i.a, Value::from_bits(word));
         next!(cx, r, following(ip), view)
     }
 }

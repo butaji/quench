@@ -285,7 +285,6 @@ impl std::ops::Deref for MemoryRead<'_> {
     }
 }
 
-pub const WASM_PAGE_BITS: u32 = 16;
 const BYTE_PAGE_BITS: u32 = 0;
 #[cfg(test)]
 pub const WASM_PAGE_BYTES: usize = 1 << WASM_PAGE_BITS;
@@ -365,6 +364,14 @@ pub(crate) fn checked_range(
 #[macro_use]
 #[path = "../staged/wasm_lists.rs"]
 mod wasm_lists;
+
+/// The page size of a Wasm memory as a shift, from the one list the b-jit codes also read.
+macro_rules! page_bits_const {
+    ($bits:literal) => {
+        pub const WASM_PAGE_BITS: u32 = $bits;
+    };
+}
+wasm_page_bits!(page_bits_const);
 
 /// The `MemoryLoad` enum, its discriminants the list's order (`wasm_lists.rs`).
 macro_rules! define_memory_loads {
