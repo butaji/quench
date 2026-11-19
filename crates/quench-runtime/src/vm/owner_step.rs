@@ -66,14 +66,21 @@ impl<H: Host> Vm<H> {
     }
 
     /// `StoreGlobalLexical` of `value` to `declaration` through cache `cache`, at the binding site `pc`
-    /// names: the write of an initialized, mutable binding through its realm index slot, under the same
-    /// guards as the read. Any other write (a temporal dead zone, a const, a stale or unmapped index, a
-    /// shadowing scope) takes the by-name store, which makes the errors, and then refreshes the slot.
+    /// names. An initializing store is the script's own declaration, which ends the binding's temporal
+    /// dead zone: nothing in the root's scope can shadow it, and the binding exists from instantiation.
+    /// Otherwise the write of an initialized, mutable binding through its realm index slot, under the
+    /// same guards as the read. Any other write (a temporal dead zone, a const, a stale or unmapped
+    /// index, a shadowing scope) takes the by-name store, which makes the errors, and then refreshes
+    /// the slot.
     pub(super) fn global_lexical_store(&mut self, p: &ResidualProgram, owner: VarOwner, (declaration, cache, initializing): (u32, u16, bool),
         value: Value, pc: usize) -> Result<(), JsError> {
         let (atom, slot) = global_lexical_declaration(p, declaration);
+        if initializing {
+            self.initialize_global_lexical(atom, value);
+            return Ok(());
+        }
         let static_scopes = self.global_scope_names_resolve_statically(p, owner) && !self.scope_names.declared(atom);
-        if static_scopes && self.global_lexical_store_at(atom, slot.get(), value)? {
+        if static_scopes && self.global_lexical_store_at(atom, slot.get(), value) {
             return Ok(());
         }
         self.at_binding_site(owner, pc, |vm| vm.store_name(p, owner, atom, value, cache, initializing))?;
@@ -152,7 +159,7 @@ impl<H: Host> Vm<H> {
         self.at_binding_site(owner, pc, |vm| vm.store_name(p, owner, atom, value, cache, initializing))
     }
 
-    /// `StoreLocal`: the function-name, initialization and constant rules, then the binding with its mirrors.
+    /// `StoreLocal`: the function-name, initialization and constant rules, then the binding.
     fn store_local_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction) -> Result<(), JsError> {
         let value = self.owner_register(owner, i.register_a());
         let slot = i.local_slot();
@@ -170,7 +177,6 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "assignment to constant binding".into()));
             }
             *self.owner_binding_mut(p, owner, slot).ok_or_else(|| JsError("invalid local slot".into()))? = value;
-            self.mirror_global_lexical_binding(p, owner, slot, value);
             self.mapped_argument_store(p, owner, slot, value);
         }
         if let Some(register) = i.optional_register_b() {

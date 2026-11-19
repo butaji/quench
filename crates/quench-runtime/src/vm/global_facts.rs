@@ -224,6 +224,16 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Initializes the active realm's global lexical binding of `atom`, which a script's own declaration
+    /// of it makes: the binding is in its temporal dead zone from the script's instantiation
+    /// (`instantiate_global_declarations`). The write retires the code that holds the binding's value.
+    pub(super) fn initialize_global_lexical(&mut self, atom: Atom, value: Value) {
+        match self.realm.global_lexical_bindings.get_index_of(&atom) {
+            Some(index) => self.assign_global_lexical_at(index, value),
+            None => self.bind_global_lexical(atom, value),
+        }
+    }
+
     /// Assigns `value` to the active realm's initialized global lexical binding at `index`, which
     /// `global_lexical_store_at` has proved is mutable and holds an initialized value of the name.
     pub(super) fn assign_global_lexical_at(&mut self, index: usize, value: Value) {

@@ -19324,7 +19324,7 @@ impl<H: Host> Vm<H> {
                 let exited = super::dispatch_frame::LaneExit { executing, raised };
                 let result = self.run_frames_after_lane_exit(code, frame, &mut pending, exited);
                 debug_assert_eq!(self.frames.len(), site.frames + 1, "the loop leaves the callback's frame");
-                self.complete_user_frame(code, result, false).and_then(FrameOutcome::into_value)
+                self.complete_user_frame(result, false).and_then(FrameOutcome::into_value)
             }
         };
         pending.clear();
@@ -19467,7 +19467,7 @@ impl<H: Host> Vm<H> {
                         let code = unsafe { &*code };
                         let exited = super::dispatch_frame::LaneExit { executing, raised };
                         let result = self.run_frames_after_lane_exit(code, frame, &mut pending, exited);
-                        self.complete_user_frame(code, result, false).and_then(FrameOutcome::into_value)
+                        self.complete_user_frame(result, false).and_then(FrameOutcome::into_value)
                     }
                     (None, None) => unreachable!("an exit records its frame"),
                 };
@@ -19927,7 +19927,7 @@ impl<H: Host> Vm<H> {
                 let result = self.run_frames_after_lane_exit(code, frame, &mut prepared.pending, exited);
                 debug_assert_eq!(self.frames.len(), site.frames + 1, "the loop leaves the callback's frame");
                 prepared.pending.clear();
-                self.complete_user_frame(code, result, false).and_then(FrameOutcome::into_value)
+                self.complete_user_frame(result, false).and_then(FrameOutcome::into_value)
             }
         };
         self.active_registers = registers;

@@ -86,17 +86,16 @@ impl<H: Host> Vm<H> {
     /// `global_lexical_at`'s guard holds and the binding is mutable and initialized: the store the
     /// by-name path makes (`store_global_lexical_assignment`), without its lookup. Otherwise `false`,
     /// and the by-name store settles it: a temporal dead zone, a const, or a stale index.
-    pub(super) fn global_lexical_store_at(&mut self, atom: Atom, index: u16, value: Value) -> Result<bool, JsError> {
+    pub(super) fn global_lexical_store_at(&mut self, atom: Atom, index: u16, value: Value) -> bool {
         let index = usize::from(index);
         let Some((bound, current)) = self.realm.global_lexical_bindings.get_index(index) else {
-            return Ok(false);
+            return false;
         };
         if *bound != atom || current.is_deleted() || self.realm.immutable_global_lexical_bindings.contains(&atom) {
-            return Ok(false);
+            return false;
         }
-        self.store_active_global_lexical(atom, value)?;
         self.assign_global_lexical_at(index, value);
-        Ok(true)
+        true
     }
 
     #[inline(always)]

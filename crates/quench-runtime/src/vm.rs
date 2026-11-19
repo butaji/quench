@@ -1925,8 +1925,8 @@ pub(crate) struct Vm<H> {
     execution_interrupt: crate::ExecutionInterrupt,
     active_call_roots: Vec<Value>,
     /// The frame index of each root activation this Vm's entry points are running (`call_root`),
-    /// innermost last. A script's root is among them, so its global lexical bindings are found
-    /// without a walk over every frame (`active_global_lexical_binding`).
+    /// innermost last. Global var paths walk them rather than every frame. A script's lexical
+    /// bindings live in the realm, not in its root's frame.
     active_roots: Vec<usize>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
@@ -2436,9 +2436,6 @@ impl<H: Host> Vm<H> {
                     )
                     .map(|_| ());
             }
-            if self.eval_script_context {
-                self.bind_global_lexical(atom, Value::DELETED);
-            }
         }
         let declared = root
             .global_lexical_atoms()
@@ -2464,6 +2461,14 @@ impl<H: Host> Vm<H> {
                     "global var declaration conflicts with lexical binding",
                 )
                 .map(|_| ());
+        }
+        // A script's lexical bindings exist from instantiation, in their temporal dead zone until the
+        // declaration initializes them (`StoreGlobalLexical` with `initialize`). They are created once
+        // the var conflict check passes, so a script refused for a conflicting name creates none.
+        if program.kind == crate::bytecode::ProgramKind::Script {
+            for atom in root.global_lexical_atoms().iter().copied() {
+                self.bind_global_lexical(atom, Value::DELETED);
+            }
         }
         for atom in root.global_function_atoms().iter().copied() {
             let key = PropertyKey::string(atom);
@@ -2533,19 +2538,6 @@ impl<H: Host> Vm<H> {
         self.map_global_lexical_slots(program);
         Ok(())
     }
-    pub(in crate::vm) fn mirror_global_lexical_binding(
-        &mut self,
-        program: &ResidualProgram,
-        owner: VarOwner,
-        slot: usize,
-        value: Value,
-    ) {
-        if let Some(atom) = self.root_global_lexical_atom(program, self.owner_view(owner).function(), slot)
-            && self.realm.global_lexical_bindings.contains_key(&atom)
-        {
-            self.bind_global_lexical(atom, value);
-        }
-    }
     /// A global lexical name was declared: it may shadow a global property that a global name
     /// read's hint names (`dispatch_fast::name_row`), so every such hint is
     /// dropped (`LaneView::clear_name_hints`), and code holding one retires (`note_global_shadowing`).
@@ -2561,27 +2553,6 @@ impl<H: Host> Vm<H> {
         !self.realm.shadows_global_name(atom)
     }
 
-    /// Publishes a finished script root's global lexical bindings; every other activation
-    /// returns without leaving the caller.
-    #[inline(always)]
-    pub(super) fn persist_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
-        if program.kind == crate::bytecode::ProgramKind::Script && frame.function == ROOT_FUNCTION_ID {
-            self.persist_root_global_lexical_bindings(program, frame);
-        }
-    }
-
-    #[inline(never)]
-    fn persist_root_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
-        let metadata = &program.function(ROOT_FUNCTION_ID as usize);
-        for atom in metadata.global_lexical_atoms().iter().copied() {
-            let value = metadata.local_atoms.iter().position(|candidate| *candidate == atom)
-                .and_then(|slot| {
-                    if frame.captured { self.heap.environment_slot(frame.env, slot) }
-                    else { frame.locals.get(slot).copied() }
-                }).unwrap_or(Value::DELETED);
-            self.bind_global_lexical(atom, value);
-        }
-    }
     pub(crate) fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.execute_with_job_drain(program, &[], true)
     }

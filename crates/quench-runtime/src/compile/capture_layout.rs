@@ -11,8 +11,9 @@ pub(crate) struct LayoutInputs {
     pub(crate) dynamic_descendant: bool,
     /// Whether the function is a program root that splits like a function: a module's body,
     /// whose module-scope bindings importers and the linker address by slot, or a Script's or
-    /// eval's root without dynamic name resolution, whose global declarations the realm and
-    /// later code find by slot. Those bindings are in `captured`; its block bindings, such as
+    /// eval's root without dynamic name resolution, whose global declarations the realm and later
+    /// code find by slot. Those bindings are in `captured`; a Script's top-level lexicals are realm
+    /// bindings with no root slot, so they are not. Its block bindings, such as
     /// a `for (let ...)` loop's, are as private to its activation as a function's.
     pub(crate) split_root: bool,
 }

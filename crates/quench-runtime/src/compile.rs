@@ -4127,6 +4127,14 @@ impl<'a> Compiler<'a> {
         let annex_b_collisions = self.annex_b_collisions(body);
         let mut function_scope =
             self.collect_locals(body, &mut locals, root_strict, parent.is_some(), &annex_b_collisions);
+        // A script's own top-level lexicals are the realm's global lexical bindings, which the root
+        // and its nested functions reach by declaration index (`LoadGlobalLexical`,
+        // `StoreGlobalLexical`). The root keeps no local slot or environment slot for them, so no
+        // closure captures them. `root_lexical_atoms` is empty for a module and for an eval.
+        if parent.is_none() && !self.root_lexical_atoms.is_empty() {
+            locals.retain(|atom| !self.root_lexical_atoms.contains(atom));
+            function_scope.retain(|atom| !self.root_lexical_atoms.contains(atom));
+        }
         // Only a function-scope binding (a parameter, `var`, top-level declaration) shadows
         // the expression's own name; a block's or a catch clause's binding does not.
         let name_binding = options.name_binding.and_then(|source_name| {
