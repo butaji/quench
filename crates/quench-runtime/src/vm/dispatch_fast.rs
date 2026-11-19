@@ -7660,11 +7660,12 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump }; }
     requicken::<H>(ip, jump_row::<H, JUMP>(true));
     // The site kept the update before the jump from fusing with it (`install_loop_sites`
-    // runs before `fuse_rows`): the plain jump takes the loader's pair fusion now.
+    // runs before `fuse_rows`): the plain jump takes the loader's pair fusion now, with the
+    // `FUSED_TARGET` record where the header's target run holds (`update_fusion`'s `target`).
     if site.backedge > site.header {
         // SAFETY: the record before the backedge is the loop body's, in the same view as the jump.
         let update = unsafe { ip.sub(1) };
-        if let Some(fused) = update_fusion::<H>(unsafe { &*update }, unsafe { &*ip }) {
+        if let Some(fused) = update_fusion::<H>(unsafe { &*update }, unsafe { &*ip }, Some(header)) {
             requicken::<H>(update, fused);
         }
     }
@@ -16927,7 +16928,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
         return None;
     }
     if jumps_by_row(op) {
-        return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD, FLAG_UNREAD>, produces: false });
+        return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>, produces: false });
     }
     if admits_row(op) {
         return Some(LaneHandler { handler: generated_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
@@ -18064,7 +18065,7 @@ fn holds_no_call_link(op: Op) -> bool {
 /// The handler of a loop site's backward jump: the jump row in the loop's flag (`FLAG_LOOP`), which
 /// takes the jump while the site warms up and leaves any other to `loop_jump_miss`.
 fn loop_jump_row<H: Host>() -> Handler {
-    row_jump::<H, JUMP, true, FLAG_LOOP> as Handler
+    row_jump::<H, JUMP, true, FLAG_LOOP, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }> as Handler
 }
 
 /// Gives each backward `Jump` whose loop the shared compiler admits (`analyze_osr_region`) the
@@ -18345,8 +18346,8 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
 }
 
 /// The `FUSED_ROWS` pairs whose second row is `Jump`, by their index in that table: a row followed
-/// by a backward jump, which `FUSED_TARGET` may fuse with the conditional test at the jump's target.
-/// `(Move, Jump)`, `(StoreLocalPlain, Jump)`, `(WasmI32AddImmediate, Jump)` and `(IncDec, Jump)` are
+/// by a backward jump, which `FUSED_TARGET` may fuse with the target run at the jump's target.
+/// `(StoreLocalPlain, Jump)`, `(Move, Jump)`, `(WasmI32AddImmediate, Jump)` and `(IncDec, Jump)` are
 /// the pairs; the const check below names each one's second row.
 const BACK_EDGE_PAIRS: [usize; 4] = [31, 32, 33, 37];
 const _: () = {
@@ -18357,76 +18358,166 @@ const _: () = {
     }
 };
 
-/// Gives each `FUSED_ROWS` pair in `BACK_EDGE_PAIRS` followed by a backward jump whose target
-/// record holds a conditional test (`staged::FUSED_TARGET_ROWS`, the row `plain_row` names) the
-/// `FUSED_TARGET` record: the pair, the jump, and the test at the target in one dispatch, the
-/// target keeping its own row for every other entry. Runs before `fuse_rows`, so the pair it
-/// claims is not refused by its plain pair. A pair at a hot OSR latch whose first row is a move
-/// or an add of a constant keeps its own record, as `fuse_rows` keeps it.
-///
-/// Subsumes `lane_inc_dec_loop` (an `IncDec` pair whose back edge enters a register test) and
-/// `lane_inc_dec_small_loop` (the same with a constant bound, which the test's own row reads). Not
-/// claimed here: a back edge whose target is a loaded bound (`lane_inc_dec_load_loop`, a chain
-/// target), a back edge whose target is an update (`lane_jump_back_update_small`), and a lone back
-/// jump into a nullish test (`lane_jump_back_nullish`, `specialize_nullish_back_edges`), which is
-/// not a pair.
-fn fuse_target_backedges<H: Host>(records: &mut [LaneInstruction], osr_loop: bool) {
-    macro_rules! test {
-        ($pair:literal, $k:literal) => {
-            (
-                (|handler| plain_row::<H, { crate::staged::FUSED_TARGET_ROWS[$k] }>(handler)) as fn(*const ()) -> bool,
-                lane_frame::fused_rows::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }, true, { crate::staged::FUSED_TARGET }, { crate::staged::FUSED_TARGET_ROWS[$k] }> as Handler,
-            )
-        };
+/// One `FUSED_TARGET` form of a back edge: whether its target run holds (`holds(target, after)`, where
+/// `target` is the target record's handler and `after` gives the handler of the record after it, read
+/// only by a form with a prefix row), and the handler the back edge's record takes for it.
+type TargetForm = (fn(*const (), &dyn Fn() -> *const ()) -> bool, Handler);
+
+/// Whether the target run `PREFIX` then `TEST` holds: the target record runs `PREFIX` (when there is one)
+/// and the record after it is `TEST`. With no prefix, `TEST` is the target record itself.
+fn target_run_holds<H: Host, const PREFIX: u16, const TEST: u16>(target: *const (), after: &dyn Fn() -> *const ()) -> bool {
+    if const { PREFIX == crate::staged::NO_LINK } {
+        lane_frame::plain_row::<H, TEST>(target)
+    } else {
+        lane_frame::plain_row::<H, PREFIX>(target) && lane_frame::plain_row::<H, TEST>(after())
     }
+}
+
+/// The `FUSED_TARGET` form of the pair `(A, B)`, a back edge whose target run is `PREFIX` then `TEST`:
+/// the fused record `fused_rows` makes with that run.
+fn pair_target_form<H: Host, const A: u16, const B: u16, const PREFIX: u16, const TEST: u16>() -> TargetForm {
+    (
+        target_run_holds::<H, PREFIX, TEST> as fn(*const (), &dyn Fn() -> *const ()) -> bool,
+        lane_frame::fused_rows::<H, A, B, true, { crate::staged::FUSED_TARGET }, TEST, PREFIX> as Handler,
+    )
+}
+
+/// The `FUSED_TARGET` form of a lone backward jump whose target run is `PREFIX` then `TEST`: the jump's
+/// record `row_jump` with that run (`target_run`).
+fn lone_target_form<H: Host, const PREFIX: u16, const TEST: u16>() -> TargetForm {
+    (
+        target_run_holds::<H, PREFIX, TEST> as fn(*const (), &dyn Fn() -> *const ()) -> bool,
+        lane_frame::row_jump::<H, JUMP, true, FLAG_UNREAD, PREFIX, TEST> as Handler,
+    )
+}
+
+/// The twelve forms of a back edge's target run, in the order: no prefix, then each
+/// `FUSED_TARGET_PREFIX_ROWS` row; each with each `FUSED_TARGET_ROWS` test. `$form` takes the
+/// leading const arguments (a pair's `A` and `B`), then `PREFIX` and `TEST`.
+macro_rules! target_forms {
+    ($form:ident $(, $arg:tt)*) => {
+        [
+            $form::<H, $($arg,)* { crate::staged::NO_LINK }, { crate::staged::FUSED_TARGET_ROWS[0] }>(),
+            $form::<H, $($arg,)* { crate::staged::NO_LINK }, { crate::staged::FUSED_TARGET_ROWS[1] }>(),
+            $form::<H, $($arg,)* { crate::staged::NO_LINK }, { crate::staged::FUSED_TARGET_ROWS[2] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[0] }, { crate::staged::FUSED_TARGET_ROWS[0] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[0] }, { crate::staged::FUSED_TARGET_ROWS[1] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[0] }, { crate::staged::FUSED_TARGET_ROWS[2] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[1] }, { crate::staged::FUSED_TARGET_ROWS[0] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[1] }, { crate::staged::FUSED_TARGET_ROWS[1] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[1] }, { crate::staged::FUSED_TARGET_ROWS[2] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[2] }, { crate::staged::FUSED_TARGET_ROWS[0] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[2] }, { crate::staged::FUSED_TARGET_ROWS[1] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[2] }, { crate::staged::FUSED_TARGET_ROWS[2] }>(),
+        ]
+    };
+}
+
+/// The `FUSED_TARGET` forms of the pair `(A, B)`'s back edge.
+fn pair_target_forms<H: Host, const A: u16, const B: u16>() -> [TargetForm; 12] {
+    target_forms!(pair_target_form, A, B)
+}
+
+/// The `FUSED_TARGET` forms of a lone backward jump.
+fn lone_target_forms<H: Host>() -> [TargetForm; 12] {
+    target_forms!(lone_target_form)
+}
+
+/// The handler of the first form of `forms` whose target run holds at `target` (`after` as `target_run_holds`).
+fn target_run_handler(forms: &[TargetForm], target: *const (), after: &dyn Fn() -> *const ()) -> Option<Handler> {
+    forms.iter().find(|(holds, _)| holds(target, after)).map(|(_, handler)| *handler)
+}
+
+/// Gives each backward jump whose target run holds (a test, or a variable read or an update then a test,
+/// at the jump's target: `FUSED_TARGET_ROWS`, `FUSED_TARGET_PREFIX_ROWS`) the `FUSED_TARGET` record, in
+/// one of two places, the target keeping its own row for every other entry:
+/// - a jump after one of `BACK_EDGE_PAIRS`' pairs: the pair's record becomes the pair, the jump and the
+///   target run in one dispatch (`pair_target_forms`);
+/// - a jump with no pair before it: the jump's own record runs the target run (`lone_target_forms`).
+/// Runs after `fuse_chains` and before `fuse_rows`, so the target records are still their own rows, and
+/// a lone jump is not rewritten where `fuse_rows` would fuse the record before it with the jump.
+///
+/// Subsumes `lane_inc_dec_loop` and `lane_inc_dec_small_loop` (an update pair into a register or constant
+/// test), `lane_inc_dec_load_loop` (an update pair into a loaded bound, then its test), `lane_jump_back_nullish`
+/// and `specialize_nullish_back_edges` (a lone back jump into a nullish test), and `lane_jump_back_update_small`
+/// (an update then its test; not its copy-then-test form).
+fn fuse_target_backedges<H: Host>(records: &mut [LaneInstruction], osr_loop: bool) {
     macro_rules! pair {
         ($pair:literal) => {
             (
                 (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }>(handler)) as fn(*const ()) -> bool,
-                [test!($pair, 0), test!($pair, 1), test!($pair, 2)],
+                pair_target_forms::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }>(),
             )
         };
     }
     let pairs = [pair!(31), pair!(32), pair!(33), pair!(37)];
-    const _: () = assert!(BACK_EDGE_PAIRS.len() == 4 && crate::staged::FUSED_TARGET_ROWS.len() == 3);
+    let lone = lone_target_forms::<H>();
     let back = jump_row::<H, JUMP>(true) as *const ();
     let record = std::mem::size_of::<LaneInstruction>() as isize;
-    for pc in 0..records.len().saturating_sub(1) {
-        let (first, second) = (records[pc].handler, records[pc + 1].handler);
-        if second != back {
+    for jump in 0..records.len() {
+        if records[jump].handler != back {
             continue;
         }
-        let Some((_, tests)) = pairs.iter().find(|(a, _)| a(first)) else {
-            continue;
-        };
-        if osr_loop && (plain_row::<H, { crate::staged::MOVE_ROW }>(first) || plain_row::<H, { crate::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first)) {
-            continue;
-        }
-        // The jump's target record: its distance is in bytes from the jump record, as `take_jump` reads it.
-        let Ok(target) = usize::try_from(pc as isize + 1 + records[pc + 1].jump() / record) else {
+        // The jump's target: its distance is in bytes from the jump record, as `take_jump` reads it.
+        let Ok(target) = usize::try_from(jump as isize + records[jump].jump() / record) else {
             continue;
         };
         let Some(target_handler) = records.get(target).map(|record_at| record_at.handler) else {
             continue;
         };
-        if let Some((_, handler)) = tests.iter().find(|(test, _)| test(target_handler)) {
-            records[pc].handler = *handler as *const ();
+        let after = || records.get(target + 1).map_or(std::ptr::null(), |record_at| record_at.handler);
+        let Some(head) = jump.checked_sub(1) else {
+            // No record before the jump: a lone back jump.
+            if let Some(handler) = target_run_handler(&lone, target_handler, &after) {
+                records[jump].handler = handler as *const ();
+            }
+            continue;
+        };
+        let first = records[head].handler;
+        if let Some((_, forms)) = pairs.iter().find(|(first_row, _)| first_row(first)) {
+            // A move or an add of a constant at a hot OSR latch keeps its own record, as `fuse_rows` keeps it.
+            let latch = osr_loop && (plain_row::<H, { crate::staged::MOVE_ROW }>(first) || plain_row::<H, { crate::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first));
+            if !latch {
+                if let Some(handler) = target_run_handler(forms, target_handler, &after) {
+                    records[head].handler = handler as *const ();
+                }
+            }
+            continue;
+        }
+        // The window pair (`fuse_rows`' `window_pairs`) whose first row is a window local's stores before a jump: leave its jump.
+        if lane_frame::is_window_row::<H, { crate::staged::FUSED_ROWS[31].0 }>(first) {
+            continue;
+        }
+        if let Some(handler) = target_run_handler(&lone, target_handler, &after) {
+            records[jump].handler = handler as *const ();
         }
     }
 }
 
 /// The handler of the `IncDec` record `update` that the record `jump` follows, where `jump` is an
 /// unconditional jump: the generated pair of `IncDec` and `Jump` (`fused_row`, the `staged::FUSED_ROWS`
-/// entry of that pair, `FUSED_PLAIN`). `None` for any other pair. The loader's `fuse_rows` pass and a
-/// loop site that retires (`lane_loop_retire`) fuse by it, so a declined loop runs what the
-/// interpreter's own does. The jump's target record keeps its own row.
-fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction) -> Option<Handler> {
+/// entry of that pair, `FUSED_PLAIN`). `None` for any other pair. A backward jump whose target run holds
+/// at `target` (a test, or a variable read or an update then a test) takes the pair's `FUSED_TARGET`
+/// record instead (`pair_target_forms`), so the target run runs in the same dispatch. The loader's
+/// `fuse_rows` pass and a loop site that retires (`lane_loop_retire`) fuse by it, so a declined loop runs
+/// what the interpreter's own does. The target record keeps its own row.
+fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction, target: Option<Ip>) -> Option<Handler> {
     update_direction::<H>(update)?;
     let backward = match jump.handler {
         plain if plain == jump_row::<H, JUMP>(true) as *const () => true,
         plain if plain == jump_row::<H, JUMP>(false) as *const () => false,
         _ => return None,
     };
+    if let (true, Some(target)) = (backward, target) {
+        let forms = pair_target_forms::<H, { crate::staged::INC_DEC_ROW }, { crate::staged::JUMP_ROW }>();
+        // SAFETY: a backward jump's target is a validated record of the running view.
+        let target_handler = unsafe { (*target).handler };
+        // A target run's prefix falls through to the record after it, which validation makes a record of the view.
+        let after = || unsafe { (*following(target)).handler };
+        if let Some(handler) = target_run_handler(&forms, target_handler, &after) {
+            return Some(handler);
+        }
+    }
     Some(lane_frame::fused_row::<H, { crate::staged::INC_DEC_ROW }, { crate::staged::JUMP_ROW }, { crate::staged::FUSED_PLAIN }>(backward))
 }
 

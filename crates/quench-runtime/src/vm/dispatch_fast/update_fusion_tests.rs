@@ -39,9 +39,9 @@ fn an_update_fuses_with_the_jump_after_it() {
     let record = |handler: *const (), a: u16| LaneInstruction { handler, operand: LaneOperand { jump: 0 }, a, b: 0, c: 0, call_link: std::cell::Cell::new(NO_CALL_LINK) };
     let update = record(generated_row::<TestHost, { opc::IncDec }, ACC_NONE, FLAG_UNREAD> as Handler as *const (), 0);
     let jump = record(jump_row::<TestHost, { opc::Jump }>(true) as *const (), 0);
-    let fused = update_fusion::<TestHost>(&update, &jump).map(|handler| handler as *const ());
+    let fused = update_fusion::<TestHost>(&update, &jump, None).map(|handler| handler as *const ());
     assert_eq!(fused, Some(lane_frame::fused_row::<TestHost, { opc::IncDec }, { opc::Jump }, { crate::staged::FUSED_PLAIN }>(true) as *const ()));
-    assert!(update_fusion::<TestHost>(&jump, &jump).is_none(), "only an `IncDec` fuses with the jump after it");
+    assert!(update_fusion::<TestHost>(&jump, &jump, None).is_none(), "only an `IncDec` fuses with the jump after it");
 }
 
 /// A postfix update fused with its `ToNumeric` (`lane_postfix_update`) skips the `IncDec` row, an
