@@ -23,3 +23,4 @@ per-call-recheck	.	^(lane_script_call_leaf|lane_cross_leaf_call|lane_enter_windo
 per-call-recheck	.	^lane_script_call$	debug_assert only, not in release builds (call-proofs kind 7)
 per-call-recheck	.	^(note_site_callee|note_linked_callee_slow|lane_function_call)$	call-site history for the planner, only where tiers_run; repeat callee is one compare (call-proofs kind 8)
 per-call-recheck	.	^lane_forwarded_cell_entry$	code lifecycle: entry_published is the cell validity, one load (call-proofs kind 9)
+per-call-recheck	.	^call_admitted$	reads script_calls_allowed only to name the miss reason after its one admission compare fails (call-proofs kind 2)
