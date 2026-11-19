@@ -361,7 +361,8 @@ impl Renamer<'_> {
             };
             let (a, b, base) = (source(row.a), source(row.b), row.base.map(|register| read(register)));
             let [dst, also] = defs.written[k].map(|def| def.map(|def| self.web(def)));
-            renamed.push(Decoded { dst, also, a, b, base, ..*row });
+            // The packed instruction names the original registers, which the renaming moves: a renamed row runs the general step.
+            renamed.push(Decoded { dst, also, a, b, base, packed: None, ..*row });
             at.extend(here);
         }
         let leaf_at = (0..flow.leaf_pcs.len()).flat_map(|leaf| self.table(flow.leaf(leaf))).collect();
