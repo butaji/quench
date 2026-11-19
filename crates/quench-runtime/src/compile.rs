@@ -4264,8 +4264,13 @@ impl<'a> Compiler<'a> {
             .instance_fields
             .filter(|_| !options.derived_constructor)
         {
-            function
-                .emit_instance_fields(fields, options.instance_private_methods.unwrap_or_default());
+            // A base class constructor's receiver is its own [[Construct]]'s, fresh; a derived
+            // class's fields run in their initializer on the receiver `super()` returned.
+            function.emit_instance_fields(
+                fields,
+                options.instance_private_methods.unwrap_or_default(),
+                options.class_constructor,
+            );
         }
         if let Some(defaults) = options.defaults {
             function.emit_parameter_bindings(defaults);

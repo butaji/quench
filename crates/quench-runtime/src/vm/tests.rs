@@ -24960,3 +24960,119 @@ fn constant_class_fields_allocate_receivers_in_their_layout() {
         assert_eq!(output.borrow().as_slice(), [expected, "true s-2.5 abcdefg 1 4"]);
     }
 }
+
+#[test]
+fn constant_field_runs_are_skipped_only_on_receivers_that_hold_them() {
+    // A base class constructor's run of two or more leading constant fields is skipped
+    // (`Op::ConstantFieldsHeld` and a `JumpTrue` past its defines) where the receiver was made
+    // holding it; anything else runs the defines. Exact for a prototype setter of the same name, a
+    // throw in a later initializer that saved the receiver, another `new.target` (a subclass's
+    // `super()`, `Reflect.construct`, a Proxy), classes evaluated many times, a run longer than
+    // a receiver is given, a run of one, private brands, and a derived class's fields on an
+    // object its base returned, which already holds them.
+    let source = r#"
+        const out = [];
+        class A { a = 1; b = "two"; c; d = false; constructor(n) { this.n = n; } }
+        let a; for (let i = 0; i < 300; i++) a = new A(i);
+        out.push(Object.keys(a).join(""), [a.a, a.b, a.c, a.d, a.n].join("|"));
+        a.a = 9; delete a.b;
+        const a2 = new A(1);
+        out.push(Object.keys(a2).join(""), a2.a, a2.b);
+        const log = [];
+        Object.defineProperty(A.prototype, "b", { set(v) { log.push(v); }, get() { return "proto"; }, configurable: true });
+        let as; for (let i = 0; i < 50; i++) as = new A(i);
+        out.push(log.length, as.b, Object.getOwnPropertyDescriptor(as, "b").writable);
+        let saved, seen;
+        function boom(o) { saved = o; seen = Object.keys(o).join(""); throw new Error("boom"); }
+        class T { a = 1; b = 2; c = 3; d = boom(this); e = 5; }
+        let caught = 0; for (let i = 0; i < 100; i++) { try { new T(); } catch (e) { caught++; } }
+        out.push(caught, seen, saved.a + saved.b + saved.c, "e" in saved);
+        function Other() {}
+        Other.prototype.tag = "o";
+        let rc; for (let i = 0; i < 100; i++) rc = Reflect.construct(A, [i], Other);
+        out.push(rc.tag, Object.keys(rc).join(""), rc.b, rc instanceof A);
+        const NT = new Proxy(function () {}, { get(t, k, r) { return k === "prototype" ? Other.prototype : Reflect.get(t, k, r); } });
+        let pr; for (let i = 0; i < 100; i++) pr = Reflect.construct(A, [i], NT);
+        out.push(Object.keys(pr).join(""), pr.tag, pr.a, pr.n);
+        class S extends A { e = 5; f = 6; constructor() { super(7); this.g = 8; } }
+        let s; for (let i = 0; i < 100; i++) s = new S();
+        out.push(Object.keys(s).join(""), s.a + s.e + s.f + s.g + s.n);
+        class B { constructor(o) { return o; } }
+        class E extends B { x = 1; y = 2; z = 3; constructor(o) { super(o); } }
+        const target = { x: 10, y: 20, z: 30 };
+        let okE = true;
+        for (let i = 0; i < 100; i++) {
+            target.x = -i; target.y = "s";
+            const r = new E(target);
+            okE = okE && r === target && r.x === 1 && r.y === 2 && r.z === 3;
+        }
+        out.push(okE, Object.keys(target).join(""));
+        function make(v) { return class { p = 1; q = "q"; r = null; constructor() { this.v = v; } }; }
+        let okM = true;
+        for (let i = 0; i < 30; i++) {
+            const C = make(i);
+            for (let j = 0; j < 5; j++) {
+                const o = new C();
+                okM = okM && Object.keys(o).join("") === "pqrv" && o.p === 1 && o.q === "q" && o.r === null && o.v === i;
+            }
+        }
+        out.push(okM);
+        class L {
+            f0 = 0; f1 = 1; f2 = 2; f3 = 3; f4 = 4; f5 = 5; f6 = 6; f7 = 7; f8 = 8; f9 = 9;
+            f10 = 10; f11 = 11; f12 = 12; f13 = 13; f14 = 14; f15 = 15; f16 = 16; f17 = 17; f18 = 18; f19 = 19;
+        }
+        let l; for (let i = 0; i < 100; i++) l = new L();
+        out.push(Object.keys(l).length, Object.keys(l)[19], Object.values(l).reduce((x, y) => x + y, 0));
+        class One { only = 4; ["oth" + "er"] = 2; }
+        let one; for (let i = 0; i < 100; i++) one = new One();
+        out.push(Object.keys(one).join(""), one.only + one.other);
+        class M { a = 1; b = 2; c = [3]; d = 4; }
+        let m; for (let i = 0; i < 100; i++) m = new M();
+        out.push(Object.keys(m).join(""), m.c[0] + m.d);
+        class PB { #m() { return 1; } a = 1; b = 2; get m() { return this.#m(); } }
+        let pb; for (let i = 0; i < 100; i++) pb = new PB();
+        out.push(Object.keys(pb).join(""), pb.m);
+        print(out.join(" "));
+    "#;
+    let expected = concat!(
+        "abcdn 1|two||false|299 abcdn 1 two 0 two true 100 abc 6 false o abcdn two true ",
+        "abcdn o 1 99 abcdnefg 27 true xyz true 20 f19 190 onlyother 6 abcd 7 ab 1",
+    );
+    let program = Engine::specialize(source, "constant-field-skips.js").unwrap();
+
+    // The skip opens each base class constructor's run of two or more, a test then a jump past
+    // the run's last define; a run of one, a derived class's initializer and every function
+    // without a run have none.
+    program.compile_released();
+    let mut skips = 0;
+    for function in (0..program.function_count()).filter_map(|index| program.function_get(index)) {
+        let code = function.instructions().collect::<Vec<_>>();
+        let tests = code.iter().enumerate().filter(|(_, instruction)| instruction.op() == crate::bytecode::Op::ConstantFieldsHeld)
+            .map(|(pc, _)| pc).collect::<Vec<_>>();
+        if function.constant_fields.len() < 2 {
+            assert!(tests.is_empty(), "{} constant fields, {} tests", function.constant_fields.len(), tests.len());
+            continue;
+        }
+        assert_eq!(tests.len(), 1);
+        let jump = code[tests[0] + 1];
+        assert_eq!(jump.op(), crate::bytecode::Op::JumpTrue);
+        let end = jump.jump_target() as usize;
+        let defines = code[tests[0]..end].iter().filter(|instruction| instruction.op() == crate::bytecode::Op::DefineField).count();
+        assert_eq!(defines, function.constant_fields.len().min(crate::bytecode::PRESHAPED_FIELDS));
+        assert_eq!(code[end - 1].op(), crate::bytecode::Op::DefineField);
+        skips += 1;
+    }
+    // A, T, M, PB, the made class and L.
+    assert_eq!(skips, 6);
+
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        use super::call_out::counts::{take, CONSTANT_FIELD_SKIPS};
+        take(&CONSTANT_FIELD_SKIPS);
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected], "{mode:?}");
+        assert!(take(&CONSTANT_FIELD_SKIPS) > 0, "{mode:?}: no run was skipped");
+    }
+}

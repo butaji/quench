@@ -46,7 +46,7 @@ fn without_helper_addresses_every_opcode_leaves() {
 /// The opcodes whose only lowering is the generic helper step, each for the reason beside it:
 /// no fast arm a register's word, a shape or a backing the row can read decides, so the helper
 /// is their whole operation, not a slow arm.
-const RESIDUAL: [Op; 18] = [
+const RESIDUAL: [Op; 19] = [
     // The define adds a property: where its site recorded the transition (`Known::adds`) its staged row (`staged::add`) is the fast arm (`adds`) and this helper its slow arm; with none recorded, the helper is the whole operation.
     Op::DefineField,
     // The key is converted (guest code) and the property defined through the shape's slow path.
@@ -83,6 +83,8 @@ const RESIDUAL: [Op; 18] = [
     Op::IteratorCleanupPush,
     // Pops the frame's VM-held active-iterator stack.
     Op::IteratorCleanupPop,
+    // Compares the receiver's shape with a define site's overwrite entry (`Vm::constant_fields_held`): VM-held cache state, read once per construction in place of the run of helper defines it skips.
+    Op::ConstantFieldsHeld,
 ];
 
 /// No function of the lane fixtures holds a generic helper step of the lane's in-place steps

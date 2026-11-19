@@ -23,6 +23,21 @@
 //! overwrite of `proved_field_define_hit`), keeping the key order. Private methods (marked
 //! before the fields) and private fields (after) touch no public key.
 //!
+//! The skipped run: where a base class constructor's run of constant fields is two or more, the
+//! compiler emits `ConstantFieldsHeld` of the receiver and a `JumpTrue` past the run's defines
+//! (and the initializers' constant loads) before it (`compile::class::emit_instance_fields`); the
+//! jump is taken where the receiver already holds the run (`Vm::constant_fields_held`). That test
+//! is exact on its own terms: the receiver's exact shape must be the one the run's first define
+//! (its own cache site, which no other instruction writes) found already holding its name
+//! (`field_define_overwrite`). At that define a fresh receiver holds the name only where it was
+//! made in the constant layout, as nothing before it adds a public key (the template is empty,
+//! private brands are no keys, the run's names are distinct), so that shape holds every name of
+//! the run in order with default attributes; a receiver of that shape at the run's start was made
+//! so too, and holds the constants, which the defines would write over themselves. Any receiver
+//! that was not (a construct plan's empty template, an inline allocation of another tier, a run
+//! longer than this module gives) fails the test and runs the defines. Not taking the jump is
+//! always exact, so a tier may run the test or not.
+//!
 //! The layout depends on the constructor's body alone: whichever `new.target` a construction
 //! passes (a subclass's `super()`, `Reflect.construct`, a Proxy whose `prototype` trap ran
 //! before the allocation), its receiver is fresh, of `new.target`'s prototype, and runs this
@@ -59,7 +74,8 @@ use crate::value_vec::INLINE_PROPERTY_COUNT;
 pub(super) const PRESHAPED_RECEIVER_ENTRIES: usize = 64;
 /// The most fields a layout gives a receiver at its allocation: a longer constant layout gives
 /// its first ones (still a leading run), a longer declared layout none; the defines add the rest.
-pub(super) const PRESHAPED_FIELDS: usize = 16;
+/// The compiler's skip over the run covers as many (`bytecode::PRESHAPED_FIELDS`).
+pub(super) const PRESHAPED_FIELDS: usize = crate::bytecode::PRESHAPED_FIELDS;
 
 /// What a construction by `constructor` from a template of shape `start` allocates: the shape its
 /// layout's `len` names (`atoms`) reach from `start`, each in turn reaching `shapes`, holding
@@ -186,6 +202,28 @@ impl<H: Host> Vm<H> {
                 self.invalidate_method_caches_for_prototype_add(this, atom);
             }
         }
+    }
+
+    /// Whether `receiver`, a base class constructor's fresh receiver at the run of leading constant
+    /// fields its body defines first (`ConstantFieldsHeld`), already holds that run as its defines
+    /// would leave it, so the run's skip is taken (the module's skipped run): its exact shape is
+    /// the one the run's first define, through cache site `site`, found already holding its name
+    /// (`field_define_overwrite`), as only a receiver made in the constant layout does. One cache
+    /// entry and one shape are read; anything else, an empty entry included, answers `false`.
+    #[inline(always)]
+    pub(super) fn constant_fields_held(&self, receiver: Value, site: u16) -> bool {
+        let Some(record_id) = receiver.direct_object_index() else {
+            return false;
+        };
+        let entry = self.field_cache_entry(site);
+        let held = entry.holder == NO_FIELD_HOLDER
+            && entry.receiver != NO_FIELD_RECEIVER
+            && entry.receiver == self.heap.object_record_by_id(record_id).exact_shape();
+        #[cfg(test)]
+        if held {
+            super::call_out::counts::bump(&super::call_out::counts::CONSTANT_FIELD_SKIPS);
+        }
+        held
     }
 
     /// Appends the layout of entry `index` to `this`, its receiver still empty over the run

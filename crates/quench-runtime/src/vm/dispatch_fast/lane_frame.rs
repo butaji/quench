@@ -31,7 +31,11 @@ type NamesStep = unsafe fn(*mut (), CallOut, [Option<Value>; 2]) -> Option<Value
 /// The values a keeping activation kept (`kept_values`).
 type KeptValues = unsafe fn(*mut ()) -> Option<(u16, u16)>;
 
-/// How a by-name load's record reads its name once resolved (`name_resolution`).
+/// The test of a receiver's constant fields through a cache site (`constant_fields_value`), which
+/// reads one entry and a shape.
+type ConstantFieldsTest = unsafe fn(*mut (), Value, u16) -> bool;
+
+/// How a by-name load's record reads its name once resolved (`lane_name_resolution`).
 #[derive(Clone, Copy)]
 pub(super) enum NameRead {
     /// The active realm's function for the native the name stands for (`Vm::intrinsic_natives`).
@@ -57,8 +61,12 @@ struct LaneHost {
     define: ElementDefiner,
     delete: PropertyDeleter,
     read_name: NameReader,
-    /// What an `await`'s source conversion asks (`staged::await_source`, `AwaitSource::of`).
-    awaits: AwaitSource,
+    /// The values a keeping activation kept (`kept_values`): their count and the register
+    /// that holds the first, past the function's registers.
+    kept_values: KeptValues,
+    /// Whether a receiver already holds its constructor's run of constant fields
+    /// (`Vm::constant_fields_held`).
+    constant_fields: ConstantFieldsTest,
     /// What the by-name load the frame runs resolved its name to, if it runs one.
     name: Option<NameBinding>,
     /// The VM's `is_object_like` of a heap value, for a staged object test (`RequireIteratorResult`).
@@ -635,10 +643,8 @@ impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
     #[inline(always)]
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
-        let host = LaneHost { cx: cx.cast(), allocate: allocation_in_lane::<H>, define: define_element_in_lane::<H>, delete: delete_value_in_lane::<H>,
-            read_name: name_value_in_lane::<H>, type_of: type_of_in_lane::<H>, typeof_name: typeof_string_in_lane::<H>,
-            set_name: set_function_name_in_lane::<H>, kept_values: kept_values::<H>, name: None,
-            object_like: object_like_in_lane::<H>, awaits: AwaitSource::of::<H>() };
+        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: lane_delete_value::<H>,
+            read_name: lane_name_value::<H>, kept_values: kept_values::<H>, constant_fields: constant_fields_value::<H>, name: None };
         Self { host: Some(host), ..Self::new(registers, view) }
     }
 
@@ -1046,105 +1052,18 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn vm_step(&mut self, stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, Boxing)> {
-        if let Some((context, binary)) = self.binary
-            && let Some((left, right, operator)) = binary_call(operation)
-        {
-            let (left, right) = (self.operand_word(stage, left)?, self.operand_word(stage, right)?);
-            let (left, right) = (Value::from_bits(left), Value::from_bits(right));
-            // SAFETY: the running lane's context, live for the row's step.
-            return unsafe { binary(context, operator, left, right) }.map(|value| (value.to_bits(), Boxing::Value));
+        // A receiver's constant fields test reads one cache entry and the receiver's shape in place.
+        if let CallOut::Protocol { step: crate::staged::Protocol::ConstantFieldsHeld { site }, operands: [_, Some(receiver)] } = operation {
+            let host = self.host?;
+            let receiver = Value::from_bits(self.read(stage, receiver));
+            // SAFETY: the host's context is the running lane's.
+            let held = unsafe { (host.constant_fields)(host.cx, receiver, site) };
+            return Some((Value::boolean(held).to_bits(), Boxing::Value));
         }
-        match operation {
-            CallOut::Decide { left, right, operator } => {
-                let Decisions { context, decide, .. } = self.decisions?;
-                let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
-                decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
-            }
-            CallOut::Protocol { .. } | CallOut::ForInNext { .. } | CallOut::PropertyKey { .. } => {
-                let (context, step) = self.names?;
-                let operands = operation.operands().fixed;
-                let operands = operands.map(|operand| operand.and_then(|operand| self.operand_word(stage, operand)).map(Value::from_bits));
-                // SAFETY: the running lane's context, live for the row's step.
-                unsafe { step(context, operation, operands) }.map(|value| (value.to_bits(), Boxing::Value))
-            }
-            // The clone defines no register; its word is a placeholder the row does not write.
-            CallOut::CloneEnv { plan } => {
-                let EnvironmentClones { context, window, run } = self.clones?;
-                // SAFETY: the running lane's context and register file, live for the row's step.
-                unsafe { run(context, self.registers, window, plan) }.then_some((Value::UNDEFINED.to_bits(), Boxing::Value))
-            }
-            _ => None,
-        }
-    }
-
-    #[inline(always)]
-    fn arguments_length(&mut self, _stage: &mut Concrete, slot: u16) -> Option<(u64, Boxing)> {
-        let (context, count) = self.arguments?;
-        // SAFETY: the running lane's context, live for the row's step.
-        Some((unsafe { count(context, slot) }?.to_bits(), Boxing::Value))
-    }
-
-    /// The kept value at `index` of a keeping activation's `arguments` binding in local `slot`: the
-    /// value after the running function's registers (`kept`), in range of the activation's count.
-    #[inline(always)]
-    fn argument(&mut self, _stage: &mut Concrete, slot: u16, index: u64) -> Option<(u64, Boxing)> {
-        let (context, count) = self.arguments?;
-        // SAFETY: the running lane's context, live for the row's step.
-        let count = unsafe { count(context, slot) }?.as_int()?;
-        let index = Value::from_bits(index).as_int().and_then(|index| u16::try_from(index).ok())?;
-        if i32::from(index) >= count {
-            return None;
-        }
-        Some((self.registers.get(self.kept + index).to_bits(), Boxing::Value))
-    }
-
-    /// The keeping activation's `arguments` binding in local `slot` (`kept_binding`): the marker a forwarding
-    /// read passes on, the object it makes at its last read, or a frame's binding as the Vm reads it.
-    #[inline(always)]
-    fn arguments_binding(&mut self, _stage: &mut Concrete, slot: u16) -> Option<(u64, Boxing)> {
-        let (context, binding) = self.kept_binding?;
-        // SAFETY: the running lane's context and register file, live for the row's step.
-        Some((unsafe { binding(context, self.registers, slot) }?.to_bits(), Boxing::Value))
-    }
-
-    /// `value instanceof constructor` by the VM's proof of the constructor's chain, else the ordinary walk
-    /// (`Decisions::instance`), which runs no guest code; `None` where only the full algorithm decides.
-    #[inline(always)]
-    fn instance_of(&mut self, _stage: &mut Concrete, value: u64, constructor: u64) -> Option<bool> {
-        let Decisions { context, instance, .. } = self.decisions?;
-        instance(context, Value::from_bits(value), Value::from_bits(constructor))
-    }
-
-    /// The by-name read through the window's scope (`ScopeReads::name`): the destination and the call
-    /// receiver are written by the callout, which finds the binding the scope holds.
-    #[inline(always)]
-    fn scoped_name(&mut self, _stage: &mut Concrete, destination: Register, receiver: Option<Register>, atom: u32) -> Option<()> {
-        let ScopeReads { context, ip, name, site, .. } = self.scope?;
-        // SAFETY: the running lane's context and register file, live for the row's step.
-        unsafe { name(context, self.registers, ip, atom, destination, receiver, site) }.then_some(())
-    }
-
-    /// The store of `value` to the `with` object the window's scope holds the name in (`ScopeReads::store`).
-    #[inline(always)]
-    fn scoped_store(&mut self, _stage: &mut Concrete, atom: u32, value: u64) -> Option<()> {
-        let ScopeReads { context, ip, store, .. } = self.scope?;
-        // SAFETY: as `scoped_name`.
-        unsafe { store(context, self.registers, ip, atom, value) }.then_some(())
-    }
-
-    /// The store of `value` to local `slot` through the window's scope (`ScopeReads::local`).
-    #[inline(always)]
-    fn scoped_local_store(&mut self, _stage: &mut Concrete, slot: u16, value: u64) -> Option<()> {
-        let ScopeReads { context, ip, local, .. } = self.scope?;
-        // SAFETY: as `scoped_name`.
-        unsafe { local(context, self.registers, ip, slot, value) }.then_some(())
-    }
-
-    #[inline(always)]
-    fn callee_value(&mut self, _stage: &mut Concrete) -> Option<(u64, Boxing)> {
-        let (context, read) = self.callee?;
-        // SAFETY: the running lane's context, live for the row's step.
-        Some((unsafe { read(context) }?.to_bits(), Boxing::Value))
+        let CallOut::Decide { left, right, operator } = operation else { return None };
+        let Decisions { context, decide, .. } = self.decisions?;
+        let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
+        decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
     }
 
     #[inline(always)]
@@ -3313,6 +3232,18 @@ unsafe fn kept_values<H: Host>(cx: *mut ()) -> Option<(u16, u16)> {
     }
     let script = unsafe { vm(cx) }.lane_stack.activations().last()?.script().filter(|script| script.forwards)?;
     Some((script.argc, script.kept))
+}
+
+/// Whether `receiver` already holds its constructor's run of constant fields
+/// (`Vm::constant_fields_held`): one cache entry of site `site` and the receiver's shape, read in
+/// the lane context `cx`; it allocates nothing and runs no guest code.
+///
+/// # Safety
+/// `cx` is the running lane's context. Called through `LaneHost::constant_fields`, a constant
+/// function pointer in the frame a names row builds (`row_frame`), so the call inlines.
+#[inline(always)]
+unsafe fn constant_fields_value<H: Host>(cx: *mut (), receiver: Value, site: u16) -> bool {
+    unsafe { vm(cx.cast::<LaneContext<H>>()) }.constant_fields_held(receiver, site)
 }
 
 /// The value of `atom` under `read` in the lane context `cx`, which allocates nothing and runs

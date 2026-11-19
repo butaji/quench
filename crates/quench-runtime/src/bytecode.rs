@@ -1198,14 +1198,15 @@ opcodes!($;
     // the rest register, `undefined` where the entry kept the values passed, which it spreads.
     CallRest => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallRest; staged Names; traits CALL_LINK MAY_ALLOCATE, @ Returnable, @ fields(ResultRegister, Register, Register),
     // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
-    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused; staged Call; traits FIRST_CALL_STUB MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmSegmentDrop => Effect::WRITES_HEAP; layout Scalar; meaning WasmInstanceSlot; class WasmSegmentDrop; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
-    // Synthetic records only: the lane view's prologue records, which no bytecode holds. A frameless activation
-    // of a function the JavaScript tier may claim starts at `TierPrologue` (`imm` the function, `a` its parameter
-    // count); a specialized body's prologue is `BodyEntry` (`imm` the function, `b` whether it binds `this`).
-    // Their staged rows are `Operation::Prologue` and `Operation::BodyEntry` (`staged::prologue`).
-    TierPrologue => CALL_EFFECT; layout Scalar; meaning Unused; class TierPrologue; staged Lane; traits MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
-    BodyEntry => CALL_EFFECT; layout Scalar; meaning Unused; class BodyEntry; staged Lane; traits MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
+    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    // `a` = whether `b`, a base class constructor's fresh receiver, already holds the run of
+    // leading constant fields (`ConstantField`) whose defines follow the `JumpTrue` of `a` that
+    // skips them: its exact shape is the one the run's first `DefineField` (cache site `c`) found
+    // already holding its name, as only a receiver made in the run's layout does
+    // (`vm::preshaped_receiver`, `Vm::constant_fields_held`). It reads one cache entry and a
+    // shape, and raises nothing; not taking the skip is always exact too, as the defines then
+    // write each value over itself (`compile::class::emit_instance_fields`).
+    ConstantFieldsHeld => Effect::READS_HEAP; layout Scalar; meaning Unused; staged Names; step LaneResult; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, CacheSiteIndex),
 );
 
 const _: () = {
@@ -1997,12 +1998,18 @@ impl FactTables for ResidualProgram {
 /// `__proto__` nor numeric, whose initializer is absent or a primitive constant. The leading
 /// run of them is defined first thing by the constructor, before any code can observe the
 /// receiver, so its receiver may be allocated already holding them (`vm::preshaped_receiver`);
-/// the `DefineField`s still run and find each in place.
+/// the `DefineField`s then find each in place, and the compiler skips the run where the receiver
+/// holds it (`Op::ConstantFieldsHeld`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ConstantField {
     pub(crate) atom: Atom,
     pub(crate) value: FieldConstant,
 }
+
+/// The most leading constant fields a receiver is allocated holding (`vm::preshaped_receiver`):
+/// a longer run gives its first ones, and the compiler's skip over the run covers as many
+/// (`compile::class::emit_instance_fields`).
+pub(crate) const PRESHAPED_FIELDS: usize = 16;
 
 /// The primitive a constant field holds; a string is named by its atom, whose string the VM
 /// keeps.
