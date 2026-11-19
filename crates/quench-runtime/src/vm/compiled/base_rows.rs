@@ -235,6 +235,10 @@ pub(super) enum Heap {
     /// The entry test of a declared parameter (`base_region::declared`): the register at hole 0 holds a word whose
     /// tag-decided languages meet the declared mask at hole 1, else the entry leaves with nothing written.
     Declared,
+    /// The entry test of a class-typed parameter (`base_region::link::entry_rows`): the register at hole 0 holds a direct
+    /// object whose exact shape and prototype link are the pair in hole 1 (`entry::shape_link_matches`), else the entry
+    /// leaves with nothing written.
+    Prototype,
     /// A prototype-held field folded to the value its holder held when the code was compiled (hole 2):
     /// the object register whose frame offset sits above the destination's in hole 0 is a direct object
     /// of the exact shape in hole 1's low half and the prototype link in its high half, else the row
@@ -398,6 +402,7 @@ impl Heap {
         Some(match self {
             Heap::Identity => library::IDENTITY_ROW,
             Heap::Declared => library::DECLARED_ROW,
+            Heap::Prototype => library::PROTOTYPE_ROW,
             Heap::TypeofIndex => library::TYPEOF_INDEX_ROW,
             Heap::TypeofString => library::TYPEOF_STRING_ROW,
             Heap::Instanceof => library::INSTANCEOF_ROW,
@@ -447,7 +452,7 @@ impl Heap {
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(super) fn reads_frame_word(self) -> bool {
-        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value

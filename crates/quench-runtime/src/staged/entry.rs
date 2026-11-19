@@ -218,13 +218,20 @@ fn site_record<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), 
 /// (leaving at `miss`) for any other receiver. Shape and link are the caller's values, compared here.
 #[inline(always)]
 pub(crate) fn held_constant<S: Stage>(stage: &mut S, record: S::Word, (shape, link): (u32, u32), value: u64, miss: S::Miss) -> Option<S::Word> {
+    shape_link_matches(stage, record, (u64::from(shape), u64::from(link)), miss)?;
+    Some(stage.constant(value))
+}
+
+/// The receiver check of a prototype-held read (`held_constant`, `guard::prototype`): the record `record` has
+/// exact shape `shape` and prototype link `link`, else the caller leaves at `miss`. The one definition of the pair.
+#[inline(always)]
+pub(crate) fn shape_link_matches<S: Stage>(stage: &mut S, record: S::Word, (shape, link): (u64, u64), miss: S::Miss) -> Option<()> {
     let exact = super::object::exact_shape(stage, record);
-    let same = stage.eq_imm(exact, u64::from(shape));
+    let same = stage.eq_imm(exact, shape);
     stage.guard(same, miss)?;
     let prototype = super::object::proto_link(stage, record);
-    let same = stage.eq_imm(prototype, u64::from(link));
-    stage.guard(same, miss)?;
-    Some(stage.constant(value))
+    let same = stage.eq_imm(prototype, link);
+    stage.guard(same, miss)
 }
 
 /// A field read through the cache entry `offset` bytes into the table `entries`, of the object

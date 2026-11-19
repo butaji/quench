@@ -228,7 +228,7 @@ const HEAP_USES: &[(Uses, &[std::ops::RangeInclusive<u8>])] = &[
     (uses(Entry::Kept, Slot::Unread, Slot::Unread, Slot::Unread), &[ADD_PACKED_ROW..=ADD_PACKED_ROW, ADD_ARENA_ROW..=ADD_ARENA_ROW, ADD_EITHER_ROW..=ADD_EITHER_ROW,
         THIS_ADD_PACKED_ROW..=THIS_ADD_PACKED_ROW, THIS_ADD_ARENA_ROW..=THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW..=THIS_ADD_EITHER_ROW]),
     // The rows that read nothing but their holes.
-    (uses(Entry::Never, Slot::Unread, Slot::Unread, Slot::Unread), &[NAME_EITHER_ROW..=NAME_EITHER_ROW, NAME_ARENA_ROW..=NAME_ARENA_ROW, ARRAY_ROW..=ARRAY_ROW, DECLARED_ROW..=DECLARED_ROW, IC_PROOF_ROW..=IC_PROOF_ROW,
+    (uses(Entry::Never, Slot::Unread, Slot::Unread, Slot::Unread), &[NAME_EITHER_ROW..=NAME_EITHER_ROW, NAME_ARENA_ROW..=NAME_ARENA_ROW, ARRAY_ROW..=ARRAY_ROW, DECLARED_ROW..=DECLARED_ROW, PROTOTYPE_ROW..=PROTOTYPE_ROW, IC_PROOF_ROW..=IC_PROOF_ROW,
         IDENTITY_ROW..=IDENTITY_ROW, LIVE_ROW..=LIVE_ROW, REALM_ROW..=REALM_ROW, OBJECT_ROW..=OBJECT_ROW, KEY_ROW..=KEY_ROW, FOR_IN_ROW..=FOR_IN_ROW,
         TYPEOF_INDEX_ROW..=TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW..=TYPEOF_STRING_ROW, INSTANCEOF_ROW..=INSTANCEOF_ROW, TYPEOF_IS_ROW..=TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW..=TYPEOF_ISNOT_ROW]),
     // The staged rows over two register operands into a frame slot (`staged_rows.rs`): a remainder, a relation or an

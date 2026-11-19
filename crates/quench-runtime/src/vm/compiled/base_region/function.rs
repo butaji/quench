@@ -435,6 +435,19 @@ pub(in crate::vm::compiled) struct BodySpec<'a> {
     pub(in crate::vm::compiled) kinds: &'a [OperandKinds],
 }
 
+/// A class-typed parameter's prototype as the entry observed it: the parameter's register, the receiver's exact shape
+/// and prototype link (the receiver check of `PrototypeProof::Linked`, `entry::shape_link_matches`), the prototype's
+/// exact shape (`holder`, which the body subscribes to, so a change of its values retires the body), and the prototype's
+/// own data values of the named reads the body makes of the parameter (`members`, by atom, as bits).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::vm::compiled) struct ClassProto {
+    pub(in crate::vm::compiled) register: crate::bytecode::Register,
+    pub(in crate::vm::compiled) shape: u32,
+    pub(in crate::vm::compiled) link: u32,
+    pub(in crate::vm::compiled) holder: u32,
+    pub(in crate::vm::compiled) members: Vec<(crate::bytecode::Atom, u64)>,
+}
+
 /// The body of the function `spec` names that `region` spans, over the callees its call sites
 /// recorded, counted under the trace. An error where its first row leaves at once: such a body is
 /// pure entry cost.
@@ -585,7 +598,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let realm = (ending == Ending::Body || !stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
     let relies: Vec<bool> = decoded.iter().map(|row| row.relies).collect();
     let (guards, numbers) = (super::declared::entry_guards(function), super::declared::entry_numbers(function));
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, guards, numbers };
+    let prototypes = super::declared::class_prototypes(function, spec.known.classes);
+    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, guards, numbers, prototypes };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     let (code, resumes) = link(&layout, &planned)?;
@@ -595,7 +609,10 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let covered = reached.count() - exits;
     let bare = realm.is_none() && decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls() && !row.step.is_some_and(Step::reads_payload));
     let records = planned.iter_mut().flat_map(|row| std::mem::take(&mut row.owned)).collect();
-    let (atoms, holders) = (held_atoms(&decoded), held_holders(&decoded));
+    let atoms = held_atoms(&decoded);
+    // A class-typed parameter's prototype shape joins the holders the body subscribes to, so a value change there retires it.
+    let holders: Box<[u32]> = held_holders(&decoded).iter().copied().chain(layout.prototypes.iter().map(|proto| proto.holder))
+        .collect::<std::collections::BTreeSet<u32>>().into_iter().collect();
     let names_shapes = decoded.iter().any(|row| row.ic.is_some());
     Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region))), atoms, holders,
         instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,

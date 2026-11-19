@@ -122,6 +122,10 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// What each by-name global access takes (`Vm::global_table`, the b-jit's), where the code may hold
     /// Stable facts: a global object's slot under its layout (`globals`). `None` where none may.
     pub(in crate::vm::compiled) globals: Option<&'a crate::vm::global_facts::GlobalReads>,
+    /// The prototypes the class-typed parameters entered with, as the compiling VM observed them (`VM::class_prototypes`):
+    /// a named read of such a parameter folds to its prototype's own value (`declared::class_member_read`), and the entry
+    /// checks each (`declared::class_prototypes`). Empty where none was observed.
+    pub(in crate::vm::compiled) classes: &'a [function::ClassProto],
 }
 
 /// The realm a body's inlined callees were found in: where the active realm's global object sits in
