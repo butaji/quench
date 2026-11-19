@@ -368,6 +368,11 @@ impl<H: Host> Vm<H> {
         excluded: &[Value],
         kind: PropertyCopyKind,
     ) -> bool {
+        // `Object.assign` onto an empty target takes the source's shape when no key could meet
+        // `__proto__`, an accessor or a read-only property on the target's chain.
+        if matches!(kind, PropertyCopyKind::Set) && excluded.is_empty() && self.adopt_source_shape_for_set(target, source) {
+            return true;
+        }
         let Some(slots) = self.shape_enumerable_slots(source) else {
             return false;
         };
@@ -598,7 +603,7 @@ impl<H: Host> Vm<H> {
         let epoch = crate::heap::prototype_layout_epoch();
         if !self.symbol_write_proofs.holds(proto, key, epoch) {
             let guard = self.add_prototype_guard(object, symbol)?;
-            self.mark_prototype_links(proto, guard.prototype_depth);
+            self.mark_prototype_links(proto, guard.depth);
             // Marking a link that was no prototype yet leaves the epoch where it was.
             if crate::heap::prototype_layout_epoch() == epoch {
                 self.symbol_write_proofs.record(proto, key, epoch);

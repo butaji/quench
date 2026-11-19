@@ -939,13 +939,17 @@ impl<H: Host> Vm<H> {
         if self.shape_is_dictionary(shape) {
             return self.heap.property_get(object, self.prototype_data_slot(constructor, shape, key)?);
         }
-        let memo = &self.shapes[shape as usize].prototype_slot;
-        let slot = match memo.get() {
+        let memo = &self.shapes[shape as usize];
+        let slot = match memo.prototype_slot() {
             PROTOTYPE_SLOT_UNKNOWN => {
                 let slot = self
                     .prototype_data_slot(constructor, shape, key)
-                    .map_or(PROTOTYPE_SLOT_NONE, |slot| slot as u32);
-                memo.set(slot);
+                    .map_or(PROTOTYPE_SLOT_NONE, |slot| u32::try_from(slot).unwrap_or(PROTOTYPE_SLOT_UNKNOWN));
+                if slot == PROTOTYPE_SLOT_UNKNOWN {
+                    // A slot past every memo: read it unmemoized.
+                    return self.heap.property_get(object, self.prototype_data_slot(constructor, shape, key)?);
+                }
+                memo.set_prototype_slot(slot);
                 slot
             }
             slot => slot,
@@ -973,7 +977,7 @@ impl<H: Host> Vm<H> {
         if self.shape_is_dictionary(shape) {
             return None;
         }
-        match self.shapes[shape as usize].prototype_slot.get() {
+        match self.shapes[shape as usize].prototype_slot() {
             PROTOTYPE_SLOT_UNKNOWN | PROTOTYPE_SLOT_NONE => None,
             slot => Some((shape, slot as usize)),
         }

@@ -3868,7 +3868,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
             let shape = vm.object_data(object).expect("object value").shape();
             assert!(vm.shape_is_dictionary(shape), "{mode}: {name}");
             assert_eq!(
-                vm.shapes[shape as usize].dictionary_trigger,
+                vm.shapes[shape as usize].dictionary_trigger(),
                 Some(trigger),
                 "{mode}: {name} trigger"
             );
@@ -3979,7 +3979,7 @@ fn a_deletion_keeps_a_shared_shape_until_vacated_slots_outnumber_properties() {
     assert_eq!(first, second);
     // Two vacated slots and no property: the object's storage is all holes.
     assert_eq!(
-        vm.shapes[emptied as usize].dictionary_trigger,
+        vm.shapes[emptied as usize].dictionary_trigger(),
         Some(super::DictionaryTrigger::DeletionPattern)
     );
     assert_eq!(output.borrow().as_slice(), ["14 false a,c"]);
@@ -4024,7 +4024,7 @@ fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
     let shape = vm.transition_property_shape(0, key);
     assert!(vm.shape_is_dictionary(shape));
     assert_eq!(
-        vm.shapes[shape as usize].dictionary_trigger,
+        vm.shapes[shape as usize].dictionary_trigger(),
         Some(super::DictionaryTrigger::PropertyCount)
     );
     assert_eq!(

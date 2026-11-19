@@ -114,9 +114,9 @@ impl AtomClass {
 /// The shape of an object without properties, where every literal shape starts.
 const EMPTY_SHAPE: u32 = 0;
 /// Transitions a shape lookup may walk before the walk counts as long.
-const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
+pub(super) const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
 /// Long walks from one shape after which that shape gets a lookup index.
-const SHAPE_INDEX_LONG_WALKS: u8 = 8;
+pub(super) const SHAPE_INDEX_LONG_WALKS: u8 = 8;
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 /// `AccessorFieldCache::holder` of an accessor the receiver holds itself.
 pub(super) const OWN_ACCESSOR: Value = Value::UNDEFINED;
@@ -252,7 +252,7 @@ impl<H: Host> Vm<H> {
         if let Some(index) = entry.lookup_index.get() {
             return index.slot(key).map(|slot| slot as usize);
         }
-        if entry.dictionary_trigger.is_some() {
+        if entry.is_dictionary() {
             return self.shape_lookup_index(shape).slot(key).map(|slot| slot as usize);
         }
         if let Some(slot) = self.shape_slot_memo.get(shape, key) {
@@ -323,9 +323,9 @@ impl<H: Host> Vm<H> {
     #[cold]
     pub(super) fn note_long_shape_walk(&self, shape: u32) {
         let entry = &self.shapes[shape as usize];
-        let walks = entry.long_walks.get() + 1;
+        let walks = entry.long_walks() + 1;
         if walks < SHAPE_INDEX_LONG_WALKS {
-            entry.long_walks.set(walks);
+            entry.set_long_walks(walks);
             return;
         }
         entry
@@ -419,7 +419,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn shape_keys(&self, shape: u32) -> Vec<PropertyKey> {
         self.shape_entries(shape)
-            .map(|(key, _)| *key)
+            .map(|(key, _)| key)
             .collect()
     }
     /// Moves `parent`'s lookup index to `child`, a cached transition of it the object took, as
@@ -484,7 +484,7 @@ impl<H: Host> Vm<H> {
         let next = u32::try_from(self.shapes.len()).expect("object shape table exhausted");
         let dictionary_trigger = match transition {
             ShapeTransition::Dictionary { trigger } => Some(trigger),
-            _ => self.shapes[parent as usize].dictionary_trigger,
+            _ => self.shapes[parent as usize].dictionary_trigger(),
         };
         let parent_facts = self.shapes[parent as usize].facts;
         // The object that grew has moved to the child, so the parent's lookup index moves
@@ -492,7 +492,7 @@ impl<H: Host> Vm<H> {
         // one; an object left on the parent rebuilds it after `SHAPE_INDEX_LONG_WALKS` long
         // walks. Otherwise every intermediate shape of a growing wide object (the global
         // object during bootstrap) kept a full index, or each one walked its whole chain anew.
-        let long_walks = self.shapes[parent as usize].long_walks.get();
+        let long_walks = self.shapes[parent as usize].long_walks();
         let lookup_index = self.shapes[parent as usize]
             .lookup_index
             .take()
@@ -504,7 +504,7 @@ impl<H: Host> Vm<H> {
             dictionary_trigger,
             parent_facts,
         );
-        child.long_walks.set(long_walks);
+        child.set_long_walks(long_walks);
         if let Some(index) = lookup_index {
             child.lookup_index = OnceCell::from(index);
         }
@@ -526,14 +526,14 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn shape_is_dictionary(&self, shape: u32) -> bool {
-        self.shapes[shape as usize].dictionary_trigger.is_some()
+        self.shapes[shape as usize].is_dictionary()
     }
     /// Whether a property of `shape` may be an accessor: a dictionary shape keeps its
     /// attributes outside its transitions, any other knows from its chain (`ShapeFacts`).
     #[inline(always)]
     pub(super) fn shape_may_have_accessors(&self, shape: u32) -> bool {
         let entry = &self.shapes[shape as usize];
-        entry.dictionary_trigger.is_some() || entry.facts.accessors()
+        entry.is_dictionary() || entry.facts.accessors()
     }
     /// Whether a property of `shape` may be an accessor with a setter (`ShapeFacts::ACCESSOR_PAIRS`):
     /// a dictionary shape keeps its attributes outside its transitions, any other knows from
@@ -541,14 +541,14 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn shape_may_have_accessor_pairs(&self, shape: u32) -> bool {
         let entry = &self.shapes[shape as usize];
-        entry.dictionary_trigger.is_some() || entry.facts.accessor_pairs()
+        entry.is_dictionary() || entry.facts.accessor_pairs()
     }
     /// Whether a property of `shape` may be keyed by a symbol or private name (`ShapeFacts::HAS_SYMBOL_KEY`):
     /// a dictionary shape keeps its keys outside its transitions, any other knows from its chain.
     #[inline(always)]
     pub(super) fn shape_may_have_symbol_keys(&self, shape: u32) -> bool {
         let entry = &self.shapes[shape as usize];
-        entry.dictionary_trigger.is_some() || entry.facts.has_symbol_key()
+        entry.facts.is_dictionary() || entry.facts.has_symbol_key()
     }
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
         let Some(shape) = self.object_data(object).map(Object::shape) else {
@@ -667,7 +667,7 @@ impl<H: Host> Vm<H> {
         if self.shape_is_dictionary(shape) {
             return true;
         }
-        if let Some(known) = self.shapes[shape as usize].index_keys.get() {
+        if let Some(known) = self.shapes[shape as usize].index_keys() {
             return known;
         }
         let mut current = Some(shape);
@@ -676,7 +676,7 @@ impl<H: Host> Vm<H> {
                 break false;
             };
             let candidate = &self.shapes[id as usize];
-            if let Some(known) = candidate.index_keys.get() {
+            if let Some(known) = candidate.index_keys() {
                 break known;
             }
             if let ShapeTransition::Add {
@@ -689,7 +689,7 @@ impl<H: Host> Vm<H> {
             }
             current = candidate.parent();
         };
-        self.shapes[shape as usize].index_keys.set(Some(found));
+        self.shapes[shape as usize].set_index_keys(found);
         found
     }
 
@@ -1020,6 +1020,7 @@ impl<H: Host> Vm<H> {
         self.enumerable_key_value_lists.clear();
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
+        self.field_add_chains.clear();
         self.megamorphic_fields.clear();
         self.heap.dependencies_mut().clear_inherited();
         self.accessor_fields.clear();
@@ -3536,12 +3537,13 @@ impl<H: Host> Vm<H> {
             || self.heap.array(object).is_some()
             || self.heap.function(object).is_some() && self.function_links_answer(atom)
             || self.heap.ordinary_builtin_object(object).is_some();
-        let (cache, value) = self.inherited_field(receiver, shape_holds_own, atom)?;
+        let (cache, shapes, value) = self.inherited_field(receiver, shape_holds_own, atom)?;
         #[cfg(feature = "profile-lane-exits")]
         self.record_field_probe_path(site, atom, 5);
         if self.field_cache_records(site) {
             self.note_field_cache_write(site);
-            self.record_inherited_field(site, cache);
+            let depth = usize::from(cache.depth);
+            self.record_inherited_field(site, cache, &shapes[..depth]);
         }
         Some(value)
     }
@@ -3582,7 +3584,9 @@ impl<H: Host> Vm<H> {
     /// Records `cache` as the site's newest inherited entry. An entry for its receiver shape
     /// is replaced in place; a site holding `INHERITED_FIELD_CACHE_WAYS` entries reuses its
     /// oldest one's storage, so a site's entries stay bounded however many shapes reach it.
-    fn record_inherited_field(&mut self, site: usize, cache: InheritedFieldCache) {
+    /// `shapes` are the entry's chain, which the cache interns (`Dependencies::intern_inherited_chain`).
+    fn record_inherited_field(&mut self, site: usize, mut cache: InheritedFieldCache, shapes: &[u32]) {
+        cache.chain = self.heap.dependencies_mut().intern_inherited_chain(shapes);
         let head = self.inherited_field_indices.get(site);
         if let Some(slot) =
             record_mru_entry(self.heap.dependencies_mut(), head, INHERITED_FIELD_CACHE_WAYS, cache)
@@ -3642,7 +3646,7 @@ impl<H: Host> Vm<H> {
         let mut prototype = first;
         let mut holder = None;
         let mut holder_value = Value::UNDEFINED;
-        for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
+        for &shape in self.heap.dependencies().inherited_chain(cache) {
             let data = self.inherited_chain_link(prototype, cache.atom, cache.function_links)?;
             if data.ordinary_shape() != shape {
                 return None;
@@ -3728,15 +3732,17 @@ impl<H: Host> Vm<H> {
         object: &Object,
         shape_holds_own: bool,
         atom: Atom,
-    ) -> Option<(InheritedFieldCache, Value)> {
+    ) -> Option<(InheritedFieldCache, [u32; INHERITED_FIELD_CACHE_MAX_DEPTH], Value)> {
         if self.shape_slot(object.shape(), atom).is_some() {
             return None;
         }
         let function_links = self.function_links_answer(atom);
+        // The chain's shapes, which `record_inherited_field` interns as the entry's `chain`.
+        let mut shapes = [NO_FIELD_HOLDER; INHERITED_FIELD_CACHE_MAX_DEPTH];
         let mut cache = InheritedFieldCache {
             receiver: object.shape(),
             atom,
-            prototype_shapes: [NO_FIELD_HOLDER; INHERITED_FIELD_CACHE_MAX_DEPTH],
+            chain: 0,
             depth: 0,
             function_links,
             answer: InheritedFieldAnswer::Absent,
@@ -3757,7 +3763,7 @@ impl<H: Host> Vm<H> {
         let mut prototype = object.proto();
         for depth in 0..INHERITED_FIELD_CACHE_MAX_DEPTH {
             if prototype.is_null() {
-                return absence_cacheable.then_some((cache, Value::UNDEFINED));
+                return absence_cacheable.then_some((cache, shapes, Value::UNDEFINED));
             }
             let data = self.inherited_chain_link(prototype, atom, function_links)?;
             let shape = data.shape();
@@ -3766,7 +3772,7 @@ impl<H: Host> Vm<H> {
             {
                 return None;
             }
-            cache.prototype_shapes[depth] = shape;
+            shapes[depth] = shape;
             cache.depth = (depth + 1) as u8;
             if let Some(slot) = self.shape_slot(shape, atom) {
                 // The immediate prototype is the regular field cache's holder tier.
@@ -3774,11 +3780,11 @@ impl<H: Host> Vm<H> {
                     return None;
                 }
                 cache.answer = InheritedFieldAnswer::Slot(slot as u16);
-                return Some((cache, self.heap.property_get(data, slot)?));
+                return Some((cache, shapes, self.heap.property_get(data, slot)?));
             }
             prototype = data.proto();
         }
-        (prototype.is_null() && absence_cacheable).then_some((cache, Value::UNDEFINED))
+        (prototype.is_null() && absence_cacheable).then_some((cache, shapes, Value::UNDEFINED))
     }
 
     #[cold]
@@ -4614,6 +4620,7 @@ impl<H: Host> Vm<H> {
                 && !self.shape_is_dictionary(shape)
                 && let Some(prototype_guard) = add_prototype_guard
             {
+                let guarded = self.guarded_field_add(&prototype_guard);
                 self.record_field_add_cache(
                     site,
                     FieldAddCache {
@@ -4622,7 +4629,7 @@ impl<H: Host> Vm<H> {
                         target_shape: data_shape,
                         slot: slot as u16,
                         layouts: Object::add_layouts(layout, data_shape),
-                        ..prototype_guard
+                        ..guarded
                     },
                 );
             }
@@ -4637,6 +4644,15 @@ impl<H: Host> Vm<H> {
             );
         }
         Ok(())
+    }
+
+    /// An empty add entry proving `guard`'s prototype chain, interned (`field_add_chains`).
+    fn guarded_field_add(&mut self, guard: &AddPrototypeGuard) -> FieldAddCache {
+        FieldAddCache {
+            prototype_depth: guard.depth,
+            chain: self.field_add_chains.intern(guard.shapes()),
+            ..FieldAddCache::EMPTY
+        }
     }
 
     pub(super) fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
@@ -4802,11 +4818,11 @@ impl<H: Host> Vm<H> {
     /// The prototype shapes a cached add of `key` to `object` must find again, as the depth and
     /// shape fields of a `FieldAddCache`; `None` when a link is exotic, a dictionary, or holds
     /// `key` as an accessor or read-only.
-    pub(super) fn add_prototype_guard(&self, object: Value, key: PropertyKey) -> Option<FieldAddCache> {
+    pub(super) fn add_prototype_guard(&self, object: Value, key: PropertyKey) -> Option<AddPrototypeGuard> {
         let mut prototype = self.object_data(object)?.proto();
-        let mut guard = FieldAddCache::EMPTY;
+        let mut guard = AddPrototypeGuard::EMPTY;
         while !prototype.is_null() {
-            let depth = usize::from(guard.prototype_depth);
+            let depth = usize::from(guard.depth);
             if depth == FIELD_ADD_CACHE_MAX_PROTO_DEPTH {
                 return None;
             }
@@ -4820,8 +4836,8 @@ impl<H: Host> Vm<H> {
             {
                 return None;
             }
-            guard.prototype_shapes[depth] = shape;
-            guard.prototype_depth += 1;
+            guard.shapes[depth] = shape;
+            guard.depth += 1;
             prototype = data.proto();
         }
         Some(guard)
@@ -4860,7 +4876,8 @@ impl<H: Host> Vm<H> {
         // Entries record only non-dictionary source and prototype shapes, a shape's
         // dictionary state is fixed when it is created, and shape compaction clears these
         // caches, so a matching shape needs no dictionary probe here or along the chain.
-        if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
+        let chain = self.field_add_chains.get(cache.chain, usize::from(depth));
+        if !self.field_add_prototype_chain_matches(proto, chain) {
             return None;
         }
         self.mark_prototype_links(proto, depth);
@@ -4901,7 +4918,7 @@ impl<H: Host> Vm<H> {
 
     /// The source shape and prototype proof a keyed add of `atom` to `object` would record
     /// (`record_keyed_add`), taken before the add.
-    pub(super) fn keyed_add_guard(&self, object: Value, atom: Atom) -> Option<(u32, FieldAddCache)> {
+    pub(super) fn keyed_add_guard(&self, object: Value, atom: Atom) -> Option<(u32, AddPrototypeGuard)> {
         let data = self.heap.object_record(object)?;
         let shape = data.shape();
         if self.shape_is_dictionary(shape) || self.shape_slot(shape, atom).is_some() || !self.field_add_atom_eligible(atom) {
@@ -4913,7 +4930,7 @@ impl<H: Host> Vm<H> {
     /// Remembers the add of `atom` that moved `object` from `shape`, proved by `guard`
     /// (`keyed_add_guard`), as `keyed_add_hit` replays it: an append at the source shape's
     /// end to a non-dictionary shape.
-    pub(super) fn record_keyed_add(&mut self, object: Value, atom: Atom, shape: u32, guard: FieldAddCache) {
+    pub(super) fn record_keyed_add(&mut self, object: Value, atom: Atom, shape: u32, guard: AddPrototypeGuard) {
         let Some(target_shape) = self.heap.object_record(object).map(Object::shape) else {
             return;
         };
@@ -4929,8 +4946,9 @@ impl<H: Host> Vm<H> {
         let Ok(slot) = u16::try_from(slot) else {
             return;
         };
+        let guarded = self.guarded_field_add(&guard);
         self.keyed_adds[keyed_add_index(shape, atom)] =
-            FieldAddCache { atom, source_shape: shape, target_shape, slot, ..guard };
+            FieldAddCache { atom, source_shape: shape, target_shape, slot, ..guarded };
     }
 
     /// Marks the `depth` links of the chain from `proto` as prototypes, so a later change to

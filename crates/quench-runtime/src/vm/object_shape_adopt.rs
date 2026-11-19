@@ -73,4 +73,62 @@ impl<H: Host> Vm<H> {
         self.initialize_plain_copy(target, source_shape, &values, atoms.iter().copied());
         true
     }
+
+    /// `adopt_source_shape` for `Object.assign`, whose copies are `[[Set]]`s rather than
+    /// CreateDataProperty. A set of a source key on the target creates the same own data property
+    /// as CreateDataProperty when no object on the target's prototype chain has that key as an
+    /// accessor (a setter would run) or as a read-only data property (the write would be refused).
+    /// So the target takes the source's shape only when every key of the source's shape passes
+    /// that check, and `adopt_source_shape` holds. The check walks the chain from the target's
+    /// prototype and stops at the first object that holds the key, as `OrdinarySet` does; a Proxy,
+    /// an exotic or frozen object on the chain, and the key `__proto__` (Object.prototype's
+    /// accessor) answer `false`. Runs no guest code and cannot throw; `false`, before any effect,
+    /// leaves the copy to the general path.
+    pub(crate) fn adopt_source_shape_for_set(&mut self, target: Value, source: Value) -> bool {
+        let (Some(source_data), Some(target_data)) = (self.object_data(source), self.object_data(target)) else {
+            return false;
+        };
+        let target_proto = target_data.proto();
+        let source_shape = source_data.shape();
+        // The source's keys, read from the same chain of default string-key adds that
+        // `adopt_source_shape` walks.
+        let mut atoms = smallvec::SmallVec::<[Atom; ADOPT_INLINE_PROPERTIES]>::new();
+        let mut current = source_shape;
+        while let Some(parent) = self.shapes[current as usize].parent() {
+            match self.shapes[current as usize].transition {
+                ShapeTransition::Add { key: PropertyKey::String(atom), attributes, .. }
+                    if attributes == DEFAULT_DATA_ATTRIBUTES =>
+                {
+                    atoms.push(atom)
+                }
+                _ => return false,
+            }
+            current = parent;
+        }
+        for &atom in &atoms {
+            if self.atom_units_equal_str(atom, "__proto__") {
+                return false;
+            }
+            let mut holder = target_proto;
+            while !holder.is_null() {
+                let Some(data) = self.object_data(holder) else {
+                    return false;
+                };
+                if !self.shape_lists_enumerable_keys(holder)
+                    || data.is_arguments_object()
+                    || data.is_frozen()
+                {
+                    return false;
+                }
+                if let Some(attributes) = self.property_attributes(holder, PropertyKey::string(atom)) {
+                    if attributes.accessor || !attributes.writable {
+                        return false;
+                    }
+                    break;
+                }
+                holder = data.proto();
+            }
+        }
+        self.adopt_source_shape(target, source, Value::UNDEFINED)
+    }
 }

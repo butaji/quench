@@ -239,7 +239,7 @@ fn append_compacted_shape(
     let shape = u32::try_from(shapes.len()).expect("object shape table exhausted");
     let dictionary_trigger = match transition {
         ShapeTransition::Dictionary { trigger } => Some(trigger),
-        _ => shapes[parent as usize].dictionary_trigger,
+        _ => shapes[parent as usize].dictionary_trigger(),
     };
     let parent_facts = shapes[parent as usize].facts;
     shapes.push(Shape::child(
@@ -297,7 +297,7 @@ fn rebuild_shape(
             );
         }
     }
-    if let Some(trigger) = old_shapes[old_shape as usize].dictionary_trigger {
+    if let Some(trigger) = old_shapes[old_shape as usize].dictionary_trigger() {
         parent = append_compacted_shape(
             shapes,
             transitions,

@@ -881,8 +881,13 @@ unsafe impl site_table::StoredWords for FieldCacheWords {}
 pub(crate) use crate::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
 
 /// One cached property-add transition: an extensible ordinary object of `source_shape` whose
-/// prototype chain still has exactly `prototype_shapes[..prototype_depth]` gains `atom` at `slot`
-/// and moves to `target_shape`.
+/// prototype chain still has exactly the `prototype_depth` shapes interned at `chain`
+/// (`Vm::field_add_chains`) gains `atom` at `slot` and moves to `target_shape`.
+///
+/// 40 bytes: proved epoch (8), atom, source and target shapes, chain, proved prototype (20),
+/// layouts (8), slot and depth (3), padded; an inline `[u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH]`
+/// made it 72, though recorded adds prove at most a few prototypes and the sites of one
+/// constructor's stores share one chain.
 #[derive(Clone, Copy)]
 struct FieldAddCache {
     atom: Atom,
@@ -893,13 +898,30 @@ struct FieldAddCache {
     /// (`Transition::layouts`), which the staged rows guard and store.
     layouts: [u32; 2],
     prototype_depth: u8,
-    prototype_shapes: [u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
+    /// Where the chain's prototype shapes are interned (`Vm::field_add_chains`).
+    chain: u32,
     /// The `prototype_layout_epoch` under which a walk last proved the chain from
     /// `proved_prototype`, or `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
     proved_epoch: u64,
     /// The receiver's prototype link the proof holds for, compared undecoded; a collection
     /// advances the epoch, so it never outlives the record it names.
     proved_prototype: ProtoLink,
+}
+// Keep the entry compact: a monomorphic add site's set is its first entry, a length and a box.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<FieldAddCache>() == 40);
+/// The prototype shapes a cached add must find again (`Vm::add_prototype_guard`), nearest
+/// first, before an entry interns them as its chain.
+#[derive(Clone, Copy)]
+struct AddPrototypeGuard {
+    depth: u8,
+    shapes: [u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
+}
+impl AddPrototypeGuard {
+    const EMPTY: Self = Self { depth: 0, shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH] };
+    fn shapes(&self) -> &[u32] {
+        &self.shapes[..usize::from(self.depth)]
+    }
 }
 /// A `FieldAddCache::proved_epoch` no epoch reaches: the chain is unproven.
 const NO_PROVED_EPOCH: u64 = u64::MAX;
@@ -911,13 +933,10 @@ impl FieldAddCache {
         slot: 0,
         layouts: [0; 2],
         prototype_depth: 0,
-        prototype_shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
+        chain: 0,
         proved_epoch: NO_PROVED_EPOCH,
         proved_prototype: ProtoLink::NULL,
     };
-    fn prototype_shapes(&self) -> &[u32] {
-        &self.prototype_shapes[..usize::from(self.prototype_depth)]
-    }
     /// The shape transition the entry caches, as the staged add row takes it.
     #[inline(always)]
     fn transition(&self) -> Transition {
@@ -1009,9 +1028,11 @@ impl FieldAddCacheSet {
         let kept = match entries[..len]
             .iter()
             .position(|entry| {
+                // Interned chains are equal exactly when their offsets and lengths are.
                 entry.source_shape == cache.source_shape
                     && entry.atom == cache.atom
-                    && entry.prototype_shapes() == cache.prototype_shapes()
+                    && entry.prototype_depth == cache.prototype_depth
+                    && entry.chain == cache.chain
             })
         {
             Some(index) => {
@@ -1521,7 +1542,8 @@ impl ShapeLookupIndex {
     }
 }
 /// Facts a shape inherits from its chain: once a transition introduces one, every descendant
-/// keeps it. Two bytes, so `Shape` keeps its size.
+/// keeps it. Two bytes, so `Shape` keeps its size; the top three bits hold the shape's
+/// dictionary trigger (`DICTIONARY_MASK`).
 #[derive(Clone, Copy, Default)]
 struct ShapeFacts(u16);
 impl ShapeFacts {
@@ -1585,6 +1607,37 @@ impl ShapeFacts {
         )
     }
 
+    /// The dictionary trigger, in the top three bits: zero for none, else the trigger's
+    /// index plus one. Set per shape (`Shape::child`), not by `extended_by`.
+    const DICTIONARY_SHIFT: u32 = 13;
+    const DICTIONARY_MASK: u16 = 0b111 << Self::DICTIONARY_SHIFT;
+
+    /// These facts with `trigger` as the dictionary trigger.
+    fn with_dictionary_trigger(self, trigger: Option<DictionaryTrigger>) -> Self {
+        let code: u16 = match trigger {
+            None => 0,
+            Some(DictionaryTrigger::PropertyCount) => 1,
+            Some(DictionaryTrigger::DeletionPattern) => 2,
+            Some(DictionaryTrigger::PrototypeUse) => 3,
+            Some(DictionaryTrigger::ModuleNamespace) => 4,
+        };
+        Self((self.0 & !Self::DICTIONARY_MASK) | (code << Self::DICTIONARY_SHIFT))
+    }
+
+    #[inline(always)]
+    fn dictionary_trigger(self) -> Option<DictionaryTrigger> {
+        match (self.0 & Self::DICTIONARY_MASK) >> Self::DICTIONARY_SHIFT {
+            0 => None,
+            1 => Some(DictionaryTrigger::PropertyCount),
+            2 => Some(DictionaryTrigger::DeletionPattern),
+            3 => Some(DictionaryTrigger::PrototypeUse),
+            _ => Some(DictionaryTrigger::ModuleNamespace),
+        }
+    }
+
+    #[inline(always)]
+    fn is_dictionary(self) -> bool { self.0 & Self::DICTIONARY_MASK != 0 }
+
     fn accessor_pairs(self) -> bool { self.0 & Self::ACCESSOR_PAIRS != 0 }
     fn accessors(self) -> bool { self.0 & Self::ACCESSORS != 0 }
     fn default_attributes(self) -> bool { self.0 & Self::NON_DEFAULT_ATTRIBUTES == 0 }
@@ -1610,32 +1663,45 @@ struct Shape {
     transition: ShapeTransition,
     /// Property slots an object of this shape stores (slot indices are `u32`).
     storage_len: u32,
-    dictionary_trigger: Option<DictionaryTrigger>,
+    /// The chain's facts and, in its top bits, the dictionary trigger
+    /// (`ShapeFacts::dictionary_trigger`).
     facts: ShapeFacts,
+    /// This immutable shape's lazily derived memos in one word (`ShapeMemo`): its own data
+    /// `prototype` slot, whether its keys include an array-index name, and the long walks
+    /// spent toward a lookup index.
+    memo: std::cell::Cell<u16>,
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
-    /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions
-    /// from this shape before it had an index.
-    long_walks: std::cell::Cell<u8>,
-    /// Memo of this immutable shape's own data `prototype` slot, which every `new F` reads:
-    /// `PROTOTYPE_SLOT_UNKNOWN` until first derived, `PROTOTYPE_SLOT_NONE` when absent or an
-    /// accessor. Dictionary shapes never memoize.
-    prototype_slot: std::cell::Cell<u32>,
-    /// Memo of whether this immutable shape's keys include an array-index name: `None` until
-    /// first derived (`Vm::shape_has_index_key`). Dictionary shapes never memoize.
-    index_keys: std::cell::Cell<Option<bool>>,
     /// The child of this shape's latest cached transition (`NO_LAST_CHILD` before one), tried
     /// before the transition index: objects of one layout grow by the same keys in turn.
     last_child: std::cell::Cell<u32>,
 }
-// Every object layout and property key costs one shape; keep the record compact.
+// Every object layout and property key costs one shape; keep the record compact: 4 (parent)
+// + 24 (transition) + 4 (storage_len) + 2 (facts with the dictionary trigger) + 2 (memo) + 8
+// (lookup index) + 4 (last child) = 48, where separate memo and trigger fields made 56.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(size_of::<Shape>() == 56);
+const _: () = assert!(size_of::<Shape>() == 48);
 /// `Shape::parent` of the root shape.
 const NO_PARENT_SHAPE: u32 = u32::MAX;
 /// `Shape::last_child` before the shape has a cached transition.
 const NO_LAST_CHILD: u32 = u32::MAX;
 const PROTOTYPE_SLOT_UNKNOWN: u32 = u32::MAX;
 const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
+/// The bits of `Shape::memo`. The `prototype` slot memo takes the low ten bits: a slot below
+/// `MEMO_PROTOTYPE_NONE` is memoized as itself, a slot at or past it (a function with a
+/// thousand own properties before `prototype`) is never memoized and is derived again.
+struct ShapeMemo;
+impl ShapeMemo {
+    const PROTOTYPE_MASK: u16 = (1 << 10) - 1;
+    const PROTOTYPE_UNKNOWN: u16 = Self::PROTOTYPE_MASK;
+    const PROTOTYPE_NONE: u16 = Self::PROTOTYPE_MASK - 1;
+    const INDEX_KEYS_SHIFT: u32 = 10;
+    const INDEX_KEYS_MASK: u16 = 0b11 << Self::INDEX_KEYS_SHIFT;
+    const LONG_WALKS_SHIFT: u32 = 12;
+    const LONG_WALKS_MAX: u8 = 15;
+    const INITIAL: u16 = Self::PROTOTYPE_UNKNOWN;
+}
+// The long-walk count reaches `SHAPE_INDEX_LONG_WALKS` in its four bits.
+const _: () = assert!(object::SHAPE_INDEX_LONG_WALKS <= ShapeMemo::LONG_WALKS_MAX);
 /// The shape table's initial capacity, above what a builtin realm uses (about 1900 shapes).
 /// A table this large is mapped by the allocator on its own, so it grows by remapping in
 /// place, never leaving a copied-out table behind, and only the shapes in use are resident.
@@ -1660,6 +1726,66 @@ impl Shape {
         self.storage_len as usize
     }
 
+    /// What made this shape and its descendants dictionaries, if anything did.
+    #[inline(always)]
+    fn dictionary_trigger(&self) -> Option<DictionaryTrigger> {
+        self.facts.dictionary_trigger()
+    }
+
+    /// Whether this shape is a dictionary's (`dictionary_trigger`).
+    #[inline(always)]
+    fn is_dictionary(&self) -> bool {
+        self.facts.is_dictionary()
+    }
+
+    /// The memo of this shape's own data `prototype` slot: `PROTOTYPE_SLOT_UNKNOWN` until
+    /// derived, `PROTOTYPE_SLOT_NONE` when absent or an accessor.
+    #[inline(always)]
+    fn prototype_slot(&self) -> u32 {
+        match self.memo.get() & ShapeMemo::PROTOTYPE_MASK {
+            ShapeMemo::PROTOTYPE_UNKNOWN => PROTOTYPE_SLOT_UNKNOWN,
+            ShapeMemo::PROTOTYPE_NONE => PROTOTYPE_SLOT_NONE,
+            slot => u32::from(slot),
+        }
+    }
+
+    /// Memoizes `slot` as `prototype_slot`; a slot past the memo's range stays unknown.
+    fn set_prototype_slot(&self, slot: u32) {
+        let bits = match slot {
+            PROTOTYPE_SLOT_NONE => ShapeMemo::PROTOTYPE_NONE,
+            slot if slot < u32::from(ShapeMemo::PROTOTYPE_NONE) => slot as u16,
+            _ => return,
+        };
+        self.memo.set((self.memo.get() & !ShapeMemo::PROTOTYPE_MASK) | bits);
+    }
+
+    /// The memo of whether this shape's keys include an array-index name, once derived.
+    #[inline(always)]
+    fn index_keys(&self) -> Option<bool> {
+        match (self.memo.get() & ShapeMemo::INDEX_KEYS_MASK) >> ShapeMemo::INDEX_KEYS_SHIFT {
+            0 => None,
+            1 => Some(false),
+            _ => Some(true),
+        }
+    }
+
+    fn set_index_keys(&self, found: bool) {
+        let bits: u16 = (if found { 2u16 } else { 1u16 }) << ShapeMemo::INDEX_KEYS_SHIFT;
+        self.memo.set((self.memo.get() & !ShapeMemo::INDEX_KEYS_MASK) | bits);
+    }
+
+    /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions from this shape
+    /// before it had an index.
+    #[inline(always)]
+    fn long_walks(&self) -> u8 {
+        (self.memo.get() >> ShapeMemo::LONG_WALKS_SHIFT) as u8
+    }
+
+    fn set_long_walks(&self, walks: u8) {
+        let walks = u16::from(walks.min(ShapeMemo::LONG_WALKS_MAX));
+        self.memo.set((self.memo.get() & !(0xF_u16 << ShapeMemo::LONG_WALKS_SHIFT)) | (walks << ShapeMemo::LONG_WALKS_SHIFT));
+    }
+
     fn child(
         parent: Option<u32>,
         transition: ShapeTransition,
@@ -1671,12 +1797,9 @@ impl Shape {
             parent: parent.unwrap_or(NO_PARENT_SHAPE),
             transition,
             storage_len: u32::try_from(storage_len).expect("object property index exceeds u32"),
-            dictionary_trigger,
-            facts: parent_facts.extended_by(transition),
+            facts: parent_facts.extended_by(transition).with_dictionary_trigger(dictionary_trigger),
+            memo: std::cell::Cell::new(ShapeMemo::INITIAL),
             lookup_index: OnceCell::new(),
-            long_walks: std::cell::Cell::new(0),
-            prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
-            index_keys: std::cell::Cell::new(None),
             last_child: std::cell::Cell::new(NO_LAST_CHILD),
         }
     }
@@ -2100,6 +2223,9 @@ pub(crate) struct Vm<H> {
     accessor_fields: Vec<AccessorFieldCache>,
     field_add_indices: site_table::CacheSiteTable<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
+    /// The prototype chains add entries name (`FieldAddCache::chain`), each once; cleared
+    /// only with every entry (`field_add_sets` and `keyed_adds`).
+    field_add_chains: crate::heap::InternedChains,
     /// The layouts and strings JSON parses share within a collection epoch.
     json_parse_cache: json::JsonParseCache,
     /// Adds a keyed `[[Set]]` of a string naming an atom made (`Vm::keyed_add_hit`): a keyed
@@ -2822,7 +2948,8 @@ impl<H: Host> Vm<H> {
             })
             .sum();
         let field_add_cache_bytes = self.field_add_indices.capacity_bytes()
-            + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>();
+            + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
+            + self.field_add_chains.bytes();
         eprintln!(
             "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"inline_property_values\":{inline_property_values},\"narrowable_inline_property_values\":{narrowable_inline_property_values},\"out_of_line_property_values\":{out_of_line_property_values},\"narrowable_out_of_line_property_values\":{narrowable_out_of_line_property_values},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"dense_array_values\":{dense_array_values},\"narrowable_dense_array_values\":{narrowable_dense_array_values},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"field_cache_sites\":{},\"field_cache_site_capacity\":{},\"active_field_caches\":{active_field_caches},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"field_cache_data_bytes\":{},\"megamorphic_field_index_bytes\":{},\"field_add_index_bytes\":{},\"field_add_set_bytes\":{},\"field_add_sets\":{},\"field_add_cache_entries\":{field_add_cache_entries},\"field_add_cache_depth_counts\":{field_add_cache_depth_counts:?},\"field_add_set_occupancy\":{field_add_set_occupancy:?},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
             self.shapes.len(),
@@ -2979,7 +3106,7 @@ impl<H: Host> Vm<H> {
             heap.cell_payload_bytes,
             shape_table_bytes,
             self.shapes.len(),
-            self.shapes.iter().filter(|shape| shape.dictionary_trigger.is_some()).count(),
+            self.shapes.iter().filter(|shape| shape.is_dictionary()).count(),
             shape_lookup_bytes,
             transition_table_bytes,
             descriptor_side_table_bytes,
@@ -3105,7 +3232,8 @@ impl<H: Host> Vm<H> {
         self.field_add_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
-        self.megamorphic_field_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
+        self.field_add_chains.clear();
+        self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.megamorphic_fields.clear();
         self.holder_hints.clear();
         self.length_atom = self.intern_atom("length");
@@ -3329,19 +3457,20 @@ impl<H: Host> Vm<H> {
 
     /// Empties every cache entry in `layout`'s ranges, which a reclaimed program left, for
     /// the program taking them over.
+    ///
+    /// Every table's empty entry stores as zero bits, so a range empties by handing its whole
+    /// pages back to the kernel (`SiteTable::empty_range`): both when its program is reclaimed
+    /// (`free_cache_layouts_of`), so the dead program's recorded pages leave the resident set
+    /// at once, and again on reuse, where only the sites recorded since are written.
     fn empty_cache_ranges(&mut self, layout: ProgramCacheLayout) {
         let fields = layout.field_base..layout.field_base + usize::from(layout.sites.fields);
-        for site in fields {
-            self.field_caches.set(site, EMPTY_CACHE);
-            self.field_add_indices.set(site, NO_FIELD_ADD_SET);
-            self.megamorphic_field_indices.set(site, NO_MEGAMORPHIC_FIELD);
-            self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
-            self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
-        }
+        self.field_caches.empty_range(fields.clone());
+        self.field_add_indices.empty_range(fields.clone());
+        self.megamorphic_field_indices.empty_range(fields.clone());
+        self.inherited_field_indices.empty_range(fields.clone());
+        self.accessor_field_indices.empty_range(fields);
         self.method_caches.empty_sites(layout.method_base..layout.method_base + layout.sites.methods);
-        for site in layout.object_base..layout.object_base + layout.sites.objects {
-            self.object_shapes.set(site, NO_OBJECT_SHAPE);
-        }
+        self.object_shapes.empty_range(layout.object_base..layout.object_base + layout.sites.objects);
     }
 
     /// Files the cache-site ranges of reclaimed `programs` for programs with the same site
@@ -3350,6 +3479,7 @@ impl<H: Host> Vm<H> {
         for program in programs {
             let Some(&layout) = self.program_cache_layouts.get(program.raw() as usize) else { continue };
             if layout.sites != crate::bytecode::CacheSiteCounts::default() {
+                self.empty_cache_ranges(layout);
                 self.free_cache_layouts.entry(layout.sites).or_default().push(layout);
             }
         }

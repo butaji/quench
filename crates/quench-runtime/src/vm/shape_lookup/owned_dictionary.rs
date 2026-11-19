@@ -23,7 +23,7 @@ const SHARED_DELETIONS: usize = 8;
 type SlotEntry = Option<(PropertyKey, ShapeAttributes)>;
 
 pub(in crate::vm) fn is_owned(shape: &Shape) -> bool {
-    shape.dictionary_trigger == Some(DictionaryTrigger::DeletionPattern)
+    shape.dictionary_trigger() == Some(DictionaryTrigger::DeletionPattern)
 }
 
 /// Whether more of `storage_len` slots are vacated than hold the `live` properties: when an
@@ -194,7 +194,7 @@ impl<H: Host> Vm<H> {
         let entry = &self.shapes[shape as usize];
         let storage_len = entry.storage_len();
         match transition {
-            _ if entry.dictionary_trigger.is_some() => None,
+            _ if entry.is_dictionary() => None,
             ShapeTransition::Add { .. } => {
                 (storage_len > object::FIELD_CACHE_SLOT_CAPACITY).then_some(DictionaryTrigger::PropertyCount)
             }

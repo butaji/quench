@@ -110,7 +110,7 @@ fn an_owned_dictionary_packs_its_storage_as_keys_come_and_go() {
         for (var i = 0; i < 1e5; i++) { o['x' + (i & 255)] = i; delete o['x' + ((i * 7) & 255)]; }";
     let mut vm = Vm::new(TestHost::default());
     vm.execute(&Engine::specialize(source, "churn.js").unwrap()).unwrap();
-    let owned = vm.shapes.iter().filter(|shape| shape.dictionary_trigger == Some(DictionaryTrigger::DeletionPattern));
+    let owned = vm.shapes.iter().filter(|shape| shape.dictionary_trigger() == Some(DictionaryTrigger::DeletionPattern));
     let widest = owned.map(Shape::storage_len).max().unwrap_or(0);
     assert!(widest <= 2 * 260, "an owned dictionary grew to {widest} slots");
 }

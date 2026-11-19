@@ -30,7 +30,6 @@ pub struct Languages(pub u16);
 
 impl Languages {
     pub const EMPTY: Self = Self(0);
-    pub const ANY: Self = Self(ANY_LANGUAGES);
 
     /// The set holding only `kind`.
     pub const fn of(kind: ValueType) -> Self {
@@ -89,6 +88,7 @@ impl Type {
     /// shape or storage permission follows from this refinement.
     pub(crate) const DIRECT_OBJECT_FAMILY: Self = Self(TypeKind::DirectObjectFamily);
     /// Internal control discriminant emitted by the typeof-test rewrite.
+    #[cfg(test)]
     pub(crate) const TYPEOF_INDEX: Self = Self(TypeKind::Language(1 << (u16::BITS - 1)));
 
     pub(crate) const fn language(kind: ValueType) -> Self {

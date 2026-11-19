@@ -161,7 +161,7 @@ impl<H: Host> Vm<H> {
             accessor_field_indices: _,
             accessor_fields: _,
             field_add_indices: _,
-            field_add_sets: _, json_parse_cache: _,
+            field_add_sets: _, field_add_chains: _, json_parse_cache: _,
             keyed_adds: _,
             megamorphic_field_indices: _,
             field_cache_writes: _,
@@ -280,7 +280,7 @@ impl<H: Host> Vm<H> {
             writer.u32(shape.parent);
             shape.transition.snap(&mut writer)?;
             writer.u32(shape.storage_len);
-            shape.dictionary_trigger.snap(&mut writer)?;
+            shape.dictionary_trigger().snap(&mut writer)?;
         }
         shape_constructors.snap(&mut writer)?;
         shape_accessors.snap(&mut writer)?;

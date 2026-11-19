@@ -49,6 +49,11 @@ impl<H: Host> Vm<H> {
         if let Some(keys) = self.own_enumerable_key_values_cached(object) {
             return Some(self.array_of(&keys));
         }
+        // The shape's key strings, made once per shape, copied into the result in one part; the
+        // allocation does not collect, so the memo's strings stay live through the copy.
+        if let Some(keys) = self.own_enumerable_key_values_cached(object) {
+            return Some(self.array_of(&keys));
+        }
         let keys: EnumerableKeys<Value> =
             self.shape_enumerable_keys(object)?.into_iter().map(|atom| self.atom_string(atom)).collect();
         Some(self.array_of(&keys))
