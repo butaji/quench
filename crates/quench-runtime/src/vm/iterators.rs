@@ -3198,8 +3198,8 @@ impl<H: Host> Vm<H> {
 
     /// Every value a values iterator over a plain array would still yield, taken at once and
     /// leaving the iterator exhausted, when each remaining step is a Get of a present data
-    /// element: no indexed descriptors, sparse elements or arguments mapping, and no hole
-    /// (a hole's Get reaches the prototype chain). `None` leaves the steps to run one by one.
+    /// element or of a hole nothing fills (`holes_read_undefined`): no indexed descriptors,
+    /// sparse elements or arguments mapping. `None` leaves the steps to run one by one.
     pub(super) fn take_present_array_values(&mut self, iterator: Value) -> Option<Vec<Value>> {
         let Some(IteratorRecord {
             source,
@@ -3221,10 +3221,12 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let elements = array.elements();
-        if position > elements.len() || elements.range(position..elements.len()).any(|value| value.is_deleted()) {
+        if position > elements.len()
+            || (elements.range(position..elements.len()).any(|value| value.is_deleted()) && !self.holes_read_undefined(source))
+        {
             return None;
         }
-        let rest: Vec<Value> = elements.range(position..elements.len()).collect();
+        let rest: Vec<Value> = elements.range(position..elements.len()).map(|value| if value.is_deleted() { Value::UNDEFINED } else { value }).collect();
         if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
             *done = true;
             *source = Value::UNDEFINED;
@@ -3391,10 +3393,10 @@ impl<H: Host> Vm<H> {
     /// CreateIterResultObject: a fresh ordinary object whose `value` and `done` are data
     /// properties, laid out as the literal `{ value, done }`.
     /// One %ArrayIteratorPrototype%.next step of a values iterator over a plain array where
-    /// it runs no guest code: the present data element at its position (`Some(Some(_))`), or
-    /// the iterator done past the end (`Some(None)`), as `take_present_array_values` decides
-    /// for every remaining step. `None` for a hole, an exotic or sparse array, another kind
-    /// or a done iterator, whose step the native makes.
+    /// it runs no guest code (`step_present_element`): the element at its position, a hole
+    /// no prototype fills read as `undefined` (`Some(Some(_))`), or the iterator done past
+    /// the end (`Some(None)`). `None` for a hole some prototype may fill, an exotic or sparse
+    /// array, another kind or a done iterator, whose step the native makes.
     pub(super) fn step_present_array_value(&mut self, iterator: Value) -> Option<Option<Value>> {
         let Some(IteratorRecord {
             source,

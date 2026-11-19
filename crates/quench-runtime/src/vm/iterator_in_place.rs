@@ -47,9 +47,9 @@ impl<H: Host> Vm<H> {
     /// One %ArrayIteratorPrototype%.next step of a values iterator not yet done over
     /// `source` at `position`, where it runs no guest code (`step_present_array_value`): the
     /// present data element at the position, the iterator left past it (`Some(Some(_))`),
-    /// or the iterator done past the end (`Some(None)`). `None` for a hole (whose Get reaches
-    /// the prototype chain), or a source that is no plain array, or one with indexed
-    /// descriptors, an arguments mapping or sparse elements.
+    /// or the iterator done past the end (`Some(None)`). `None` for a hole some prototype
+    /// may fill, or a source that is no plain array, or one with indexed descriptors, an
+    /// arguments mapping or sparse elements.
     #[inline(always)]
     pub(super) fn step_present_element(&mut self, iterator: Value, source: Value, position: usize) -> Option<Option<Value>> {
         let array = self.heap.array(source)?;
@@ -63,10 +63,17 @@ impl<H: Host> Vm<H> {
             }
             return Some(None);
         };
-        if value.is_deleted() {
-            return None;
-        }
+        // A hole's Get reaches the prototype chain: `undefined` where neither the array nor
+        // any prototype holds the index (`absent_array_element`, the chain's proof past the
+        // array), else the native's step.
+        let value = if value.is_deleted() { self.absent_array_element(source, Value::number(position as f64))? } else { value };
         self.heap.store_iterator_position(iterator, position + 1);
         Some(Some(value))
+    }
+
+    /// Whether a Get of any hole of plain array `array` reads `undefined`: neither its own
+    /// shape nor any prototype holds an index (`prototypes_hold_no_index`, the chain's proof).
+    pub(super) fn holes_read_undefined(&self, array: Value) -> bool {
+        self.heap.array(array).is_some_and(|data| !self.shape_has_index_key(data.shape())) && self.prototypes_hold_no_index(array)
     }
 }
