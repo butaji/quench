@@ -2136,6 +2136,10 @@ pub(crate) struct Vm<H> {
     /// The one `{ value, done }` result a lane iterator step reuses (`Vm::reused_iterator_result`),
     /// `undefined` until the first; cleared with `iterator_result_header`.
     reused_iterator_result: Value,
+    /// A spent await state no reaction, job or continuation names, which the next await
+    /// arms instead of allocating one (`Vm::armed_await_state`); `undefined` when there is
+    /// none. A root, so it outlives collections; cleared with the heap it belongs to.
+    spare_await_state: Value,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
     /// field-cache invalidation clears them.
@@ -3128,6 +3132,7 @@ impl<H: Host> Vm<H> {
         self.closure_templates.fill(None);
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
+        self.spare_await_state = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;

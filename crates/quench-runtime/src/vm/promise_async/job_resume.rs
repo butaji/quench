@@ -59,6 +59,7 @@ impl<H: Host> Vm<H> {
             && !resume.rejected
         {
             self.spend_await(state);
+            self.keep_spare_await_state(state);
             if let Some(record) = self.generator_record_mut(generator) {
                 record.stop();
             }

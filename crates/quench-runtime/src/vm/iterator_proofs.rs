@@ -84,7 +84,7 @@ impl<H: Host> Vm<H> {
         let result = self.iterator_result(value, done)?;
         let prototype = self.realm_object_prototype(self.realm.globals);
         if self.then_absence_proved(prototype) {
-            return self.promise_settle(p, promise, super::promise::PromiseState::Fulfilled, result);
+            return self.promise_settle(p, promise, crate::heap::PromiseState::Fulfilled, result);
         }
         self.promise_resolve_value(p, promise, result)
     }

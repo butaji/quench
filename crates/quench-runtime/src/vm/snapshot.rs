@@ -172,6 +172,7 @@ impl<H: Host> Vm<H> {
             bound_function_shape: _,
             iterator_result_header: _,
             reused_iterator_result: _,
+            spare_await_state: _,
             descriptor_shapes: _,
             descriptor_layout: _,
             regexp_object_shapes: _,

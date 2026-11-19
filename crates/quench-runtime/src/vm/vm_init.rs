@@ -178,6 +178,7 @@ impl<H: Host> Vm<H> {
             closure_templates: Box::new([None; CLOSURE_TEMPLATES]),
             iterator_result_header: None,
             reused_iterator_result: Value::UNDEFINED,
+            spare_await_state: Value::UNDEFINED,
             descriptor_shapes: [None; 2],
             descriptor_layout: None,
             regexp_object_shapes: None,
