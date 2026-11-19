@@ -105,6 +105,10 @@ impl JsString {
                 writer.u8(0);
                 writer.bytes(bytes);
             }
+            crate::vm::wtf16::Units::Latin1(bytes) => {
+                writer.u8(2);
+                writer.bytes(bytes);
+            }
             crate::vm::wtf16::Units::Wide(units) => {
                 writer.u8(1);
                 writer.u16s(units);
@@ -122,6 +126,7 @@ impl JsString {
                 Self::from_unit_run(crate::vm::wtf16::Units::Ascii(bytes))
             }
             1 => Self::from_units(&reader.u16s()?),
+            2 => Self::from_unit_run(crate::vm::wtf16::Units::Latin1(reader.bytes()?)),
             _ => return Err(SnapshotError("invalid snapshot string".into())),
         })
     }

@@ -334,6 +334,6 @@ fn pending_storage(input: &JsString) -> Option<(usize, usize)> {
     }
     match flat.view() {
         super::wtf16::Units::Ascii(bytes) => Some((bytes.as_ptr() as usize, bytes.len())),
-        super::wtf16::Units::Wide(_) => None,
+        super::wtf16::Units::Latin1(_) | super::wtf16::Units::Wide(_) => None,
     }
 }

@@ -49,8 +49,10 @@ Representation (`vm/wtf16.rs`, `vm/wtf16/payload.rs`, `heap/small_strings.rs`):
 - ASCII is always narrow (one byte per unit). `FlatUnits::Short` holds up to
   `SHORT_ASCII_CAPACITY = 22` bytes inside the record. Longer ASCII uses `Rc<str>` (16-byte
   header plus bytes), with `AsciiSlice` for shared tails.
-- Non-ASCII text uses UTF-16 (`Rc<[u16]>`, two bytes per unit), including Latin-1 characters
-  0x80-0xFF.
+- Text whose units are all at most U+00FF is Latin-1: one byte per unit (`FlatUnits::Latin1`
+  `Rc<[u8]>`, or `Latin1Prefix` in an append buffer). It is shared like wide text, so its host
+  text is cached beside it. Its units are the bytes themselves, not UTF-8, so it is never read as
+  `str`. Text with a unit above U+00FF uses UTF-16 (`Rc<[u16]>`, two bytes per unit).
 - Single-unit ASCII strings share one record per unit (`ascii_unit_strings`).
 - Ropes: `JsStringInner` is about 40 bytes plus its 16-byte `Rc` header (64-byte class), with
   hashes computed lazily in padding (`compare_hash`), so unhashed strings pay nothing extra.
@@ -68,10 +70,9 @@ class) plus 24 = 456 bytes, against 248 for ASCII.
 
 ## Candidate wins, not implemented
 
-1. Latin-1 storage for non-ASCII text below U+0100 (one byte per unit). For accented text this
-   halves the text bytes, about 208 bytes saved at length 200. This needs a new `Repr` variant
-   and touches conversions, search, regexp subjects and the JIT string paths. Too large to
-   verify without a build.
+1. Done: Latin-1 storage for non-ASCII text below U+0100 (one byte per unit), as
+   `FlatUnits::Latin1`. It is not yet verified by a build. Regexp subjects widen Latin-1 text to
+   UTF-16 once per run (`SubjectCache::run`), so a regexp scan still copies it.
 2. Constructors that receive wide inline values should build an arena run of capacity 4
    (32 bytes) instead of a 64-byte `ObjectExtras` box, saving 32 bytes per such object. Needs
    the arena threaded through the construction path (`with_property_storage` and the planned

@@ -242,7 +242,7 @@ impl<H: Host> Vm<H> {
                     text.extend_from_slice(bytes);
                     true
                 }
-                Units::Wide(_) => false,
+                Units::Latin1(_) | Units::Wide(_) => false,
             };
         }
         match value.as_bool() {

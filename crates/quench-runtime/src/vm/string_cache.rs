@@ -96,7 +96,7 @@ impl<H: Host> Vm<H> {
             match self.heap.string(operand) {
                 Some(text) => match text.existing_flat()?.view() {
                     super::wtf16::Units::Ascii(text) => bytes.try_extend(text)?,
-                    super::wtf16::Units::Wide(_) => return None,
+                    super::wtf16::Units::Latin1(_) | super::wtf16::Units::Wide(_) => return None,
                 },
                 None if let Some(integer) = operand.as_int() => bytes.try_extend(itoa::Buffer::new().format(integer).as_bytes())?,
                 None => {
@@ -288,7 +288,7 @@ impl<H: Host> Vm<H> {
                 Some(number) => crate::number_to_string::write(number, &mut text),
                 None => match self.heap.flat_text(value)? {
                     crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes)) => text.append_bytes(bytes),
-                    crate::heap::FlatText::Record(super::wtf16::Units::Wide(_)) => return None,
+                    crate::heap::FlatText::Record(super::wtf16::Units::Latin1(_) | super::wtf16::Units::Wide(_)) => return None,
                     crate::heap::FlatText::Small(small) => text.append_bytes(small.as_bytes()),
                 },
             }

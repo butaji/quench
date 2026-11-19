@@ -25,7 +25,7 @@ const _: () = assert!(MAX_STRING_UNITS <= u32::MAX as usize);
 #[inline(always)]
 fn signature(text: &JsString, length: usize) -> Option<u64> {
     let (first, last) = match text.existing_flat()?.view() {
-        Units::Ascii(bytes) => (
+        Units::Ascii(bytes) | Units::Latin1(bytes) => (
             u16::from(bytes.first().copied().unwrap_or(EMPTY_EDGE_UNIT as u8)),
             u16::from(bytes.last().copied().unwrap_or(EMPTY_EDGE_UNIT as u8)),
         ),

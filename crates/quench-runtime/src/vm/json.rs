@@ -207,29 +207,33 @@ fn json_text_string(text: JsonText) -> String {
 fn write_json_string(value: &JsString, output: &mut JsonText) {
     match value.units() {
         Units::Ascii(bytes) => write_json_utf8(bytes, output),
-        Units::Wide(units) => {
-            output.push(b'"');
-            let mut index = 0;
-            while index < units.len() {
-                let unit = units[index];
-                let scalar = if let Some(code_point) = units
-                    .get(index + 1)
-                    .and_then(|low| unicode::decode_surrogate_pair(unit, *low))
-                {
-                    index += 2;
-                    Some(char::from_u32(code_point).expect("valid surrogate pair"))
-                } else {
-                    index += 1;
-                    char::from_u32(u32::from(unit))
-                };
-                match scalar {
-                    Some(scalar) => write_json_scalar(scalar, output),
-                    None => write_unicode_escape(u32::from(unit), output),
-                }
-            }
-            output.push(b'"');
+        Units::Latin1(bytes) => write_json_units(&bytes.iter().map(|byte| u16::from(*byte)).collect::<Vec<u16>>(), output),
+        Units::Wide(units) => write_json_units(units, output),
+    }
+}
+
+/// QuoteJSONString of UTF-16 `units`, each lone surrogate escaped as `\uXXXX`.
+fn write_json_units(units: &[u16], output: &mut JsonText) {
+    output.push(b'"');
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        let scalar = if let Some(code_point) = units
+            .get(index + 1)
+            .and_then(|low| unicode::decode_surrogate_pair(unit, *low))
+        {
+            index += 2;
+            Some(char::from_u32(code_point).expect("valid surrogate pair"))
+        } else {
+            index += 1;
+            char::from_u32(u32::from(unit))
+        };
+        match scalar {
+            Some(scalar) => write_json_scalar(scalar, output),
+            None => write_unicode_escape(u32::from(unit), output),
         }
     }
+    output.push(b'"');
 }
 
 /// QuoteJSONString of UTF-8 `text`. Every byte QuoteJSONString escapes is ASCII and no
@@ -623,6 +627,7 @@ fn parse_json_text<B: JsonBuilder>(text: &JsString, builder: &mut B) -> Result<B
     }
     match text.units() {
         Units::Ascii(bytes) => JsonParser::new(bytes, builder).parse(),
+        Units::Latin1(bytes) => JsonParser::new(&bytes.iter().map(|byte| u16::from(*byte)).collect::<Vec<u16>>(), builder).parse(),
         Units::Wide(units) => JsonParser::new(units, builder).parse(),
     }
 }

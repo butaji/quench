@@ -19,6 +19,8 @@ impl Units<'_> {
     pub(crate) fn text_hash(self) -> TextHash {
         match self {
             Units::Ascii(bytes) => ascii_hash(bytes),
+            Units::Latin1(bytes) if bytes.is_ascii() => ascii_hash(bytes),
+            Units::Latin1(bytes) => fold(hash_latin1(bytes)),
             Units::Wide(units) if units.iter().all(|unit| is_ascii_unit(*unit)) => {
                 fold(hash_ascii_words(units.len(), units.chunks(ASCII_BYTES_PER_WORD).map(|chunk| {
                     chunk.iter().rev().fold(0, |word, unit| (word << u8::BITS) | u64::from(*unit))
@@ -101,6 +103,19 @@ fn hash_ascii_words(len: usize, words: impl Iterator<Item = u64>) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     hasher.write_usize(len);
     words.for_each(|word| hasher.write_u64(word));
+    hasher.finish()
+}
+
+/// `hash_wide` of Latin-1 units, one byte each: the same words, so a Latin-1 text and its
+/// UTF-16 spelling hash alike.
+fn hash_latin1(bytes: &[u8]) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    hasher.write_usize(bytes.len());
+    let (words, rest) = bytes.as_chunks::<WIDE_UNITS_PER_WORD>();
+    for word in words {
+        hasher.write_u64(word.iter().rev().fold(0, |word, byte| (word << u16::BITS) | u64::from(*byte)));
+    }
+    rest.iter().for_each(|byte| hasher.write_u16(u16::from(*byte)));
     hasher.finish()
 }
 

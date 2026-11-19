@@ -128,7 +128,7 @@ impl<H: Host> Vm<H> {
         };
         let ascii = |value: Value| match self.heap.string(value)?.existing_flat()?.view() {
             Units::Ascii(bytes) => Some(bytes),
-            Units::Wide(_) => None,
+            Units::Latin1(_) | Units::Wide(_) => None,
         };
         let (text, needle, with) = (ascii(receiver)?, ascii(*search)?, ascii(*replacement)?);
         if needle.is_empty() || with.contains(&b'$') {
