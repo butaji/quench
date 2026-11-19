@@ -258,7 +258,7 @@ impl Lowered {
             return Self::Oversized;
         }
         let started = std::time::Instant::now();
-        let code = image::compile(native, lowered.scalar.take(), level);
+        let code = image::compile(native, lowered.scalar.take(), lowered.proven.take(), level);
         if let Some(census) = census {
             eprintln!("{}", Census { ir, ..census }.report(started.elapsed(), code.as_ref().map_or(0, |image| image.code.len())));
         }
@@ -494,8 +494,8 @@ impl<H: Host> Vm<H> {
         let method = loop {
             let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[], &|_, _, _, _| true)
             else { break None };
-            match image::compile(native, plan.lowered.scalar.take(), super::jit_backend::CompileLevel::run_default()) {
-                Ok(code) => break plan.finish(&code.code, code.scalar),
+            match image::compile(native, plan.lowered.scalar.take(), plan.lowered.proven.take(), super::jit_backend::CompileLevel::run_default()) {
+                Ok(code) => break plan.finish(&code.code, code.scalar, code.proven),
                 Err(reason) if plan.replans(reason) => budget /= 2,
                 Err(_) => break None,
             }
@@ -684,7 +684,7 @@ impl<H: Host> Vm<H> {
                     return Ok(LaneBodyOutcome::Declined);
                 }
                 let PendingLaneMethod { plan, .. } = *pending;
-                plan.finish(&code.code, code.scalar)
+                plan.finish(&code.code, code.scalar, code.proven)
                     .and_then(|method| self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()))
                     .inspect(|published| self.programs.note_installed_lane(key, published))
                     .map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
@@ -783,7 +783,7 @@ impl LanePlan {
 
     /// The method its compiled `code` makes, published to executable memory. The method
     /// takes its direct callees whole: the code names them by address.
-    pub(super) fn finish(mut self, code: &[u8], scalar: Option<usize>) -> Option<LaneMethod> {
+    pub(super) fn finish(mut self, code: &[u8], scalar: Option<usize>, proven: Option<(usize, Box<[crate::typed_ir::Type]>)>) -> Option<LaneMethod> {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
         let amortizes = amortizes_entry(self.tiers, unit, self.function, &self.direct);
@@ -797,8 +797,9 @@ impl LanePlan {
         // SAFETY: the lane region lowers a body with the lane body ABI (`body_signature_in_lane`).
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         let scalar = scalar.map(|at| memory.pointer().addr() + at);
+        let proven = proven.map(|(at, params)| (memory.pointer().addr() + at, params));
         Some(LaneMethod {
-            dependencies, stable, invalidation: self.invalidation, _code: memory, entry, scalar, rows: None, recovery_space,
+            dependencies, stable, invalidation: self.invalidation, _code: memory, entry, scalar, proven, rows: None, recovery_space,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, exits: ExitTable::of_unit(&self.unit), inlined: self.unit.frames,
