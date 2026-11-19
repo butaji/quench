@@ -5718,6 +5718,7 @@ struct Analysis<'a, H: Host> {
     unrolls: bool,
     /// The defined functions that may grow the memory (`wasm_growth`); empty until the module's
     /// memory is known, and a function past its bound is taken to grow it.
+    grows_memory: crate::bitset::BitSet,
 }
 
 impl<H: Host> Analysis<'_, H> {

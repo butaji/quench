@@ -102,6 +102,7 @@ fn rustc_flags() -> Vec<String> {
 /// The architecture and object reader of a build target, if its stencils are supported.
 fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
     let var = |name| env::var(name).unwrap_or_default();
+    if !var("QUENCH_NO_STENCILS").is_empty() { return None; }
     match (var("CARGO_CFG_TARGET_ARCH").as_str(), var("CARGO_CFG_TARGET_OS").as_str()) {
         ("x86_64", "linux") => Some((Arch::X86_64, elf::rows)),
         ("aarch64", "linux") => Some((Arch::Aarch64, elf::rows)),
@@ -129,7 +130,7 @@ fn main() {
         fs::write(&table, VARIANTS.map(|(name, _)| library_source(name, Counts::default(), &[])).concat()).unwrap();
         return;
     };
-    let instances = instances(&listed);
+    let instances = instances(&listed, arch);
     let parts = shards::split(&instances);
     for (shard, part) in parts.iter().enumerate() {
         fs::write(instance_file(&out, shard), part.concat()).unwrap();
@@ -154,12 +155,19 @@ fn main() {
 }
 
 /// One macro invocation per generated row, the unit `shards::split` distributes.
-fn instances(listed: &supernodes::Listed) -> Vec<String> {
-    let numbers = library::library().into_iter().map(|c| format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4));
-    let heaps = library::heap_library().into_iter().map(|c| format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4));
-    let supers = supernodes::instances(listed).into_iter().map(|nodes| format!("supernode_row!({}, {});\n", supernode_rules::name(&nodes), supernode_rules::macro_args(&nodes)));
+/// The base tier's numeric, heap and supernode rows are x86-64's only; every other target builds the Wasm rows alone,
+/// and its base tier falls back as a `--b-jit` without one does.
+fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<String> {
+    let base: Vec<String> = if arch == Arch::X86_64 {
+        let numbers = library::library().into_iter().map(|c| format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4));
+        let heaps = library::heap_library().into_iter().map(|c| format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4));
+        let supers = supernodes::instances(listed).into_iter().map(|nodes| format!("supernode_row!({}, {});\n", supernode_rules::name(&nodes), supernode_rules::macro_args(&nodes)));
+        numbers.chain(heaps).chain(supers).collect()
+    } else {
+        Vec::new()
+    };
     let wasm = wasm_library::wasm_library().into_iter().map(|c| format!("wasm_row!({}, {}, {}, {}, {});\n", wasm_library::wasm_name(c), c.0, c.1, c.2, c.3));
-    numbers.chain(heaps).chain(supers).chain(wasm).collect()
+    base.into_iter().chain(wasm).collect()
 }
 
 fn instance_file(out: &Path, shard: usize) -> PathBuf {

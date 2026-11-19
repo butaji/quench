@@ -25,7 +25,7 @@
 //   other opcode: a Wasm step (`step_wasm`).
 
 use super::*;
-use super::dispatch_fast::operand_feedback::OperandKinds;
+use super::dispatch_frame::{InterpreterFrame, RowRun};
 
 mod call_forms;
 mod increment;
@@ -669,26 +669,17 @@ impl<H: Host> Vm<H> {
                 self.frames[f].pc_is_resume = true;
                 self.maybe_collect(p);
             }
-            None => self.get_index(p, base, key)?,
-        };
-        self.write(f, i.result_register(), v);
-        Ok(None)
+        }
+        run
     }
 
-    /// `SetIndex` of the record `i` in frame `f`: a store to a present dense element (`store_present_element`),
-    /// else the general index store (`set_index_mode`).
-    fn step_index_set(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> Result<(), JsError> {
-        #[cfg(feature = "profile-aggregate")]
-        self.profile.index_dispatch(true, false);
-        let (object, key, value) = (self.read(f, i.register_b()), self.read(f, i.register_c()), self.read(f, i.register_a()));
-        if let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok())
-            && self.store_present_element(object, index, value)
-        {
-            self.note_element_kind(f, pc - 1, OperandKinds::DENSE);
-            return Ok(());
-        }
-        let strict = p.function(self.frames[f].function as usize).strict || i.boolean_flag().expect("validated boolean immediate");
-        self.set_index_mode(p, object, key, value, strict)
+    /// The staged row `i` decodes to under `context`: a general row, a name load (under no context:
+    /// its proof is the frame's), or the lane's suspension and string-case rows.
+    #[inline(always)]
+    pub(super) fn decode_row(i: WideInstruction, context: crate::staged::DecodeContext<'_>) -> Option<crate::staged::Operation<u64, ()>> {
+        crate::staged::Operation::<u64, ()>::decode(i, context)
+            .or_else(|| crate::staged::Operation::<u64, ()>::decode_load_name(i, ()))
+            .or_else(|| crate::staged::Operation::<u64, ()>::decode_lane(i))
     }
 
     /// Whether the staged row `operation` may run on frame `f`: the checked local rows need the

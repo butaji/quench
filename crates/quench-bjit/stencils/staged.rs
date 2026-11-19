@@ -1,5 +1,5 @@
 #[path = "../../quench-runtime/src/staged/stage.rs"] mod stage;
-pub(crate) use stage::{RecordSpace, Stage, Table, word_bytes, word_offset, Passed};
+pub(crate) use stage::{StagedRecordSpace, Stage, Table, word_bytes, word_offset, Passed};
 pub(crate) type Concrete = crate::stage::StencilStage;
 #[path = "../../quench-runtime/src/staged/region.rs"] pub(crate) mod region;
 #[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;
@@ -25,7 +25,6 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/entry.rs"] pub(crate) mod entry;
 #[path = "../../quench-runtime/src/staged/frame.rs"] pub(crate) mod frame;
 #[path = "../../quench-runtime/src/staged/call.rs"] pub(crate) mod call;
-#[path = "../../quench-runtime/src/staged/protocol.rs"] #[allow(dead_code)] pub(crate) mod protocol;
 #[path = "../../quench-runtime/src/staged/ic.rs"] pub(crate) mod ic;
 #[path = "../../quench-runtime/src/staged/ic_flat.rs"] pub(crate) mod ic_flat;
 #[path = "../../quench-runtime/src/staged/ic_read.rs"] pub(crate) mod ic_read;
@@ -48,3 +47,55 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/wasm_call.rs"] #[allow(dead_code)] pub(crate) mod wasm_call;
 #[path = "../../quench-runtime/src/staged/wasm_roots.rs"] pub(crate) mod wasm_roots;
 #[path = "../../quench-runtime/src/staged/wasm_instance.rs"] #[allow(dead_code)] pub(crate) mod wasm_instance;
+
+// The interpreter's whole staged dispatch (call protocol v2 / Futamura: every stencil row is the
+// interpreter's staged row run on `StencilStage`). The runtime's `staged.rs` root names the opcode
+// catalog, so its leaf modules are included here one by one with the root items they share:
+// `Operation` (its decode is the runtime's: `cfg(not(stencil_build))`), the family steps and the
+// frame traits. A row builds its `Operation` from its holes and runs the family step over `Places`.
+#[path = "../../quench-runtime/src/staged/operation.rs"] mod operation;
+pub(crate) use operation::Operation;
+#[path = "../../quench-runtime/src/staged/steps.rs"] mod steps;
+pub(crate) use steps::{step, row_step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_arith};
+#[path = "../../quench-runtime/src/staged/names.rs"] mod names;
+pub(crate) use names::Protocol;
+#[path = "../../quench-runtime/src/staged/captures.rs"] mod captures;
+#[path = "../../quench-runtime/src/staged/control.rs"] mod control;
+#[path = "../../quench-runtime/src/staged/generic.rs"] mod generic;
+#[path = "../../quench-runtime/src/staged/callout.rs"] mod callout;
+pub(crate) use callout::{CallOut, OperandValues};
+#[path = "../../quench-runtime/src/staged/spread.rs"] mod spread;
+pub(crate) use spread::Passing;
+#[path = "../../quench-runtime/src/staged/compare.rs"] pub(crate) mod compare;
+pub(crate) use compare::{Comparison, Nullish};
+#[path = "../../quench-runtime/src/staged/delete.rs"] mod delete;
+#[path = "../../quench-runtime/src/staged/heap.rs"] mod heap;
+#[path = "../../quench-runtime/src/staged/element_rows.rs"] pub(crate) mod element_rows;
+#[path = "../../quench-runtime/src/staged/element_frame.rs"] mod element_frame;
+pub(crate) use element_frame::ElementFrame;
+#[path = "../../quench-runtime/src/staged/property.rs"] pub(crate) mod property;
+pub(crate) use property::{NoPlans, PropertyFrame};
+#[path = "../../quench-runtime/src/staged/property_write.rs"] mod property_write;
+#[path = "../../quench-runtime/src/staged/plan_fields.rs"] pub(crate) mod plan_fields;
+#[path = "../../quench-runtime/src/staged/store.rs"] pub(crate) mod store;
+#[path = "../../quench-runtime/src/staged/holder.rs"] pub(crate) mod holder;
+#[path = "../../quench-runtime/src/staged/forms.rs"] pub(crate) mod forms;
+pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
+// The runtime's root names its stencil layout numbers `layout_offsets`; the stencils' are `crate::layout`.
+pub(crate) use crate::layout as layout_offsets;
+#[path = "../../quench-runtime/src/staged/protocol.rs"] pub(crate) mod protocol;
+pub(crate) use protocol::CallOperation;
+#[path = "../../quench-runtime/src/staged/invoke.rs"] pub(crate) mod invoke;
+pub(crate) use invoke::{CallFrame, Entered, Room};
+#[path = "../../quench-runtime/src/staged/plan.rs"] pub(crate) mod plan;
+pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, Resolved};
+#[path = "../../quench-runtime/src/staged/native_call.rs"] mod native_call;
+#[path = "../../quench-runtime/src/staged/allocation.rs"] mod allocation;
+pub(crate) use allocation::Allocation;
+#[path = "../../quench-runtime/src/staged/effects.rs"] pub(crate) mod effects;
+#[path = "../../quench-runtime/src/staged/flow.rs"] pub(crate) mod flow;
+// The Wasm families `step` dispatches to (pure word arithmetic over the stage).
+#[path = "../../quench-runtime/src/staged/wasm_simd.rs"] mod wasm_simd;
+
+#[path = "../../quench-runtime/src/staged/edge.rs"] mod edge;
+pub(crate) use edge::Edge;

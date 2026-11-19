@@ -69,6 +69,10 @@ mod admission;
 mod delete;
 mod operation;
 pub(crate) use operation::Operation;
+mod binary_class;
+pub(crate) use binary_class::BinaryClass;
+mod edge;
+pub(crate) use edge::Edge;
 
 mod decode;
 pub(crate) mod meaning_fast;
@@ -146,6 +150,7 @@ mod property_write;
 pub(crate) use property::{NoPlans, PropertyFrame};
 pub(crate) mod value;
 pub(crate) mod poll;
+mod guard;
 mod steps;
 mod control;
 mod generic;
@@ -192,15 +197,6 @@ pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, wo
 
 mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
-
-mod operation;
-pub(crate) use operation::Operation;
-
-mod binary_class;
-pub(crate) use binary_class::BinaryClass;
-
-mod edge;
-pub(crate) use edge::Edge;
 
 /// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
 /// capture access whose scopes the frame does not hold, the walk over the scopes from the
@@ -1174,23 +1170,6 @@ pub(crate) mod emit {
     }
 }
 
-
-/// Which of an instruction's two control edges it takes.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Edge {
-    /// The jump target.
-    Target,
-    /// The record leaves the lane run: its activation suspended into its job (`Frame::suspend_await`).
-    Leave,
-    /// The record switched the running register file: its frame made a suspension that transfers
-    /// control to another activation (`Frame::suspend_yield`), which the frame holds for the lane to resume.
-    Transfer,
-    /// The instruction after this one.
-    Following,
-    /// The entry a branch table's index picks (`k`, clamped to the default entry): control goes to
-    /// the jump record `k` places after the table record.
-    Entry(u32),
-}
 
 #[cfg(test)]
 mod test_words;

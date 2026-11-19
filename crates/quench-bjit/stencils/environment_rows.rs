@@ -10,7 +10,7 @@ use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
 use crate::places::{DEST, LEFT, Places, settle, tagged_place};
 use crate::places_property::run_lexical;
 use crate::stage::StencilStage;
-use crate::staged::{Operation, RecordSpace, Stage, environment, step_names};
+use crate::staged::{Operation, StagedRecordSpace, Stage, environment, step_names};
 use crate::words::{hole, hole64};
 use crate::codes::{CALLEE_CAPTURE_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, ENV_ROW, ENV_SET_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW};
 
@@ -86,7 +86,7 @@ fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
     let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
     if GATED {
-        let open = stage.store_gate(RecordSpace::Object, hole::<0>() as u64, tagged_place::<A, HOLE_A>(&s));
+        let open = stage.store_gate(StagedRecordSpace::Object, hole::<0>() as u64, tagged_place::<A, HOLE_A>(&s));
         need!(s, stage.guard(open, ()));
     }
     let mut frame = Places::<0, A, 0>::new(s);
