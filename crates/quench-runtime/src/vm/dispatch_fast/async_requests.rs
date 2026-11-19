@@ -119,7 +119,7 @@ pub(super) fn request_returned_in_lane<H: Host>(cx: *mut LaneContext<H>, activat
 /// the call the error its settlement threw.
 fn request_settled<H: Host>(vm: &mut Vm<H>, activation: &Activation, memory: MemoryView, promise: Value, settled: Result<(), JsError>) -> Resumed {
     match settled {
-        Ok(()) => lane_resume_after_call(activation, memory, promise),
+        Ok(()) => resume_after_call_in_lane(activation, memory, promise),
         Err(error) => {
             vm.lane_completion.raise(error);
             Resumed::Exit(exit(activation.call))

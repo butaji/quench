@@ -44,7 +44,7 @@ pub(super) enum CallEntry {
     /// (`Completion::SettlesPromise`).
     Settles,
     /// Its body is a leaf (`leaf_body`): a plain call of its own program runs its records on
-    /// a window of the lane stack without an activation (`lane_script_call_leaf`), which
+    /// a window of the lane stack without an activation (`script_call_leaf_miss`), which
     /// anything observing activations makes first (`materialize_leaf_in_lane`). Any other
     /// call activates it as `Activates`.
     Leaf,

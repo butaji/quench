@@ -200,7 +200,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
 /// A Wasm call of `function`, which native code holds, made from the lane beside its
 /// activations (`lane_in_place`), so the callers stay activations unless guest code the
 /// callee reaches makes them frames. The caller resumes after the call as a returning
-/// activation's does (`lane_resume_after_call`), its memory view read again: the callee may
+/// activation's does (`resume_after_call_in_lane`), its memory view read again: the callee may
 /// have grown the memory. `None` when native code declines the call, which then enters as
 /// an activation.
 #[cold]

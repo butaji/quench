@@ -119,7 +119,7 @@ pub(super) fn finish_array_iteration<H: Host>(cx: *mut LaneContext<H>, resume: I
 /// place (`native_calls::body_native_call_in_lane`) does so too. A callee loaded from a method site's
 /// caches is the one the interpreter would call. Any other callee or case is a miss, which leaves
 /// the body at the call, before any effect.
-pub(in crate::vm) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+pub(in crate::vm) unsafe extern "C" fn body_call_helper<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // Static regions recover ordinary calls through their linked semantic operation.
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return LANE_CALL_MISSED; }
@@ -130,11 +130,11 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residu
     status
 }
 
-/// `lane_body_call` with the context of the running body, which a native callee's frame made the
+/// `body_call_helper` with the context of the running body, which a native callee's frame made the
 /// innermost (`native_frames::in_innermost_frame`).
 ///
 /// # Safety
-/// As `lane_body_call`; `call_pc` is a record of the running body's function.
+/// As `body_call_helper`; `call_pc` is a record of the running body's function.
 unsafe fn body_call_in_lane<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
     match unsafe { BodyCall::at(cx, call_pc) } {
@@ -143,7 +143,7 @@ unsafe fn body_call_in_lane<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u
     }
 }
 
-/// `lane_body_call` of the decoded `call`.
+/// `body_call_helper` of the decoded `call`.
 fn body_call<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall) -> u64 {
     let vm = unsafe { vm(cx) };
     let Some(receiver) = call.receiver(vm) else { return miss(vm, Miss::Receiver) };
@@ -211,9 +211,9 @@ unsafe fn body_read_answer<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, ta
 /// A lane body's `new`, as the lane's own construction does (`lane_script_construct`): the
 /// callee's plan, else the receiver its target allocates and, where its body does more
 /// than store fields, its activation, whose completion yields its returned object or the
-/// receiver. A returned construction takes the plan only. Its results are `lane_body_call`'s.
-pub(in crate::vm) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
-    // As `lane_body_call`: static regions recover constructions through their semantic operation.
+/// receiver. A returned construction takes the plan only. Its results are `body_call_helper`'s.
+pub(in crate::vm) unsafe extern "C" fn body_construct_helper<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+    // As `body_call_helper`: static regions recover constructions through their semantic operation.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
     let mut moved = true;
@@ -225,7 +225,7 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _r
     status
 }
 
-/// `lane_body_construct` with the context of the running body (`body_call_in_lane`).
+/// `body_construct_helper` with the context of the running body (`body_call_in_lane`).
 ///
 /// # Safety
 /// As `body_call_in_lane`.
@@ -237,7 +237,7 @@ unsafe fn body_construct_in_lane<H: Host>(cx: *mut LaneContext<H>, call_pc: u64,
     }
 }
 
-/// `lane_body_construct` of the decoded `call`, inlined into its one caller so the decoded form is not copied.
+/// `body_construct_helper` of the decoded `call`, inlined into its one caller so the decoded form is not copied.
 #[inline(always)]
 fn body_construct<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, moved: &mut bool) -> u64 {
     let vm = unsafe { vm(cx) };

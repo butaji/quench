@@ -9,7 +9,7 @@ impl Lowering<'_, '_> {
     /// plan does not make leaves at the record, before any effect. The allocation may move
     /// the property arena (`allocated`). A construction in the caller's window is the call row
     /// (`call_rows`); one a previous body left at runs as a call does
-    /// (`dispatch_fast::lane_body_construct`): the callee's plan, else its activation.
+    /// (`dispatch_fast::body_construct_helper`): the callee's plan, else its activation.
     pub(super) fn construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return None };
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {

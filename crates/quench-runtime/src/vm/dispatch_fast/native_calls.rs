@@ -4,7 +4,7 @@ use super::*;
 use crate::vm::object_get::ordinary_chain::ChainRead;
 
 /// The natives whose steady case (`Vm::steady_native_value`) a `Call` site makes under its own
-/// handler, one instantiation of `lane_call_builtin` per row: the native is a constant of the
+/// handler, one instantiation of `builtin_miss` per row: the native is a constant of the
 /// handler, so its entry is a direct call and the site tests only the callee's identity.
 macro_rules! builtin_rows {
     ($($row:literal => $native:ident),* $(,)?) => {
@@ -14,8 +14,13 @@ macro_rules! builtin_rows {
         fn builtin_row(native: Native) -> Option<u8> {
             match native { $(Native::$native => Some($row),)* _ => None }
         }
-        fn builtin_handler<H: Host>(row: u8) -> Handler {
-            match row { $($row => lane_call_builtin::<H, $row>,)* _ => lane_native_call::<H> }
+        /// The protocol row of a Call of builtin row `row` (`native_call_handler`).
+        const fn builtin_handler<H: Host>(row: u8) -> Handler {
+            match row { $($row => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | (BUILTIN_KIND | $row) as u16 }> as Handler,)* _ => lane_native_call::<H> }
+        }
+        /// The miss body of builtin row `row` (`leaf_call_miss_of`).
+        pub(in crate::vm::dispatch_fast) const fn builtin_miss_of<H: Host>(row: u8) -> Handler {
+            match row { $($row => builtin_miss::<H, $row> as Handler,)* _ => lane_native_call::<H> }
         }
     };
 }
@@ -26,7 +31,7 @@ builtin_rows!(
 );
 
 /// The Math functions whose call a site makes under its own handler, one instantiation of
-/// `lane_call_math_native` per row: the native is a constant, so the site tests the callee's
+/// `math_native_miss` per row: the native is a constant, so the site tests the callee's
 /// identity and runs the operation inline (`number::math_inline_call` folds to it) with no
 /// dispatch on the native. Every other inline Math native keeps `lane_call_math`.
 macro_rules! math_rows {
@@ -35,7 +40,11 @@ macro_rules! math_rows {
             match row { $($row => Native::$native,)* _ => unreachable!() }
         }
         fn math_handler<H: Host>(native: Native) -> Option<Handler> {
-            match native { $(Native::$native => Some(lane_call_math_native::<H, $row>),)* _ => None }
+            match native { $(Native::$native => Some(protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | (MATH_KIND | $row) as u16 }> as Handler),)* _ => None }
+        }
+        /// The miss body of Math row `row` (`leaf_call_miss_of`).
+        pub(in crate::vm::dispatch_fast) const fn math_miss_of<H: Host>(row: u8) -> Handler {
+            match row { $($row => math_native_miss::<H, $row> as Handler,)* _ => lane_call_math::<H> }
         }
     };
 }
@@ -57,7 +66,7 @@ script_handler! {
     /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): its
     /// value of Number arguments in place (`number::math_inline_call`). Any other callee or
     /// argument takes `lane_call_math`.
-    fn lane_call_math_native<ROW: u8>(cx, r, ip, i, view) {
+    pub(super) fn math_native_miss<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { math_row_native(ROW) };
         let value = if callee_is_native(vm, r.get(i.b), native) {
@@ -163,7 +172,7 @@ script_handler! {
     /// A `Call` site whose callee was the native of builtin row `ROW` (`native_call_handler`): that
     /// call in its steady case (`Vm::steady_native_value`). Any other callee or case takes
     /// `lane_native_call`.
-    fn lane_call_builtin<ROW: u8>(cx, r, ip, i, view) {
+    pub(super) fn builtin_miss<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { row_native(ROW) };
         let value = if !callee_is_native(vm, r.get(i.b), native) {
@@ -250,7 +259,7 @@ script_handler! {
     /// `this` (`lane_activate_getter`), whose completion is the call's value; any other
     /// call is the native's (`native_call_value_in_lane`).
     #[inline(never)]
-    fn lane_reflect_get_call<>(cx, r, ip, i, view) {
+    pub(super) fn reflect_get_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // SAFETY: the window is registers of the running function, read before anything runs.
         let window = unsafe { lane_call_window(r, i) };
@@ -277,7 +286,7 @@ script_handler! {
 
 /// The handler of a `Reflect.get` call site (`lane_native_call`'s sibling).
 pub(super) fn reflect_get_call_handler<H: Host>() -> Handler {
-    lane_reflect_get_call::<H>
+    protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | REFLECT_GET_KIND as u16 }> as Handler
 }
 
 /// `body_native_call_in_lane` of a native that is not in place: the lane's own call of it

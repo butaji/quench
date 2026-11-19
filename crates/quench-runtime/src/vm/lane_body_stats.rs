@@ -110,7 +110,7 @@ impl LaneBodyStats {
 }
 
 /// Why a lane body's call or construction helper answered `LANE_CALL_MISSED`, which leaves the
-/// body at the call: one variant per refusal site in `lane_body_call`, `lane_body_construct` and
+/// body at the call: one variant per refusal site in `body_call_helper`, `body_construct_helper` and
 /// `body_native_call_in_lane`, named `site:reason` in the diagnostics report (`miss_report`).
 macro_rules! miss_reasons {
     ($($variant:ident => $name:literal),+ $(,)?) => {

@@ -304,7 +304,7 @@ impl LaneView {
     /// The body a just published method makes of this view.
     pub(super) fn specialized(&self, entry: Handler, method: std::rc::Rc<super::super::compiled::PublishedLaneMethod>, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
         // A body whose entry would not pay for itself serves native callers only
-        // (`lane_body_call`, direct calls); the lane's own entries keep the records, and it
+        // (`body_call_helper`, direct calls); the lane's own entries keep the records, and it
         // has no trial to run.
         let tier_prologue = if method.lease().expect("a body just published is live").amortizes_entry() {
             // SAFETY: as `claim_for_tier`; no handler reads the prologue now.

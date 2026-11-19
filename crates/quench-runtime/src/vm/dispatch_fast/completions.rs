@@ -58,7 +58,7 @@ fn complete_trapped_read_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value
     if activation.caller_program() != unsafe { (*cx).program } {
         lane_enter_program(cx, activation.caller_program());
     }
-    Some(lane_resume_after_call(&activation, caller_memory, value))
+    Some(resume_after_call_in_lane(&activation, caller_memory, value))
 }
 
 /// `complete_activation_in_lane`'s commonest completion: a JavaScript activation of the
@@ -72,7 +72,7 @@ pub(super) fn return_plain_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Valu
     return_from_in_lane::<H, false, false, false, false>(cx, value)
 }
 
-/// `return_plain_in_lane` into a running lane body's call (`lane_body_call`): a returning
+/// `return_plain_in_lane` into a running lane body's call (`body_call_helper`): a returning
 /// call's register takes the result too, since the body completes its own activation with
 /// it next (`LaneExit::Returned`).
 #[inline(always)]
@@ -263,7 +263,7 @@ pub(super) fn restore_caller_in_lane<H: Host>(cx: *mut LaneContext<H>, activatio
 /// The caller of `activation`, restored with `memory` (`restore_caller_in_lane`), resumes
 /// after its call with `value` in the call's result register.
 #[inline(always)]
-pub(super) fn lane_resume_after_call(activation: &Activation, memory: MemoryView, value: Value) -> Resumed {
+pub(super) fn resume_after_call_in_lane(activation: &Activation, memory: MemoryView, value: Value) -> Resumed {
     // SAFETY: the call record belongs to the caller's live view.
     activation.caller_registers().set(unsafe { (*activation.call()).a }, value);
     resume_at_in_lane(activation, memory, following(activation.call()))

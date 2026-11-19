@@ -50,7 +50,7 @@ pub(super) fn resume_loop<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &
         LoopContinuation::Threw(next) => LaneBodyLeft::Raised(at(next)),
         LoopContinuation::Callee => {
             let mut carried = Carried::script(cx);
-            // SAFETY: `lane_body_call` set both before the region left.
+            // SAFETY: `body_call_helper` set both before the region left.
             let (registers, resume) = unsafe { ((*cx).registers, (*cx).callee_resume) };
             carried.acc = Slot::of(unsafe { (*cx).callee_acc });
             LaneBodyLeft::Resume(registers, resume, carried)

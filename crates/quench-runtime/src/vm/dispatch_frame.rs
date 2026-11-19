@@ -1544,7 +1544,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether the general loop enters `view` at `pc`: where a lane run pays, or at the first instruction of
     /// the callee a due collection's lane stop left to it (`after_lane_exit`), as a native's call would.
-    fn lane_enters(view: *const dispatch_fast::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::runs_in_lane(view, pc) || after_lane_exit && pc == 0 && Self::runs_call_in_lane(view) }
+    fn enters_in_lane(view: *const dispatch_fast::LaneView, pc: usize, after_lane_exit: bool) -> bool { Self::runs_in_lane(view, pc) || after_lane_exit && pc == 0 && Self::runs_call_in_lane(view) }
 
     /// Whether a frame entry may run the lane: execution-only support never
     /// interprets, and instruction profiling must observe every PC.
@@ -1795,7 +1795,7 @@ impl<H: Host> Vm<H> {
         // A lane exit resumes at its record, which the general path executes, or raises there
         // the error of the call the lane made, as after the loop's own lane run.
         let mut resumes_lane_exit = false;
-        // The last step followed a lane run a due collection stopped, or a lane exit (`Vm::lane_enters`).
+        // The last step followed a lane run a due collection stopped, or a lane exit (`Vm::enters_in_lane`).
         let mut after_lane_exit = false;
         match raised {
             Some(Some(error)) => {
@@ -1847,7 +1847,7 @@ impl<H: Host> Vm<H> {
                 pc = return_pc;
                 continue;
             }
-            if !resumed && native_step.is_none() && Self::lane_enters(cursor.lane, pc, entering_after_lane_exit) {
+            if !resumed && native_step.is_none() && Self::enters_in_lane(cursor.lane, pc, entering_after_lane_exit) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut frame, pc, pending_calls, &mut executing, allow_inline_calls);
                 lane_returned = self.lane_completion.take_returned();

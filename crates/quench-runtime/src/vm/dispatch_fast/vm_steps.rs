@@ -13,7 +13,7 @@ use super::*;
 /// the comparison held.
 pub(in crate::vm) unsafe extern "C" fn vm_operation_step<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     // An ahead body runs from its entry trampoline, with no lane run to step in: it leaves at
-    // the record, which the entry's per-PC fallback executes (as `lane_body_call`).
+    // the record, which the entry's per-PC fallback executes (as `body_call_helper`).
     if context == 0 { return super::super::compiled::LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
     let status = native_frames::in_innermost_frame(cx, || unsafe { vm_operation_step_in(cx, call_pc) });

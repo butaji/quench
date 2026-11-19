@@ -13,7 +13,7 @@ script_handler! {
     /// `lane_script_call_full`, which activates a leaf as any registers-only target. `ARGC`
     /// is the record's argument count (`leaf_call_handler`), which a call returning its
     /// completion never has.
-    fn lane_script_call_leaf<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
+    pub(super) fn script_call_leaf_miss<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         // A pending construction refuses every cached target (`LaneStack::set_refused`).
@@ -90,48 +90,50 @@ script_handler! {
     }
 }
 
-/// The `lane_script_call_leaf` form of `entry` for a record of `ARGC` arguments, or
-/// `lane_script_call_full` for no leaf, out of line: a site meeting another form's callee
-/// takes it from the leaf it was made for.
+/// The handler of a site meeting another leaf form's callee: `entry`'s leaf form at the record's
+/// argument count (`leaf_arm`), or `lane_script_call_full` for no leaf, out of line: a site
+/// meeting another form's callee takes it from the leaf it was made for.
 #[cold]
 #[inline(never)]
 fn other_leaf_form<H: Host, const ARGC: u16>(entry: CallEntry) -> Handler {
-    match entry.leaf_form() {
-        PLAIN_LEAF => lane_script_call_leaf::<H, PLAIN_LEAF, ARGC>,
-        CAPTURE_LEAF => lane_script_call_leaf::<H, CAPTURE_LEAF, ARGC>,
-        CONTEXT_LEAF => lane_script_call_leaf::<H, CONTEXT_LEAF, ARGC>,
-        THIS_LEAF => lane_script_call_leaf::<H, THIS_LEAF, ARGC>,
+    leaf_arm::<H>(entry.leaf_form(), ARGC)
+}
+
+/// The protocol row of a leaf call of `leaf` form and argument count `argc` (the `Call` record's
+/// `LEAF_CALL` miss is `script_call_leaf_miss` of the same form and count, `leaf_call_miss_of`), or,
+/// for no leaf or an argument count past `FIXED_ARGUMENT_COPIES`, `lane_script_call_full`.
+fn leaf_arm<H: Host>(leaf: LeafForm, argc: u16) -> Handler {
+    macro_rules! leaf {
+        ($form:ident) => {
+            match argc {
+                0 => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 0) as u16 }> as Handler,
+                1 => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 1) as u16 }> as Handler,
+                2 => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 2) as u16 }> as Handler,
+                3 => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 3) as u16 }> as Handler,
+                4 => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 4) as u16 }> as Handler,
+                _ => lane_script_call_full::<H>,
+            }
+        };
+    }
+    match leaf {
+        PLAIN_LEAF => leaf!(PLAIN_LEAF),
+        CAPTURE_LEAF => leaf!(CAPTURE_LEAF),
+        CONTEXT_LEAF => leaf!(CONTEXT_LEAF),
+        THIS_LEAF => leaf!(THIS_LEAF),
         _ => lane_script_call_full::<H>,
     }
 }
 
 /// The form a call record `i` whose linked target is a leaf (`entry`) calls it with: the
-/// `lane_script_call_leaf` instantiation of its entry and argument count, or, for a record
+/// `script_call_leaf_miss` instantiation of its entry and argument count, or, for a record
 /// past `FIXED_ARGUMENT_COPIES` or returning its completion, which completes its caller too,
 /// `lane_script_call_full`, which activates the leaf.
 pub(super) fn leaf_call_handler<H: Host>(entry: CallEntry, i: &LaneInstruction) -> Handler {
     const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
-    macro_rules! leaf {
-        ($form:ident) => {
-            match ImmediateLayout::argument_count(i.imm()) {
-                0 => lane_script_call_leaf::<H, $form, 0>,
-                1 => lane_script_call_leaf::<H, $form, 1>,
-                2 => lane_script_call_leaf::<H, $form, 2>,
-                3 => lane_script_call_leaf::<H, $form, 3>,
-                4 => lane_script_call_leaf::<H, $form, 4>,
-                _ => lane_script_call_full::<H>,
-            }
-        };
-    }
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return lane_script_call_full::<H>;
     }
-    match entry.leaf_form() {
-        CONTEXT_LEAF => leaf!(CONTEXT_LEAF),
-        CAPTURE_LEAF => leaf!(CAPTURE_LEAF),
-        THIS_LEAF => leaf!(THIS_LEAF),
-        _ => leaf!(PLAIN_LEAF),
-    }
+    leaf_arm::<H>(entry.leaf_form(), ImmediateLayout::argument_count(i.imm()))
 }
 
 /// Whether `direct_call_this_in_lane` binds `receiver` for `target`, without the binding: any
@@ -183,7 +185,7 @@ pub(super) fn materialize_running_leaf_in_lane<H: Host>(cx: *mut LaneContext<H>)
 }
 
 /// A plain call record `i` of `target`, another program's leaf (`CallEntry::leaf`), run as
-/// `lane_script_call_leaf` runs its own program's: its records on a window at the lane
+/// `script_call_leaf_miss` runs its own program's: its records on a window at the lane
 /// stack's top without an activation, in its program, which its return leaves
 /// (`complete_leaf_in_lane`) and its materialization records as a crossing activation's
 /// (`Completion::Cross`). `None`, which changes nothing, for a call the leaf form does not
@@ -216,7 +218,7 @@ pub(super) fn cross_leaf_call_in_lane<H: Host>(
         return None;
     }
     vm.programs.record_js_jit_lane_entry(target.program(), target.function);
-    // SAFETY: as `lane_script_call_leaf`'s window.
+    // SAFETY: as `script_call_leaf_miss`'s window.
     let registers = unsafe {
         let registers = vm.lane_stack.values.top();
         fill_admitted_window(registers, usize::from(target.fill), usize::from(target.registers));
@@ -226,7 +228,7 @@ pub(super) fn cross_leaf_call_in_lane<H: Host>(
     if leaf_binds_this(form) {
         registers.set_this(this);
     }
-    // SAFETY: as `lane_script_call_leaf`'s first record.
+    // SAFETY: as `script_call_leaf_miss`'s first record.
     let base = unsafe { (*target.view).records() };
     unsafe {
         let caller_program = (*cx).program;

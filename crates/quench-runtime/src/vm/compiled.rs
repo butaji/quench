@@ -1015,7 +1015,7 @@ lane_helper_inventory! { H;
     /// One kept `arguments` element (`lane_body_argument_get`).
     ArgumentGet => super::dispatch_fast::lane_body_argument_get::<H>,
     FieldSet => field_set_in_lane::<H>,
-    Call => super::dispatch_fast::lane_body_call::<H>,
+    Call => super::dispatch_fast::body_call_helper::<H>,
     /// A loop region's call (`dispatch_fast::lane_region_call`).
     RegionCall => super::dispatch_fast::lane_region_call::<H>,
     IndexSet => index_set_in_lane::<H>,
@@ -1042,8 +1042,8 @@ lane_helper_inventory! { H;
     ConstructReceiver => constructions::construct_receiver_in_lane::<H>,
     /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
     ConstructPlanHolds => constructions::construct_plan_holds_in_lane::<H>,
-    /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
-    ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
+    /// A construction of the body's own, by the call protocol (`dispatch_fast::body_construct_helper`).
+    ConstructCall => super::dispatch_fast::body_construct_helper::<H>,
     /// A body's uncaught `throw`, stashed for its native callers and the lane (`lane_raise`).
     Raise => lane_raise::<H>,
     /// The exception a callee left in `Vm::lane_raised`, for a handler of the caller's own (`take_raised_in_lane`).
@@ -3700,7 +3700,7 @@ pub(super) struct LaneMethod {
     /// The callees it calls by their compiled entries, which its code names.
     pub(in crate::vm) direct: Box<[DirectCallee]>,
     /// Whether every call of it that has run is inlined or direct: under a direct caller's native
-    /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
+    /// frames the lane's helper call misses (`dispatch_fast::body_call_helper`), so only such
     /// a body is called directly.
     closed: bool,
     /// The call records its code reads (`CallRecord`), by address: the code must not outlive them.
@@ -3777,7 +3777,7 @@ pub(super) enum LaneExit {
     Inlined { frame: usize, pc: u32 },
     Terminated,
     /// A native call made its callee's activation and the lane continues in it
-    /// (`dispatch_fast::lane_body_call`).
+    /// (`dispatch_fast::body_call_helper`).
     Callee,
     /// The activation completes with `value`, by the `Return` or the returning call at `pc`.
     Returned { pc: usize, value: Value },
@@ -3802,7 +3802,7 @@ pub(super) use quench_bjit::call_record::LANE_BODY_RETURNED;
 /// record that raised it (`LaneExit::Threw`). Native callers unwind through it.
 pub(super) use quench_bjit::call_record::LANE_BODY_THREW;
 
-/// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
+/// What a lane body's native call (`dispatch_fast::body_call_helper`) did: completed, with its
 /// result in the call's register; missed before any effect, so the body leaves at the call;
 /// or left the lane in the callee's activation it made.
 /// Termination is terminal: the outer native body must not reconstruct or replay a call.
@@ -4231,7 +4231,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `run_lane_method` from inside a running body (`dispatch_fast::lane_body_call`): the
+    /// `run_lane_method` from inside a running body (`dispatch_fast::body_call_helper`): the
     /// caller's body continues with the per-entry words it entered with. Its callee runs in
     /// the same program (`crosses_in_lane`) and allocates nothing, so the program's bases stand.
     #[allow(clippy::too_many_arguments)]
@@ -10796,7 +10796,7 @@ mod tests {
     fn static_lane_call_helper_declines_without_dynamic_context() {
         // Execution-only images lend no interpreter lane, so even a null context
         // must decline before inspecting it or publishing a dynamic continuation.
-        let status = unsafe { super::super::dispatch_fast::lane_body_call::<crate::test_host::TestHost>(0, 0, 0, 0) };
+        let status = unsafe { super::super::dispatch_fast::body_call_helper::<crate::test_host::TestHost>(0, 0, 0, 0) };
         assert_eq!(status, LANE_CALL_MISSED);
     }
 

@@ -25,7 +25,7 @@ pub(in crate::vm) struct DirectCallee {
     /// takes any receiver as it is.
     pub(in crate::vm) sloppy: Option<Value>,
     /// An arrow, which binds no receiver: its body reads its environment's `this`, so a call
-    /// passes the deleted marker (`lane_body_call`). Only BaseJIT's direct rows call one.
+    /// passes the deleted marker (`body_call_helper`). Only BaseJIT's direct rows call one.
     pub(in crate::vm) lexical: bool,
     /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
     pub(in crate::vm) capture_values: *const Value,

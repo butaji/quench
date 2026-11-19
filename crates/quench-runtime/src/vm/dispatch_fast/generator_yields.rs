@@ -197,7 +197,7 @@ fn await_settling_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
     vm.lane_stack.pop_activation();
     let (memory, _) = restore_caller_in_lane(cx, &activation);
     match vm.enqueue_async_resume(code, crate::heap::AwaitKind::function(continuation), promise, value) {
-        Ok(()) => lane_resume_after_call(&activation, memory, promise),
+        Ok(()) => resume_after_call_in_lane(&activation, memory, promise),
         Err(error) => {
             vm.lane_completion.raise(error);
             Resumed::Exit(exit(activation.call))

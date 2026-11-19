@@ -392,7 +392,7 @@ fn resume_generated_in_lane<H: Host>(vm: &mut Vm<H>, activation: &Activation, me
         activation.caller_registers().set(state, result);
         return resume_at_in_lane(activation, memory, activation.call());
     }
-    lane_resume_after_call(activation, memory, result)
+    resume_after_call_in_lane(activation, memory, result)
 }
 
 /// The `next` step of the delegate `delegate` by `method` with `input`, a `yield*` at `ip` of

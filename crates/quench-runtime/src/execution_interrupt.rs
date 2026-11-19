@@ -4,7 +4,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-/// The lane floor (`ExecutionInterrupt::lane_floor`) that sends a run's next safepoint jump
+/// The lane floor (`ExecutionInterrupt::floor_in_lane`) that sends a run's next safepoint jump
 /// through its slow path: no stack address lies at or above it.
 pub(crate) const LANE_FLOOR_RAISED: usize = usize::MAX;
 type NativeWaker = dyn Fn() + Send + Sync;
@@ -180,7 +180,7 @@ impl ExecutionInterrupt {
         self.state.requested.load(Ordering::Acquire)
     }
     /// The owner's lane floor, which lives as long as this handle's state.
-    pub(crate) fn lane_floor(&self) -> &AtomicUsize {
+    pub(crate) fn floor_in_lane(&self) -> &AtomicUsize {
         &self.state.lane_floor
     }
     /// Register a native, idempotent cancellation wakeup for a blocked operation.

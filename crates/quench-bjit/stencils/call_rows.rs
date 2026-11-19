@@ -14,7 +14,7 @@
 //! leaves does not spill (the frame is already canonical).
 //!
 //! Helper row `call_helper`: holes V0 = the call record's pc (the fourth helper argument), V1 =
-//! the helper's address (`lane_body_call`); vm, residual and lane context come from the
+//! the helper's address (`body_call_helper`); vm, residual and lane context come from the
 //! dispatch payload behind the context. Successors: COMPLETED continues at NEXT; MISSED
 //! (nothing ran) leaves at the call's pc through EXIT0 (a leave that does not spill); LEFT and
 //! TERMINATED leave through EXIT1 with the (status, word) in r14, r15 (`leave_status`); BRANCHED
@@ -23,7 +23,7 @@
 //!
 //! Direct row `call_direct_a<N>_<strict|sloppy|lexical>`: hole V0 = the address of the site's
 //! `CallRecord`. It checks the callee word and (sloppy) the receiver (an arrow, lexical, binds
-//! none: its body finds its `this` in its environment, as `lane_body_call` passes it), admits the call with the
+//! none: its body finds its `this` in its environment, as `body_call_helper` passes it), admits the call with the
 //! shared `admit_native` row (one validity compare, one room check) plus the shadow frame's
 //! room, writes `N` arguments and `undefined` for the rest into the callee's window at the lane
 //! stack's top, pushes the shadow frame, calls the cell's entry with the body ABI (context,
@@ -102,7 +102,7 @@ struct RowsReturn {
     value: u64,
     status: u64,
 }
-/// A semantic helper (`lane_body_call`): (vm, residual, lane context, call pc) -> status.
+/// A semantic helper (`body_call_helper`): (vm, residual, lane context, call pc) -> status.
 type Helper = unsafe extern "C" fn(u64, u64, u64, u64) -> u64;
 
 /// The state a successor receives where nothing is live: the frame and context, pinned

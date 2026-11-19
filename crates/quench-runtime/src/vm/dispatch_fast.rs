@@ -88,7 +88,7 @@ macro_rules! arithmetic_all {
 
 /// What a leaf's records read of the context its call runs them in (`leaf_body`), which is
 /// what the call makes its own and its return restores: the forms of its call
-/// (`lane_script_call_leaf`), its entry (`CallEntry::leaf`) and its return records
+/// (`script_call_leaf_miss`), its entry (`CallEntry::leaf`) and its return records
 /// (`LaneView::specialize_leaf_returns`). `NOT_LEAF` is a record of no leaf's records.
 type LeafForm = u8;
 const NOT_LEAF: LeafForm = 0;
@@ -723,7 +723,7 @@ mod indexed_compositions;
 pub(super) mod lane_body_stats;
 mod body_calls;
 mod body_forms;
-pub(super) use body_calls::{lane_body_call, lane_body_construct};
+pub(super) use body_calls::{body_call_helper, body_construct_helper};
 #[path = "lane_leaves.rs"]
 mod lane_leaves;
 #[path = "operand_feedback.rs"]
@@ -3021,7 +3021,7 @@ struct LaneContext<H: Host> {
     /// jump carried to its target (`safepoint_at`), else none.
     resumed_acc: Slot<Value>,
     /// The record a lane body's native call left the lane to continue at, one of the callee's
-    /// records in the activation it made (`lane_body_call`), and the accumulator that record reads.
+    /// records in the activation it made (`body_call_helper`), and the accumulator that record reads.
     callee_resume: Ip,
     callee_acc: Value,
     /// The call a lane body's helper decoded last (`BodyCall::at`): its program, function, record and
@@ -3047,7 +3047,7 @@ struct LaneContext<H: Host> {
     /// toward one (`body_activate_in_lane`): its caller's leave says nothing of the caller's own
     /// specialization (`lane_leave_counts`).
     callee_warming: bool,
-    /// The leaf call whose records run (`lane_script_call_leaf`), which holds what its
+    /// The leaf call whose records run (`script_call_leaf_miss`), which holds what its
     /// activation would until its return or materialization; `NO_LEAF_CALL` for none.
     leaf: LeafCall,
     /// The dispatch payload of the native loop region running on this activation, zero for none
@@ -3212,7 +3212,7 @@ impl<T: Copy> TlsCell<T> {
 /// only through the general path, and each run restores the outer context when it returns.
 #[thread_local]
 static LANE_CONTEXT: TlsCell<*mut ()> = TlsCell(std::cell::Cell::new(std::ptr::null_mut()));
-/// The running lane's stack floor (`ExecutionInterrupt::lane_floor` of its VM): a taken
+/// The running lane's stack floor (`ExecutionInterrupt::floor_in_lane` of its VM): a taken
 /// safepoint jump below it returns to the lane loop. The maximum address marks a due
 /// collection or a termination request.
 #[thread_local]
@@ -9484,7 +9484,7 @@ script_handler! {
 
 /// The plain activation of `target`, an `Activates` entry, for the call record `i` at `ip`
 /// whose argument count is `ARGC` (`call_argument_count`), past its target's proof
-/// (`lane_script_call`, `lane_script_call_leaf`).
+/// (`lane_script_call`, `script_call_leaf_miss`).
 macro_rules! lane_plain_activation {
     ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr) => {
         lane_plain_activation!($cx, $vm, $r, $ip, $i, $target, $argc, $plain, false)
@@ -9565,7 +9565,7 @@ fn materialize_leaf_in_lane<H: Host>(cx: *mut LaneContext<H>) {
     let form = leaf.form;
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: the leaf's window starts at the stack's length, within its capacity
-    // (`lane_script_call_leaf`).
+    // (`script_call_leaf_miss`).
     let window = unsafe { (*cx).registers.0 };
     unsafe { stack.values.set_top(window.add(usize::from(target.registers) + lane_values::CONTEXT)) };
     let activation = Activation::of_parts(
@@ -9583,7 +9583,7 @@ fn materialize_leaf_in_lane<H: Host>(cx: *mut LaneContext<H>) {
     // SAFETY: the call proved room for the activation (`lane_activation_room`).
     unsafe { stack.push_activation(activation, window) };
     if !leaf_binds_this(form) {
-        // The receiver the call proved it binds directly (`lane_script_call_leaf`), from the
+        // The receiver the call proved it binds directly (`script_call_leaf_miss`), from the
         // caller's registers, which the leaf does not write.
         let this = direct_call_this_in_lane(vm, target, leaf.caller_registers.get(call.c))
             .expect("the leaf's call proved its receiver's binding");
@@ -13095,7 +13095,7 @@ pub(in crate::vm) fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, fu
 }
 
 /// Whether a lane body's run may call bodies by their compiled entries: the lane may make
-/// their activations should it leave inside one (`lane_body_call`'s own conditions).
+/// their activations should it leave inside one (`body_call_helper`'s own conditions).
 fn lane_direct_calls<H: Host>(cx: *mut LaneContext<H>) -> bool {
     let vm = unsafe { vm(cx) };
     let script_calls = unsafe { (*cx).script_calls };
@@ -13313,7 +13313,7 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_argument_get<H: Host>(_vm: u64,
 }
 
 pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: u64, context: u64, packed: u64) -> u64 {
-    // As `lane_body_call`: static regions recover captures through their semantic operation,
+    // As `body_call_helper`: static regions recover captures through their semantic operation,
     // and an ahead body has no lane context to read them from.
     if !crate::DYNAMIC_EXECUTION_ENABLED || context == 0 { return Value::DELETED.to_bits(); }
     let cx = context as usize as *mut LaneContext<H>;
@@ -13486,7 +13486,7 @@ fn lane_frames_resumed<H: Host>(
         // A native call made its callee's activation and left the lane there.
         super::compiled::LaneExit::Callee => {
             let mut carried = Carried::script(cx);
-            // SAFETY: `lane_body_call` set both before the body left.
+            // SAFETY: `body_call_helper` set both before the body left.
             let (registers, resume) = unsafe { ((*cx).registers, (*cx).callee_resume) };
             carried.acc = Slot::of(unsafe { (*cx).callee_acc });
             LaneBodyLeft::Resume(registers, resume, carried)
@@ -13520,7 +13520,7 @@ pub(super) unsafe fn lane_region_payload<H: Host>(context: usize, payload: usize
 }
 
 /// The helper a loop region's call row runs (`LaneHelper::RegionCall`): the call at `call_pc` of the
-/// activation the lane context names, whose registers the region runs on, as `lane_body_call`
+/// activation the lane context names, whose registers the region runs on, as `body_call_helper`
 /// makes it, then the heap bases the region's payload holds reloaded (`LaneContext::region_payload`)
 /// besides the body frame's, which the callee's run or an allocation may have moved.
 ///
@@ -13528,7 +13528,7 @@ pub(super) unsafe fn lane_region_payload<H: Host>(context: usize, payload: usize
 /// `context` is the running lane's, which the region entered (`lane_region_payload`), and `call_pc` a call record of its function.
 pub(super) unsafe extern "C" fn lane_region_call<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
-    let status = unsafe { body_calls::lane_body_call::<H>(vm, residual, context, call_pc) };
+    let status = unsafe { body_calls::body_call_helper::<H>(vm, residual, context, call_pc) };
     // SAFETY: as above.
     unsafe { refresh_region_bases_of::<H>(context) };
     status
@@ -14664,7 +14664,7 @@ fn complete_activation_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut val
         }
         // SAFETY: the call record belongs to the caller's live view.
         if unsafe { (*activation.call()).a } & crate::bytecode::RETURN_REGISTER == 0 {
-            return Some(lane_resume_after_call(&activation, caller_memory, value));
+            return Some(resume_after_call_in_lane(&activation, caller_memory, value));
         }
         // The call returns its callee's completion: its caller completes in turn, an
         // activation here or the frame in the general loop, which the exit hands it to.
@@ -14712,7 +14712,7 @@ fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value)
         (*cx).instance = call.instance;
         (*cx).memory = memory;
     }
-    lane_resume_after_call(&activation, memory, encoded)
+    resume_after_call_in_lane(&activation, memory, encoded)
 }
 
 /// The return of the innermost activation, a Wasm one whose call keeps its result: its
@@ -14741,7 +14741,7 @@ fn lane_complete_wasm_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Va
         }
         value = vm.wasm_export_result(value, result);
     }
-    Some(lane_resume_after_call(&activation, caller_memory, value))
+    Some(resume_after_call_in_lane(&activation, caller_memory, value))
 }
 
 /// The value-producing records that may return their result from the frame
@@ -18515,7 +18515,7 @@ impl<H: Host> Vm<H> {
         } else {
             stack_pointer().saturating_sub(LANE_STACK_SLACK)
         };
-        let cell: *const std::sync::atomic::AtomicUsize = self.execution_interrupt.lane_floor();
+        let cell: *const std::sync::atomic::AtomicUsize = self.execution_interrupt.floor_in_lane();
         let outer_cell = LANE_FLOOR.with(|current| current.replace(cell));
         // SAFETY: the VM holds its interrupt state for the whole run.
         let outer_floor = unsafe { &*cell }.swap(floor, std::sync::atomic::Ordering::SeqCst);

@@ -20966,7 +20966,7 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
     assert!(run.events.count(Event::Published) > 0, "a declined method runs as a lane body");
 }
 
-/// Lane bodies call the callees they do not inline natively (`dispatch_fast::lane_body_call`):
+/// Lane bodies call the callees they do not inline natively (`dispatch_fast::body_call_helper`):
 /// a callee that completes in its own body returns its value to the caller's native code; one
 /// that leaves continues in the lane in its own activation; a callee with no body, a host
 /// function or a throwing one leaves the caller at the call. Every result must equal the
@@ -21472,7 +21472,7 @@ fn lane_loose_equality_decides_records_and_nullish_only() {
 fn lane_bodies_construct_by_activation() {
     // A lane body's `new` whose constructor does more than store fields (an array literal,
     // a nested construction and call, a returned object) runs the constructor's activation
-    // (`dispatch_fast::lane_body_construct`); a planned one and a returned one by the plan.
+    // (`dispatch_fast::body_construct_helper`); a planned one and a returned one by the plan.
     let source = r#"
      (function () {
       function OC() { this.elms = []; }
@@ -21594,7 +21594,7 @@ fn lane_loops_make_regexp_literals_natively_with_fresh_state() {
 #[test]
 fn lane_bodies_construct_empty_arrays() {
     // `new Array()` of the realm's `Array` in a lane body is an empty array
-    // (`dispatch_fast::lane_body_construct`); a function named `Array` constructs as itself,
+    // (`dispatch_fast::body_construct_helper`); a function named `Array` constructs as itself,
     // and a constructor only lane bodies construct gets a body of its own.
     let source = r#"
      (function () {
