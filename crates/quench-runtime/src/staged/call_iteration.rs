@@ -17,11 +17,10 @@
 //! The interpreter runs them on `Concrete` (`dispatch_fast::iterator_step_reads_miss`,
 //! `iterator_step_binding_miss`, `generator_windows::lane_resume_generator`); every miss is the
 //! handler's own general step (`iterator_step_miss`, `generator_step_miss`, the native call).
-#![allow(dead_code)]
 
 use super::call::admit_room;
 use super::region::Region;
-use super::{word_bytes, Stage, Step};
+use super::{word_bytes, Stage};
 use crate::bytecode::{Register, RETURN_REGISTER};
 use crate::Value;
 
@@ -41,39 +40,6 @@ pub(crate) struct StepReads {
     pub(crate) done: Register,
     pub(crate) value: Register,
     pub(crate) flag: Option<Register>,
-}
-
-/// An iteration step's row, with the words a tier loaded. Each yields the word it checked or
-/// produced; a failed guard leaves at the miss edge, which is the handler's general step.
-#[derive(Clone, Copy)]
-pub(crate) enum IterationOperation<W> {
-    /// Continue where a generator resumes as activation `depth` within `limit` activations; the
-    /// site's own operand (`resumes_at_site`) decided before the row runs.
-    Resume { depth: W, limit: W },
-    /// Continue where the reads after the step name `atoms` (`reads_step`).
-    Reads { done: W, value: W, atoms: StepAtoms },
-    /// The step yielded `value`: `false` to the done registers, `value` to the value register.
-    Yielded { registers: W, reads: StepReads, value: W },
-    /// The step is done: `true` to the done registers, the value register untouched.
-    Finished { registers: W, reads: StepReads },
-}
-
-/// Run the iteration-step `operation`; its word, or `Unresolved` where it left at `miss`.
-#[inline(always)]
-pub(crate) fn step<S: Stage, C>(stage: &mut S, miss: S::Miss, operation: IterationOperation<S::Word>) -> Step<S::Word, C> {
-    let word = match operation {
-        IterationOperation::Resume { depth, limit } => admit_resume(stage, depth, limit, miss),
-        IterationOperation::Reads { done, value, atoms } => {
-            let reads = reads_step(stage, done, value, atoms);
-            stage.guard(reads, miss).map(|()| done)
-        }
-        IterationOperation::Yielded { registers, reads, value } => {
-            step_yielded(stage, registers, reads, value);
-            Some(value)
-        }
-        IterationOperation::Finished { registers, reads } => Some(step_finished(stage, registers, reads)),
-    };
-    word.map_or(Step::Unresolved, Step::Value)
 }
 
 /// Whether a step whose result goes to register `result` (the call record's A operand) may
@@ -163,21 +129,11 @@ pub(crate) fn concrete_step_finished(registers: *mut Value, reads: StepReads) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::staged::Concrete;
 
     const ATOMS: StepAtoms = StepAtoms { done: 3, value: 4 };
 
-    fn run(operation: IterationOperation<u64>) -> Option<u64> {
-        match step::<Concrete, ()>(&mut Concrete::new(std::ptr::null()), (), operation) {
-            Step::Value(word) => Some(word),
-            _ => None,
-        }
-    }
-
     #[test]
     fn a_resume_is_admitted_below_the_limit_and_not_for_a_returning_call() {
-        assert_eq!(run(IterationOperation::Resume { depth: 3, limit: 4 }), Some(3));
-        assert_eq!(run(IterationOperation::Resume { depth: 4, limit: 4 }), None);
         assert_eq!(concrete_admit_resume(0, 1), Some(0));
         assert_eq!(concrete_admit_resume(1, 1), None);
         assert!(resumes_at_site(5) && !resumes_at_site(5 | RETURN_REGISTER));
@@ -187,7 +143,6 @@ mod tests {
     fn the_reads_must_be_done_then_value() {
         assert!(concrete_reads_step(3, 4, ATOMS));
         assert!(!concrete_reads_step(4, 3, ATOMS));
-        assert_eq!(run(IterationOperation::Reads { done: 3, value: 5, atoms: ATOMS }), None);
     }
 
     #[test]

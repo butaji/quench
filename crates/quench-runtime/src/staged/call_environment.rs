@@ -10,7 +10,6 @@
 //! What stays the tier's own (host work no row expresses): the returning-call admission, the
 //! callee plan's legacy-reflection test for values past the parameters, the `with` scope test,
 //! the rest array's allocation, the values' top, and the activation record's push.
-#![allow(dead_code)]
 
 use super::call::admit_room;
 use super::frame;

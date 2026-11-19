@@ -15,14 +15,13 @@
 //! - completion: [[Construct]] yields a returned object, else the receiver the frame holds
 //!   (`complete_construct`, `construct_value`); a skipped forwarding constructor's
 //!   construction (`Completion::Forwarder`) yields its receiver whatever the method returned
-//!   (`ConstructCompletion::Forwarder`). Whether a value is an object is the tier's answer
+//!   (`concrete_forwarder_value`). Whether a value is an object is the tier's answer
 //!   (`object`): the interpreter's (`Vm::is_object_like`) reads the heap's cell, which no word
 //!   rule decides.
 //!
 //! The direct (JIT) construction through an initializer is `invoke::enter_direct`, whose
 //! receiver rule is `invoke::callee_this`'s `allocates_receiver` arm and whose completion is
 //! `protocol::complete_call` with the receiver.
-#![allow(dead_code)]
 
 use super::frame;
 use super::protocol::guard_received;
@@ -92,6 +91,7 @@ pub(crate) fn concrete_unpending(pending: bool) -> bool {
 /// The construction's receiver: the plan's `allocated` word, leaving at `miss` where the plan
 /// declined (the deleted marker, `protocol::guard_received`). Reads `allocated` only.
 #[inline(always)]
+#[allow(dead_code)] // one-frame-one-call.md C1 (enter's Receiver(constructs) this) routes through it
 pub(crate) fn construct_this<S: Stage>(stage: &mut S, allocated: S::Word, miss: S::Miss) -> Option<S::Word> {
     guard_received(stage, allocated, miss)?;
     Some(allocated)
@@ -99,6 +99,7 @@ pub(crate) fn construct_this<S: Stage>(stage: &mut S, allocated: S::Word, miss: 
 
 /// The context words of a construction's activation at `window`.
 #[derive(Clone, Copy)]
+#[allow(dead_code)] // one-frame-one-call.md enter step 4 (C2) routes through it
 pub(crate) struct ConstructContext<W> {
     /// The receiver, which the completion reads back (`complete_construct`).
     pub(crate) this: W,
@@ -110,6 +111,7 @@ pub(crate) struct ConstructContext<W> {
 /// and `CONTEXT_CAPTURE`. A construction is never a plain activation (its completion is not
 /// Plain), so it writes no plain header (`protocol::push_plain`); its record is the tier's.
 #[inline(always)]
+#[allow(dead_code)] // one-frame-one-call.md enter step 4 (C2) routes through it
 pub(crate) fn enter_construct_context<S: Stage>(stage: &mut S, window: S::Word, context: ConstructContext<S::Word>) {
     let at = Region::Frame.mutable();
     stage.store_u64(at, window, context_at(frame::CONTEXT_THIS), context.this);
@@ -132,28 +134,6 @@ pub(crate) fn complete_construct<S: Stage>(stage: &mut S, window: S::Word, value
     stage.choose(object, |_| value, |stage| stage.load_u64(Region::Frame.mutable(), window, context_at(frame::CONTEXT_THIS)))
 }
 
-/// What a construction's completion yields (`Completion::Constructs` and its cross and body
-/// forms, `Completion::Forwarder`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ConstructCompletion {
-    /// An ordinary constructor's: a returned object, else the receiver.
-    Constructs,
-    /// A skipped forwarding constructor's, whose body returns `undefined` after the method:
-    /// the receiver, whatever the method returned.
-    Forwarder,
-}
-
-/// The value of a construction completing as `completion` with `value`, its receiver
-/// `receiver` (already loaded), `object` the tier's test of `value`. Pure.
-#[inline(always)]
-pub(crate) fn complete_construction<S: Stage>(stage: &mut S, completion: ConstructCompletion, value: S::Word, receiver: S::Word,
-    object: S::Cond) -> S::Word {
-    match completion {
-        ConstructCompletion::Constructs => construct_value(stage, value, receiver, object),
-        ConstructCompletion::Forwarder => receiver,
-    }
-}
-
 /// `construct_value` on machine words.
 #[inline(always)]
 pub(crate) fn concrete_construct_value(value: u64, receiver: u64, object: bool) -> u64 {
@@ -166,10 +146,12 @@ pub(crate) fn concrete_complete_construct(window: u64, value: u64, object: bool)
     complete_construct(&mut super::Concrete::new(std::ptr::null()), window, value, object)
 }
 
-/// `complete_construction` of a skipped forwarding constructor on machine words.
+/// The completion of a skipped forwarding constructor (`Completion::Forwarder`): its receiver,
+/// whatever the method returned (`_value` is not read). Its body returns `undefined` after the
+/// method, so the receiver is the construction's value.
 #[inline(always)]
-pub(crate) fn concrete_forwarder_value(value: u64, receiver: u64) -> u64 {
-    complete_construction(&mut super::Concrete::new(std::ptr::null()), ConstructCompletion::Forwarder, value, receiver, true)
+pub(crate) fn concrete_forwarder_value(_value: u64, receiver: u64) -> u64 {
+    receiver
 }
 
 #[cfg(test)]

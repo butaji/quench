@@ -16,7 +16,6 @@
 //!
 //! The completion (`Completion::ReturnsToNative`, `ArrayStep`) reads the record, which only the
 //! interpreter lays out, so it stays the tier's (`completions::lane_complete_native_callback`).
-#![allow(dead_code)]
 
 use super::call::admit_room;
 use super::frame;
@@ -131,24 +130,6 @@ pub(crate) fn install_callback<S: Stage>(stage: &mut S, window: S::Word, context
     stage.store_u64(at, window, context_at(frame::CONTEXT_CAPTURE), context.capture);
 }
 
-/// A callback's entry past its admission and record: the window filled from `arguments`
-/// (`fill_callback`), then the context words (`install_callback`). The tier moves the values'
-/// top past the window and makes the context's registers and records the callee's.
-#[inline(always)]
-pub(crate) fn enter_callback<S: Stage>(stage: &mut S, window: S::Word, arguments: S::Word, shape: CallbackWindow,
-    context: CallbackContext<S::Word>) {
-    fill_callback(stage, window, arguments, shape);
-    install_callback(stage, window, context);
-}
-
-/// `enter_callback` of held words (`fill_callback_words`).
-#[inline(always)]
-pub(crate) fn enter_callback_words<S: Stage, const N: usize>(stage: &mut S, window: S::Word, words: [S::Word; N],
-    shape: CallbackWindow, context: CallbackContext<S::Word>) {
-    fill_callback_words(stage, window, words, shape);
-    install_callback(stage, window, context);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,7 +152,9 @@ mod tests {
         let window = unsafe { words.as_mut_ptr().add(8) } as u64;
         let shape = CallbackWindow { registers: 4, passed: 1, argc: 3, keeps: true };
         let context = CallbackContext { this: 1, env: 2, capture: 3 };
-        enter_callback(&mut Concrete::new(std::ptr::null()), window, arguments.as_ptr() as u64, shape, context);
+        let stage = &mut Concrete::new(std::ptr::null());
+        fill_callback(stage, window, arguments.as_ptr() as u64, shape);
+        install_callback(stage, window, context);
         assert_eq!(&words[8..], &[10, u, u, u, 10, 20, 30]);
         assert_eq!((words[7], words[6], words[5]), (1, 2, 3));
     }
@@ -182,7 +165,9 @@ mod tests {
         let mut words = [0_u64; 8 + 6];
         let window = unsafe { words.as_mut_ptr().add(8) } as u64;
         let shape = CallbackWindow { registers: 3, passed: 2, argc: 3, keeps: false };
-        enter_callback_words(&mut Concrete::new(std::ptr::null()), window, [7, 8, 9], shape, CallbackContext { this: 1, env: 2, capture: 3 });
+        let stage = &mut Concrete::new(std::ptr::null());
+        fill_callback_words(stage, window, [7, 8, 9], shape);
+        install_callback(stage, window, CallbackContext { this: 1, env: 2, capture: 3 });
         assert_eq!(&words[8..11], &[7, 8, u]);
         assert_eq!(&words[11..], &[0, 0, 0], "a shape that keeps nothing writes nothing past its registers");
     }

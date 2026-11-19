@@ -112,7 +112,7 @@ fn lane_forwarded_setter_store<H: Host>(
 enum SetterStore {
     /// It stores its first parameter to the own field `atom` of its receiver, whose store
     /// entry for the receiver's exact shape is this one.
-    Store(FieldCache, crate::bytecode::Atom),
+    Store(crate::vm::FieldCache, crate::bytecode::Atom),
     /// It is no such body, nor binds the receiver as its `this`: it never forwards.
     Never,
     /// It is such a body, but its store site holds no own entry for this receiver yet.
@@ -145,7 +145,7 @@ fn trivial_setter_store<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object: 
     }
     // The setter is of the running program (`lane_script_target`), whose sites its store's are.
     let cache = vm.field_cache_entry(store.site);
-    let holds = vm.heap.object_record(object).is_some_and(|receiver| cache.holder == NO_FIELD_HOLDER && cache.receiver == receiver.exact_shape());
+    let holds = vm.heap.object_record(object).is_some_and(|receiver| cache.holder == crate::vm::NO_FIELD_HOLDER && cache.receiver == receiver.exact_shape());
     if holds { SetterStore::Store(cache, store.atom) } else { SetterStore::NotYet }
 }
 

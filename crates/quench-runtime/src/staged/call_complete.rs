@@ -7,8 +7,6 @@
 //! `Concrete`. The activation records, the lane's state and the heap work of a completion stay
 //! the interpreter's own; a row takes the words those read and yields the word they write.
 
-#![allow(dead_code)]
-
 use super::region::Region;
 use super::{frame, word_offset, Stage};
 use crate::bytecode::{Register, RETURN_REGISTER};
@@ -210,14 +208,12 @@ pub(crate) fn concrete_write_side_flags(window: u64, flags: u64) {
 }
 
 /// What a side record's completion runs past the header's pop, selected by the flags of the
-/// popped frame's packed word: the caller's program entered again (`crosses`), and the
-/// completion's own step (`completes`); keeping and environment frames need nothing past the
-/// window's release.
+/// popped frame's packed word: the caller's program entered again (`crosses`); keeping and
+/// environment frames need nothing past the window's release.
 #[derive(Clone, Copy)]
 pub(crate) struct SideCompletion<C> {
     pub(crate) sided: C,
     pub(crate) crosses: C,
-    pub(crate) completes: C,
 }
 
 /// The side completion row: which side steps the frame of packed word `packed` runs once its
@@ -228,9 +224,7 @@ pub(crate) fn side_completion<S: Stage>(stage: &mut S, packed: S::Word) -> SideC
     let sided = stage.ne_imm(sided, 0u64);
     let crosses = stage.and_imm(packed, frame::CROSSES_FLAG);
     let crosses = stage.ne_imm(crosses, 0u64);
-    let completes = stage.and_imm(packed, frame::COMPLETION_FLAG);
-    let completes = stage.ne_imm(completes, 0u64);
-    SideCompletion { sided, crosses, completes }
+    SideCompletion { sided, crosses }
 }
 
 /// `side_completion` on a machine word.
@@ -280,9 +274,9 @@ mod tests {
         let flags = concrete_side_flags(true, false, true, false, false);
         assert_eq!(flags, frame::KEEPS_FLAG | frame::CROSSES_FLAG);
         let side = concrete_side_completion(crate::staged::protocol::plain_packed(4, 1, flags));
-        assert!(side.sided && side.crosses && !side.completes);
+        assert!(side.sided && side.crosses);
         let side = concrete_side_completion(crate::staged::protocol::plain_packed(4, 1, frame::ENV_FLAG | frame::COMPLETION_FLAG));
-        assert!(side.sided && !side.crosses && side.completes);
+        assert!(side.sided && !side.crosses);
         assert!(!concrete_side_completion(crate::staged::protocol::plain_packed(4, 1, 0)).sided);
     }
 

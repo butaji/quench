@@ -18,14 +18,12 @@
 //! of its own are the kept copy (`keep_passed`), the rest register (`fill_keeping`), the size
 //! of the window and the record's words (`keeping_window_words`, `KeepingRecord`). The rest
 //! array itself is made by the tier (it allocates), before the window, and is a word here.
-#![allow(dead_code)]
 
 use super::call::fits;
 use super::frame;
 use super::protocol::fill_call;
 use super::region::Region;
 use super::{word_bytes, word_offset, Passed, Stage};
-use crate::Value;
 
 /// The byte offset of context word `word` below a window's register 0.
 #[inline(always)]
@@ -144,15 +142,13 @@ pub(crate) fn enter_context<S: Stage>(stage: &mut S, window: S::Word, this: S::W
     stage.store_u64(at, window, context_at(frame::CONTEXT_THIS), this);
 }
 
-/// The undefined word a window without a rest array passes `fill_keeping` as `rest`.
-pub(crate) const NO_REST: u64 = Value::UNDEFINED.to_bits();
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::staged::Concrete;
+    use crate::Value;
 
-    const U: u64 = NO_REST;
+    const U: u64 = Value::UNDEFINED.to_bits();
 
     fn fill(window: KeepingWindow, passed: &[u64], rest: u64) -> [u64; 8] {
         let mut words = [0_u64; 8];

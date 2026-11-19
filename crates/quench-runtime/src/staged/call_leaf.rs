@@ -18,7 +18,6 @@
 //!   interpreter fills with its admitted-room block stores;
 //! - the frame push: replaced by the leaf record (`enter_leaf`), the one family-specific step;
 //! - completion: the leaf record's caller (`complete_leaf`) in place of `protocol::pop_plain`'s.
-#![allow(dead_code)]
 
 use super::frame;
 use super::protocol::bind_this;

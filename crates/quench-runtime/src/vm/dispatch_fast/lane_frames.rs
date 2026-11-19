@@ -430,10 +430,10 @@ impl LaneStack {
 
     /// Edit the side record of the innermost activation where it is a plain header
     /// (one-frame-one-call.md F4 (3)): its side record, or a fresh one for a header that had
-    /// none, then stored as the top of the side records, the innermost's (`store_side`). A trampoline's header (a native's callback, an array
-    /// step's) takes its trampoline's words as its own first, and its trampoline's completion
-    /// into its side record, as its spill into a record took them. `false`, editing nothing,
-    /// where the innermost is a record.
+    /// none, then stored as the top of the side records, the innermost's (`store_side`). A
+    /// trampoline's header (a native's callback, an array step's) takes its trampoline's words
+    /// as its own first, and its trampoline's completion into its side record, as its spill
+    /// into a record took them. `false`, editing nothing, where the innermost is a record.
     fn edit_top_side(&mut self, edit: impl FnOnce(&mut Side)) -> bool {
         if self.plain.depth.get() == 0 { return false; }
         let window = Registers(self.plain.registers.get());

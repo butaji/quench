@@ -308,7 +308,8 @@ pub(super) fn lane_body_array_iteration<H: Host>(
     let vm = unsafe { vm(cx) };
     let index = iteration.advance()?;
     let element = lane_dense_element(vm, receiver, index)?;
-    // A body's iteration keeps its callback a record: the nested run's boundaries read it.
+    // A body's iteration keeps its callback off the trampoline: the nested run's boundaries read
+    // its completion, which its side record holds (`Completion::ArrayStep`, one-frame-one-call.md F4 (3)).
     let caller_base = unsafe { (*cx).base };
     let window = lane_admit_prepared(cx, &shape.activation, shape.room)?;
     // SAFETY: the admission pushed the activation over the window.
@@ -411,7 +412,7 @@ fn lane_finish_array_step<H: Host>(cx: *mut LaneContext<H>, call: Ip, applied: O
 
 /// `lane_begin_array_iteration`'s push of `step`'s first callback: its plain header where the
 /// shape has one (`LaneStack::push_step_header`), which returns through the array steps'
-/// trampoline (`array_step_returned`), else its record (`lane_admit_prepared`); then the
+/// trampoline (`array_step_returned`), else its header with a side record (`lane_admit_prepared`); then the
 /// callback entered for the step's element. The entry is pushed first, so a spill of the
 /// header finds its step (`LaneStack::plain_record`). `None`, which changes nothing, where the
 /// lane stack lacks room.
