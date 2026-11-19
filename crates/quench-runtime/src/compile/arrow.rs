@@ -110,6 +110,7 @@ impl Compiler<'_> {
             &promoted_local_slots,
             &clobbered_local_slots,
         );
+        function.code.reserve(super::code_capacity_hint(source_span));
         function.strict = strict;
         function.super_static = super_static;
         function.super_home = super_home;
@@ -139,7 +140,7 @@ impl Compiler<'_> {
             }
         }
         // As in `Compiler::compile_function`: no doubling slack beside the syntax tree.
-        function.code.shrink_to_fit();
+        super::trim_slack(&mut function.code);
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();

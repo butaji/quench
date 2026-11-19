@@ -100,6 +100,8 @@ pub(crate) mod replay;
 mod settled;
 mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW, settle_deferred_rewrite};
 mod rewrite; mod rest_alias;
+mod scratch;
+pub(crate) use scratch::{CompileScratch, code_capacity_hint, trim_slack};
 mod sequence;
 pub(crate) mod stack;
 mod checks;
@@ -1997,6 +1999,8 @@ struct Compiler<'a> {
     /// The source starts of function expressions called where they are made or marked as
     /// about to run, which keep their records (`note_invoked_callee`).
     invoked_functions: FxHashSet<u32>,
+    /// The buffers every function's lowering passes share (`CompileScratch`).
+    scratch: CompileScratch,
     /// How each replayable function was compiled, with the cursors it started from.
     replay_calls: FxHashMap<u32, (replay::TableCursors, replay::ReplayCall)>,
     /// In a replay, the function it recompiles and where the load left each function.
@@ -2260,6 +2264,7 @@ pub(crate) fn lower_settled<'a>(
     function: &mut BcFunction,
     tables: &LoweringTables<'_>,
     atom_name: impl Fn(usize) -> Option<&'a str>,
+    scratch: &mut CompileScratch,
 ) -> Option<Vec<liveness::RegisterSet>> {
     let LoweringTables { methods, field_sites, superinstructions, specialized, undefined_constant, object_sites } = *tables;
     if function.dispatch == DispatchClass::Numeric {
@@ -2273,13 +2278,13 @@ pub(crate) fn lower_settled<'a>(
     // passes read one set of blocks.
     let flow = crate::bytecode::initialization::FlowCell::new();
     let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions, &flow);
-    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name, &flow);
+    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name, &flow, scratch);
     if specialized {
         if coalescing_repays(function) {
             rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
         }
-        object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
-        rewrite::hoist_loop_constants(function, methods, field_sites, superinstructions);
+        object_registers::promote(function, methods, field_sites, superinstructions, object_sites, scratch);
+        rewrite::hoist_loop_constants(function, methods, field_sites, superinstructions, scratch);
     }
     rest_reads::rewrite(function, methods, field_sites, superinstructions, &|atom| atom_name(atom as usize) == Some("length"));
     let mut solved = None;
@@ -2295,7 +2300,7 @@ pub(crate) fn lower_settled<'a>(
     }
     // The one compaction of the lowering: the passes above leave the `Nop`s their in-place
     // rewrites made, and the live sets this returns are compacted with the same map.
-    rewrite::remove_nops(function, &mut solved);
+    rewrite::remove_nops(function, &mut solved, scratch);
     solved
 }
 
@@ -2490,6 +2495,7 @@ impl<'a> Compiler<'a> {
             dynamic_binding_scopes: 0,
             early_replays: FxHashMap::default(),
             invoked_functions: FxHashSet::default(),
+            scratch: CompileScratch::default(),
             replay_calls: FxHashMap::default(),
             replay_target: None,
             source_type: oxc_span::SourceType::default(),
@@ -3500,6 +3506,7 @@ impl<'a> Compiler<'a> {
                                 undefined_constant,
                             },
                             |atom| self.atoms.get(atom),
+                            &mut CompileScratch::default(),
                         );
                     }
                     function
@@ -4169,6 +4176,7 @@ impl<'a> Compiler<'a> {
             &promoted_local_slots,
             &clobbered_local_slots,
         );
+        function.code.reserve(code_capacity_hint(options.source_span));
         if let Some((name, binding)) = name_binding {
             function.push_function_name_binding(name, binding);
         }
@@ -4283,7 +4291,7 @@ impl<'a> Compiler<'a> {
         });
         // Grown by doubling, these would keep their slack beside the syntax tree until the
         // whole program has compiled.
-        function.code.shrink_to_fit();
+        trim_slack(&mut function.code);
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
@@ -4464,19 +4472,25 @@ impl<'a> Compiler<'a> {
 
     /// The finishing passes of one function after every function's rewrites: its dispatch
     /// class (`settle_dispatch`), then the passes the class leaves (`lower_settled`).
-    fn lower_function(&self, function: &mut BcFunction, undefined_constant: u32) -> Option<Vec<liveness::RegisterSet>> {
+    fn lower_function(&mut self, function: &mut BcFunction, undefined_constant: u32) -> Option<Vec<liveness::RegisterSet>> {
         self.settle_dispatch(function);
+        // Field borrows, not `method_arguments()`, so the scratch borrows alongside the tables.
+        let methods: &dyn liveness::MethodArguments = match self.replay_program {
+            Some(program) => program,
+            None => &self.method_sites,
+        };
         lower_settled(
             function,
             &LoweringTables {
                 object_sites: self.object_sites.as_slice(),
-                methods: self.method_arguments(),
+                methods,
                 field_sites: self.field_sites.as_slice(),
                 superinstructions: self.superinstructions.as_slice(),
                 specialized: self.mode == SpecializationMode::Enabled,
                 undefined_constant,
             },
             |atom| self.atoms.get(atom),
+            &mut self.scratch,
         )
     }
 
@@ -4494,9 +4508,9 @@ impl<'a> Compiler<'a> {
 
     /// `settle_dispatch` for a function whose lowering ends there, which therefore drops the
     /// `Nop`s its rewrites left (`lower_settled` does so for the functions it lowers).
-    fn settle_dispatch_only(&self, function: &mut BcFunction) {
+    fn settle_dispatch_only(&mut self, function: &mut BcFunction) {
         self.settle_dispatch(function);
-        rewrite::remove_nops(function, &mut None);
+        rewrite::remove_nops(function, &mut None, &mut self.scratch);
     }
 
     fn dispatch_class(code: &[Instr], wide: &[WideInstruction]) -> DispatchClass {

@@ -275,13 +275,13 @@ fn hand_on(
 /// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
 /// that followed it. The per-pc live sets, when given, are compacted with the same map: a `Nop`
 /// passes its successor's live set through, so a dropped entry loses nothing.
-pub(super) fn remove_nops(function: &mut BcFunction, live: &mut Option<Vec<RegisterSet>>) {
+pub(super) fn remove_nops(function: &mut BcFunction, live: &mut Option<Vec<RegisterSet>>, scratch: &mut CompileScratch) {
     if !function.code.iter().any(|instruction| instruction.op() == NOP) {
         return;
     }
     let old = std::mem::take(&mut function.code);
-    let mut code = Vec::with_capacity(old.len());
-    let mut map = vec![0usize; old.len() + 1];
+    let mut code = scratch.code_buffer(old.len());
+    let map = scratch.remap(old.len());
     for (pc, &instruction) in old.iter().enumerate() {
         map[pc] = code.len();
         if instruction.op() != NOP {
@@ -299,7 +299,7 @@ pub(super) fn remove_nops(function: &mut BcFunction, live: &mut Option<Vec<Regis
     relocate(
         &mut code,
         &mut function.wide,
-        &map,
+        &*map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
         &mut function.binding_sites,
@@ -307,6 +307,7 @@ pub(super) fn remove_nops(function: &mut BcFunction, live: &mut Option<Vec<Regis
         &old,
     );
     function.code = code;
+    scratch.recycle_code(old);
 }
 
 /// The liveness of a function's code as it stands: each instruction's transfer masks and the
@@ -1551,7 +1552,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         function.code = code;
         function.registers = registers;
         rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None);
-        remove_nops(function, &mut None);
+        remove_nops(function, &mut None, &mut CompileScratch::default());
         std::mem::take(&mut function.code)
     }
 

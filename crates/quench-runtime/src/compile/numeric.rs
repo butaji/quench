@@ -290,7 +290,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
-        crate::compile::rewrite::remove_nops(&mut dead, &mut None);
+        crate::compile::rewrite::remove_nops(&mut dead, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(dead.code.len(), 2);
         assert_eq!(dead.code[0].a(), NUMERIC_LOCAL_TARGET | 3);
 
@@ -301,7 +301,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
-        crate::compile::rewrite::remove_nops(&mut live, &mut None);
+        crate::compile::rewrite::remove_nops(&mut live, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(live.code.len(), 3);
     }
 
@@ -371,7 +371,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
-        crate::compile::rewrite::remove_nops(&mut dead, &mut None);
+        crate::compile::rewrite::remove_nops(&mut dead, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(dead.code.len(), 2);
         assert_eq!(crate::bytecode::Operand(dead.code[0].b()).tag(), 3);
         assert_eq!(crate::bytecode::Operand(dead.code[0].c()).tag(), 3);
@@ -383,7 +383,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
-        crate::compile::rewrite::remove_nops(&mut live, &mut None);
+        crate::compile::rewrite::remove_nops(&mut live, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(live.code.len(), 4);
     }
 }

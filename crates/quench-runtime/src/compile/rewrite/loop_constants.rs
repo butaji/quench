@@ -62,6 +62,7 @@ pub(in crate::compile) fn hoist_loop_constants<M: liveness::MethodArguments + ?S
     methods: &M,
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
+    scratch: &mut CompileScratch,
 ) -> bool {
     let usable = usable_loops(function);
     let in_loop_load = function.code.iter().enumerate().any(|(pc, instruction)| {
@@ -78,7 +79,7 @@ pub(in crate::compile) fn hoist_loop_constants<M: liveness::MethodArguments + ?S
     for pc in 0..function.code.len() {
         hoister.try_hoist(function, pc, &tables);
     }
-    hoister.apply(function)
+    hoister.apply(function, scratch)
 }
 
 /// The loops whose heads only their own code enters, innermost first. A loop is excluded when a
@@ -212,11 +213,11 @@ impl Hoister {
     }
 
     /// Places the preheaders into `function` and grows its frame by the hoisted registers.
-    fn apply(self, function: &mut BcFunction) -> bool {
+    fn apply(self, function: &mut BcFunction, scratch: &mut CompileScratch) -> bool {
         if self.preheaders.is_empty() {
             return false;
         }
-        place_preheaders(function, &self.preheaders);
+        place_preheaders(function, &self.preheaders, scratch);
         function.registers = self.base + self.hoisted.len() as Register;
         true
     }
@@ -319,10 +320,10 @@ impl Walk<'_> {
 
 /// Rebuilds `function`'s code with each head's preheader placed before the head, relocating the
 /// jumps, handlers and positions. Jumps to a head land past its preheader.
-fn place_preheaders(function: &mut BcFunction, preheaders: &Preheaders) {
+fn place_preheaders(function: &mut BcFunction, preheaders: &Preheaders, scratch: &mut CompileScratch) {
     let old = std::mem::take(&mut function.code);
-    let mut code = Vec::with_capacity(old.len() + preheaders.values().map(Vec::len).sum::<usize>());
-    let mut map = vec![0usize; old.len() + 1];
+    let mut code = scratch.code_buffer(old.len() + preheaders.values().map(Vec::len).sum::<usize>());
+    let map = scratch.remap(old.len());
     for (pc, &packed) in old.iter().enumerate() {
         for &(constant, register) in preheaders.get(&pc).into_iter().flatten() {
             code.push(pack(WideInstruction::new(LOAD_CONST, register, 0, 0, constant), &mut function.wide));
@@ -334,7 +335,7 @@ fn place_preheaders(function: &mut BcFunction, preheaders: &Preheaders) {
     relocate(
         &mut code,
         &mut function.wide,
-        &map,
+        &*map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
         &mut function.binding_sites,
@@ -342,6 +343,7 @@ fn place_preheaders(function: &mut BcFunction, preheaders: &Preheaders) {
         &old,
     );
     function.code = code;
+    scratch.recycle_code(old);
 }
 
 /// `instruction` in packed form, spilling it to the wide table when the packed domain cannot hold it.
