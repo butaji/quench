@@ -1173,7 +1173,7 @@ pub(super) fn inline_region<'a>(
         Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks))),
         header_live,
         header,
-        &receivers, MethodCalls::Inliner,
+        &receivers, MethodCalls::Inliner, &|_| false,
     )
     .ok()?;
     // Dynamic receiver reads use the loop's caller registers and exact caller PCs. Keep
@@ -1247,8 +1247,6 @@ pub(crate) struct LoopEntry {
     /// An inlining region's callee registers, which leaving at an inlined instruction
     /// writes back here for its activation.
     scratch: [std::mem::MaybeUninit<u64>; MAX_REGION_REGISTERS],
-    /// What the backward-edge counter started at (`set_backedge_budget`), 0 by default.
-    seed: u64,
 }
 
 /// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
@@ -1468,7 +1466,7 @@ impl Role {
             (Role::Array { elements: a, written }, Role::Array { elements: b, written: more })
                 if boxed(a) && boxed(b) =>
             {
-                Some(Role::Array { elements: a.join(b), written: written || more })
+                Some(Role::Array { elements: a.max(b), written: written || more })
             }
             (Role::Array { elements, written }, Role::Scalar(Tagged)) if boxed(elements) => {
                 Some(Role::Array { elements: Tagged, written })

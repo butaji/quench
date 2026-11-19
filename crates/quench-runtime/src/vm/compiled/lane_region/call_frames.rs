@@ -11,7 +11,8 @@ use crate::staged::machine::{Lane, MachineScalar, Relation};
 use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
 use super::super::entry_cell::{EntryCell, RAISED_RUN};
-use super::super::exit_protocol::{status_is, StatusClass};
+use quench_bjit::call_record::{LANE_BODY_NOT_ENTERED, LANE_BODY_THREW};
+use super::super::lane_body_abi::body_signature_in_lane;
 use super::super::super::dispatch_fast::{LaneRecoverySpace, KIND_NATIVE, KIND_OFFSET};
 use crate::staged::call::admit_room;
 use crate::staged::{Access, Region};
@@ -235,7 +236,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         }
         self.push_native(stage, callee, this, room);
         let entry = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, entry)));
-        let signature = lane_body_signature(types::I64, stage.builder.func.signature.call_conv);
+        let signature = body_signature_in_lane(types::I64, stage.builder.func.signature.call_conv);
         let signature = stage.builder.import_signature(signature);
         let captures = address(self.helpers, stage.builder, RelocKind::CaptureWords, callee.target.function,
             callee.capture_word());
@@ -263,13 +264,13 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
             stage.builder.set_cold_block(block);
         }
         stage.builder.switch_to_block(entered.unfinished);
-        let not_entered = status_is(stage, entered.status, StatusClass::NotEntered);
+        let not_entered = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LANE_BODY_NOT_ENTERED));
         stage.branch(not_entered, (missed, &[]), (threw, &[]));
         stage.builder.switch_to_block(missed);
         self.pop_native(stage, room);
         stage.jump(helper, &[]);
         stage.builder.switch_to_block(threw);
-        let did_raise = status_is(stage, entered.status, StatusClass::Threw);
+        let did_raise = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LANE_BODY_THREW));
         stage.branch(did_raise, (raised, &[]), (left, &[]));
         stage.builder.switch_to_block(raised);
         let counters = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)));

@@ -7,11 +7,7 @@ use super::*;
 /// inlined callee writes the callee's live registers to.
 pub(super) fn bind_loop<H: Host>(dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize) {
     dispatch.lane_context = lane_context;
-    // A region's `THIS`-based reads take the running activation's receiver, as a lane
-    // body's do (`run_loop_body`); `with` leaves it `DELETED`. A frameless activation's
-    // receiver is the lane context's: `frame` is then the VM frame beneath it, its caller's.
-    // SAFETY: `lane_context` is the running lane's context for `H`.
-    dispatch.receiver = unsafe { super::dispatch_fast::context_this_in_lane::<H>(lane_context) }.to_bits();
+    // A region's `THIS`-based reads take the running activation's header word (`CONTEXT_THIS`), which the prologue wrote.
     // The counter is the `words` field's first word, not the struct's offset 0:
     // `LoopEntry` is not `repr(C)`.
     dispatch.loop_entry = entry.words_mut() as usize;

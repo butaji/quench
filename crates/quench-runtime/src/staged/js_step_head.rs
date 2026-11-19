@@ -85,4 +85,8 @@ pub(crate) struct JsStepHead<V> {
     pub(crate) body_top: usize,
     /// The DirectCallee descriptor of each native frame, indexed as `body_table` (the u-jit half of F5).
     pub(crate) native_table: usize,
+    /// The array records' mark blocks and their count, which an inline reference store into an
+    /// array's elements marks as the object records' are (the u-jit's inline array barrier).
+    pub(crate) array_mark_blocks: usize,
+    pub(crate) array_mark_block_count: usize,
 }

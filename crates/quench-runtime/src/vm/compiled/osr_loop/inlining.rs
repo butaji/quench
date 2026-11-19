@@ -34,7 +34,7 @@ pub(super) fn stored_names(caller: &[WideInstruction], sites: &[FieldSite]) -> B
     caller
         .iter()
         .filter_map(|instruction| match instruction.op() {
-            _ if admitted_store(instruction.op()) => Some(instruction.atom_index()),
+            _ if admitted_store(*instruction) => Some(instruction.atom_index()),
             // A fused read the bytecode stores into a `this` field (`inlined_set_this`).
             op if crate::staged::reads_named_field(op) && instruction.writes_current_this() => match instruction.field_lookup()? {
                 FieldLookup::Site(index) => sites.get(index)?.sink.map(|(atom, _)| atom),

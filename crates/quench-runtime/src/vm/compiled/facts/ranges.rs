@@ -5,6 +5,7 @@
 
 use super::{immediate, operand_type, set};
 use crate::bytecode::{Constant, Operand, WideInstruction};
+use crate::staged::{NumberOperation, Operation};
 use crate::typed_ir::{IntRange, Type};
 use crate::value::Value;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};

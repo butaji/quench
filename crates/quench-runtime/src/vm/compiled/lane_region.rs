@@ -437,7 +437,6 @@ struct LoopStore {
     domain: Type,
 }
 
-#[derive(Default)]
 pub(super) struct LoweredRegion {
     pub(super) number_result: Option<NativeNumberResult>,
     pub(super) function: ir::Function,
@@ -446,6 +445,13 @@ pub(super) struct LoweredRegion {
     /// Whether a loop of the region hoists an array view, so a typed variant may differ.
     pub(super) hoists_arrays: bool,
     pub(super) stable: StableFacts,
+}
+
+impl Default for LoweredRegion {
+    /// A region that lowered nothing (`LoweredLane`'s default): an empty function.
+    fn default() -> Self {
+        Self { number_result: None, function: ir::Function::new(), native: 0, fault_poll: false, hoists_arrays: false, stable: StableFacts::default() }
+    }
 }
 
 /// A guard's failure block and the state it leaves from: the registers' facts, and which frame slots
@@ -4122,7 +4128,7 @@ impl Lowering<'_, '_> {
                     self.builder.def_var(variables.length, view.length);
                     let unproved = self.raw_const(Lane::I32, 0);
                     self.builder.def_var(variables.room, unproved);
-                    if (array.header..=array.back).any(|pc| super::native_calls::searches(&self.intrinsics, pc)) {
+                    if (array.header..=array.back).any(|pc| native_calls::searches(&self.intrinsics, pc)) {
                         let base = self.builder.use_var(variables.bits);
                         let held = self.helper_call(LaneHelper::PrototypesHoldNoIndex, &[base]);
                         let clear = self.raw_compare_imm(Relation::NotEqual, held, 0);

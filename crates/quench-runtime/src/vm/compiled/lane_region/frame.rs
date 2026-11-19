@@ -233,11 +233,11 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
         let at = if self.arrays_fixed { crate::staged::Region::RecordBases.readonly() } else { crate::staged::Region::RecordBases.mutable() };
         let arrays = crate::staged::Stage::load_u64(stage, at, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, array_record_base) as i32);
+            std::mem::offset_of!(super::super::JsStepDispatch, head.array_record_base) as i32);
         let objects = super::super::emit_js_payload_word(stage.builder, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, object_record_base));
+            std::mem::offset_of!(super::super::JsStepDispatch, head.object_record_base));
         let epoch = super::super::emit_js_payload_word(stage.builder, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, epoch));
+            std::mem::offset_of!(super::super::JsStepDispatch, head.epoch));
         for table in [arrays, objects] {
             let present = stage.raw_compare_imm(crate::staged::machine::Relation::NotEqual, table, 0);
             super::super::emit_js_guard(stage.builder, present, miss);

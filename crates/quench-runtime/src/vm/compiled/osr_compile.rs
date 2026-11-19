@@ -8,14 +8,14 @@ use super::{
 };
 use super::base_region::function::{build_region, Body, BodySpec};
 use super::lane_compile::LaneDependencies;
-use super::tier_policy::Tiers;
+use super::tier_policy::{Tiers, REGION_CODE_BUDGET};
 use super::lane_region::StableFacts;
 use crate::code_dependencies::Invalidation;
 mod calls;
 mod inlined_unit;
 use inlined_unit::*;
 pub(in crate::vm) use calls::{CallCode, RegionCalls};
-use crate::bytecode::{FieldLookup, Function, ResidualProgram, WideInstruction};
+use crate::bytecode::{FieldLookup, Function, Register, ResidualProgram, WideInstruction};
 use crate::vm::global_facts::GlobalTable;
 use super::super::specializer::Specializer;
 use super::{DirectCallee, DirectCandidates};
@@ -323,12 +323,6 @@ pub(super) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, 
     reads.sort_by_key(|read| read.pc);
     reads
 }
-
-/// A lane region carries each inlined callee's full body and its guards, so a loop
-/// that inlines two calls may legitimately exceed one function's code budget. The code
-/// is published once per hot loop and retires with its site, so the larger per-site
-/// bound stays bounded by the lane plan's own admission.
-const REGION_CODE_BUDGET: usize = 2 * osr_loop::MAX_CODE_BYTES;
 
 /// The BaseJIT tier's answer for `region`: `Some(code)` where it builds or (under `--b-jit`) declines the
 /// region, `None` where Cranelift compiles it. A region BaseJIT builds skips Cranelift: every instruction has a lowering (`base_region::steps`).
