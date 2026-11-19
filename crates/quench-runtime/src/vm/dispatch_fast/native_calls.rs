@@ -11,7 +11,9 @@ use crate::vm::object_get::ordinary_chain::ChainRead;
 #[inline(always)]
 pub(super) fn string_char_code_at<H: Host>(vm: &Vm<H>, receiver: Value, index: Value) -> Option<Value> {
     let records = vm.heap.string_record_base().unwrap_or(std::ptr::null());
-    crate::staged::strings::concrete_string_char_code_at(records, receiver, index).or_else(|| crate::staged::builtins::concrete_char_code_at(vm.heap.flat_text(receiver)?.units(), index))
+    use crate::staged::strings::{ConcreteString, concrete_char_code_at};
+    concrete_char_code_at(ConcreteString::Record { records, value: receiver }, index)
+        .or_else(|| concrete_char_code_at(ConcreteString::Units(vm.heap.flat_text(receiver)?.units()), index))
 }
 
 /// `charAt` of a flat string at an integer index of an ASCII unit
@@ -19,11 +21,9 @@ pub(super) fn string_char_code_at<H: Host>(vm: &Vm<H>, receiver: Value, index: V
 /// Any other receiver, index or unit takes the native.
 pub(super) fn string_char_at_ascii<H: Host>(vm: &mut Vm<H>, receiver: Value, index: Value) -> Option<Value> {
     let (records, table) = (vm.heap.string_record_base().unwrap_or(std::ptr::null()), vm.heap.ascii_unit_strings_base().unwrap_or(std::ptr::null()));
-    if let Some(character) = crate::staged::strings::concrete_string_char_at(records, table, receiver, index) {
-        return Some(character);
-    }
-    let byte = crate::staged::builtins::concrete_char_at_ascii(vm.heap.flat_text(receiver)?.units(), index)?;
-    Some(vm.ascii_byte_string(byte))
+    use crate::staged::strings::{ConcreteString, concrete_char_at};
+    concrete_char_at(ConcreteString::Record { records, value: receiver }, table, index)
+        .or_else(|| concrete_char_at(ConcreteString::Units(vm.heap.flat_text(receiver)?.units()), table, index))
 }
 
 /// The natives whose steady case (`Vm::steady_native_value`) a `Call` site makes under its own
@@ -751,7 +751,7 @@ script_handler! {
             let (args, code) = unsafe { (call_window_in_lane(r, i), &*(*cx).code) };
             let receiver = r.get(i.c);
             let float64 = if const { matches!(in_place_row_native(ROW), Native::DataViewGetFloat64 | Native::DataViewSetFloat64) } {
-                let value = vm.lane_data_view_float64(native, receiver, args);
+                let value = vm.plain_data_view_access(native, receiver, args);
                 if value.is_some() && vm.execution_mode == super::super::ExecutionMode::Compiled {
                     vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
                 }

@@ -123,7 +123,7 @@ pub(super) fn spread_native_call_in_lane<H: Host>(
     list: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let native = lane_spread_native(vm, callee)?;
+    let native = spread_native_in_lane(vm, callee)?;
     if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }

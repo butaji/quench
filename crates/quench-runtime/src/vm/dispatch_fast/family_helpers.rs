@@ -71,8 +71,8 @@ pub(in crate::vm) unsafe fn direct<H: Host>(cx: *mut LaneContext<H>, first: u64,
     }
     let done = match operation {
         Operation::Binary { left, right, operator, .. } => binary(vm, frame, instruction, left, right, operator),
-        Operation::ElementRead { base, key } => element_read(vm, frame, instruction, base, key),
-        Operation::ElementWrite { value, base, key } => element_write(vm, frame, value, base, key),
+        Operation::ElementRead { base, key, .. } => element_read(vm, frame, instruction, base, key),
+        Operation::ElementWrite { value, base, key, .. } => element_write(vm, frame, value, base, key),
         Operation::GetField { lookup: FieldLookup::Atom { atom, base, cache_site }, .. } =>
             get_field(vm, program, frame, instruction, (atom, base, cache_site)),
         Operation::SetField { value, base: Some(base), .. } => set_field(vm, program, frame, instruction, value, base),
@@ -84,13 +84,20 @@ pub(in crate::vm) unsafe fn direct<H: Host>(cx: *mut LaneContext<H>, first: u64,
 }
 
 /// A binary operator on two operands `Vm::number_binary` answers (Numbers, no user code), written by
-/// `write_binary_result`.
-fn binary<H: Host>(vm: &mut Vm<H>, frame: usize, instruction: WideInstruction, left: Register, right: Register, operator: u32) -> bool {
+/// to its numeric local target or result register.
+fn binary<H: Host>(vm: &mut Vm<H>, frame: usize, instruction: WideInstruction, left: Operand, right: Operand, operator: u32) -> bool {
+    let (Some(left), Some(right)) = (left.register_index(), right.register_index()) else {
+        return false;
+    };
     let (left, right) = (vm.read(frame, left), vm.read(frame, right));
     let Some(value) = vm.number_binary(operator, left, right) else {
         return false;
     };
-    vm.write_binary_result(frame, instruction, value);
+    // A record naming a numeric local target writes the local, else its result register.
+    match instruction.numeric_local_target() {
+        Some(local) => vm.frames[frame].locals[local as usize] = value,
+        None => vm.write(frame, instruction.result_register(), value),
+    }
     true
 }
 
