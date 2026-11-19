@@ -1902,11 +1902,15 @@ impl<H: Host> Vm<H> {
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
-    /// code units, which runs no guest code.
+    /// code units, which runs no guest code. Identical Values name the same string, so they
+    /// are equal without reading either; otherwise `order` compares them (in place when flat).
     pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
-        let (left, right) = (self.heap.string(left)?, self.heap.string(right)?);
-        let ordering = left.order(right);
-        NumberRelation::from_operator(op)?.of_ordering(ordering)
+        let relation = NumberRelation::from_operator(op)?;
+        let (left_string, right_string) = (self.heap.string(left)?, self.heap.string(right)?);
+        if left == right {
+            return relation.of_ordering(std::cmp::Ordering::Equal);
+        }
+        relation.of_ordering(left_string.order(right_string))
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.

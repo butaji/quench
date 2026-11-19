@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::vm::wtf16::Units;
+use crate::vm::wtf16::find_ascii;
+use crate::vm::wtf16::split::SplitParts;
 
 impl<H: Host> Vm<H> {
     /// `indexOf`, `lastIndexOf`, `includes`, `startsWith` or `endsWith` of a flat string receiver
@@ -48,53 +50,80 @@ impl<H: Host> Vm<H> {
 
 impl<H: Host> Vm<H> {
     /// `split` of a flat string receiver at a flat string separator, with the limit left
-    /// out: no conversion runs guest code and nothing collects while the parts are made, so
-    /// the receiver is cut in place without the general path's roots and copies. `None`
-    /// leaves any other call to `call_primitive_native`.
+    /// out or an int32: no conversion runs guest code and nothing collects while the parts are
+    /// made, so the receiver is cut in place without the general path's roots and copies. The
+    /// parts are gathered once and the array is made from them in one step. `None` leaves any
+    /// other call to `call_primitive_native`.
     pub(super) fn split_in_place(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         if native != Native::StringSplit {
             return None;
         }
-        let (Some(separator), None) = (args.first(), args.get(1).filter(|limit| !limit.is_undefined())) else {
-            return None;
-        };
+        let separator = args.first()?;
+        let limit = split_limit(args.get(1))?;
         let input = self.heap.string(receiver)?;
         input.existing_flat()?;
         let input = input.clone();
         let separator = self.heap.string(*separator)?;
         separator.existing_flat()?;
         let separator = separator.clone();
-        let mut parts = crate::vm::wtf16::split::SplitParts::<Value>::new();
+        let mut parts = SplitParts::<Value>::new();
         match (input.units(), separator.units()) {
             // An ASCII text cut at one byte: a plain scan, each piece's bytes made a string
             // (a one-byte piece is that byte's string) without a units view per piece.
-            (Units::Ascii(text), Units::Ascii(&[byte])) => {
-                let mut start = 0;
-                let mut cut = |end: usize, parts: &mut crate::vm::wtf16::split::SplitParts<Value>| {
-                    parts.push(self.heap.alloc_ascii_run(&text[start..end]));
-                    start = end + 1;
-                };
-                if text.len() <= 32 {
-                    for (offset, &unit) in text.iter().enumerate() {
-                        if unit == byte {
-                            cut(offset, &mut parts);
-                        }
-                    }
-                } else {
-                    for offset in memchr::memchr_iter(byte, text) {
-                        cut(offset, &mut parts);
-                    }
-                }
-                cut(text.len(), &mut parts);
-            }
+            (Units::Ascii(text), Units::Ascii(&[byte])) => self.push_byte_pieces(&mut parts, text, byte, limit),
             // An ASCII text cut into its units: each byte's string.
-            (Units::Ascii(text), Units::Ascii(&[])) => {
-                parts.extend(text.iter().map(|unit| self.heap.alloc_unit_run(Units::Ascii(std::slice::from_ref(unit)))));
-            }
-            _ => input.split_runs(separator.units(), u32::MAX as usize, |run| parts.push(self.heap.alloc_unit_run(run))),
+            (Units::Ascii(text), Units::Ascii(&[])) => self.push_unit_pieces(&mut parts, text, limit),
+            _ => input.split_runs(separator.units(), limit, |run| parts.push(self.heap.alloc_unit_run(run))),
         }
-        let values = crate::heap::ArrayElements::from_slice(&parts);
-        Some(self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), values)))
+        Some(self.heap.alloc_literal_array_from_parts(self.array_proto, &[parts.as_slice()]))
+    }
+
+    /// The pieces of the ASCII `text` cut at the byte `byte`, at most `limit` of them, each
+    /// made into `parts` as its own string. The cuts are counted first so `parts` is sized
+    /// once, not grown as it fills.
+    fn push_byte_pieces(&mut self, parts: &mut SplitParts<Value>, text: &[u8], byte: u8, limit: usize) {
+        let cuts = if text.len() <= SHORT_SPLIT_TEXT_BYTES {
+            text.iter().filter(|&&unit| unit == byte).count()
+        } else {
+            memchr::memchr_iter(byte, text).count()
+        };
+        parts.reserve((cuts + 1).min(limit));
+        if text.len() <= SHORT_SPLIT_TEXT_BYTES {
+            let offsets = text.iter().enumerate().filter_map(|(offset, &unit)| (unit == byte).then_some(offset));
+            push_pieces(&mut self.heap, parts, text, offsets, limit);
+        } else {
+            push_pieces(&mut self.heap, parts, text, memchr::memchr_iter(byte, text), limit);
+        }
+    }
+
+    /// The first `limit` units of the ASCII `text`, each its own one-unit string, into `parts`.
+    fn push_unit_pieces(&mut self, parts: &mut SplitParts<Value>, text: &[u8], limit: usize) {
+        let count = text.len().min(limit);
+        parts.reserve(count);
+        parts.extend(text[..count].iter().map(|unit| self.heap.alloc_unit_run(Units::Ascii(std::slice::from_ref(unit)))));
+    }
+}
+
+/// The text length up to which a split scans for its one-byte separator unit by unit, where
+/// `memchr`'s setup costs more than the scan.
+const SHORT_SPLIT_TEXT_BYTES: usize = 32;
+
+/// The limit a `split` takes: left out or undefined is every piece (ToUint32 of `u32::MAX`), an
+/// int32 is its ToUint32. `None` for any other value, which the general path converts.
+fn split_limit(limit: Option<&Value>) -> Option<usize> {
+    match limit {
+        Some(value) if !value.is_undefined() => value.as_int().map(|int| int as u32 as usize),
+        _ => Some(u32::MAX as usize),
+    }
+}
+
+/// Makes each piece of the ASCII `text` between the one-byte separator's `offsets` as a string
+/// into `parts`, taking at most `limit` pieces: the last piece runs to the end of the text.
+fn push_pieces(heap: &mut crate::heap::Heap, parts: &mut SplitParts<Value>, text: &[u8], offsets: impl Iterator<Item = usize>, limit: usize) {
+    let mut start = 0;
+    for end in offsets.chain(std::iter::once(text.len())).take(limit) {
+        parts.push(heap.alloc_ascii_run(&text[start..end]));
+        start = end + 1;
     }
 }
 
@@ -129,31 +158,19 @@ impl<H: Host> Vm<H> {
     }
 
     /// `replace` or `replaceAll` of a flat ASCII receiver at a flat ASCII pattern, with a flat
-    /// ASCII replacement that holds no `$`: the matches are found in place, which gives the
-    /// result's length, and the result is then written once from the operands read in place.
-    /// The receiver itself when nothing matches. `None` leaves the call to the general path.
+    /// ASCII replacement that holds no `$`. The three operands are read in place once: the
+    /// matches are found and the result is written from the same borrow, then allocated after
+    /// the borrow ends. The receiver itself when nothing matches. `None` leaves the call to the
+    /// general path.
     fn ascii_replace(&mut self, receiver: Value, search: Value, replacement: Value, replace_all: bool) -> Option<Value> {
-        let (offsets, length) = {
-            let text = self.heap.flat_text(receiver)?;
-            let needle = self.heap.flat_text(search)?;
-            let with = self.heap.flat_text(replacement)?;
-            let (Units::Ascii(text), Units::Ascii(needle), Units::Ascii(with)) = (text.units(), needle.units(), with.units())
-            else {
-                return None;
-            };
-            if needle.is_empty() || with.contains(&b'$') {
-                return None;
-            }
-            let offsets = ascii_match_offsets(text, needle, replace_all);
-            if offsets.is_empty() {
-                return Some(receiver);
-            }
-            let length = replaced_len(text.len(), needle.len(), with.len(), offsets.len())?;
-            (offsets, length)
-        };
-        self.heap.alloc_ascii_derived([receiver, search, replacement], length, |out, [text, needle, with]| {
-            write_replaced(out, text, needle.len(), with, &offsets);
-        })
+        let plan = self
+            .heap
+            .with_ascii_sources([receiver, search, replacement], |[text, needle, with]| replace_plan(text, needle, with, replace_all))
+            .flatten()?;
+        match plan {
+            ReplacePlan::Unchanged => Some(receiver),
+            ReplacePlan::Derived(string) => Some(self.heap.alloc_string(string)),
+        }
     }
 
     /// A string value's flat units, read in place: a rope is left to the general path, which
@@ -254,23 +271,58 @@ fn replaced_len(text_len: usize, needle_len: usize, with_len: usize, count: usiz
     (length <= crate::vm::wtf16::MAX_STRING_UNITS).then_some(length)
 }
 
+/// What a flat ASCII replace comes to: the receiver as it is, or the string it makes.
+enum ReplacePlan {
+    /// No match: the receiver itself is the result.
+    Unchanged,
+    /// The replaced string, written in full once.
+    Derived(JsString),
+}
+
+/// The plan of a replace over the flat ASCII `text`, `needle` and `with`, all read in place.
+/// `None` when the replace needs the general path: an empty needle, a `$` in the replacement, or
+/// a length past the longest string.
+fn replace_plan(text: &[u8], needle: &[u8], with: &[u8], replace_all: bool) -> Option<ReplacePlan> {
+    if needle.is_empty() || with.contains(&b'$') {
+        return None;
+    }
+    let offsets = ascii_match_offsets(text, needle, replace_all);
+    if offsets.is_empty() {
+        return Some(ReplacePlan::Unchanged);
+    }
+    let length = replaced_len(text.len(), needle.len(), with.len(), offsets.len())?;
+    let string = JsString::from_ascii_filled(length, |out| write_replaced(out, text, needle.len(), with, &offsets));
+    Some(ReplacePlan::Derived(string))
+}
+
 /// Writes `text` into `out` with each match at `offsets` (of `needle_len` bytes) replaced by
-/// `with`; `out` is exactly the length `replaced_len` gives.
-fn write_replaced(out: &mut [u8], text: &[u8], needle_len: usize, with: &[u8], offsets: &[usize]) {
+/// `with`. `out` is exactly the length `replaced_len` gives, and every byte of it is written
+/// (checked below), so no byte of the uninitialized storage is left unset.
+fn write_replaced(out: &mut [std::mem::MaybeUninit<u8>], text: &[u8], needle_len: usize, with: &[u8], offsets: &[usize]) {
     let mut at = 0;
     let mut cursor = 0;
     for &index in offsets {
-        put(out, &mut at, &text[cursor..index]);
-        put(out, &mut at, with);
+        at = put(out, at, &text[cursor..index]);
+        at = put(out, at, with);
         cursor = index + needle_len;
     }
-    put(out, &mut at, &text[cursor..]);
+    at = put(out, at, &text[cursor..]);
+    assert_eq!(at, out.len(), "the matches fill the length `replaced_len` counted");
 }
 
-/// Writes `bytes` into `out` at `*at`, then advances `*at` past them.
-fn put(out: &mut [u8], at: &mut usize, bytes: &[u8]) {
-    out[*at..*at + bytes.len()].copy_from_slice(bytes);
-    *at += bytes.len();
+/// Copies `bytes` into `out` at `at`, returning the offset past them; a single byte is one store.
+#[inline(always)]
+fn put(out: &mut [std::mem::MaybeUninit<u8>], at: usize, bytes: &[u8]) -> usize {
+    if let [byte] = bytes {
+        out[at].write(*byte);
+        return at + 1;
+    }
+    let target = &mut out[at..at + bytes.len()];
+    // SAFETY: `target` has exactly `bytes.len()` slots, which `bytes` cannot overlap (it is a
+    // borrow of the heap or of the pattern text, never of `out`); `u8` and `MaybeUninit<u8>`
+    // share a layout, so the copy initializes the slots.
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), target.as_mut_ptr().cast::<u8>(), bytes.len()) };
+    at + bytes.len()
 }
 
 /// The units range `slice` (negative bounds count from the end) or `substring` (bounds in
@@ -346,6 +398,9 @@ pub(super) fn clamped_position(native: Native, number: f64, length: usize) -> us
 /// The result of a string search method at `position` (already clamped by `clamped_position`)
 /// of `needle` in `text`: the index it finds, or the boolean it answers.
 pub(super) fn search_result(native: Native, text: Units<'_>, needle: Units<'_>, position: usize) -> Value {
+    if let (Units::Ascii(text), Units::Ascii(needle)) = (text, needle) {
+        return ascii_search_result(native, text, needle, position);
+    }
     match native {
         Native::StringIndexOf => index_value(text.find(needle, position)),
         Native::StringLastIndexOf => index_value(text.rfind(needle, position)),
@@ -356,6 +411,31 @@ pub(super) fn search_result(native: Native, text: Units<'_>, needle: Units<'_>, 
                 .checked_sub(needle.len())
                 .is_some_and(|start| text.slice(start..position) == needle),
         ),
+    }
+}
+
+/// `search_result` of ASCII text and needle, on the bytes: `find_ascii` finds a one-byte
+/// needle with `memchr`, and the affixes compare slices. `position` is within the text.
+fn ascii_search_result(native: Native, text: &[u8], needle: &[u8], position: usize) -> Value {
+    match native {
+        Native::StringIndexOf => index_value(find_ascii(&text[position..], needle).map(|at| position + at)),
+        Native::StringLastIndexOf => index_value(ascii_rfind(text, needle, position)),
+        Native::StringIncludes => Value::boolean(find_ascii(&text[position..], needle).is_some()),
+        Native::StringStartsWith => Value::boolean(text[position..].starts_with(needle)),
+        _ => Value::boolean(position.checked_sub(needle.len()).is_some_and(|start| text[start..position] == *needle)),
+    }
+}
+
+/// The last offset at or before `position` where the ASCII `needle` occurs in `text`, as
+/// `lastIndexOf` searches: `position` is first clamped to the last offset a match can start at.
+/// A one-byte needle is found by `memrchr`, a longer one by `memmem`'s reverse search.
+fn ascii_rfind(text: &[u8], needle: &[u8], position: usize) -> Option<usize> {
+    let last = text.len().checked_sub(needle.len())?;
+    let from = position.min(last);
+    match needle {
+        [] => Some(from),
+        [byte] => memchr::memrchr(*byte, &text[..=from]),
+        _ => memchr::memmem::rfind(&text[..from + needle.len()], needle),
     }
 }
 

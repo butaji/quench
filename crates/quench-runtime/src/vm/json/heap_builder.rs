@@ -418,15 +418,12 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
         self.advance(object, atom);
         atom
     }
-    /// An array of the gathered `values`, built with one allocation and one copy of each
-    /// value into its elements.
+    /// An array of the gathered `values`, built with one allocation and one copy of the
+    /// slice into its elements (`Heap::alloc_literal_array_from_parts`).
     fn array(&mut self, values: std::vec::Drain<'_, Value>) -> Value {
-        let values = values.as_slice();
-        // SAFETY: `alloc_literal_array` calls its element function once for each index below
-        // the length it is given, which is `values`' own length.
-        self.vm.heap.alloc_literal_array(self.array_prototype, values.len(), |index| unsafe {
-            *values.get_unchecked(index)
-        })
+        self.vm
+            .heap
+            .alloc_literal_array_from_parts(self.array_prototype, &[values.as_slice()])
     }
     fn object(
         &mut self,

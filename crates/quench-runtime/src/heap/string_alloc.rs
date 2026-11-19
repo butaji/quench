@@ -74,7 +74,7 @@ impl Heap {
     /// small string. The heap is only read while `build` runs: it makes no record, so nothing
     /// moves or is freed under the bytes. `None`, before `build` runs, when a source is not flat
     /// ASCII.
-    fn with_ascii_sources<const N: usize, R>(&self, sources: [Value; N], build: impl FnOnce([&[u8]; N]) -> R) -> Option<R> {
+    pub(crate) fn with_ascii_sources<const N: usize, R>(&self, sources: [Value; N], build: impl FnOnce([&[u8]; N]) -> R) -> Option<R> {
         let texts = sources.map(|source| self.flat_text(source));
         let mut bytes: [&[u8]; N] = [&[]; N];
         for (slot, text) in bytes.iter_mut().zip(&texts) {

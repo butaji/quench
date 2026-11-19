@@ -12,21 +12,21 @@ use crate::vm::wtf16::native_string as form;
 
 /// The record of the flat string `value` names among the string records at `record_base`, with
 /// whether its form is the short one and whether it is the wide one: `None` (leaving at `miss`)
-/// for any other value, before the first string record exists (`record_base` zero), for a small
-/// string, which has no record (`Heap::small_string_text`), or for a record in a form a row does
-/// not read. The record's address is its index, `value`'s low half, times the record size past
-/// `record_base`.
+/// for any other value, for a small string, which has no record (`Heap::small_string_text`), or
+/// for a record in a form a row does not read. The record's address is its index, `value`'s low
+/// half, times the record size past `record_base`. No zero test on `record_base`: a direct string
+/// names a record only after its space is reserved (`records.rs`, `ensure_reserved` on every
+/// allocation), so a zero base comes only with a small string, which the small-id test leaves.
 #[inline(always)]
 pub(crate) fn flat_record<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<(S::Word, S::Cond, S::Cond)> {
     let is_string = is_direct_string(stage, value);
     stage.guard(is_string, miss)?;
-    let present = stage.ne_imm(record_base, 0u32);
-    stage.guard(present, miss)?;
-    let index = stage.and_imm(value, u64::from(u32::MAX));
-    let small_bits = stage.and_imm(index, u64::from(crate::heap::SMALL_STRING_ID_MASK));
+    // The small-id mask lies in the low word, so it reads `value` as it is.
+    let small_bits = stage.and_imm(value, u64::from(crate::heap::SMALL_STRING_ID_MASK));
     let has_record = stage.ne_imm(small_bits, u64::from(crate::heap::SMALL_STRING_ID_BASE));
     stage.guard(has_record, miss)?;
+    let index = stage.and_imm(value, u64::from(u32::MAX));
     let offset = stage.mul_imm(index, form::RECORD_SIZE as u64);
     let record = stage.add(record_base, offset);
     let tag = stage.load_u8(Region::HeapMeta.mutable(), record, form::TAG_OFFSET);

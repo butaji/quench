@@ -5,23 +5,15 @@ use super::super::*;
 
 impl<H: Host> Vm<H> {
     /// `Object.keys(object)` of a plain object whose shape lists its enumerable string keys
-    /// (`shape_enumerable_slots`), as V8's enum cache answers it: the key strings its shape's
-    /// memo entry holds (`EnumerableKeyMemo::with_key_strings`) are copied into a new array in
-    /// one pass. The first call on a shape, or the first after a collection, makes the strings
-    /// and records them. `None` leaves every other object to `plain_enumerable_own_properties`.
+    /// (`shape_enumerable_slots`), as V8's enum cache answers it: the shape's key strings
+    /// (`Vm::own_enumerable_key_values_cached`, made once per shape and collection) are copied
+    /// into a new array in one allocation. `None` leaves every other object to
+    /// `plain_enumerable_own_properties`.
     #[inline]
     pub(in crate::vm) fn plain_object_keys(&mut self, object: Value) -> Option<Value> {
-        let shape = self.enum_cache_shape(object)?;
-        let epoch = self.heap.collection_epoch();
-        let array_proto = self.array_proto;
-        let heap = &mut self.heap;
-        let cached = self.enumerable_keys.with_key_strings(shape, epoch, |strings| {
-            heap.alloc_literal_array(array_proto, strings.len(), |index| strings[index])
-        });
-        if cached.is_some() {
-            return cached;
-        }
-        self.record_object_key_strings(object, shape, epoch)
+        self.enum_cache_shape(object)?;
+        let keys = self.own_enumerable_key_values_cached(object)?;
+        Some(self.array_of(&keys[..]))
     }
 
     /// The shape of `object` where it alone decides `object`'s enumerable string keys, as
@@ -43,18 +35,6 @@ impl<H: Host> Vm<H> {
         }
         let shape = data.shape();
         (!self.shape_is_dictionary(shape)).then_some(shape)
-    }
-
-    /// `plain_object_keys` where the memo holds no strings of `shape` made in collection epoch
-    /// `epoch`: makes each key's string (`Vm::atom_string`), returns the array of them, and
-    /// records them beside the shape's slots. No collection runs before the array holds them.
-    #[cold]
-    fn record_object_key_strings(&mut self, object: Value, shape: u32, epoch: u64) -> Option<Value> {
-        let slots = self.shape_enumerable_slots(object)?;
-        let strings = slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect::<Box<[Value]>>();
-        let keys = self.array_of(&strings[..]);
-        self.enumerable_keys.record_key_strings(shape, epoch, strings);
-        Some(keys)
     }
 
     /// `Object.assign(target, source)` of one plain source into a fresh empty `target`, where
