@@ -205,16 +205,9 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             registers: 1,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -331,16 +324,9 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             registers: 1,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -894,10 +880,12 @@ fn load_encoded_records_decode_as_records_compiled_again() {
     }
 }
 
-/// The function record's budget: 376 bytes before the TypeScript signature, global
-/// declarations and instance initializer moved behind `Function::rare` (one pointer for
-/// the three, in place of 24 bytes).
-const FUNCTION_RECORD_BUDGET: usize = 368;
+/// The function record's budget. Estimated from 368 bytes: the eight lazy booleans share one
+/// `u16` (-14), plain locals, declared atom sets, initializer and register masks move behind
+/// `Function::caches` (-32, one pointer +8 added), the hot expansion's pointer moves behind it
+/// too (`HotDecoding` 16 -> 4, -12), and `SourcePositions` boxes its bytes (48 -> 40, -8).
+/// Net -58, so 310.
+const FUNCTION_RECORD_BUDGET: usize = 310;
 
 #[test]
 fn function_record_stays_within_its_size_budget() {

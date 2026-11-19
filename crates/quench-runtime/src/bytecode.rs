@@ -34,7 +34,9 @@ pub(crate) use name_bindings::{CapturedNames, NameBindings};
 mod numeric_ops; mod op_classes; mod op_scan; mod typeof_names; mod unary_operators; mod rest_alias;
 pub(crate) use unary_operators::*;
 mod source_positions;
-pub(crate) use source_positions::SourcePositions;
+pub(crate) use source_positions::{SourcePositions, SourcePositionsBuilder};
+mod function_caches;
+pub(crate) use function_caches::{FunctionCaches, LazyFlag};
 pub(crate) use atoms::{AtomSequence, AtomTable};
 
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
@@ -1222,55 +1224,18 @@ const HOT_DECODE_ENTRIES: u32 = 64;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HotDecoding {
+    /// Entries counted so far, saturating at `HOT_DECODE_ENTRIES`. The expansion lives in
+    /// `FunctionCaches::hot_code`; `Function::on_entry` reads both.
     entries: std::cell::Cell<u32>,
-    // A thin pointer: every `Function` pays for this field, almost all stay cold.
-    #[allow(clippy::box_collection)]
-    code: std::cell::OnceCell<Box<Vec<WideInstruction>>>,
 }
 
 impl HotDecoding {
-    /// Counts one entry and returns the expanded code once the function is hot.
-    #[inline(always)] pub(crate) fn on_entry(
-        &self,
-        code: &[Instr],
-        wide: &[WideInstruction],
-    ) -> Option<&[WideInstruction]> {
-        if let Some(decoded) = self.code.get() {
-            return Some(decoded);
-        }
-        let entries = self.entries.get() + 1;
-        self.entries.set(entries);
-        if entries >= HOT_DECODE_ENTRIES {
-            return Some(self.expand(code, wide));
-        }
-        None
-    }
-
     /// Makes a function whose code loops expand on its first entry. Priming at installation
     /// leaves the entry path itself unchanged.
     pub(crate) fn prime_loop(&self, code: &[Instr], wide: &[WideInstruction]) {
         if self.entries.get() == 0 && back_edges_of(code.iter().map(|&packed| widen(packed, wide))).next().is_some() {
             self.entries.set(HOT_DECODE_ENTRIES - 1);
         }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn expand(&self, code: &[Instr], wide: &[WideInstruction]) -> &[WideInstruction] {
-        self.code
-            .get_or_init(|| {
-                code.iter()
-                    .map(|packed| {
-                        if packed.is_wide() {
-                            wide[packed.wide_index()]
-                        } else {
-                            packed.as_wide()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .into()
-            })
-            .as_slice()
     }
 }
 
@@ -1431,32 +1396,13 @@ pub struct Function {
     pub(crate) dispatch: DispatchClass,
     /// Fixed-width view of `code`, derived once the function proves hot.
     pub(crate) decoded: HotDecoding,
-    /// Lazily derived `plain_local_slots`; never serialized.
-    pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<u64>>,
-    /// Lazily derived `declared_atoms`; never serialized.
-    pub(crate) declared_atom_sets: std::cell::OnceCell<Box<DeclaredAtomSets>>,
-    /// Lazily derived `activation_bindings_observable`; never serialized.
-    pub(crate) activation_bindings: std::cell::OnceCell<bool>,
-    /// Lazily derived `maker_bindings_read`; never serialized.
-    pub(crate) maker_bindings: std::cell::OnceCell<bool>,
-    /// Lazily derived `arrow_chain_reads_implicit_bindings` of this function; never serialized.
-    pub(crate) arrow_reads: std::cell::OnceCell<bool>,
-    /// Lazily derived `reflects_live_parameters`; never serialized.
-    pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
-    /// Lazily derived `names_resolve_statically`; never serialized.
-    pub(crate) static_name_scope: std::cell::OnceCell<bool>,
-    /// Lazily derived `has_dynamic_scope_access`; never serialized.
-    pub(crate) dynamic_scope_access: std::cell::OnceCell<bool>,
-    /// Lazily derived `evals_in_scope`; never serialized.
-    pub(crate) evals_in_scope: std::cell::OnceCell<bool>,
-    /// Whether the JavaScript tier's candidate filter admits the function
-    /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
-    pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
+    /// The lazily derived booleans (`LazyFlag`), each a known bit and a value bit; never serialized.
+    pub(crate) lazy_flags: std::cell::Cell<u16>,
+    /// The caches a call or a collection fills, boxed by the first fill (`caches`); never serialized.
+    pub(crate) caches: std::cell::OnceCell<Box<FunctionCaches>>,
     /// Lazily derived `call_plan`; never serialized.
     /// `CallPlan::to_bits`, packed: the plan's flags are one word, not a byte each.
     pub(crate) call_plan: std::cell::OnceCell<u16>,
-    /// Lazily derived `initializer_stores`; never serialized.
-    pub(crate) initializer: std::cell::OnceCell<Option<crate::heap::ThinBoxSlice<InitializerStore>>>,
     pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
     pub(crate) register_roots: RegisterRoots,
     /// A register that holds `undefined` for the whole activation, set at frame entry and
@@ -1908,7 +1854,6 @@ pub(crate) struct RegisterRoots {
     /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound. Filled where the lowering had the live
     /// sets, else on the first `ResidualProgram::entry_fill`.
     entry_live: std::cell::OnceCell<u16>,
-    pub(crate) masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
 }
 
 /// Uncovered, which bounds no register live at entry.
@@ -1923,12 +1868,12 @@ impl RegisterRoots {
     /// derived on its first ask.
     pub(crate) fn new(covered: bool) -> Self {
         let entry_live = if covered { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(Self::ALL_LIVE_AT_ENTRY) };
-        Self { covered, entry_live, masks: std::cell::OnceCell::new() }
+        Self { covered, entry_live }
     }
 
     /// Covered, every register live at entry below `entry_live`.
     pub(crate) fn with_entry_live(covered: bool, entry_live: u16) -> Self {
-        Self { covered, entry_live: std::cell::OnceCell::from(entry_live), masks: std::cell::OnceCell::new() }
+        Self { covered, entry_live: std::cell::OnceCell::from(entry_live) }
     }
 
     /// An `entry_live` that bounds nothing.
@@ -1941,11 +1886,6 @@ impl RegisterRoots {
 
     pub(crate) fn covered(&self) -> bool {
         self.covered
-    }
-
-    /// The masks a collection derived so far; none until one finds the function running.
-    pub(crate) fn capacity_bytes(&self) -> usize {
-        self.masks.get().map_or(0, |masks| masks.bytes())
     }
 }
 
@@ -1988,7 +1928,6 @@ impl Function {
     pub(crate) fn shrink_to_fit(&mut self) {
         self.code.shrink_to_fit();
         self.wide.shrink_to_fit();
-        self.source_positions.shrink_to_fit();
     }
 
     /// The TypeScript parameter types, by argument index (`FunctionRare::declared_parameters`).
@@ -2207,7 +2146,7 @@ impl Function {
     }
 
     fn declared_atoms(&self) -> &DeclaredAtomSets {
-        self.declared_atom_sets.get_or_init(|| {
+        self.caches().declared_atom_sets.get_or_init(|| {
             let global_lexical: rustc_hash::FxHashSet<Atom> =
                 self.global_lexical_atoms().iter().copied().collect();
             let global_var: rustc_hash::FxHashSet<Atom> =
@@ -2310,7 +2249,7 @@ impl Function {
     /// which inherits them. Any other closure has its own. `functions` is the owning
     /// program's table.
     pub(crate) fn activation_bindings_observable(&self, tables: &impl FactTables) -> bool {
-        *self.activation_bindings.get_or_init(|| self.derive_activation_bindings_observable(tables))
+        self.lazy_flag(LazyFlag::ActivationBindings, || self.derive_activation_bindings_observable(tables))
     }
 
     /// Whether the activation's own reads or the arrows it makes read its implicit bindings
@@ -2319,11 +2258,11 @@ impl Function {
     /// `this` kept for it.
     /// `arrow_chain_reads_implicit_bindings` of this function, `id` of `code`, cached.
     pub(crate) fn arrow_reads_implicit_bindings(&self, code: &ResidualProgram, id: u32) -> bool {
-        *self.arrow_reads.get_or_init(|| arrow_chain_reads_implicit_bindings(code, id))
+        self.lazy_flag(LazyFlag::ArrowReads, || arrow_chain_reads_implicit_bindings(code, id))
     }
 
     pub(crate) fn maker_bindings_read(&self, code: &ResidualProgram) -> bool {
-        *self.maker_bindings.get_or_init(|| {
+        self.lazy_flag(LazyFlag::MakerBindings, || {
             self.activation_binding_reads(code)
                 || self.instructions_of(|op| op == Op::MakeClosure).any(|instruction| {
                     let id = instruction.closure_function_index();
@@ -2375,7 +2314,7 @@ impl Function {
     /// environment and reads its scope by name, or records binding sites, the lexical scope
     /// its closures and evals resolve names in.
     pub(crate) fn evals_in_scope(&self) -> bool {
-        *self.evals_in_scope.get_or_init(|| self.derive_evals_in_scope())
+        self.lazy_flag(LazyFlag::EvalsInScope, || self.derive_evals_in_scope())
     }
 
     fn derive_evals_in_scope(&self) -> bool {
@@ -2449,7 +2388,7 @@ impl Function {
     /// binding, the parameters are simple, and each is a plain or register-promoted local.
     /// Otherwise the arguments are reflected as passed.
     pub(crate) fn reflects_live_parameters(&self, tables: &impl FactTables) -> bool {
-        *self.live_parameter_reflection.get_or_init(|| self.derive_reflects_live_parameters(tables))
+        self.lazy_flag(LazyFlag::LiveParameters, || self.derive_reflects_live_parameters(tables))
     }
 
     fn derive_reflects_live_parameters(&self, tables: &impl FactTables) -> bool {
@@ -2764,10 +2703,10 @@ impl Function {
     /// Seeds the facts `derived_facts` packed; a fact already derived keeps its value.
     pub(crate) fn seed_derived_facts(&self, bits: u32) {
         let fact = |fact: DerivedFact| bits & fact.bit() != 0;
-        let _ = self.activation_bindings.set(fact(DerivedFact::ActivationBindings));
-        let _ = self.live_parameter_reflection.set(fact(DerivedFact::LiveParameters));
-        let _ = self.static_name_scope.set(fact(DerivedFact::StaticNameScope));
-        let _ = self.dynamic_scope_access.set(fact(DerivedFact::DynamicScopeAccess));
+        self.seed_lazy_flag(LazyFlag::ActivationBindings, fact(DerivedFact::ActivationBindings));
+        self.seed_lazy_flag(LazyFlag::LiveParameters, fact(DerivedFact::LiveParameters));
+        self.seed_lazy_flag(LazyFlag::StaticNameScope, fact(DerivedFact::StaticNameScope));
+        self.seed_lazy_flag(LazyFlag::DynamicScopeAccess, fact(DerivedFact::DynamicScopeAccess));
         let _ = self.call_plan.set(u16::try_from(bits >> DERIVED_FACT_COUNT).expect("the plan's flags fit 16 bits"));
     }
 
@@ -2791,7 +2730,8 @@ impl Function {
 
     /// The function's `initializer_stores`, derived on first use.
     #[inline(always)] pub(crate) fn initializer_stores(&self, constants: &[Constant]) -> Option<&[InitializerStore]> {
-        self.initializer
+        self.caches()
+            .initializer
             .get_or_init(|| self.derive_initializer_stores(constants).map(Into::into))
             .as_deref()
     }
@@ -3200,7 +3140,7 @@ impl Function {
     /// Derived once per function: lane views, capture layouts and name resolution each ask,
     /// and the instruction scan had cost 1.3% of the axios npm scenario's instructions.
     pub(crate) fn has_dynamic_scope_access(&self) -> bool {
-        *self.dynamic_scope_access.get_or_init(|| self.derive_dynamic_scope_access())
+        self.lazy_flag(LazyFlag::DynamicScopeAccess, || self.derive_dynamic_scope_access())
     }
 
     fn derive_dynamic_scope_access(&self) -> bool {
@@ -3224,7 +3164,7 @@ impl Function {
     /// `program` holds this function; an enclosing function whose record it has not read yet
     /// is read here.
     pub(crate) fn names_resolve_statically(&self, program: &ResidualProgram) -> bool {
-        *self.static_name_scope.get_or_init(|| self.derive_names_resolve_statically(program))
+        self.lazy_flag(LazyFlag::StaticNameScope, || self.derive_names_resolve_statically(program))
     }
 
     fn derive_names_resolve_statically(&self, program: &ResidualProgram) -> bool {
@@ -3246,7 +3186,7 @@ impl Function {
     /// The memoized `plain_local_slots` projection for this residual's atoms.
     #[inline(always)] pub(crate) fn plain_local(&self, tables: &impl FactTables, slot: usize) -> bool {
         let words =
-            self.plain_locals.get_or_init(|| self.plain_local_slots(tables.superinstructions()).words().to_vec().into());
+            self.caches().plain_locals.get_or_init(|| self.plain_local_slots(tables.superinstructions()).words().to_vec().into());
         crate::bitset::words_contain(words, slot)
     }
 
@@ -4454,8 +4394,8 @@ impl ResidualProgram {
             return None;
         }
         let masks = function
-            .register_roots
-            .masks
+            .caches()
+            .register_masks
             .get_or_init(|| {
                 crate::compile::liveness::RegisterMasks::of(function, self, &self.field_sites, &self.superinstructions)
                     .map(std::rc::Rc::new)

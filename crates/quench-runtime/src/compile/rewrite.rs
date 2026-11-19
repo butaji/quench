@@ -1150,7 +1150,7 @@ fn relocate_source_positions(
     map: &[usize],
 ) {
     let relocated = relocated_source_positions(code_len, source_positions, old_code, wide, map);
-    *source_positions = relocated;
+    *source_positions = relocated.freeze();
 }
 
 /// The table `source_positions` becomes once the code is relocated through `map`. Surviving
@@ -1161,13 +1161,13 @@ fn relocated_source_positions(
     old_code: &[Instr],
     wide: &[WideInstruction],
     map: &[usize],
-) -> crate::bytecode::SourcePositions {
+) -> crate::bytecode::SourcePositionsBuilder {
     let mut survivors = source_positions
         .iter()
         .filter(|position| source_instruction_survives(position.pc as usize, old_code, map))
         .peekable();
     // Relocation keeps or drops entries, so the old coding bounds the new one's.
-    let mut relocated = crate::bytecode::SourcePositions::with_capacity(source_positions.coded_len());
+    let mut relocated = crate::bytecode::SourcePositionsBuilder::with_capacity(source_positions.coded_len());
     let mut origin_pc = 0;
     let mut effective = None;
     let mut previous_location = None;

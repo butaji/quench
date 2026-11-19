@@ -886,7 +886,7 @@ fn append_to(out: &mut BinaryWriter, target: &mut Vec<u8>, write: impl FnOnce(&m
 /// its names resolve statically, given the facts of the functions encoded before it.
 fn write_record(program: &super::ResidualProgram, index: usize, static_names: &[bool], out: &mut BinaryWriter) -> bool {
     program.with_record(index, |record| {
-        let names_static = *record.static_name_scope.get_or_init(|| {
+        let names_static = record.lazy_flag(super::LazyFlag::StaticNameScope, || {
             record.own_names_resolve_statically(program) && enclosing_names_static(program, static_names, record.parent)
         });
         let facts = record.derived_facts(program, names_static);
@@ -1192,7 +1192,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
             return;
         }
         let computed;
-        let plain: &[u64] = match function.plain_locals.get() {
+        let plain: &[u64] = match function.cached_plain_locals() {
             Some(words) => &words[..],
             None => {
                 computed = function.plain_local_slots(superinstructions);
@@ -1487,16 +1487,9 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             registers,
             dispatch,
             decoded: Default::default(),
-            plain_locals: if packed { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(plain_locals) },
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            evals_in_scope: Default::default(),
-            js_tier_candidate: Default::default(),
+            caches: if packed { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(Box::new(super::FunctionCaches { plain_locals: std::cell::OnceCell::from(plain_locals), ..Default::default() })) },
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: handlers.into(),
             register_roots,
             undefined_register,

@@ -103,7 +103,7 @@ impl ProgramFootprint {
                     .map(|steps| slice_bytes::<crate::bytecode::LiteralStep>(steps))
                     .sum::<usize>()
                 + slice_bytes::<Superinstruction>(&program.superinstructions),
-            register_roots: sum(|function| function.register_roots.capacity_bytes()),
+            register_roots: sum(|function| function.register_masks_bytes()),
         }
     }
 
