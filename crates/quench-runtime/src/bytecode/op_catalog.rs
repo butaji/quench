@@ -260,7 +260,7 @@ pub(crate) enum ValueStep {
 
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Traits(pub(crate) u64);
+pub(crate) struct Traits(pub(crate) u128);
 
 impl Traits {
     pub(crate) const NONE: Self = Self(0);
