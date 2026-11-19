@@ -11,7 +11,7 @@ use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
-use std::{fmt, ops::Range};
+use std::ops::Range;
 /// Source-shaping inputs shared by host Script preparation and native compilation.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HostScriptOptions {
@@ -145,102 +145,7 @@ pub(crate) fn eval_context_source(
     format!("(class{heritage} {{\n{declarations}\n{method}() {{\n{source}\n}}\n}})")
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DiagnosticKind {
-    Syntax,
-    Compilation,
-    StackExhausted,
-}
-#[derive(Clone)]
-pub struct Diagnostic {
-    kind: DiagnosticKind,
-    source: String,
-    message: String,
-    span: Span,
-}
-impl Diagnostic {
-    fn message(&self) -> &str {
-        match self.kind {
-            DiagnosticKind::Syntax | DiagnosticKind::Compilation => &self.message,
-            DiagnosticKind::StackExhausted => crate::stack::STACK_EXHAUSTED_MESSAGE,
-        }
-    }
-
-    /// Whether parsing or ECMAScript early-error validation rejected the source.
-    /// Backend limits and unsupported syntax are separate compilation failures.
-    pub fn is_syntax_error(&self) -> bool {
-        self.kind == DiagnosticKind::Syntax
-    }
-
-    /// The UTF-8 offset in the source the diagnostic points at.
-    pub fn offset(&self) -> u32 {
-        self.span.start
-    }
-
-    /// The diagnostic message without a leading SyntaxError class name.
-    pub fn syntax_message(&self) -> &str {
-        let message = self.message();
-        message.strip_prefix(SYNTAX_ERROR_PREFIX).unwrap_or(message)
-    }
-
-    /// A parse failure, reported with V8's message at OXC's position.
-    fn parse_failure(source_name: &str, source: &str, error: &oxc_diagnostics::OxcDiagnostic) -> Self {
-        let offset = error.labels.first().map_or(0, |label| label.offset());
-        Self {
-            kind: DiagnosticKind::Syntax,
-            source: source_name.into(),
-            message: syntax_message::parse_failure(source, error),
-            span: Span::new(offset, offset),
-        }
-    }
-
-    pub(crate) fn is_stack_exhausted(&self) -> bool {
-        self.kind == DiagnosticKind::StackExhausted
-    }
-
-    fn stack_exhausted(source: &str) -> Self {
-        Self {
-            kind: DiagnosticKind::StackExhausted,
-            source: source.into(),
-            message: String::new(),
-            span: Span::default(),
-        }
-    }
-
-    pub(crate) fn unsupported(source: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            kind: DiagnosticKind::Compilation,
-            source: source.into(),
-            message: message.into(),
-            span: Span::default(),
-        }
-    }
-}
-impl fmt::Debug for Diagnostic {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Diagnostic")
-            .field("source", &self.source)
-            .field("message", &self.message())
-            .field("span", &self.span)
-            .finish()
-    }
-}
-impl fmt::Display for Diagnostic {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}:{}..{}: {}",
-            self.source,
-            self.span.start,
-            self.span.end,
-            self.message()
-        )
-    }
-}
 pub struct Engine;
-
-/// The class name some compiler messages lead with.
-const SYNTAX_ERROR_PREFIX: &str = "SyntaxError: ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DynamicFunctionKind {
@@ -347,28 +252,6 @@ fn may_begin_single_regexp_literal(source: &str) -> bool {
         }
     }
 }
-pub(crate) enum StaticModuleThrow {
-    Value(Constant),
-    Error {
-        name: String,
-        message: Option<Constant>,
-    },
-}
-#[derive(Clone, Debug, Default)]
-pub(crate) struct StaticModulePlan {
-    pub(crate) link_plan: Option<ModuleLinkPlan>,
-    pub(crate) requests: Vec<ModuleRequest>,
-    pub(crate) has_top_level_await: bool,
-}
-pub(crate) use crate::bytecode::ModuleReexport as StaticModuleReexport;
-
-/// `Engine::static_module_analysis`: a static module text's early error, or else its plan
-/// (none when the stack does not bound its syntax).
-pub(crate) struct StaticModuleAnalysis {
-    pub(crate) early_error: Option<String>,
-    pub(crate) plan: Option<StaticModulePlan>,
-}
-
 /// The key `static_module_analysis` memoizes a text under: the module's name, the text's
 /// length and its hash. Texts are the process's own module files, not adversarial input, and
 /// a module is looked up about fifteen times, so one fast hash of its text serves.
@@ -388,6 +271,22 @@ impl StaticModuleTextKey {
         Self { length: source.len(), hash: hasher.finish(), name: module_name.into(), typescript }
     }
 }
+pub(crate) use crate::bytecode::{ModuleReexport as StaticModuleReexport, StaticModuleAnalysis, StaticModulePlan, StaticModuleThrow};
+pub(crate) use crate::bytecode::{Diagnostic, DiagnosticKind};
+impl Diagnostic {
+    /// A parse failure, reported with V8's message at OXC's position.
+    fn parse_failure(source_name: &str, source: &str, error: &oxc_diagnostics::OxcDiagnostic) -> Self {
+        let offset = error.labels.first().map_or(0, |label| label.offset());
+        Self {
+            kind: crate::bytecode::DiagnosticKind::Syntax,
+            source: source_name.into(),
+            message: syntax_message::parse_failure(source, error),
+            span: (offset, offset),
+        }
+    }
+}
+
+
 impl Engine {
     /// V8 excludes tagged templates from eval's compilation cache because each
     /// evaluation owns distinct template objects, including nested function sites.
@@ -1172,7 +1071,7 @@ impl Engine {
             && let Some((span, message)) = typescript::unsupported_runtime_syntax(&parsed.program)
         {
             let mut diagnostic = Diagnostic::unsupported(name, message);
-            diagnostic.span = span;
+            diagnostic.span = (span.start, span.end);
             return Err(vec![diagnostic]);
         }
         if let Some(error) = early::regexp_early_error(&parsed) {
@@ -1182,7 +1081,7 @@ impl Engine {
                     kind: DiagnosticKind::Syntax,
                     source: name.into(),
                     message,
-                    span: Span::default(),
+                    span: (0, 0),
                 },
             }]);
         }
@@ -1194,7 +1093,7 @@ impl Engine {
                 kind: DiagnosticKind::Syntax,
                 source: name.into(),
                 message: "SyntaxError: return outside function in eval".into(),
-                span,
+                span: (span.start, span.end),
             }]);
         }
         if capture_script_completion {
@@ -1207,7 +1106,7 @@ impl Engine {
                 kind: DiagnosticKind::Syntax,
                 source: name.into(),
                 message: "SyntaxError: invalid assignment target".into(),
-                span,
+                span: (span.start, span.end),
             }]);
         }
         let ordinary_private_context = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
@@ -1248,7 +1147,7 @@ impl Engine {
                 kind: DiagnosticKind::Syntax,
                 source: name.into(),
                 message: "SyntaxError: invalid dynamic Function source shape".into(),
-                span: Span::default(),
+                span: (0, 0),
             }]);
         }
         // Parsing is done; the semantic analysis starts here.
@@ -1342,7 +1241,7 @@ impl Engine {
                         kind: DiagnosticKind::Syntax,
                         source: name.into(),
                         message: "SyntaxError: return outside function in eval".into(),
-                        span,
+                        span: (span.start, span.end),
                     }]);
                 }
             }
@@ -3830,7 +3729,7 @@ impl<'a> Compiler<'a> {
             kind: DiagnosticKind::Compilation,
             source: self.source.into(),
             message: message.into(),
-            span,
+            span: (span.start, span.end),
         });
     }
     fn reject_syntax(&mut self, span: Span, message: impl Into<String>) {
@@ -3838,7 +3737,7 @@ impl<'a> Compiler<'a> {
             kind: DiagnosticKind::Syntax,
             source: self.source.into(),
             message: message.into(),
-            span,
+            span: (span.start, span.end),
         });
     }
     pub(super) fn collect_body_lexical_bindings(

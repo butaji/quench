@@ -1803,36 +1803,36 @@ const ANALYSIS_EARLY_ERROR: u8 = 1;
 const ANALYSIS_PLAN: u8 = 2;
 
 /// A static module analysis as bytes, which the host's compile cache keeps for its text.
-pub(crate) fn encode_static_module_analysis(analysis: &crate::compile::StaticModuleAnalysis) -> Vec<u8> {
+pub(crate) fn encode_static_module_analysis(analysis: &crate::bytecode::StaticModuleAnalysis) -> Vec<u8> {
     let mut out = BinaryWriter::new();
     match analysis {
-        crate::compile::StaticModuleAnalysis { early_error: Some(message), .. } => {
+        crate::bytecode::StaticModuleAnalysis { early_error: Some(message), .. } => {
             out.u8(ANALYSIS_EARLY_ERROR);
             out.string(message);
         }
-        crate::compile::StaticModuleAnalysis { early_error: None, plan: Some(plan) } => {
+        crate::bytecode::StaticModuleAnalysis { early_error: None, plan: Some(plan) } => {
             out.u8(ANALYSIS_PLAN);
             write_module_requests(&mut out, &plan.requests);
             write_module_link_plan(&mut out, plan.link_plan.as_ref());
             out.u8(u8::from(plan.has_top_level_await));
         }
-        crate::compile::StaticModuleAnalysis { early_error: None, plan: None } => out.u8(ANALYSIS_UNBOUNDED),
+        crate::bytecode::StaticModuleAnalysis { early_error: None, plan: None } => out.u8(ANALYSIS_UNBOUNDED),
     }
     out.bytes
 }
 
-pub(crate) fn decode_static_module_analysis(bytes: &[u8]) -> Result<crate::compile::StaticModuleAnalysis, String> {
+pub(crate) fn decode_static_module_analysis(bytes: &[u8]) -> Result<crate::bytecode::StaticModuleAnalysis, String> {
     let mut input = BinaryReader::new(bytes);
     let analysis = match input.u8()? {
-        ANALYSIS_UNBOUNDED => crate::compile::StaticModuleAnalysis { early_error: None, plan: None },
-        ANALYSIS_EARLY_ERROR => crate::compile::StaticModuleAnalysis { early_error: Some(input.string()?), plan: None },
+        ANALYSIS_UNBOUNDED => crate::bytecode::StaticModuleAnalysis { early_error: None, plan: None },
+        ANALYSIS_EARLY_ERROR => crate::bytecode::StaticModuleAnalysis { early_error: Some(input.string()?), plan: None },
         ANALYSIS_PLAN => {
             let requests = read_module_requests(&mut input)?;
             let link_plan = read_module_link_plan(&mut input)?;
             let has_top_level_await = input.flag("top-level await")?;
-            crate::compile::StaticModuleAnalysis {
+            crate::bytecode::StaticModuleAnalysis {
                 early_error: None,
-                plan: Some(crate::compile::StaticModulePlan { link_plan, requests, has_top_level_await }),
+                plan: Some(crate::bytecode::StaticModulePlan { link_plan, requests, has_top_level_await }),
             }
         }
         _ => return Err("invalid static module analysis tag".into()),

@@ -135,7 +135,7 @@ impl<H: Host> Vm<H> {
         // A body too deep for the stack reports it here, where it compiles, as V8 does.
         let residual = match crate::Engine::specialize_first_call_chunk(p, function, span, &*self, run) {
             Ok(residual) => residual,
-            Err(errors) if errors.iter().any(crate::compile::Diagnostic::is_stack_exhausted) => return Err(self.stack_exhaustion_error()),
+            Err(errors) if errors.iter().any(crate::Diagnostic::is_stack_exhausted) => return Err(self.stack_exhaustion_error()),
             Err(_) => return Err(JsError::validation("a first-call chunk does not compile".into())),
         };
         let target = residual

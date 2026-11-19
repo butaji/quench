@@ -156,3 +156,29 @@ impl ModuleRequestPhase {
             .find(|phase| phase.runtime_value() == value)
     }
 }
+
+/// A static module's `throw` of an early error: the value, or an error's name and message.
+pub(crate) enum StaticModuleThrow {
+    Value(super::Constant),
+    Error {
+        name: String,
+        message: Option<super::Constant>,
+    },
+}
+
+/// A static module text's plan: its link plan, the requests it makes and whether its top
+/// level awaits (`Engine::static_module_analysis`).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StaticModulePlan {
+    pub(crate) link_plan: Option<ModuleLinkPlan>,
+    pub(crate) requests: Vec<ModuleRequest>,
+    pub(crate) has_top_level_await: bool,
+}
+
+
+/// `Engine::static_module_analysis`: a static module text's early error, or else its plan
+/// (none when the stack does not bound its syntax).
+pub(crate) struct StaticModuleAnalysis {
+    pub(crate) early_error: Option<String>,
+    pub(crate) plan: Option<StaticModulePlan>,
+}

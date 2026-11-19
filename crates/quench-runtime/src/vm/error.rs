@@ -1472,7 +1472,7 @@ impl<H: Host> Vm<H> {
                     .map_err(|diagnostics| {
                         if diagnostics
                             .iter()
-                            .any(crate::compile::Diagnostic::is_stack_exhausted)
+                            .any(crate::Diagnostic::is_stack_exhausted)
                         {
                             return self.stack_exhaustion_error();
                         }

@@ -98,7 +98,8 @@ pub use vm::AheadImages;
 pub use vm::tier_events::{Event as TierEvent, TierEvents};
 pub use bytecode::{set_record_built, set_record_read, KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase, FlowFunction, FlowInstruction};
 pub use module_identity::normalized_text as normalized_module_name;
-pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
+pub use bytecode::Diagnostic;
+pub use compile::{CompilePhase, Engine, set_compile_phase_boundary};
 pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId};
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{

@@ -1,9 +1,13 @@
 use smallvec::SmallVec;
 
 mod internal_bindings;
+mod diagnostic;
 mod module_records;
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
-pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind};
+pub use diagnostic::Diagnostic;
+pub(crate) use diagnostic::DiagnosticKind;
+pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind,
+    StaticModuleAnalysis, StaticModulePlan, StaticModuleThrow};
 pub(crate) use internal_bindings::*;
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";

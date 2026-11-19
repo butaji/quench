@@ -75,7 +75,7 @@ type StaticModuleResolveSet = FxHashSet<(ModuleIdentity, String)>;
 /// looks a name up once, so resolving every export of a module is linear in its exports.
 struct StaticModuleNode {
     locals: Vec<(String, StaticModuleValue)>,
-    reexports: Vec<crate::compile::StaticModuleReexport>,
+    reexports: Vec<crate::bytecode::ModuleReexport>,
     /// Where each export name is defined: a local binding wins over a named or namespace
     /// re-export, and an earlier re-export over a later one. Star re-exports are unnamed.
     sites: FxHashMap<String, StaticExportSite>,
@@ -107,7 +107,7 @@ enum StaticExportSite {
 impl StaticModuleNode {
     fn new(
         locals: Vec<(String, StaticModuleValue)>,
-        reexports: Vec<crate::compile::StaticModuleReexport>,
+        reexports: Vec<crate::bytecode::ModuleReexport>,
     ) -> Rc<Self> {
         let mut sites = FxHashMap::default();
         for (index, (name, _)) in locals.iter().enumerate() {
@@ -116,8 +116,8 @@ impl StaticModuleNode {
                 .or_insert(StaticExportSite::Local(index));
         }
         for (index, reexport) in reexports.iter().enumerate() {
-            if let crate::compile::StaticModuleReexport::Named { exported, .. }
-            | crate::compile::StaticModuleReexport::Namespace { exported, .. } = reexport
+            if let crate::bytecode::ModuleReexport::Named { exported, .. }
+            | crate::bytecode::ModuleReexport::Namespace { exported, .. } = reexport
             {
                 sites
                     .entry(exported.clone())
@@ -175,12 +175,12 @@ impl StaticModuleLinks {
 
     fn add(
         &mut self,
-        reexport: crate::compile::StaticModuleReexport,
+        reexport: crate::bytecode::ModuleReexport,
         dependency: String,
         exports: Vec<(String, StaticModuleValue)>,
     ) -> StaticModuleAdd {
         match reexport {
-            crate::compile::StaticModuleReexport::Named {
+            crate::bytecode::ModuleReexport::Named {
                 imported, exported, ..
             } => {
                 let Some(value) = exports
@@ -191,7 +191,7 @@ impl StaticModuleLinks {
                 };
                 self.insert_explicit(exported, value)
             }
-            crate::compile::StaticModuleReexport::Namespace { exported, .. } => self
+            crate::bytecode::ModuleReexport::Namespace { exported, .. } => self
                 .insert_explicit(
                     exported,
                     StaticModuleValue::Namespace {
@@ -199,7 +199,7 @@ impl StaticModuleLinks {
                         exports,
                     },
                 ),
-            crate::compile::StaticModuleReexport::Star { .. } => {
+            crate::bytecode::ModuleReexport::Star { .. } => {
                 for (name, value) in exports {
                     if name == "default"
                         || self.explicit.contains_key(&name)
@@ -2995,7 +2995,7 @@ impl<H: Host> Vm<H> {
     /// `Engine::static_module_analysis` of a module, kept across runs in the host's compile
     /// cache for its exact text, as its compiled program is: a process otherwise parses every
     /// static module it links once more than it compiles it.
-    pub(super) fn static_module_analysis(&mut self, module: &ModuleSource) -> Rc<crate::compile::StaticModuleAnalysis> {
+    pub(super) fn static_module_analysis(&mut self, module: &ModuleSource) -> Rc<crate::bytecode::StaticModuleAnalysis> {
         let (source, name) = (module.source.as_ref(), module.name.as_str());
         let program = self.realm.promise.modules.get(&module_cache_key(name, "javascript"))
             .and_then(|record| record.program)
@@ -3005,9 +3005,9 @@ impl<H: Host> Vm<H> {
         crate::Engine::static_module_analysis_with(source, name, module.typescript, |analyze| {
             // Derive the loader's memoized view from its admitted compiler result.
             if let Some(program) = program {
-                return crate::compile::StaticModuleAnalysis {
+                return crate::bytecode::StaticModuleAnalysis {
                     early_error: None,
-                    plan: Some(crate::compile::StaticModulePlan {
+                    plan: Some(crate::bytecode::StaticModulePlan {
                         link_plan: program.module_link_plan.clone(),
                         requests: program.module_requests.clone(),
                         has_top_level_await: program.function(0).is_async,
@@ -3027,7 +3027,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn static_module_plan(&mut self, module: &ModuleSource) -> Option<crate::compile::StaticModulePlan> {
+    fn static_module_plan(&mut self, module: &ModuleSource) -> Option<crate::bytecode::StaticModulePlan> {
         self.static_module_analysis(module).plan.clone()
     }
 
@@ -3110,7 +3110,7 @@ impl<H: Host> Vm<H> {
                 .map_err(|diagnostics| {
                     if diagnostics
                         .iter()
-                        .any(crate::compile::Diagnostic::is_stack_exhausted)
+                        .any(crate::Diagnostic::is_stack_exhausted)
                     {
                         self.stack_exhaustion_error()
                     } else {
@@ -3302,7 +3302,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         module: &ModuleSource,
-        plan: &crate::compile::StaticModulePlan,
+        plan: &crate::bytecode::StaticModulePlan,
         active: &mut ModuleEvaluationStack,
     ) -> Result<Option<Value>, JsError> {
         self.evaluate_module_requests(p, &module.name, &plan.requests, active)?;
@@ -3686,7 +3686,7 @@ impl<H: Host> Vm<H> {
                 .map_err(|diagnostics| {
                     if diagnostics
                         .iter()
-                        .any(crate::compile::Diagnostic::is_stack_exhausted)
+                        .any(crate::Diagnostic::is_stack_exhausted)
                     {
                         return self.stack_exhaustion_error();
                     }
@@ -3856,11 +3856,11 @@ impl<H: Host> Vm<H> {
     fn evaluate_static_module_throw(
         &mut self,
         p: &ResidualProgram,
-        thrown: crate::compile::StaticModuleThrow,
+        thrown: crate::bytecode::StaticModuleThrow,
     ) -> Result<Value, JsError> {
         let reason = match thrown {
-            crate::compile::StaticModuleThrow::Value(value) => self.module_static_value(value),
-            crate::compile::StaticModuleThrow::Error { name, message } => {
+            crate::bytecode::StaticModuleThrow::Value(value) => self.module_static_value(value),
+            crate::bytecode::StaticModuleThrow::Error { name, message } => {
                 let kind = match name.as_str() {
                     "EvalError" => Native::EvalError,
                     "RangeError" => Native::RangeError,
@@ -3962,7 +3962,7 @@ impl<H: Host> Vm<H> {
         .map_err(|diagnostics| {
             if diagnostics
                 .iter()
-                .any(crate::compile::Diagnostic::is_stack_exhausted)
+                .any(crate::Diagnostic::is_stack_exhausted)
             {
                 return self.stack_exhaustion_error();
             }
@@ -4008,11 +4008,11 @@ impl<H: Host> Vm<H> {
         let mut names: Vec<String> = node.locals.iter().map(|(name, _)| name.clone()).collect();
         for reexport in &node.reexports {
             match reexport {
-                crate::compile::StaticModuleReexport::Named { exported, .. }
-                | crate::compile::StaticModuleReexport::Namespace { exported, .. } => {
+                crate::bytecode::ModuleReexport::Named { exported, .. }
+                | crate::bytecode::ModuleReexport::Namespace { exported, .. } => {
                     names.push(exported.clone());
                 }
-                crate::compile::StaticModuleReexport::Star { source } => {
+                crate::bytecode::ModuleReexport::Star { source } => {
                     let Some(dependency) =
                         self.static_node_dependency(p, module, source, nodes)?
                     else {
@@ -4120,7 +4120,7 @@ impl<H: Host> Vm<H> {
         let mut index = StaticStarIndex::default();
         let mut complete = true;
         for reexport in &node.reexports {
-            let crate::compile::StaticModuleReexport::Star { source } = reexport else {
+            let crate::bytecode::ModuleReexport::Star { source } = reexport else {
                 continue;
             };
             let Some(dependency) = self.static_node_dependency(p, module, source, nodes)? else {
@@ -4166,7 +4166,7 @@ impl<H: Host> Vm<H> {
                 ));
             }
             Some(StaticExportSite::Reexport(index)) => match &node.reexports[index] {
-                crate::compile::StaticModuleReexport::Named { source, imported, .. } => {
+                crate::bytecode::ModuleReexport::Named { source, imported, .. } => {
                     let Some(dependency) = self.static_node_dependency(p, module, source, nodes)?
                     else {
                         return Ok(StaticModuleResolution::Missing);
@@ -4179,7 +4179,7 @@ impl<H: Host> Vm<H> {
                         resolve_set,
                     );
                 }
-                crate::compile::StaticModuleReexport::Namespace { source, .. } => {
+                crate::bytecode::ModuleReexport::Namespace { source, .. } => {
                     let Some(dependency) = self.static_node_dependency(p, module, source, nodes)?
                     else {
                         return Ok(StaticModuleResolution::Missing);
@@ -4232,7 +4232,7 @@ impl<H: Host> Vm<H> {
                         },
                     ));
                 }
-                crate::compile::StaticModuleReexport::Star { .. } => {
+                crate::bytecode::ModuleReexport::Star { .. } => {
                     unreachable!("star re-exports define no named site")
                 }
             },
@@ -4254,7 +4254,7 @@ impl<H: Host> Vm<H> {
             None => {
                 let mut candidates = Vec::new();
                 for reexport in &node.reexports {
-                    let crate::compile::StaticModuleReexport::Star { source } = reexport else {
+                    let crate::bytecode::ModuleReexport::Star { source } = reexport else {
                         continue;
                     };
                     let Some(dependency) = self.static_node_dependency(p, module, source, nodes)? else {
@@ -4315,11 +4315,11 @@ impl<H: Host> Vm<H> {
         };
         for reexport in node.reexports.iter().cloned() {
             let (source, named) = match reexport {
-                crate::compile::StaticModuleReexport::Named {
+                crate::bytecode::ModuleReexport::Named {
                     source, imported, ..
                 } => (source, Some(imported)),
-                crate::compile::StaticModuleReexport::Star { source }
-                | crate::compile::StaticModuleReexport::Namespace { source, .. } => (source, None),
+                crate::bytecode::ModuleReexport::Star { source }
+                | crate::bytecode::ModuleReexport::Namespace { source, .. } => (source, None),
             };
             let Some(dependency) = self.static_module_dependency(p, &module.name, &source)? else {
                 return Ok(Some(false));
@@ -4504,7 +4504,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         module: &ModuleSource,
-        plan: crate::compile::StaticModulePlan,
+        plan: crate::bytecode::StaticModulePlan,
         active: &mut ActiveModuleExports,
     ) -> Result<StaticModuleGraph, JsError> {
         let Some(link_plan) = plan.link_plan else {
@@ -4523,7 +4523,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
         locals: Vec<(String, StaticModuleValue)>,
-        reexports: Vec<crate::compile::StaticModuleReexport>,
+        reexports: Vec<crate::bytecode::ModuleReexport>,
         active: &mut ActiveModuleExports,
     ) -> Result<StaticModuleGraph, JsError> {
         let mut links = StaticModuleLinks::default();
@@ -4538,9 +4538,9 @@ impl<H: Host> Vm<H> {
             let mut changed = false;
             for reexport in pending {
                 let source = match &reexport {
-                    crate::compile::StaticModuleReexport::Named { source, .. }
-                    | crate::compile::StaticModuleReexport::Star { source }
-                    | crate::compile::StaticModuleReexport::Namespace { source, .. } => source,
+                    crate::bytecode::ModuleReexport::Named { source, .. }
+                    | crate::bytecode::ModuleReexport::Star { source }
+                    | crate::bytecode::ModuleReexport::Namespace { source, .. } => source,
                 };
                 let dependency = self
                     .host_resolved_module(&module.name, source)
