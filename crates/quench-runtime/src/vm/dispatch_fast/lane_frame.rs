@@ -779,6 +779,93 @@ lane_handler! {
     }
 }
 
+/// Protocol miss families (`protocol_row`'s `MISS`, high byte): which body completes a
+/// protocol record the lane frame does not answer. The low byte carries the family's own
+/// static parameters (an argument count, a leaf form, a plain bit), which its `*_miss_of`
+/// table turns into the instantiation the record had.
+pub(in crate::vm::dispatch_fast) mod protocol_family {
+    /// Keyed reads and writes, deletes and named reads past their rows (`element_miss_of`).
+    pub(crate) const ELEMENT: u16 = 1 << 8;
+    /// Private names and defined fields (`private_miss_of`).
+    pub(crate) const PRIVATE: u16 = 2 << 8;
+    /// Script calls (`script_call_miss_of`).
+    pub(crate) const SCRIPT_CALL: u16 = 3 << 8;
+    /// Iterator and generator steps (`iteration_miss_of`).
+    pub(crate) const ITERATION: u16 = 4 << 8;
+    /// Native, applied, spread and array calls (`native_call_miss_of`).
+    pub(crate) const NATIVE_CALL: u16 = 5 << 8;
+    /// Loop headers and numeric protocol records (`loop_miss_of`).
+    pub(crate) const LOOP: u16 = 6 << 8;
+    /// Constructions (`construct_miss_of`).
+    pub(crate) const CONSTRUCT: u16 = 7 << 8;
+    /// Forwarded and kept calls, tier prologues and body entries (`entry_miss_of`).
+    pub(crate) const ENTRY: u16 = 8 << 8;
+    /// Returns and returning records (`return_miss_of`).
+    pub(crate) const RETURN: u16 = 9 << 8;
+    /// Frame calls and memoized script calls (`frame_call_miss_of`).
+    pub(crate) const FRAME_CALL: u16 = 10 << 8;
+    /// Leaf, Math and builtin native calls (`leaf_call_miss_of`).
+    pub(crate) const LEAF_CALL: u16 = 11 << 8;
+    /// The family of `miss`.
+    pub(crate) const fn of(miss: u16) -> u16 { miss & 0xff00 }
+    /// The family's static parameters in `miss`.
+    pub(crate) const fn parameters(miss: u16) -> u8 { (miss & 0xff) as u8 }
+}
+
+/// The body that completes protocol record `miss` (`protocol_row`) when its row leaves the record
+/// unresolved: the one place a former hand handler's body remains. Each family's table maps its
+/// parameters to the instantiation the record had.
+pub(in crate::vm::dispatch_fast) const fn protocol_miss<H: Host>(miss: u16) -> Handler {
+    use protocol_family as F;
+    match F::of(miss) {
+        F::ELEMENT => super::element_miss_of::<H>(F::parameters(miss)),
+        F::PRIVATE => super::private_miss_of::<H>(F::parameters(miss)),
+        F::SCRIPT_CALL => super::script_call_miss_of::<H>(F::parameters(miss)),
+        F::ITERATION => super::iteration_miss_of::<H>(F::parameters(miss)),
+        F::NATIVE_CALL => super::native_call_miss_of::<H>(F::parameters(miss)),
+        F::LOOP => super::loop_miss_of::<H>(F::parameters(miss)),
+        F::CONSTRUCT => super::construct_miss_of::<H>(F::parameters(miss)),
+        F::ENTRY => super::entry_miss_of::<H>(F::parameters(miss)),
+        F::RETURN => super::return_miss_of::<H>(F::parameters(miss)),
+        F::FRAME_CALL => super::frame_call_miss_of::<H>(F::parameters(miss)),
+        F::LEAF_CALL => super::leaf_call_miss_of::<H>(F::parameters(miss)),
+        _ => lane_general_step::<H>,
+    }
+}
+
+lane_handler! {
+    /// The lane handler of a protocol record (a call, a construction, a return, an iterator or
+    /// generator step, a frame or tier protocol record), generated from its staged row as
+    /// `lane_row` is but with no site plan: the record decodes by its opcode's decoder, the row
+    /// steps on `Concrete` over the lane's frame (`CallFrame`), and the step picks the
+    /// continuation. What the lane frame does not answer leaves unresolved to the record's
+    /// protocol body (`protocol_miss(MISS)`), so the body is the row's miss arm, never the record's
+    /// handler. An opcode with no staged decoder decodes to nothing and takes that arm directly
+    /// until its row lands.
+    pub(super) fn protocol_row<OP: u16, ACC: u8, MISS: u16>(cx, r, ip, i, view) {
+        // The row family's decoder, a constant of the instantiation, so only its arm is compiled.
+        let fields = LaneFields::<OP>(i);
+        let decoded = match const { LaneFields::<OP>::OPCODE.staged() } {
+            Some(crate::bytecode::Decoder::Call) =>
+                Operation::decode_call(crate::staged::Fields::wide(fields), crate::staged::DecodeContext::EMPTY),
+            _ => None,
+        };
+        let Some(operation) = decoded else {
+            sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
+        };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = row_frame::<H, OP, ACC>(cx, r, view);
+        match crate::staged::step(&mut stage, &mut frame, operation) {
+            Step::Value(value) => {
+                r.set(i.a, Value::from_bits(value));
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+            Step::Control(Edge::Following) => next!(cx, r, following(ip), Carried::script_in(cx, view)),
+            Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
+        }
+    }
+}
+
 /// The value `allocation` makes in the lane context `cx` (a `*mut LaneContext<H>`): it
 /// allocates and runs no guest code, so a frame's own run makes it as the general loop does;
 /// `None` where the general path must.

@@ -128,6 +128,7 @@ impl CallFacts {
 impl Invocation {
     /// The operands of `instruction`, read with the tables of `context`; `None` for any form no
     /// row runs: an eval, which the host decides, a super construction, and an array of arguments.
+    #[inline(always)]
     pub(crate) fn of(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         let (callee, receiver, arguments) = Self::operands(instruction, context)?;
         matches!(instruction.result_flags(), 0 | RETURN_REGISTER).then(|| Self { callee, receiver, arguments,
@@ -135,6 +136,7 @@ impl Invocation {
             forwards: instruction.op() == Op::CallForwardingArguments })
     }
 
+    #[inline(always)]
     fn operands(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Callee, Receiver, Arguments)> {
         match instruction.op() {
             Op::Call | Op::CallForwardingArguments => Self::call(instruction),
@@ -147,6 +149,7 @@ impl Invocation {
 
     /// A call through registers: the callee, receiver and a window of arguments; `None` for an
     /// eval, which the host decides.
+    #[inline(always)]
     fn call(instruction: WideInstruction) -> Option<(Callee, Receiver, Arguments)> {
         let imm = instruction.imm();
         (!instruction.direct_eval() && !instruction.parameter_eval()).then(|| (Callee::Register(instruction.register_b()),

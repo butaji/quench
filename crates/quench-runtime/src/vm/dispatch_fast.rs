@@ -3855,6 +3855,7 @@ lane_handler! {
 
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
+mod protocol_misses; use protocol_misses::*;
 mod local_fields;
 use local_fields::local_field_handler;
 mod window_bodies;
@@ -3865,7 +3866,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_property_key, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{protocol_row, protocol_miss, protocol_family, is_row, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_property_key, staged_require_iterator_result, staged_typeof_index};
 
 
 lane_handler! {
