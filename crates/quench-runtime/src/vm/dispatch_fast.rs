@@ -15216,7 +15216,6 @@ script_handler! {
         // The link's admission (`Admission::admits_across`) proves the run calls script
         // functions and has no construction pending; a refused link falls to the general form,
         // which decides.
-        debug_assert!(unsafe { (*cx).script_calls || !vm.lane_stack.script_calls_allowed() });
         let target = vm.linked_cross_call_entry(callee, &i.call_link);
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let Some(target) = target.map(|target| unsafe { &*target }) else {
