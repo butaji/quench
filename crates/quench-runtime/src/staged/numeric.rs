@@ -522,15 +522,19 @@ fn arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 }
 
 /// `left % right` in `domain`. An int32 remainder is an int32 except at a zero divisor (NaN)
-/// and at a zero with a negative dividend (`-0`, `i32::MIN % -1` included): those leave.
+/// and at a zero with a negative dividend (`-0`, `i32::MIN % -1` included): those leave. A
+/// Float64 remainder takes `remainder_number`'s int32 fast path where both operands are int32.
 #[inline(always)]
 fn remainder<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand, domain: Domain) -> Step<S::Word, F::Control> {
-    let miss = frame.miss();
-    let Some((left, right)) = operands(stage, frame, left, right, domain) else { return Step::Unresolved };
     let (result, fact) = match domain {
-        Domain::Float64 => (stage.float_remainder(left, right), frame.number_fact()),
+        Domain::Float64 => {
+            let Some(result) = remainder_number(stage, frame, left, right) else { return Step::Unresolved };
+            (result, frame.number_fact())
+        }
         Domain::Int32 => {
+            let miss = frame.miss();
+            let Some((left, right)) = operands(stage, frame, left, right, domain) else { return Step::Unresolved };
             let zero_divisor = stage.i32_is_zero(right);
             if stage.guard_false(zero_divisor, miss).is_none() {
                 return Step::Unresolved;
@@ -547,6 +551,60 @@ fn remainder<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     };
     frame.write(stage, destination, result, fact);
     Step::Value(result)
+}
+
+/// `left % right` of two Number operands, as a binary64 word. Where both are int32 at run time,
+/// the divisor is nonzero and the dividend is non-negative, the remainder is one `idiv` and a
+/// conversion of its int32 result: a non-negative dividend's remainder is never `-0` and needs
+/// no fmod. Every other pair takes the binary64 remainder. `None` where an operand is no Number,
+/// which leaves the row.
+#[inline(always)]
+fn remainder_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    left: Operand, right: Operand) -> Option<S::Word> {
+    let Some(((left_int, left_test), (right_int, right_test))) =
+        fast_int(stage, frame, left).zip(fast_int(stage, frame, right))
+    else {
+        return remainder_float(stage, frame, left, right);
+    };
+    let divisor_nonzero = stage.i32_is_zero(right_int);
+    let divisor_nonzero = stage.not(divisor_nonzero);
+    let dividend_negative = stage.i32_is_negative(left_int);
+    let mut fast = stage.not(dividend_negative);
+    fast = stage.both(fast, divisor_nonzero);
+    for test in [left_test, right_test].into_iter().flatten() {
+        fast = stage.both(fast, test);
+    }
+    stage.choose_leaving(fast, |stage| {
+        let remainder = stage.int_remainder(left_int, right_int);
+        Some(stage.i32_to_f64(remainder))
+    }, |stage| remainder_float(stage, frame, left, right))
+}
+
+/// `left % right` of two binary64 operands (`float_word`), the general remainder.
+#[inline(always)]
+fn remainder_float<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    left: Operand, right: Operand) -> Option<S::Word> {
+    let miss = frame.miss();
+    let left = float_word(stage, frame, left, miss)?;
+    let right = float_word(stage, frame, right, miss)?;
+    Some(stage.float_remainder(left, right))
+}
+
+/// `operand`'s int32 word for `remainder_number`, with the test that makes it an int32 at run
+/// time. A program constant that is an int32 is its own word with no test: its decode proved it,
+/// so its tag is never read at run time. A register is its low word, tested by its tag. `None`
+/// where the operand is neither, or a constant that is no int32, which keeps the binary64 path.
+#[inline(always)]
+fn fast_int<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operand: Operand) -> Option<(S::Word, Option<S::Cond>)> {
+    match frame.constant_operand(operand) {
+        Some(value) => Some((stage.i32_constant(value.as_int()?), None)),
+        None => {
+            let bits = frame.operand_word(stage, operand)?;
+            let test = super::value::is_int(stage, bits);
+            Some((stage.narrow(bits), Some(test)))
+        }
+    }
 }
 
 /// ToNumeric of a Number `source`: the Number itself, copied with its facts. Any other
