@@ -46,8 +46,9 @@ pub(crate) struct ConstructGate<W> {
 /// `constructs`, writes nothing.
 #[inline(always)]
 pub(crate) fn admit_construct_run<S: Stage>(stage: &mut S, calls: S::Word, constructs: S::Word, miss: S::Miss) -> Option<()> {
-    let both = stage.and(calls, constructs);
-    let admits = stage.ne_imm(both, 0u64);
+    let calls = stage.ne_imm(calls, 0u64);
+    let constructs = stage.ne_imm(constructs, 0u64);
+    let admits = stage.all(calls, constructs);
     stage.guard(admits, miss)
 }
 

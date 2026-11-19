@@ -342,25 +342,6 @@ pub(crate) fn window_fill<S: Stage>(stage: &mut S, facts: S::Word, room: S::Word
     let all = stage.eq_imm(fill, u32::from(FILL_ALL));
     stage.select(all, room, fill)
 }
-
-/// The direct native call both JIT tiers emit at a bound call site: the callee identity guard
-/// inlined (`guard_callee`, one compare of the held word against the identity the site was bound
-/// to) and the code pointer read from the callee's entry cell, the word the tier then jumps or
-/// calls through (`call *entry`). No validity compare is needed: `entry` is the native validity
-/// itself, a withdrawn or never-published body leaves the stub there, which enters nothing and
-/// answers the status the tier's fallback already handles. Where the identity is folded (a
-/// written-once root binding, `Identity::Folded`) the tier passes `expected = None` and the row
-/// is the one load. `cell` is the bound function's cell, a constant at a bound site.
-#[allow(dead_code)] // emitted by the JIT tiers (u-jit `call_frames.rs`, b-jit `call_rows.rs`)
-#[inline(always)]
-pub(crate) fn enter_cached<S: Stage>(stage: &mut S, held: S::Word, expected: Option<u64>, cell: S::Word, miss: S::Miss)
-    -> Option<S::Word> {
-    if let Some(expected) = expected {
-        super::protocol::guard_callee(stage, held, expected, miss)?;
-    }
-    Some(stage.load_u64(Region::EntryCell.mutable(), cell, CELL.entry_offset))
-}
-
 /// The direct native call both JIT tiers emit at a bound call site: the callee identity guard
 /// inlined (`guard_callee`, one compare of the held word against the identity the site was bound
 /// to) and the code pointer read from the callee's entry cell, the word the tier then jumps or

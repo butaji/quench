@@ -174,7 +174,7 @@ fn body_script_call<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &
     // SAFETY: as `call_read_in_lane`.
     if target.entry.answered_by_read() { return unsafe { body_read_call(cx, call, target, this) }; }
     let Some(how) = call_activation_in_lane(target, call.argc()) else { return miss(vm, Miss::EntryNotActivation) };
-    if how.plain && !lane_activation_room(vm, target) { return miss(vm, Miss::NoActivationRoom); }
+    if how.plain && !activation_room_in_lane(vm, target) { return miss(vm, Miss::NoActivationRoom); }
     body_activate_in_lane(cx, call, target, this, false, how)
 }
 
@@ -300,7 +300,7 @@ fn construct_activated<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, callee
         None => return miss(vm, Miss::EntryNotActivation),
         Some(how) => how,
     };
-    if how.plain && !lane_activation_room(vm, &target) { return miss(vm, Miss::NoActivationRoom); }
+    if how.plain && !activation_room_in_lane(vm, &target) { return miss(vm, Miss::NoActivationRoom); }
     let Some((this, initialized)) = construct_receiver(cx, call, callee, &target) else { return miss(vm, Miss::Receiver) };
     // Allocating the receiver can make a collection due.
     note_allocation(vm);
@@ -413,7 +413,7 @@ fn body_activate_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, targ
 }
 
 /// The run of the activation a body's call pushed at `registers` by the target's own body, warmed
-/// toward one first where it has none, as the lane's own calls warm it (`lane_specialize`: a
+/// toward one first where it has none, as the lane's own calls warm it (`specialize_in_lane`: a
 /// constructor only body code constructs is entered by nothing else): its completion writes the
 /// call's register (`LANE_CALL_COMPLETED`), and any other end leaves the lane in the activation
 /// (`LANE_CALL_LEFT`). Its words are the entered `this` (`body_this_in_lane`, `call_body::body_this`)
@@ -431,7 +431,7 @@ fn body_run_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::super::program_store::derived_lane_view);
     let Some(own) = own else { return leave(start, Value::UNDEFINED) };
     let respecializes = own.respecializes();
-    if respecializes || own.body_view_in_lane().is_none() { lane_specialize(cx, own, target.function, respecializes, &[], None); }
+    if respecializes || own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, respecializes, &[], None); }
     let Some(method) = own.body_view_in_lane().filter(|method| body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
         return leave(start, Value::UNDEFINED);

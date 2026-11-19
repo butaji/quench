@@ -1023,8 +1023,6 @@ impl<H: Host> Vm<H> {
         // A swept function's id may go to another record (`RealmNativeProofs`).
         self.realm_native_proofs.forget();
         super::dispatch_fast::retire_running_lane_context();
-        // Records keeping a root slot's value read the slot again (`lane_load_root_constant`).
-        self.retire_root_constants();
         self.forget_dead_parked_lanes_and_hints();
         self.realm.jobs.extend(
             finalization_jobs

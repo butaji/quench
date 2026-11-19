@@ -4,7 +4,7 @@
 //! miss to the helper row where the staged body leaves.
 
 use crate::staged::math::FloatUnary;
-use crate::vm::Native;
+use crate::heap::Native;
 use crate::vm::number::{MathFunction, math_function};
 use quench_bjit::call::BuiltinRow;
 

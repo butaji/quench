@@ -270,7 +270,7 @@ pub(super) fn lane_push_getter<H: Host>(
     // The plain depth the push writes past, loaded once; at depth 0 the room test refreshes
     // the bound for the pushes above (`LaneStack::plain_room`).
     let depth = vm.lane_stack.plain.depth.get();
-    debug_assert_eq!(vm.lane_stack.plain_room(depth, target.room), lane_activation_room(vm, target));
+    debug_assert_eq!(vm.lane_stack.plain_room(depth, target.room), activation_room_in_lane(vm, target));
     if !vm.lane_stack.plain_room(depth, target.room) {
         return None;
     }
