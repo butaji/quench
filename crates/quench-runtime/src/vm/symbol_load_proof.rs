@@ -327,12 +327,14 @@ impl<H: Host> Vm<H> {
     }
 
     /// The holder of an inherited proof answer: the object `hops` prototype links up from the
-    /// receiver record `data`. The subjects the answer's entry is held under fix every link.
+    /// receiver record `data`. The subjects the answer's entry is held under fix every link,
+    /// which may be any object whose shape answers the key (`Vm::prove_load`), an array's
+    /// among them.
     #[inline(always)]
     pub(super) fn proof_holder<'a>(&'a self, data: &'a crate::heap::Object, hops: u8) -> Option<&'a crate::heap::Object> {
         let mut link = data;
         for _ in 0..hops {
-            link = self.heap.object_record(link.proto())?;
+            link = self.heap.object(link.proto())?;
         }
         Some(link)
     }

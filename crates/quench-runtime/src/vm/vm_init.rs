@@ -173,6 +173,7 @@ impl<H: Host> Vm<H> {
             megamorphic_field_indices: Default::default(),
             field_cache_writes: Some(Vec::new()),
             megamorphic_fields: vec![],
+            field_stubs: Default::default(),
             holder_hints: Default::default(),
             rc_pinned_shapes: 0,
             rc_pin_epoch: u64::MAX,

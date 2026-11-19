@@ -80,8 +80,7 @@ pub(crate) struct ObjectTemplate {
     layouts_proved: Option<std::cell::Cell<u64>>,
     /// Keeps the graph and every guarded object and probed value alive, so each compares
     /// by identity for the template's lifetime.
-    #[expect(dead_code, reason = "held for their lifetime, never read")]
-    roots: Box<[RootId]>,
+    _roots: Box<[RootId]>,
 }
 
 impl<H: Host> Vm<H> {
@@ -155,7 +154,7 @@ impl<H: Host> Vm<H> {
             probes: captured.into_boxed_slice(),
             parameters: slots.into_boxed_slice(),
             layouts_proved,
-            roots,
+            _roots: roots,
         });
         Some(id)
     }

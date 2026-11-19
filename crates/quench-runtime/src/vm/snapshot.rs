@@ -168,6 +168,7 @@ impl<H: Host> Vm<H> {
             megamorphic_field_indices: _,
             field_cache_writes: _,
             megamorphic_fields: _,
+            field_stubs: _,
             holder_hints: _,
             rc_pinned_shapes: _,
             rc_pin_epoch: _,

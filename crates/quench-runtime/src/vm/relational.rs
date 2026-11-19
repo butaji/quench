@@ -428,7 +428,7 @@ impl<H: Host> Vm<H> {
             Some(SymbolLoadAnswer::Inherited { .. } | SymbolLoadAnswer::Getter { .. }) if !side => Some(true),
             Some(_) => None,
             None => match self.prove_load(object, key) {
-                super::object_get::ProvedLoad::Value(_) | super::object_get::ProvedLoad::Getter => Some(true),
+                super::object_get::ProvedLoad::Value(_) | super::object_get::ProvedLoad::Getter(_) => Some(true),
                 super::object_get::ProvedLoad::Absent => Some(false),
                 super::object_get::ProvedLoad::Unproved => None,
             },
