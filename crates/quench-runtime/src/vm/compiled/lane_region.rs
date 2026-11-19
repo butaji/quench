@@ -594,6 +594,9 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, LoopRead>,
     /// The scalar native calls a loop's entry computed once, by PC (`native_calls::hoist_scalar_calls`).
     scalar_values: BTreeMap<usize, native_calls::HoistedScalar>,
+    /// Per dense array a loop searches, whether its prototypes hold no index, proved on the loop's entry
+    /// (`hoist_arrays`) and unset by an invalidation (`forget_append_rooms`).
+    prototype_clear: BTreeMap<ArraySource, Variable>,
     /// The loops whose entering edge tests the construct plan of each callee their kept
     /// constructions build by, once for the loop (`virtual_objects::hoist_constructions`).
     construct_ready: Vec<virtual_objects::ConstructReady>,
@@ -1857,6 +1860,7 @@ pub(super) fn lower(
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
         scalar_values: BTreeMap::new(),
+        prototype_clear: BTreeMap::new(),
         construct_ready: Vec::new(),
         loop_arrays: Vec::new(), loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
@@ -4089,6 +4093,20 @@ impl Lowering<'_, '_> {
                     self.builder.def_var(variables.length, view.length);
                     let unproved = self.raw_const(Lane::I32, 0);
                     self.builder.def_var(variables.room, unproved);
+                    if (array.header..=array.back).any(|pc| super::native_calls::searches(&self.intrinsics, pc)) {
+                        let base = self.builder.use_var(variables.bits);
+                        let held = self.helper_call(LaneHelper::PrototypesHoldNoIndex, &[base]);
+                        let clear = self.raw_compare_imm(Relation::NotEqual, held, 0);
+                        let checked = match self.prototype_clear.get(&array.source).copied() {
+                            Some(checked) => checked,
+                            None => {
+                                let checked = self.builder.declare_var(types::I8);
+                                self.prototype_clear.insert(array.source, checked);
+                                checked
+                            }
+                        };
+                        self.builder.def_var(checked, clear);
+                    }
                 }
                 ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
                 ElementViews::Double => {
