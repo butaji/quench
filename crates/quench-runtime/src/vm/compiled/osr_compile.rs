@@ -281,7 +281,7 @@ fn stored_after_reads(instructions: &[crate::bytecode::WideInstruction], fields:
         if fields.get(site).is_some_and(|loads| loads.as_ref().is_some_and(|loads| !loads.is_empty())) { continue }
         let atom = store.atom_index();
         let read = instructions[..at].iter().rev().take_while(|earlier| earlier.defined_register() != Some(receiver))
-            .find_map(|earlier| match earlier.op().is_get_field().then(|| earlier.field_lookup()).flatten() {
+            .find_map(|earlier| match super::meaning_compiled::is_get_field(*earlier).then(|| earlier.field_lookup()).flatten() {
                 Some(FieldLookup::Atom { atom: read, cache_site, .. }) if read == atom && earlier.register_b() == receiver => Some(cache_site),
                 _ => None,
             });

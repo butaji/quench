@@ -327,3 +327,16 @@ pub(crate) fn stores_name(instruction: WideInstruction) -> bool {
         None => instruction.op().stores_name(),
     }
 }
+
+/// A binary operation of the numeric lowering (`JsDenotation::NumericBinary`): the catalog's property
+/// of the opcode, which `numeric_binary` rows and the stage admit by their operator.
+#[inline(always)]
+pub(crate) fn is_numeric_binary(instruction: WideInstruction) -> bool {
+    instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+}
+
+/// A unary operation of the numeric lowering (`JsDenotation::NumericUnary`), as `is_numeric_binary`.
+#[inline(always)]
+pub(crate) fn is_numeric_unary(instruction: WideInstruction) -> bool {
+    instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericUnary
+}

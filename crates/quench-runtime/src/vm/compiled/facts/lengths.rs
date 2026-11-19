@@ -143,14 +143,13 @@ impl Model<'_> {
     /// numeric steps, moves, jumps and reads of a hoisted view, whose misses leave.
     pub(in crate::vm::compiled) fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction) -> bool {
         use crate::staged::Operation as Staged;
-        let op = instruction.op();
         let decoded = crate::vm::compiled::decoded(instruction);
         let completed = crate::vm::compiled::decoded_completed(instruction);
         let quiet = matches!(decoded, Some(Staged::Move { .. } | Staged::Jump | Staged::Nop | Staged::JumpIf { .. }
                 | Staged::CompareJump { .. } | Staged::Number(crate::staged::NumberOperation::IncDec { .. })
                 | Staged::IncDecLocal { .. }))
             || crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
-            || op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+            || super::super::meaning_compiled::is_numeric_binary(instruction)
             || (matches!(completed, Some(Staged::ElementRead { .. } | Staged::ElementReadOperand { .. })) && (self.dense)(pc));
         !quiet || self.generic.contains(&pc)
     }
