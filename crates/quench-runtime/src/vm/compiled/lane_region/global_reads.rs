@@ -28,6 +28,26 @@ impl Lowering<'_, '_> {
         true
     }
 
+    /// The by-name load at `pc` of a loop's callee, read on the entering edge of the loop at `header` (`hoist_scalar_calls`):
+    /// the read `global_read` makes, but a miss leaves at the header, before the loop ran. Its tagged value.
+    pub(super) fn hoist_native_read(&mut self, state: &mut State, header: usize, pc: usize) -> Option<ir::Value> {
+        let instruction = self.unit.instructions[pc];
+        if !matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(crate::staged::Operation::LoadName { .. })) { return None; }
+        let (binding, held) = self.global_binding(pc);
+        let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit(state, header as u32));
+        if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
+            self.hold_global(state, exit, fact, (global, realm_offset));
+        }
+        if let (GlobalBinding::Typed { .. }, Some(&(GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. })), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
+            self.hold_global_slot(state, exit, slot);
+        }
+        let proof = super::EmitProof::GlobalRead { miss: exit, binding };
+        let edges = exit.map_or(frame::Edges::Value, |miss| frame::Edges::ValueGuarded { miss });
+        let row = crate::staged::Operation::decode_load_name(instruction, proof)?;
+        self.step(state, edges, row);
+        Some(self.tagged(state, instruction.result_register()))
+    }
+
     /// The binding `pc`'s read takes, and the fact that holds it: what the read's own binding
     /// time (`GlobalBinding::time`) leaves this lowering's division to fold, else the lane's read.
     fn global_binding(&self, pc: usize) -> (GlobalBinding, Option<(crate::heap::GlobalFact, Value, i32)>) {

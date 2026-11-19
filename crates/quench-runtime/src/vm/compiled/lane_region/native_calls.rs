@@ -169,6 +169,13 @@ impl Lowering<'_, '_> {
     /// dense array). False where the call is not one.
     pub(super) fn intrinsic_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(&Some((callee, inline, holder))) = self.intrinsics.get(pc) else { return false };
+        // A scalar native whose callee identity and arguments the loop's entry proved (`hoist_scalar_calls`): the call's
+        // value is the one the entry computed, its callee being the same function on each iteration.
+        if let Some(hoisted) = self.scalar_values.get(&pc).copied() && hoisted.fixed {
+            let value = self.builder.use_var(hoisted.value);
+            self.set_tagged(state, instruction.result_register(), value);
+            return true;
+        }
         // An element search scans for an int32 word (`element_search`): a search value not proved
         // int32 takes the call's generic path, which compares it by the array's own steps.
         if let Inline::Builtin(Builtin::Includes | Builtin::IndexOf) = inline
@@ -183,7 +190,7 @@ impl Lowering<'_, '_> {
         emit_js_guard(&mut self.builder, same, exit);
         match inline {
             Inline::Builtin(builtin) => self.builtin_call(state, pc, instruction, builtin, exit),
-            Inline::Scalar => self.scalar_call(state, instruction, held, exit),
+            Inline::Scalar => self.scalar_call(state, pc, instruction, held, exit),
             _ => self.math_call(state, instruction, inline, exit),
         }
         true
@@ -193,7 +200,13 @@ impl Lowering<'_, '_> {
     /// case on the arguments (`lane_allocations::scalar_native_in_lane`), which reads the native from the callee. The call
     /// leaves at `exit`, before it changes anything, where that case does not complete (an object argument, an error, a
     /// due collection).
-    fn scalar_call(&mut self, state: &mut State, instruction: WideInstruction, held: ir::Value, exit: ir::Block) {
+    fn scalar_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, held: ir::Value, exit: ir::Block) {
+        // The value the loop's entry computed (`hoist_scalar_calls`), where the callee's identity guard at this call holds.
+        if let Some(hoisted) = self.scalar_values.get(&pc).copied() {
+            let value = self.builder.use_var(hoisted.value);
+            self.set_tagged(state, instruction.result_register(), value);
+            return;
+        }
         let argc = crate::bytecode::ImmediateLayout::argument_count(instruction.imm());
         let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
         let undefined = self.builder.ins().iconst(ir::types::I64, Value::UNDEFINED.to_bits() as i64);
@@ -222,5 +235,98 @@ impl Lowering<'_, '_> {
             let number = inline.emit(&mut self.builder, &numbers);
             self.set_number(state, result, number);
         }
+    }
+}
+
+/// A scalar native call a loop's entry computed once (`Lowering::hoist_scalar_calls`): the variable holding its result, and
+/// whether its callee register is no write of the loop's, so the entry's identity guard holds on every iteration (`fixed`).
+/// Else the call keeps its identity guard per iteration, and takes the held result where that guard passes.
+#[derive(Clone, Copy)]
+pub(super) struct HoistedScalar {
+    pub(super) value: Variable,
+    pub(super) fixed: bool,
+}
+
+/// An argument of a hoisted scalar call, as the loop's entry reads it: a register no instruction of the loop writes, or a
+/// constant its loading instruction names.
+#[derive(Clone, Copy)]
+enum ScalarArgument {
+    Register(Register),
+    Constant(Value),
+}
+
+impl Lowering<'_, '_> {
+    /// The scalar native calls of the loop at `header` whose arguments the loop does not write, computed once on its entering
+    /// edge (`HoistedScalar`), so an iteration takes their result instead of the helper call. Each call is one the entry
+    /// can run before the loop: a pure native on primitive arguments, whose exit (an object argument, an error, a due
+    /// collection) leaves at the header before the loop ran, as each iteration would have left at the call.
+    pub(super) fn hoist_scalar_calls(&mut self, state: &mut State, header: usize) {
+        if self.generic.contains(&header) || !self.holds_holders() { return; }
+        let Some(end) = self.loop_end(header) else { return };
+        if !self.enters_only_at_header(header, end) { return; }
+        let calls: Vec<usize> = (header..=end).filter(|&pc| matches!(self.intrinsics.get(pc), Some(Some((_, Inline::Scalar, _))))
+            && !self.scalar_values.contains_key(&pc) && !self.hoisted.contains_key(&pc) && !self.generic.contains(&pc)).collect();
+        for pc in calls {
+            self.hoist_scalar_call(state, header, end, pc);
+        }
+    }
+
+    /// The scalar native call at `pc` in the loop `header..=end` (`hoist_scalar_calls`), where its callee is held and its
+    /// arguments are loop-invariant; else nothing is hoisted.
+    fn hoist_scalar_call(&mut self, state: &mut State, header: usize, end: usize, pc: usize) -> Option<()> {
+        let instruction = self.unit.instructions[pc];
+        let argc = crate::bytecode::ImmediateLayout::argument_count(instruction.imm());
+        let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
+        let callee = instruction.register_b();
+        let Some(Some((identity, _, holder))) = self.intrinsics.get(pc).copied() else { return None };
+        if argc == 0 { return None; }
+        let writes = |at: usize| self.unit.instructions[at].written_registers().any(|written| written == callee);
+        let loop_writes: Vec<usize> = (header..=end).filter(|&at| writes(at)).collect();
+        let defined = (0..pc).rev().find(|&at| writes(at))?;
+        // A callee the loop writes is its one by-name read of the native (`defined`), read on the entering edge: else the
+        // callee is no loop write and the entry's guard holds throughout.
+        let fixed = loop_writes.is_empty();
+        if !fixed && (loop_writes != [defined] || defined < header || !matches!(self.global_reads.get(&defined), Some(GlobalRead::NativeSlot { .. }))) {
+            return None;
+        }
+        let arguments: Vec<ScalarArgument> = (0..argc).map(|index| self.scalar_argument(header, end, pc, window + index)).collect::<Option<_>>()?;
+        let exit = self.guard_exit(state, header as u32);
+        self.hold_holder_any(state, exit, holder);
+        let entry = if fixed { self.tagged(state, callee) } else { self.hoist_native_read(state, header, defined)? };
+        let same = self.is_identity(entry, identity);
+        emit_js_guard(&mut self.builder, same, exit);
+        let mut values = Vec::with_capacity(usize::from(argc));
+        for argument in arguments {
+            values.push(match argument {
+                ScalarArgument::Register(register) => self.tagged(state, register),
+                ScalarArgument::Constant(value) => self.builder.ins().iconst(ir::types::I64, value.to_bits() as i64),
+            });
+        }
+        let undefined = self.builder.ins().iconst(ir::types::I64, Value::UNDEFINED.to_bits() as i64);
+        let count = self.builder.ins().iconst(ir::types::I64, i64::from(argc));
+        let second = if argc == 2 { values[1] } else { undefined };
+        let value = self.helper_call(LaneHelper::ScalarNative, &[entry, count, undefined, values[0], second]);
+        let done = self.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
+        emit_js_guard(&mut self.builder, done, exit);
+        // As the call does in the loop, a primitive argument may allocate its text.
+        self.allocated(state);
+        let variable = self.builder.declare_var(ir::types::I64);
+        self.builder.def_var(variable, value);
+        self.scalar_values.insert(pc, HoistedScalar { value: variable, fixed });
+        Some(())
+    }
+
+    /// The argument the window register `register` holds at the call at `pc` in the loop `header..=end`: the source of the
+    /// one copy or constant load that writes it, in the call's own block, where the loop writes that source nowhere.
+    fn scalar_argument(&self, header: usize, end: usize, pc: usize, register: Register) -> Option<ScalarArgument> {
+        let at = (header..pc).rev().find(|&at| self.unit.instructions[at].written_registers().any(|written| written == register))?;
+        if ((at + 1)..pc).any(|later| self.blocks.get(later).is_some_and(|block| block.is_some())) { return None; }
+        let instruction = self.unit.instructions[at];
+        if instruction.op().js_denotation() == crate::bytecode::JsDenotation::LoadConst {
+            let constant = self.program.constants.get(instruction.constant_index())?;
+            return super::super::facts::immediate(constant).map(ScalarArgument::Constant);
+        }
+        let Some(crate::staged::Operation::<(), ()>::Move { source, .. }) = crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::EMPTY) else { return None };
+        (header..=end).all(|at| !self.unit.instructions[at].written_registers().any(|written| written == source)).then_some(ScalarArgument::Register(source))
     }
 }

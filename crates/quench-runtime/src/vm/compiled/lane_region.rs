@@ -592,6 +592,8 @@ struct Lowering<'a, 'f> {
     /// The calls that run inline as Math operations (`native_calls::intrinsic_calls`).
     intrinsics: native_calls::Intrinsics,
     hoisted: BTreeMap<usize, LoopRead>,
+    /// The scalar native calls a loop's entry computed once, by PC (`native_calls::hoist_scalar_calls`).
+    scalar_values: BTreeMap<usize, native_calls::HoistedScalar>,
     /// The loops whose entering edge tests the construct plan of each callee their kept
     /// constructions build by, once for the loop (`virtual_objects::hoist_constructions`).
     construct_ready: Vec<virtual_objects::ConstructReady>,
@@ -1854,6 +1856,7 @@ pub(super) fn lower(
         unit_leaders: std::cell::OnceCell::new(),
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
+        scalar_values: BTreeMap::new(),
         construct_ready: Vec::new(),
         loop_arrays: Vec::new(), loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),

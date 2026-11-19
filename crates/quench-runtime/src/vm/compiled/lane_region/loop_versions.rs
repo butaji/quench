@@ -101,6 +101,8 @@ impl Lowering<'_, '_> {
     pub(super) fn hoist_entry(&mut self, state: &mut State, header: usize) {
         self.hoist_pure(state, header);
         self.hoist_decisions(state, header);
+        // Before the views: a scalar native's allocation reloads the arena the views' bases come from.
+        self.hoist_scalar_calls(state, header);
         self.hoist_arrays(state, header, false);
         self.hoist_stable(state, header);
         self.hoist_receivers(state, header);
