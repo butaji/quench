@@ -115,12 +115,15 @@ pub(super) struct CallShape {
     /// follows it does (`steps::completing`), and nothing is live after it.
     pub(super) returning: bool,
     pub(super) form: CallForm,
+    /// The opcode of the call record, which keys the fast-row counter of a planned direct call (`note_fast`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) op: crate::bytecode::Op,
 }
 
 impl CallShape {
     pub(super) fn of(call_pc: u32, instruction: WideInstruction, form: CallForm) -> Self {
         let imm = instruction.imm();
-        let (result, returning) = (instruction.result_register(), instruction.returns_from_frame());
+        let (result, returning, op) = (instruction.result_register(), instruction.returns_from_frame(), instruction.op());
         match form {
             CallForm::Plain => Self {
                 call_pc,
@@ -131,8 +134,9 @@ impl CallShape {
                 result,
                 returning,
                 form,
+                op,
             },
-            CallForm::Construct | CallForm::Stepped => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form },
+            CallForm::Construct | CallForm::Stepped => Self { call_pc, callee: 0, this: 0, window: 0, argc: 0, result, returning, form, op },
         }
     }
 }
@@ -357,7 +361,7 @@ mod tests {
     use super::*;
     use quench_bjit::call_record as protocol;
 
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain };
+    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain, op: crate::bytecode::Op::Call };
 
     fn facts(registers: u16, params: u16) -> DirectFacts {
         let cell = CellFacts { registers, room: registers, params, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };

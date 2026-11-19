@@ -6,7 +6,7 @@
 //! decode does not take, an opcode with no staged row such as `NumericAdd`), the catalog's own
 //! trait for the opcode decides, as it did before. Nothing here matches on an opcode name.
 
-use crate::bytecode::WideInstruction;
+use crate::bytecode::{Op, Register, WideInstruction};
 use crate::staged::{CallOperation, Callee, Invocation, NumberOperation, Operation, Passing, Protocol, Receiver};
 use crate::vm::compiled::{decoded, decoded_completed};
 
@@ -67,6 +67,7 @@ pub(crate) fn is_call_known(instruction: WideInstruction) -> bool {
 }
 
 /// A `JumpBinaryFalse`: a branch where the comparison of its two operands fails.
+#[inline(always)]
 pub(crate) fn is_jump_binary_false(instruction: WideInstruction) -> bool {
     match decoded(instruction) {
         Some(Operation::CompareJump { .. }) => true,
@@ -90,6 +91,7 @@ pub(crate) fn loads_name(instruction: WideInstruction) -> bool {
 }
 
 /// An ordinary call: a plain call or a call of a spread array (`Call`, `CallArray`).
+#[inline(always)]
 pub(crate) fn is_ordinary_call(instruction: WideInstruction) -> bool {
     match call_form(instruction) {
         Some(form) => matches!(form, CallForm::Plain | CallForm::Array),
@@ -106,6 +108,7 @@ pub(crate) fn is_call_array(instruction: WideInstruction) -> bool {
 }
 
 /// A construction, plain or `super(...)`.
+#[inline(always)]
 pub(crate) fn is_construct(instruction: WideInstruction) -> bool {
     match call_form(instruction) {
         Some(form) => matches!(form, CallForm::Construct | CallForm::Super),
@@ -179,6 +182,7 @@ pub(crate) fn is_set_index(instruction: WideInstruction) -> bool {
 }
 
 /// A named property read (`GetField`).
+#[inline(always)]
 pub(crate) fn is_get_field(instruction: WideInstruction) -> bool {
     match decoded(instruction) {
         Some(Operation::GetField { .. }) => true,
@@ -322,4 +326,64 @@ pub(crate) fn stores_name(instruction: WideInstruction) -> bool {
         Some(_) => false,
         None => instruction.op().stores_name(),
     }
+}
+
+/// A binary operation of the numeric lowering (`JsDenotation::NumericBinary`): the catalog's property
+/// of the opcode, which `numeric_binary` rows and the stage admit by their operator.
+#[inline(always)]
+pub(crate) fn is_numeric_binary(instruction: WideInstruction) -> bool {
+    instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+}
+
+/// A unary operation of the numeric lowering (`JsDenotation::NumericUnary`), as `is_numeric_binary`.
+#[inline(always)]
+pub(crate) fn is_numeric_unary(instruction: WideInstruction) -> bool {
+    instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericUnary
+}
+
+/// Whether a region rejection's opcode is a plain call (`Op::Call`), the stop the inliner takes over
+/// once the call site is hot (`RegionAnalysisFailure::is_call_boundary`).
+#[inline(always)]
+pub(crate) fn is_call_rejection(opcode: u16) -> bool {
+    opcode == Op::Call as u16
+}
+
+/// The record that reads a named field into `a` through the base in `b`, the lookup in `c` and the
+/// atom in `imm` (`GetField`). A rewrite builds its reads with this, not by naming the opcode.
+#[inline(always)]
+pub(crate) fn field_read_record(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
+    WideInstruction::new(Op::GetField, a, b, c, imm)
+}
+
+/// The record that stores `a` into the `this` field named by the site in `c` and atom `imm`
+/// (`SetThisField`), the sink of a fused read.
+#[inline(always)]
+pub(crate) fn this_field_store_record(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
+    WideInstruction::new(Op::SetThisField, a, b, c, imm)
+}
+
+/// The record that stores `a` into a field of the object in `b` through the lookup in `c` and atom
+/// `imm` (`SetField`).
+#[inline(always)]
+pub(crate) fn field_store_record(a: u16, b: u16, c: u16, imm: u32) -> WideInstruction {
+    WideInstruction::new(Op::SetField, a, b, c, imm)
+}
+
+/// The record that copies register `b` into `a` (`Move`).
+#[inline(always)]
+pub(crate) fn move_record(a: Register, b: Register) -> WideInstruction {
+    WideInstruction::new(Op::Move, a, b, 0, 0)
+}
+
+/// The record that jumps unconditionally to the PC `target` (`Jump`).
+#[inline(always)]
+pub(crate) fn jump_record(target: u32) -> WideInstruction {
+    WideInstruction::new(Op::Jump, 0, 0, 0, target)
+}
+
+/// The record that reads a capture into `a` at the depth and slot its immediate `imm` names
+/// (`LoadCapture`), through the operands in `b` and `c`.
+#[inline(always)]
+pub(crate) fn capture_load_record(a: u16, b: u16, c: u16, imm: u32) -> WideInstruction {
+    WideInstruction::new(Op::LoadCapture, a, b, c, imm)
 }

@@ -15,7 +15,7 @@ pub(super) fn inlinable(instruction: WideInstruction) -> bool {
         _ if crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some() || throws(instruction) => instruction.result_flags() == 0,
         _ if super::super::meaning_compiled::is_construct(instruction) => instruction.result_flags() == 0,
         _ if super::super::meaning_compiled::is_call(instruction) => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
-        _ => plain && instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
+        _ => plain && super::super::meaning_compiled::is_numeric_binary(instruction),
     })
 }
 

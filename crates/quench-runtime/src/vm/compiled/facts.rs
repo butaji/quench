@@ -288,8 +288,8 @@ fn transfer(
             ranges::step(types, instruction);
             Flow::Next
         }
-        _ if Operation::<u64, ()>::is_number_binary(instruction) => binary::numeric_binary(types, instruction, constants, written),
-        Some(Operation::CompareJump { .. }) if super::nullish_comparison(constants, instruction,
+        _ if super::meaning_compiled::is_numeric_binary(instruction) => binary::numeric_binary(types, instruction, constants, written),
+        _ if compares && super::nullish_comparison(constants, instruction,
             |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_some() => {
             Flow::To(instruction.jump_target() as usize)
         }
@@ -356,7 +356,8 @@ fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Fl
             set(types, instruction.result_register(), ty);
             Some(Flow::Next)
         }
-        _ if Operation::<u64, ()>::is_number_unary(instruction) && instruction.result_flags() == 0 && !instruction.writes_current_this()
+        _ if super::meaning_compiled::is_unary(instruction) && instruction.result_flags() == 0 && !instruction.writes_current_this()
+            && super::meaning_compiled::is_numeric_unary(instruction)
             && super::super::operations::NumberUnary::from_js_instruction(op, instruction.unary_operator()).is_some() => {
             let source = instruction.register_b();
             if !types.get(usize::from(source)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)) { set(types, source, Type::NUMBER); }

@@ -143,15 +143,15 @@ impl Model<'_> {
     /// Whether `instruction` may change an array's length or run guest code that can: all but
     /// numeric steps, moves, jumps and reads of a hoisted view, whose misses leave.
     pub(in crate::vm::compiled) fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction) -> bool {
-        let quiet = Operation::<u64, ()>::is_nop(instruction)
-            || crate::staged::loads_constant(instruction.op())
-            || matches!(Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY),
-                Some(Operation::Move { .. } | Operation::LoadConst { .. } | Operation::Jump | Operation::JumpIf { .. }
-                    | Operation::CompareJump { .. } | Operation::Number(NumberOperation::IncDec { .. })))
-            || Operation::<u64, ()>::is_number_binary(instruction)
-            // merge: HEAD also keeps a dense element read of a frame local's base (`ElementReadOperand`) quiet.
-            || (matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementRead { .. } | Operation::ElementReadOperand { .. }))
-                && (self.dense)(pc));
+        use crate::staged::Operation as Staged;
+        let decoded = crate::vm::compiled::decoded(instruction);
+        let completed = crate::vm::compiled::decoded_completed(instruction);
+        let quiet = matches!(decoded, Some(Staged::Move { .. } | Staged::Jump | Staged::Nop | Staged::JumpIf { .. }
+                | Staged::CompareJump { .. } | Staged::Number(crate::staged::NumberOperation::IncDec { .. })
+                | Staged::IncDecLocal { .. }))
+            || crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
+            || super::super::meaning_compiled::is_numeric_binary(instruction)
+            || (matches!(completed, Some(Staged::ElementRead { .. } | Staged::ElementReadOperand { .. })) && (self.dense)(pc));
         !quiet || self.generic.contains(&pc)
     }
 }

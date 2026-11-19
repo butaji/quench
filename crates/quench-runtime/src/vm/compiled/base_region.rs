@@ -227,8 +227,8 @@ pub(in crate::vm) fn fast_rows(op: crate::bytecode::Op) -> u64 {
 }
 
 #[cfg(test)]
-fn note_fast(op: u16) {
-    FAST_ROWS.with(|rows| rows[usize::from(op)].update(|count| count + 1));
+fn note_fast(op: crate::bytecode::Op) {
+    FAST_ROWS.with(|rows| rows[op as usize].update(|count| count + 1));
 }
 
 /// The direct-cell call sites the stitcher inlined (`call_plan::plan_call`), counted whether or not

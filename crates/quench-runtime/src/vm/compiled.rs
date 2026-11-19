@@ -281,22 +281,16 @@ const _: () = assert!(RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 /// Compute ToBoolean for values whose truthiness is encoded without a heap
 /// lookup. Strings, BigInts, and objects take the VM path at the same PC.
 fn emit_js_tagged_truthiness(builder: &mut FunctionBuilder<'_>, bits: ir::Value, fallback: ir::Block) -> ir::Value {
-    use crate::staged::machine::Relation;
     let mut stage = object_slots::emit(builder);
     let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut stage, bits);
-    let decided = stage.raw_compare_imm(Relation::Equal, undecided, 0);
+    let decided = stage.not(undecided);
     stage.guard(decided, fallback);
     truthy
 }
 
 /// Decode an already-proved Number without repeating its semantic type check.
 fn emit_known_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
-    use crate::staged::machine::{Lane, Unary};
-    let mut stage = object_slots::emit(builder);
-    let integer = crate::staged::value::is_int(&mut stage, bits);
-    let int = crate::staged::value::int32_as_f64(&mut stage, bits);
-    let double = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
-    stage.raw_select(integer, int, double)
+    crate::staged::value::known_number_f64(&mut object_slots::emit(builder), bits)
 }
 
 /// Unbox a tagged JavaScript Number, branching to the current instruction's
@@ -307,37 +301,16 @@ fn emit_js_tagged_number(
     bits: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    use crate::staged::machine::{Lane, Relation, Unary};
-    let nan = builder.create_block();
-    let tagged = builder.create_block();
-    let integer_block = builder.create_block();
     let join = builder.create_block();
     builder.append_block_param(join, types::F64);
     let mut stage = object_slots::emit(builder);
-    let number = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
-    let unordered = stage.raw_compare(Relation::FloatUnordered, number, number);
-    stage.branch_if(unordered, (nan, &[]), (join, &[number]));
-
-    // An integer is the common NaN-space value (a double column holds its integral
-    // values tagged), so its tag is tested first.
-    stage.builder.switch_to_block(nan);
-    let integer = crate::staged::value::is_int(&mut stage, bits);
-    stage.branch_if(integer, (integer_block, &[]), (tagged, &[]));
-
-    // Any other tag leaves; an untagged NaN is the double NaN.
-    stage.builder.switch_to_block(tagged);
-    let double = crate::staged::value::is_double(&mut stage, bits);
-    stage.branch_if(double, (join, &[number]), (fallback, &[]));
-
-    stage.builder.switch_to_block(integer_block);
-    let int = crate::staged::value::int32_as_f64(&mut stage, bits);
-    stage.goto(join, &[int]);
-    builder.seal_block(nan);
-    builder.seal_block(tagged);
-    builder.seal_block(integer_block);
-    builder.seal_block(join);
-    builder.switch_to_block(join);
-    builder.block_params(join)[0]
+    // The row's test and unboxing (an int32 by its tag, a double by its bits, anything else
+    // leaves to the VM at the same PC).
+    let (decided, number) = crate::staged::value::tagged_number_f64(&mut stage, bits);
+    stage.branch_if(decided, (join, &[number]), (fallback, &[]));
+    stage.builder.switch_to_block(join);
+    stage.builder.seal_block(join);
+    stage.builder.block_params(join)[0]
 }
 
 // The boxes `emit_js_box_number` made while a lowering records them (`record_boxed_numbers`):
@@ -381,14 +354,11 @@ fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> 
 }
 
 fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    use crate::staged::machine::{Lane, Relation, Unary};
     let (cold, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(cold);
     let result = builder.append_block_param(join, types::I64);
     let mut stage = object_slots::emit(builder);
-    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
-    let truncated = stage.raw_unary(Unary::Truncate, number);
-    let whole_or_nan = stage.raw_compare(Relation::FloatUnorderedEqual, truncated, number);
+    let (whole_or_nan, bits) = crate::staged::value::number_bits_unless_whole(&mut stage, number);
     stage.branch_if(whole_or_nan, (cold, &[]), (join, &[bits]));
     stage.builder.switch_to_block(cold);
     stage.builder.seal_block(cold);
@@ -1304,7 +1274,7 @@ struct NullishComparison {
 /// Resolve the constant operand and equality denotation before execution.
 fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: WideInstruction,
     register_type: impl Fn(Register) -> typed_ir::Type) -> Option<NullishComparison> {
-    if !matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CompareJump { .. })) { return None; }
+    if !meaning_compiled::is_jump_binary_false(instruction) { return None; }
     let nullish = |operand: Operand| {
         let ty = facts::operand_type(constants, operand, &register_type);
         if ty == typed_ir::Type::language(crate::ValueType::Null) { Some(Value::NULL) }
@@ -3932,8 +3902,14 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
 /// ToBoolean of `bits`, a value whose cell decides it (`Vm::truthy`): a read, which neither
 /// allocates nor runs guest code.
 unsafe extern "C" fn lane_truthy<H: Host>(vm: u64, _residual: u64, bits: u64) -> u64 {
+    // The word's answer is the staged truthiness row the lane's Cranelift runs (`tagged_truthiness`);
+    // only a heap value the word leaves undecided asks its cell.
+    let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut crate::staged::Concrete::new(std::ptr::null()), bits);
+    if !undecided {
+        return u64::from(truthy);
+    }
     // SAFETY: the payload holds the running VM, live and unborrowed while the body runs.
-    u64::from(unsafe { &*(vm as *const Vm<H>) }.truthy(Value::from_bits(bits)))
+    u64::from(unsafe { &*(vm as *const Vm<H>) }.heap_cell_truthy(Value::from_bits(bits)))
 }
 
 /// Admit a bound slot's write domain before any guest effect or raw store.
@@ -4845,8 +4821,8 @@ const JS_NO_STOP_PC: usize = usize::MAX;
 
 #[cfg(feature = "profile-native-ops")]
 fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction: WideInstruction) -> &'static str {
-    if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CompareJump { .. })) {
-        let Some((strict, _)) = super::operations::equality_operator(instruction.binary_operator_field()) else {
+    if meaning_compiled::is_jump_binary_false(instruction) {
+        let Some((strict, _))= super::operations::equality_operator(instruction.binary_operator_field()) else {
             return "branch-relation";
         };
         let registers = &vm.frames[frame].registers;
@@ -4894,7 +4870,7 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
             None => "capture-slot-miss",
         };
     }
-    if !crate::staged::Operation::<u64, ()>::is_field_read(instruction) {
+    if !meaning_compiled::is_get_field(instruction) {
         return "other";
     }
     if vm.frames[frame].function == 0 {
@@ -5197,7 +5173,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let is_call = crate::staged::Operation::<u64, ()>::is_ordinary_call(current_instruction);
+            let is_call = meaning_compiled::is_ordinary_call(current_instruction);
             let diagnostics_enabled = is_call && vm.programs.js_jit_diagnostics_enabled();
             let direct_call_target = if diagnostics_enabled && is_call {
                 vm.frames[dispatch.frame]
@@ -5270,7 +5246,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 )
             };
             // A construction the operation pushed completes as a pushed call does.
-            let step = if crate::staged::Operation::<u64, ()>::is_construction(current_instruction) && dispatch.allow_inline_calls {
+            let step = if meaning_compiled::is_construct(current_instruction) && dispatch.allow_inline_calls {
                 vm.complete_pushed_call(program, dispatch.frame, current_instruction, step)
             } else { step };
             if is_call && diagnostics_enabled {

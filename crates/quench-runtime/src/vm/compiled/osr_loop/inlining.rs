@@ -352,7 +352,7 @@ impl<'c, 'a> Emission<'c, 'a> {
             if site.frame.bound[usize::from(parameter)].is_some() {
                 continue;
             }
-            let copy = WideInstruction::new(crate::staged::row_op(crate::staged::MOVE_ROW), site.frame.base + parameter, site.window + parameter, 0, 0);
+            let copy = crate::vm::compiled::meaning_compiled::move_record(site.frame.base + parameter, site.window + parameter);
             self.push(copy, Origin::Caller(site.resume), self.plan.mask(site.resume)?);
         }
         Some(())
@@ -361,8 +361,8 @@ impl<'c, 'a> Emission<'c, 'a> {
     /// Completes the call as the callee's `Return` does: the result's move, then the jump
     /// past the call.
     fn complete(&mut self, view: &CallView<'_, '_>, returned: Register, origin: Origin, set: RegisterSet) {
-        self.push(WideInstruction::new(crate::staged::row_op(crate::staged::MOVE_ROW), view.site.result, returned, 0, 0), origin, set);
-        self.push(WideInstruction::new(crate::staged::row_op(crate::staged::JUMP_ROW), 0, 0, 0, view.continuation), origin, set);
+        self.push(crate::vm::compiled::meaning_compiled::move_record(view.site.result, returned), origin, set);
+        self.push(crate::vm::compiled::meaning_compiled::jump_record(view.continuation), origin, set);
     }
 
     fn callee_instruction(&mut self, view: &CallView<'_, 'a>, callee_pc: usize, instruction: WideInstruction) -> Option<()> {
@@ -396,8 +396,8 @@ impl<'c, 'a> Emission<'c, 'a> {
         if !crate::staged::writes_this_field(instruction.op()) {
             return view.rename(instruction);
         }
-        let store = view.rename(WideInstruction::new(crate::staged::row_op(crate::staged::SET_FIELD_ROW), instruction.a(), 0, instruction.c(), instruction.imm()))?;
-        Some(WideInstruction::new(crate::staged::row_op(crate::staged::SET_FIELD_ROW), store.a(), view.frame.receiver, store.c(), store.imm()))
+        let store = view.rename(crate::vm::compiled::meaning_compiled::field_store_record(instruction.a(), 0, instruction.c(), instruction.imm()))?;
+        Some(crate::vm::compiled::meaning_compiled::field_store_record(store.a(), view.frame.receiver, store.c(), store.imm()))
     }
 
     /// A callee's own capture reads its environment, which its identity guard fixes
@@ -410,7 +410,7 @@ impl<'c, 'a> Emission<'c, 'a> {
             self.callee_captures.len() - 1
         });
         let slot = CALLEE_CAPTURE | u16::try_from(position).ok().filter(|position| *position < CALLEE_CAPTURE)?;
-        Some(WideInstruction::new(crate::staged::row_op(crate::staged::LOAD_CAPTURE_ROW), instruction.a(), instruction.b(), instruction.c(), ImmediateLayout::capture_immediate(0, slot)))
+        Some(crate::vm::compiled::meaning_compiled::capture_load_record(instruction.a(), instruction.b(), instruction.c(), ImmediateLayout::capture_immediate(0, slot)))
     }
 }
 

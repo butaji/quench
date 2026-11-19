@@ -519,7 +519,7 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     #[cfg(test)]
     if choice == Choice::Direct {
-        super::note_fast(crate::bytecode::index::Call);
+        super::note_fast(shape.op);
     }
     chained(parts, spills.len(), record)
 }

@@ -5,7 +5,6 @@
 
 use super::{immediate, operand_type, set};
 use crate::bytecode::{Constant, Operand, WideInstruction};
-use crate::staged::{NumberOperation, Operation};
 use crate::typed_ir::{IntRange, Type};
 use crate::value::Value;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
@@ -39,7 +38,7 @@ fn negative_zero(operation: NumberArithmetic, left: IntRange, right: IntRange) -
 
 /// The arithmetic operator `instruction` is and its operands' ranges, where both are known.
 fn operation(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<(NumberArithmetic, IntRange, IntRange)> {
-    if !Operation::<u64, ()>::is_number_binary(instruction) { return None; }
+    if !super::super::meaning_compiled::is_numeric_binary(instruction) { return None; }
     let operation = NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator())?;
     let [left, right] = [instruction.operand_b(), instruction.operand_c()].map(lookup);
     Some((operation, left?, right?))
@@ -143,7 +142,7 @@ pub(in crate::vm::compiled) fn result(lookup: Lookup<'_>, constants: &[Constant]
     if crate::staged::loads_constant(instruction.op()) {
         return constants.get(instruction.constant_index()).and_then(immediate).and_then(Value::as_int).map(IntRange::singleton);
     }
-    let bitwise_operation = Operation::<u64, ()>::is_number_binary(instruction)
+    let bitwise_operation = super::super::meaning_compiled::is_numeric_binary(instruction)
         .then(|| NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator())).flatten();
     match bitwise_operation {
         Some(operation @ (NumberBitwise::And | NumberBitwise::Or | NumberBitwise::Xor | NumberBitwise::ShiftRight)) =>
