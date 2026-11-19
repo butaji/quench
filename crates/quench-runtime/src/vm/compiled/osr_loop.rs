@@ -1247,6 +1247,8 @@ pub(crate) struct LoopEntry {
     /// An inlining region's callee registers, which leaving at an inlined instruction
     /// writes back here for its activation.
     scratch: [std::mem::MaybeUninit<u64>; MAX_REGION_REGISTERS],
+    /// What the budget word was primed with for the current run (`set_backedge_budget`; `BACKEDGE_BUDGET` by default).
+    primed: i64,
 }
 
 /// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
@@ -1285,15 +1287,23 @@ impl LoopEntry {
         let mut words = [std::mem::MaybeUninit::uninit(); ENTRY_WORDS];
         // The backward-edge budget is the one leading word native code reads before any push.
         words[ENTRY_BACKEDGE_COUNT].write(BACKEDGE_BUDGET as u64);
-        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS] }
+        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS], primed: BACKEDGE_BUDGET }
     }
 
-    /// Number of taken executions of this region's backward edge in the most recent run: the budget less what the
-    /// word has left.
+    /// Number of taken executions of this region's backward edge in the most recent run: the budget the word was
+    /// primed with less what it has left.
     pub(crate) fn backedge_count(&self) -> u64 {
         // SAFETY: `new` initializes the budget word.
         let left = unsafe { self.words[ENTRY_BACKEDGE_COUNT].assume_init() } as i64;
-        (BACKEDGE_BUDGET - left).max(0) as u64
+        (self.primed - left).max(0) as u64
+    }
+
+    /// Lets a b-jit region's run take at most `budget` backward edges (`LoopTier::backedge_budget`): the word is
+    /// primed with it, and the stencil edge that debits it to zero leaves at the jump, so a loop due to move to u-jit
+    /// leaves its stencil code mid-run. Never above `BACKEDGE_BUDGET`, the run's own bound.
+    pub(crate) fn set_backedge_budget(&mut self, budget: u64) {
+        self.primed = i64::try_from(budget).unwrap_or(BACKEDGE_BUDGET).clamp(1, BACKEDGE_BUDGET);
+        self.words[ENTRY_BACKEDGE_COUNT].write(self.primed as u64);
     }
 
     /// The record's words. Native OSR may also update the private first counter word.

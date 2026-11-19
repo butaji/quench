@@ -79,14 +79,14 @@ impl<T: 'static> OffThread<T> {
     /// `work` on the code generator's thread, reading nothing the program owns.
     pub(in crate::vm) fn start<W: 'static>(work: W, run: fn(W) -> T) -> Self {
         let work = AssertSend(work);
-        Self { done: None, result: run_in_background(move || { let AssertSend(work) = work; AssertSend(run(work)) }) }
+        Self { done: None, result: run_in_background(move || { let held = work; let AssertSend(work) = held; AssertSend(run(work)) }) }
     }
 
     /// `work` on the code generator's thread, which reads data the program keeps alive until
     /// it ends: dropping the driver waits for it.
     pub(in crate::vm) fn guarded<W: 'static>(work: W, run: fn(W) -> T) -> Self {
         let work = AssertSend(work);
-        let (result, done) = run_in_background_guarded(move || { let AssertSend(work) = work; AssertSend(run(work)) });
+        let (result, done) = run_in_background_guarded(move || { let held = work; let AssertSend(work) = held; AssertSend(run(work)) });
         Self { done: Some(done), result }
     }
 

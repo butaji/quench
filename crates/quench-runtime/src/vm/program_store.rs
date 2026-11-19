@@ -2642,7 +2642,7 @@ impl ProgramStore {
         if entry.native_js.is_some() {
             return (&[], &entry.constants[..]);
         }
-        (entry.lane_views.of(&entry.residual), &entry.constants[..])
+        (entry.views_in_lane.of(&entry.residual), &entry.constants[..])
     }
 
     /// The lane view a general-loop entry of `function` runs with. A function that may loop
