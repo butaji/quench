@@ -29,6 +29,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } | Operation::CloneEnv { .. }
             | Operation::IteratorCleanupPush { .. } | Operation::IteratorCleanupPop | Operation::SetFunctionName { .. }
             => super::names::step(stage, frame, operation),
+        #[cfg(not(stencil_build))]
         Operation::SuperConstArrayObject2(pair) => super::superinstructions::step(stage, frame, pair),
         guard @ (Operation::GuardIdentity { .. } | Operation::GuardLive | Operation::GuardRealm { .. } | Operation::GuardDeclared { .. }
             | Operation::GuardPrototype { .. } | Operation::GuardShape { .. } | Operation::GuardStores { .. } | Operation::BackEdge { .. }) => guard_step(stage, frame, guard),
@@ -36,9 +37,6 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     }
 }
 
-/// A tier guard, or a taken back edge's poll and count (`step`): `Step::Value` where the proof holds,
-/// `Step::Unresolved` where the row leaves.
-#[inline(always)]
 /// The control a frame answers (`Frame::raise`), or `Unresolved` where it answers none.
 #[inline(always)]
 fn suspended<W, C>(control: Option<C>) -> Step<W, C> {
@@ -48,6 +46,9 @@ fn suspended<W, C>(control: Option<C>) -> Step<W, C> {
     }
 }
 
+/// A tier guard, or a taken back edge's poll and count (`step`): `Step::Value` where the proof holds,
+/// `Step::Unresolved` where the row leaves.
+#[inline(always)]
 fn guard_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let held = match operation {

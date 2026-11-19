@@ -418,3 +418,10 @@ pub(crate) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
     }
     left % right
 }
+
+impl NumberArithmetic {
+    /// Whether the result of two integers is an integer: all but a division.
+    pub(crate) const fn integral(self) -> bool {
+        !matches!(self, Self::Divide)
+    }
+}

@@ -2,7 +2,6 @@
 //! interpreter and every tier.
 
 use super::*;
-use crate::value::ValueLayout;
 
 use super::value::{TYPEOF_BOOLEAN, TYPEOF_NUMBER, TYPEOF_OBJECT, TYPEOF_UNDEFINED, typeof_classes};
 use super::value_encoding::ValueLayout;

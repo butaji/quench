@@ -95,10 +95,6 @@ impl NumberArithmetic {
         matches!(self, Self::Add | Self::Subtract)
     }
 
-    /// Whether the result of two integers is an integer: all but a division.
-    pub(crate) const fn integral(self) -> bool {
-        !matches!(self, Self::Divide)
-    }
 }
 
 #[cfg(test)]

@@ -21,6 +21,9 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/object.rs"] pub(crate) mod object;
 #[path = "../../quench-runtime/src/staged/narrow.rs"] mod narrow;
 #[path = "../../quench-runtime/src/staged/elements.rs"] pub(crate) mod elements;
+#[path = "../../quench-runtime/src/staged/double_view.rs"] pub(crate) mod double_view;
+// The value encoding, mounted once by `layout.rs`.
+pub(crate) use crate::layout::value_encoding;
 #[path = "../../quench-runtime/src/staged/environment.rs"] pub(crate) mod environment;
 #[path = "../../quench-runtime/src/staged/string_length.rs"] pub(crate) mod string_length;
 #[path = "../../quench-runtime/src/staged/code_units.rs"] pub(crate) mod code_units;
@@ -110,9 +113,6 @@ pub(crate) use allocation::{Allocation, InlineEmpty};
 // families are the runtime's alone. The Wasm call rows' staged ABI, roots and instance words.
 #[path = "../../quench-runtime/src/staged/wasm_jump.rs"] pub(crate) mod wasm_jump;
 pub(crate) use wasm_jump::{BranchTable, WasmJump};
-#[path = "../../quench-runtime/src/staged/wasm_call.rs"] #[allow(dead_code)] pub(crate) mod wasm_call;
-#[path = "../../quench-runtime/src/staged/wasm_roots.rs"] pub(crate) mod wasm_roots;
-#[path = "../../quench-runtime/src/staged/wasm_instance.rs"] #[allow(dead_code)] pub(crate) mod wasm_instance;
 
 #[path = "../../quench-runtime/src/staged/edge.rs"] mod edge;
 pub(crate) use edge::Edge;

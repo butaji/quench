@@ -69,6 +69,7 @@ pub(crate) enum Operation<W, P> {
     Allocate { destination: Register, allocation: Allocation, proof: P },
     /// A `SuperConstArrayObject2` record's pair (`superinstructions`): a constant array, two `Binary`
     /// operations, then an object pair, each part's row in turn (`superinstructions::step`).
+    #[cfg(not(stencil_build))]
     SuperConstArrayObject2(super::superinstructions::ConstArrayPair<P>),
     /// Define element `index` of the literal array in `array` as `value` (`DefineArrayElement`), a
     /// fresh hole of that array; the frame's element definer answers it (`Frame::define_element`).
@@ -243,14 +244,17 @@ pub(crate) enum Operation<W, P> {
     #[cfg(not(stencil_build))]
     WasmFloat(wasm_float::WasmFloatOperation),
     /// A Wasm i32 or i64 register or immediate operator (`wasm_int`), which the row answers from its words.
+    #[cfg(not(stencil_build))]
     WasmInt(wasm_int::WasmIntOperation),
     /// A Wasm i32 conditional jump or fused add-and-jump over int32 operands (`wasm_jump`).
     WasmJump(WasmJump),
     /// A Wasm branch table: control goes to the entry its index picks (`Edge::Entry`, `wasm_jump`).
     BranchTable(BranchTable),
     /// A Wasm global's load or store, or a register window's fill (`wasm_state`).
+    #[cfg(not(stencil_build))]
     WasmState(wasm_state::WasmStateOperation),
     /// A Wasm direct load or store of the function's memory (`wasm_access`).
+    #[cfg(not(stencil_build))]
     WasmAccess(wasm_access::WasmAccessOperation),
     /// A Wasm SIMD operator or byte shuffle on the lane's vector registers (`wasm_simd`).
     #[cfg(not(stencil_build))]
@@ -592,6 +596,7 @@ impl<W, P> Operation<W, P> {
     }
 }
 
+#[cfg(not(stencil_build))]
 impl Operation<u64, ()> {
     /// The operation `instruction` denotes, decoded with no tables (`DecodeContext::EMPTY`): what a
     /// tier asks an instruction's meaning by, where the row's operands need no table.

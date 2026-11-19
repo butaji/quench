@@ -413,12 +413,26 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 }
 
 /// The oxc unary operator `operation` names, which the VM's `unary` takes (`CallOut::Unary`).
+#[cfg(not(stencil_build))]
 fn unary_operator(operation: NumberUnary) -> u32 {
     match operation {
         NumberUnary::Plus => oxc_ast::ast::UnaryOperator::UnaryPlus as u32,
         NumberUnary::Negate => oxc_ast::ast::UnaryOperator::UnaryNegation as u32,
     }
 }
+
+/// The stencil build has no parser, and no stencil frame takes the VM's general operators
+/// (`NumericFrame::general_operators`), so no operator code reaches a callout there.
+#[cfg(stencil_build)]
+fn unary_operator(_operation: NumberUnary) -> u32 {
+    u32::MAX
+}
+
+/// The oxc `~` operator, which the VM's `unary` takes (`CallOut::Unary`); as `unary_operator` in the stencil build.
+#[cfg(not(stencil_build))]
+const BITWISE_NOT_OPERATOR: u32 = oxc_ast::ast::UnaryOperator::BitwiseNot as u32;
+#[cfg(stencil_build)]
+const BITWISE_NOT_OPERATOR: u32 = u32::MAX;
 
 /// The VM's unary `operator` of the register `source`, defining `destination`, where the frame takes
 /// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
@@ -438,7 +452,7 @@ fn bitwise_not<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
     destination: Register, source: Operand) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let Some(value) = frame.int_operand(stage, source, miss) else {
-        return general_unary(stage, frame, oxc_ast::ast::UnaryOperator::BitwiseNot as u32, (destination, source));
+        return general_unary(stage, frame, BITWISE_NOT_OPERATOR, (destination, source));
     };
     let all_ones = stage.i32_constant(-1);
     int_arithmetic_result(stage, frame, destination, all_ones, value,

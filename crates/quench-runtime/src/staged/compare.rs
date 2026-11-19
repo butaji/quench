@@ -179,6 +179,22 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
 fn by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, comparison: Comparison,
     [left, right]: [Operand; 2]) -> Option<S::Cond> {
     if !frame.general_operators() { return None; }
+    by_vm_operator(stage, frame, comparison, [left, right])
+}
+
+/// No stencil frame takes the VM's general operators, and the stencil build has no parser's operator codes.
+#[cfg(stencil_build)]
+#[inline(always)]
+fn by_vm_operator<S: NumericStage, F: NumericFrame<S>>(_stage: &mut S, _frame: &mut F, _comparison: Comparison,
+    _operands: [Operand; 2]) -> Option<S::Cond> {
+    None
+}
+
+/// `by_vm` of a frame that takes the VM's general operators.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+fn by_vm_operator<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, comparison: Comparison,
+    [left, right]: [Operand; 2]) -> Option<S::Cond> {
     let both_registers = left.register_index().is_some() && right.register_index().is_some();
     match comparison {
         Comparison::Relation { relation, .. } => binary_decision(stage, frame, [left, right], relation.binary_operator()),
