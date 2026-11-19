@@ -1,7 +1,7 @@
 //! The registers a literal's elements were evaluated into: data a staged allocation row
 //! carries, so the elements need not be contiguous.
 
-use super::Register;
+use crate::bytecode::Register;
 
 /// The most elements a literal evaluates into registers before its array is made, and so the
 /// longest list a staged row holds (`RegisterList`).

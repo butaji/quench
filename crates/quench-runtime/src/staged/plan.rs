@@ -5,6 +5,8 @@
 //! checked once per call. A bound function unwraps at plan time only under a folded identity,
 //! because only then are its target, `this` and arguments constants of the call.
 
+// Planning reads the binding times of the frame's facts: runtime only (the stencil rows plan no entry).
+#[cfg(not(stencil_build))]
 use crate::typed_ir::BindingTime;
 
 /// A native function a call enters directly: its entry, and whether it runs beside the lane's
@@ -110,7 +112,9 @@ pub(crate) enum CallEntry {
     Helper,
 }
 
+#[cfg(not(stencil_build))]
 /// A callee a frame resolved at plan time, with the binding time of the value the site names.
+#[cfg(not(stencil_build))]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Resolved {
     pub(crate) plan: DirectPlan,
@@ -119,6 +123,7 @@ pub(crate) struct Resolved {
     pub(crate) body: Option<usize>,
 }
 
+#[cfg(not(stencil_build))]
 impl Resolved {
     /// Whether the callee's identity is a constant of the call: Static, or Stable under a dependency.
     const fn folds(&self) -> bool {
@@ -126,6 +131,7 @@ impl Resolved {
     }
 }
 
+#[cfg(not(stencil_build))]
 /// The entry of a call to `callee`, by binding time. A folded identity checks nothing; any other is
 /// guarded once. A bound function whose identity is not folded is the VM's call. A folded script
 /// function whose body fits `inline_budget` instructions inlines, with its direct entry behind it.

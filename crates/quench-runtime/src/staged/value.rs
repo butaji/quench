@@ -182,10 +182,10 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
     // A heap word's truth is its record's test alone, so the immediate and Number ladder below
     // runs only where the word is not a heap value: an object's ToBoolean costs its tag and
     // record tests, not every arm of the ladder. The arms compute the same truth as before.
-    let truthy = stage.choose(heap, |stage| {
+    let truthy = stage.choose(heap, #[inline(always)] |stage| {
         let (yes, no) = (stage.constant(1), stage.constant(0));
         stage.select(record, yes, no)
-    }, |stage| {
+    }, #[inline(always)] |stage| {
         let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
         let payload = stage.and_imm(bits, u64::from(u32::MAX));
         let integer_truthy = stage.ne_imm(payload, 0u32);
@@ -216,9 +216,18 @@ pub(crate) fn int_truthy<S: Stage>(stage: &mut S, word: S::Word) -> S::Cond {
     stage.ne_imm(word, 0u32)
 }
 
+#[cfg(not(stencil_build))]
+use crate::bytecode::typeof_name_index as name_index;
+// The stencil build mounts the same self-contained file as `crate::bytecode`'s `typeof_names`.
+#[cfg(stencil_build)]
+#[path = "../bytecode/typeof_names.rs"]
+mod typeof_names;
+#[cfg(stencil_build)]
+use typeof_names::typeof_name_index as name_index;
+
 /// The index in `bytecode::TYPEOF_NAMES` of a name some value's `typeof` is.
 const fn typeof_name_index(name: &str) -> u64 {
-    match crate::bytecode::typeof_name_index(name) {
+    match name_index(name) {
         Some(index) => index as u64,
         None => panic!("a typeof name"),
     }
@@ -377,6 +386,7 @@ pub(crate) fn number_bits_unless_whole<M: MachineScalar>(machine: &mut M, number
     (cold, bits)
 }
 
+#[cfg(not(stencil_build))]
 /// The ToInt32 candidate of the binary64 `number` by the exact I64 truncation: the low 32 bits of its
 /// saturating I64 truncation, and whether `number` lies inside the exact range
 /// (`EXACT_I64_TRUNCATION_LIMIT`); a caller leaves when the range does not hold. Returns `(int32, exact)`.
@@ -389,6 +399,7 @@ pub(crate) fn truncate_int32<M: MachineScalar>(machine: &mut M, number: M::Word)
     (machine.raw_unary(Unary::Narrow(Lane::I32), wide), exact)
 }
 
+#[cfg(not(stencil_build))]
 /// The interpreter's `immediate_typeof_index` of `value`.
 #[inline(always)]
 pub(crate) fn concrete_immediate_typeof_index(value: crate::Value) -> Option<usize> {

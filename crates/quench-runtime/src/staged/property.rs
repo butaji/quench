@@ -273,7 +273,7 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     /// without the test. An unbound `this` leaves at `miss`.
     #[inline(always)]
     fn field_this(&mut self, stage: &mut S, miss: S::Miss) -> Option<S::Word> where Self: Sized {
-        super::bound_this(stage, self, miss)
+        super::register_frame::bound_this(stage, self, miss)
     }
 
     /// The record of `owner`'s `object`, with the words the frame already holds of it (its

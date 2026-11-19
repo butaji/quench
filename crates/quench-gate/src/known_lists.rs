@@ -31,7 +31,7 @@ pub fn run(config: &Config) -> Verdict {
         total += names(&current).len();
         let shown = process::run(config.command("git").args(["show", &format!("{TRUNK}:{list}")]))?;
         if !shown.success {
-            return Ok(format!("{TRUNK} is not fetched; lists unchecked ({total}+ known failures)"));
+            return Err(format!("{TRUNK}:{list} is not available (fetch {TRUNK}); the known-failure lists cannot be checked"));
         }
         let ceiling = shown.stdout;
         report.extend(added(&ceiling, &current).into_iter().map(|name| format!("  {list}: {name}")));

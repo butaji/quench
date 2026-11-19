@@ -605,6 +605,9 @@ struct Lowering<'a, 'f> {
     /// Per dense array a loop searches, whether its prototypes hold no index, proved on the loop's entry
     /// (`hoist_arrays`) and unset by an invalidation (`forget_append_rooms`).
     prototype_clear: BTreeMap<ArraySource, Variable>,
+    /// The hoisted dense arrays, by loop header and source, whose entering edge guarded every element
+    /// an int32 (`int_only_array`, `hoist_arrays`): their reads take the element's word as it is.
+    int_only: BTreeSet<(usize, ArraySource)>,
     /// The loops whose entering edge tests the construct plan of each callee their kept
     /// constructions build by, once for the loop (`virtual_objects::hoist_constructions`).
     construct_ready: Vec<virtual_objects::ConstructReady>,
@@ -1881,6 +1884,7 @@ pub(super) fn lower(
         hoisted: BTreeMap::new(),
         scalar_values: BTreeMap::new(),
         prototype_clear: BTreeMap::new(),
+        int_only: BTreeSet::new(),
         construct_ready: Vec::new(),
         loop_arrays: Vec::new(), loop_strings: Vec::new(), string_vars: BTreeMap::new(), loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
@@ -4124,6 +4128,15 @@ impl Lowering<'_, '_> {
                     let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
                     // Stores through the hoisted view then write the element alone.
                     if array.writable { super::emit_dense_array_uncounted(&mut self.builder, view); }
+                    // A read-only array no store or append of its loop changes, read only as int32s, is
+                    // proved once here: a backing with others (a non-int32 or a hole) leaves at the entry, so
+                    // its reads need no tag test (`proved_int_element_read`).
+                    if self.int_only_array(array) {
+                        let mut stage = super::object_slots::emit(&mut self.builder);
+                        crate::staged::elements::int_only_backing(&mut stage, view.values, exit)
+                            .expect("the emit stage continues past its guards");
+                        self.int_only.insert((array.header, array.source));
+                    }
                     self.builder.def_var(variables.values, view.values);
                     self.builder.def_var(variables.length, view.length);
                     let unproved = self.raw_const(Lane::I32, 0);
@@ -4222,6 +4235,8 @@ impl Lowering<'_, '_> {
         let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
             .filter(|array| matches!(array.views, ElementViews::Dense | ElementViews::Double) && (array.header..=array.back).contains(&pc)).collect();
         for array in arrays {
+            // An int-only array has no store or append in its loop (`int_only_array`), so no reload reaches it.
+            debug_assert!(!self.int_only.contains(&(array.header, array.source)), "a reload of an int-only array");
             let variables = self.array_variables(array);
             let bits = self.builder.use_var(variables.bits);
             if array.views == ElementViews::Double {

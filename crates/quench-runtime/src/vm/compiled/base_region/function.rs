@@ -269,6 +269,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let loops: Vec<Register> = shapes.iter().map(|proto| proto.register).collect();
     let flat: Vec<Register> = shapes.iter().filter(|proto| proto.flat).map(|proto| proto.register).collect();
     proofs::prove(&span, &mut decoded, &reached, &objects, &shaped, &loops, &flat);
+    super::repr::keep_typed_reads(&homes, &mut decoded);
     // The run's stores word is checked at the entry where a store is admitted on it (`Heap::Stores`); a store that re-reads
     // the word itself (`Decoded::recheck`) needs no entry test, and the stores after it are admitted by that test.
     let stores = decoded.iter().any(|row| row.admitted && !row.recheck);
@@ -285,6 +286,10 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let kept: Vec<Register> = numbers.iter().copied().chain(stitched.copies.iter().flatten().flat_map(|&(param, arg)| [param, arg])).collect();
     let entry_reads = numbers::entry_reads(&span, &decoded, &homes, &kinds, &kept);
     let number_held = numbers::proven_operands(&span, &decoded, &reached, &homes, &webs, &entry_reads, &kinds, ending, &stitched.entries);
+    let ints = numbers::proven_int_operands(&span, &decoded, &reached, &homes, &webs, ending, &stitched.entries);
+    for (row, (int_a, int_b)) in decoded.iter_mut().zip(ints) {
+        (row.int_a, row.int_b) = (int_a, int_b);
+    }
     let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities().collect();
     identities.sort_unstable();
     identities.dedup();

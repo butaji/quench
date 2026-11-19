@@ -888,13 +888,6 @@ fn load_encoded_records_decode_as_records_compiled_again() {
     }
 }
 
-/// The function record's budget. Estimated from 368 bytes: the eight lazy booleans share one
-/// `u16` (-14), declared atom sets, initializer and register masks move behind `Function::caches`
-/// (-24 net of its +8 pointer), and `SourcePositions` boxes its bytes (48 -> 40, -8). Plain
-/// locals and the hot expansion's pointer stay inline, where their hot-path reads need them.
-/// Net -38, so 330.
-const FUNCTION_RECORD_BUDGET: usize = 352;
-
 #[test]
 fn register_row_trait_tags_exactly_the_register_move_local_and_jump_rows() {
     let tagged: Vec<Op> = (0..Op::COUNT)

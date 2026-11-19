@@ -147,6 +147,7 @@ impl<W, P> Operation<W, P> {
             Self::Call(operation) => operation.effects(),
             // A suspension resumes the activation after anything: an `await` may run guest code
             // through PromiseResolve, and the frame's state is the generator's again.
+            #[cfg(not(stencil_build))]
             Self::Suspend { .. } => Effects::ANY,
             // The memory operations answered in `memory_effects`; anything else is conservative.
             _ => Effects::ANY,

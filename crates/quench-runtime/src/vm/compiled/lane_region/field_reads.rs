@@ -20,7 +20,8 @@ fn last_read_site(program: &ResidualProgram, instruction: WideInstruction) -> Op
 /// The type every slot the last read of `instruction`'s lookup reads has held: int32 or
 /// direct object (`NativeFieldLoad::ty`), for a lookup with no sink or completion.
 fn held_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> Option<Type> {
-    agreed_slot_type(program, fields, instruction).filter(|ty| *ty == Type::INT32 || *ty == Type::DIRECT_OBJECT_FAMILY)
+    agreed_slot_type(program, fields, instruction)
+        .filter(|ty| *ty == Type::INT32 || *ty == Type::NUMBER || *ty == Type::DIRECT_OBJECT_FAMILY)
 }
 
 /// The slot type every load of `instruction`'s plain field read observed, where they agree.
@@ -181,8 +182,10 @@ impl Lowering<'_, '_> {
     /// online body depends on the slots' observations, which every write joins before it lands
     /// (`ValueArena::note_slot_value`) and retires the body at a widening
     /// (`LaneDependencies`), so a read of the covered slots alone (`fresh`: no earlier proof stands
-    /// in for them) reads the invalidation word (`hold_stable`) and tests no tag; otherwise an
-    /// int32 tag is tested, leaving through `exit` where it fails, and anything else is untyped.
+    /// in for them) reads the invalidation word (`hold_stable`) and tests no tag, whatever class the
+    /// slots held (int32, Number, direct object). Otherwise an int32 or direct-object tag is tested
+    /// once here, leaving through `exit` where it fails, so no later use tests it again; a Number
+    /// is left untyped, as `define_read_value` proves it where only Number operations read it.
     fn prove_held_slot(&mut self, state: &mut State, instruction: WideInstruction, (value, fresh): (ir::Value, bool),
         exit: ir::Block) -> Type {
         let Some(ty) = held_slot_type(self.program, self.fields, instruction) else { return Type::ANY };
@@ -191,6 +194,9 @@ impl Lowering<'_, '_> {
         } else if ty == Type::INT32 {
             let integer = is_int_tagged(&mut self.builder, value);
             emit_js_guard(&mut self.builder, integer, exit);
+        } else if ty == Type::DIRECT_OBJECT_FAMILY {
+            let object = crate::staged::value::is_direct_object(&mut emit(&mut self.builder), value);
+            emit_js_guard(&mut self.builder, object, exit);
         } else {
             return Type::ANY;
         }
