@@ -23,7 +23,7 @@ pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState};
 pub(crate) use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmTableElements};
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
-pub(crate) use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_values, watch_prototype_values};
+pub(crate) use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_layouts, subscribe_prototype_values, watch_prototype_values};
 pub(crate) use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
 #[cfg(test)]
 pub(crate) use global_values::new_table;
@@ -1545,7 +1545,7 @@ impl ProtoLink {
         Self(Object::encode_proto(prototype))
     }
 
-    #[cfg(test)]
+    /// The link whose encoding is `bits` (`bits`'s inverse).
     pub(crate) fn from_bits(bits: u32) -> Self { Self(bits) }
 
     /// The link as the object header encodes it (`OBJECT.proto_mask`).
@@ -2326,11 +2326,11 @@ impl Object {
     }
 
     /// A change to what this object offers its inheritors, if it has any, made before it takes
-    /// effect: the watches on its values and all code holding prototype values retire
-    /// (`prototype_values::note_layout_change`), and so do the proofs whose chain holds it,
-    /// through its subject (`ChainCell`). A prototype with no subject (a restored heap's, or a
-    /// copy's) is named by no cell, so the global epoch advances for the proofs still keyed by
-    /// it.
+    /// effect: the watches and code on its values retire (`prototype_values::note_layout_change`),
+    /// and so do the proofs and the code whose chain holds it, through its subject (`ChainCell`,
+    /// `Dependencies::hold_layouts`). A prototype with no subject (a restored heap's, or a copy's)
+    /// is named by no cell, so the global epoch advances for the proofs still keyed by it, and
+    /// all code holding a prototype's value retires.
     #[inline(always)]
     fn note_prototype_layout_change(&self) {
         if self.was_used_as_prototype() {

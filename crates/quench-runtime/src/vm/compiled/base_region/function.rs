@@ -43,6 +43,9 @@ pub(in crate::vm::compiled) struct Body {
     /// The exact shapes of the holders whose values its folded reads hold (a Stable fact): a change
     /// of a value a prototype of one holds retires the body (`StableFacts::holders`).
     pub(in crate::vm::compiled) holders: Box<[u32]>,
+    /// The prototype chains its folded reads, membership tests and adding stores read through (a
+    /// Stable fact): a layout change of a prototype on one retires the body (`StableFacts::chains`).
+    pub(in crate::vm::compiled) chains: Box<[crate::code_dependencies::PrototypeChain]>,
     /// What its `instanceof` fast arms hold of their constructors' `prototype`s (a Stable fact): a write of a `prototype`,
     /// a departure of a constructor's shape or a change of the `@@hasInstance` holder's values retires the body
     /// (`StableFacts::instanceofs`).
@@ -559,6 +562,6 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let (atoms, holders) = (held_atoms(&decoded), held_holders(&decoded));
     let names_shapes = decoded.iter().any(|row| row.ic.is_some());
     Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region))), atoms, holders,
-        instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
+        chains: held_chains(&decoded), instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
         layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes })
 }

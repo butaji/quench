@@ -85,13 +85,20 @@ pub(super) fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
     facts.into()
 }
 
-/// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`), and the owners
-/// of the chain proofs the adding stores hold (`adds::Add::chain_owner`): the Stable facts the code
-/// takes, which a change of a value a prototype of that shape holds, or of any prototype's layout, retires it.
+/// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`) or whose native
+/// functions they stand on (`Decoded::holder`): the Stable facts the code takes, which a change of a value
+/// a prototype of that shape holds, or of its own layout, retires it.
 pub(super) fn held_holders(decoded: &[Decoded]) -> Box<[u32]> {
-    let chained = decoded.iter().filter_map(|row| row.add.and_then(adds::Add::chain_owner));
     let natives = decoded.iter().filter_map(|row| row.holder);
-    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)).chain(chained).chain(natives))
+    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)).chain(natives))
+}
+
+/// The prototype chains the folded rows read their answers through (`Folded::chain`) and the adding stores'
+/// chain proofs hold for (`adds::Add::chain`): the Stable facts the code takes, which a layout change or the
+/// death of a prototype on one retires it (`Heap::subscribe_prototype_chain`).
+pub(super) fn held_chains(decoded: &[Decoded]) -> Box<[crate::code_dependencies::PrototypeChain]> {
+    let added = decoded.iter().filter_map(|row| row.add.and_then(adds::Add::chain));
+    distinct(decoded.iter().filter_map(|row| row.folded.map(Folded::chain)).chain(added))
 }
 
 /// The atoms the rows hold unnamed by method caches (`Decoded::atom`): the Stable facts the code
@@ -115,13 +122,13 @@ pub(super) fn held_constructors(decoded: &[Decoded]) -> Box<[Value]> {
 
 /// The row of `key in object` over a register's object, where the VM remembers exactly one receiver layout answering the
 /// key (`Known::presences`): the boolean it answered to the register `dst`, while the object has that exact shape and prototype
-/// link (`Heap::Held`, the folded read's row over a constant), under the dependency on the prototypes' layouts that
-/// `Folded::holder` names.
+/// link (`Heap::Held`, the folded read's row over a constant), under the dependency on the layouts of the prototypes
+/// `Folded::chain` names, the whole chain the answer read.
 pub(super) fn membership_row(known: Known, pc: u32, instruction: WideInstruction, dst: Register) -> Option<Decoded> {
     let fact = known.presences?.get(pc as usize).copied().flatten().filter(|_| is_membership(instruction))?;
     let object = Some(Source::Register(instruction.operand_c().register_index()?));
     let row = Decoded::heap(Heap::Held, Some(dst), object, None);
-    Some(Decoded { hole: Value::boolean(fact.present).to_bits(), folded: Some(Folded { shape: fact.shape, link: fact.link, holder: fact.holder }), ..row })
+    Some(Decoded { hole: Value::boolean(fact.present).to_bits(), folded: Some(Folded { shape: fact.shape, link: fact.link, holder: fact.holder, depth: fact.depth }), ..row })
 }
 
 /// What the fast arm of the `instanceof` at `pc` stands on: its value and constructor registers, and the constructor's identity with

@@ -8,16 +8,17 @@ fn entry_offset(site: u16) -> u64 {
 }
 
 /// The folded form of a field read at cache `site`: where the site proves exactly one load, held by
-/// the receiver's immediate prototype, whose value the holder holds now (`InheritedConstant`), the
+/// a prototype on the receiver's chain, whose value the holder holds now (`InheritedConstant`), the
 /// receiver it stands on and the value. A change of a value any prototype of the holder's shape holds
-/// retires the code (`Body::holders`).
+/// retires the code (`Body::holders`), as does a layout change of a prototype the read passed
+/// (`Body::chains`).
 fn folded_read(known: Known, site: u16) -> Option<(Folded, u64)> {
     let reads = known.reads?;
     let loads = reads(site);
     let [load] = loads.as_slice() else { return None };
     let inherited = load.inherited?;
-    let [(link, value)] = inherited.values() else { return None };
-    (!load.function_shape).then_some((Folded { shape: load.shape, link: *link, holder: load.holder? }, value.to_bits()))
+    let ([(link, value)], Some(chain)) = (inherited.values(), inherited.chains().next()) else { return None };
+    (!load.function_shape).then_some((Folded { shape: load.shape, link: *link, holder: load.holder?, depth: chain.depth }, value.to_bits()))
 }
 
 /// The row of a named field read of a register (or of the receiver, `this`, which the payload

@@ -4206,7 +4206,7 @@ impl Lowering<'_, '_> {
             first.probed |= self.inherited_off_record(state, base, &first.loads);
         }
         let folds = self.division().folds(crate::staged::division::INHERITED_FIELD);
-        if folds { field_plans::embed_inherited(&inputs, &mut self.stable.roots); }
+        if folds { field_plans::embed_inherited(&inputs, &mut self.stable); }
         with_read_plan(&inputs, (folds, held.known.is_some()), |plans| {
             let edges = frame::Edges::ValueGuarded { miss: exit };
             match self.field_step(state, edges, crate::staged::Operation::GetField { base, lookup }, (plans, held)) {

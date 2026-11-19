@@ -7,7 +7,8 @@
 //! Facts the row relies on rather than checks: that no method cache names the atom (`Known::stores_in_place`,
 //! a Stable fact the body holds, `Decoded::atom`) and, for a store, that the receiver's prototype
 //! chain holds no setter or read-only name for it, proved for one prototype link (`AddSite::link`),
-//! which the row tests per receiver; any prototype's layout change retires the code.
+//! which the row tests per receiver; a layout change of a prototype on that chain retires the code
+//! (`Add::chain`).
 
 use super::*;
 use crate::staged::Form;
@@ -32,9 +33,9 @@ impl Add {
         Heap::Add { form: self.form, this: self.this }
     }
 
-    /// The shape whose prototype-layout dependency the code holds for the chain proof, where the add has one.
-    pub(super) fn chain_owner(self) -> Option<u32> {
-        self.site.link.map(|_| self.site.transition.before)
+    /// The chain whose prototypes' layouts the code holds for the chain proof, where the add has one.
+    pub(super) fn chain(self) -> Option<crate::code_dependencies::PrototypeChain> {
+        self.site.link.map(|link| crate::code_dependencies::PrototypeChain { link, depth: self.site.depth })
     }
 
     /// The row's holes: the before and after layouts, the value operand's frame offset, and the slot
@@ -110,7 +111,7 @@ mod tests {
     use numeric::library::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
 
     fn add(link: Option<u32>) -> Add {
-        Add { site: AddSite { transition: Transition { before: 5, after: 9, slot: 2, layouts: [5, 9] }, link }, form: Form::Arena, this: false }
+        Add { site: AddSite { transition: Transition { before: 5, after: 9, slot: 2, layouts: [5, 9] }, link, depth: 3 }, form: Form::Arena, this: false }
     }
 
     /// The holes carry what `heap_rows::add_row` unpacks: shapes, value offset, slot, link and object offset.
@@ -123,11 +124,11 @@ mod tests {
         assert_eq!((site & slot_mask, (site >> ADD_LINK_AT) & link_mask, site >> ADD_OBJECT_AT), (2, 0xABC, 24));
     }
 
-    /// Only a chained add (a store) holds a prototype-layout dependency, owned by its before-shape.
+    /// Only a chained add (a store) holds a prototype-layout dependency, on the chain its proof read.
     #[test]
-    fn a_chained_add_owns_a_chain_dependency_and_a_define_none() {
-        assert_eq!(add(Some(1)).chain_owner(), Some(5));
-        assert_eq!(add(None).chain_owner(), None);
+    fn a_chained_add_holds_its_proofs_chain_and_a_define_none() {
+        assert_eq!(add(Some(1)).chain(), Some(crate::code_dependencies::PrototypeChain { link: 1, depth: 3 }));
+        assert_eq!(add(None).chain(), None);
     }
 
     /// The row library holds the row of every form of both receivers, chained or not.

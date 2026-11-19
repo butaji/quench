@@ -101,8 +101,7 @@ impl Decisions {
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { context: cx.cast(), decide: |context, operator, left, right|
             super::vm_steps::lane_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right),
-            prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext<H>>()) }.instanceof_fact(constructor)
-                .map(|fact| fact.link),
+            prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext<H>>()) }.instanceof_link(constructor),
             records: |context| unsafe { vm(context.cast::<LaneContext<H>>()) }.heap.object_record_base().map(|base| base as u64) }
     }
 }

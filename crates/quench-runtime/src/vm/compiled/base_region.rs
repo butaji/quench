@@ -85,8 +85,9 @@ pub(in crate::vm::compiled) struct Known<'a> {
     pub(in crate::vm::compiled) stores: Option<&'a crate::vm::method_cache::AtomBits>,
     /// The loads a cache site proves for a read (`Vm::native_field_read_descriptors`), where the VM and
     /// the program run specialized and the code may hold Stable facts: a read of a field its receiver's
-    /// prototype holds folds to the value the holder holds now (`folded_read`), which a change of the
-    /// holder's values retires the code over (`Body::holders`). `None` where no fact may be held.
+    /// prototype chain holds folds to the value the holder holds now (`folded_read`), which a change of the
+    /// holder's values or of a layout on the way retires the code over (`Body::holders`, `Body::chains`). `None`
+    /// where no fact may be held.
     pub(in crate::vm::compiled) reads: Option<&'a dyn Fn(u16) -> Vec<NativeFieldLoad>>,
     /// The add a cache site recorded for an atom, as a define's (`false`) or an adding store's (`true`,
     /// whose proved prototype chain is then a Stable fact) transition (`Vm::native_field_add`): a
@@ -113,8 +114,8 @@ pub(in crate::vm::compiled) struct Known<'a> {
     pub(in crate::vm::compiled) instanceofs: Option<&'a dyn Fn(usize) -> Option<(Value, InstanceofFact)>>,
     /// What `key in object` answered at the PC of an `in` whose key is a constant string (`Vm::membership_facts`), where
     /// the VM and the program run specialized and the code may hold Stable facts: the row answers the boolean while its
-    /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of any
-    /// prototype retires the code over (`Body::holders`). `None` where no fact may be held.
+    /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of a
+    /// prototype on its chain retires the code over (`Body::chains`). `None` where no fact may be held.
     pub(in crate::vm::compiled) presences: Option<&'a [Option<InPresence>]>,
     /// What each by-name global access takes (`Vm::global_table`, the b-jit's), where the code may hold
     /// Stable facts: a global object's slot under its layout (`globals`). `None` where none may.

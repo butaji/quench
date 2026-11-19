@@ -674,7 +674,7 @@ impl<H: Host> Vm<H> {
             self.symbol_load_proofs.record_absent_own(layout, key32);
             return false;
         }
-        let Some(subjects) = self.fact_chain_subjects(prototype, depth) else { return false };
+        let Some(subjects) = self.heap.chain_subjects(prototype, depth) else { return false };
         // A holder up the chain that is an object record: its id, plus one; any other holder
         // (an array's, a builtin's) is found by its hops (`Vm::proof_holder`).
         let holder = if depth > 0 { holder.direct_object_index().map_or(0, |id| id + 1) } else { 0 };
@@ -687,26 +687,12 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The subjects of the `depth` prototypes from `prototype`, each marked a prototype first;
-    /// `None` where one has none, so no proof is recorded for that chain.
-    pub(super) fn fact_chain_subjects(&mut self, prototype: Value, depth: u8) -> Option<smallvec::SmallVec<[u32; crate::heap::INHERITED_FIELD_CACHE_MAX_DEPTH]>> {
-        let mut subjects = smallvec::SmallVec::new();
-        let mut link = prototype;
-        for _ in 0..depth {
-            self.heap.mark_prototype(link);
-            let object = self.heap.object(link)?;
-            subjects.push(object.watched_subject()?);
-            link = object.proto();
-        }
-        Some(subjects)
-    }
-
     /// The validity cell of the `depth` prototypes from `prototype` (`heap::ChainCell`), each
     /// marked a prototype first: it holds while none of them changes its layout (shape,
     /// prototype link, integrity, recorded descriptors) or dies, whatever other prototypes do.
     /// `None` where one has no subject, so no proof is recorded for that chain.
     pub(super) fn chain_cell(&mut self, prototype: Value, depth: u8) -> Option<crate::heap::ChainCell> {
-        let subjects = self.fact_chain_subjects(prototype, depth)?;
+        let subjects = self.heap.chain_subjects(prototype, depth)?;
         Some(self.heap.dependencies().chain_cell(&subjects))
     }
 
@@ -749,7 +735,7 @@ impl<H: Host> Vm<H> {
     /// `start` (itself included) changes its layout or dies, each marked a prototype first
     /// (`Dependencies::hold_layouts`); `false` where a link has no subject or a table is full.
     pub(super) fn hold_chain_layouts(&mut self, start: Value, dependency: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
-        let Some(subjects) = self.chain_depth(start).and_then(|depth| self.fact_chain_subjects(start, depth)) else {
+        let Some(subjects) = self.chain_depth(start).and_then(|depth| self.heap.chain_subjects(start, depth)) else {
             return false;
         };
         self.heap.dependencies().hold_layouts(&subjects, dependency)

@@ -175,7 +175,7 @@ impl<H: Host> Vm<H> {
         if grew { Some(self.heap.dependencies().subjects_cell(&plain.subjects)) } else { held }
     }
 
-    /// The subjects of the whole chain from `prototype` (`fact_chain_subjects`), each marked
+    /// The subjects of the whole chain from `prototype` (`Heap::chain_subjects`), each marked
     /// a prototype first; `None` past `u8::MAX` links or where one has no subject.
     fn chain_subjects_to_end(&mut self, prototype: Value) -> Option<smallvec::SmallVec<[u32; crate::heap::INHERITED_FIELD_CACHE_MAX_DEPTH]>> {
         let mut depth = 0u8;
@@ -184,7 +184,7 @@ impl<H: Host> Vm<H> {
             link = self.heap.object(link)?.proto();
             depth = depth.checked_add(1)?;
         }
-        self.fact_chain_subjects(prototype, depth)
+        self.heap.chain_subjects(prototype, depth)
     }
 
     /// SerializeJSONProperty of `value` with no replacer and no gap, for plain data whose

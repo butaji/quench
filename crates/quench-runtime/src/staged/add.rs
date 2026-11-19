@@ -70,8 +70,8 @@ pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: 
 /// compiled site holds it: the word is a direct object (else `None`, leaving at `miss`), and where
 /// `link` is given (an add the prototype chain can intercept, whose chain proof the code holds as
 /// a Stable fact for exactly that prototype) the object's prototype link is it. The chain's own
-/// shapes are not read: a change to any prototype's layout retires the code
-/// (`heap::subscribe_prototype_values`), so only what varies per receiver, its link, is tested.
+/// shapes are not read: a change to the layout of a prototype on it retires the code
+/// (`Heap::subscribe_prototype_chain`), so only what varies per receiver, its link, is tested.
 #[inline(always)]
 #[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),

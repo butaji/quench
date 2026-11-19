@@ -1763,8 +1763,9 @@ impl<H: Host> Vm<H> {
 
     /// The reads a site's proved inherited entries answer (`proved_inherited_field_hit`), as
     /// constants: a receiver of the entry's shape whose prototype link is the proved one, while
-    /// the value stays (`heap::subscribe_prototype_values`), reads what the proved holder held
-    /// when the code was compiled, `undefined` for an absent name.
+    /// the value stays (`heap::subscribe_prototype_values`) and so do the `depth` prototypes the
+    /// proof read (`Heap::subscribe_prototype_chain`), reads what the proved holder held when the
+    /// code was compiled, `undefined` for an absent name.
     fn inherited_native_loads(&self, site: u16) -> Vec<super::compiled::NativeFieldLoad> {
         let mut loads = Vec::new();
         let mut index = self.inherited_field_indices.get(self.field_cache_index(site));
@@ -1789,7 +1790,7 @@ impl<H: Host> Vm<H> {
                 storage_len: usize::from(slot) + 1,
                 storage: None,
                 ty: crate::typed_ir::Type::ANY,
-                inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)]), function_shape: false,
+                inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value, cache.depth)]), function_shape: false,
                 raw_double: false, formed: None,
             });
         }
@@ -1822,13 +1823,14 @@ impl<H: Host> Vm<H> {
     /// The values the prototypes of exact shape `holder` hold at `slot` now, each with the
     /// link that names it: what a holder read may take while the receiver's link names one of
     /// them and no value changes (`NativeFieldLoad::inherited`). A shape does not name one prototype: sibling
-    /// prototypes holding the same names share it.
+    /// prototypes holding the same names share it. Each is the receiver's own prototype, the one
+    /// link of its chain.
     fn inherited_constant(&self, holder: u32, slot: u16) -> Option<super::compiled::InheritedConstant> {
         let mut holders = Vec::new();
         for prototype in self.heap.prototypes_of_shape(holder) {
             let value = self.heap.property_get(self.heap.object(prototype)?, usize::from(slot))?;
             if value.is_deleted() { return None; }
-            holders.push((crate::heap::ProtoLink::of(prototype).bits(), value));
+            holders.push((crate::heap::ProtoLink::of(prototype).bits(), value, 1));
         }
         super::compiled::InheritedConstant::of(holders)
     }
@@ -2246,7 +2248,8 @@ impl<H: Host> Vm<H> {
         }
         self.field_add_sets[set as usize].entries().filter(|cache| cache.atom == atom).find_map(|cache| {
             let link = chained.then_some(cache.proved_prototype);
-            link.is_none_or(|link| cache.proof_holds(link)).then_some(AddSite { transition: cache.transition(), link: link.map(ProtoLink::bits) })
+            link.is_none_or(|link| cache.proof_holds(link))
+                .then_some(AddSite { transition: cache.transition(), link: link.map(ProtoLink::bits), depth: cache.prototype_depth })
         })
     }
 
@@ -3368,7 +3371,7 @@ impl<H: Host> Vm<H> {
         };
         let holder_id = if hops == 0 { 0 } else { holder.direct_object_index().map_or(0, |id| id + 1) };
         let prototype = receiver.proto();
-        let Some(subjects) = self.fact_chain_subjects(prototype, hops) else { return };
+        let Some(subjects) = self.heap.chain_subjects(prototype, hops) else { return };
         if let Some(entry) = self.symbol_load_proofs.record_accessor(layout, key32, hops, slot32, kind, holder_id) {
             self.hold_fact(entry, &subjects);
         }
@@ -3686,15 +3689,7 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn prove_inherited_chain(&mut self, proof: InheritedChainProof) {
-        let mut subjects = smallvec::SmallVec::<[u32; INHERITED_FIELD_CACHE_MAX_DEPTH]>::new();
-        let mut link = proof.prototype;
-        for _ in 0..proof.depth {
-            self.heap.mark_prototype(link);
-            let Some(object) = self.heap.object(link) else { return };
-            let Some(subject) = object.watched_subject() else { return };
-            subjects.push(subject);
-            link = object.proto();
-        }
+        let Some(subjects) = self.heap.chain_subjects(proof.prototype, proof.depth) else { return };
         let dependencies = self.heap.dependencies_mut();
         let cache = dependencies.inherited_mut(proof.index);
         cache.proved_prototype = crate::heap::ProtoLink::of(proof.prototype);

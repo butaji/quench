@@ -399,12 +399,12 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     let spec = BodySpec { function, registers, known, realm: calls.realm, widened, seen: observation.entry_types, kinds: observation.operand_kinds };
     // SAFETY: `calls` was made of the call sites' records this compile (`Vm::region_calls`), whose entry cells are live.
     let built = unsafe { build_region(region, &spec, views, &calls.callees, helpers) };
-    let Ok(Body { code, bare, frames, records, stable, atoms, holders, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
+    let Ok(Body { code, bare, frames, records, stable, atoms, holders, chains, instanceofs, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, DumpSite::Loop { header: region.header }, &code, None, "");
     }
     let calls = CallCode::of((frames, calls.callees.owned, records), registers, invalidation);
-    let facts = OsrFacts { stable: StableFacts { globals: stable, holders, atoms, layouts, slots: slot_types, ..Default::default() },
+    let facts = OsrFacts { stable: StableFacts { globals: stable, holders, chains, instanceofs, atoms, layouts, slots: slot_types, ..Default::default() },
         calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let code = super::super::jit_backend::run_in_background(move || Ok(code));
@@ -479,7 +479,7 @@ pub(in crate::vm) fn start_osr_region(
     let function = lowered.function;
     super::residuals::report_clif(region.header, &function);
     let clif = native_dump_directory().map(|_| function.display().to_string());
-    let stable = StableFacts { atoms: lowered.stable.atoms, holders: lowered.stable.holders, ..StableFacts::default() };
+    let stable = StableFacts { atoms: lowered.stable.atoms, holders: lowered.stable.holders, chains: lowered.stable.chains, ..StableFacts::default() };
     let calls = if !direct.is_empty() { CallCode::of((Vec::new(), direct, Vec::new()), caller.registers, invalidation) } else { CallCode::holding(invalidation) };
     let facts = OsrFacts { roots: lowered.stable.roots, stable, calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
     let code = super::super::jit_backend::run_in_background(move || {

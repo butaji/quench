@@ -50,15 +50,22 @@ pub(super) enum Source {
 
 /// The receiver a folded prototype-held read stands on (`Heap::Held`): the exact shape and the
 /// prototype link the row proves of the receiver before it answers the value the holder held (the
-/// row's `hole`), and the holder's exact shape, whose values the code holds (a Stable fact).
+/// row's `hole`), the holder's exact shape, whose values the code holds, and the `depth` prototypes
+/// from the link the answer was read through, whose layouts it holds (Stable facts).
 #[derive(Clone, Copy)]
 pub(super) struct Folded {
     pub(super) shape: u32,
     pub(super) link: u32,
     pub(super) holder: u32,
+    pub(super) depth: u8,
 }
 
 impl Folded {
+    /// The chain the answer was read through (`StableFacts::chains`).
+    pub(super) fn chain(self) -> crate::code_dependencies::PrototypeChain {
+        crate::code_dependencies::PrototypeChain { link: self.link, depth: self.depth }
+    }
+
     /// The row's receiver word: the shape, and the link above `HELD_LINK_AT` bits.
     pub(super) fn word(self) -> u64 {
         u64::from(self.shape) | u64::from(self.link) << numeric::library::HELD_LINK_AT

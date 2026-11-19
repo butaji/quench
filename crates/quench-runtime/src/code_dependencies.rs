@@ -103,18 +103,32 @@ pub(crate) struct SlotDependency {
     pub(crate) ty: Type,
 }
 
+/// The prototypes a Stable fact was read through: the `depth` links from the prototype the encoded
+/// link `link` names (`heap::ProtoLink::bits`), nearest first, the holder last. Code holding the
+/// fact holds each one's layout (`Heap::subscribe_prototype_chain`): a change to one of them (its
+/// shape, its prototype link, its integrity, a descriptor its shape does not record) or its death
+/// retires the code, and a change to a prototype off the chain leaves it standing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct PrototypeChain {
+    pub(crate) link: u32,
+    pub(crate) depth: u8,
+}
+
 /// What an `instanceof` of one constructor depends on when its code takes the constructor's
 /// `prototype` as a Stable fact (`Vm::instanceof_fact`): the encoded link of that prototype and the
 /// slot of the constructor's own `prototype` property in its exact shape (a write retires the
-/// code, as does a departure of that shape, which an own `@@hasInstance` would be), and the exact
-/// shape of the holder the constructor inherits the native `@@hasInstance` from (a prototype value
-/// or layout change retires the code).
+/// code, as does a departure of that shape, which an own `@@hasInstance` would be), the exact
+/// shape of the holder the constructor inherits the native `@@hasInstance` from (a change of its
+/// values retires the code), and the chain from the constructor itself to that holder, whose
+/// lookup a new prototype or an `@@hasInstance` added on the way would change (a layout change of
+/// one retires the code).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct InstanceofFact {
     pub(crate) link: u32,
     pub(crate) shape: u32,
     pub(crate) slot: u16,
     pub(crate) holder: u32,
+    pub(crate) chain: PrototypeChain,
 }
 
 impl InstanceofFact {
@@ -208,23 +222,33 @@ impl CodeReaders {
 
     #[inline(never)]
     fn retire_readers(&mut self, owner: u32) {
-        let Some(head) = self.heads.get_mut(owner as usize) else { return };
-        let mut cursor = head.take();
-        while let Some(link) = cursor {
-            if let Some(code) = self.readers[(link.get() - 1) as usize].code.as_ref().and_then(Weak::upgrade) {
-                code.retire();
-            }
-            cursor = self.release(link);
-        }
+        self.take(owner).into_iter().for_each(|code| code.retire());
     }
 
     pub(crate) fn reset(&mut self) {
-        for reader in &mut self.readers {
-            if let Some(code) = reader.code.take().and_then(|code| code.upgrade()) { code.retire(); }
+        self.take_all().into_iter().for_each(|code| code.retire());
+    }
+
+    /// Unlinks `owner`'s readers and gives the code still alive among them, for a caller to
+    /// retire once it no longer holds the table these readers live in (`heap::Dependencies`).
+    pub(crate) fn take(&mut self, owner: u32) -> Vec<Rc<dyn DependentCode>> {
+        let Some(head) = self.heads.get_mut(owner as usize) else { return Vec::new() };
+        let mut cursor = head.take();
+        let mut taken = Vec::new();
+        while let Some(link) = cursor {
+            taken.extend(self.readers[(link.get() - 1) as usize].code.as_ref().and_then(Weak::upgrade));
+            cursor = self.release(link);
         }
+        taken
+    }
+
+    /// `take` of every owner: an event no owner names.
+    pub(crate) fn take_all(&mut self) -> Vec<Rc<dyn DependentCode>> {
+        let taken = self.readers.iter_mut().filter_map(|reader| reader.code.take().and_then(|code| code.upgrade())).collect();
         self.heads.clear();
         self.readers.clear();
         self.free = None;
+        taken
     }
 }
 

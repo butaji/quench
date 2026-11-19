@@ -91,14 +91,16 @@ fn inherited_pairs(load: &NativeFieldLoad, folds_stable: bool) -> Vec<(u32, u64)
         constant.values().iter().map(|(link, value)| (*link, value.to_bits())).collect()).unwrap_or_default()
 }
 
-/// Registers the heap values a folding division's inherited loads name with `roots`, which the
-/// publication keeps alive (`FoldedRoots::embed_heap_identity`); `inherited_pairs` then names
-/// them by their bits.
-pub(super) fn embed_inherited(links: &[LinkInput], roots: &mut crate::folded_roots::FoldedRoots) {
-    for load in links.iter().flat_map(|link| Fast::of(&link.loads).loads()) {
-        for (_, value) in load.inherited.iter().flat_map(|constant| constant.values().iter()) {
-            roots.embed_heap_identity(*value);
+/// Registers the heap values a folding division's inherited loads name with the lowering's
+/// roots, which the publication keeps alive (`FoldedRoots::embed_heap_identity`), and the chains
+/// they were read through with its chains, whose prototypes' layouts it holds
+/// (`StableFacts::chains`); `inherited_pairs` then names the values by their bits.
+pub(super) fn embed_inherited(links: &[LinkInput], stable: &mut super::stable::StableUses) {
+    for constant in links.iter().flat_map(|link| Fast::of(&link.loads).loads()).filter_map(|load| load.inherited) {
+        for (_, value) in constant.values() {
+            stable.roots.embed_heap_identity(*value);
         }
+        stable.chains.extend(constant.chains());
     }
 }
 

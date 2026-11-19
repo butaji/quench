@@ -12,6 +12,9 @@ use crate::staged::{Region, Stage};
 pub(crate) struct StableFacts {
     /// Exact shapes of prototypes whose values it holds (`heap::subscribe_prototype_values`).
     pub(crate) holders: Box<[u32]>,
+    /// The chains it read those values through, whose prototypes' layouts it holds
+    /// (`Heap::subscribe_prototype_chain`).
+    pub(crate) chains: Box<[crate::code_dependencies::PrototypeChain]>,
     /// Atoms it stores without a method-cache test (`MethodCacheAtoms::readers`).
     pub(crate) atoms: Box<[Atom]>,
     /// Global cells whose values it holds (`heap::subscribe_global_value`).
@@ -35,6 +38,8 @@ pub(crate) struct StableFacts {
 pub(super) struct StableUses {
     /// Holder shapes whose prototypes' values the code took as constants.
     pub(super) holders: crate::bitset::BitSet,
+    /// The chains the code read those values through (`field_plans::embed_inherited`).
+    pub(super) chains: BTreeSet<crate::code_dependencies::PrototypeChain>,
     /// Exact shapes of the objects whose shape the code held past a call (`StableHold::hold_shape`).
     pub(super) shapes: crate::bitset::BitSet,
     /// Atoms it stores directly because no method cache named them.
@@ -64,6 +69,7 @@ impl StableUses {
     pub(super) fn take(&mut self) -> StableFacts {
         StableFacts { holders: std::mem::take(&mut self.holders).iter().map(|holder| holder as u32).collect(),
             shapes: std::mem::take(&mut self.shapes).iter().map(|shape| shape as u32).collect(),
+            chains: std::mem::take(&mut self.chains).into_iter().collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
             globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
             layouts: std::mem::take(&mut self.layouts).into_iter().collect(),
