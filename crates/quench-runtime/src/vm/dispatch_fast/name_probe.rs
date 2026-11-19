@@ -14,7 +14,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         vm.scope_names.probe = Some(crate::vm::name_scope::NameProbe {
             program: unsafe { (*cx).program },
-            function: lane_running_function(cx),
+            function: running_function_in_lane(cx),
             pc: unsafe { ip.offset_from((*cx).base) } as u32,
         });
         exit(ip)

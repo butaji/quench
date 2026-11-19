@@ -263,7 +263,7 @@ fn inlined_math_functions_match_the_interpreter_at_their_edges() {
 }
 
 /// A function entered a few times whose loop is hot, and leaves at its calls, gets its lane body
-/// when the loop retires (`lane_loop_retire`), not after the entry warm-up it would never
+/// when the loop retires (`loop_retire_in_lane`), not after the entry warm-up it would never
 /// reach; its calls then run in the callees' bodies, and its results are the interpreter's.
 #[test]
 fn a_hot_loop_that_leaves_at_calls_specializes_its_function_before_the_entry_warm_up() {

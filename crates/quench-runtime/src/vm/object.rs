@@ -41,7 +41,7 @@ mod tests {
         vm.set_execution_mode(crate::ExecutionMode::NativeOnly);
         vm.execute_native_program(&native, true).unwrap();
         assert!(vm.specialized_operations_enabled(program));
-        assert!(!vm.lane_admits(program), "native semantics do not admit interpreter lane dispatch");
+        assert!(!vm.admits_in_lane(program), "native semantics do not admit interpreter lane dispatch");
         let site = |name: &str| {
             let function = program.functions.iter().position(|body| body.header().name
                 .is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
@@ -2053,7 +2053,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The add `cached_field_add_hit` makes for a lane: an ordinary record's cached add,
-    /// without the specialization test (`Vm::lane_admits`) or the store probe before it. The
+    /// without the specialization test (`Vm::admits_in_lane`) or the store probe before it. The
     /// caller proved `atom` eligible (`field_add_atom_eligible`) for the site.
     #[inline(always)]
     pub(super) fn primary_field_add_hit(

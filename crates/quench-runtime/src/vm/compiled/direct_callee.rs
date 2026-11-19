@@ -21,7 +21,7 @@ pub(in crate::vm) struct DirectCallee {
     pub(in crate::vm) callee: Value,
     pub(in crate::vm) registers: u16,
     /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
-    /// binds a direct object itself (`lane_receiver_this`); `None` for a strict callee, which
+    /// binds a direct object itself (`receiver_this_in_lane`); `None` for a strict callee, which
     /// takes any receiver as it is.
     pub(in crate::vm) sloppy: Option<Value>,
     /// An arrow, which binds no receiver: its body reads its environment's `this`, so a call

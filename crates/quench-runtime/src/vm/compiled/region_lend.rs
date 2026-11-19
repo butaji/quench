@@ -8,12 +8,12 @@
 
 use super::*;
 
-/// Binds `payload`'s lane stack words to the room the lane has now (`Vm::lane_stack_words`): the tops
+/// Binds `payload`'s lane stack words to the room the lane has now (`Vm::stack_words_in_lane`): the tops
 /// the callees' windows and frames are pushed through, and, where the lane may make their
 /// activations (`direct_calls`), the end of the frames they may nest; none is pushed. A call the
 /// region made that ran lane code (`lane_region_call`) may have moved the stacks' storage.
 pub(super) fn bind_stacks<H: Host>(vm: &mut Vm<H>, payload: &mut JsStepDispatch, direct_calls: bool) {
-    let words = vm.lane_stack_words(if direct_calls { SHADOW_FRAMES } else { 0 });
+    let words = vm.stack_words_in_lane(if direct_calls { SHADOW_FRAMES } else { 0 });
     payload.lane_values_top = words.values_top;
     payload.lane_values_end = words.values_end;
     payload.lane_activations_top = words.activations_top;

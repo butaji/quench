@@ -32,7 +32,7 @@ pub(in crate::vm) unsafe extern "C" fn vm_operation_step<H: Host>(_vm: u64, _res
 unsafe fn vm_operation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
-    let function = lane_running_function(cx);
+    let function = running_function_in_lane(cx);
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let body = code.function(function as usize);
@@ -235,7 +235,7 @@ unsafe fn body_general_step_record<H: Host>(_vm: u64, _residual: u64, context: u
 /// # Safety
 /// As `body_general_step`.
 unsafe fn activation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
-    let body = unsafe { &*(*cx).code }.function(lane_running_function(cx) as usize);
+    let body = unsafe { &*(*cx).code }.function(running_function_in_lane(cx) as usize);
     let record = body.widened(body.code[call_pc as usize]);
     if record.without_return().op().steps_on_owner() {
         unsafe { owner_step_in(cx, call_pc, record) }

@@ -3610,7 +3610,7 @@ struct JsStepDispatch {
     shadow_end: usize,
     /// A lane run's lane stack, where a direct call places its callee's registers and its
     /// native frame (`DirectCallee`): the words that hold the values' and the activations'
-    /// tops, which the VM's `LaneStack` owns (`Vm::lane_stack_words`), the end of the values'
+    /// tops, which the VM's `LaneStack` owns (`Vm::stack_words_in_lane`), the end of the values'
     /// capacity, and the end of the frames the run nests (`SHADOW_FRAMES`).
     lane_values_top: usize,
     lane_values_end: usize,
@@ -4283,7 +4283,7 @@ impl<H: Host> Vm<H> {
     /// leave inside one reads (`lane_scratch`), before the activations it makes overwrite them.
     pub(super) fn lane_adopt_window(registers: *const Value, from: usize, width: usize) {
         let frame = lane_frame();
-        // SAFETY: as `lane_stack_words`; the body's admission proved the room past the
+        // SAFETY: as `stack_words_in_lane`; the body's admission proved the room past the
         // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
         unsafe {
             for (at, slot) in (*frame).scratch.iter_mut().take(width).enumerate() {

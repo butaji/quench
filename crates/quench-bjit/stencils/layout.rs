@@ -325,7 +325,7 @@ pub(crate) const JS_STEP_RETURNED_PC: usize = 248;
 pub(crate) const JS_STEP_VM: usize = 200;
 pub(crate) const JS_STEP_RESIDUAL: usize = 208;
 pub(crate) const JS_STEP_LANE_CONTEXT: usize = 240;
-/// The lane stack's words (`Vm::lane_stack_words`): the addresses of the values' and the activations' tops,
+/// The lane stack's words (`Vm::stack_words_in_lane`): the addresses of the values' and the activations' tops,
 /// the end of the values' room and the end of the frames' room.
 pub(crate) const JS_STEP_LANE_VALUES_TOP: usize = 288;
 pub(crate) const JS_STEP_LANE_VALUES_END: usize = 296;

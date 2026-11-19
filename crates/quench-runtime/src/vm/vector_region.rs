@@ -1022,7 +1022,7 @@ mod tests {
         /// How many vector regions `function`'s lane view holds.
         fn regions(&self, function: u32) -> usize {
             let program = self.vm.programs.find_shared(&self.module.program).expect("the module's program");
-            let view = self.vm.lane_view_any(program, function).expect("a lane view");
+            let view = self.vm.view_any_in_lane(program, function).expect("a lane view");
             // SAFETY: views live as long as their program entry.
             unsafe { &*view }.vector_regions.len()
         }

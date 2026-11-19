@@ -100,7 +100,7 @@ pub(super) fn lane_returning_call_admitted<H: Host>(cx: *mut LaneContext<H>) -> 
     if !vm.host.proper_tail_calls() {
         return true;
     }
-    let function = lane_running_function(cx);
+    let function = running_function_in_lane(cx);
     !unsafe { &*(*cx).code }.function(function as usize).strict
 }
 

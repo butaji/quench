@@ -248,7 +248,7 @@ script_handler! {
     /// (`Vm::reflect_chain_read`): a data value or an absent key completes the call in place,
     /// an accessor with a getter is that getter's activation with the receiver argument as
     /// `this` (`lane_activate_getter`), whose completion is the call's value; any other
-    /// call is the native's (`lane_native_call_value`).
+    /// call is the native's (`native_call_value_in_lane`).
     #[inline(never)]
     fn lane_reflect_get_call<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -270,7 +270,7 @@ script_handler! {
                     Err(next) => next,
                 }
             }
-            _ => resume!(cx, lane_native_call_value(cx, r, ip, i, Native::ReflectGet)),
+            _ => resume!(cx, native_call_value_in_lane(cx, r, ip, i, Native::ReflectGet)),
         }
     }
 }

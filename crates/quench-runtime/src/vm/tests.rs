@@ -23108,7 +23108,7 @@ fn lane_leaf_calls_follow_callee_redefinition() {
 #[test]
 fn lane_leaf_calls_that_throw_keep_their_frames() {
     // A leaf's record that leaves the lane makes the leaf an activation first
-    // (`lane_materialize_leaf`), so its error's stack holds its frame, and a `valueOf` it
+    // (`materialize_leaf_in_lane`), so its error's stack holds its frame, and a `valueOf` it
     // reaches runs above it (expected frames from Node).
     let source = r#"
       function getV(o) { return o.v; }

@@ -113,7 +113,7 @@ impl LaneExit {
 
 /// How a loop region's run ended: its exit, in the one vocabulary every tier's leave word
 /// decodes to, and whether it ended inside the native frames a callee's entry pushed on the lane
-/// stack, where the lane reads and continues it (`dispatch_fast::lane_region_left`). Whether a
+/// stack, where the lane reads and continues it (`dispatch_fast::region_left_in_lane`). Whether a
 /// leave at a caller PC is a guard inside the loop or the loop's normal continuation is a
 /// function of the region (`LoopRegion::holds_exit`), not a second exit vocabulary.
 #[derive(Clone, Copy, Debug)]

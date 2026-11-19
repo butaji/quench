@@ -45,7 +45,7 @@ pub(super) enum CallEntry {
     Settles,
     /// Its body is a leaf (`leaf_body`): a plain call of its own program runs its records on
     /// a window of the lane stack without an activation (`lane_script_call_leaf`), which
-    /// anything observing activations makes first (`lane_materialize_leaf`). Any other
+    /// anything observing activations makes first (`materialize_leaf_in_lane`). Any other
     /// call activates it as `Activates`.
     Leaf,
     /// A leaf whose records read its captures and not its receiver (`CAPTURE_LEAF`), so its

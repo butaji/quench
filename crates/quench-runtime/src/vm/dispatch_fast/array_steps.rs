@@ -108,7 +108,7 @@ pub(super) fn lane_admits_activation(target: &ScriptCallTarget) -> bool {
 }
 
 /// `forEach` at the lane `Call` record `ip`, whose result nothing reads
-/// (`lane_call_result_dead`), over a dense array `receiver` whose storage holds one element (the
+/// (`call_result_dead_in_lane`), over a dense array `receiver` whose storage holds one element (the
 /// caller tested it), with `args`: where the element is present, the callback's one call with
 /// it, its index and the array, a plain activation (`Completion::Plain`) whose value the dead
 /// register takes. The method's own value, `undefined`, is never read, and the length it read

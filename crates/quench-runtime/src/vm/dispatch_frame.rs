@@ -177,7 +177,7 @@ impl<H: Host> Vm<H> {
         let interprets = self.execution_mode.allows_dynamic_execution();
         #[cfg(feature = "native-execution")]
         let interprets = interprets && self.programs.native_js_code(program_id).is_none();
-        let admitted = interprets && lane && self.lane_admits(program);
+        let admitted = interprets && lane && self.admits_in_lane(program);
         let view = if admitted { self.entry_lane_view(program_id, function) } else { std::ptr::null() };
         // Native transitions read only boundary metadata from packed code;
         // they must not warm or allocate an interpreter dispatch expansion.
@@ -535,12 +535,12 @@ impl<H: Host> Vm<H> {
         let runs_in_lane = runs_in_lane && self.programs.native_js_code(program).is_none();
         if !runs_in_lane
             || p.kind == crate::bytecode::ProgramKind::Wasm
-            || !self.lane_admits(p)
+            || !self.admits_in_lane(p)
             || !self.programs.lane_call_may_derive(program, id, false, false)
         {
             return std::ptr::null();
         }
-        self.lane_view_any(program, id).unwrap_or(std::ptr::null())
+        self.view_any_in_lane(program, id).unwrap_or(std::ptr::null())
     }
 
     /// Retire the innermost frame, a user activation that ran to `result` on the native

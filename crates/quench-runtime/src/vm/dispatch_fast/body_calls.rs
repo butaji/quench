@@ -170,7 +170,7 @@ fn call_admitted<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>, call: &BodyCall, 
 /// activated as the lane's own call would.
 fn body_script_call<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &ScriptCallTarget, receiver: Value) -> u64 {
     let vm = unsafe { vm(cx) };
-    let Some(this) = lane_direct_call_this(vm, target, receiver) else { return miss(vm, Miss::Receiver) };
+    let Some(this) = direct_call_this_in_lane(vm, target, receiver) else { return miss(vm, Miss::Receiver) };
     // SAFETY: as `call_read_in_lane`.
     if target.entry.answered_by_read() { return unsafe { body_read_call(cx, call, target, this) }; }
     let Some(how) = lane_call_activation(target, call.argc()) else { return miss(vm, Miss::EntryNotActivation) };
@@ -401,12 +401,12 @@ fn lane_body_push<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &Sc
 }
 
 /// A target without a body warms toward one by a body's calls too, as by the lane's own
-/// (`lane_specialize`): a constructor only body code constructs is entered by nothing else.
+/// (`specialize_in_lane`): a constructor only body code constructs is entered by nothing else.
 fn lane_warm_callee<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32) {
     if own.respecializes() {
-        lane_specialize(cx, own, function, true, &[]);
+        specialize_in_lane(cx, own, function, true, &[]);
     } else if own.lane_body().is_none() {
-        lane_specialize(cx, own, function, false, &[]);
+        specialize_in_lane(cx, own, function, false, &[]);
     }
 }
 
@@ -424,8 +424,8 @@ fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target:
     record_late_call(cx, call.ip, target, call.argc());
     let registers = match lane_body_push(cx, call, target, this, constructs, how) { Ok(registers) => registers, Err(refused) => return refused };
     // A leave resumes at a record of the callee's view, never at its tier prologue, which
-    // lies outside its records: a loop region's `Callee` exit (`lane_loop_native`) leaves the
-    // lane there and needs its PC. `lane_specialize` below takes the prologue's warming step.
+    // lies outside its records: a loop region's `Callee` exit (`loop_native_in_lane`) leaves the
+    // lane there and needs its PC. `specialize_in_lane` below takes the prologue's warming step.
     let start = unsafe { (*cx).base };
     // Counted without making a plain activation a record: `finish` reads the records, which
     // spills them, so the index then names this activation.

@@ -62,7 +62,7 @@ fn indexed_composition<const DEPENDENT: bool, const STEPS: usize>(b: &mut Benche
             // to this view, and no VM execution mutates them during this inspection.
             let handler = unsafe {
                 if (*ip).handler == lane_loop_header::<TestHost> as Handler as *const () {
-                    (*lane_header_site(ip)).header_handler.get()
+                    (*header_site_in_lane(ip)).header_handler.get()
                 } else { (*ip).handler }
             };
             handler == proved
@@ -261,7 +261,7 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
             // their loop headers. No VM execution runs during this inspection.
             let handler = unsafe {
                 if (*ip).handler == lane_loop_header::<TestHost> as Handler as *const () {
-                    (*lane_header_site(ip)).header_handler.get()
+                    (*header_site_in_lane(ip)).header_handler.get()
                 } else { (*ip).handler }
             };
             for (index, (_, candidate, _)) in kinds.iter().enumerate() {

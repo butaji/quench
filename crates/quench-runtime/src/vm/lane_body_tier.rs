@@ -430,7 +430,7 @@ impl LaneView {
     }
 
     /// `specialize_lane_body` at once, past the warm-up: a hot loop's backward jump has run
-    /// its calls, so their sites have linked (`lane_loop_retire`).
+    /// its calls, so their sites have linked (`loop_retire_in_lane`).
     pub(super) fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) {
         self.skip_warm_up();
         self.specialize_lane_body(entry, specialize);

@@ -512,9 +512,9 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
 /// callee's window and a body's scratch (`expanded`). A region and a body alike run over an activation
 /// that may keep its environment window (its header words, the environment among them, and its
 /// locals) right past its registers, in a lane activation's value stack or a VM frame's register file
-/// (`lane_context_locals_in_window`); the rows' registers start past it, so they never overlap it
+/// (`context_locals_in_window_in_lane`); the rows' registers start past it, so they never overlap it
 /// whatever the activation, and the run is admitted only where the storage reaches them
-/// (`dispatch_fast::lane_frame_holds_window`, `lane_body_admits`). A body's scratch written at
+/// (`dispatch_fast::frame_holds_window_in_lane`, `lane_body_admits`). A body's scratch written at
 /// `registers` overwrote the environment word (JetStream earley-boyer's "invalid local environment").
 fn inline_base(function: &crate::bytecode::Function, registers: u16) -> u16 {
     registers.saturating_add(crate::vm::dispatch_fast::WINDOW_LOCALS).saturating_add(function.locals)

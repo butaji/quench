@@ -158,7 +158,7 @@ def plan(path, binary):
         names[address] = short_name(symbol)
     anchor = int(next(line.split()[1] for line in open(path) if line.startswith('LANEPLAN-ANCHOR')), 16)
     anchor_symbol = subprocess.run(['nm', binary], capture_output=True, text=True).stdout
-    anchor_address = next(int(line.split()[0], 16) for line in anchor_symbol.splitlines() if 'lane_plan_anchor' in line)
+    anchor_address = next(int(line.split()[0], 16) for line in anchor_symbol.splitlines() if 'plan_anchor_in_lane' in line)
     bias = anchor - anchor_address
     name = lambda word: names.get(int(word, 16) - bias, word)
     records, chunks = collections.defaultdict(dict), {}

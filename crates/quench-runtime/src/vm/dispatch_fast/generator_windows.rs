@@ -127,7 +127,7 @@ pub(super) fn window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame
     if let Some(plan) = frame.window_plan.filter(|plan| plan.key == key) {
         return Some(plan);
     }
-    let view = vm.lane_view_any(program, function)?;
+    let view = vm.view_any_in_lane(program, function)?;
     let (parent, locals) = window_environments(vm, view, env, captured, environment)?;
     let capture = vm.target_capture(code, program, parent);
     Some(WindowPlan { key, view, parent, locals, capture, environment })

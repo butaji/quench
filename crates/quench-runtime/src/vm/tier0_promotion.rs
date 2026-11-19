@@ -30,11 +30,11 @@ impl<H: Host> Vm<H> {
     /// Whether a lane call may derive `function`'s view now (`ProgramStore::lane_call_may_derive`),
     /// lowering it first where its unlowered runs are done, or from its unlowered record where
     /// a live frame of it kept blocking that (`ResidualProgram::tier0_blocked`).
-    /// Beside a window activation (`Vm::lane_runs_windows`) a call that waits boxes the window's
+    /// Beside a window activation (`Vm::runs_windows_in_lane`) a call that waits boxes the window's
     /// record as a frame, which costs more than its view: the callee lowers where nothing keeps
     /// it unlowered and derives at once, its deferred runs skipped.
     pub(super) fn lane_call_may_derive(&self, program: ProgramId, function: u32) -> bool {
-        let now = self.lane_runs_windows();
+        let now = self.runs_windows_in_lane();
         let blocked = self.programs.residual(program).is_some_and(|code| {
             if now {
                 self.promote_tier0_now(code, function);

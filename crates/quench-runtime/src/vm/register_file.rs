@@ -25,7 +25,7 @@ impl Default for RegisterFile {
 
 impl RegisterFile {
     /// An empty file with spare room for a small frame's registers, its environment window and the windows
-    /// of the callees a loop region inlines past them (`dispatch_fast::lane_frame_holds_window`), so that a
+    /// of the callees a loop region inlines past them (`dispatch_fast::frame_holds_window_in_lane`), so that a
     /// region runs over the frame without growing it under the lane's pointers.
     pub(in crate::vm) fn new() -> Self {
         let mut words = Vec::with_capacity(FRAME_CONTEXT + SPARE_WORDS);
