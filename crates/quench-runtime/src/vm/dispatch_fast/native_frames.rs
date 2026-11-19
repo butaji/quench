@@ -6,6 +6,7 @@
 //! A leave inside the frames then continues the lane in the innermost (`advance_into_frames`).
 use super::*;
 use super::super::compiled::{ShadowFrame, LANE_CALL_LEFT, LANE_CALL_TERMINATED};
+use crate::staged::frame::{CONTEXT_CALL, CONTEXT_CALLER_BASE, CONTEXT_PACKED};
 
 /// What a call's caller runs with, which its activation saves for the return: the registers
 /// and records of its function, and its program. Its receiver, environment and captures are
@@ -60,6 +61,91 @@ fn link_unlinked<H: Host>(cx: *mut LaneContext<H>) {
     let activations = unsafe { vm(cx).lane_stack.records_unspilled() };
     let (unlinked, len) = (activations.unlinked(), activations.len());
     for depth in len - unlinked..len { link_on_observe(cx, depth); }
+    // The plain headers above the records, outermost first (one-frame-one-call.md F5).
+    for (window, index) in unsafe { vm(cx) }.lane_stack.unlinked_native_headers() {
+        link_header(cx, window, index);
+    }
+}
+
+/// The NATIVE_FLAG bit of a plain header's packed word, read through `window`.
+#[inline(always)]
+pub(super) fn header_packed(window: Registers) -> u64 {
+    // SAFETY: a plain header's words lie below its window, which the lane stack holds.
+    unsafe { *window.0.sub(CONTEXT_PACKED).cast::<u64>() }
+}
+
+impl LaneStack {
+    /// The native headers not yet linked, the top run of the plain headers, outermost first, each with
+    /// its table index: the frames below the plain headers plus the header's place in the plain run.
+    pub(super) fn unlinked_native_headers(&self) -> Vec<(Registers, usize)> {
+        let (depth, base) = (self.plain.depth.get(), self.frames_below_plain());
+        let mut window = Registers(self.plain.registers.get());
+        let mut found = Vec::new();
+        for above in 0..depth {
+            if header_packed(window) & crate::staged::frame::NATIVE_FLAG == 0 { break; }
+            found.push((window, base + depth - 1 - above));
+            // SAFETY: the header's caller registers word, written at its push.
+            window = window.plain_caller().1;
+        }
+        found.reverse();
+        found
+    }
+
+    /// How many native headers run on top, linked or not (`native_depth` above a plain header): a
+    /// header is a native frame while its NATIVE_FLAG is set, or its side record names a descriptor.
+    pub(super) fn header_native_depth(&self) -> usize {
+        // SAFETY: the sides are read, not written, here.
+        let sides = unsafe { &*self.sides.get() };
+        let mut window = Registers(self.plain.registers.get());
+        let mut side_at = sides.len();
+        let mut count = 0;
+        for _ in 0..self.plain.depth.get() {
+            let native = if header_packed(window) & crate::staged::frame::NATIVE_FLAG != 0 {
+                true
+            } else if super::lane_frames::header_sided(window) {
+                side_at -= 1;
+                sides[side_at].native != super::lane_frames::NO_NATIVE
+            } else {
+                false
+            };
+            if !native { break; }
+            count += 1;
+            // SAFETY: as in `unlinked_native_headers`.
+            window = window.plain_caller().1;
+        }
+        count
+    }
+}
+
+/// Links the native header at `window`, whose table index is `index` (one-frame-one-call.md F5): its call
+/// record and caller base come from its descriptor, its argc from its call record, and it gets a side record
+/// naming the descriptor, pushed on top of the sides. Its caller registers are the header's own word, written
+/// at its push. The window takes the context words its call would have written (`lane_enter_window`).
+fn link_header<H: Host>(cx: *mut LaneContext<H>, window: Registers, index: usize) {
+    let vm = unsafe { vm(cx) };
+    let stack = &mut vm.lane_stack;
+    // SAFETY: the table entry was written by the push that made the header; its descriptor outlives the run.
+    let callee = unsafe { &*(stack.native_table[index] as *const super::super::compiled::DirectCallee) };
+    let argc = ImmediateLayout::argument_count(unsafe { (*(callee.call as Ip)).imm() });
+    let completion = if callee.forwarder.is_some() { Completion::Forwarder } else { Completion::Plain };
+    let program = unsafe { (*cx).program };
+    let packed = header_packed(window);
+    // SAFETY: the header's words lie below its window.
+    unsafe {
+        let words = window.0;
+        *words.sub(CONTEXT_CALL).cast::<u64>() = callee.call as u64;
+        *words.sub(CONTEXT_CALLER_BASE).cast::<u64>() = callee.caller_base as u64;
+        let flags = (packed & !crate::staged::frame::NATIVE_FLAG) | crate::staged::frame::COMPLETION_FLAG;
+        *words.sub(CONTEXT_PACKED).cast::<u64>() = flags | (u64::from(argc) << crate::staged::frame::ARGC_SHIFT);
+    }
+    window.set_env(callee.target.env);
+    window.set_capture(callee.target.capture);
+    let mut side = super::lane_frames::Side::plain(completion, program);
+    side.native = index;
+    if let Some(skipped) = callee.forwarder { side.payload = super::lane_frames::SidePayload::Forwarder(skipped); }
+    // SAFETY: the sides are written through `&mut self`'s stack, and no walk runs during a link.
+    unsafe { (*stack.sides.get()).push(side) };
+    vm.programs.record_js_jit_lane_entry(callee.target.program(), callee.target.function);
 }
 
 /// Links the native frame at `depth`: the `Script` activation its call would have made. Its

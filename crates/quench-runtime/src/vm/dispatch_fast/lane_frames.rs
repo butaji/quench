@@ -130,6 +130,9 @@ impl Frame {
 /// innermost first, taking one side per sided frame (`LaneStack::walk_innermost`).
 #[derive(Clone, Copy)]
 pub(super) struct Side {
+    /// The table index (`LaneStack::native_table`, `body_table`) of a linked native header, or
+    /// `NO_NATIVE` (one-frame-one-call.md F5).
+    pub(super) native: usize,
     /// What its return yields to its call (`frame::COMPLETION_FLAG`, `frame::CROSSES_FLAG`).
     pub(super) completion: Completion,
     /// It keeps the values passed past its registers (`frame::KEEPS_FLAG`, `ScriptActivation::forwards`).
@@ -146,6 +149,9 @@ pub(super) struct Side {
     /// What its completion carries (one-frame-one-call.md F4 (3)).
     pub(super) payload: SidePayload,
 }
+
+/// `Side::native` of a side that names no native frame.
+pub(super) const NO_NATIVE: usize = usize::MAX;
 
 /// What a frame's completion carries past its header, in its side record, so it pushes and pops
 /// with its frame (one-frame-one-call.md F4 (3)); its frame takes it when it materializes
@@ -199,6 +205,7 @@ impl Side {
     #[inline(always)]
     pub(super) fn of(script: &ScriptActivation, caller_program: ProgramId, flags: u64) -> Option<Self> {
         (flags != 0).then_some(Self {
+            native: NO_NATIVE,
             completion: script.completion,
             forwards: script.forwards,
             kept: script.kept,
@@ -213,7 +220,7 @@ impl Side {
     /// carries and owns nothing.
     #[inline(always)]
     pub(super) fn plain(completion: Completion, caller_program: ProgramId) -> Self {
-        Self { completion, forwards: false, kept: 0, environment: false, caller_program, record: std::ptr::null_mut(), payload: SidePayload::None }
+        Self { native: NO_NATIVE, completion, forwards: false, kept: 0, environment: false, caller_program, record: std::ptr::null_mut(), payload: SidePayload::None }
     }
 
     /// The side-record flags its header carries (`flags_of` of the activation it describes).
@@ -279,8 +286,17 @@ impl LaneStack {
         let (packed, callee) = unsafe { (*window.0.sub(CONTEXT_PACKED).cast::<u64>(), *window.0.sub(CONTEXT_CALLEE)) };
         let (forwards, kept, environment, record) =
             side.map_or((false, 0, false, std::ptr::null_mut()), |side| (side.forwards, side.kept, side.environment, side.record));
+        let native = match side {
+            Some(side) if side.native != NO_NATIVE => super::super::compiled::ShadowFrame {
+                callee: self.native_table[side.native] as *const super::super::compiled::DirectCallee,
+                body: self.body_table[side.native],
+                window: window.0.addr(),
+                ..super::super::compiled::ShadowFrame::EMPTY
+            },
+            _ => super::super::compiled::ShadowFrame { window: window.0.addr(), ..super::super::compiled::ShadowFrame::EMPTY },
+        };
         Frame {
-            native: super::super::compiled::ShadowFrame { window: window.0.addr(), ..super::super::compiled::ShadowFrame::EMPTY },
+            native,
             function: packed as u32,
             call,
             caller_base,
@@ -503,15 +519,18 @@ impl LaneStack {
     /// (`LaneActivations::top_is_native`); a plain header never is one.
     #[inline(always)]
     pub(in crate::vm) fn top_is_native(&self) -> bool {
+        if self.plain.depth.get() != 0 {
+            return super::native_frames::header_packed(Registers(self.plain.registers.get())) & crate::staged::frame::NATIVE_FLAG != 0;
+        }
         // SAFETY: the reference ends here.
-        self.plain.depth.get() == 0 && unsafe { self.records_unspilled() }.top_is_native()
+        unsafe { self.records_unspilled() }.top_is_native()
     }
 
     /// How many frames on top belong to a running native body (`LaneActivations::native_depth`):
     /// none above a plain header, whose prefix names no callee.
     #[inline]
     pub(in crate::vm) fn native_depth(&self) -> usize {
-        if self.plain.depth.get() != 0 { return 0; }
+        if self.plain.depth.get() != 0 { return self.header_native_depth(); }
         // SAFETY: the reference ends here.
         unsafe { self.records_unspilled() }.native_depth()
     }

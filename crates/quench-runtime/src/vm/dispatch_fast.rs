@@ -1360,7 +1360,8 @@ impl Registers {
             let packed = *self.0.sub(CONTEXT_PACKED).cast::<u64>();
             // Emitted direct calls' plain frames (compiled bodies, native frames) are spilled
             // by their rows' own branch of `LaneStack::spill_plain` once those rows write them.
-            debug_assert!(packed & (crate::staged::frame::BODY_FLAG | crate::staged::frame::NATIVE_FLAG) == 0);
+            // A native header (NATIVE_FLAG) is plain: it names its callee in the same word until linked.
+            debug_assert!(packed & crate::staged::frame::BODY_FLAG == 0);
             (packed as u32, (packed >> crate::staged::frame::ARGC_SHIFT) as u16, *self.0.sub(CONTEXT_CALLEE))
         }
     }
@@ -19213,7 +19214,7 @@ pub(in crate::vm) fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, fu
     let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     Some(super::compiled::DirectCallee {
-        target, method, body, call: view.records().wrapping_add(pc).addr(), cell: view_of.entry_cell(),
+        target, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), function: target.function, cell: view_of.entry_cell(),
         callee: target.callee, registers: target.registers, sloppy, lexical, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
     })
 }
