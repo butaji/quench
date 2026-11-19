@@ -26,7 +26,7 @@ pub(crate) const KEPT_MASK_BYTES: usize = 64 * 1024;
 impl RegisterMasks {
     /// Whether `function`'s table, at the width its registers need, would pass
     /// `KEPT_MASK_BYTES`.
-    fn too_large_to_keep(function: &Function) -> bool {
+    pub(crate) fn too_large_to_keep(function: &Function) -> bool {
         let width = if u32::from(function.registers) <= u64::BITS {
             std::mem::size_of::<u64>()
         } else if u32::from(function.registers) <= u128::BITS {

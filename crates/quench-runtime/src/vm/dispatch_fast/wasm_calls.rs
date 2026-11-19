@@ -176,6 +176,8 @@ impl<H: Host> WasmActivation for LaneCall<'_, H> {
         let vm = unsafe { vm(self.cx) };
         let window = vm.lane_stack.values.len();
         let frame_storage_bytes = usize::from(shape.registers).saturating_mul(std::mem::size_of::<Value>());
+        // A call of this program's own functions (`lane_call_known`, `lane_call_wasm_reference`).
+        let function_program = unsafe { (*self.cx).program };
         let callee = fill_callee_window(vm, self.r, self.i, shape);
         // SAFETY: capacity holds the activation; the window's start has not moved.
         unsafe {
@@ -189,7 +191,7 @@ impl<H: Host> WasmActivation for LaneCall<'_, H> {
                     caller_base: (*self.cx).base,
                     caller_registers: self.r,
                     caller_program: (*self.cx).program,
-                    kind: ActivationKind::Wasm { memory: self.memory, frame_storage_bytes },
+                    kind: ActivationKind::Wasm { memory: self.memory, frame_storage_bytes, program: function_program, pc: 0 },
                 },
                 at,
             );
@@ -392,7 +394,7 @@ fn fill_callee_window<H: Host>(vm: &mut Vm<H>, r: Registers, i: &LaneInstruction
     // no activation's window moves.
     unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        fill_window(registers, count, shape.initial);
+        fill_window(registers, usize::from(shape.fill), shape.initial);
         let mut offset = 0;
         while offset < passed {
             registers
