@@ -219,8 +219,25 @@ impl<H: Host> Vm<H> {
         } else if self.realm.global_lexical_bindings.len() != retained {
             self.note_global_shadowing();
         }
-        if let Some(index) = assigned.and_then(|index| u32::try_from(index).ok())
-            && let Some(table) = self.active_global_values()
+        if let Some(index) = assigned {
+            self.note_global_lexical_write(index);
+        }
+    }
+
+    /// Assigns `value` to the active realm's initialized global lexical binding at `index`, which
+    /// `global_lexical_store_at` has proved is mutable and holds an initialized value of the name.
+    pub(super) fn assign_global_lexical_at(&mut self, index: usize, value: Value) {
+        if let Some((_, word)) = self.realm.global_lexical_bindings.get_index_mut(index) {
+            *word = value;
+        }
+        self.note_global_lexical_write(index);
+    }
+
+    /// The code holding the value of the active realm's global lexical binding at `index` retires:
+    /// an assignment to an initialized binding (`bind_global_lexical`, `assign_global_lexical_at`).
+    fn note_global_lexical_write(&self, index: usize) {
+        if let Some(table) = self.active_global_values()
+            && let Ok(index) = u32::try_from(index)
         {
             crate::heap::note_global_write(table, GlobalCell::Binding(index));
         }

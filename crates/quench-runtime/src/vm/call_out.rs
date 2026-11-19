@@ -112,6 +112,12 @@ impl<H: Host> Vm<H> {
             }
             CallOut::GlobalTypeof { atom, site } =>
                 self.at_binding_site(owner, resume, |vm| vm.load_name_typeof(p, owner, atom, site)).map(Some),
+            CallOut::GlobalLexicalLoad { declaration, site } =>
+                self.global_lexical_load(p, owner, (declaration, site), resume).map(Some),
+            CallOut::GlobalLexicalStore { declaration, site, initialize, .. } => {
+                self.global_lexical_store(p, owner, (declaration, site, initialize), value, resume)?;
+                Ok(None)
+            }
             CallOut::LoadName { atom, site } =>
                 self.at_binding_site(owner, resume, |vm| vm.load_name(p, owner, atom, Some(site))).map(Some),
             // The frame's own clone, as `Op::CloneEnv` makes it and the lane's clone did: the frame's

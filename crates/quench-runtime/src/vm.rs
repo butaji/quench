@@ -1929,6 +1929,10 @@ pub(crate) struct Vm<H> {
     native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,
     active_call_roots: Vec<Value>,
+    /// The frame index of each root activation this Vm's entry points are running (`call_root`),
+    /// innermost last. A script's root is among them, so its global lexical bindings are found
+    /// without a walk over every frame (`active_global_lexical_binding`).
+    active_roots: Vec<usize>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
     startup_intrinsics: startup_intrinsics::StartupIntrinsics,
@@ -2653,7 +2657,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.realm.globals
         };
-        let result = self.call_value(program, root, this, &[]);
+        let result = self.call_root(program, root, this);
         self.finish_main_module(program, &result)?;
         if drain_jobs {
             let jobs = self.drain_jobs(program);

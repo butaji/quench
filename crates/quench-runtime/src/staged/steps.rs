@@ -22,8 +22,9 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. } | Operation::InitializeLocal { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } | Operation::Nop => register_step(stage, frame, operation),
-        Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. } | Operation::ArgumentGet { .. }
-            | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
+        Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
+            | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::GlobalLexicalLoad { .. }
+            | Operation::GlobalLexicalStore { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. }
             | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } => super::names::step(stage, frame, operation),
         guard @ (Operation::GuardIdentity { .. } | Operation::GuardLive | Operation::GuardRealm { .. } | Operation::GuardDeclared { .. }
@@ -94,13 +95,9 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         Operation::LoadCallee { destination } => load_callee(stage, frame, destination),
         Operation::RequireIteratorResult { register } => super::iteration::require_iterator_result(stage, frame, register, frame.miss()),
         Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
-        Operation::TypeofTest { destination, source, index, negated } =>
-            super::control::typeof_test(stage, frame, destination, source, index, negated),
-        Operation::TypeofString { destination, source } => super::control::typeof_string(stage, frame, destination, source),
-        Operation::StringCaseIndex { destination, source, start, count } => string_case_index(stage, frame, destination, source, start, count),
-        Operation::Suspend { kind, destination, value } => super::suspend::suspend(stage, frame, kind, destination, value),
-        Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. } | Operation::ArgumentGet { .. }
-            | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::Protocol { .. }
+        Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
+            | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::GlobalLexicalLoad { .. }
+            | Operation::GlobalLexicalStore { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } => super::names::step(stage, frame, operation),
         heap => super::heap::heap_step(stage, frame, heap),
     }

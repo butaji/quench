@@ -24,10 +24,8 @@ pub(crate) const TAG_LOAD_NAME: u8 = 12;
 pub(crate) const TAG_SUPER_CALL: u8 = 13;
 pub(crate) const TAG_DECIDE: u8 = 14;
 pub(crate) const TAG_ENUMERATED_GET: u8 = 15;
-pub(crate) const TAG_CLONE_ENV: u8 = 16;
-pub(crate) const TAG_ARGUMENT_GET: u8 = 17;
-// merge: HEAD's Accessor keeps its variant (used by vm/call_out.rs) under a fresh tag, since theirs took 16 and 17.
-pub(crate) const TAG_ACCESSOR: u8 = 18;
+pub(crate) const TAG_GLOBAL_LEXICAL_LOAD: u8 = 16;
+pub(crate) const TAG_GLOBAL_LEXICAL_STORE: u8 = 17;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -79,15 +77,11 @@ pub(crate) enum CallOut {
     Decide { left: Register, right: Register, operator: u32 } = TAG_DECIDE,
     /// `base[key]` of a for-in's enumerated read whose state's memo did not answer: the element read.
     EnumeratedGet { base: Register, key: Register } = TAG_ENUMERATED_GET,
-    /// The running activation's environment cloned by environment clone plan `plan`, the copy a
-    /// `for (let ...)` iteration's closures capture. It defines no register.
-    CloneEnv { plan: u32 } = TAG_CLONE_ENV,
-    /// The `[[Get]]` of `atom` on `receiver` through cache `site` by the VM's field read
-    /// (`Vm::get_field_cached`): where the site cached a getter, the getter runs by the
-    /// interpreter's own activation (`call_value`) with `receiver` as `this`. The getter is the
-    /// site's cached accessor, which no register holds, so the VM resolves it from the site.
-    #[allow(dead_code)]
-    Accessor { receiver: Register, atom: u32, site: u16 } = TAG_ACCESSOR,
+    /// The script-top-level binding `declaration` names, read through cache `site` (`LoadGlobalLexical`).
+    GlobalLexicalLoad { declaration: u32, site: u16 } = TAG_GLOBAL_LEXICAL_LOAD,
+    /// `source` to the script-top-level binding `declaration` names, through cache `site`, `initialize`
+    /// for a declaration (`StoreGlobalLexical`).
+    GlobalLexicalStore { source: Register, declaration: u32, site: u16, initialize: bool } = TAG_GLOBAL_LEXICAL_STORE,
 }
 
 /// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
@@ -153,7 +147,7 @@ impl CallOut {
     /// activations is their caller's.
     pub(crate) fn names_activation(self) -> bool {
         matches!(self, Self::LoadEnvLocal { .. } | Self::StoreEnvLocal { .. } | Self::LoadName { .. }
-            | Self::GlobalTypeof { .. } | Self::GlobalWrite { .. })
+            | Self::GlobalTypeof { .. } | Self::GlobalWrite { .. } | Self::GlobalLexicalLoad { .. } | Self::GlobalLexicalStore { .. })
     }
 
     /// The registers the VM reads, in the order its operation takes them: the first operand
@@ -165,11 +159,10 @@ impl CallOut {
             Self::Delete { base: left, key: right, .. }
                 | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
-            Self::ArgumentGet { index, .. } => [Some(index), None],
-            Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
+            Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. }
+                | Self::GlobalLexicalStore { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. }
-                | Self::CloneEnv { .. } => [None, None],
-            Self::Accessor { receiver, .. } => [Some(receiver), None],
+                | Self::GlobalLexicalLoad { .. } => [None, None],
             Self::Protocol { operands, .. } => operands,
             Self::Spread { callee, receiver, arguments, .. } =>
                 return Operands { fixed: [Some(Operand::register(callee)), Some(Operand::register(receiver))], list: Some(arguments) },
@@ -209,6 +202,10 @@ impl<W, P> Operation<W, P> {
             Self::GlobalWrite { source, atom, site, initialize } =>
                 (CallOut::GlobalWrite { source, atom, site, initialize }, None),
             Self::GlobalTypeof { destination, atom, site } => (CallOut::GlobalTypeof { atom, site }, Some(destination)),
+            Self::GlobalLexicalLoad { destination, declaration, site } =>
+                (CallOut::GlobalLexicalLoad { declaration, site }, Some(destination)),
+            Self::GlobalLexicalStore { source, declaration, site, initialize } =>
+                (CallOut::GlobalLexicalStore { source, declaration, site, initialize }, None),
             Self::Delete { destination, base, key, strict } => (CallOut::Delete { base, key, strict }, Some(destination)),
             Self::CompareJump { comparison, left, right, .. } => (CallOut::Decide { left: left.register_index()?,
                 right: right.register_index()?, operator: comparison.operator()? }, None),

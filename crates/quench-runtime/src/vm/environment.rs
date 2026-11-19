@@ -101,8 +101,32 @@ impl<H: Host> Vm<H> {
             .and_then(|atom| self.realm.global_lexical_bindings.get(&atom).copied())
     }
 
+    /// Runs the root activation `root` of `p` to completion, recorded in `active_roots` while it
+    /// runs. The root's frame is pushed at the frame count taken here, so deferred lane activations
+    /// are materialized first: they would otherwise land below the root.
+    pub(super) fn call_root(&mut self, p: &ResidualProgram, root: Value, this: Value) -> Result<Value, JsError> {
+        self.materialize_deferred_lane();
+        self.active_roots.push(self.frames.len());
+        let result = self.call_value(p, root, this, &[]);
+        self.active_roots.pop();
+        result
+    }
+
+    /// The frame index of the innermost running root activation of `program` (`active_roots`).
+    fn active_root_of(&self, program: super::ProgramId) -> Option<usize> {
+        self.active_roots.iter().rev().copied().find(|&index| {
+            self.frames.get(index).is_some_and(|active| {
+                active.function == super::ROOT_FUNCTION_ID && active.program == program
+            })
+        })
+    }
+
+    /// The running script root that declares global lexical `atom` in the active realm, as its frame
+    /// index and binding slot: the innermost such root of `active_roots`. Roots nest only through
+    /// host script evaluation, so the walk is over those, not over the frames.
     pub(super) fn active_global_lexical_binding(&self, atom: Atom) -> Option<(usize, usize)> {
-        self.frames.iter().enumerate().rev().find_map(|(index, frame)| {
+        self.active_roots.iter().rev().find_map(|&index| {
+            let frame = self.frames.get(index)?;
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != self.realm.globals {
                 return None;
             }
@@ -1347,20 +1371,27 @@ impl<H: Host> Vm<H> {
         if self.realm.immutable_global_lexical_bindings.contains(&atom) {
             return Err(self.type_error(p, "assignment to constant binding".into()));
         }
-        let active = self.active_global_lexical_binding(atom);
-        if let Some((index, slot)) = active {
-            let frame = &mut self.frames[index];
-            if frame.captured {
-                *self.heap.environment_slot_mut(frame.env, slot)
-                    .ok_or_else(|| JsError("invalid global lexical environment".into()))? = value;
-            } else {
-                frame.locals[slot] = value;
-            }
-        }
-        if active.is_none() || self.realm.global_lexical_bindings.contains_key(&atom) {
+        let active = self.store_active_global_lexical(atom, value)?;
+        if !active || self.realm.global_lexical_bindings.contains_key(&atom) {
             self.bind_global_lexical(atom, value);
         }
         Ok(())
+    }
+
+    /// Writes `value` into the slot of the running script root that declares global lexical `atom`,
+    /// if one runs (the root's locals, or its environment once captured); whether one does.
+    pub(super) fn store_active_global_lexical(&mut self, atom: Atom, value: Value) -> Result<bool, JsError> {
+        let Some((index, slot)) = self.active_global_lexical_binding(atom) else {
+            return Ok(false);
+        };
+        let frame = &mut self.frames[index];
+        if frame.captured {
+            *self.heap.environment_slot_mut(frame.env, slot)
+                .ok_or_else(|| JsError("invalid global lexical environment".into()))? = value;
+        } else {
+            frame.locals[slot] = value;
+        }
+        Ok(true)
     }
 
     /// The environment `depth` function layers out from an activation's captures
@@ -2035,9 +2066,7 @@ impl<H: Host> Vm<H> {
             if self.realm.global_lexical_bindings.contains_key(&atom) {
                 self.bind_global_lexical(atom, value);
             }
-            let owner = self.frames.iter().rposition(|active| {
-                active.function == super::ROOT_FUNCTION_ID && active.program == owner_id
-            });
+            let owner = self.active_root_of(owner_id);
             if let Some(owner) = owner {
                 let (owner_env, captured) = (self.frames[owner].env, self.frames[owner].captured);
                 if captured && owner_env != env {
@@ -2404,7 +2433,10 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<bool, JsError> {
-        let Some(()) = self.frames.iter().rev().find_map(|frame| {
+        // Script and eval roots are the only ROOT_FUNCTION_ID activations whose `this` is the
+        // global object; both are recorded in `active_roots` (`call_root`, `call_eval_closure`).
+        let Some(()) = self.active_roots.iter().rev().find_map(|&index| {
+            let frame = self.frames.get(index)?;
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != self.realm.globals {
                 return None;
             }
@@ -2442,7 +2474,11 @@ impl<H: Host> Vm<H> {
         }
         // Each script/eval activation has its own local layout. The global
         // object owns the binding; refresh every active projection in this realm.
-        for frame in self.frames.iter_mut() {
+        // Only script and eval roots (`active_roots`) project global vars into their locals.
+        for &index in &self.active_roots {
+            let Some(frame) = self.frames.get_mut(index) else {
+                continue;
+            };
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != object {
                 continue;
             }

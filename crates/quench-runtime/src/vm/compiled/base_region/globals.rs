@@ -112,22 +112,11 @@ fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decode
 }
 
 /// Whether `instruction` stores to a global name, which may write a field of the global object that a
-/// loop's entry record holds (`Facts::Entry`).
+/// loop's entry record holds (`Facts::Entry`), or to a script-top-level lexical, which writes the realm's record.
 pub(super) fn stores_name(instruction: WideInstruction) -> bool {
-    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::GlobalWrite { .. }))
-}
-
-/// Whether `instruction` loads a global name's value: a plain or call load, or the load a
-/// `typeof` reads (`Operation::GlobalTypeof`).
-fn loads_global(instruction: WideInstruction) -> bool {
-    named_load(instruction)
-        || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::GlobalTypeof { .. }))
-}
-
-/// Whether `instruction` is a by-name read, `LoadName` or a call's `LoadNameCall`: the decode names both
-/// (`Operation::decode_load_name`), whose proof decides nothing about which opcode it is.
-fn named_load(instruction: WideInstruction) -> bool {
-    crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some()
+    instruction.op().class() == Class::StoreName
+        || matches!(crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::EMPTY),
+            Some(crate::staged::Operation::GlobalLexicalStore { .. }))
 }
 
 /// The register a name call's `undefined` receiver is defined in.
