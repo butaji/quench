@@ -182,10 +182,10 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
     // A heap word's truth is its record's test alone, so the immediate and Number ladder below
     // runs only where the word is not a heap value: an object's ToBoolean costs its tag and
     // record tests, not every arm of the ladder. The arms compute the same truth as before.
-    let truthy = stage.choose(heap, |stage| {
+    let truthy = stage.choose(heap, #[inline(always)] |stage| {
         let (yes, no) = (stage.constant(1), stage.constant(0));
         stage.select(record, yes, no)
-    }, |stage| {
+    }, #[inline(always)] |stage| {
         let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
         let payload = stage.and_imm(bits, u64::from(u32::MAX));
         let integer_truthy = stage.ne_imm(payload, 0u32);

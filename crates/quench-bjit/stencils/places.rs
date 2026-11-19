@@ -255,7 +255,7 @@ fn truthy<const P: u8, const H: u8>(s: &S) -> Option<bool> {
         Representation::Float64 => Some(stage().number_truthy(word)),
         Representation::Tagged => {
             let (undecided, truthy) = value::tagged_truthiness(&mut stage(), word);
-            (!undecided).then_some(truthy).or_else(|| string_truthy(s, word))
+            if undecided { string_truthy(s, word) } else { Some(truthy) }
         }
     }
 }

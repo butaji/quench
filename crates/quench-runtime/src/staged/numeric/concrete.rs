@@ -120,9 +120,12 @@ impl NumericStage for super::super::Concrete {
     #[inline(always)]
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
     #[inline(always)]
-    fn f64_constant(&mut self, value: f64) -> u64 { value.to_bits() }
-    fn f64_from_bits(&mut self, bits: u64) -> u64 { bits }
+    /// Opaque to the stencil build, so a row moves the bits as an immediate instead of loading a
+    /// constant pool entry (a relocation that is not a hole); the bits themselves in the runtime.
     #[inline(always)]
+    fn f64_constant(&mut self, value: f64) -> u64 { crate::staged::wasm_float::opaque(value.to_bits()) }
+    #[inline(always)]
+    fn f64_from_bits(&mut self, bits: u64) -> u64 { bits }
     #[inline(always)]
     fn narrow(&mut self, value: u64) -> u64 { u64::from(value as u32) }
     #[inline(always)]
