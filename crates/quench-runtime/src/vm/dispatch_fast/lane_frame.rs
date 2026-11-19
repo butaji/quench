@@ -47,7 +47,7 @@ struct LaneHost {
     allocate: AllocationMaker,
     delete: PropertyDeleter,
     read_name: NameReader,
-    /// What an `await`'s source conversion asks (`staged_ops::lane_await_source`).
+    /// What an `await`'s source conversion asks (`staged::await_source`, `AwaitSource::of`).
     awaits: AwaitSource,
     /// What the by-name load the frame runs resolved its name to, if it runs one.
     name: Option<NameBinding>,

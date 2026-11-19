@@ -177,7 +177,7 @@ pub(super) fn target_entry(body: &crate::bytecode::Function, plan: &crate::bytec
 /// its environment and locals (`CallPlan::suspended_environment`), laid out as an environment
 /// activation lays out an ordinary body (`CallPlan::environment_activation`): each parameter a
 /// frame local, every register starting `undefined`. Its `await` suspends it in place, its frame
-/// taking the window's environment (`generator_yields::lane_await_settling`).
+/// taking the window's environment (`generator_yields::suspend_settling`).
 pub(super) fn settles_in_environment(body: &crate::bytecode::Function, plan: &crate::bytecode::CallPlan) -> bool {
     body.is_async
         && !body.is_generator

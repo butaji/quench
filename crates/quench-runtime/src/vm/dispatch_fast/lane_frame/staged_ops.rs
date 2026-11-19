@@ -334,12 +334,3 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
         self.suspends?.in_place(self.registers, step).map(LaneControl::Resumed)
     }
 }
-
-/// What `await` of `awaited` waits on in the lane context `cx` (registers `r`): the staged
-/// conversion (`staged::await_source`) over the lane's own PromiseResolve. `None` leaves a
-/// conversion that could run guest code, or throw into the frame's handlers, to the general path.
-pub(in crate::vm::dispatch_fast) fn lane_await_source<H: Host>(cx: *mut LaneContext<H>, r: Registers, awaited: Value) -> Option<Value> {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
-    crate::staged::await_source(&mut stage, &mut frame, awaited.to_bits()).map(Value::from_bits)
-}
