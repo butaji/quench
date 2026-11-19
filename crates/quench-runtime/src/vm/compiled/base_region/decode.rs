@@ -128,6 +128,9 @@ pub(super) struct Decoded {
     /// Every path proves the inline-cache access's receiver of its entry's shape (`proofs::prove`): the row
     /// reads or writes the slot with no guard.
     pub(super) proven: bool,
+    /// Where `proven`, the receiver's storage form is proven flat too (`proofs::prove`): the row's slot is the arena run's,
+    /// with no compare of the auxiliary word (`Heap::IcKnownGetFlat`, `Heap::IcKnownSetFlat`).
+    pub(super) flat: bool,
     /// Some receiver proof reaches the row (`proofs::prove`), which a later row may stand on: the code
     /// is not resumed here.
     pub(super) relies: bool,
@@ -141,7 +144,7 @@ pub(super) struct Decoded {
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, proven: false, relies: false, admitted: false, recheck: false }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, proven: false, flat: false, relies: false, admitted: false, recheck: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {

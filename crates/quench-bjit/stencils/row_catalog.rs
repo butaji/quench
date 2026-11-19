@@ -7,10 +7,10 @@
 //! that share the line (a typed kind family). `reserve N` skips N codes no row holds. Rows are listed in
 //! chunks, each a `[END TABLE: ...]`, because the positional values chain through the chunks and a
 //! single macro expansion over every row would nest deeper than the default recursion limit.
-//! Adding a heap row: one line here, and a `Heap` variant with its arm in `Heap::code` in `runtime base_rows.rs`
-//! (the test there checks that every variant's code is one of these rows; it must list the new variant too).
+//! Adding a heap row: one line here naming its variant (`= Heap::X`). `Heap::code` in `runtime base_rows.rs` expands
+//! these lines (`heap_code_of!`), and the test there lists every variant.
 
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports, unused_macros)]
 
 use super::TYPED_KINDS;
 
@@ -82,7 +82,7 @@ macro_rules! heap_chunk {
         heap_chunk!(@go $end, $table, $base + 1, [$($acc)*]; $($($rest)*)?);
     };
     (@go $end:ident, $table:ident, $base:expr, [$($acc:tt)*];
-        $(#[$m:meta])* $name:ident : uses($dst:ident, $a:ident, $b:ident, $entry:ident) $(x $n:expr)? $(, $($rest:tt)*)?) => {
+        $(#[$m:meta])* $name:ident : uses($dst:ident, $a:ident, $b:ident, $entry:ident) $(x $n:ident)? $(= $pat:pat $(=> $off:expr)?)? $(, $($rest:tt)*)?) => {
         $(#[$m])* pub const $name: u8 = $base;
         heap_chunk!(@go $end, $table, $base + (1 $(+ ($n) - 1)?),
             [$($acc)* ($base, 1 $(+ ($n) - 1)?, Uses { entry: Entry::$entry, dst: Slot::$dst, a: Slot::$a, b: Slot::$b }),];
@@ -106,62 +106,101 @@ macro_rules! row_catalog {
     };
 }
 
-row_catalog! {
+/// The heap rows' codes as one expression over `$heap` (a `Heap`): each chunk is a `match` whose arms are the catalog's
+/// patterns (`Heap::X => row`, a family's offset after `=>`) and whose catch-all is `None`; the chunks are tried in turn.
+macro_rules! heap_code_match {
+    (@chunks $heap:tt, $acc:expr;) => {
+        $acc
+    };
+    (@chunks $heap:tt, $acc:expr; [$end:ident $table:ident: $($body:tt)*] $($rest:tt)*) => {
+        heap_code_match!(@chunks $heap, $acc.or_else(|| heap_code_match!(@go $heap, []; $($body)*)); $($rest)*)
+    };
+    (@go $heap:tt, [$($arms:tt)*];) => {
+        match $heap {
+            $($arms)*
+            _ => None,
+        }
+    };
+    (@go $heap:tt, [$($arms:tt)*]; reserve $n:expr $(, $($rest:tt)*)?) => {
+        heap_code_match!(@go $heap, [$($arms)*]; $($($rest)*)?)
+    };
+    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? = $pat:pat $(=> $off:expr)? $(, $($rest:tt)*)?) => {
+        heap_code_match!(@go $heap, [$($arms)* $pat => Some(library::$name $(+ $off)?),]; $($($rest)*)?)
+    };
+    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? $(, $($rest:tt)*)?) => {
+        heap_code_match!(@go $heap, [$($arms)*]; $($($rest)*)?)
+    };
+    ($heap:tt heap { $($chunk:tt)* } number { $($kinds:tt)* }) => {
+        heap_code_match!(@chunks $heap, None; $($chunk)*).unwrap_or_else(|| unreachable!("a heap variant without a catalog row"))
+    };
+}
+
+/// `$heap`'s code: the catalog's heap rows as one expression (`heap_code_match!`).
+macro_rules! heap_code_of {
+    ($heap:tt) => {
+        catalog!(heap_code_match($heap))
+    };
+}
+
+/// The whole catalog, handed to `$consumer` with `$args` ahead of its `heap { .. } number { .. }` body.
+macro_rules! catalog {
+    ($consumer:ident ($($args:tt)*)) => {
+        $consumer! { $($args)*
     heap {
     [HEAP_END_1 HEAP_TABLE_1:
-    CAPTURE_ROW: uses(Dst, Unread, Unread, Never),
-    INDEX_ROW: uses(Dst, Unread, Src, Kept),
-    STORE_ROW: uses(Unread, Src, Src, Kept),
-    FIELD_ROW: uses(Dst, Unread, Unread, Never),
+    CAPTURE_ROW: uses(Dst, Unread, Unread, Never) = Heap::Capture(_),
+    INDEX_ROW: uses(Dst, Unread, Src, Kept) = Heap::Index,
+    STORE_ROW: uses(Unread, Src, Src, Kept) = Heap::Store,
+    FIELD_ROW: uses(Dst, Unread, Unread, Never) = Heap::Field,
     ARRAY_ROW: uses(Unread, Unread, Unread, Never),
-    SITE_ROW: uses(Dst, Unread, Unread, Kept),
+    SITE_ROW: uses(Dst, Unread, Unread, Kept) = Heap::Site | Heap::SiteChain,
     /// The running activation's `this`, a local slot read, a local slot written.
-    THIS_ROW: uses(Dst, Unread, Unread, Never),
-    LOAD_LOCAL_ROW: uses(Dst, Unread, Unread, Never),
-    STORE_LOCAL_ROW: uses(Unread, Src, Unread, Never),
+    THIS_ROW: uses(Dst, Unread, Unread, Never) = Heap::This,
+    LOAD_LOCAL_ROW: uses(Dst, Unread, Unread, Never) = Heap::LoadLocal(_),
+    STORE_LOCAL_ROW: uses(Unread, Src, Unread, Never) = Heap::StoreLocal(_),
     /// The frame slot at hole 1 holds exactly the word at hole 2: the proof a call's callee is the one
     /// a site was stitched for.
-    IDENTITY_ROW: uses(Unread, Unread, Unread, Never),
-    LENGTH_ROW: uses(Dst, Unread, Unread, Never),
-    CAPTURE_SET_ROW: uses(Unread, Src, Unread, Never),
-    SITE_STORE_ROW: uses(Unread, Src, Unread, Kept),
+    IDENTITY_ROW: uses(Unread, Unread, Unread, Never) = Heap::Identity,
+    LENGTH_ROW: uses(Dst, Unread, Unread, Never) = Heap::Length,
+    CAPTURE_SET_ROW: uses(Unread, Src, Unread, Never) = Heap::CaptureSet(_),
+    SITE_STORE_ROW: uses(Unread, Src, Unread, Kept) = Heap::SiteStore,
     /// The site rows of the activation's receiver (`this`), which the payload holds.
-    THIS_SITE_ROW: uses(Dst, Unread, Unread, Kept),
-    THIS_STORE_ROW: uses(Unread, Src, Unread, Kept),
+    THIS_SITE_ROW: uses(Dst, Unread, Unread, Kept) = Heap::ThisSite | Heap::ThisChain,
+    THIS_STORE_ROW: uses(Unread, Src, Unread, Kept) = Heap::ThisStore,
     /// A prototype-held field folded to the value its holder held when the code was compiled, over the
     /// receiver (shape and prototype link) it stands on; the receiver's variant (`entry`) takes it from the payload.
-    HELD_ROW: uses(Dst, Unread, Unread, Kept),
+    HELD_ROW: uses(Dst, Unread, Unread, Kept) = Heap::Held | Heap::ThisHeld,
     /// Leaves unless the invalidation word at the address in hole 1 is zero.
-    LIVE_ROW: uses(Unread, Unread, Unread, Never),
+    LIVE_ROW: uses(Unread, Unread, Unread, Never) = Heap::Live,
     /// A fast arm of an instruction whose full operation a helper step makes (`staged::iteration`): the
     /// frame slot at hole 1 holds a direct object or array record (`RequireIteratorResult`), or a direct
     /// string, which is copied to the slot at hole 0 (`ToPropertyKey`). A hit continues at TAKEN, past the
     /// helper step laid out after the row; a miss leaves through EXIT0 into it.
-    OBJECT_ROW: uses(Unread, Unread, Unread, Never),
-    KEY_ROW: uses(Unread, Unread, Unread, Never),
+    OBJECT_ROW: uses(Unread, Unread, Unread, Never) = Heap::Object,
+    KEY_ROW: uses(Unread, Unread, Unread, Never) = Heap::Key,
     /// A fast arm of `Unary`'s `typeof` index and tests (`staged::value::immediate_typeof_index`): the frame
     /// slot at hole 1 holds a value whose tag decides its `typeof` index, which is the destination's int
     /// (`TYPEOF_INDEX_ROW`, hole 0), or whether it is (`TYPEOF_IS_ROW`) or is not (`TYPEOF_ISNOT_ROW`) the
     /// name at index hole 2, as a boolean. A hit continues at TAKEN; a heap value leaves through EXIT0 into
     /// the helper step after the row.
-    TYPEOF_INDEX_ROW: uses(Unread, Unread, Unread, Never),
-    TYPEOF_IS_ROW: uses(Unread, Unread, Unread, Never),
-    TYPEOF_ISNOT_ROW: uses(Unread, Unread, Unread, Never),
+    TYPEOF_INDEX_ROW: uses(Unread, Unread, Unread, Never) = Heap::TypeofIndex,
+    TYPEOF_IS_ROW: uses(Unread, Unread, Unread, Never) = Heap::TypeofIs { negated: false, .. },
+    TYPEOF_ISNOT_ROW: uses(Unread, Unread, Unread, Never) = Heap::TypeofIs { negated: true, .. },
     /// A local slot read (`LOAD_CHECKED_ROW`) or an assignment that is no initialization (`STORE_CHECKED_ROW`)
     /// whose binding may be in its temporal dead zone: the slot holds the deleted marker, which leaves through
     /// EXIT0 into the helper step after the row, whose read raises the `ReferenceError`; a hit continues at
     /// TAKEN. The slot number is hole 1 (a read) or hole 2 (the store, whose first operand is the value).
-    LOAD_CHECKED_ROW: uses(Dst, Unread, Unread, Never),
-    STORE_CHECKED_ROW: uses(Unread, Src, Unread, Never),
+    LOAD_CHECKED_ROW: uses(Dst, Unread, Unread, Never) = Heap::LoadChecked(_),
+    STORE_CHECKED_ROW: uses(Unread, Src, Unread, Never) = Heap::StoreChecked(_),
     ]
     [HEAP_END_2 HEAP_TABLE_2:
     /// A fast arm of `Unary`'s `typeof` string (`staged::value::immediate_typeof_string`): the operand (hole 1)
     /// whose tag decides its index, the entry of the table of result strings at hole 2 at that index, to the
     /// destination (hole 0). A hit continues at TAKEN; a heap value leaves through EXIT0 into the helper step.
-    TYPEOF_STRING_ROW: uses(Unread, Unread, Unread, Never),
+    TYPEOF_STRING_ROW: uses(Unread, Unread, Unread, Never) = Heap::TypeofString,
     /// The ordinary value at the address in hole 1 (an inlined callee's capture slot, `staged::environment::capture_at`)
     /// into the destination; an internal marker (a dead zone, a shared slot) leaves. A hit continues at NEXT.
-    CALLEE_CAPTURE_ROW: uses(Dst, Unread, Unread, Never),
+    CALLEE_CAPTURE_ROW: uses(Dst, Unread, Unread, Never) = Heap::CalleeCapture,
     // Value 26 is unused: the numbering has always left it free.
     reserve 1,
     /// A fast arm of `Binary`'s `instanceof` of a constructor the code holds (`staged::object::instanceof_by_words`): the
@@ -170,118 +209,129 @@ row_catalog! {
     /// constructor's identity, which the slot must hold, else the row leaves. A hit writes the boolean to the destination and
     /// continues at TAKEN; a cell the walk does not follow, another constructor or a longer chain leaves through EXIT0 into
     /// the helper step after the row.
-    INSTANCEOF_ROW: uses(Unread, Unread, Unread, Never),
+    INSTANCEOF_ROW: uses(Unread, Unread, Unread, Never) = Heap::Instanceof,
     /// Leaves through the taken successor unless the VM's active realm (the word at the byte offset of
     /// hole 1 behind the payload's VM) names the global object word of hole 2: the proof once at entry.
-    REALM_ROW: uses(Unread, Unread, Unread, Never),
+    REALM_ROW: uses(Unread, Unread, Unread, Never) = Heap::Realm,
     /// The global object's slot, read into the destination (hole 1: the object's record id, hole 2: the
     /// slot's byte offset), or written from the first operand (hole 0: the record id, hole 2: the byte
     /// offset; the `entry` variant takes the store gate, for a value that may be a heap reference).
-    GLOBAL_READ_ROW: uses(Dst, Unread, Unread, Never),
-    GLOBAL_STORE_ROW: uses(Unread, Src, Unread, Kept),
+    GLOBAL_READ_ROW: uses(Dst, Unread, Unread, Never) = Heap::GlobalRead,
+    GLOBAL_STORE_ROW: uses(Unread, Src, Unread, Kept) = Heap::GlobalStore,
     /// The destination takes the tagged word of hole 1.
-    CONSTANT_ROW: uses(Dst, Unread, Unread, Never),
+    CONSTANT_ROW: uses(Dst, Unread, Unread, Never) = Heap::Word,
     /// `AppendArray`'s fast arm: the Number operand (hole 1) appended to the unique writable dense array at the
     /// frame slot of hole 0 where the backing's capacity word proves room (`elements::append_in_room`). A hit
     /// continues at TAKEN, past the helper step laid out after the row (which grows the backing); a miss
     /// leaves through EXIT0 into it.
-    APPEND_ROW: uses(Unread, Src, Unread, Never),
+    APPEND_ROW: uses(Unread, Src, Unread, Never) = Heap::Append,
     /// The property-add rows (`staged::add::site_add`): an object register's or the activation's receiver
     /// (`THIS_ADD_*`) gains the value operand (hole 1) by the transition the holes carry, one row per storage
     /// form the slot admits (`staged::object::Form`). A hit continues at TAKEN, past the helper step laid out
     /// after the row (or the leave a guarded row's miss makes); a miss leaves through EXIT0 into it.
-    ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept),
-    ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept),
-    ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept),
-    THIS_ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept),
-    THIS_ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept),
-    THIS_ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept),
+    ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept) = Heap::Add { form: Form::Packed, this: false },
+    ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept) = Heap::Add { form: Form::Arena, this: false },
+    ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept) = Heap::Add { form: Form::Either, this: false },
+    THIS_ADD_PACKED_ROW: uses(Unread, Unread, Unread, Kept) = Heap::Add { form: Form::Packed, this: true },
+    THIS_ADD_ARENA_ROW: uses(Unread, Unread, Unread, Kept) = Heap::Add { form: Form::Arena, this: true },
+    THIS_ADD_EITHER_ROW: uses(Unread, Unread, Unread, Kept) = Heap::Add { form: Form::Either, this: true },
     /// `ForInNext`'s fast arm (`staged::iteration::for_in_next`): the for-in state in the frame slot of hole 1
     /// yields its next key to the slot of hole 0 where its memo proves the snapshot current. A hit continues
     /// at TAKEN, past the helper step laid out after the row, which also takes the exhausted step's jump; a
     /// miss leaves through EXIT0 into it.
-    FOR_IN_ROW: uses(Unread, Unread, Unread, Never),
+    FOR_IN_ROW: uses(Unread, Unread, Unread, Never) = Heap::ForIn,
     /// `SetFunctionName`'s fast arm (`staged::naming::site_name`): the function in the frame slot whose offset
     /// hole 2 carries (above `NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot hole 2 carries (low
     /// `ADD_SLOT_BITS`), moving from the before-layout to the after-layout hole 0 carries as an add's does, where it
     /// held the empty name. One row per storage form the slot admits. A hit continues at TAKEN, past the helper
     /// step laid out after the row; a miss leaves through EXIT0 into it.
-    NAME_EITHER_ROW: uses(Unread, Unread, Unread, Never),
-    NAME_ARENA_ROW: uses(Unread, Unread, Unread, Never),
+    NAME_EITHER_ROW: uses(Unread, Unread, Unread, Never) = Heap::Name { form: Form::Packed | Form::Either },
+    NAME_ARENA_ROW: uses(Unread, Unread, Unread, Never) = Heap::Name { form: Form::Arena },
     /// The inline-cache rows (`ic_rows.rs`): a read of the receiver's own flat slot, a read of the slot its
     /// prototype holds, and a store of a Number into the receiver's own flat slot, whose slot type is `ANY` or
     /// `NUMBER` (`IC_SET_ROW`) or `INT32` (`IC_SET_INT_ROW`).
-    IC_GET_ROW: uses(Dst, Unread, Unread, Kept),
+    IC_GET_ROW: uses(Dst, Unread, Unread, Kept) = Heap::IcGet,
     IC_GET_HOLDER_ROW: uses(Dst, Unread, Unread, Kept),
-    IC_SET_ROW: uses(Unread, Src, Unread, Kept),
-    IC_SET_INT_ROW: uses(Unread, Src, Unread, Kept),
+    IC_SET_ROW: uses(Unread, Src, Unread, Kept) = Heap::IcSet { int: false },
+    IC_SET_INT_ROW: uses(Unread, Src, Unread, Kept) = Heap::IcSet { int: true },
     /// A read (`ENV_ROW`) and a store (`ENV_SET_ROW`) of a local slot the running activation's environment window holds
     /// (`staged::environment::environment_slot`), through the storage word the payload keeps
     /// (`JS_STEP_ENV_STORAGE`; one that holds no window reads as sparse storage, which every such row misses at): the slot
     /// at hole 1 and its byte offset at hole 2 as a capture row's, the destination (read) or the value operand (store) at hole 0.
     /// A hit continues at TAKEN, past the helper step laid out after the row; a slot past the run or holding an internal
     /// marker (a dead zone, a slot the environment took) leaves through EXIT0 into it.
-    ENV_ROW: uses(Dst, Unread, Unread, Never),
-    ENV_SET_ROW: uses(Unread, Src, Unread, Never),
+    ENV_ROW: uses(Dst, Unread, Unread, Never) = Heap::EnvLocal(_),
+    ENV_SET_ROW: uses(Unread, Src, Unread, Never) = Heap::EnvStore(_),
     /// The definition of a slot of that storage (`staged::environment::environment_slot_define`): a binding's first value
     /// (hole 0 the value operand, holes 1 and 2 the slot as `ENV_SET_ROW`'s), over its dead zone or an earlier value, which
     /// `InitializeTdz` (the hole as the operand) and a declaration's store make. A hit continues at TAKEN; a slot past the run
     /// or another environment's shared slot leaves through EXIT0 into the helper step.
-    ENV_DEFINE_ROW: uses(Unread, Src, Unread, Never),
+    ENV_DEFINE_ROW: uses(Unread, Src, Unread, Never) = Heap::EnvDefine(_),
     ]
     [HEAP_END_3 HEAP_TABLE_3:
     /// The destination (hole 0) takes the word of the global lexical binding at the address in hole 1 (`staged::lexical_read`), or the
     /// first operand (hole 1) is stored to it (address in hole 2) where it is initialized: a binding in its temporal dead zone (the deleted
     /// marker) leaves through EXIT0, so the interpreter's step raises. The address is held under the global layout, which a new declaration
     /// changes.
-    LEXICAL_READ_ROW: uses(Dst, Unread, Unread, Never),
-    LEXICAL_WRITE_ROW: uses(Unread, Src, Unread, Never),
+    LEXICAL_READ_ROW: uses(Dst, Unread, Unread, Never) = Heap::LexicalRead,
+    LEXICAL_WRITE_ROW: uses(Unread, Src, Unread, Never) = Heap::LexicalWrite,
     /// A typed array's element of a planned kind (`TypedArrayKind` in discriminant order, `TYPED_KINDS` of them), read into
     /// the destination (`TYPED_INDEX_ROW` + kind) or replaced by the Number operand (`TYPED_STORE_ROW` + kind), through the
     /// view the loop's entry recorded: the entry words' record offset is hole 1 (a read) or hole 0 (a store), the index
     /// operand hole 2 and the store's value hole 1. The entry proved the kind once, so no row tests it; an index past the
     /// count or a value no element converts leaves through EXIT0 with nothing written. `TYPED_LENGTH_ROW` reads the count
     /// the entry words hold (hole 1) as the destination's int32.
-    TYPED_INDEX_ROW: uses(Float, Unread, Src, Always) x TYPED_KINDS,
-    TYPED_STORE_ROW: uses(Unread, Src, Src, Always) x TYPED_KINDS,
-    TYPED_LENGTH_ROW: uses(Dst, Unread, Unread, Always),
+    TYPED_INDEX_ROW: uses(Float, Unread, Src, Always) x TYPED_KINDS = Heap::TypedIndex(k) => k,
+    TYPED_STORE_ROW: uses(Unread, Src, Src, Always) x TYPED_KINDS = Heap::TypedStore(k) => k,
+    TYPED_LENGTH_ROW: uses(Dst, Unread, Unread, Always) = Heap::TypedLength,
     /// The receiver-proof rows (`ic_rows.rs`, `base_region::proofs`): the proof that the object register is of the
     /// entry's exact shape with flat values, and the guardless read and stores of a receiver every path proved so.
-    IC_PROOF_ROW: uses(Unread, Unread, Unread, Never),
-    IC_KNOWN_GET_ROW: uses(Dst, Unread, Unread, Kept),
-    IC_KNOWN_SET_ROW: uses(Unread, Src, Unread, Kept),
-    IC_KNOWN_SET_INT_ROW: uses(Unread, Src, Unread, Kept),
+    IC_PROOF_ROW: uses(Unread, Unread, Unread, Never) = Heap::IcProof,
+    IC_KNOWN_GET_ROW: uses(Dst, Unread, Unread, Kept) = Heap::IcKnownGet,
+    IC_KNOWN_SET_ROW: uses(Unread, Src, Unread, Kept) = Heap::IcKnownSet { int: false, admitted: false },
+    IC_KNOWN_SET_INT_ROW: uses(Unread, Src, Unread, Kept) = Heap::IcKnownSet { int: true, admitted: false },
     /// `IC_KNOWN_SET_ROW` of a store the region's entry admitted (`base_region::proofs`): no run-level stores test, the entry
     /// test (`STORES_ROW`) having held and no call since.
-    IC_KNOWN_SET_ADMITTED_ROW: uses(Unread, Src, Unread, Kept),
-    IC_KNOWN_SET_INT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept),
+    IC_KNOWN_SET_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) = Heap::IcKnownSet { int: false, admitted: true },
+    IC_KNOWN_SET_INT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) = Heap::IcKnownSet { int: true, admitted: true },
+    /// `IC_KNOWN_GET_ROW` / `IC_KNOWN_SET_ROW` of a receiver whose entry proved its exact shape and flat form (`SHAPE_FLAT_ROW`,
+    /// `base_region::proofs`): the slot at its byte offset in the arena run, with no compare of the auxiliary word. The
+    /// flat set's holes are the admitted row's (`ADMITTED`) or the stores test's (`IC_KNOWN_SET_FLAT_ROW`) plus the offset.
+    IC_KNOWN_GET_FLAT_ROW: uses(Dst, Unread, Unread, Kept) = Heap::IcKnownGetFlat,
+    IC_KNOWN_SET_FLAT_ROW: uses(Unread, Src, Unread, Kept) = Heap::IcKnownSetFlat { int: false, admitted: false },
+    IC_KNOWN_SET_INT_FLAT_ROW: uses(Unread, Src, Unread, Kept) = Heap::IcKnownSetFlat { int: true, admitted: false },
+    IC_KNOWN_SET_FLAT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) = Heap::IcKnownSetFlat { int: false, admitted: true },
+    IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW: uses(Unread, Src, Unread, Kept) = Heap::IcKnownSetFlat { int: true, admitted: true },
     /// A declared parameter's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a word
     /// whose language its tag alone decides, in the mask of hole 1 (`shared_words::language`), where the mask
     /// is the declared set. A hit continues at NEXT; a miss leaves through EXIT0 with nothing written.
-    DECLARED_ROW: uses(Unread, Unread, Unread, Never),
+    DECLARED_ROW: uses(Unread, Unread, Unread, Never) = Heap::Declared,
     /// A captured declaration's entry test (`base_region::link::entry_rows`): the depth-0 capture at the slot of hole 0
     /// holds exactly the word of hole 1 (the callee the body calls by identity). A hit continues at NEXT; a miss leaves
     /// through EXIT0 with nothing written.
-    CAPTURE_IDENTITY_ROW: uses(Unread, Unread, Unread, Never),
+    CAPTURE_IDENTITY_ROW: uses(Unread, Unread, Unread, Never) = Heap::CaptureIdentity,
     /// A class-typed parameter's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a direct
     /// object of the exact shape in hole 1's low half whose prototype link is its high half (`HELD_LINK_AT`), the record
     /// found in the payload's object record table (`guard::prototype`). A hit continues at NEXT; a miss leaves through
     /// EXIT0 with nothing written.
-    PROTOTYPE_ROW: uses(Unread, Unread, Unread, Never),
+    PROTOTYPE_ROW: uses(Unread, Unread, Unread, Never) = Heap::Prototype,
     /// A loop-invariant receiver's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a direct
     /// object of the exact shape in hole 1 (its record found in the payload's object record table, `guard::shape`). A hit
     /// continues at NEXT; a miss leaves through EXIT0 with nothing written.
-    SHAPE_ROW: uses(Unread, Unread, Unread, Never),
+    SHAPE_ROW: uses(Unread, Unread, Unread, Never) = Heap::Shape,
+    /// `SHAPE_ROW` of a receiver whose flat form the entry checks too: the auxiliary word is the shape in hole 1 with no
+    /// storage-form bit (`guard::shape` at `Form::Arena`), so its values are the arena run's.
+    SHAPE_FLAT_ROW: uses(Unread, Unread, Unread, Never) = Heap::ShapeFlat,
     /// A region's entry test that the run stores specialized (`JS_STEP_STORES_SPECIALIZED`, `slot_store::store_admitted`):
     /// a hit continues at NEXT; a miss leaves through EXIT0 with nothing written.
-    STORES_ROW: uses(Unread, Unread, Unread, Never),
+    STORES_ROW: uses(Unread, Unread, Unread, Never) = Heap::Stores,
     /// `String.prototype.charCodeAt` of a flat string (hole 1: the receiver's frame slot) at an int32 index in range (hole 2):
     /// the code unit, an int32 into the destination (hole 0). Any other receiver, index or form leaves through EXIT0 with
     /// nothing written, to the call's own step.
-    CHAR_CODE_AT_ROW: uses(Dst, Unread, Src, Never),
+    CHAR_CODE_AT_ROW: uses(Dst, Unread, Src, Never) = Heap::CharCodeAt,
     /// `parseInt` of a flat string (hole 1: the frame slot) in radix 10 (`staged::parse_int::decimal_int32`): the int32
     /// into the destination (hole 0). Any other text leaves through EXIT0 with nothing written.
-    PARSE_INT_ROW: uses(Dst, Unread, Unread, Never),
+    PARSE_INT_ROW: uses(Dst, Unread, Unread, Never) = Heap::ParseInt,
     /// The staged rows (`staged_rows.rs`): a Number operation the planner's operator tables do not name, a relation or
     /// an equality in value form, `~`, `void`, `InitializeTdz` of a frame local and `RequireObjectCoercible`. Each is a
     /// fast arm over register operands, its destination a frame slot; `STAGED_FIRST..=STAGED_LAST` is the run
@@ -362,4 +412,6 @@ row_catalog! {
     ADD_NO_OVERFLOW,
     SUB_NO_OVERFLOW,
     }
+        }
+    };
 }

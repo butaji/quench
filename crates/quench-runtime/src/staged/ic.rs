@@ -313,6 +313,17 @@ pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, sl
     })
 }
 
+/// The own field of the object record at `record` whose exact shape and flat form the entry proved (`GuardShape` with
+/// `Form::Arena`): the arena run's slot, no compare (the flat arm of `own_field` alone).
+#[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`)
+pub(crate) fn own_field_flat<S: Stage>(stage: &mut S, record: S::Word, slot: u16) -> S::Word {
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+    let run = super::object::arena_run(stage, payload);
+    let layout = super::object::Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
+    read_slot(stage, layout, slot, Representation::Tagged)
+}
+
 /// `concrete_hinted_own_field_hit`'s form: the one the hint's bits name at run time.
 pub(crate) const HINTED_FORM: u32 = u32::MAX;
 

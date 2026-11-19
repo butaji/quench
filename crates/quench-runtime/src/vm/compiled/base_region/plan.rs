@@ -157,6 +157,10 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     Some(padded_holes(match heap {
         Heap::IcGet | Heap::IcKnownGet => { let ic = decoded.ic.unwrap_or_default(); [object, upper, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
         Heap::IcSet { .. } | Heap::IcKnownSet { .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
+        // The flat rows read no shape: the offset follows the atom where the store tests it (`IcKnownSetFlat`), else leads.
+        Heap::IcKnownGetFlat => { let ic = decoded.ic.unwrap_or_default(); [object, upper, 0, ic >> u32::BITS, 0] }
+        Heap::IcKnownSetFlat { admitted: false, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic >> u32::BITS, 0] }
+        Heap::IcKnownSetFlat { admitted: true, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, ic >> u32::BITS, 0, 0] }
         Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole, 0, 0],
@@ -239,11 +243,13 @@ fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hol
         return Ok(site);
     }
     let int = decoded.slot.is_some_and(|ty| ty.is_subtype(crate::typed_ir::Type::INT32));
-    let ic = match (heap, decoded.proven) {
-        (Heap::Site, false) => Heap::IcGet,
-        (Heap::Site, true) => Heap::IcKnownGet,
-        (_, false) => Heap::IcSet { int },
-        (_, true) => Heap::IcKnownSet { int, admitted: decoded.admitted },
+    let ic = match (heap, decoded.proven, decoded.flat) {
+        (Heap::Site, false, _) => Heap::IcGet,
+        (Heap::Site, true, false) => Heap::IcKnownGet,
+        (Heap::Site, true, true) => Heap::IcKnownGetFlat,
+        (_, false, _) => Heap::IcSet { int },
+        (_, true, false) => Heap::IcKnownSet { int, admitted: decoded.admitted },
+        (_, true, true) => Heap::IcKnownSetFlat { int, admitted: decoded.admitted },
     };
     let row = HeapRow { heap: ic, dst, a, b: Place::Mem, entry: true };
     let holes = heap_holes(decoded, homes, ic, false, [dst_hole, a_hole, 0]);

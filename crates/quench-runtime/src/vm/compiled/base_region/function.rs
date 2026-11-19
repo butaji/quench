@@ -161,10 +161,13 @@ pub(in crate::vm::compiled) struct ClassProto {
 
 /// A loop-invariant receiver and the exact shape its field accesses saw at the region's entry: the entry checks the shape
 /// once (`Heap::Shape`), and every access of the register the proofs carry takes its known-shape row (`proofs::prove`).
+/// `flat`: every access saw the shape in flat form too, so the entry checks the form (`Heap::ShapeFlat`) and the accesses
+/// take the flat rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::vm::compiled) struct ShapeProto {
     pub(in crate::vm::compiled) register: crate::bytecode::Register,
     pub(in crate::vm::compiled) shape: u32,
+    pub(in crate::vm::compiled) flat: bool,
 }
 
 /// The body of the function `spec` names that `region` spans, over the callees its call sites
@@ -274,7 +277,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let shaped: Vec<Register> = prototypes.iter().map(|proto| proto.register).collect();
     // The entry seeds the direct objects it checks: the declared ones, and each shape-checked receiver (`Heap::Shape`).
     let objects: Vec<Register> = super::declared::exact_objects(function, &prototypes).into_iter().chain(shapes.iter().map(|proto| proto.register)).collect();
-    proofs::prove(&span, &mut decoded, &reached, &objects, &shaped);
+    let flat: Vec<Register> = shapes.iter().filter(|proto| proto.flat).map(|proto| proto.register).collect();
+    proofs::prove(&span, &mut decoded, &reached, &objects, &shaped, &flat);
     // The run's stores word is checked at the entry where a store is admitted on it (`Heap::Stores`); a store that re-reads
     // the word itself (`Decoded::recheck`) needs no entry test, and the stores after it are admitted by that test.
     let stores = decoded.iter().any(|row| row.admitted && !row.recheck);

@@ -118,16 +118,25 @@ fn plain_entry_fields(region: &LoopRegion, program: &ResidualProgram) -> Vec<Opt
 /// entry checks that shape once (`Heap::Shape`), so the reads of the receiver keep their known-shape rows.
 fn loop_shapes(region: &LoopRegion, observation: &Observation<'_>) -> Vec<super::base_region::function::ShapeProto> {
     let code = region.instructions();
-    let mut shapes: std::collections::BTreeMap<crate::bytecode::Register, Option<u32>> = std::collections::BTreeMap::new();
+    // Each register's shape, and whether every load of its reads is flat (`Form::Arena`): a later read that disagrees on the
+    // shape drops the register; one that is not flat clears the flat flag only.
+    let mut shapes: std::collections::BTreeMap<crate::bytecode::Register, Option<(u32, bool)>> = std::collections::BTreeMap::new();
     for (&offset, &index) in region.field_reads() {
         let Some(FieldLookup::Atom { base, .. }) = code[offset as usize].field_lookup() else { continue };
         let (Some(register), Some(loads)) = (base.register_index(), observation.native_field_loads.get(index)) else { continue };
         let Some(shape) = loads.first().map(|load| load.shape).filter(|shape| loads.iter().all(|load| load.shape == *shape)) else { continue };
-        let merged = shapes.entry(register).or_insert(Some(shape));
-        if *merged != Some(shape) { *merged = None; }
+        let flat = loads.iter().all(|load| crate::staged::object::Form::of(load.storage, load.storage_len) == crate::staged::object::Form::Arena);
+        let merged = shapes.entry(register).or_insert(Some((shape, flat)));
+        *merged = match *merged {
+            Some((known, both)) if known == shape => Some((known, both && flat)),
+            _ => None,
+        };
     }
     shapes.into_iter()
-        .filter_map(|(register, shape)| Some(super::base_region::function::ShapeProto { register, shape: shape? }))
+        .filter_map(|(register, known)| {
+            let (shape, flat) = known?;
+            Some(super::base_region::function::ShapeProto { register, shape, flat })
+        })
         .filter(|proto| !code.iter().any(|instruction| instruction.written_registers().any(|written| written == proto.register)))
         .collect()
 }

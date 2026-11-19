@@ -68,8 +68,9 @@ pub(in super::super) fn entry_rows(layout: &Layout, entered: &[usize], at: usize
         let receiver = u64::from(proto.shape) | (u64::from(proto.link) << numeric::library::HELD_LINK_AT);
         rows.push(EntryRow { stencil: base_rows::stencil(prototype)?, holes: padded_holes([u64::from(proto.register) * SLOT, receiver, 0]), declared: true });
     }
-    let shape = HeapRow { heap: Heap::Shape, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     for proto in &layout.shapes {
+        let heap = if proto.flat { Heap::ShapeFlat } else { Heap::Shape };
+        let shape = HeapRow { heap, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
         rows.push(EntryRow { stencil: base_rows::stencil(shape)?, holes: padded_holes([u64::from(proto.register) * SLOT, u64::from(proto.shape), 0]), declared: true });
     }
     if layout.stores {
