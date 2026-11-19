@@ -54,7 +54,7 @@ fn every_other_call_takes_the_helper_with_its_reason() {
 
 fn plan<'a>(direct: Option<&'a DirectFacts>, spills: &'a [(Place, Register)], reloads: &'a [(Place, Register)]) -> CallPlan<'a> {
     let direct = direct.map_or(&[][..], std::slice::from_ref);
-    CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads }
+    CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads, proven_args: 0 }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -148,4 +148,13 @@ fn call_protocol_matches_the_runtime() {
         [std::mem::offset_of!(EntryCell, entry), std::mem::offset_of!(EntryCell, recovery), std::mem::offset_of!(EntryCell, body), std::mem::offset_of!(LaneRecoverySpace, values), std::mem::offset_of!(LaneRecoverySpace, activations)],
         [mirror::CELL_ENTRY_AT, mirror::CELL_RECOVERY_AT, mirror::CELL_BODY_AT, mirror::RECOVERY_VALUES_AT, mirror::RECOVERY_ACTIVATIONS_AT]
     );
+}
+
+/// A direct row's record carries the arguments the caller proves Numbers, which its row passes to the callee's entry.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn a_direct_record_carries_the_proven_arguments() {
+    let direct = facts(4, 2);
+    let chain = plan_call(&CallPlan { proven_args: 0b11, ..plan(Some(&direct), &[], &[]) }).expect("a plan");
+    assert_eq!(chain.records.first().map(|record| record.proven_args), Some(0b11));
 }

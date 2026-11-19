@@ -11,10 +11,11 @@ pub(in crate::vm) use quench_bjit::call_record::LANE_BODY_NOT_ENTERED;
 /// body is published or it retired) and the body's own recovery space, which it is stored in
 /// once, per function, at a stable address (`LaneView::entry_cell`).
 ///
-/// One 64-byte line whose every offset is the designed cell's (`staged::call::ENTRY_CELL`, asserted
-/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40, `scalar` 48, `rows` 56.
-/// Writers: `entry`, `scalar`, `recovery` and `body` by `publish`/`withdraw`; `facts` once per function
-/// (`set_facts`); `counters` only on cold paths (completion evidence).
+/// Two 64-byte lines whose every offset is the designed cell's (`staged::call::ENTRY_CELL`, asserted
+/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40, `scalar` 48, `rows` 56,
+/// `proven` 64, `numbers` 72, `uses_this` 80.
+/// Writers: `entry`, `scalar`, `recovery`, `body`, `rows`, `proven`, `numbers` and `uses_this` by `publish`/`withdraw`;
+/// `facts` once per function (`set_facts`); `counters` only on cold paths (completion evidence).
 #[repr(C, align(64))]
 pub(in crate::vm) struct EntryCell {
     pub(in crate::vm) entry: std::cell::Cell<usize>,
@@ -40,11 +41,28 @@ pub(in crate::vm) struct EntryCell {
     /// The address of the published b-jit body's row entry (`LaneMethod::rows_address`), which a
     /// b-jit direct call row calls instead of `entry`; 0 where the body has none or retired.
     pub(in crate::vm) rows: std::cell::Cell<usize>,
+    /// The address of the published b-jit body's proven-arguments row entry (`RowEntries::proven`): `entry_rows` past
+    /// its Number guards. A direct row calls it only where `numbers` is covered by the call's proven arguments.
+    pub(in crate::vm) proven: std::cell::Cell<usize>,
+    /// The parameter registers whose Number guards `proven` skips (`RowEntries::numbers`).
+    pub(in crate::vm) numbers: std::cell::Cell<u64>,
+    /// Whether the body reads its `this` from the context header (`RowEntries::uses_this`).
+    pub(in crate::vm) uses_this: std::cell::Cell<u64>,
+}
+
+/// A b-jit body's row entries in its code, as the cell publishes them: its row entry (`rows`), its proven-arguments
+/// row entry (`proven`, past the Number guards `numbers` names) and whether it reads `this` from its context header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::vm) struct RowEntries {
+    pub(in crate::vm) rows: usize,
+    pub(in crate::vm) proven: usize,
+    pub(in crate::vm) numbers: u64,
+    pub(in crate::vm) uses_this: bool,
 }
 
 const _: () = {
     use crate::staged::call::ENTRY_CELL;
-    assert!(std::mem::size_of::<EntryCell>() == 64);
+    assert!(std::mem::size_of::<EntryCell>() == 128);
     assert!(std::mem::offset_of!(EntryCell, entry) as i32 == ENTRY_CELL.entry_offset);
     assert!(std::mem::offset_of!(EntryCell, body) as i32 == ENTRY_CELL.body_offset);
     assert!(std::mem::offset_of!(EntryCell, facts) as i32 == ENTRY_CELL.facts_offset);
@@ -53,6 +71,9 @@ const _: () = {
     assert!(std::mem::offset_of!(EntryCell, counters) as i32 == ENTRY_CELL.counters_offset);
     assert!(std::mem::offset_of!(EntryCell, scalar) as i32 == ENTRY_CELL.scalar_offset);
     assert!(std::mem::offset_of!(EntryCell, rows) as i32 == ENTRY_CELL.rows_offset);
+    assert!(std::mem::offset_of!(EntryCell, proven) as i32 == ENTRY_CELL.proven_offset);
+    assert!(std::mem::offset_of!(EntryCell, numbers) as i32 == ENTRY_CELL.numbers_offset);
+    assert!(std::mem::offset_of!(EntryCell, uses_this) as i32 == ENTRY_CELL.uses_this_offset);
 };
 
 /// The halves of a cell's counters word.
@@ -103,7 +124,7 @@ impl EntryCell {
     pub(in crate::vm) fn scalar_stub() -> usize { scalar_entry_stub as ScalarEntry as usize }
 
     pub(in crate::vm) fn new() -> Self {
-        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: std::cell::Cell::new(Self::scalar_stub()), rows: Default::default() }
+        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: std::cell::Cell::new(Self::scalar_stub()), rows: Default::default(), proven: Default::default(), numbers: Default::default(), uses_this: Default::default() }
     }
 
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires: the
@@ -116,9 +137,16 @@ impl EntryCell {
         self.entry.set(body.entry_address());
         method.on_retire(&self.entry, body.entry_address(), Self::stub());
         self.rows.set(0);
-        if let Some(rows) = body.rows_address() {
-            self.rows.set(rows);
-            method.on_retire(&self.rows, rows, 0);
+        self.proven.set(0);
+        self.numbers.set(0);
+        self.uses_this.set(0);
+        if let Some(entries) = body.row_entries() {
+            self.rows.set(entries.rows);
+            method.on_retire(&self.rows, entries.rows, 0);
+            self.proven.set(entries.proven);
+            method.on_retire(&self.proven, entries.proven, 0);
+            self.numbers.set(entries.numbers);
+            self.uses_this.set(u64::from(entries.uses_this));
         }
         self.scalar.set(Self::scalar_stub());
         if let Some(scalar) = body.scalar_address() {
@@ -159,6 +187,7 @@ impl EntryCell {
     pub(in crate::vm) fn withdraw(&self) {
         self.entry.set(Self::stub());
         self.rows.set(0);
+        self.proven.set(0);
         self.scalar.set(Self::scalar_stub());
         self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
         self.body.set(0);

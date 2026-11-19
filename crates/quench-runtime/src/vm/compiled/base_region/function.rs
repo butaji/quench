@@ -73,6 +73,10 @@ pub(in crate::vm::compiled) struct Body {
     /// Whether its inline-cache rows hold shape ids, which a shape compaction renumbers
     /// (`LaneMethod::names_shapes`).
     pub(in crate::vm::compiled) names_shapes: bool,
+    /// The parameter registers whose Number guards its proven-arguments entry skips (`RowEntries::numbers`).
+    pub(in crate::vm::compiled) number_guards: u64,
+    /// Whether the activation reads its `this` (`RowEntries::uses_this`), so a direct call writes the receiver for it.
+    pub(in crate::vm::compiled) uses_this: bool,
 }
 
 /// What a stitch decides its call sites by: the callees they recorded and the stitch's budget, the
@@ -299,10 +303,11 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities().collect();
     identities.sort_unstable();
     identities.dedup();
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, guards, numbers, prototypes, shapes, stores, identities };
+    let proven_args = super::call_args::proven_arguments(function, &spec.known.program.constants, &numbers).unwrap_or_default();
+    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
-    let (code, resumes) = link(&layout, &planned)?;
+    let (code, resumes, number_guards) = link(&layout, &planned)?;
     residuals::report_rows(&layout, region.header, &decoded, &planned, code.len());
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached.contains(*k) && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
@@ -316,5 +321,6 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let names_shapes = decoded.iter().any(|row| row.ic.is_some());
     Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region)).chain(sites.callees.held_facts())), atoms, holders,
         instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
-        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes })
+        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes, number_guards,
+        uses_this: crate::bytecode::activation_reads_this(spec.known.program, function) })
 }

@@ -168,7 +168,7 @@ mod tests {
 
     #[cfg(all(test, target_arch = "x86_64"))]
     fn thunk_len() -> usize {
-        thunk(Ending::Region, 0).unwrap().len()
+        thunk(Ending::Region, 0, 0).unwrap().len()
     }
 
     /// A loop whose operands change type mid-run leaves compiled code at a guard and resumes

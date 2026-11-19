@@ -3527,9 +3527,9 @@ pub(super) struct LaneMethod {
     /// Where its scalar entry lies in the same code (`lane_region::scalar`), which a native call
     /// that proves its numeric arguments calls by the entry cell's `scalar` word.
     scalar: Option<usize>,
-    /// Where its row entry lies in the same code (`entry_rows`, a b-jit body's), which a b-jit direct
-    /// call calls by the entry cell's `rows` word; none for a Cranelift body.
-    rows: Option<usize>,
+    /// Where its row entries lie in the same code (`entry_rows` and its proven-arguments copy, a b-jit body's), which a
+    /// b-jit direct call calls by the entry cell's `rows` and `proven` words; none for a Cranelift body.
+    rows: Option<entry_cell::RowEntries>,
     recovery_space: super::dispatch_fast::LaneRecoverySpace,
     /// The lowering requires an owned, resumable poll-page capability.
     fault_poll: bool,
@@ -3595,8 +3595,8 @@ impl LaneMethod {
         self.scalar
     }
 
-    /// The address of its row entry, if it has one (`EntryCell::rows`).
-    pub(super) fn rows_address(&self) -> Option<usize> {
+    /// Its row entries, if it has them (`EntryCell::rows`, `proven`, `numbers`, `uses_this`).
+    pub(super) fn row_entries(&self) -> Option<entry_cell::RowEntries> {
         self.rows
     }
 

@@ -262,6 +262,9 @@ pub(super) struct CallPlan<'a> {
     pub(super) helper: usize,
     pub(super) spills: &'a [(Place, Register)],
     pub(super) reloads: &'a [(Place, Register)],
+    /// The arguments the caller proves Numbers (bit `k`: argument `k`, `call_args::proven_arguments`), which the direct row
+    /// passes on to the callee's proven-arguments entry where its guards are covered (`CallRecord::proven_args`).
+    pub(super) proven_args: u64,
 }
 
 /// The address of `helper` in a process helper table; none for a linked or symbolic one.
@@ -322,8 +325,9 @@ fn refusal_only(plan: &CallPlan, register: Register) -> bool {
 
 /// The direct row and the record it reads, whose address is its hole 0. `arguments` is the place each leading
 /// argument is passed from (`argument_places`).
-fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_ARGUMENTS]) -> Result<(CallPart, Box<CallRecord>), String> {
+fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_ARGUMENTS], proven_args: u64) -> Result<(CallPart, Box<CallRecord>), String> {
     let record = Box::new(CallRecord {
+        proven_args,
         callee: facts.callee,
         cell: facts.cell as u64,
         expected: facts.validity,
@@ -365,7 +369,7 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     let arguments = argument_places(plan);
     let mut directs = Vec::new();
     for (_, facts) in choices.into_iter().filter(|(choice, _)| *choice == Choice::Direct) {
-        directs.push(direct_part(&plan.shape, facts, arguments)?);
+        directs.push(direct_part(&plan.shape, facts, arguments, plan.proven_args)?);
     }
     // The spills before the direct rows; the spills of pinned arguments that only the refusal path reads
     // (`refusal_only`) follow them, where the rows' NEXT falls to the helper row. Without a direct row, all come first.
