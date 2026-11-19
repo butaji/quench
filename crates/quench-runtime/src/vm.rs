@@ -1820,7 +1820,7 @@ pub(crate) struct Vm<H> {
     native_microtask_running: bool,
     /// The async function a microtask drain resumed whose activation the running lane run is
     /// rooted in (`Vm::resume_job`), else undefined: its `await` of a settled value continues in
-    /// place when no other job is queued (`lane_await`).
+    /// place when no other job is queued (`await_miss`).
     queue_resumed: Value,
     /// Whether the innermost running job queue has entered the host's context for unobserved
     /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.

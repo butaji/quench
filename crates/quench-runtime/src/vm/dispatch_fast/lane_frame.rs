@@ -2342,6 +2342,7 @@ pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: 
             _ => super::store_name_first_miss::<H> as Handler,
         },
         crate::staged::Miss::Yield => super::generator_yields::yield_miss::<H>,
+        crate::staged::Miss::Await => super::generator_yields::await_miss::<H>,
         crate::staged::Miss::YieldStar => super::lane_exit::<H>,
         crate::staged::Miss::NameLoad(load) => name_load_miss::<H, FLAG>(load),
         crate::staged::Miss::General | crate::staged::Miss::CompareChain => lane_general_step::<H>,
@@ -3149,7 +3150,7 @@ lane_handler! {
                 // (`lane_return_value!`), so it writes no register.
                 let value = if const { super::own_site_decodes(FLAG) } { crate::value_vec::decode_staged_word(value) } else { Value::from_bits(value) };
                 let script: *mut LaneContext<H> = view.memory.bytes.cast();
-                if let Some(resumed) = by_leaf!(super::returning_leaf(FLAG), |L| super::lane_complete_plain_activation::<H, L>(script, value)) {
+                if let Some(resumed) = by_leaf!(super::returning_leaf(FLAG), |L| super::complete_plain_activation_in_lane::<H, L>(script, value)) {
                     resume!(script, resumed)
                 }
                 resume!(script, super::return_value_general_in_lane(script, ip, value));

@@ -171,6 +171,10 @@ pub(crate) enum Miss {
     /// A `yield` the frame does not suspend in place (no generator runs the lane): the job root's
     /// suspension, or the general step (`yield_miss`).
     Yield,
+    /// An `await` the frame does not suspend in place (the activation is not a promise job's root,
+    /// or the awaited conversion could run guest code): the job's suspension or the general step
+    /// (`await_miss`).
+    Await,
     /// A `yield*` the frame does not suspend in place: the general path (`lane_exit`), since the
     /// general step of a suspending operation does not continue in place.
     YieldStar,
@@ -206,6 +210,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::StoreName => Miss::StoreNameFirst,
         Op::JumpBinaryFalse => Miss::CompareChain,
         Op::Yield => Miss::Yield,
+        Op::Await => Miss::Await,
         Op::YieldStar => Miss::YieldStar,
         _ => match name_load(op) {
             Some(load) => Miss::NameLoad(load),

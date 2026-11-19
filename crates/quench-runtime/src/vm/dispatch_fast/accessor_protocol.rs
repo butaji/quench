@@ -249,7 +249,7 @@ impl<H: Host> AccessorCall<H> {
             }
             return self.read_forwarded(r, ip, base, atom);
         };
-        lane_materialize_running_leaf(self.cx);
+        materialize_running_leaf_in_lane(self.cx);
         let Some(target) = self.trap_target(trap) else {
             #[cfg(feature = "profile-lane-exits")]
             super::super::lane_exits::record_detail("get trap decline target".into());
@@ -297,7 +297,7 @@ impl<H: Host> AccessorCall<H> {
         vm.proxy_parts(base)?;
         let atom = keyed_trap_atom(vm, key)?;
         let (trap, handler, arguments) = get_trap_call(vm, base, atom)?;
-        lane_materialize_running_leaf(self.cx);
+        materialize_running_leaf_in_lane(self.cx);
         let target = self.trap_target(trap)?;
         Some(self.activate_trap(r, ip, target, handler, &arguments).map(|activated| {
             owe_invariants(vm, Completion::ReadsTrapped, arguments[0], atom, TrapAccess::Read);

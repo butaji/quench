@@ -213,12 +213,12 @@ k08_escape 0.9 RecordSpace::claim_slow
 k08_escape 0.9 Vm::collect_inner
 k09_reduce 3183.9 lane_return_value_general
 k09_reduce 896.0 lane_returning_operator<8, false, 1>
-k09_reduce 591.0 lane_begin_array_iteration
+k09_reduce 591.0 begin_array_iteration_in_lane
 k09_reduce 336.0 Vm::fresh_array_step
 k09_reduce 246.0 ArrayIteration::advance
 k09_reduce 170.0 Vm::resolve_script_call_target
 k09_reduce 120.0 bool::then<quench_runtime::value::Value, <quench_runtime::heap::array_elements::ArrayElements>::get::{closure#0}>
-k09_reduce 112.0 lane_retire_array_step
+k09_reduce 112.0 retire_array_step_in_lane
 k09_reduce 99.0 Vm::closure_of_template
 k09_reduce 98.0 lane_closure_value_of
 k09_reduce 74.6 ScriptTargets::remember

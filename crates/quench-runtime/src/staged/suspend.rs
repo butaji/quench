@@ -2,7 +2,7 @@
 //! what suspends and the registers it reads and resumes into, and its step is the frame's
 //! (`CallFrame::suspend`). A frame that cannot suspend in place leaves the row unresolved, so the
 //! tier exits at its exact PC and the interpreter's own suspension runs it: the lane's
-//! `lane_await`, `lane_yield` and `lane_yield_star` (`dispatch_fast::generator_yields`), or the
+//! `await_miss`, `lane_yield` and `lane_yield_star` (`dispatch_fast::generator_yields`), or the
 //! general step's `StepResult::Await` and `StepResult::Yield` (`Vm::step`).
 use super::{CallFrame, Operation, Register, Stage, Step};
 use crate::bytecode::{Op, WideInstruction};

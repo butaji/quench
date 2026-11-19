@@ -105,14 +105,14 @@ pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
 /// Runs `helper`, which pushes activations or runs guest code, with the context of the
 /// innermost native frame's body, as the lane's own calls run: they take their caller's state
 /// from the context. The frames are linked first, then a body entered through its cell, which has
-/// no activation yet, becomes one (`lane_materialize_running_leaf`): the record the helper runs
+/// no activation yet, becomes one (`materialize_running_leaf_in_lane`): the record the helper runs
 /// is that activation's, not the frame below it. The owner's state returns unless the helper left
 /// the lane in an activation of its own or ended the run.
 #[inline(always)]
 pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl FnOnce() -> u64) -> u64 {
     let vm = unsafe { vm(cx) };
     vm.link_natives(cx);
-    lane_materialize_running_leaf(cx);
+    materialize_running_leaf_in_lane(cx);
     let Some(frame) = vm.lane_stack.activations().top_native() else { return helper() };
     let owner = CallerState::of_context(cx);
     let depth = vm.lane_stack.activation_count();

@@ -1591,7 +1591,7 @@ fn lane_array_callback_sites_keep_iteration_semantics() {
 #[test]
 fn for_each_of_one_element_with_a_dead_result_keeps_callback_semantics() {
     // A `forEach` site whose result nothing reads calls the callback of a one-element array as
-    // a plain call (`lane_call_for_each_once`), and an array step re-enters its callback in
+    // a plain call (`call_for_each_once_in_lane`), and an array step re-enters its callback in
     // place (`reenter_prepared_values_in_lane`): a live or returned result, the arguments and
     // this passed, a callback mutating its array, a hole, a length past the storage with an
     // inherited index, a throwing callback's error and frames, generator, async and bound
@@ -23597,7 +23597,7 @@ fn lane_returning_operators_keep_binary_semantics() {
 #[test]
 fn lane_array_iterations_keep_callback_method_semantics() {
     // An array callback method over a dense array runs its callbacks as activations of the
-    // calling lane (`lane_begin_array_iteration`), each return stepping the loop: the
+    // calling lane (`begin_array_iteration_in_lane`), each return stepping the loop: the
     // arguments and thisArg, holes, the length read once and the array mutated under the
     // loop, throws, collections inside callbacks, map and filter results and species, the
     // early answers, nesting and recursion, generator, async and bound callbacks, a redefined

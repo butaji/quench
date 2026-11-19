@@ -2850,8 +2850,8 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_operato
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_proved_arrays 53
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_register_operands 189
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::window_environment 48
-function-lines crates/quench-runtime/src/vm/dispatch_fast/array_steps.rs::lane_step_array_iteration_in_place 41
-function-lines crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_list_activation 65
+function-lines crates/quench-runtime/src/vm/dispatch_fast/array_steps.rs::step_array_iteration_in_place_in_lane 41
+function-lines crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::list_activation_in_lane 65
 function-lines crates/quench-runtime/src/vm/dispatch_fast/wasm_calls.rs::lane_call_frame 46
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::activate_general_frame 75
 function-lines crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::activate_plain_frame 44
@@ -3875,8 +3875,8 @@ hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_site_targets 5
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::lane_unit_targets 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_environment_window 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_proved_arrays 2
-hot-alloc crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_apply_activation 1
-hot-alloc crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_list_activation 2
+hot-alloc crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::apply_activation_in_lane 1
+hot-alloc crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::list_activation_in_lane 2
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::activation_arguments_object 1
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::captured_with_objects 4
 hot-alloc crates/quench-runtime/src/vm/dispatch_frame.rs::Vm<H>::captured_with_objects_for_function 1
@@ -4741,7 +4741,7 @@ magic crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_capture_updates 
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_int32_truncations 1
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_operator_pairs 2
 magic crates/quench-runtime/src/vm/dispatch_fast.rs::specialize_updated_index_operators 2
-magic crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::lane_apply_activation 1
+magic crates/quench-runtime/src/vm/dispatch_fast/list_calls.rs::apply_activation_in_lane 1
 magic crates/quench-runtime/src/vm/disposal.rs::disposal_native_length 2
 magic crates/quench-runtime/src/vm/environment.rs::capture_walk_index 1
 magic crates/quench-runtime/src/vm/error.rs::Vm<H>::construct_aggregate_error 1

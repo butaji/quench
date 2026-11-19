@@ -16,7 +16,7 @@ impl<H: Host> Vm<H> {
     /// eval code once a `with` statement was entered, whose frame takes the chain its environment
     /// captured (`Vm::captured_with_objects_for_function`), which a lane activation does not
     /// push; its calls take the general path's frame (`lane_frame_call`).
-    pub(super) fn lane_user_target(&self, callee: Value) -> Option<(ProgramId, u32, Value)> {
+    pub(super) fn user_target_in_lane(&self, callee: Value) -> Option<(ProgramId, u32, Value)> {
         let target = self.same_realm_user_target(callee)?;
         let takes_with_chain = self.with_scope_entered
             && self.programs.residual(target.0).is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Eval);
@@ -178,7 +178,7 @@ pub(super) fn target_entry(body: &crate::bytecode::Function, plan: &crate::bytec
     } else if plan.keeps_arguments {
         CallEntry::Keeps
     } else if cross {
-        // A leaf runs as one across programs too (`lane_cross_leaf_call`); no other
+        // A leaf runs as one across programs too (`cross_leaf_call_in_lane`); no other
         // body form's answer reads another program's caches.
         shape.leaf.map_or(CallEntry::Activates, CallEntry::leaf)
     } else {
@@ -192,7 +192,7 @@ pub(super) fn target_entry(body: &crate::bytecode::Function, plan: &crate::bytec
 /// its environment and locals (`CallPlan::suspended_environment`), laid out as an environment
 /// activation lays out an ordinary body (`CallPlan::environment_activation`): each parameter a
 /// frame local, every register starting `undefined`. Its `await` suspends it in place, its frame
-/// taking the window's environment (`generator_yields::lane_await_settling`).
+/// taking the window's environment (`generator_yields::await_settling_in_lane`).
 pub(super) fn settles_in_environment(body: &crate::bytecode::Function, plan: &crate::bytecode::CallPlan) -> bool {
     body.is_async
         && !body.is_generator

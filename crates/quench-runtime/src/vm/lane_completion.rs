@@ -9,13 +9,13 @@ pub(crate) enum LaneCompletion {
     /// No completion waits.
     #[default]
     None,
-    /// A frame's own call record returned this value (`dispatch_fast::lane_frame_return`): the
+    /// A frame's own call record returned this value (`dispatch_fast::frame_return_in_lane`): the
     /// general loop returns it from the frame at that instruction.
     Returned(Value),
     /// A native's frameless callback completed with this value (`Completion::ReturnsToNative`):
     /// its run hands it to the native.
     NativeReturned(Value),
-    /// The activation a lane job ran awaited or yielded this value (`dispatch_fast::lane_await`,
+    /// The activation a lane job ran awaited or yielded this value (`dispatch_fast::await_miss`,
     /// `dispatch_fast::lane_yield`): its run hands it to the await's reactions, or to the native
     /// `next` that stepped a sync generator.
     Suspended(Value),

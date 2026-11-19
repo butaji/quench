@@ -345,7 +345,7 @@ fn suspend_generator_in_lane<H: Host>(
     };
     vm.suspend_generator_window(script.callee, pc, destination, value, depth);
     vm.lane_stack.pop_activation();
-    let (memory, _) = lane_restore_caller(cx, &activation);
+    let (memory, _) = restore_caller_in_lane(cx, &activation);
     resume_generated_in_lane(vm, &activation, memory, (value, false), passed_on)
 }
 
@@ -378,10 +378,10 @@ fn resume_generated_in_lane<H: Host>(vm: &mut Vm<H>, activation: &Activation, me
         let (done_read, value_read) = unsafe { (&*activation.call.add(FOR_OF_DONE_READ), &*activation.call.add(form.value_read())) };
         activation.caller_registers.set(done_read.a, if done { Value::TRUE } else { Value::FALSE });
         if done {
-            return lane_resume_at(activation, memory, unsafe { activation.call.add(form.exit()) });
+            return resume_at_in_lane(activation, memory, unsafe { activation.call.add(form.exit()) });
         }
         activation.caller_registers.set(value_read.a, value);
-        return lane_resume_at(activation, memory, unsafe { activation.call.add(form.records()) });
+        return resume_at_in_lane(activation, memory, unsafe { activation.call.add(form.records()) });
     }
     let result = passed_on.unwrap_or_else(|| vm.generator_step_result(value, done, completion.is_some_and(Completion::reuses_result)));
     // The result may be a fresh allocation, which the caller's safepoints collect after.
@@ -390,7 +390,7 @@ fn resume_generated_in_lane<H: Host>(vm: &mut Vm<H>, activation: &Activation, me
         // SAFETY: the `yield*` record belongs to the caller's live view.
         let (state, _) = ImmediateLayout::register_pair(unsafe { (*activation.call()).imm() });
         activation.caller_registers().set(state, result);
-        return lane_resume_at(activation, memory, activation.call());
+        return resume_at_in_lane(activation, memory, activation.call());
     }
     lane_resume_after_call(activation, memory, result)
 }

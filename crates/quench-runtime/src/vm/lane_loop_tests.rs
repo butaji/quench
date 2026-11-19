@@ -179,7 +179,7 @@ fn a_loop_leaves_into_a_claimed_callee_at_its_first_record() {
     assert_eq!(output.borrow().as_slice(), [(20000 * 10).to_string()]);
 }
 
-/// A lane body answers natives that complete in place (`lane_body_native_call`) and stays
+/// A lane body answers natives that complete in place (`body_native_call_in_lane`) and stays
 /// native across them: a Math function, a string method and a Map read give the values the
 /// interpreter gives.
 #[test]

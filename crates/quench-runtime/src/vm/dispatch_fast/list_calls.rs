@@ -8,7 +8,7 @@ use super::*;
 /// copies before anything runs, as `function_call_activation_in_lane` activates a call's. `None`
 /// for any other call, which the native makes.
 #[inline(never)]
-pub(super) fn lane_apply_activation<H: Host>(
+pub(super) fn apply_activation_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -39,7 +39,7 @@ pub(super) fn lane_apply_activation<H: Host>(
         ));
     }
     let absent = native == Native::FunctionApply && (list.is_undefined() || list.is_null());
-    lane_list_activation(cx, r, ip, i, callee, receiver, list, if absent { None } else { Some(unsafe { vm(cx) }.dense_list_length(list)?) })
+    list_activation_in_lane(cx, r, ip, i, callee, receiver, list, if absent { None } else { Some(unsafe { vm(cx) }.dense_list_length(list)?) })
 }
 
 /// `callee`'s activation with `receiver` and the elements of `list`, a dense array without
@@ -48,7 +48,7 @@ pub(super) fn lane_apply_activation<H: Host>(
 /// argument array the call's spread evaluation built; `None` for any other list.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(super) fn lane_list_activation<H: Host>(
+pub(super) fn list_activation_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -114,7 +114,7 @@ pub(super) fn lane_list_activation<H: Host>(
 /// so one whose result is unused (`ImmediateLayout::lane_call_result_used`) is made too: the
 /// value goes to its dead register. `None` for any other callee.
 #[inline(never)]
-pub(super) fn lane_spread_native_call<H: Host>(
+pub(super) fn spread_native_call_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
     i: &LaneInstruction,
@@ -123,8 +123,8 @@ pub(super) fn lane_spread_native_call<H: Host>(
     list: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let native = lane_spread_native(vm, callee)?;
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+    let native = spread_native_in_lane(vm, callee)?;
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted_in_lane(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
     let args = vm.heap.array_elements(list)?.iter().collect::<smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]>>();
@@ -132,21 +132,21 @@ pub(super) fn lane_spread_native_call<H: Host>(
     Some(lane_native_complete(cx, ip, i, value))
 }
 
-/// The native `lane_spread_native_call` calls in place: any but a forwarding one or `eval`.
+/// The native `spread_native_call_in_lane` calls in place: any but a forwarding one or `eval`.
 #[inline(always)]
-fn lane_spread_native<H: Host>(vm: &Vm<H>, callee: Value) -> Option<Native> {
+fn spread_native_in_lane<H: Host>(vm: &Vm<H>, callee: Value) -> Option<Native> {
     let FunctionKind::Native(native) = vm.heap.function(callee)?.kind else {
         return None;
     };
     (!matches!(native, Native::FunctionCall | Native::FunctionBoundCall | Native::FunctionApply | Native::ReflectApply | Native::Eval)).then_some(native)
 }
 
-/// `lane_spread_native_call` of a spread of a Set that iterates intact
+/// `spread_native_call_in_lane` of a spread of a Set that iterates intact
 /// (`Vm::intact_iteration_kind`), as Vue's effect trigger spreads a dependency's Set into
 /// `push`: its live values, which iterating it yields and no step's code can change, copied
 /// out first. `None` for any other spread or callee, which the general path makes.
 #[inline(never)]
-pub(super) fn lane_spread_set_native_call<H: Host>(
+pub(super) fn spread_set_native_call_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
     i: &LaneInstruction,
@@ -158,11 +158,11 @@ pub(super) fn lane_spread_set_native_call<H: Host>(
     if !vm.heap.is_set(list) {
         return None;
     }
-    let native = lane_spread_native(vm, callee)?;
+    let native = spread_native_in_lane(vm, callee)?;
     if vm.intact_iteration_kind(list) != Some(crate::vm::iterators::IterationSource::Set) {
         return None;
     }
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted_in_lane(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
     let args = vm.heap.set_entries(list)?.to_vec();

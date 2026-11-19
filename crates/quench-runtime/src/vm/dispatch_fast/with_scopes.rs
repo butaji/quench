@@ -67,7 +67,7 @@ impl<H: Host> Vm<H> {
     /// environments from now on (`Vm::with_scope_entered`). Calls activate in the lane after it
     /// as before: no lane target's function inherits a `with` scope (`CallPlan`), and a function
     /// of eval code, whose frame takes the chain its environment captured
-    /// (`Vm::captured_with_objects_for_function`), resolves to no target (`Vm::lane_user_target`).
+    /// (`Vm::captured_with_objects_for_function`), resolves to no target (`Vm::user_target_in_lane`).
     /// The first entry retires every target resolved before, on the running lane stack, the
     /// parked ones and the spares.
     pub(in crate::vm) fn enter_with_scope(&mut self) {
