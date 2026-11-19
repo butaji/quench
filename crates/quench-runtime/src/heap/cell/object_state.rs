@@ -272,7 +272,7 @@ impl Object {
         self.element_facts().has(ElementFacts::SIDE_DESCRIPTORS)
     }
     /// A prototype's side descriptors can name keys its shape lacks, which retires the
-    /// proofs (`prototype_layout_epoch`) that found them absent.
+    /// proofs (its subject's, `ChainCell`) that found them absent.
     pub(crate) fn mark_side_descriptors(&mut self) {
         self.note_prototype_layout_change();
         self.mark_element_fact(ElementFacts::SIDE_DESCRIPTORS);
