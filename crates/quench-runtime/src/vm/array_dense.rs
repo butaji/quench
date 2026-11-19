@@ -48,7 +48,8 @@ impl<H: Host> Vm<H> {
             // SAFETY: `source`'s backing is its own allocation or a nursery run behind the
             // cursor; making the new array's run bumps the cursor past it and frees, moves and
             // writes nothing of it, and no collection runs before the copy ends.
-            return Some(self.heap.alloc_literal_array(self.array_proto, len, |index| unsafe { *base.add(index) }));
+            let part = unsafe { std::slice::from_raw_parts(base, len) };
+            return Some(self.heap.alloc_literal_array_from_parts(self.array_proto, &[part]));
         }
         if let Some(words) = elements.narrow_words() {
             let words = &words[range];
@@ -89,6 +90,11 @@ impl<H: Host> Vm<H> {
     /// A new array of `segments`' `total` values, one allocation of the exact length: each value
     /// is read from its backing as the result's run is filled, with no intermediate buffer.
     fn array_of_segments(&mut self, segments: &[ConcatSegment], total: usize) -> Value {
+        if segments.iter().all(|segment| segment.values().is_some()) {
+            let mut parts = smallvec::SmallVec::<[&[Value]; CONCAT_INLINE_PARTS]>::new();
+            parts.extend(segments.iter().filter_map(|segment| segment.values()));
+            return self.heap.alloc_literal_array_from_parts(self.array_proto, &parts);
+        }
         let mut reader = ConcatReader { segments, segment: 0, offset: 0 };
         self.heap.alloc_literal_array(self.array_proto, total, |_| reader.next_value())
     }
@@ -265,6 +271,9 @@ enum ConcatSegment {
     Narrow(*const u32, usize),
 }
 
+/// The segments `array_of_segments` holds inline before a `concat` result's parts spill to the heap.
+const CONCAT_INLINE_PARTS: usize = 4;
+
 /// The values of a `concat` result in order, read from its segments: each call gives the next.
 struct ConcatReader<'a> {
     segments: &'a [ConcatSegment],
@@ -287,6 +296,19 @@ impl ConcatReader<'_> {
 }
 
 impl ConcatSegment {
+    /// The segment as a slice of plain values: a primitive's one value, or a wide backing's
+    /// values. `None` for a narrow backing, whose words decode one by one.
+    #[inline(always)]
+    fn values(&self) -> Option<&[Value]> {
+        match self {
+            Self::Value(value) => Some(std::slice::from_ref(value)),
+            // SAFETY: as for `get`: the backing is still the array's, read before any write or
+            // collection, and the result's allocation is written with no collection.
+            Self::Wide(base, len) => Some(unsafe { std::slice::from_raw_parts(*base, *len) }),
+            Self::Narrow(..) => None,
+        }
+    }
+
     /// The value at `offset`, below `len`, of this segment.
     #[inline(always)]
     fn get(self, offset: usize) -> Value {

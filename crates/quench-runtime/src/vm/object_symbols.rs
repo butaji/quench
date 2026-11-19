@@ -29,9 +29,9 @@ impl<H: Host> Vm<H> {
             if data.kind == crate::heap::SymbolKind::HostPrivate)
     }
 
-    /// A new array of `elements`, in a young run where one is free (`Heap::alloc_literal_array`).
+    /// A new array of `elements`, in a young run where one is free (`Heap::alloc_literal_array_from_parts`).
     pub(super) fn array_of(&mut self, elements: &[Value]) -> Value {
-        self.heap.alloc_literal_array(self.array_proto, elements.len(), |index| elements[index])
+        self.heap.alloc_literal_array_from_parts(self.array_proto, &[elements])
     }
 
     fn is_internal_property_name(&self, atom: Atom) -> bool {
