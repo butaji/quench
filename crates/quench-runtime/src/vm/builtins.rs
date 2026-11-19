@@ -738,8 +738,7 @@ impl<H: Host> Vm<H> {
         self.report_memory_if_enabled("runtime_date_regexp_realms");
         let symbol = self.native_value(Native::Symbol);
         self.set_builtin_function_name(symbol, "Symbol")?;
-        self.set_builtin_named(program, symbol, "for", Native::SymbolFor)?;
-        self.set_builtin_named(program, symbol, "keyFor", Native::SymbolKeyFor)?;
+        self.install_native_rows(program, symbol, super::native_rows::Holder::SymbolConstructor)?;
         for well_known in WellKnownSymbol::ALL {
             let name = well_known.name();
             let value = self
@@ -867,14 +866,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_symbols_disposal");
         self.install_string(program, string)?;
-        self.set_builtin_named(program, string, "fromCharCode", Native::StringFromCharCode)?;
-        self.set_builtin_named(
-            program,
-            string,
-            "fromCodePoint",
-            Native::StringFromCodePoint,
-        )?;
-        self.set_builtin_named(program, string, "raw", Native::StringRaw)?;
+        self.install_native_rows(program, string, super::native_rows::Holder::StringConstructor)?;
         self.global(program, "String", string)?;
         self.install_iterator_self(program)?;
         self.install_native_rows(program, self.realm.globals, super::native_rows::Holder::GlobalObject)?;
@@ -996,40 +988,17 @@ impl<H: Host> Vm<H> {
         let prototype = self.realm_object_prototype(global);
         let json = self.heap.alloc_object(Self::empty_object(prototype));
         self.install_builtin_to_string_tag(json, "JSON")?;
-        let realm = (global != self.realm.globals).then_some(global);
-        for (name, native) in [
-            ("parse", Native::JsonParse),
-            ("stringify", Native::JsonStringify),
-            ("rawJSON", Native::JsonRawJson),
-            ("isRawJSON", Native::JsonIsRawJson),
-        ] {
-            self.set_realm_builtin_named(program, json, name, native, realm)?;
+        let holder = super::native_rows::Holder::Json;
+        match (global != self.realm.globals).then_some(global) {
+            None => self.install_native_rows(program, json, holder)?,
+            Some(realm) => self.install_realm_native_rows(json, holder, realm)?,
         }
         self.set_builtin_value_named(global, "JSON", json)
     }
 
     pub(super) fn install_reflect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let reflect = self.object();
-        for (name, native) in [
-            ("get", Native::ReflectGet),
-            ("has", Native::ReflectHas),
-            ("apply", Native::ReflectApply),
-            (
-                "getOwnPropertyDescriptor",
-                Native::ReflectGetOwnPropertyDescriptor,
-            ),
-            ("defineProperty", Native::ReflectDefineProperty),
-            ("deleteProperty", Native::ReflectDeleteProperty),
-            ("preventExtensions", Native::ReflectPreventExtensions),
-            ("isExtensible", Native::ReflectIsExtensible),
-            ("set", Native::ReflectSet),
-            ("ownKeys", Native::ReflectOwnKeys),
-            ("getPrototypeOf", Native::ReflectGetPrototypeOf),
-            ("setPrototypeOf", Native::ReflectSetPrototypeOf),
-            ("construct", Native::ReflectConstruct),
-        ] {
-            self.set_builtin_named(program, reflect, name, native)?;
-        }
+        self.install_native_rows(program, reflect, super::native_rows::Holder::Reflect)?;
         self.install_builtin_to_string_tag(reflect, "Reflect")?;
         self.seal_initialized_intrinsic(reflect);
         self.global(program, "Reflect", reflect)

@@ -1303,13 +1303,7 @@ impl<H: Host> Vm<H> {
         let symbol_prototype = self.object();
         self.set_named_constant(program, symbol, "prototype", symbol_prototype)?;
         self.set_builtin_value_named(symbol_prototype, "constructor", symbol)?;
-        self.set_builtin_named(program, symbol_prototype, "valueOf", Native::SymbolValueOf)?;
-        self.set_builtin_named(
-            program,
-            symbol_prototype,
-            "toString",
-            Native::SymbolToString,
-        )?;
+        self.install_native_rows(program, symbol_prototype, super::native_rows::Holder::SymbolPrototype)?;
         let description = self.native_value(Native::SymbolDescriptionGetter);
         self.install_symbol_description(symbol_prototype, description)?;
         for native in [Native::String, Native::Number] {
@@ -1941,39 +1935,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        for (name, native) in [
-            ("defineProperty", Native::ObjectDefineProperty),
-            ("defineProperties", Native::ObjectDefineProperties),
-            ("setPrototypeOf", Native::ObjectSetPrototypeOf),
-            ("getPrototypeOf", Native::ObjectGetPrototypeOf),
-            ("create", Native::ObjectCreate),
-            ("keys", Native::ObjectKeys),
-            ("values", Native::ObjectValues),
-            ("entries", Native::ObjectEntries),
-            ("getOwnPropertyNames", Native::ObjectGetOwnPropertyNames),
-            ("getOwnPropertySymbols", Native::ObjectGetOwnPropertySymbols),
-            (
-                "getOwnPropertyDescriptor",
-                Native::ObjectGetOwnPropertyDescriptor,
-            ),
-            (
-                "getOwnPropertyDescriptors",
-                Native::ObjectGetOwnPropertyDescriptors,
-            ),
-            ("fromEntries", Native::ObjectFromEntries),
-            ("assign", Native::ObjectAssign),
-            ("is", Native::ObjectIs),
-            ("hasOwn", Native::ObjectHasOwn),
-            ("preventExtensions", Native::ObjectPreventExtensions),
-            ("isExtensible", Native::ObjectIsExtensible),
-            ("groupBy", Native::ObjectGroupBy),
-            ("seal", Native::ObjectSeal),
-            ("isSealed", Native::ObjectIsSealed),
-            ("freeze", Native::ObjectFreeze),
-            ("isFrozen", Native::ObjectIsFrozen),
-        ] {
-            self.set_realm_builtin_named(program, object, name, native, Some(global))?;
-        }
+        self.install_realm_native_rows(object, super::native_rows::Holder::ObjectConstructor, global)?;
         self.set_builtin_value_named(global, "Object", object)?;
         let object_name = self.intern_atom("Object");
         self.set_property_attributes(

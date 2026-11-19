@@ -478,6 +478,47 @@ mod tests {
     }
 
 
+    /// The dispatch record's fields a stencil row reads, as (name, the runtime's offset, the stencil layout's).
+    fn dispatch_offsets() -> Vec<(&'static str, usize, usize)> {
+        use stencil_layout as m;
+        use std::mem::offset_of as at;
+        vec![
+            ("loop_entry", at!(JsStepDispatch, loop_entry), m::JS_STEP_LOOP_ENTRY),
+            ("capture_values", at!(JsStepDispatch, capture_values), m::JS_STEP_CAPTURE_VALUES),
+            ("capture_len", at!(JsStepDispatch, capture_len), m::JS_STEP_CAPTURE_LEN),
+            ("capture_stores", at!(JsStepDispatch, capture_stores), m::JS_STEP_CAPTURE_STORES),
+            ("array_record_base", at!(JsStepDispatch, array_record_base), m::JS_STEP_ARRAY_RECORD_BASE),
+            ("object_record_base", at!(JsStepDispatch, object_record_base), m::JS_STEP_OBJECT_RECORD_BASE),
+            ("function_record_base", at!(JsStepDispatch, function_record_base), m::JS_STEP_FUNCTION_RECORD_BASE),
+            ("object_mark_blocks", at!(JsStepDispatch, object_mark_blocks), m::JS_STEP_OBJECT_MARK_BLOCKS),
+            ("object_mark_block_count", at!(JsStepDispatch, object_mark_block_count), m::JS_STEP_OBJECT_MARK_BLOCK_COUNT),
+            ("property_buffer", at!(JsStepDispatch, property_buffer), m::JS_STEP_PROPERTY_BUFFER),
+            ("field_entries", at!(JsStepDispatch, field_entries), m::JS_STEP_FIELD_ENTRIES),
+            ("method_cache_atoms", at!(JsStepDispatch, method_cache_atoms), m::JS_STEP_METHOD_CACHE_ATOMS),
+            ("method_cache_atom_words", at!(JsStepDispatch, method_cache_atom_words), m::JS_STEP_METHOD_CACHE_ATOM_WORDS),
+            ("stores_specialized", at!(JsStepDispatch, stores_specialized), m::JS_STEP_STORES_SPECIALIZED),
+            ("slots_tracked", at!(JsStepDispatch, slots_tracked), m::JS_STEP_SLOTS_TRACKED),
+            ("receiver", at!(JsStepDispatch, receiver), m::JS_STEP_RECEIVER),
+            ("vm", at!(JsStepDispatch, vm), m::JS_STEP_VM),
+            ("residual", at!(JsStepDispatch, residual), m::JS_STEP_RESIDUAL),
+            ("lane_context", at!(JsStepDispatch, lane_context), m::JS_STEP_LANE_CONTEXT),
+            ("returned_pc", at!(JsStepDispatch, returned_pc), m::JS_STEP_RETURNED_PC),
+            ("lane_values_top", at!(JsStepDispatch, lane_values_top), m::JS_STEP_LANE_VALUES_TOP),
+            ("lane_values_end", at!(JsStepDispatch, lane_values_end), m::JS_STEP_LANE_VALUES_END),
+            ("lane_activations_top", at!(JsStepDispatch, lane_activations_top), m::JS_STEP_LANE_ACTIVATIONS_TOP),
+            ("lane_frames_end", at!(JsStepDispatch, lane_frames_end), m::JS_STEP_LANE_FRAMES_END),
+            ("native_locals", at!(JsStepDispatch, native_locals), m::JS_STEP_NATIVE_LOCALS),
+            ("local_count", at!(JsStepDispatch, local_count), m::JS_STEP_LOCAL_COUNT),
+            ("epoch", at!(JsStepDispatch, epoch), m::JS_STEP_EPOCH),
+            ("string_record_base", at!(JsStepDispatch, string_record_base), m::JS_STEP_STRING_RECORD_BASE),
+            ("ascii_unit_strings", at!(JsStepDispatch, ascii_unit_strings), m::JS_STEP_ASCII_UNIT_STRINGS),
+            ("function_mark_blocks", at!(JsStepDispatch, function_mark_blocks), m::JS_STEP_FUNCTION_MARK_BLOCKS),
+            ("function_mark_block_count", at!(JsStepDispatch, function_mark_block_count), m::JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
+            ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),
+            ("environment_storage", at!(JsStepDispatch, environment_storage), m::JS_STEP_ENV_STORAGE),
+        ]
+    }
+
     /// Every payload field a stencil row reads, as (name, the runtime's offset, the stencil layout's).
     fn payload_offsets() -> Vec<(&'static str, usize, usize)> {
         use stencil_layout as m;

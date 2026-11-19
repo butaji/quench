@@ -11,54 +11,7 @@ use chrono::{
 };
 use chrono_tz::OffsetName;
 
-const DATE_PROTOTYPE_METHODS: &[(&str, Native)] = &[
-    ("toString", Native::DateToString),
-    ("valueOf", Native::DateValueOf),
-    ("getTime", Native::DateGetTime),
-    ("getFullYear", Native::DateGetFullYear),
-    ("getMonth", Native::DateGetMonth),
-    ("getDate", Native::DateGetDate),
-    ("getDay", Native::DateGetDay),
-    ("getHours", Native::DateGetHours),
-    ("getMinutes", Native::DateGetMinutes),
-    ("getSeconds", Native::DateGetSeconds),
-    ("getMilliseconds", Native::DateGetMilliseconds),
-    ("getTimezoneOffset", Native::DateGetTimezoneOffset),
-    ("getUTCFullYear", Native::DateGetUTCFullYear),
-    ("getUTCMonth", Native::DateGetUTCMonth),
-    ("getUTCDate", Native::DateGetUTCDate),
-    ("getUTCDay", Native::DateGetUTCDay),
-    ("getUTCHours", Native::DateGetUTCHours),
-    ("getUTCMinutes", Native::DateGetUTCMinutes),
-    ("getUTCSeconds", Native::DateGetUTCSeconds),
-    ("getUTCMilliseconds", Native::DateGetUTCMilliseconds),
-    ("getYear", Native::DateGetYear),
-    ("setTime", Native::DateSetTime),
-    ("setFullYear", Native::DateSetFullYear),
-    ("setMonth", Native::DateSetMonth),
-    ("setUTCMonth", Native::DateSetUTCMonth),
-    ("setDate", Native::DateSetDate),
-    ("setUTCDate", Native::DateSetUTCDate),
-    ("setUTCFullYear", Native::DateSetUTCFullYear),
-    ("setHours", Native::DateSetHours),
-    ("setMinutes", Native::DateSetMinutes),
-    ("setSeconds", Native::DateSetSeconds),
-    ("setMilliseconds", Native::DateSetMilliseconds),
-    ("setUTCHours", Native::DateSetUTCHours),
-    ("setUTCMinutes", Native::DateSetUTCMinutes),
-    ("setUTCSeconds", Native::DateSetUTCSeconds),
-    ("setUTCMilliseconds", Native::DateSetUTCMilliseconds),
-    ("setYear", Native::DateSetYear),
-    ("toLocaleString", Native::DateToLocaleString),
-    ("toDateString", Native::DateToDateString),
-    ("toTimeString", Native::DateToTimeString),
-    ("toLocaleDateString", Native::DateToLocaleDateString),
-    ("toLocaleTimeString", Native::DateToLocaleTimeString),
-    ("toUTCString", Native::DateToUTCString),
-    ("toISOString", Native::DateToISOString),
-    ("toJSON", Native::DateToJSON),
-    ("toTemporalInstant", Native::DateToTemporalInstant),
-];
+/// The `Date.prototype` aliases the rows do not hold: each names a row's function under another name.
 const DATE_PROTOTYPE_ALIASES: &[(&str, &str)] = &[("toGMTString", "toUTCString")];
 use crate::units::SECONDS_PER_MINUTE;
 const LEGACY_DATE_YEAR_OFFSET: i32 = 1900;
@@ -72,7 +25,7 @@ pub(super) const DATE_TIME_CLIP_LIMIT_MS: f64 = 8.64e15;
 const LEGACY_DATE_YEAR_MIN: f64 = 0.0;
 const LEGACY_DATE_YEAR_MAX: f64 = 99.0;
 const LEGACY_DATE_YEAR_MAX_INT: i32 = 99;
-const DATE_COMPONENT_COUNT: usize = 7;
+pub(super) const DATE_COMPONENT_COUNT: usize = 7;
 const YEAR_COMPONENT: usize = 0;
 const MONTH_COMPONENT: usize = 1;
 const DAY_COMPONENT: usize = 2;
@@ -84,13 +37,13 @@ const REQUIRED_DATE_SETTER_ARGUMENTS: usize = 1;
 const EPOCH_MILLISECONDS: f64 = 0.0;
 const DATE_LOCAL_DISAMBIGUATION: &str = "compatible";
 const DATE_CONSTRUCTOR_MULTI_ARGUMENT_THRESHOLD: usize = 2;
-const DATE_SETTER_YEAR_ARGUMENT_LIMIT: usize = 3;
-const DATE_SETTER_MONTH_ARGUMENT_LIMIT: usize = 2;
-const DATE_SETTER_DAY_ARGUMENT_LIMIT: usize = 1;
-const DATE_SETTER_HOUR_ARGUMENT_LIMIT: usize = 4;
-const DATE_SETTER_MINUTE_ARGUMENT_LIMIT: usize = 3;
-const DATE_SETTER_SECOND_ARGUMENT_LIMIT: usize = 2;
-const DATE_SETTER_MILLISECOND_ARGUMENT_LIMIT: usize = 1;
+pub(super) const DATE_SETTER_YEAR_ARGUMENT_LIMIT: usize = 3;
+pub(super) const DATE_SETTER_MONTH_ARGUMENT_LIMIT: usize = 2;
+pub(super) const DATE_SETTER_DAY_ARGUMENT_LIMIT: usize = 1;
+pub(super) const DATE_SETTER_HOUR_ARGUMENT_LIMIT: usize = 4;
+pub(super) const DATE_SETTER_MINUTE_ARGUMENT_LIMIT: usize = 3;
+pub(super) const DATE_SETTER_SECOND_ARGUMENT_LIMIT: usize = 2;
+pub(super) const DATE_SETTER_MILLISECOND_ARGUMENT_LIMIT: usize = 1;
 const FIRST_DAY_OF_MONTH: f64 = 1.0;
 const DATE_DAY_FIELD_WIDTH: usize = 2;
 const DATE_TIME_FIELD_WIDTH: usize = 2;
@@ -127,27 +80,6 @@ const DATE_MONTHS: [&str; 12] = [
 ];
 const DEFAULT_DATE_COMPONENTS: [f64; DATE_COMPONENT_COUNT] =
     [0.0, 0.0, FIRST_DAY_OF_MONTH, 0.0, 0.0, 0.0, 0.0];
-
-pub(super) const fn date_native_length(native: Native) -> Option<f64> {
-    match native {
-        Native::Date | Native::DateUTC => Some(DATE_COMPONENT_COUNT as f64),
-        Native::DateParse | Native::DateSetTime | Native::DateToPrimitive => Some(1.0),
-        Native::DateNow => Some(0.0),
-        _ => {
-            if let Some(setter) = DateSetter::from_native(native) {
-                return Some(setter.maximum_arguments as f64);
-            }
-            let mut index = 0;
-            while index < DATE_PROTOTYPE_METHODS.len() {
-                if DATE_PROTOTYPE_METHODS[index].1 as u16 == native as u16 {
-                    return Some(if matches!(native, Native::DateToJSON) { 1.0 } else { 0.0 });
-                }
-                index += 1;
-            }
-            None
-        }
-    }
-}
 
 struct DateParts {
     year: i32,
@@ -210,11 +142,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        for (name, native) in DATE_PROTOTYPE_METHODS {
-            let method = self.native_with_realm(*native, global, global);
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(prototype, name, method)?;
-        }
+        self.install_realm_native_rows(prototype, super::native_rows::Holder::DatePrototype, global)?;
         for (alias, original) in DATE_PROTOTYPE_ALIASES {
             let original = self.intern_atom(original);
             let method = self
@@ -222,15 +150,7 @@ impl<H: Host> Vm<H> {
                 .expect("Date method aliases have installed targets");
             self.set_builtin_value_named(prototype, alias, method)?;
         }
-        for (name, native) in [
-            ("now", Native::DateNow),
-            ("parse", Native::DateParse),
-            ("UTC", Native::DateUTC),
-        ] {
-            let method = self.native_with_realm(native, global, global);
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(constructor, name, method)?;
-        }
+        self.install_realm_native_rows(constructor, super::native_rows::Holder::DateConstructor, global)?;
         if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::ToPrimitive) {
             let method = self.native_with_realm(Native::DateToPrimitive, global, global);
             self.set_builtin_function_name(method, "[Symbol.toPrimitive]")?;

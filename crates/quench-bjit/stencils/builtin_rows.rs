@@ -15,7 +15,7 @@
 
 use crate::heap_rows::{payload, word_at};
 use crate::layout::call_record::{CallRecord, REGISTER_BYTES};
-use crate::layout::JS_STEP_STRING_RECORD_BASE;
+use crate::layout::{JS_STEP_ASCII_UNIT_STRINGS, JS_STEP_STRING_RECORD_BASE};
 use crate::stage::StencilStage;
 use crate::staged::{builtins, math, strings};
 use crate::words::{S, hole64};
@@ -108,6 +108,23 @@ unsafe fn char_code_at(s: &S, record: usize) -> Option<u64> {
     }
 }
 
+/// `charAt` of the string receiver at the index argument: the one-unit string from the table of those
+/// strings (`strings::string_char_at`); a miss leaves the call to the helper row.
+#[inline(always)]
+unsafe fn char_at(s: &S, record: usize) -> Option<u64> {
+    // SAFETY: as `char_code_at`, with the dispatch payload's table word.
+    unsafe {
+        if !is_callee(s, record) {
+            return None;
+        }
+        let records = word_at(payload(s), JS_STEP_STRING_RECORD_BASE);
+        let table = word_at(payload(s), JS_STEP_ASCII_UNIT_STRINGS);
+        let mut stage = StencilStage::from_hole(0);
+        let string = strings::flat_string(&mut stage, records, receiver(s, record), ())?;
+        strings::string_char_at(&mut stage, string, argument(s, record, 0), table, ())
+    }
+}
+
 /// `Number.isInteger` of a Number argument (`builtins::concrete_is_integral`); a non-Number misses.
 #[inline(always)]
 unsafe fn is_integer(s: &S, record: usize) -> Option<u64> {
@@ -188,6 +205,7 @@ macro_rules! builtin_row {
 }
 
 builtin_row!(call_builtin_char_code_at, |s, record| char_code_at(s, record));
+builtin_row!(call_builtin_char_at, |s, record| char_at(s, record));
 builtin_row!(call_builtin_is_integer, |s, record| is_integer(s, record));
 builtin_row!(call_builtin_floor, |s, record| unary(s, record, math::FloatUnary::Floor));
 builtin_row!(call_builtin_ceil, |s, record| unary(s, record, math::FloatUnary::Ceil));
