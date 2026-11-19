@@ -11042,6 +11042,13 @@ enum NameResolution {
     General,
 }
 
+/// A `lane_load_name_bound` that reads the native an internal name stands for.
+const BOUND_NATIVE: u8 = 0;
+/// A `lane_load_name_bound` of the global `undefined`.
+const BOUND_UNDEFINED: u8 = 1;
+/// A `lane_load_name_bound` of an intrinsic name.
+const BOUND_INTRINSIC: u8 = 3;
+
 /// The resolution of the by-name load of `atom` in the function `cx` runs. A native an internal
 /// name stands for is recorded for its reads (`Vm::intrinsic_natives`). An internal name is no
 /// binding source text can declare, except the internal globals the realm installs on its global
@@ -11080,17 +11087,12 @@ script_handler! {
     /// is the row instance (`name_row`) holding the binding, or leaves every run to the general
     /// path. `KIND` is the load's (`LOAD_NAME`).
     #[inline(never)]
-    fn load_name_resolve_miss<KIND: u8>(cx, r, ip, i, view) {
-        let load = match KIND {
-            LOAD_NAME_CALL => crate::staged::NameLoad::Call,
-            LOAD_NAME_TYPEOF => crate::staged::NameLoad::Typeof,
-            _ => crate::staged::NameLoad::Read,
-        };
-        let bound: Handler = match name_resolution(cx, i.imm()) {
-            NameResolution::Native => name_row::<H, FLAG_NAME_NATIVE>(load),
-            NameResolution::Undefined => name_row::<H, FLAG_NAME_UNDEFINED>(load),
-            NameResolution::Global => name_row::<H, FLAG_NAME_GLOBAL>(load),
-            NameResolution::Intrinsic => name_row::<H, FLAG_NAME_INTRINSIC>(load),
+    fn lane_load_name_resolve<KIND: u8>(cx, r, ip, i, view) {
+        let bound: Handler = match lane_name_resolution(cx, i.imm()) {
+            NameResolution::Native => lane_load_name_bound::<H, KIND, BOUND_NATIVE>,
+            NameResolution::Undefined => lane_load_name_bound::<H, KIND, BOUND_UNDEFINED>,
+            NameResolution::Global => lane_load_global_name::<H, KIND, false>,
+            NameResolution::Intrinsic => lane_load_name_bound::<H, KIND, BOUND_INTRINSIC>,
             NameResolution::General => {
                 // SAFETY: the context's program outlives the lane run.
                 let code = unsafe { &*(*cx).code };
@@ -11113,6 +11115,37 @@ script_handler! {
         };
         requicken::<H>(ip, bound);
         sibling!(bound, r, ip, Carried::script_in(cx, view))
+    }
+}
+
+/// The binding the record `i` of `lane_load_name_bound::<_, _, BOUND>` holds: a global's is its
+/// record's own-field hint.
+#[inline(always)]
+fn lane_name_binding<const BOUND: u8>(i: &LaneInstruction) -> NameBinding {
+    match BOUND {
+        BOUND_NATIVE => NameBinding::Read(NameRead::Native),
+        BOUND_UNDEFINED => NameBinding::Undefined,
+        BOUND_INTRINSIC => NameBinding::Read(NameRead::Intrinsic),
+        _ => unreachable!("a bound name load holds one of the BOUND_ bindings"),
+    }
+}
+
+script_handler! {
+    /// A by-name load whose first run resolved its name (`lane_load_name_resolve`): the staged
+    /// `LoadName` row over the binding `BOUND` names, whose call receiver (`LOAD_NAME_CALL`) is
+    /// `undefined`. A global name is not bound here: `lane_load_name_resolve` routes it to
+    /// `lane_load_global_name`, which reads the global object's own data field through its
+    /// record's hint (`LaneInstruction::field_hint`) without the staged row. A read the binding
+    /// does not answer takes its residual: a native's resolution again, and an intrinsic name's
+    /// the general path.
+    fn lane_load_name_bound<KIND: u8, BOUND: u8>(cx, r, ip, i, view) {
+        if !staged_load_name(cx, r, i, KIND == LOAD_NAME_CALL, lane_name_binding::<BOUND>(i)) {
+            match BOUND {
+                BOUND_NATIVE => sibling!(lane_load_name_resolve::<H, KIND>, r, ip, view),
+                _ => return exit(ip),
+            }
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
 

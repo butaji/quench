@@ -213,9 +213,8 @@ const HEAP_USES: &[(Uses, &[std::ops::RangeInclusive<u8>])] = &[
     // The frame, environment, global and constant reads of one destination.
     (uses(Entry::Never, Slot::Dst, Slot::Unread, Slot::Unread), &[CAPTURE_ROW..=CAPTURE_ROW, ENV_ROW..=ENV_ROW, FIELD_ROW..=FIELD_ROW, LENGTH_ROW..=LENGTH_ROW, THIS_ROW..=THIS_ROW,
         LOAD_LOCAL_ROW..=LOAD_LOCAL_ROW, LOAD_CHECKED_ROW..=LOAD_CHECKED_ROW, GLOBAL_READ_ROW..=GLOBAL_READ_ROW, LEXICAL_READ_ROW..=LEXICAL_READ_ROW,
-        CONSTANT_ROW..=CONSTANT_ROW, CALLEE_CAPTURE_ROW..=CALLEE_CAPTURE_ROW]),
-    // The stores of one operand into a global, a site or the receiver.
-    (uses(Entry::Kept, Slot::Unread, Slot::Src, Slot::Unread), &[GLOBAL_STORE_ROW..=GLOBAL_STORE_ROW, SITE_STORE_ROW..=SITE_STORE_ROW, THIS_STORE_ROW..=THIS_STORE_ROW,
+        CONSTANT_ROW..=CONSTANT_ROW, CALLEE_CAPTURE_ROW..=CALLEE_CAPTURE_ROW, EMPTY_OBJECT_ROW..=EMPTY_OBJECT_ROW, EMPTY_ARRAY_ROW..=EMPTY_ARRAY_ROW]),
+    (uses(Entry::Kept, false, true, false), &[GLOBAL_STORE_ROW..=GLOBAL_STORE_ROW, SITE_STORE_ROW..=SITE_STORE_ROW, THIS_STORE_ROW..=THIS_STORE_ROW,
         IC_SET_ROW..=IC_SET_ROW, IC_SET_INT_ROW..=IC_SET_INT_ROW, IC_KNOWN_SET_ROW..=IC_KNOWN_SET_INT_ROW]),
     // The reads of one destination from a site, the receiver's site, a held field or an inline cache.
     (uses(Entry::Kept, Slot::Dst, Slot::Unread, Slot::Unread), &[SITE_ROW..=SITE_ROW, THIS_SITE_ROW..=THIS_SITE_ROW, HELD_ROW..=HELD_ROW, IC_GET_ROW..=IC_GET_ROW, IC_GET_HOLDER_ROW..=IC_GET_HOLDER_ROW, IC_KNOWN_GET_ROW..=IC_KNOWN_GET_ROW]),
@@ -292,5 +291,18 @@ pub fn heap_library() -> Vec<HeapCode> {
             }
         }
     }
+    typed_rows(&dsts, &srcs, &mut rows);
+    for &dst in &dsts {
+        rows.extend([THIS_ROW, LOAD_LOCAL_ROW, LOAD_CHECKED_ROW, ENV_ROW, LEXICAL_READ_ROW, CALLEE_CAPTURE_ROW, EMPTY_OBJECT_ROW, EMPTY_ARRAY_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
+    }
+    for heap in [STORE_LOCAL_ROW, STORE_CHECKED_ROW, CAPTURE_SET_ROW, ENV_SET_ROW, ENV_DEFINE_ROW, APPEND_ROW, LEXICAL_WRITE_ROW] {
+        rows.extend(srcs.iter().map(|&a| heap_canonical((heap, false, MEM, a, MEM))));
+    }
+    for heap in ADD_ROWS {
+        rows.extend([false, true].map(|chained| heap_canonical((heap, chained, MEM, MEM, MEM))));
+    }
+    rows.extend(NAME_ROWS.map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
+    rows.extend([ARRAY_ROW, IDENTITY_ROW, LIVE_ROW, REALM_ROW, OBJECT_ROW, KEY_ROW, FOR_IN_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, INSTANCEOF_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
+    cache_rows(&dsts, &srcs, &mut rows);
     rows.into_iter().collect()
 }

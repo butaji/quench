@@ -38,12 +38,6 @@ pub(super) enum NameRead {
     Native,
     /// An intrinsic name's value (`Vm::intrinsic_name_value`).
     Intrinsic,
-    /// The global object's own data field the record's hint names.
-    Field(crate::vm::FieldCache),
-    /// The active realm's global lexical binding the record's hint locates by index (`slot`), taken
-    /// only while it is the name's and initialized (`Vm::global_lexical_at`). Subsumes the hand
-    /// `lane_load_name_lexical`.
-    Lexical(crate::vm::FieldCache),
 }
 
 /// What a by-name load's record resolved its name to: the global `undefined`, a constant no
@@ -3380,87 +3374,6 @@ unsafe fn name_value_in_lane<H: Host>(cx: *mut (), read: NameRead, atom: u32) ->
             Some(vm.native_value(native))
         }
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
-        NameRead::Field(hint) => vm.record_field_entry_hit(hint, vm.realm.globals),
-        NameRead::Lexical(hint) => vm.global_lexical_at(atom, hint.slot),
-    }
-}
-
-/// Whether `value` is an object of any kind the VM admits as an iterator result (`Vm::is_object_like`),
-/// for `RequireIteratorResult`'s object arm (`LaneFrame::object_like`).
-///
-/// # Safety
-/// `cx` is the running lane's context.
-#[inline(always)]
-unsafe fn object_like_in_lane<H: Host>(cx: *mut (), value: Value) -> bool {
-    unsafe { vm(cx.cast::<LaneContext<H>>()) }.is_object_like(value)
-}
-
-/// The `typeof` kind of the heap value `value`, as the VM's `typeof` names it (`Vm::typeof_kind`: an
-/// IsHTMLDDA object reads as undefined): the index of its name in `TYPEOF_NAMES`.
-///
-/// # Safety
-/// `cx` is the running lane's context.
-unsafe fn type_of_in_lane<H: Host>(cx: *mut (), value: Value) -> Option<crate::staged::value::TypeofKind> {
-    let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
-    let index = crate::vm::coercion::typeof_name_index(vm.typeof_kind(value));
-    Some(crate::staged::value::TypeofKind::of_index(index as u64))
-}
-
-/// The interned `typeof` result string of the name index `name` (`Vm::typeof_names`), which
-/// `typeof` yields without allocating.
-///
-/// # Safety
-/// `cx` is the running lane's context.
-unsafe fn typeof_string_in_lane<H: Host>(cx: *mut (), name: u64) -> Option<Value> {
-    let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
-    vm.typeof_names.get(usize::try_from(name).ok()?).copied()
-}
-
-/// SetFunctionName of `function` to the program atom `name` through cache `site`, by the VM's own naming
-/// (`Vm::set_function_name`); `None` where it raises.
-///
-/// # Safety
-/// `cx` is the running lane's context.
-unsafe fn set_function_name_in_lane<H: Host>(cx: *mut (), function: Value, name: u32, site: u16) -> Option<()> {
-    let cx = cx.cast::<LaneContext<H>>();
-    let vm = unsafe { vm(cx) };
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    vm.set_function_name(code, function, (name, site)).ok()
-}
-
-/// `IteratorCleanupPush` in the running VM frame, as the general loop runs it: the iterator to close if
-/// the loop exits abruptly. A frameless activation keeps it on the lane stack (`LaneStack::iterators`),
-/// which its frame takes if it materializes.
-///
-/// # Safety
-/// `cx` is the running lane's context.
-unsafe fn iterator_push_in_lane<H: Host>(cx: *mut (), iterator: Register, done: Register) {
-    let cx = cx.cast::<LaneContext<H>>();
-    let vm = unsafe { vm(cx) };
-    let iterator = crate::vm::ActiveIterator { iterator, done };
-    if let Some(depth) = vm.lane_stack.activations().len().checked_sub(1) {
-        vm.lane_stack.iterators.push((depth, iterator));
-    } else {
-        let frame = unsafe { (*cx).frame() };
-        vm.frames[frame].active_iterators.push(iterator);
-    }
-}
-
-/// `IteratorCleanupPop` in the running VM frame: the running activation's own entry, the last. `false`
-/// where there is none, which the general path raises for.
-///
-/// # Safety
-/// `cx` is the running lane's context.
-unsafe fn iterator_pop_in_lane<H: Host>(cx: *mut ()) -> bool {
-    let cx = cx.cast::<LaneContext<H>>();
-    let vm = unsafe { vm(cx) };
-    match vm.lane_stack.activations().len().checked_sub(1) {
-        Some(depth) => vm.lane_stack.iterators.pop_if(|(owner, _)| *owner == depth).is_some(),
-        None => {
-            let frame = unsafe { (*cx).frame() };
-            vm.frames[frame].active_iterators.pop().is_some()
-        }
     }
 }
 

@@ -147,11 +147,11 @@ pub(super) enum Heap {
     ThisChain,
     /// The `length` of the direct array at hole 1, an int32 (what the array's record counts).
     Length,
-    /// `String.prototype.charCodeAt` of the flat string at hole 1, at the int32 index at hole 2 (`CHAR_CODE_AT_ROW`): the call
-    /// the method read's native folds into (`base_region::function::native_call`).
-    CharCodeAt,
-    /// `parseInt` of the flat string at hole 1 in radix 10 (`PARSE_INT_ROW`).
-    ParseInt,
+    /// An empty ordinary object (`Allocation::Empty`), or a zero-length array, made inline from the object or array
+    /// space's cursor and the captured template (`JsStepDispatch::empty_*`): the destination (hole 0) takes the
+    /// direct reference of the new record. Nothing is planned for these yet (the b-jit has no allocation planner).
+    EmptyObject,
+    EmptyArray,
     /// Stores the value operand (hole 1) into the own data field the site's cache entry (hole 2) names
     /// of the object register whose frame offset is hole 0, where the store gate admits it.
     SiteStore,
@@ -407,8 +407,8 @@ impl Heap {
     fn other_code(self) -> u8 {
         match self {
             Heap::Length => library::LENGTH_ROW,
-            Heap::CharCodeAt => library::CHAR_CODE_AT_ROW,
-            Heap::ParseInt => library::PARSE_INT_ROW,
+            Heap::EmptyObject => library::EMPTY_OBJECT_ROW,
+            Heap::EmptyArray => library::EMPTY_ARRAY_ROW,
             Heap::Word => library::CONSTANT_ROW,
             Heap::Append => library::APPEND_ROW,
             Heap::ForIn => library::FOR_IN_ROW,
@@ -422,6 +422,13 @@ impl Heap {
     /// hit hops past the step laid out after them (`base_region::steps::plan_fast`).
     pub(super) fn continues_at_taken(self) -> bool {
         matches!(self, Heap::StoreLocal(_) | Heap::Capture(_) | Heap::CaptureSet(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_))
+    }
+
+    /// Whether the row reads a snapshot of the heap the loop's entry took (the record's captures,
+    /// fields and array views) or tables a helper may move: not the activation's `this` and local
+    /// slots, which every run reads live, and the rows that read no heap.
+    pub(super) fn reads_snapshot(self) -> bool {
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::EmptyObject | Heap::EmptyArray | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
@@ -438,7 +445,7 @@ impl Heap {
     }
 
     pub(super) fn yields_tagged(self) -> bool {
-        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word | Heap::CharCodeAt | Heap::ParseInt)
+        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word | Heap::EmptyObject | Heap::EmptyArray)
     }
 }
 
@@ -518,6 +525,14 @@ mod tests {
             ("function_mark_block_count", at!(JsStepDispatch, function_mark_block_count), m::JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
             ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),
             ("environment_storage", at!(JsStepDispatch, environment_storage), m::JS_STEP_ENV_STORAGE),
+            ("object_cursor", at!(JsStepDispatch, object_cursor), m::JS_STEP_OBJECT_CURSOR),
+            ("empty_object_layout", at!(JsStepDispatch, empty_object_layout), m::JS_STEP_EMPTY_OBJECT_LAYOUT),
+            ("empty_object_payload", at!(JsStepDispatch, empty_object_payload), m::JS_STEP_EMPTY_OBJECT_PAYLOAD),
+            ("empty_object_proto", at!(JsStepDispatch, empty_object_proto), m::JS_STEP_EMPTY_OBJECT_PROTO),
+            ("array_cursor", at!(JsStepDispatch, array_cursor), m::JS_STEP_ARRAY_CURSOR),
+            ("empty_array_layout", at!(JsStepDispatch, empty_array_layout), m::JS_STEP_EMPTY_ARRAY_LAYOUT),
+            ("empty_array_payload", at!(JsStepDispatch, empty_array_payload), m::JS_STEP_EMPTY_ARRAY_PAYLOAD),
+            ("empty_array_proto", at!(JsStepDispatch, empty_array_proto), m::JS_STEP_EMPTY_ARRAY_PROTO),
         ]
     }
 

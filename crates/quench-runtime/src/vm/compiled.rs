@@ -3617,11 +3617,22 @@ struct JsStepDispatch {
     typed_view_directory: usize,
     typed_view_pages: usize,
     buffer_relocations: usize,
-    outcome: Option<JsNativeStep>,
+    /// The function records' mark blocks and their count, which a store into a function's own
+    /// properties reads as the object records' are (`StagedRecordSpace::Function`); and the empty
+    /// string's word, which a function's inferred name replaces (`staged::naming`).
+    function_mark_blocks: usize,
+    function_mark_block_count: usize,
+    empty_string: u64,
+    /// The word of the storage the running lane body's environment-owned locals live in, which its environment rows
+    /// read through (`staged::environment::environment_slot`): its activation's window, or storage that holds no
+    /// slot where it runs in a frame (`heap::absent_environment_storage`).
+    environment_storage: u64,
     /// The object space's allocation cursor (`Heap::native_object_cursor`), which an inline
     /// allocation bumps (`NATIVE_RECORD_CURSOR_LAYOUT`); zero where absent. Refreshed with the bases.
-    /// Declared last, with the other words only generated allocation reads: the stencils' offsets
-    /// (`quench-bjit/stencils/layout.rs`) are of the fields before them, which keep their places.
+    /// The allocation words are declared here, after `environment_storage` and before `outcome`:
+    /// their offsets are sums of the fields before them, which the b-jit stencils name
+    /// (`quench-bjit/stencils/layout.rs`), and `outcome`'s size (`Option<JsNativeStep>`) is not one
+    /// those sums can name, so it comes after them. No stencil reads `outcome`.
     object_cursor: usize,
     /// The record words of an empty object made for the realm's prototype `empty_object_proto`
     /// (`capture_empty_object`): an inline allocation stores them into the record it bumps.
@@ -3629,6 +3640,14 @@ struct JsStepDispatch {
     empty_object_layout: u64,
     empty_object_payload: u64,
     empty_object_proto: u64,
+    /// The array space's allocation cursor (`Heap::native_array_cursor`) and the record words of
+    /// an empty, zero-length array made for `empty_array_proto` (`capture_empty_array`), read the
+    /// same way as the object's: zero where absent or not yet captured.
+    array_cursor: usize,
+    empty_array_layout: u64,
+    empty_array_payload: u64,
+    empty_array_proto: u64,
+    outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
     stop_pc: usize,
@@ -4600,9 +4619,18 @@ impl JsStepDispatch {
             stop_pc: JS_NO_STOP_PC,
             native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
-            ascii_unit_strings: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
-            call_cache: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
-            body: std::ptr::null(), inlined: 0, exit_line: 0,
+            capture_values: std::ptr::null(), capture_len: 0, capture_stores: 0,
+            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0,
+            object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
+            array_cursor: 0, empty_array_layout: 0, empty_array_payload: 0, empty_array_proto: 0,
+            object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
+            property_buffer: 0, field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
+            call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
+            loop_entry: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
+            empty_string: Value::DELETED.to_bits(),
+            environment_storage: crate::heap::absent_environment_storage(),
+            receiver: Value::DELETED.to_bits(),
+            vm: 0, residual: 0, body: std::ptr::null(), inlined: 0, exit_line: 0, lane_context: 0, returned_pc: 0,
             native_top: 0, native_end: 0, shadow_top: 0, shadow_end: 0,
             outcome: None,
         }
@@ -4640,6 +4668,7 @@ impl JsStepDispatch {
             && self.slots_tracked == usize::from(vm.heap.tracks_slot_values())
             && self.empty_string != Value::DELETED.to_bits() && self.ascii_unit_strings != 0
             && self.empty_object_proto == vm.realm_object_prototype(vm.realm.globals).to_bits()
+            && self.empty_array_proto == vm.array_prototype_for_realm(vm.realm.globals).to_bits()
         {
             return;
         }
@@ -4655,6 +4684,10 @@ impl JsStepDispatch {
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
         (self.empty_object_layout, self.empty_object_payload) = (0, 0);
         self.object_cursor = vm.heap.native_object_cursor();
+        // The empty array's template is dropped with the bases, as the object's is (`capture_empty_array`).
+        self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
+        (self.empty_array_layout, self.empty_array_payload) = (0, 0);
+        self.array_cursor = vm.heap.native_array_cursor();
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
@@ -4686,6 +4719,20 @@ impl JsStepDispatch {
         let (payload, layout) = record.stored_words();
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
         (self.empty_object_payload, self.empty_object_layout) = (payload, u64::from(layout));
+    }
+
+    /// Records `array`, the zero-length array `Vm::hole_array(0)` just made for the current realm's
+    /// Array prototype, as the template an inline empty array allocation copies. Its elements are
+    /// the static empty header, so the record's two words depend on the prototype only
+    /// (`ArrayObject::fresh`), as an empty object's do. Not captured under per-record profiling.
+    fn capture_empty_array<H: Host>(&mut self, vm: &Vm<H>, array: Value) {
+        if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
+            return;
+        }
+        let Some(record) = vm.heap.object(array) else { return };
+        let (payload, layout) = record.stored_words();
+        self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
+        (self.empty_array_payload, self.empty_array_layout) = (payload, u64::from(layout));
     }
 
     /// Readies a region's parked dispatch (`CompiledOsrRegion::parked`) for a run of `program`
