@@ -9,11 +9,7 @@ static ALLOCATOR: quench_alloc::QuenchAlloc = quench_alloc::QuenchAlloc::new();
 fn allocator_route() -> bool {
     static QUENCH: OnceLock<bool> = OnceLock::new();
     *QUENCH.get_or_init(|| {
-        let enabled = match std::env::var("QUENCH_GROWTH_ALLOCATOR").as_deref() {
-            Ok("system") => false,
-            Ok("quench") => true,
-            _ => panic!("set QUENCH_GROWTH_ALLOCATOR to system or quench"),
-        };
+        let enabled = crate::vm::switches::growth_allocator().expect("set QUENCH_GROWTH_ALLOCATOR to system or quench");
         if enabled { quench_alloc::QuenchAlloc::enable(); }
         let probe = ArrayElements::from_slice(&[Value::NULL]);
         assert_eq!(quench_alloc::owns(probe.as_ptr().cast()), enabled);

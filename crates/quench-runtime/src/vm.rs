@@ -2835,10 +2835,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn report_memory_snapshot(&self, phase: &str) {
         self.heap.report_record_pages(phase);
         let heap = self.heap.memory_composition();
-        let page_size = std::env::var("QUENCH_MEMORY_PAGE_SIZE")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|page_size| page_size.is_power_of_two());
+        let page_size = switches::memory_page_size();
         let (
             complete_slot_slabs,
             fully_free_slot_slabs,
