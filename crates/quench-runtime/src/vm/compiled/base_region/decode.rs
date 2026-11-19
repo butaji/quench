@@ -49,9 +49,9 @@ pub(super) enum Source {
     Value(u64),
 }
 
-/// The receiver a folded prototype-held read stands on (`Heap::Held`): the exact shape and the
-/// prototype link the row proves of the receiver before it answers the value the holder held (the
-/// row's `hole`), and the holder's exact shape, whose values the code holds (a Stable fact).
+/// The prototype-held read a row stands on: the receiver's exact shape and prototype link (checked by the row,
+/// `Heap::Held`, unless `proofs::prove` proved them at the row, where a class read becomes a constant load), and the
+/// holder's exact shape, whose values the code holds (a Stable fact).
 #[derive(Clone, Copy)]
 pub(super) struct Folded {
     pub(super) shape: u32,
@@ -87,6 +87,9 @@ pub(super) struct Decoded {
     pub(super) atom: Option<Atom>,
     /// The receiver a folded prototype-held read stands on, with its value in `hole`.
     pub(super) folded: Option<Folded>,
+    /// A named read of a class-typed parameter's prototype value (`declared::class_member_read`): a Linked held read
+    /// that `proofs::prove` makes a constant load where the receiver's shape is proven at the row.
+    pub(super) class_read: bool,
     /// The recorded transition an add row runs (`adds`), with the form its storage takes and whether
     /// the receiver is the activation's `this`.
     pub(super) add: Option<adds::Add>,
@@ -137,7 +140,7 @@ pub(super) struct Decoded {
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, typed: None, proven: false, relies: false }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, proven: false, relies: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -277,7 +280,7 @@ fn own_capture_store(instruction: WideInstruction) -> bool {
 }
 
 /// The row of a depth-0 capture access `heap` over `result` and `value`: a read, or a store, which the row
-/// makes where the run's slots admit every direct store (`JS_STEP_CAPTURE_STORES`). Where they do not, the slot
+/// makes where the run's slots admit every direct store (the stores bit of the window's `CONTEXT_BODY` word). Where they do not, the slot
 /// holds a marker (a loop's snapshot of a stored slot) or the binding is a root one (a global `var`'s shared
 /// slot, which the activation's dense view omits), a body has the interpreter's step behind the row
 /// (`Step::Fast`) and a loop region leaves into it.

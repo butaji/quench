@@ -2707,6 +2707,7 @@ impl<'a> Compiler<'a> {
             ),
             dynamic_descendant: false,
             split_root: false,
+            declared_captures: Vec::new(),
         };
         let arguments_slot = function.arguments_slot;
         capture_layout::apply_function(&mut function, id as usize, &layout, &self.atoms);
@@ -4156,6 +4157,7 @@ impl<'a> Compiler<'a> {
                 .position(|atom| atom == binding)
                 .and_then(|slot| u16::try_from(slot).ok())
         });
+        let declared_functions = if parent.is_some() { self.declared_function_slots(body, &locals, params.len()) } else { Vec::new() };
         let arguments = self.atom("arguments");
         let parameter_shadows_arguments = locals[..parameter_local_count].contains(&arguments);
         let has_arguments_binding = locals.contains(&arguments);
@@ -4425,6 +4427,8 @@ impl<'a> Compiler<'a> {
             local_atoms: function.locals.clone().into(),
             environment_atoms,
             selective_capture_slots: None,
+            declared_functions: crate::heap::ThinBoxSlice::from_slice(&declared_functions),
+            declared_captures: Default::default(),
             local_registers: function.promoted_local_layout().into(),
             inherited_with_scope: options.with_depth != 0,
             lexical_atoms: lexical_atoms.into(),

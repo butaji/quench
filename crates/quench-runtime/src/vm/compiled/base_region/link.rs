@@ -168,6 +168,8 @@ pub(super) struct Layout<'a> {
     pub(super) numbers: Vec<Register>,
     /// The class-typed parameters the function never writes, with the prototype each entry checks (`declared::class_prototypes`).
     pub(super) prototypes: Vec<super::function::ClassProto>,
+    /// The captured declarations the body calls by identity, each with the function its entry checks (`Callees::captured_identities`).
+    pub(super) identities: Vec<(u16, u64)>,
 }
 
 impl Layout<'_> {

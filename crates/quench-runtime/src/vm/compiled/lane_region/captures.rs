@@ -96,7 +96,7 @@ fn capture_miss(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureS
         return emit(builder).raw_const(Lane::I64, 0);
     };
     let (payload, helpers) = reach;
-    let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
+    let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.vm));
     let slot = emit(builder).raw_const(Lane::I64, i64::from(at.1));
     let helper = helpers.address(builder, LaneHelper::FunctionCapture);
     let read = emit_lane_call(builder, helper, &[vm, callee, slot]);
@@ -127,7 +127,7 @@ pub(super) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at:
 /// The lane context and the packed capture (depth in the high half, slot in the low) a capture
 /// helper takes.
 fn capture_operands(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (depth, slot): (u16, u16)) -> (ir::Value, ir::Value) {
-    let context = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+    let context = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.lane_context));
     let packed = emit(builder).raw_const(Lane::I64, i64::from(u32::from(depth) << u16::BITS | u32::from(slot)));
     (context, packed)
 }

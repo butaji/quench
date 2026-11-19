@@ -23,7 +23,7 @@
 //! offset in holes 1 and 2. A field store (`SITE_STORE_ROW`) takes the object register's frame
 //! offset in hole 0, its value operand in hole 1 and the cache entry's byte offset in hole 2. A
 //! chained site read (`ENTRY`) carries both entry offsets in hole 2. The rows of the activation's
-//! receiver (`THIS_SITE_ROW`, `THIS_STORE_ROW`) take it from the payload, so their hole 0 is the
+//! receiver (`THIS_SITE_ROW`, `THIS_STORE_ROW`) take it from their window's header (`context_word`), so their hole 0 is the
 //! destination alone (a read) or unused (a store).
 //! The global object's slot rows (`GLOBAL_READ_ROW`, `GLOBAL_STORE_ROW`) take its record id in hole 1
 //! (the store: hole 0) and the slot's byte offset in hole 2; a constant row takes its word in hole 1
@@ -32,68 +32,20 @@
 //! instruction.
 
 use crate::bytecode::Operand;
-use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
+use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
+use crate::layout::shared_words::{capture_len, capture_values};
 use crate::ic_rows;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of};
-use crate::words::{hole, hole64, int_word};
-use crate::places::{DEST, LEFT, RIGHT, Places};
+use crate::words::{hole, hole64, hop, int_word};
+use crate::places::{DEST, LEFT, RIGHT, Places, finish, finish_fast};
+pub(crate) use crate::stage::stage_site;
+pub(crate) use crate::words::{context_word, payload, set_context_word, word_at};
 use crate::stage::StencilStage;
-use crate::staged::{Operation, Stage, Step, step, step_local, step_value, string_length};
-use crate::codes::{ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, HELD_LINK_AT, PROTOTYPE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
-use crate::staged::{code_units, parse_int};
+use crate::staged::{Frame, Operation, Stage, Step, step, step_local, step_value, string_length};
+use crate::codes::{ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_IDENTITY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, HELD_LINK_AT, PROTOTYPE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
+use crate::staged::{code_units, environment, parse_int};
 use crate::places_view::{self, ELEMENT_SITES, entry_dense, entry_typed};
 use crate::{environment_rows, key_rows, name_rows, site_rows, staged_rows};
-
-unsafe extern "C" {
-    static HOLE_V0: u8;
-    static HOLE_V1: u8;
-}
-
-#[inline(always)]
-pub(crate) fn word_at(base: usize, offset: usize) -> u64 {
-    // SAFETY: a layout offset of a live record, as every staged load.
-    unsafe { ((base + offset) as *const u64).read() }
-}
-
-/// The activation's dispatch payload: the context's adapter pointer.
-#[inline(always)]
-pub(crate) fn payload(s: &S) -> usize {
-    word_at(s.ctx, CALL_CONTEXT_ADAPTER_PAYLOAD) as usize
-}
-
-/// The array word an `ENTRY == false` row names: the frame slot at hole `H`.
-#[inline(always)]
-fn array_word<const H: u8>(s: &S) -> u64 {
-    word_at(s.frame, hole::<H>())
-}
-
-#[inline(always)]
-pub(crate) fn stage_site(stage: &mut StencilStage) -> u64 {
-    stage.site(0)
-}
-
-/// Whether the row's staged work was done and fit its place: it continues, else it leaves.
-#[inline(always)]
-fn finish<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, done: bool) -> Out {
-    if frame.writes_fit(done) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
-}
-
-/// A row's hit continues at TAKEN, past the helper step laid out after it where it is a fast arm; a miss
-/// leaves as it did.
-#[inline(always)]
-pub(crate) fn hop(out: Out) -> Out {
-    match out {
-        Out::Next(s) => Out::Taken(s),
-        left => left,
-    }
-}
-
-/// A fast arm's row: where its proof held and its places fit it continues at TAKEN, past the
-/// helper step laid out after it, else it leaves into that step.
-#[inline(always)]
-pub(crate) fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
-    hop(finish(frame, done))
-}
 
 /// `this` (`LoadThis`): the activation's receiver defined into the destination, where it holds one.
 #[inline(always)]
@@ -157,6 +109,18 @@ fn guard_row(s: S, guard: Operation<u64, ()>) -> Out {
 fn identity_row(s: S) -> Out {
     let guard = Operation::GuardIdentity { source: word_at(s.frame, hole::<HOLE_A>()), expected: hole64::<HOLE_B>() };
     guard_row(s, guard)
+}
+
+/// A captured declaration's entry test (`base_region::link::entry_rows`): the depth-0 capture at the slot of hole 0 of
+/// the activation's captures (the window's `CONTEXT_BODY` word, written by the call that enters it) holds exactly the
+/// word of hole 1, else the entry leaves with nothing written.
+#[inline(always)]
+fn capture_identity_row(s: S) -> Out {
+    let captures = context_word(s.frame, CONTEXT_BODY);
+    let mut stage = StencilStage::from_hole(0);
+    let held = environment::dense_capture(&mut stage, capture_values(captures), capture_len(captures), hole::<0>() as u16, ())
+        .is_some_and(|word| word == hole64::<HOLE_A>());
+    if held { Out::Next(s) } else { Out::Exit(s) }
 }
 
 /// A declared parameter's entry test: the frame slot at hole 0 holds a word whose tag-decided languages
@@ -267,11 +231,10 @@ fn length_row<const D: u8>(s: S, payload: usize) -> Out {
     if matches!(step(&mut StencilStage::from_hole(0), &mut frame, length), Step::Value(_)) {
         return finish(frame, true);
     }
-    let s = frame.s;
     let mut stage = StencilStage::from_hole(0);
-    let base = array_word::<HOLE_A>(&s);
+    let base = frame.read(&mut stage, LEFT);
     let records = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_STRING_RECORD_BASE));
-    deliver::<D>(s, need!(s, string_length::length_of(&mut stage, records, base, ())))
+    deliver::<D>(frame.s, need!(frame.s, string_length::length_of(&mut stage, records, base, ())))
 }
 
 /// `ArrayAppend`: the Number operand (hole 1) appended to the array at hole 0 where its backing is writable
@@ -289,26 +252,28 @@ fn append_row<const A: u8>(s: S) -> Out {
 #[inline(always)]
 fn char_code_at_row<const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     let index = need!(s, index_of::<B, HOLE_B>(&s));
-    let base = array_word::<HOLE_A>(&s);
+    let mut frame = Places::<D, MEM, B>::new(s);
     let mut stage = StencilStage::from_hole(0);
-    let string = need!(s, string_length::flat_string(&mut stage, word_at(payload, JS_STEP_STRING_RECORD_BASE), base, ()));
+    let base = frame.read(&mut stage, LEFT);
+    let string = need!(frame.s, string_length::flat_string(&mut stage, word_at(payload, JS_STEP_STRING_RECORD_BASE), base, ()));
     if index < 0 || index as u64 >= string.length {
-        return Out::Exit(s);
+        return Out::Exit(frame.s);
     }
     let unit = code_units::code_unit(&mut stage, string.wide != 0, string.units, index as u64);
-    deliver::<D>(s, int_word(unit as u32 as i32))
+    deliver::<D>(frame.s, int_word(unit as u32 as i32))
 }
 
 /// `parseInt` of the flat string in the frame slot at hole 1, in radix 10: the int32 `parse_int::decimal_int32` answers over its
 /// code units. Any other text leaves with nothing written.
 #[inline(always)]
 fn parse_int_row<const D: u8>(s: S, payload: usize) -> Out {
-    let base = array_word::<HOLE_A>(&s);
+    let mut frame = Places::<D, MEM, MEM>::new(s);
     let mut stage = StencilStage::from_hole(0);
-    let string = need!(s, string_length::flat_string(&mut stage, word_at(payload, JS_STEP_STRING_RECORD_BASE), base, ()));
+    let base = frame.read(&mut stage, LEFT);
+    let string = need!(frame.s, string_length::flat_string(&mut stage, word_at(payload, JS_STEP_STRING_RECORD_BASE), base, ()));
     let (units, wide) = (string.units, string.wide != 0);
-    let value = need!(s, parse_int::decimal_int32((0..string.length).map(|index| code_units::code_unit(&mut stage, wide, units, index) as u16)));
-    deliver::<D>(s, int_word(value))
+    let value = need!(frame.s, parse_int::decimal_int32((0..string.length).map(|index| code_units::code_unit(&mut stage, wide, units, index) as u16)));
+    deliver::<D>(frame.s, int_word(value))
 }
 
 #[inline(always)]
@@ -358,6 +323,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         IC_GET_ROW | IC_GET_HOLDER_ROW | IC_SET_ROW | IC_SET_INT_ROW | IC_PROOF_ROW | IC_KNOWN_GET_ROW | IC_KNOWN_SET_ROW | IC_KNOWN_SET_INT_ROW =>
             ic_rows::run::<KIND, ENTRY, D, A>(s),
         DECLARED_ROW => declared_row(s),
+        CAPTURE_IDENTITY_ROW => capture_identity_row(s),
         PROTOTYPE_ROW => prototype_row(s),
         CHAR_CODE_AT_ROW => char_code_at_row::<D, B>(s, payload),
         PARSE_INT_ROW => parse_int_row::<D>(s, payload),

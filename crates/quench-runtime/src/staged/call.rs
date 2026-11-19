@@ -294,12 +294,14 @@ impl CellFacts {
 }
 
 /// Admits a native call: leaving at `miss` unless the cell's validity word is `expected` (one
-/// compare) and `free` holds `room` words. Entry kind and argc are decided at site admission or
-/// publish, so the admission does not read them.
+/// compare) and the values stack from `top` to `end` holds the cell's room past `reserved` words
+/// (the callee's recovery space and the frame context): one pointer compare, `top + (room + reserved)
+/// words <= end`. Returns the room and the window's fill, both read from the one facts word. Entry
+/// kind and argc are decided at site admission or publish, so the admission does not read them.
 #[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/call_rows.rs`), which includes this file
 #[inline(always)]
-pub(crate) fn admit_native<S: Stage>(stage: &mut S, cell: S::Word, expected: S::Word, free: S::Word, miss: S::Miss)
-    -> Option<S::Word> {
+pub(crate) fn admit_native<S: Stage>(stage: &mut S, cell: S::Word, expected: S::Word, top: S::Word, end: S::Word, reserved: S::Word, miss: S::Miss)
+    -> Option<(S::Word, S::Word)> {
     let validity = stage.load_u64(Region::EntryCell.mutable(), cell, CELL.validity_offset);
     let difference = stage.sub(validity, expected);
     let valid = stage.eq_imm(difference, 0u32);
@@ -307,16 +309,17 @@ pub(crate) fn admit_native<S: Stage>(stage: &mut S, cell: S::Word, expected: S::
     let facts = stage.load_u64(Region::EntryCell.readonly(), cell, CELL.facts_offset);
     let room = stage.shr_imm(facts, ROOM_SHIFT);
     let room = stage.and_imm(room, u64::from(u16::MAX));
-    admit_room(stage, free, room, miss)?;
-    Some(room)
+    let words = stage.add(room, reserved);
+    let bytes = stage.mul_imm(words, WORD_BYTES);
+    let needed = stage.add(top, bytes);
+    admit_room(stage, end, needed, miss)?;
+    Some((room, window_fill(stage, facts, room)))
 }
 
-/// The registers a native call into the cell at `cell` writes: its arguments and `undefined` up to the
-/// cell's fill (`CellFacts::fill`), or the whole `room` where the fill is `FILL_ALL`.
-#[cfg_attr(not(stencil_build), allow(dead_code))] // the b-jit direct row's fill (`stencils/call_rows.rs`)
+/// The registers a native call writes into a cell's window, from the cell's facts word: its arguments
+/// and `undefined` up to the cell's fill (`CellFacts::fill`), or the whole `room` where the fill is `FILL_ALL`.
 #[inline(always)]
-pub(crate) fn window_fill<S: Stage>(stage: &mut S, cell: S::Word, room: S::Word) -> S::Word {
-    let facts = stage.load_u64(Region::EntryCell.readonly(), cell, CELL.facts_offset);
+pub(crate) fn window_fill<S: Stage>(stage: &mut S, facts: S::Word, room: S::Word) -> S::Word {
     let fill = stage.shr_imm(facts, FILL_SHIFT);
     let fill = stage.and_imm(fill, u64::from(u8::MAX));
     let all = stage.eq_imm(fill, u32::from(FILL_ALL));
@@ -346,8 +349,9 @@ mod tests {
     #[test]
     fn a_native_admission_is_one_validity_compare_and_a_room_check() {
         let mut stage = Concrete::new(std::ptr::null());
+        // The values stack from 0 to `free` words, with nothing reserved past the room.
         let mut admit = |cell: EntryCellLayoutWords, expected: u64, free: u64| {
-            admit_native(&mut stage, std::ptr::addr_of!(cell) as u64, expected, free, ())
+            admit_native(&mut stage, std::ptr::addr_of!(cell) as u64, expected, 0, free * WORD_BYTES, 0, ()).map(|(room, _)| room)
         };
         assert_eq!(admit(cell(7, 5, 8, 2, 1), 7, 100), Some(8), "kind and argc are not read");
         assert_eq!(admit(cell(7, 5, 8, 2, 0), 6, 100), None);

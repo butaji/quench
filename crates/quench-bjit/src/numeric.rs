@@ -14,9 +14,11 @@ use crate::Stencil;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-/// The holes of an operand: the first and the second operand's frame offset or value.
-pub const FIRST: u32 = 1;
-pub const SECOND: u32 = 2;
+/// The holes of the destination and of the operands: the destination's frame offset is hole 0, then the first and
+/// the second operand's frame offset or value.
+const DESTINATION: u32 = 0;
+pub const FIRST: u32 = DESTINATION + 1;
+pub const SECOND: u32 = FIRST + 1;
 
 /// Where a row's operand lives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,65 +43,65 @@ pub enum Place {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum Kind {
-    Move,
-    Const,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    And,
-    Or,
-    Xor,
-    Shl,
-    Shr,
-    UShr,
+    Move = library::MOVE,
+    Const = library::COPY,
+    Add = library::ADD,
+    Sub = library::SUB,
+    Mul = library::MUL,
+    Div = library::DIV,
+    And = library::AND,
+    Or = library::OR,
+    Xor = library::XOR,
+    Shl = library::SHL,
+    Shr = library::SHR,
+    UShr = library::USHR,
     /// Compare-and-jump: go to `taken` unless the relation holds.
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    Eq,
-    Ne,
+    Lt = library::LT,
+    Le = library::LE,
+    Gt = library::GT,
+    Ge = library::GE,
+    Eq = library::EQ,
+    Ne = library::NE,
     /// Go to `taken` (and poll the interrupt flag first, for `JumpPoll`, which also counts the
     /// edge in the loop entry record; for `JumpWatch`, which counts nothing, a function body
     /// having no such record).
-    Jump,
-    JumpPoll,
+    Jump = library::JUMP,
+    JumpPoll = library::JUMP_POLL,
     /// Go to `taken` unless the operand is a Number; into a pinned destination an int word, which
     /// it loads; for an int slot destination, an int word.
-    Guard,
+    Guard = library::GUARD,
     /// Set the high half of the int slot named by hole 0 to the int tag.
-    TagInit,
+    TagInit = library::TAG_INIT,
     /// Write a pinned double (operand `a`) to the frame slot at hole 0 as a canonical Number word.
-    Spill,
-    JumpWatch,
+    Spill = library::SPILL,
+    JumpWatch = library::JUMP_WATCH,
     /// Poll the interrupt flag, then continue at the next row: a conditional branch back is
     /// preceded by it, as an unconditional one is by its own poll.
-    Poll,
+    Poll = library::POLL,
     /// Go to `taken` when the operand is truthy (`JumpTrue`) or falsy (`JumpFalse`); a heap value
     /// whose cell decides its truthiness leaves.
-    JumpTrue,
-    JumpFalse,
+    JumpTrue = library::JUMP_TRUE,
+    JumpFalse = library::JUMP_FALSE,
     /// The destination takes the logical negation of the operand's truthiness (`Not`), or the
     /// Number negation of a Number operand (`Neg`).
-    Not,
-    Neg,
+    Not = library::NOT,
+    Neg = library::NEG,
     /// `%`, the staged Number remainder.
-    Rem,
+    Rem = library::REM,
     /// `Math.sqrt`, `Math.floor`, `Math.ceil`, `Math.trunc`, `Math.abs` and `Math.round` of a Number
     /// (`codes::SQRT..=codes::ROUND`).
-    Sqrt,
-    Floor,
-    Ceil,
-    Trunc,
-    Abs,
-    Round,
+    Sqrt = library::SQRT,
+    Floor = library::FLOOR,
+    Ceil = library::CEIL,
+    Trunc = library::TRUNC,
+    Abs = library::ABS,
+    Round = library::ROUND,
     /// `Math.min`, `Math.max` of two Numbers and `Math.imul` of two int32s (`codes::MIN..=codes::IMUL`).
-    Min,
-    Max,
-    Imul,
+    Min = library::MIN,
+    Max = library::MAX,
+    Imul = library::IMUL,
     /// `Math.clz32` of one Number (`codes::CLZ32`).
-    Clz32,
+    Clz32 = library::CLZ32,
 }
 
 impl Kind {
@@ -202,7 +204,7 @@ mod supernode_tests {
     /// Every supernode the library names was built, and has the successors a row chains by.
     #[test]
     fn the_supernodes_are_built() {
-        for nodes in supernodes::instances() {
+        for nodes in supernodes::instances(supernodes::SUPERNODES, supernodes::FAMILIES) {
             let stencil = supernode_stencil(nodes).unwrap_or_else(|| panic!("{nodes:?}"));
             assert!(stencil.relocs.iter().any(|reloc| crate::class::is_successor(reloc.class)), "{nodes:?}");
         }

@@ -31,7 +31,7 @@ struct Candidate {
 fn candidates() -> &'static [Candidate] {
     static LIST: OnceLock<Vec<Candidate>> = OnceLock::new();
     LIST.get_or_init(|| {
-        let mut list: Vec<Candidate> = supernodes::SUPERNODES.iter().filter_map(|supernode| Some(Candidate { shape: supernodes::parse(supernode.pattern)?, supernode })).collect();
+        let mut list: Vec<Candidate> = supernodes::SUPERNODES.iter().filter_map(|supernode| Some(Candidate { shape: supernodes::parse(supernode.pattern, supernodes::FAMILIES)?, supernode })).collect();
         list.sort_by_key(|candidate| std::cmp::Reverse(candidate.shape.keys.len()));
         list
     })
@@ -180,7 +180,7 @@ mod tests {
     }
 
     fn shape(pattern: &str) -> Shape {
-        supernodes::parse(pattern).expect(pattern)
+        supernodes::parse(pattern, supernodes::FAMILIES).expect(pattern)
     }
 
     /// `d = b * c`, then `e = a + d` with the product in the given operand.

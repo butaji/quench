@@ -10,10 +10,13 @@
 //! The chain, in layout order:
 //!
 //! 1. one `Spill` row per pinned register live at the call, writing it to its frame slot as a
-//!    canonical tagged word (the callee and the helpers read the frame);
+//!    canonical tagged word (the callee and the helpers read the frame); a leading argument's spill
+//!    that only the refusal path reads (its pinned value dead after the call, `refusal_only`) waits
+//!    for the direct rows' refusal, the direct row reading the pin itself (`CallRecord::argument_places`);
 //! 2. when the target's entry cell is stable (`Choice::Direct`), the direct row for the call's
-//!    argument count and receiver binding, whose record (`CallRecord`) the chain owns;
-//! 3. the helper row (`lane_body_call`), the direct row's refusal path and the whole call
+//!    argument count and receiver binding (checked, or unchecked where a Stable fact holds the callee),
+//!    whose record (`CallRecord`) the chain owns;
+//! 3. the refusal spills, the helper row (`lane_body_call`), the direct row's refusal path and the whole call
 //!    otherwise;
 //! 4. one `reload_*` row per pinned register live after the call (every pinned register is dead
 //!    across a call row).
@@ -41,7 +44,7 @@ use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
 use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
 use quench_bjit::call::{self, CallRow, ThisRow};
-use quench_bjit::call_record::{CallRecord, MAX_DIRECT_ARGC};
+use quench_bjit::call_record::{CallRecord, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{HOLES, Stencil, padded_holes};
 
@@ -158,14 +161,18 @@ pub(super) struct DirectFacts {
     /// A construction site's forwarding record: not a plain call.
     pub(super) construction: bool,
     pub(super) frame_bytes: u64,
+    /// The site's callee register holds this callee by a Stable fact (`Callees::stable`): the body
+    /// subscribes to the fact, so its change retires the body, and the row need not check the register.
+    pub(super) held: bool,
 }
 
 impl DirectFacts {
-    /// The facts of `callee`, whose cell's validity and facts words are read now.
+    /// The facts of `callee`, whose cell's validity and facts words are read now; `held` is whether the site's
+    /// callee register is a Stable fact's (`DirectFacts::held`).
     ///
     /// # Safety
     /// `callee.cell` is the address of the callee function's live entry cell.
-    pub(super) unsafe fn of(callee: &DirectCallee) -> Self {
+    pub(super) unsafe fn of(callee: &DirectCallee, held: bool) -> Self {
         // SAFETY: the caller's contract; the words are at the designed cell's offsets.
         let word = |offset: i32| unsafe { ((callee.cell + offset as usize) as *const u64).read() };
         Self {
@@ -180,6 +187,7 @@ impl DirectFacts {
             registers: callee.registers,
             construction: callee.forwarder.is_some(),
             frame_bytes: FRAME_BYTES as u64,
+            held,
         }
     }
 
@@ -296,8 +304,32 @@ fn helper_part(call_pc: u32, helper: usize) -> Result<CallPart, String> {
 }
 
 
-/// The direct row and the record it reads, whose address is its hole 0.
-fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<CallRecord>), String> {
+/// The pinned register holding argument `k` of the call, where the call passes it by place (the leading
+/// `PLACED_ARGUMENTS` only) and the register is spilled: its place and its window register.
+fn pinned_argument(plan: &CallPlan, k: usize) -> Option<(Place, Register)> {
+    if k >= usize::from(plan.shape.argc).min(PLACED_ARGUMENTS) {
+        return None;
+    }
+    let register = plan.shape.window + k as Register;
+    let (place, _) = plan.spills.iter().copied().find(|&(_, spilled)| spilled == register)?;
+    Some((place, register))
+}
+
+/// The place each leading argument is passed from (`CallRecord::argument_places`): its pinned register, else the window slot.
+fn argument_places(plan: &CallPlan) -> [u8; PLACED_ARGUMENTS] {
+    std::array::from_fn(|k| pinned_argument(plan, k).map_or(Place::Mem.code(), |(place, _)| place.code()))
+}
+
+/// Whether the spill of `register` serves only the refusal path: a pinned argument a direct row reads from its
+/// pin, not live after the call (its window slot is not reloaded). A live one keeps its home before the call.
+fn refusal_only(plan: &CallPlan, register: Register) -> bool {
+    (0..PLACED_ARGUMENTS).any(|k| pinned_argument(plan, k).is_some_and(|(_, passed)| passed == register))
+        && !plan.reloads.iter().any(|&(_, reloaded)| reloaded == register)
+}
+
+/// The direct row and the record it reads, whose address is its hole 0. `arguments` is the place each leading
+/// argument is passed from (`argument_places`).
+fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_ARGUMENTS]) -> Result<(CallPart, Box<CallRecord>), String> {
     let record = Box::new(CallRecord {
         callee: facts.callee,
         cell: facts.cell as u64,
@@ -310,10 +342,11 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<
         this_register: shape.this,
         args_register: shape.window,
         result_register: shape.result,
+        argument_places: arguments,
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
-    let stencil = call::stencil(CallRow::Direct { argc, this })?;
+    let stencil = call::stencil(CallRow::Direct { argc, this, checked: !facts.held })?;
     Ok((part(stencil, quench_bjit::padded_holes([std::ptr::from_ref(&*record).addr() as u64, u64::from(shape.call_pc)]), vec![Exit::Status]), record))
 }
 
@@ -333,22 +366,30 @@ pub(super) fn plan_step(pc: u32, helper: usize, spills: &[(Place, Register)], re
 /// (NEXT), the last to the helper row, so a site alternating between known callees calls each by its
 /// entry, as the interpreter's own link does, and only an unknown one takes the helper.
 pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
-    let mut parts = plan.spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
     let choices: Vec<(Choice, &DirectFacts)> = plan.direct.iter().map(|facts| (choose(&plan.shape, Some(facts)), facts)).collect();
     let choice = choices.iter().map(|(choice, _)| *choice).find(|choice| *choice == Choice::Direct)
         .unwrap_or_else(|| choices.first().map_or_else(|| choose(&plan.shape, None), |(choice, _)| *choice));
+    let arguments = argument_places(plan);
     let mut directs = Vec::new();
     for (_, facts) in choices.into_iter().filter(|(choice, _)| *choice == Choice::Direct) {
-        directs.push(direct_part(&plan.shape, facts)?);
+        directs.push(direct_part(&plan.shape, facts, arguments)?);
     }
-    // Past every direct row and the helper row that follows them: the first reload, or the next instruction.
-    let past = parts.len() + directs.len() + 1;
+    // The spills before the direct rows; the spills of pinned arguments that only the refusal path reads
+    // (`refusal_only`) follow them, where the rows' NEXT falls to the helper row. Without a direct row, all come first.
+    let (mut parts, mut refusal) = (Vec::new(), Vec::new());
+    for &(place, register) in plan.spills {
+        let spill = spill_part(place, register)?;
+        if directs.is_empty() || !refusal_only(plan, register) { parts.push(spill) } else { refusal.push(spill) }
+    }
+    // Past every direct row, the refusal spills and the helper row that follows them: the first reload, or the next instruction.
+    let past = parts.len() + directs.len() + refusal.len() + 1;
     let mut records = Vec::new();
     for (mut row, owned) in directs {
         row.taken = Some(past);
         parts.push(row);
         records.push(owned);
     }
+    parts.extend(refusal);
     parts.push(helper_part(plan.shape.call_pc, plan.helper)?);
     for &(place, register) in plan.reloads {
         parts.push(reload_part(place, register)?);
@@ -365,7 +406,7 @@ mod tests {
 
     fn facts(registers: u16, params: u16) -> DirectFacts {
         let cell = CellFacts { registers, room: registers, params, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers, construction: false, frame_bytes: 32 }
+        DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers, construction: false, frame_bytes: 32, held: false }
     }
 
     /// Each call opcode has its form, and an instruction that is no call, or carries a result flag, has none.
@@ -462,8 +503,24 @@ mod tests {
         let sloppy = DirectFacts { global_this: Some(0xabc), ..facts(4, 2) };
         let chain = plan_call(&plan(Some(&sloppy), &[], &[])).expect("a plan");
         assert_eq!(chain.records.into_iter().next().expect("a record").global_this, 0xabc);
-        let name = CallRow::Direct { argc: 2, this: ThisRow::Sloppy }.name().expect("a row");
-        assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(CallRow::Direct { argc: 2, this: ThisRow::Sloppy }).expect(&name)));
+        let name = CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true }.name().expect("a row");
+        assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true }).expect(&name)));
+    }
+
+    /// A pinned argument dead after the call is read from its pin by the direct row (its place in the record), and its
+    /// spill moves behind the direct rows, to the refusal path; a live one keeps its spill before the call.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn a_dead_pinned_argument_is_passed_by_its_pin_and_spilled_on_refusal_only() {
+        let spills = [(Place::Pin(1), SHAPE.window), (Place::PinF(0), 9)];
+        let reloads: [(Place, Register); 0] = [];
+        let direct = facts(4, 2);
+        let chain = plan_call(&plan(Some(&direct), &spills, &reloads)).expect("a plan");
+        assert_eq!(chain.parts.len(), 4, "the kept spill, the direct row, the refusal spill, the helper row");
+        assert_eq!(chain.parts[1].taken, Some(4), "completion skips the refusal spill and the helper row");
+        assert_eq!(chain.parts[2].holes[0], slot(SHAPE.window), "the refusal spill is the window argument's");
+        let record = chain.records.into_iter().next().expect("the direct row's record");
+        assert_eq!(record.argument_places, [Place::Pin(1).code(), Place::Mem.code()]);
     }
 
     /// The call protocol the stencils are compiled with (`quench_bjit::call_record`,

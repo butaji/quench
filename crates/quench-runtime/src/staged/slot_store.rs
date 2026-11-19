@@ -45,6 +45,19 @@ fn admitted_word<S: Stage>(stage: &mut S, record: S::Word, shape: u32, hinted: b
     Some(word)
 }
 
+/// Whether a store admits in place: `specialized` is the dispatch's word that the run stores specialized (a run
+/// that does not leaves), and the atom at the next site hole stays numbered. That no method cache names the atom
+/// is a Stable fact the code holds (`held_atoms`): naming it retires the code, and a run already inside learns
+/// that from the invalidation word its rows test after a call, so no bitset is read here.
+#[allow(dead_code)] // the stencil rows' admission; the interpreter's stores hold no per-store test
+#[inline(always)]
+pub(crate) fn store_admitted<S: Stage>(stage: &mut S, specialized: S::Word, miss: S::Miss) -> Option<()> {
+    let on = stage.ne_imm(specialized, 0u32);
+    stage.guard(on, miss)?;
+    let _atom = stage.site(0);
+    Some(())
+}
+
 /// The payload word of the record at `record` (id `record_id`) once a store of `value` may
 /// proceed: its exact shape is `shape` (`admitted_word`), the store gate admits the write and
 /// its values are plain; `None` (leaving at `miss`) otherwise, changing nothing.

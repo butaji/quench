@@ -137,32 +137,36 @@ pub(super) fn entry_numbers(function: &Function) -> Vec<Register> {
     declared(function).filter(|(register, fact)| *fact == DeclaredFact::Number && !written.contains(usize::from(*register))).map(|(register, _)| register).collect()
 }
 
-/// The registers the entry proves exactly a plain direct object (`Languages(OBJECT_PLAIN)`), never written:
-/// `proofs::prove` starts from them, so the inline-cache rows on them take the known-shape form
-/// (`Heap::IcKnownGet`, `Heap::IcKnownSet`), whose record indexing assumes a plain object.
-pub(super) fn exact_objects(function: &Function) -> Vec<Register> {
-    entry_guards(function).into_iter().filter(|guard| guard.languages == OBJECT_PLAIN).map(|guard| guard.register).collect()
+/// The registers the entry proves plain direct objects, never written: the `Languages(OBJECT_PLAIN)` parameters and
+/// each class-typed receiver of `classes` (`class_prototypes`, a direct object the entry tests). `proofs::prove`
+/// starts from them, so the inline-cache rows on them take the known-shape form (`Heap::IcKnownGet`,
+/// `Heap::IcKnownSet`), whose record indexing assumes a plain object.
+pub(super) fn exact_objects(function: &Function, classes: &[ClassProto]) -> Vec<Register> {
+    let guards = entry_guards(function).into_iter().filter(|guard| guard.languages == OBJECT_PLAIN).map(|guard| guard.register);
+    guards.chain(classes.iter().map(|proto| proto.register)).collect()
 }
 
 /// The prototypes the entry checks for a class-typed parameter (`DeclaredTypes::declared_parameter_class`): each
 /// of `resolved` (`VM::class_prototypes`, observed where the body was compiled) whose parameter the function
-/// never writes, so the receiver it entered with still holds the fact at every row (`entry_rows`).
+/// never writes, so the receiver it entered with holds the fact until a row may change it (`proofs::prove`, which
+/// seeds the entry's proof of each receiver's shape and link).
 pub(super) fn class_prototypes(function: &Function, resolved: &[ClassProto]) -> Vec<ClassProto> {
     let written = written(function);
     resolved.iter().filter(|proto| !written.contains(usize::from(proto.register))).cloned().collect()
 }
 
-/// The folded named read `atom` of a class-typed parameter the function never writes (`Known::classes`), where the
-/// prototype holds the name as a data value: the receiver's exact shape and prototype link prove the read
-/// (`PrototypeProof::Linked`, `Heap::Held`), and the value is the prototype's, which its shape's changes retire
-/// (`Folded::holder`). `None` for any other base or name.
+/// The named read `atom` of a class-typed parameter whose prototype holds the name as a data value (`Known::classes`,
+/// already limited to the parameters the function never writes by `class_prototypes`): a held read of the receiver's
+/// exact shape and prototype link, checked per use (`Heap::Held`). `proofs::prove` makes it a constant load where the
+/// receiver's shape is proven at the row; the prototype's values are a dependency (`Folded::holder`). `None` for any
+/// other base or name.
 pub(super) fn class_member_read(known: Known, object: Option<Register>, atom: crate::bytecode::Atom, dst: Register) -> Option<Decoded> {
     let register = object?;
     let proto = known.classes.iter().find(|proto| proto.register == register)?;
     let (_, value) = proto.members.iter().find(|(member, _)| *member == atom)?;
     let folded = Folded { shape: proto.shape, link: proto.link, holder: proto.holder };
     let row = Decoded::heap(Heap::Held, Some(dst), Some(Source::Register(register)), None);
-    Some(Decoded { hole: *value, folded: Some(folded), ..row })
+    Some(Decoded { hole: *value, folded: Some(folded), class_read: true, ..row })
 }
 
 /// A `typeof` test of a register the entry proves exactly a direct function (`Languages(FUNCTION)`) or

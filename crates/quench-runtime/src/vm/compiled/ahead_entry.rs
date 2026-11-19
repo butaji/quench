@@ -5,6 +5,7 @@
 //! dense captures are the payload's, bound once per activation (`JsStepDispatch::bind_captures`).
 use super::*;
 use super::lane_region::DISPATCH;
+use crate::staged::frame::{CONTEXT_BODY, CONTEXT_THIS};
 use crate::staged::{flow::FlowStage, NumericStage, Stage};
 
 /// The positions of the entry ABI's words the trampoline reads (`native_entry_signature`):
@@ -82,11 +83,10 @@ fn emit_dispatch(
     let whole = stage.both(starts, unbounded);
     stage.branch(whole, (blocks.body, &[]), (blocks.step, &[start_pc]));
     stage.builder.switch_to_block(blocks.body);
-    let this = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, receiver));
-    let values = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, capture_values));
-    let length = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, capture_len));
-    let length = stage.mul_imm(length, 1u64 << entry_cell::CAPTURE_ADDRESS_BITS);
-    let captures = stage.or(values, length);
+    // The body's receiver and captures word are its window's header (`CONTEXT_THIS`, `CONTEXT_BODY`), which its entry's caller wrote.
+    let window = crate::staged::Region::Frame.mutable();
+    let this = stage.load_u64(window, params[ENTRY_ARGUMENTS], -(8 * CONTEXT_THIS as i32));
+    let captures = stage.load_u64(window, params[ENTRY_ARGUMENTS], -(8 * CONTEXT_BODY as i32));
     let (status, word) = body(stage.builder, &[params[ENTRY_CONTEXT], this, captures, params[ENTRY_ARGUMENTS]]);
     emit_body_status(builder, params, blocks, payload, (status, word));
 }
@@ -107,7 +107,7 @@ fn emit_body_status(
     stage.ret(&[status]);
     stage.builder.switch_to_block(returned);
     stage.store_u64(DISPATCH, params[ENTRY_RESULT], 0, word);
-    let record = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, returned_pc));
+    let record = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.returned_pc));
     let record = stage.and_imm(record, u64::from(u32::MAX));
     let wide = stage.add_imm(record, u64::from(RETURN_STATUS_BASE));
     let status = stage.narrow(wide);

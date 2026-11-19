@@ -164,7 +164,6 @@ impl<H: Host> Vm<H> {
             classes: if folds { classes.as_slice() } else { &[] },
         };
         let speculated = widened(generic);
-        let classes = self.class_prototypes(program, function, parameters);
         let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: &seen, kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers::<H>()) }) else { return LaneBodyOutcome::Declined };

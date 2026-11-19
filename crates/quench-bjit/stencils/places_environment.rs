@@ -3,8 +3,9 @@
 //! the staged rows (`staged/{captures,names,global}.rs`) ask the frame for. Each row's operand
 //! holes are consumed in the order the stage's `site` calls name them, as the hand rows did.
 
-use crate::heap_rows::{payload, word_at};
-use crate::layout::{JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES, JS_STEP_ENV_STORAGE, JS_STEP_OBJECT_RECORD_BASE};
+use crate::heap_rows::{context_word, payload, word_at};
+use crate::layout::shared_words::{capture_len, capture_stores, capture_values};
+use crate::layout::{CONTEXT_BODY, JS_STEP_ENV_STORAGE, JS_STEP_OBJECT_RECORD_BASE};
 use crate::typed_ir::Representation;
 use crate::places::{Places};
 use crate::stage::StencilStage;
@@ -36,27 +37,26 @@ fn global_layout(stage: &mut Concrete, payload: usize, id: u64) -> Option<Layout
 }
 
 impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
-    /// `Frame::capture_slot`: the depth-0 dense run's slot, from the payload's capture values and
-    /// length; a root read and deeper scopes are the interpreter's.
+    /// `Frame::capture_slot`: the depth-0 dense run's slot, from the window's capture word (its values and
+    /// length); a root read and deeper scopes are the interpreter's.
     #[inline(always)]
     pub(crate) fn capture_read(&mut self, stage: &mut Concrete, depth: u16, slot: u16, root: bool) -> Option<(u64, Representation)> {
         if depth != 0 || root {
             return None;
         }
-        let payload = payload(&self.s);
-        let (values, len) = (word_at(payload, JS_STEP_CAPTURE_VALUES), word_at(payload, JS_STEP_CAPTURE_LEN));
-        environment::dense_capture(stage, values, len, slot, ()).map(|word| (word, Representation::Tagged))
+        let captures = context_word(self.s.frame, CONTEXT_BODY);
+        environment::dense_capture(stage, capture_values(captures), capture_len(captures), slot, ()).map(|word| (word, Representation::Tagged))
     }
 
     /// `Frame::store_capture`: the direct store into the depth-0 dense run's slot, where the run's
-    /// stores are admitted (the payload's capture stores word).
+    /// stores are admitted (the window's capture word's stores bit).
     #[inline(always)]
     pub(crate) fn capture_store(&mut self, stage: &mut Concrete, depth: u16, slot: u16, value: u64) -> Option<()> {
         if depth != 0 {
             return None;
         }
-        let payload = payload(&self.s);
-        let slots = (word_at(payload, JS_STEP_CAPTURE_VALUES), word_at(payload, JS_STEP_CAPTURE_LEN), word_at(payload, JS_STEP_CAPTURE_STORES));
+        let captures = context_word(self.s.frame, CONTEXT_BODY);
+        let slots = (capture_values(captures), capture_len(captures), capture_stores(captures));
         environment::dense_capture_store(stage, slots, slot, value, ())
     }
 

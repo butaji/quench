@@ -1121,6 +1121,8 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
             }
             None => out.u8(0),
         }
+        out.u16s(&function.declared_functions);
+        out.u16s(&function.declared_captures);
         out.u8(u8::from(function.inherited_with_scope));
         out.u32(function.lexical_atoms.len() as u32);
         for atom in &function.lexical_atoms {
@@ -1346,6 +1348,8 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             1 => Some(input.u16s()?.into()),
             _ => return Err("invalid selective capture layout".into()),
         };
+        let declared_functions = input.u16s()?.into();
+        let declared_captures = input.u16s()?.into();
         let inherited_with_scope = match input.u8()? {
             0 => false,
             1 => true,
@@ -1481,6 +1485,8 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             local_registers: local_registers.into(),
             environment_atoms: environment_atoms.into(),
             selective_capture_slots,
+            declared_functions,
+            declared_captures,
             inherited_with_scope,
             environment_clones,
             name_bindings: crate::bytecode::NameBindings::flat(name_bindings),

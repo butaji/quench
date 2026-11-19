@@ -94,7 +94,7 @@ impl Lowering<'_, '_> {
     /// The flat string `register` holds, its units and length (`strings::flat_string`).
     fn flat_string(&mut self, state: &mut State, register: Register, exit: ir::Block) -> strings::FlatString<ir::Value> {
         let string = self.tagged(state, register);
-        let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, string_record_base));
+        let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.string_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         continues(strings::flat_string(&mut stage, records, string, exit))
     }
@@ -119,7 +119,7 @@ impl Lowering<'_, '_> {
     /// The `length` of the flat string `base` (tagged) as an int32; any other value, or a
     /// length past int32, leaves through `miss`.
     pub(super) fn string_length(&mut self, base: ir::Value, miss: ir::Block) -> ir::Value {
-        let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, string_record_base));
+        let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.string_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         let string = continues(strings::flat_string(&mut stage, records, base, miss));
         let length = continues(crate::staged::value::length_value(&mut stage, string.length, miss));
@@ -137,7 +137,7 @@ impl Lowering<'_, '_> {
         let room = self.helper_call(LaneHelper::AppendRoom, &[array]);
         let granted = self.raw_compare_imm(Relation::NotEqual, room, 0);
         emit_js_guard(&mut self.builder, granted, exit);
-        let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, array_record_base));
+        let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         let backing = continues(elements::array_backing(&mut stage, records, array, exit));
         let length = continues(builtins::array_push_one(&mut stage, backing, room, value, exit));
@@ -148,7 +148,7 @@ impl Lowering<'_, '_> {
     /// and the lane's array storage proofs retire (`LaneHelper::RetireArrayProofs`).
     fn pop(&mut self, state: &mut State, receiver: Register, exit: ir::Block) -> ir::Value {
         let array = self.tagged(state, receiver);
-        let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, array_record_base));
+        let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         let backing = continues(elements::array_backing(&mut stage, records, array, exit));
         let popped = continues(builtins::array_pop(&mut stage, backing, exit));

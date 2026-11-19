@@ -5,6 +5,15 @@
 /// Bits of a body's capture word that hold the dense slots' address (a user-space address fits
 /// 48 bits); the slot count sits above them.
 pub const CAPTURE_ADDRESS_BITS: u32 = 48;
+/// The bit of a body's capture word that says its dense slots admit every direct store (`dispatch_fast::CAPTURE_STORES`).
+pub const CAPTURE_STORES_BIT: u64 = 1;
+
+/// The dense slots' address a body's capture word names (its low bit cleared).
+pub const fn capture_values(word: u64) -> u64 { word & ((1 << CAPTURE_ADDRESS_BITS) - 1) & !CAPTURE_STORES_BIT }
+/// Whether those slots admit every direct store.
+pub const fn capture_stores(word: u64) -> u64 { word & CAPTURE_STORES_BIT }
+/// The count of those slots.
+pub const fn capture_len(word: u64) -> u64 { word >> CAPTURE_ADDRESS_BITS }
 
 /// The kind tag of a native frame in the lane's activation stack (`ActivationKind::Native`).
 pub const KIND_NATIVE: u8 = 0;

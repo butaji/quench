@@ -227,7 +227,7 @@ impl Lowering<'_, '_> {
 
     /// The realm test of `prove_realm`, made here.
     pub(super) fn test_realm(&mut self, state: &mut State, exit: ir::Block, (global, realm_offset): (Value, i32)) {
-        let vm = emit_js_payload_fixed_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
+        let vm = emit_js_payload_fixed_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.vm));
         let active = emit(&mut self.builder).load_u64(Region::Dispatch.mutable(), vm, realm_offset);
         let same = self.raw_compare_imm(Relation::Equal, active, global.to_bits() as i64);
         emit_js_guard(&mut self.builder, same, exit);
@@ -252,7 +252,7 @@ impl Lowering<'_, '_> {
     pub(super) fn online_store_held(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> Option<ir::Value> {
         self.vm.online.filter(|online| !online.names(atom))?;
         if !state.proofs.specialized {
-            let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
+            let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.stores_specialized));
             let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
             emit_js_guard(&mut self.builder, specialized, exit);
             state.proofs.specialized = true;

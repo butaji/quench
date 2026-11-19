@@ -5,9 +5,9 @@
 //! live in `places_names.rs` (`typeof_entry`, `call_out_fast`).
 
 use crate::codes::{MEM, SITE_OBJECT_AT, HELD_LINK_AT, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW};
-use crate::heap_rows::{finish_fast, word_at};
+use crate::heap_rows::word_at;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S};
-use crate::places::{DEST, LEFT, Places};
+use crate::places::{DEST, LEFT, Places, finish_fast};
 use crate::stage::StencilStage;
 use crate::staged::{Frame, Operation, Stage, Step, object, step, step_generic, step_names, step_value};
 use crate::words::hole64;

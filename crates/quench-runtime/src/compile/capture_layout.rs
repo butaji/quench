@@ -16,6 +16,8 @@ pub(crate) struct LayoutInputs {
     /// bindings with no root slot, so they are not. Its block bindings, such as
     /// a `for (let ...)` loop's, are as private to its activation as a function's.
     pub(crate) split_root: bool,
+    /// The depth-0 captures of the parent's never-written declarations (`Function::declared_captures`).
+    pub(crate) declared_captures: Vec<u16>,
 }
 
 /// What the program-wide layout analyses read of one function, fixed once it is compiled:
@@ -36,6 +38,11 @@ pub(crate) struct FunctionFacts {
     /// The slots of its bindings that the runtime finds by name from outside its activation
     /// (`local_name_read_by_name`).
     pub(crate) named_slots: Box<[u16]>,
+    /// `Function::declared_functions`.
+    pub(crate) declared: Box<[u16]>,
+    /// The (distance, slot) of each store to a local (distance 0: the function's own) or a capture (the function
+    /// `distance` levels out), for every op that writes a local slot or a capture.
+    pub(crate) stores: Box<[(u32, u16)]>,
 }
 
 impl FunctionFacts {
@@ -61,6 +68,18 @@ impl FunctionFacts {
             .collect();
         captures.sort_unstable();
         captures.dedup();
+        // `code` is the function's instructions (`Function::instructions` widens each); `wide` is an expansion of it.
+        let stores: Vec<(u32, u16)> = function.code.iter()
+            .filter_map(|instruction| {
+                if writes_local(instruction.op()) {
+                    Some((0, u16::try_from(instruction.local_slot()).ok()?))
+                } else if instruction.op() == Op::StoreCapture {
+                    Some((u32::from(instruction.capture_depth()) + 1, instruction.capture_slot()))
+                } else {
+                    None
+                }
+            })
+            .collect();
         Self {
             parent: function.parent,
             is_arrow: function.is_arrow,
@@ -70,8 +89,16 @@ impl FunctionFacts {
             binding_sites: !function.binding_sites.is_empty(),
             captures: captures.into(),
             named_slots: slots_read_by_name(function, atoms).collect(),
+            declared: function.declared_functions.iter().copied().collect(),
+            stores: stores.into(),
         }
     }
+}
+
+/// Whether `op` stores to a local slot: an op whose immediate names one and that does not load it.
+fn writes_local(op: Op) -> bool {
+    op.immediate_role() == crate::bytecode::ImmediateRole::LocalSlot
+        && !matches!(op, Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal)
 }
 
 /// The slots of `function`'s compiler bindings, which the runtime finds by name in its
@@ -169,6 +196,7 @@ pub(super) fn inputs(
     arguments: impl Fn(usize) -> Option<(u16, u16)>,
 ) -> Vec<LayoutInputs> {
     let dynamic_ancestors = dynamic_scope_ancestors(facts, dynamic);
+    let immutable = immutable_declarations(facts, &dynamic_ancestors);
     let mut captured = facts.iter().map(|_| Vec::new()).collect::<Vec<_>>();
     for (id, function) in facts.iter().enumerate() {
         for &(distance, slot) in function.captures.iter() {
@@ -179,16 +207,48 @@ pub(super) fn inputs(
             }
         }
     }
+    // A capture of the parent's slot (distance 1) that the parent declares and nothing writes is the declaration's identity.
+    let declared_captures = facts.iter().map(|function| -> Vec<u16> { match function.parent {
+        Some(parent) => function.captures.iter()
+            .filter(|(distance, slot)| *distance == 1 && immutable[parent as usize].binary_search(slot).is_ok())
+            .map(|(_, slot)| *slot).collect(),
+        None => Vec::new(),
+    } });
     captured
         .into_iter()
         .enumerate()
         .zip(dynamic_ancestors)
-        .map(|((id, captured), dynamic_descendant)| LayoutInputs {
+        .zip(declared_captures)
+        .map(|(((id, captured), dynamic_descendant), declared_captures)| LayoutInputs {
             captured: complete_captured(captured, arguments(id)),
             dynamic_descendant,
             split_root: false,
+            declared_captures,
         })
         .collect()
+}
+
+/// The slots of each function's declarations that nothing writes, sorted: a declaration the function stores once
+/// (its hoisting), with no other store to its slot in the function, none from a nested function, and no dynamic
+/// name resolution around it (`dynamic_ancestors`: an `eval` or `with` may write any binding it encloses).
+fn immutable_declarations(facts: &[FunctionFacts], dynamic_ancestors: &[bool]) -> Vec<Vec<u16>> {
+    let mut written_below: Vec<Vec<u16>> = facts.iter().map(|_| Vec::new()).collect();
+    for (id, function) in facts.iter().enumerate() {
+        for &(distance, slot) in function.stores.iter().filter(|(distance, _)| *distance > 0) {
+            if let Some(owner) = ancestor(facts, id, distance as usize) {
+                written_below[owner].push(slot);
+            }
+        }
+    }
+    facts.iter().enumerate().map(|(id, function)| {
+        let stored = |slot: u16| function.stores.iter().filter(|store| **store == (0, slot)).count();
+        let mut immutable: Vec<u16> = function.declared.iter().copied()
+            .filter(|&slot| !dynamic_ancestors[id] && stored(slot) == 1 && !written_below[id].contains(&slot))
+            .collect();
+        immutable.sort_unstable();
+        immutable.dedup();
+        immutable
+    }).collect()
 }
 
 /// A function's captured slots, completed: a mapped `arguments` object aliases the
@@ -221,6 +281,7 @@ pub(super) fn apply_function(
     inputs: &LayoutInputs,
     atoms: &CompilerAtoms<'_>,
 ) {
+    function.declared_captures = crate::heap::ThinBoxSlice::from_slice(&inputs.declared_captures);
     let mut captured = inputs.captured.clone();
     // A module body's `captured` includes the bindings its module environment holds
     // (`Function::module_environment_slots`), closures or not, so it always splits.

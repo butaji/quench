@@ -25,7 +25,7 @@ impl Lowering<'_, '_> {
     /// Adds the run's trips to its loop entry record, in the block the run leaves through.
     pub(super) fn flush_trips(&mut self) {
         let Some(trips) = self.trips else { return };
-        let offset = i32::try_from(std::mem::offset_of!(super::super::JsStepDispatch, loop_entry))
+        let offset = i32::try_from(std::mem::offset_of!(super::super::JsStepDispatch, head.loop_entry))
             .expect("dispatch offset fits i32");
         let payload = self.payload;
         let entry = self.raw_load(Lane::I64, regions::dispatch(), payload, offset);

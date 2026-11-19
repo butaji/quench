@@ -6,9 +6,9 @@
 //! so the semantics are the interpreter's. A row that does not complete leaves through EXIT0 with
 //! the registers as they were; the planner lays the helper step after it.
 //!
-//! The call-out row (`staged_callout`) is the leave for the operations that need an allocation, a
+//! The call-out arm (`exit_here`, `words.rs`) is the leave for the operations that need an allocation, a
 //! guest call or a host callout (`Throw`, `Return`, `Await`, `Yield`, `Allocate`, ...): it writes
-//! nothing and leaves the registers as they came, as `exit_here` (`call_rows.rs`) does.
+//! nothing and leaves the registers as they came, as the call rows' exit does (`call_rows.rs`).
 //!
 //! The rows are heap rows: `library.rs` `HEAP_USES` names their places (entry false), `build.rs` instantiates each as
 //! a `heap_row!`, and `heap_rows::run` routes the `STAGED_FIRST..=STAGED_LAST` codes (`codes.rs`) to `run` below, a hit
@@ -16,18 +16,13 @@
 //! for a row `heap_name` already names.
 
 use crate::bytecode::Operand;
-use crate::codes::{PINF, STAGED_BITWISE_NOT, STAGED_COERCIBLE, STAGED_LOOSE_EQ, STAGED_INIT_LOCAL, STAGED_LOOSE_NE, STAGED_RELVAL_EQ, STAGED_RELVAL_GE, STAGED_RELVAL_GT, STAGED_RELVAL_LE, STAGED_RELVAL_LT, STAGED_RELVAL_NE, STAGED_REMAINDER, STAGED_STRICT_EQ, STAGED_STRICT_NE, STAGED_VOID};
-use crate::places::{DEST, LEFT, Places, RIGHT};
+use crate::codes::{LT, NE, PINF, STAGED_BITWISE_NOT, STAGED_COERCIBLE, STAGED_LOOSE_EQ, STAGED_INIT_LOCAL, STAGED_LOOSE_NE, STAGED_RELVAL_EQ, STAGED_RELVAL_GE, STAGED_RELVAL_GT, STAGED_RELVAL_LE, STAGED_RELVAL_LT, STAGED_RELVAL_NE, STAGED_REMAINDER, STAGED_STRICT_EQ, STAGED_STRICT_NE, STAGED_VOID};
+use crate::numeric::relation_of;
+use crate::places::{DEST, LEFT, Places, RIGHT, finish};
 use crate::stage::StencilStage;
 use crate::staged::{Concrete, Domain, NumberOperation, Operation, Step, step_generic, step_local, step_number, step_value};
 use crate::vm::operations::NumberRelation;
-use crate::words::{HOLE_A, Out, S, hole};
-
-/// The step's word where it completed (it wrote its destination), else the row leaves.
-#[inline(always)]
-fn finish<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, done: bool) -> Out {
-    if frame.writes_fit(done) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
-}
+use crate::words::{HOLE_A, Out, S, exit_here, hole};
 
 /// Whether one of a row's places is a pinned double, so the row computes in binary64.
 const fn wide(d: u8, a: u8, b: u8) -> bool {
@@ -40,17 +35,12 @@ fn number<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, op
     matches!(step_number(&mut Concrete::from_hole(0), frame, Operation::Number(operation)), Step::Value(_))
 }
 
-/// The relation a value-form relation row of code `kind` computes.
+/// The Number relation a value-form relation row of code `kind` computes: the compare rows' relation (`numeric::relation_of`,
+/// the one table of the staged relations) at the same offset, since both runs list `LT`..`NE` in one order (asserted below).
 const fn value_relation_of(kind: u8) -> NumberRelation {
-    match kind {
-        STAGED_RELVAL_LT => NumberRelation::LessThan,
-        STAGED_RELVAL_LE => NumberRelation::LessEqual,
-        STAGED_RELVAL_GT => NumberRelation::GreaterThan,
-        STAGED_RELVAL_GE => NumberRelation::GreaterEqual,
-        STAGED_RELVAL_EQ => NumberRelation::Equal,
-        _ => NumberRelation::NotEqual,
-    }
+    relation_of(LT + (kind - STAGED_RELVAL_LT))
 }
+const _: () = assert!(STAGED_RELVAL_NE - STAGED_RELVAL_LT == NE - LT);
 
 /// `Binary` `%` of the two operands into the destination (`NumberOperation::Remainder`). The int32
 /// computation leaves where its result is no int32 (a zero divisor's NaN, a negative dividend's
@@ -131,13 +121,6 @@ pub(crate) fn equality_row<const STRICT: bool, const NEGATED: bool, const D: u8,
     finish(frame, done)
 }
 
-/// The call-out row: the operation needs an allocation, a guest call or a host callout, so the row writes
-/// nothing and leaves through EXIT0 with the registers as they came; the helper step after it runs the operation.
-#[inline(always)]
-pub(crate) fn staged_callout(s: S) -> Out {
-    Out::Exit(s)
-}
-
 /// The staged row of code `KIND` over the places `D`, `A`, `B`.
 #[inline(always)]
 pub(crate) fn run<const KIND: u8, const D: u8, const A: u8, const B: u8>(s: S) -> Out {
@@ -152,6 +135,6 @@ pub(crate) fn run<const KIND: u8, const D: u8, const A: u8, const B: u8>(s: S) -
         STAGED_LOOSE_NE => equality_row::<false, true, D, A, B>(Places::new(s)),
         STAGED_STRICT_EQ => equality_row::<true, false, D, A, B>(Places::new(s)),
         STAGED_STRICT_NE => equality_row::<true, true, D, A, B>(Places::new(s)),
-        _ => staged_callout(s),
+        _ => exit_here(s),
     }
 }

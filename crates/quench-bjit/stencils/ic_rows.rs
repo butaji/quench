@@ -33,15 +33,16 @@
 //! covers every id a patch names. The entry's holes would move from `Planned::holes` into a
 //! per-row record of field offsets for this, which the stitcher keeps beside the code.
 
-use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM, SITE_OBJECT_AT};
+use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM};
 use crate::heap_rows::{payload, word_at};
-use crate::layout::{JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED};
-use crate::numeric::{HOLE_A, Out, S, deliver, deliver_number, is_int, number_word};
+use crate::layout::JS_STEP_OBJECT_RECORD_BASE;
+use crate::numeric::{HOLE_A, Out, S, deliver, is_int, number_word};
+use crate::places::{Places, site_object};
+use crate::places_property::{Callout, receiver_read, receiver_set, run_planned};
 use crate::stage::StencilStage;
 use crate::staged::ic::{self, IcOp};
 use crate::staged::object::{Form, direct_object_record, object_record_at};
-use crate::staged::region::Region;
-use crate::staged::slot_store::{own_flat_known, proved_flat_store};
+use crate::staged::slot_store::{own_flat_known, proved_flat_store, store_admitted};
 use crate::staged::value::direct_object_id;
 use crate::typed_ir::Representation;
 use crate::staged::Stage;
@@ -60,8 +61,7 @@ const ENTRY_HOLES: u8 = 2;
 /// the VM has an object table.
 #[inline(always)]
 fn receiver<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> Option<(u64, u64, u64)> {
-    let offset = if H == GET_RECEIVER { (hole64::<0>() >> SITE_OBJECT_AT) as usize } else { hole::<H>() };
-    let bits = word_at(s.frame, offset);
+    let bits = if H == GET_RECEIVER { site_object(s) } else { word_at(s.frame, hole::<H>()) };
     let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
     let (id, record) = direct_object_record(stage, bits, records, ())?;
     Some((id, record, records))
@@ -103,19 +103,6 @@ fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: 
     }
 }
 
-/// Whether a store of the atom at the next hole is admitted: the program runs specialized. That no
-/// method cache names the atom is a Stable fact the code holds (`Decoded::atom`, `held_atoms`): naming it
-/// retires the code, and a run already inside learns that from the invalidation word its rows test after
-/// a call (`Heap::Live`), so the row reads no bitset. The atom's hole stays numbered.
-#[inline(always)]
-fn store_admitted(stage: &mut StencilStage, payload: u64) -> Option<()> {
-    let specialized = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_STORES_SPECIALIZED as i32);
-    let on = stage.ne_imm(specialized, 0u32);
-    stage.guard(on, ())?;
-    let _atom = stage.site(0);
-    Some(())
-}
-
 /// A set: `SetField` of the value (`A`, hole 1) into the receiver (hole 0), through the entry's
 /// flat own slot (`FlatStore`); an int32 row takes int32 values only, so no compiled read of the
 /// slot's type is widened.
@@ -133,8 +120,7 @@ fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usi
 /// (`base_region::proofs`): its id masked and scaled into the record table, no family test.
 #[inline(always)]
 fn known_record<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> u64 {
-    let offset = if H == GET_RECEIVER { (hole64::<0>() >> SITE_OBJECT_AT) as usize } else { hole::<H>() };
-    let bits = word_at(s.frame, offset);
+    let bits = if H == GET_RECEIVER { site_object(s) } else { word_at(s.frame, hole::<H>()) };
     let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
     let id = direct_object_id(stage, bits);
     object_record_at(stage, records, id)
@@ -165,7 +151,8 @@ fn known_get<const D: u8, const NUMBER: bool>(s: S, payload: usize) -> Out {
 fn known_set<const INT: bool, const A: u8>(s: S, payload: usize) -> Out {
     let Some(word) = number_word::<A, HOLE_A>(&s).filter(|word| !INT || is_int(*word)) else { return miss::<true>(s) };
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
-    if store_admitted(&mut stage, payload as u64).is_none() {
+    let specialized = stage.stores_specialized(payload as u64);
+    if store_admitted(&mut stage, specialized, ()).is_none() {
         return miss::<true>(s);
     }
     let record = known_record::<SET_RECEIVER>(&s, &mut stage, payload);

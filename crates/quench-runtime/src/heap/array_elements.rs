@@ -10,31 +10,37 @@
 //! copies it to an allocation of its own (`make_mut`), as does the collection its array
 //! survives (`ArrayElements::leave_nursery`), so every young run's owner is a young array
 //! record its sweep shows.
-use super::growth::{GrowthPolicy, grown_capacity};
+use crate::staged::record_heads::ArrayHeaderHead;
 use crate::value::Value;
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 use std::ptr::NonNull;
 
+/// A backing's header: its words are `ArrayHeaderHead` (`staged::record_heads`), which the
+/// stencils read by offset. `capacity` takes `BIASED` when the header was moved past values a
+/// front removal dropped (`UniqueElements::remove` of index 0), and `others` is the fold of
+/// every write's int32-ness, which native code reads with one load (`OTHERS_UNKNOWN` once it
+/// stores uncounted values). Field accesses reach the head through `Deref`.
 #[repr(C, align(8))]
 struct Header {
-    /// Owners of this backing; zero where no owner counts it: the shared empty header and
-    /// young runs, which no drop frees.
-    owners: u32,
-    len: u32,
-    /// Room for values after the header, with `BIASED` set when the header was moved past
-    /// values a front removal dropped (`UniqueElements::remove` of index 0): the allocation
-    /// then starts `bias` values earlier, a count kept in the word just before the header.
-    capacity: u32,
-    /// How many values below `len` are not int32s, holes (`Value::DELETED`) included: the
-    /// fold of every write, each adding what it writes and removing what it overwrites, so a
-    /// reader proves every value an int32 with one load instead of a scan. At least the
-    /// true count once native code stored unknown values (`OTHERS_UNKNOWN`).
-    others: u32,
+    head: ArrayHeaderHead,
 }
 
-/// The conservative `others` marker native code stores for uncounted writes. Incremental
-/// updates preserve it until the backing's values are counted again.
-pub(crate) const OTHERS_UNKNOWN: u32 = u32::MAX;
+impl std::ops::Deref for Header {
+    type Target = ArrayHeaderHead;
+    #[inline(always)]
+    fn deref(&self) -> &ArrayHeaderHead {
+        &self.head
+    }
+}
+
+impl std::ops::DerefMut for Header {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut ArrayHeaderHead {
+        &mut self.head
+    }
+}
+
+pub(crate) use crate::staged::encodings::OTHERS_UNKNOWN;
 
 use crate::staged::elements::{concrete_other as other, concrete_recount as recounted};
 
@@ -62,18 +68,15 @@ const _: () = assert!(align_of::<Header>() <= align_of::<Value>());
 const _: () = assert!(VALUES_OFFSET.is_multiple_of(align_of::<Value>()));
 const _: () = assert!(align_of::<Header>() >= align_of::<Value>());
 /// The byte offset from a backing's first value to its `u32` length, which native appends advance.
-pub(crate) const LENGTH_FROM_VALUES: i32 = std::mem::offset_of!(Header, len) as i32 - VALUES_OFFSET as i32;
+pub(crate) const LENGTH_FROM_VALUES: i32 = (std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, len)) as i32 - VALUES_OFFSET as i32;
 /// The byte offset from a backing's first value to its `u32` count of other values
 /// (`Header::others`), which native code reads at entry, and sets to `OTHERS_UNKNOWN` where
 /// it may store uncounted values.
-pub(crate) const OTHERS_FROM_VALUES: i32 = std::mem::offset_of!(Header, others) as i32 - VALUES_OFFSET as i32;
+pub(crate) const OTHERS_FROM_VALUES: i32 = (std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, others)) as i32 - VALUES_OFFSET as i32;
 
 /// The header every empty backing shares: never written, never freed.
 static EMPTY: Header = Header {
-    owners: 0,
-    len: 0,
-    capacity: 0,
-    others: 0,
+    head: ArrayHeaderHead { owners: 0, len: 0, capacity: 0, others: 0 },
 };
 
 /// The `Header::capacity` flag of a backing whose header moved past dropped front values.
@@ -92,7 +95,7 @@ const KEEP_WIDE: u32 = 1 << 30;
 /// decodes (`concrete_record_element`); a length read as an int32 fails its sign test. Only
 /// a collection makes a narrow backing (`leave_nursery`, `narrow_in_place`), never one a
 /// running view holds.
-pub(crate) const NARROW_LEN: u32 = 1 << 31;
+pub(crate) use crate::staged::encodings::NARROW_LEN;
 
 /// The `Header::len` flag of a double backing: every value word is the IEEE-754 bits of a
 /// Number, whole or not (3 as 3.0's bits, never the int32 tag), and a hole is
@@ -102,29 +105,13 @@ pub(crate) const NARROW_LEN: u32 = 1 << 31;
 /// (`replace_in_place`, `push_double`); any other write makes it generic first (`make_mut`),
 /// for good (`KEEP_WIDE`). An all-int32 backing becomes double where it takes its first
 /// other Number. Dense capacities stay below this bit (`grow_to`), and no backing is both
-/// narrow and double. Format: research/nojit/n2-n4/double-kind-format.txt.
-///
-/// Who may write a double backing's words, the invariant every tier keeps:
-/// - `ArrayElements` itself (`replace_encoded_in_place`, `push_double`, `enter_double`), each
-///   writing `double_word`s alone, on a backing of one owner;
-/// - the staged in-place replacement through a view proved writable and double
-///   (`staged::elements::replace_present`'s double arm): a Number that is no int32, whose
-///   `Value` word is its double's bits, NaN canonical, so the word it writes is `double_word`'s;
-/// - a u-jit loop's store through its hoisted double view (`lane_region::ElementViews::Double`,
-///   proved writable by `staged::elements::double_view`), a `Float64Array` store of a Number's
-///   double below the length: a NaN it computes may be another NaN's bits, which every reader
-///   canonicalizes (`decode_double`), and never `Value::DELETED`'s, which no arithmetic makes.
-///
-/// No other native write reaches one: the staged views proved wide (`array_backing`, a loop's
-/// hoisted view, `writable_backing`, the appends) miss on this flag; a view proved wide before
-/// the backing turned double in place reads it as empty (`emit_dense_array_reload`,
-/// `staged::entry::entry_backing`), and turning double retires the lane's array storage
-/// proofs (`enter_double`). Native readers take the Number (`staged::elements::read_element`,
-/// `record_element`, `any_backing_element`); `QUENCH_DEV=no-double-elements` makes none.
-pub(crate) const DOUBLE_LEN: u32 = 1 << 30;
+/// narrow and double. Format: research/nojit/n2-n4/double-kind-format.txt. Native readers
+/// miss on it with the narrow flag (`ENCODED_LEN`), and only `QUENCH_DEV=double-elements`
+/// makes one until compiled tiers guard it.
+pub(crate) use crate::staged::encodings::DOUBLE_LEN;
 
 /// Either flag of a backing whose values are not 8-byte `Value`s in place.
-pub(crate) const ENCODED_LEN: u32 = NARROW_LEN | DOUBLE_LEN;
+pub(crate) use crate::staged::encodings::ENCODED_LEN;
 
 /// Whether backings may take the double kind (`DOUBLE_LEN`): in production unless
 /// `QUENCH_DEV=no-double-elements`; in a test only where it asks (`TEST_DOUBLES`), as tests
@@ -188,10 +175,10 @@ pub(crate) struct ArrayElements {
 /// describe so native code does not maintain a second copy of the storage layout.
 pub(super) const NATIVE_HEADER_POINTER_OFFSET: usize =
     std::mem::offset_of!(ArrayElements, header);
-pub(super) const NATIVE_HEADER_LENGTH_OFFSET: usize = std::mem::offset_of!(Header, len);
-pub(super) const NATIVE_HEADER_OWNERS_OFFSET: usize = std::mem::offset_of!(Header, owners);
+pub(super) const NATIVE_HEADER_LENGTH_OFFSET: usize = std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, len);
+pub(super) const NATIVE_HEADER_OWNERS_OFFSET: usize = std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, owners);
 /// The byte offset of the `u32` capacity word, which only the backing's allocator and growth change.
-pub(super) const NATIVE_HEADER_CAPACITY_OFFSET: usize = std::mem::offset_of!(Header, capacity);
+pub(super) const NATIVE_HEADER_CAPACITY_OFFSET: usize = std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, capacity);
 /// The capacity word's bits that count values: those left once the `BIASED` and `KEEP_WIDE`
 /// flags are dropped.
 pub(super) const NATIVE_HEADER_CAPACITY_MASK: u32 = !(BIASED | KEEP_WIDE);
@@ -276,10 +263,7 @@ impl ArrayElements {
         // SAFETY: the run starts with room for a header, which no owner counts.
         unsafe {
             header.as_ptr().write(Header {
-                owners: 0,
-                len: len as u32,
-                capacity: len as u32,
-                others: counted,
+                head: ArrayHeaderHead { owners: 0, len: len as u32, capacity: len as u32, others: counted },
             });
         }
         elements
@@ -363,10 +347,7 @@ impl ArrayElements {
         // SAFETY: the allocation is fresh and sized for a header.
         unsafe {
             header.as_ptr().write(Header {
-                owners: 1,
-                len: len as u32,
-                capacity: capacity_word,
-                others: 0,
+                head: ArrayHeaderHead { owners: 1, len: len as u32, capacity: capacity_word, others: 0 },
             });
         }
         Self { header }
@@ -546,10 +527,7 @@ impl ArrayElements {
                 narrow.add(index).write(word);
             }
             header.as_ptr().write(Header {
-                owners: 1,
-                len: len as u32 | NARROW_LEN,
-                capacity: len as u32,
-                others: self.header().others,
+                head: ArrayHeaderHead { owners: 1, len: len as u32 | NARROW_LEN, capacity: len as u32, others: self.header().others },
             });
         }
         Some(Self { header })

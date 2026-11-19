@@ -1300,8 +1300,32 @@ fn requicken<H: Host>(ip: Ip, handler: Handler) {
 }
 
 /// The context words below register 0 (`staged::frame`, the one source of the frame layout).
-use crate::staged::frame::{CONTEXT_CALL, CONTEXT_CALLEE, CONTEXT_CALLER_BASE, CONTEXT_CALLER_REGISTERS, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_PACKED, CONTEXT_THIS};
-const _: () = assert!(CONTEXT_CALLEE == super::register_file::FRAME_CONTEXT);
+use crate::staged::frame::{CONTEXT_BODY, CONTEXT_CALL, CONTEXT_CALLEE, CONTEXT_CALLER_BASE, CONTEXT_CALLER_REGISTERS, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_PACKED, CONTEXT_THIS};
+const _: () = assert!(CONTEXT_BODY == super::register_file::FRAME_CONTEXT);
+const _: () = assert!(CAPTURE_STORES as u64 == quench_bjit::shared_words::CAPTURE_STORES_BIT);
+
+/// The header word `index` (a `staged::frame` `CONTEXT_*`) of the window at `registers`: the words count
+/// down from register 0, so `sub(index)` words below it.
+///
+/// # Safety
+/// `registers` is a live window, with the frame's context words below it.
+#[inline(always)]
+pub(in crate::vm) unsafe fn frame_word(registers: *const Value, index: usize) -> u64 {
+    // SAFETY: as the caller promises.
+    unsafe { *registers.cast::<u64>().sub(index) }
+}
+
+/// Writes the header word `index` of the window at `registers` (`frame_word`).
+///
+/// # Safety
+/// As `frame_word`, and the caller owns the window's header.
+#[inline(always)]
+pub(in crate::vm) unsafe fn set_frame_word(registers: *mut Value, index: usize, word: u64) {
+    // SAFETY: as the caller promises.
+    unsafe { *registers.cast::<u64>().sub(index) = word }
+}
+/// `CONTEXT_PACKED`'s flag of a plain frame.
+pub(in crate::vm) const PLAIN_FRAME_FLAG: u64 = crate::staged::frame::PLAIN_FLAG;
 
 /// The active frame's registers. Lane instructions never resize registers or
 /// change the frame stack, so the base stays valid for the whole lane run.

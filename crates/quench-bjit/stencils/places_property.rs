@@ -11,15 +11,15 @@
 
 use crate::bytecode::{FieldBase, FieldLookup, Operand, Register};
 use crate::codes::CHAIN_SECOND_AT;
-use crate::heap_rows::{payload, stage_site, word_at};
-use crate::layout::{JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_RECEIVER, JS_STEP_STORES_SPECIALIZED};
+use crate::heap_rows::{context_word, payload, stage_site, word_at};
+use crate::layout::{CONTEXT_THIS, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY, JS_STEP_OBJECT_RECORD_BASE};
 use crate::typed_ir::Representation;
 use crate::places::{DEST, LEFT, Places};
 use crate::staged::ic::IcOp;
 use crate::staged::object::direct_object_record;
 use crate::staged::property::{FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use crate::staged::region::Region;
-use crate::staged::slot_store::own_flat_store;
+use crate::staged::slot_store::{own_flat_store, store_admitted};
 use crate::staged::{CallFrame, Concrete, Constant, ElementFrame, Frame, GlobalBinding, GlobalFrame, NumericFrame, Operation, PropertyFrame, Stage, Step, entry, lexical_read, step_names, step_property};
 use crate::words::{HOLE_B, S, hole64, is_double, is_int};
 
@@ -226,7 +226,7 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> PropertyFrame<Co
     fn field_this(&mut self, _stage: &mut Concrete, _miss: ()) -> Option<u64> where Self: Sized {
         match self.held {
             Some(held) => Some(held.object),
-            None => Some(word_at(payload(&self.places.s), JS_STEP_RECEIVER)),
+            None => Some(context_word(self.places.s.frame, CONTEXT_THIS)),
         }
     }
 
@@ -329,7 +329,7 @@ fn field_tables(s: &S) -> (u64, u64) {
 
 /// The flat own-slot store of `value` into the object `object` names (the cache row's store):
 /// a number, an int32 where `int`, into a program that stores in place and whose method cache
-/// names no atom it stores to (`method_cache_admits`), through a direct object of the exact
+/// names no atom it stores to (`store_admitted`), through a direct object of the exact
 /// shape its entry holds. Nothing is written where it leaves.
 #[inline(always)]
 fn flat_store(stage: &mut Concrete, s: &S, object: u64, value: u64, int: bool) -> Option<()> {
@@ -337,22 +337,10 @@ fn flat_store(stage: &mut Concrete, s: &S, object: u64, value: u64, int: bool) -
         return None;
     }
     let base = payload(s);
-    method_cache_admits(stage, base as u64)?;
+    let specialized = stage.stores_specialized(base as u64);
+    store_admitted(stage, specialized, ())?;
     let records = word_at(base, JS_STEP_OBJECT_RECORD_BASE);
     let (id, record) = direct_object_record(stage, object, records, ())?;
     let rep = if int { Representation::Int32 } else { Representation::Tagged };
     own_flat_store(stage, record, id, 0, 0, (value, rep), ())
-}
-
-/// Whether the run stores in place (`JS_STEP_STORES_SPECIALIZED`); the atom at hole 2 is read in
-/// hole order only.
-#[inline(always)]
-fn method_cache_admits(stage: &mut Concrete, payload: u64) -> Option<()> {
-    let specialized = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_STORES_SPECIALIZED as i32);
-    let on = stage.ne_imm(specialized, 0u32);
-    stage.guard(on, ())?;
-    // The atom hole stays read in order; a store to a method-cache atom is retired by the
-    // atom's Stable fact, not by a per-store bitset test.
-    let _atom = stage.site(0);
-    Some(())
 }

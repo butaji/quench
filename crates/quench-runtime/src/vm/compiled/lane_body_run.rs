@@ -110,6 +110,13 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     unsafe fn call_body(&self, run: &BodyRun, context: *mut CallContext, captures: u64) -> BodyReturn {
         let (receiver, registers) = (run.receiver.to_bits(), run.registers.cast_const().cast());
+        // The body's window carries its own receiver and captures word (`CONTEXT_THIS`, `CONTEXT_BODY`),
+        // which its rows and its callees' calls read there; the lane's entry writes them once.
+        // SAFETY: `run.registers` is the live window the body runs on, whose header is its own.
+        unsafe {
+            super::super::dispatch_fast::set_frame_word(run.registers, crate::staged::frame::CONTEXT_THIS, receiver);
+            super::super::dispatch_fast::set_frame_word(run.registers, crate::staged::frame::CONTEXT_BODY, captures);
+        }
         // SAFETY: the frame's context is the one this entry owns until it returns.
         let context = unsafe { &mut *context };
         if run.method.fault_poll {

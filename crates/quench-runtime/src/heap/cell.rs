@@ -1,4 +1,5 @@
 use super::root::WeakHandle;
+use crate::staged::record_heads::ObjectHead;
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
 use crate::value_vec::{
@@ -88,7 +89,7 @@ mod cell_layout_tests {
         assert_eq!(NATIVE_ARRAY_RECORD_ALIGN, std::mem::align_of::<ArrayObject>());
         assert_eq!(
             NATIVE_ARRAY_ELEMENTS_OFFSET,
-            std::mem::offset_of!(ArrayObject, object) + std::mem::offset_of!(Object, payload)
+            std::mem::offset_of!(ArrayObject, object) + std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, payload)
         );
         assert_eq!(NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET, std::mem::offset_of!(ObjectExtras, elements));
         let layout = super::super::NATIVE_ARRAY_LAYOUT;
@@ -104,11 +105,11 @@ mod cell_layout_tests {
         assert_eq!(NATIVE_OBJECT_RECORD_ALIGN, std::mem::align_of::<Object>());
         assert_eq!(
             NATIVE_OBJECT_LAYOUT_OFFSET,
-            std::mem::offset_of!(Object, layout)
+            std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, layout)
         );
         assert_eq!(
             NATIVE_OBJECT_PAYLOAD_OFFSET,
-            std::mem::offset_of!(Object, payload)
+            std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, payload)
         );
         assert_eq!(
             NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET,
@@ -1508,21 +1509,29 @@ pub(crate) enum ExactStorage {
 }
 
 #[repr(C, packed(4))]
+/// An ordinary object's record. Its words are `ObjectHead` (`staged::record_heads`), which the
+/// stencils read by offset: the payload word (`ObjectHead::payload`: with `ObjectExtras`,
+/// `EXTRAS_TAG` and a pointer to them; without, the inline values, the storage position, or an
+/// array's element backing) and the layout id (`ObjectHead::layout`, interned in `heap::layouts`,
+/// which keeps the prototype, the `OBJECT_*` flags and the shape, so the record keeps four bytes
+/// for them where it kept eight). Field accesses reach the head through `Deref`.
 pub(crate) struct Object {
-    /// One word: with `ObjectExtras`, `EXTRAS_TAG` and a pointer to them, and they then hold
-    /// the inline values and the storage position. Extras are rare, so the common object pays
-    /// no word for them. Without extras: the inline values as narrow values
-    /// (`Value::to_narrow`), the first slot in the lower half; or, without inline storage,
-    /// the storage position (`ValueVec`'s start). An inline value that has no narrow form
-    /// moves the values into extras, so every value stays storable.
-    payload: u64,
-    /// The object's layout (`heap::layouts`): the interned pair of its header words, `meta`
-    /// (the prototype's heap index, `PROTO_INDEX_BITS`, with null and undefined sentinels, and
-    /// the `OBJECT_*` flags: array, inline storage, and the integrity bits `ValueVec` keeps) and
-    /// `auxiliary` (`ValueVec::auxiliary`: the shape, the dictionary, exotic and storage-form
-    /// bits). Those facts repeat across every object of a kind, so they live once in the layout
-    /// table, and the record keeps four bytes for them where it kept eight.
-    layout: u32,
+    head: ObjectHead,
+}
+
+impl std::ops::Deref for Object {
+    type Target = ObjectHead;
+    #[inline(always)]
+    fn deref(&self) -> &ObjectHead {
+        &self.head
+    }
+}
+
+impl std::ops::DerefMut for Object {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut ObjectHead {
+        &mut self.head
+    }
 }
 
 /// Bits of `Object::meta` holding the prototype's heap reference (`PROTO_INDEX_BITS`, 28 bits).
@@ -1716,7 +1725,7 @@ pub(super) const NATIVE_OBJECT_RECORD_ALIGN: usize = std::mem::align_of::<Object
 /// Where a record keeps its layout id; the header words are in the layout's table entry
 /// (`heap::layouts::table_base`), `meta` at `NATIVE_OBJECT_META_OFFSET` and `auxiliary` at
 /// `NATIVE_OBJECT_AUXILIARY_OFFSET` within it.
-pub(super) const NATIVE_OBJECT_LAYOUT_OFFSET: usize = std::mem::offset_of!(Object, layout);
+pub(super) const NATIVE_OBJECT_LAYOUT_OFFSET: usize = std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, layout);
 pub(super) const NATIVE_OBJECT_META_OFFSET: usize = std::mem::size_of::<u32>();
 pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = 0;
 
@@ -1726,7 +1735,7 @@ pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = 0;
 const fn header_word(meta: u32, auxiliary: u32) -> u64 {
     auxiliary as u64 | (meta as u64) << u32::BITS
 }
-pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, payload);
+pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, payload);
 pub(super) const NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET: usize =
     std::mem::offset_of!(ObjectExtras, arena_start);
 pub(super) const NATIVE_OBJECT_EXTRAS_INLINE_VALUES_OFFSET: usize =
@@ -1767,7 +1776,7 @@ impl Clone for Object {
             None if self.meta() & OBJECT_ARRAY != 0 => u64::from(EMPTY_POSITION),
             None => self.payload,
         };
-        Self { payload, layout: self.layout }
+        Self { head: ObjectHead { payload, layout: self.layout } }
     }
 }
 
@@ -1831,7 +1840,7 @@ impl ArrayObject {
         // SAFETY: this thread's own memo; no reference to it outlives the read.
         let (key, layout) = unsafe { (*std::ptr::addr_of!(LAST))[at] };
         let object = if key == meta {
-            Object { payload: u64::from(EMPTY_POSITION), layout }
+            Object { head: ObjectHead { payload: u64::from(EMPTY_POSITION), layout } }
         } else {
             let mut object = Object::from_header(meta, 0, 0);
             object.initialize_properties(ValueVec::new());
@@ -2273,7 +2282,7 @@ impl Object {
     /// An object of header words `meta` and `auxiliary` (`layout`) and `payload`.
     #[inline(always)]
     fn from_header(meta: u32, auxiliary: u32, payload: u64) -> Self {
-        Self { payload, layout: super::layouts::intern(header_word(meta, auxiliary)) }
+        Self { head: ObjectHead { payload, layout: super::layouts::intern(header_word(meta, auxiliary)) } }
     }
 
     /// The header words as one: the auxiliary word low, which shape tests read most, and
@@ -2842,13 +2851,13 @@ impl Object {
         header: InlineObjectHeader,
         inline: [Value; INLINE_PROPERTY_COUNT],
     ) -> Option<Self> {
-        Some(Self { payload: Self::pack_inline(inline)?, layout: header.layout })
+        Some(Self { head: ObjectHead { payload: Self::pack_inline(inline)?, layout: header.layout } })
     }
 
     /// An object of a run header (`InlineObjectHeader::of_run`) whose values start at arena
     /// position `start`: what `with_property_storage` makes of that run, which has no extras.
     #[inline] pub(crate) fn from_run_header(header: InlineObjectHeader, start: u32) -> Self {
-        Self { payload: u64::from(start), layout: header.layout }
+        Self { head: ObjectHead { payload: u64::from(start), layout: header.layout } }
     }
 
     #[inline(always)]

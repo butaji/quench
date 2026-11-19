@@ -109,23 +109,28 @@ impl<H: Host> Vm<H> {
                 || crate::bytecode::INTERNAL_GLOBAL_BINDINGS.contains(&self.atom_name(atom)))
     }
 
-    /// The Stable fact each call site's callee register holds, by PC: the global cell its by-name
-    /// read took, where that read is the register's only definition reaching the call and the cell
-    /// holds the function the site recorded (`recorded`, by PC). Code that folds the callee holds
-    /// the fact as a dependency (`StableFacts::globals`) and tests nothing at the call.
+    /// What each call site's callee register holds, by PC: the Stable global cell its by-name read took, where that read
+    /// is the register's only definition reaching the call and the cell holds the function the site recorded (`recorded`,
+    /// by PC); or the body's own depth-0 capture of a declaration nothing writes, which the body's entry checks against
+    /// the recorded function (`Held::Captured`). Code that folds the callee holds the fact and tests nothing at the call.
     pub(in crate::vm) fn stable_callees(&mut self, program: &ResidualProgram, function: u32, code: &[crate::bytecode::WideInstruction], recorded: &[Option<crate::value::Value>])
-        -> Vec<Option<crate::heap::GlobalFact>> {
+        -> Vec<Option<super::base_region::callees::Held>> {
+        use super::base_region::callees::Held;
         let entered = branch_targets(code);
         recorded.iter().enumerate().map(|(call, callee)| {
             let callee = (*callee)?;
             let load = code[straight_definition(code, &entered, call)?];
-            if !matches!(crate::staged::Operation::<u64, ()>::decode_load_name(load, ()), Some(crate::staged::Operation::LoadName { .. })) { return None; }
+            if load.op() == crate::bytecode::Op::LoadCapture && load.result_flags() == 0 && load.capture_depth() == 0 {
+                let declared = program.function_get(function as usize)?.declared_captures.contains(&load.capture_slot());
+                return declared.then_some(Held::Captured { slot: load.capture_slot(), callee: callee.to_bits() });
+            }
+            if !load.op().is_throwing_name_load() { return None; }
             let atom = load.atom_index();
             if !self.reads_global_scope(program, function, atom) {
                 return None;
             }
             match self.stable_global_read(program, atom, load.cache_site_index()) {
-                GlobalRead::Stable { value, fact, .. } if value == callee => Some(fact),
+                GlobalRead::Stable { value, fact, .. } if value == callee => Some(Held::Global(fact)),
                 _ => None,
             }
         }).collect()
