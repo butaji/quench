@@ -2444,7 +2444,10 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<bool, JsError> {
-        let Some(()) = self.frames.iter().rev().find_map(|frame| {
+        // Script and eval roots are the only ROOT_FUNCTION_ID activations whose `this` is the
+        // global object; both are recorded in `active_roots` (`call_root`, `call_eval_closure`).
+        let Some(()) = self.active_roots.iter().rev().find_map(|&index| {
+            let frame = self.frames.get(index)?;
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != self.realm.globals {
                 return None;
             }
@@ -2482,7 +2485,11 @@ impl<H: Host> Vm<H> {
         }
         // Each script/eval activation has its own local layout. The global
         // object owns the binding; refresh every active projection in this realm.
-        for frame in self.frames.iter_mut() {
+        // Only script and eval roots (`active_roots`) project global vars into their locals.
+        for &index in &self.active_roots {
+            let Some(frame) = self.frames.get_mut(index) else {
+                continue;
+            };
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != object {
                 continue;
             }

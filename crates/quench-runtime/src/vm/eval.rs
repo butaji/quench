@@ -1145,7 +1145,12 @@ impl<H: Host> Vm<H> {
             CallTarget::User(_, function, environment) => (function, environment),
             CallTarget::Native(_) => return Err(JsError("eval body is not a user closure".into())),
         };
-        self.with_call_roots([callee, this], |vm| {
+        // An eval root is a root activation like a script's: global var stores and mirrors find
+        // it through `active_roots` (`store_global_var_binding`), so it must sit at the index
+        // pushed here, with no deferred lane activations materializing above it later.
+        self.materialize_deferred_lane();
+        self.active_roots.push(self.frames.len());
+        let result = self.with_call_roots([callee, this], |vm| {
             vm.call_user(
                 program,
                 function,
@@ -1158,7 +1163,9 @@ impl<H: Host> Vm<H> {
                     CallContext::IndirectEval(callee)
                 },
             )
-        })
+        });
+        self.active_roots.pop();
+        result
     }
 
     pub(super) fn private_home_binding_atom(&mut self, private: Atom) -> Atom {
