@@ -740,6 +740,60 @@ impl<H: Host> Vm<H> {
         frame.registers.copy_from_slice(registers);
     }
 
+    /// The frame `push_script_frame_with_registers` would push for a plain activation of `id`
+    /// (`Function::plain_activation`), made off the frame stack as `unstarted_frame_with`
+    /// detaches one: bound as `activate_plain_frame` binds it, with the `with` objects it
+    /// would push held by the frame, and `registers` moved into its file once rather than
+    /// over the values activation filled and placed. `None` for any other function, which
+    /// takes the push.
+    pub(super) fn detached_plain_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        (env, this): (Value, Value),
+        context: CallContext,
+        (passed, registers): (&[Value], &[Value]),
+    ) -> Option<Box<Frame>> {
+        let function = &p.function(id as usize);
+        if id == super::ROOT_FUNCTION_ID || !function.plain_activation(p) {
+            return None;
+        }
+        #[cfg(test)]
+        super::activation::note_frame_made();
+        self.promote_tier0_if_due(p, id);
+        self.profile.function(self.active_program.raw(), id as usize);
+        // The receiver is already coerced, so binding it cannot fail.
+        let this = self.lexical_activation_this(function, env, this).expect("a frameless activation's receiver binds");
+        let mut frame = self.pooled_frame();
+        let local_count = if function.call_plan(p).addresses_locals { usize::from(function.locals) } else { 0 };
+        frame.reset_locals_undefined(local_count);
+        self.initialize_frame_invocation(p, &mut frame, function, context, passed);
+        self.place_detached_frame(&mut frame, id, (env, this));
+        frame.with_objects = self.captured_with_objects_for_function(env, function.inherited_with_scope, p.kind);
+        // A `new.target` set for this activation has no observable binding to land in.
+        if self.take_construction_target(context).is_some() {
+            frame.context = frame.context.constructed();
+        }
+        frame.adopt_registers(function, registers);
+        Some(frame)
+    }
+
+    /// Places the detached frame of `id` (`detached_plain_frame`) at its function's start in
+    /// the active program, with environment `env` and bound receiver `this`, as
+    /// `activate_plain_frame` places a pushed one.
+    fn place_detached_frame(&self, frame: &mut Frame, id: u32, (env, this): (Value, Value)) {
+        frame.function = id;
+        frame.program = self.active_program;
+        frame.pc = 0;
+        frame.pc_is_resume = true;
+        frame.binding_site_pc = None;
+        frame.env = env;
+        frame.this = this;
+        frame.fixed_this = !this.is_deleted();
+        frame.captured = false;
+        frame.with_base = self.with_stack.len();
+    }
+
     /// A frame from the pool, or a fresh one; its fields are set by activation.
     pub(super) fn pooled_frame(&mut self) -> Box<Frame> {
         self.frame_pool.pop().unwrap_or_else(|| self.empty_frame())

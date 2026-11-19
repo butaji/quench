@@ -555,6 +555,19 @@ impl Frame {
         }
     }
 
+    /// Makes the file `registers`, a suspending activation's whole register window, sized as
+    /// `prepare_registers_for` sizes it for `function` with every slot then the window's: one
+    /// copy, not a fill the copy overwrites.
+    #[inline(always)]
+    fn adopt_registers(&mut self, function: &crate::bytecode::Function, registers: &[Value]) {
+        debug_assert_eq!(registers.len(), usize::from(function.registers));
+        self.js_jit_skip_entry_once = false;
+        self.reserve_suspension_window(function);
+        self.registers.clear();
+        self.registers.extend_from_slice(registers);
+        self.initialized_registers = self.initialized_registers.max(registers.len());
+    }
+
     /// Makes `locals` `count` undefined values. A pooled frame usually has the capacity already,
     /// so this is one capacity check and the stores.
     #[inline(always)]
