@@ -218,7 +218,7 @@ impl Stage for StencilStage {
         // `Value::number`: an integral double in int32 range (not `-0`) is an int32, NaN the
         // canonical NaN, any other double its own bits.
         let double = f64::from_bits(number);
-        let integer = double as i32;
+        let integer = crate::words::truncate32(double);
         if f64::from(integer) == double && (integer != 0 || number >> 63 == 0) {
             crate::layout::words::INT_TAG | u64::from(integer as u32)
         } else if double.is_nan() {

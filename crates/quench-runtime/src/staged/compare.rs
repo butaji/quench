@@ -6,7 +6,9 @@
 use super::object::object_record_at;
 use super::value::{is_direct_array, is_direct_object, is_direct_string};
 use super::{CallOut, Domain, Edge, NumericFrame, NumericStage, Operation, Step};
-use crate::bytecode::{Operand, WideInstruction};
+#[cfg(not(stencil_build))]
+use crate::bytecode::WideInstruction;
+use crate::bytecode::Operand;
 use crate::typed_ir::Type;
 use crate::vm::operations::{equality_binary_operator, equality_operator, NumberBitwise, NumberRelation};
 use crate::{Value, ValueType};
@@ -33,10 +35,10 @@ fn nullish_value(kind: ValueType) -> Value {
 }
 
 /// The `instanceof` operator.
-pub(crate) const INSTANCEOF_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::Instanceof as u32;
+pub(crate) const INSTANCEOF_OPERATOR: u32 = crate::vm::operations::binary_operator::Instanceof;
 
 /// The `in` operator.
-pub(crate) const IN_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::In as u32;
+pub(crate) const IN_OPERATOR: u32 = crate::vm::operations::binary_operator::In;
 
 /// What a `CompareJump` compares.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -123,6 +125,7 @@ impl Comparison {
 }
 
 impl<W, P> Operation<W, P> {
+    #[cfg(not(stencil_build))]
     /// The `JumpBinaryFalse` row: it jumps where the comparison fails.
     pub(super) fn decode_compare(instruction: WideInstruction) -> Self {
         let comparison = Comparison::of_operator(instruction.binary_operator_field());

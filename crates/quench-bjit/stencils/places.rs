@@ -11,9 +11,9 @@
 use crate::bytecode::{Operand, Register};
 use crate::codes::*;
 use crate::heap_rows::{context_word, payload, word_at};
-use crate::layout::{CONTEXT_THIS, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_STRING_RECORD_BASE};
+use crate::layout::{CONTEXT_THIS, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
 use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, string_length, value};
-use crate::typed_ir::Representation;
+use crate::typed_ir::{Representation, Type};
 use crate::words::*;
 
 pub(crate) const DEST: Register = 0;
@@ -187,6 +187,16 @@ pub(crate) fn deliver_number<const D: u8>(mut s: S, word: u64) -> Out {
     }
 }
 
+/// The row's outcome for the staged step `step` over `frame`: `next` where the step produced its word
+/// and every result fit its place, else the row leaves with the state as it was.
+#[inline(always)]
+pub(crate) fn settle<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, step: Step<u64, ()>, next: fn(S) -> Out) -> Out {
+    match step {
+        Step::Value(_) if !frame.refused => next(frame.s),
+        _ => Out::Exit(frame.s),
+    }
+}
+
 /// The row's outcome: continue where the staged work was done and every result fit its place, else leave with
 /// the registers as they were.
 #[inline(always)]
@@ -245,7 +255,7 @@ fn truthy<const P: u8, const H: u8>(s: &S) -> Option<bool> {
         Representation::Float64 => Some(stage().number_truthy(word)),
         Representation::Tagged => {
             let (undecided, truthy) = value::tagged_truthiness(&mut stage(), word);
-            (!undecided).then_some(truthy).or_else(|| string_truthy(s, word))
+            if undecided { string_truthy(s, word) } else { Some(truthy) }
         }
     }
 }
@@ -318,6 +328,26 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
             LEFT => rep_of(A),
             RIGHT => rep_of(B),
             _ => rep_of(D),
+        }
+    }
+
+    /// The type a register's place proves: an int32 place (`rep_of` Int32/Int64) an int32, a double place a Number; a tagged
+    /// place proves nothing. The staged steps skip the tag tests this answers (`staged::numeric`, `staged::compare`).
+    #[inline(always)]
+    fn register_type(&self, register: Register) -> Option<crate::typed_ir::Type> {
+        let place = match register {
+            LEFT => A,
+            RIGHT => B,
+            DEST => D,
+            _ => return None,
+        };
+        match place {
+            CONST | IMM => None,
+            _ => match rep_of(place) {
+                Representation::Int32 | Representation::Int64 => Some(Type::INT32),
+                Representation::Float64 => Some(Type::NUMBER),
+                Representation::Tagged => None,
+            },
         }
     }
 
@@ -457,7 +487,10 @@ fn local_slot(s: &S, slot: u16) -> Option<usize> {
     (locals != 0 && u64::from(slot) < count).then(|| locals + usize::from(slot) * core::mem::size_of::<u64>())
 }
 
-impl<const D: u8, const A: u8, const B: u8> crate::staged::PropertyFrame<Concrete> for Places<D, A, B> {}
+impl<const D: u8, const A: u8, const B: u8> crate::staged::PropertyFrame<Concrete> for Places<D, A, B> {
+    type Plans = crate::staged::NoPlans;
+    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+}
 
 impl<const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Places<D, A, B> {
     /// ToInt32 of the operand: an int place as it is, a double truncated (`bitwise_place`).

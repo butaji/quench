@@ -3,7 +3,7 @@
 use super::{Frame, Stage, Step};
 use crate::bytecode::{Operand, Register};
 #[cfg(not(stencil_build))]
-use oxc_ast::ast::BinaryOperator;
+use crate::vm::operations::binary_operator;
 use crate::vm::operations::{
     int32_bitwise_bits, CheckedInt32Stage, NumberArithmetic, NumberArithmeticStage, NumberBitwise, NumberF64Stage,
     NumberRelation, NumberUnary, PartialOrderStage,
@@ -279,7 +279,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 fn general_binary(operation: &NumberOperation) -> Option<(super::CallOut, Option<Register>)> {
     let (destination, left, right, operator) = match *operation {
         NumberOperation::Arithmetic { destination, left, right, operation, .. } => (destination, left, right, operation.binary_operator()),
-        NumberOperation::Remainder { destination, left, right, .. } => (destination, left, right, BinaryOperator::Remainder as u32),
+        NumberOperation::Remainder { destination, left, right, .. } => (destination, left, right, binary_operator::Remainder),
         NumberOperation::Bitwise { destination, left, right, operation } => (destination, left, right, operation.binary_operator()),
         NumberOperation::RelationValue { destination, left, right, relation, .. }
             if !matches!(relation, NumberRelation::Equal | NumberRelation::NotEqual) =>
@@ -415,8 +415,8 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 /// The oxc unary operator `operation` names, which the VM's `unary` takes (`CallOut::Unary`).
 fn unary_operator(operation: NumberUnary) -> u32 {
     match operation {
-        NumberUnary::Plus => oxc_ast::ast::UnaryOperator::UnaryPlus as u32,
-        NumberUnary::Negate => oxc_ast::ast::UnaryOperator::UnaryNegation as u32,
+        NumberUnary::Plus => crate::vm::operations::unary_operator::UnaryPlus,
+        NumberUnary::Negate => crate::vm::operations::unary_operator::UnaryNegation,
     }
 }
 
@@ -438,7 +438,7 @@ fn bitwise_not<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
     destination: Register, source: Operand) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let Some(value) = frame.int_operand(stage, source, miss) else {
-        return general_unary(stage, frame, oxc_ast::ast::UnaryOperator::BitwiseNot as u32, (destination, source));
+        return general_unary(stage, frame, crate::vm::operations::unary_operator::BitwiseNot, (destination, source));
     };
     let all_ones = stage.i32_constant(-1);
     int_arithmetic_result(stage, frame, destination, all_ones, value,
@@ -548,7 +548,7 @@ pub(crate) fn binary_operation(operator: u32, destination: Register, left: Opera
         return Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Float64,
             overflow: Overflow::Widen, zero: NegativeZero::Ignore });
     }
-    if operator == BinaryOperator::Remainder as u32 {
+    if operator == binary_operator::Remainder {
         return Some(NumberOperation::Remainder { destination, left, right, domain: Domain::Float64,
             zero: NegativeZero::Exit, divisor_nonzero: false });
     }
@@ -569,7 +569,7 @@ pub(crate) fn int32_binary_operation(operator: u32, destination: Register, left:
         Some(NumberArithmetic::Divide) => None,
         Some(operation) => Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Int32,
             overflow: Overflow::Exit, zero: NegativeZero::Exit }),
-        None if operator == BinaryOperator::Remainder as u32 =>
+        None if operator == binary_operator::Remainder =>
             Some(NumberOperation::Remainder { destination, left, right, domain: Domain::Int32,
                 zero: NegativeZero::Exit, divisor_nonzero: false }),
         None => None,

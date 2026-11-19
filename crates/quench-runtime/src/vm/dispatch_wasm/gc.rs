@@ -188,13 +188,13 @@ impl<H: Host> Vm<H> {
         let (reference, index) = (reference.to_bits(), u64::from(index));
         let mut stage = HeapStage { vm: self };
         match value {
-            Some(value) => field_write(&mut stage, aggregate, reference, index, field, value.to_bits()).map(|()| None),
+            Some(value) => {
+                let bits = stage.vm.wasm_stored_bits(field, value);
+                field_write(&mut stage, aggregate, reference, index, field, bits).map(|()| None)
+            }
             None => {
                 let word = field_read(&mut stage, aggregate, reference, index, field, access)?;
-                Ok(Some(match access {
-                    GcFieldAccess::Read => Value::from_bits(word),
-                    _ => Value::integer(word as i32),
-                }))
+                Ok(Some(stage.vm.wasm_field_value(field, access, word)))
             }
         }
     }

@@ -191,7 +191,9 @@ type Rows = Vec<(String, String)>;
 /// Compiles every shard for `cpu` (at most `shards::workers` rustc processes at once), reads each
 /// object's rows, and merges them into the sorted library with its counts.
 fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>) -> (Rows, Counts) {
-    let parallelism = thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    // `QUENCH_STENCIL_WORKERS` caps the rustc processes on a box whose memory, not its cores, bounds them.
+    let parallelism = env::var("QUENCH_STENCIL_WORKERS").ok().and_then(|jobs| jobs.parse().ok())
+        .unwrap_or_else(|| thread::available_parallelism().map_or(1, std::num::NonZero::get));
     let next = AtomicUsize::new(0);
     let built: Vec<(Rows, Counts)> = thread::scope(|scope| {
         let workers: Vec<_> = (0..shards::workers(count, parallelism))

@@ -46,6 +46,9 @@ impl Lowering<'_, '_> {
         let array = self.loop_array(pc, Some(base));
         if let Some(array) = array.filter(|array| self.reads_int32(*array))
             && self.integer_element_read(state, (destination, key), array, exit) { return true; }
+        if let Some(array) = array.filter(|array| self.int_only.contains(&(array.header, array.source)))
+            && self.observed.at(pc).is_some_and(|ty| ty.is_int32())
+            && self.proved_int_element_read(state, pc, (destination, key), array, exit) { return true; }
         // An element read as a Number (`number_reads`) needs no hole test of its own: a hole is a NaN
         // pattern, which the Number proof's one NaN test sends to the tag check that leaves.
         let packed = self.observed.at(pc).is_some();
@@ -132,6 +135,54 @@ impl Lowering<'_, '_> {
         };
         let Some(word) = word else { return false };
         let int = if self.raw_lane(word) == Lane::I64 { self.raw_unary(Unary::Narrow(Lane::I32), word) } else { word };
+        self.set_int(state, destination, int);
+        true
+    }
+
+    /// Whether the loop array `array` is read only as int32s over a backing no store of its loop can
+    /// change, so its entering edge can prove every element an int32 once (`hoist_arrays`). Such an
+    /// array is read-only (a writable one's stores uncount its backing), its loop holds no element
+    /// store or append (a store may move the backing, which reloads every view around it, or change
+    /// its count), and every element read in the loop is observed int32 (a read observed otherwise
+    /// would leave at the entry on every run that found a non-int32 element). The loop must read it,
+    /// else the entry guard buys nothing.
+    pub(super) fn int_only_array(&self, array: LoopArray) -> bool {
+        if array.views != ElementViews::Dense || array.writable { return false; }
+        let mut reads = false;
+        for pc in array.header..=array.back {
+            let instruction = self.unit.instructions[pc];
+            // A call or construction may run code that stores into the backing in place, which no
+            // reload follows: its loop keeps the per-read test.
+            let stores = matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementWrite { .. }))
+                || native_calls::appends(&self.intrinsics, pc)
+                || crate::staged::meaning::means(&instruction, crate::staged::meaning::Meaning::Call)
+                || crate::staged::meaning::means(&instruction, crate::staged::meaning::Meaning::Construct);
+            if stores { return false; }
+            if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) {
+                if !self.observed.at(pc).is_some_and(|ty| ty.is_int32()) { return false; }
+                reads = true;
+            }
+        }
+        reads
+    }
+
+    /// An element read of the int-only array `array` (`int_only_array`) into `destination` as the int32
+    /// its word is. No hole and no non-int32 element is present, so the word needs no tag test, and
+    /// `Narrow` takes its int32 payload. The index is an int32 register (`int`), the view's length
+    /// bounds it unless the access is proved within it (`ranges`). A key that is no register is the
+    /// general read's, which takes this path not at all: `false`, with nothing emitted.
+    fn proved_int_element_read(&mut self, state: &mut State, pc: usize, (destination, key): (Register, crate::bytecode::Operand),
+        array: LoopArray, exit: ir::Block) -> bool {
+        let Some(register) = key.register_index() else { return false };
+        let index = self.int(state, register, exit);
+        let (values, length) = self.hoisted_view(array);
+        let within = self.ranges.in_bounds(pc);
+        let word = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            crate::staged::elements::int_element(&mut stage, values, length, index, within, exit)
+                .expect("the emit stage continues past its guards")
+        };
+        let int = self.raw_unary(Unary::Narrow(Lane::I32), word);
         self.set_int(state, destination, int);
         true
     }

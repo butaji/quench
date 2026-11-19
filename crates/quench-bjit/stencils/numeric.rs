@@ -220,7 +220,7 @@ fn guard_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) 
 /// what makes the test redundant.
 #[inline(always)]
 fn unbox_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    let word = read_place::<MEM, LEFT>(&frame.s);
+    let word = read_place::<MEM, { LEFT as u8 }>(&frame.s);
     let value = if is_int(word) { widen(word) } else { word };
     frame.write(&mut Concrete::from_hole(0), DEST, value, Representation::Float64);
     Out::Next(frame.s)
@@ -230,7 +230,7 @@ fn unbox_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) 
 /// caller's argument proof holds the slot an int32 (`CallRecord::proven_args`'s int32 bits).
 #[inline(always)]
 fn unbox_int_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    let word = read_place::<MEM, LEFT>(&frame.s);
+    let word = read_place::<MEM, { LEFT as u8 }>(&frame.s);
     frame.write(&mut Concrete::from_hole(0), DEST, word as u32 as u64, Representation::Int32);
     Out::Next(frame.s)
 }

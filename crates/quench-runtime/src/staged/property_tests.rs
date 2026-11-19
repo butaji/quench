@@ -239,7 +239,7 @@ fn the_property_instructions_decode_to_their_operations() {
     use crate::bytecode::{Op, WideInstruction};
     let decode = |instruction| Operation::<u64, ()>::decode(instruction, crate::staged::DecodeContext::EMPTY);
     let get = decode(WideInstruction::new(Op::GetField, 1, 2, 3, 4)).expect("a register-based read decodes");
-    assert!(matches!(get, Operation::GetField { base, lookup: FieldLookup::Atom { atom: 4, cache_site: 3, .. } } if base == FieldBase::register(2)));
+    assert!(matches!(get, Operation::GetField { base, lookup: FieldLookup::Atom { atom: 4, cache_site: 3, .. }, .. } if base == FieldBase::register(2)));
     let set = decode(WideInstruction::new(Op::SetField, 1, 2, 3, 9)).expect("a store decodes");
     assert!(matches!(set, Operation::SetField { value: 1, base: Some(2), atom: 9, site: 3, .. }));
     let this = decode(WideInstruction::new(Op::SetThisField, 1, 0, 3, 9)).expect("a store to this decodes");
@@ -247,7 +247,7 @@ fn the_property_instructions_decode_to_their_operations() {
     let delete = decode(WideInstruction::new(Op::Delete, 1, 2, 3, 1)).expect("delete decodes");
     assert!(matches!(delete, Operation::Delete { destination: 1, base: 2, key: 3, strict: true }));
     let has = decode(WideInstruction::new(Op::Binary, 1, Operand(2).0, Operand(3).0,
-        oxc_ast::ast::BinaryOperator::In as u32)).expect("`in` of registers decodes");
+        crate::vm::operations::binary_operator::In)).expect("`in` of registers decodes");
     assert!(matches!(has, Operation::Binary { left, right, .. } if left == Operand::register(2) && right == Operand::register(3)), "`in` is the VM's Binary call-out row");
 }
 
