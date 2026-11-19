@@ -2,6 +2,7 @@
 //! decoder for the opcode (`Op::staged`), and its queries over instructions. `staged.rs` re-exports it.
 
 use super::*;
+use super::wasm_jump::WasmJump;
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]

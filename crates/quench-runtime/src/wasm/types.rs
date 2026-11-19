@@ -3,6 +3,7 @@
 
 mod ancestry;
 mod equivalence;
+use equivalence::Equivalence;
 mod fingerprint;
 
 use super::gc::ObjectLayout;
