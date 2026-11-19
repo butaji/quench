@@ -112,7 +112,7 @@ impl<'a> Compiler<'a> {
             let solved = self.lower_function(function, undefined_constant);
             function.register_roots = liveness::register_roots_from(function, self.method_arguments(), self.field_sites.as_slice(), self.superinstructions.as_slice(), solved);
         } else {
-            self.settle_dispatch(function);
+            self.settle_dispatch_only(function);
         }
     }
 
@@ -158,6 +158,8 @@ pub(crate) fn settle_deferred_rewrite(program: &crate::bytecode::ResidualProgram
         ),
         RewritePlan::Append => rewrite::apply(function, program, &mut SiteTable::grow(fields), &mut SiteTable::grow(supers)),
     }
+    // The rewrites leave their `Nop`s in place; this settles the record without lowering it.
+    rewrite::remove_nops(function, &mut None);
     function.dispatch = Compiler::dispatch_class(&function.code, &function.wide);
 }
 

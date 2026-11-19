@@ -3,7 +3,7 @@ use crate::bytecode::{
     Function, Instr, NumericLocalStoreTarget, Op, Operand, REGISTER_MASK, specialized_numeric_op,
 };
 
-use super::rewrite::{LOCAL_READERS, NUMERIC_INDEX_CONSUMERS, NUMERIC_LOCAL_PRODUCERS, OpSet, protected_positions, relocate};
+use super::rewrite::{LOCAL_READERS, NOP, NUMERIC_INDEX_CONSUMERS, NUMERIC_LOCAL_PRODUCERS, OpSet, next_live, protected_positions};
 
 type Rule = fn(&[Instr]) -> Option<NumericLocalStoreTarget>;
 
@@ -47,7 +47,17 @@ pub(super) fn apply(function: &mut Function, live: Option<&[RegisterSet]>) {
         compact_binary_stores(function, live, NUMERIC_COMPACT_RULES, TRIPLE_COMPACT_RULES);
     }
     for pc in 0..function.code.len() {
-        if let Some(target) = RULES.iter().find_map(|rule| rule(&function.code[pc..])) {
+        if function.code[pc].op() == NOP {
+            continue;
+        }
+        // The rules read the live instructions from `pc`, the `Nop`s they fall through skipped.
+        let window: smallvec::SmallVec<[Instr; 3]> = function.code[pc..]
+            .iter()
+            .copied()
+            .filter(|instruction| instruction.op() != NOP)
+            .take(3)
+            .collect();
+        if let Some(target) = RULES.iter().find_map(|rule| rule(&window[..])) {
             function.code[pc].set_numeric_local_store_target(Some(target));
         }
     }
@@ -71,73 +81,66 @@ fn compact_binary_stores(
     rules: &[CompactRule],
     triple_rules: &[TripleCompactRule],
 ) -> bool {
-    let old = std::mem::take(&mut function.code);
-    let mut changed = false;
     let protected = protected_positions(
-        &old,
+        &function.code,
         &function.wide,
         &function.handlers,
         function.parameter_end_pc,
         &function.binding_sites,
     );
-    let mut code = Vec::with_capacity(old.len());
-    let mut map = vec![0; old.len() + 1];
+    let mut changed = false;
     let mut pc = 0;
-    while pc < old.len() {
-        map[pc] = code.len();
-        let triple = old
-            .get(pc..pc + 3)
-            .filter(|_| !protected.contains(pc + 1) && !protected.contains(pc + 2))
-            .and_then(|window| {
-                let live_after = live.get(pc + 3).copied().unwrap_or(RegisterSet::MAX);
-                triple_rules
-                    .iter()
-                    .filter(|rule| rule.pattern.iter().zip(window).all(|(set, instruction)| set[instruction.op() as usize]))
-                    .find_map(|rule| {
-                        (rule.replacement)(window[0], window[1], window[2], live_after)
-                    })
-            });
-        if let Some(replacement) = triple {
-            map[pc + 1] = code.len();
-            map[pc + 2] = code.len();
-            code.push(replacement);
-            changed = true;
-            pc += 3;
+    while pc < function.code.len() {
+        let first = function.code[pc];
+        if first.op() == NOP {
+            pc += 1;
             continue;
         }
-        let replacement = old
-            .get(pc + 1)
-            .filter(|_| !protected.contains(pc + 1))
-            .and_then(|second| {
-                let first = old[pc];
-                let live_after = live.get(pc + 2).copied().unwrap_or(RegisterSet::MAX);
+        // The window is the next instructions that are not `Nop`s, each fused one left in place
+        // as a `Nop` by an earlier rewrite falling through.
+        let second = next_live(&function.code, pc);
+        let third = second.and_then(|second| next_live(&function.code, second));
+        let triple_window = match (second, third) {
+            (Some(second), Some(third)) if !(pc + 1..=third).any(|at| protected.contains(at)) => Some((second, third)),
+            _ => None,
+        };
+        let triple = triple_window.and_then(|(second_pc, third_pc)| {
+            let window = [first, function.code[second_pc], function.code[third_pc]];
+            let live_after = live.get(third_pc + 1).copied().unwrap_or(RegisterSet::MAX);
+            triple_rules
+                .iter()
+                .filter(|rule| rule.pattern.iter().zip(window.iter()).all(|(set, instruction)| set[instruction.op() as usize]))
+                .find_map(|rule| (rule.replacement)(window[0], window[1], window[2], live_after))
+                .map(|replacement| (replacement, second_pc, third_pc))
+        });
+        if let Some((replacement, second_pc, third_pc)) = triple {
+            function.code[pc] = replacement;
+            function.code[second_pc] = Instr::new(NOP, 0, 0, 0, 0);
+            function.code[third_pc] = Instr::new(NOP, 0, 0, 0, 0);
+            changed = true;
+            pc = third_pc + 1;
+            continue;
+        }
+        let pair = second
+            .filter(|&second_pc| !(pc + 1..=second_pc).any(|at| protected.contains(at)))
+            .and_then(|second_pc| {
+                let second_instruction = function.code[second_pc];
+                let live_after = live.get(second_pc + 1).copied().unwrap_or(RegisterSet::MAX);
                 rules
                     .iter()
-                    .filter(|rule| rule.first[first.op() as usize] && rule.second == second.op())
-                    .find_map(|rule| (rule.replacement)(first, *second, live_after))
+                    .filter(|rule| rule.first[first.op() as usize] && rule.second == second_instruction.op())
+                    .find_map(|rule| (rule.replacement)(first, second_instruction, live_after))
+                    .map(|replacement| (replacement, second_pc))
             });
-        if let Some(replacement) = replacement {
-            map[pc + 1] = code.len();
-            code.push(replacement);
+        if let Some((replacement, second_pc)) = pair {
+            function.code[pc] = replacement;
+            function.code[second_pc] = Instr::new(NOP, 0, 0, 0, 0);
             changed = true;
-            pc += 2;
+            pc = second_pc + 1;
         } else {
-            code.push(old[pc]);
             pc += 1;
         }
     }
-    map[old.len()] = code.len();
-    relocate(
-        &mut code,
-        &mut function.wide,
-        &map,
-        &mut function.handlers,
-        &mut function.parameter_end_pc,
-        &mut function.binding_sites,
-        &mut function.source_positions,
-        &old,
-    );
-    function.code = code;
     changed
 }
 
@@ -293,6 +296,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
+        crate::compile::rewrite::remove_nops(&mut dead, &mut None);
         assert_eq!(dead.code.len(), 2);
         assert_eq!(dead.code[0].a(), NUMERIC_LOCAL_TARGET | 3);
 
@@ -303,6 +307,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
+        crate::compile::rewrite::remove_nops(&mut live, &mut None);
         assert_eq!(live.code.len(), 3);
     }
 
@@ -381,6 +386,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
+        crate::compile::rewrite::remove_nops(&mut dead, &mut None);
         assert_eq!(dead.code.len(), 2);
         assert_eq!(crate::bytecode::Operand(dead.code[0].b()).tag(), 3);
         assert_eq!(crate::bytecode::Operand(dead.code[0].c()).tag(), 3);
@@ -392,6 +398,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
+        crate::compile::rewrite::remove_nops(&mut live, &mut None);
         assert_eq!(live.code.len(), 4);
     }
 }

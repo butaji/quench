@@ -2291,7 +2291,7 @@ const RECOGNISED_LEAF_INSTRUCTIONS: usize = 16;
 /// small leaf's call entry recognises it. Any other body mostly runs once (octane-code-load:
 /// coalescing cost 4.7% of the run and saved no instruction on any V8-v7 or JetStream row).
 fn coalescing_repays(function: &BcFunction) -> bool {
-    function.code.len() <= RECOGNISED_LEAF_INSTRUCTIONS || function.loops()
+    rewrite::live_count(&function.code) <= RECOGNISED_LEAF_INSTRUCTIONS || function.loops()
 }
 
 /// The lowering passes after a function's dispatch class is settled (`settle_dispatch`):
@@ -2324,6 +2324,7 @@ pub(crate) fn lower_settled<'a>(
         object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
     }
     rest_reads::rewrite(function, methods, field_sites, superinstructions, &|atom| atom_name(atom as usize) == Some("length"));
+    let mut solved = None;
     if function
         .code
         .iter()
@@ -2331,10 +2332,13 @@ pub(crate) fn lower_settled<'a>(
     {
         let live = liveness::analyze(function, methods, field_sites, superinstructions);
         if !numeric::apply_plain_local_stores(function, live.as_deref()) {
-            return live;
+            solved = live;
         }
     }
-    None
+    // The one compaction of the lowering: the passes above leave the `Nop`s their in-place
+    // rewrites made, and the live sets this returns are compacted with the same map.
+    rewrite::remove_nops(function, &mut solved);
+    solved
 }
 
 impl<'a> Compiler<'a> {
@@ -3554,7 +3558,7 @@ impl<'a> Compiler<'a> {
                     solved,
                 );
             } else {
-                self.settle_dispatch(function);
+                self.settle_dispatch_only(function);
             }
             function.shrink_to_fit();
         }
@@ -4575,15 +4579,23 @@ impl<'a> Compiler<'a> {
         };
     }
 
+    /// `settle_dispatch` for a function whose lowering ends there, which therefore drops the
+    /// `Nop`s its rewrites left (`lower_settled` does so for the functions it lowers).
+    fn settle_dispatch_only(&self, function: &mut BcFunction) {
+        self.settle_dispatch(function);
+        rewrite::remove_nops(function, &mut None);
+    }
+
     fn dispatch_class(code: &[Instr], wide: &[WideInstruction]) -> DispatchClass {
         if !wide.is_empty() {
             return DispatchClass::General;
         }
+        let live = rewrite::live_count(code);
         let binaries = code
             .iter()
             .filter(|instruction| instruction.op() == Op::Binary)
             .count();
-        if code.len() >= 32 && binaries * 3 >= code.len() {
+        if live >= 32 && binaries * 3 >= live {
             DispatchClass::Numeric
         } else {
             DispatchClass::General

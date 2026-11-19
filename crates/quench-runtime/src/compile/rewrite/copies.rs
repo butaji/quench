@@ -106,7 +106,7 @@ fn forwarded(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: 
     let at = move_reader(function, &analysis.transfers, scope, pc)?;
     // Legacy `f.arguments` reflection may rewrite a parameter during the instructions between.
     let consumer = function.code[at];
-    let crossed = at > pc + 1 && register_bit(source) & scope.parameters != 0;
+    let crossed = next_live(&function.code, pc) != Some(at) && register_bit(source) & scope.parameters != 0;
     if crossed || consumer.is_wide()
         || liveness::live_out(&analysis.successors, &analysis.live, at) & register_bit(destination) != 0
     {
@@ -127,11 +127,21 @@ fn move_reader(function: &BcFunction, transfers: &[(RegisterSet, RegisterSet)], 
     const WINDOW: usize = 8;
     let mov = function.code[pc];
     let (source, destination) = (register_bit(mov.register_b()), register_bit(mov.result_register()));
-    for at in (pc + 1..function.code.len()).take(WINDOW) {
+    // A `Nop` falls through and touches no register, so it does not count toward the window;
+    // a protected one still ends the search, as control may join there.
+    let mut examined = 0;
+    for at in pc + 1..function.code.len() {
         let (read, written) = transfers[at];
         if scope.protected.contains(at) || scope.in_handler(at) {
             return None;
         }
+        if function.code[at].op() == NOP {
+            continue;
+        }
+        if examined == WINDOW {
+            break;
+        }
+        examined += 1;
         if read & destination != 0 {
             return Some(at);
         }
