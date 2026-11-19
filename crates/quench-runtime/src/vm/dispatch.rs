@@ -809,19 +809,9 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::GetIndex => {
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.index_dispatch(false, false);
-                let base = self.resolve_operand(p, f, i.operand_b())?;
-                let key = self.resolve_operand(p, f, i.operand_c())?;
-                if allow_inline_calls
-                    && let Some(getter) = self.proved_symbol_getter(base, key)
-                    && let Some(result) =
-                        self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
-                {
-                    return result;
+                if let Some(result) = self.step_index_get(p, f, i, *pc, allow_inline_calls)? {
+                    return Ok(result);
                 }
-                let v = self.get_index(p, base, key)?;
-                self.write(f, i.result_register(), v);
             }
             Op::CheckPrivate => {
                 let object = self.read(f, i.register_a());
@@ -1585,6 +1575,24 @@ impl<H: Host> Vm<H> {
             _ => return self.step_unlisted(p, f, i, pc),
         }
         Ok(StepResult::Continue)
+    }
+
+    /// `GetIndex` of the record `i` at `pc` in frame `f`: the element written to its result register, or
+    /// `Some` where an inlined getter answered the read with the call's own result.
+    fn step_index_get(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize, allow_inline_calls: bool) -> Result<Option<StepResult>, JsError> {
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.index_dispatch(false, false);
+        let base = self.resolve_operand(p, f, i.operand_b())?;
+        let key = self.resolve_operand(p, f, i.operand_c())?;
+        if allow_inline_calls
+            && let Some(getter) = self.proved_symbol_getter(base, key)
+            && let Some(result) = self.try_inline_getter(p, f, pc, getter, base, i.result_register())
+        {
+            return result.map(Some);
+        }
+        let v = self.get_index(p, base, key)?;
+        self.write(f, i.result_register(), v);
+        Ok(None)
     }
 
     /// An opcode with no arm of its own in `step`: a row the catalog stages among the names and

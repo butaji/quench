@@ -153,6 +153,9 @@ pub(crate) use register_frame::{Constant, Frame, Step, bound_this, jump_if, load
 mod operation;
 pub(crate) use operation::Operation;
 
+mod binary_class;
+pub(crate) use binary_class::BinaryClass;
+
 mod edge;
 pub(crate) use edge::Edge;
 

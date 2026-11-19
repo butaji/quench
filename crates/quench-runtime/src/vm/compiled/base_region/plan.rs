@@ -337,7 +337,9 @@ fn number_plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): 
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || holds_number(dst);
     // A poll row also names where the run's backward-edge counter lives (`jump_row`).
     let counter = [std::mem::offset_of!(super::super::CallContext, head.adapter_payload) as u64, std::mem::offset_of!(super::super::JsStepDispatch, head.loop_entry) as u64];
-    let holes = padded_holes(if polls { [interrupt, counter[0], counter[1]] } else { [dst_hole, a_hole, b_hole] });
+    // A poll reads the process-wide attention byte first (hole 3), so its common case is one byte load.
+    let attention = crate::execution_interrupt::attention_address();
+    let holes = padded_holes(if polls { [interrupt, counter[0], counter[1], attention] } else { [dst_hole, a_hole, b_hole, 0] });
     Ok(Planned { node: Some(Node::Number(numeric::library::canonical(row.code()))), ..Planned::single(stencil, holes, decoded.target, exits.then_some(pc)) })
 }
 

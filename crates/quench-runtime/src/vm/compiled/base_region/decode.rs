@@ -1,7 +1,7 @@
 use super::*;
 use crate::vm::global_facts::LexicalSlot;
 use crate::staged::property::StoreArm;
-use crate::staged::{Constant, DecodeContext, NumberOperation, Operation};
+use crate::staged::{BinaryClass, Constant, DecodeContext, NumberOperation, Operation};
 mod fields;
 use fields::{field_row, field_store_row};
 pub(super) use fields::{site_read_row, stores_field};
@@ -9,30 +9,24 @@ mod numeric;
 use numeric::numeric_row;
 pub(super) use numeric::{staged_binary, staged_unary};
 
-/// The row kind of a binary operator: the shared operation rows decide which Number operation an
-/// operator is (`vm::operations::number_rows`, the table every tier consumes), and the row
-/// vocabulary names each operation once. A relational jump takes only a relation, a `Binary` only an
-/// arithmetic or bitwise operation.
-pub(super) fn kind_of(operator: u32, relational: bool) -> Option<Kind> {
-    use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
-    if relational {
-        return NumberRelation::from_operator(operator).map(relation_kind);
-    }
-    let arithmetic = NumberArithmetic::from_operator(operator).map(|operation| match operation {
-        NumberArithmetic::Add => Kind::Add,
-        NumberArithmetic::Subtract => Kind::Sub,
-        NumberArithmetic::Multiply => Kind::Mul,
-        NumberArithmetic::Divide => Kind::Div,
-    });
-    let remainder = (operator == crate::vm::operations::REMAINDER).then_some(Kind::Rem);
-    arithmetic.or(remainder).or_else(|| NumberBitwise::from_operator(operator).map(|operation| match operation {
-        NumberBitwise::And => Kind::And,
-        NumberBitwise::Or => Kind::Or,
-        NumberBitwise::Xor => Kind::Xor,
-        NumberBitwise::ShiftLeft => Kind::Shl,
-        NumberBitwise::ShiftRight => Kind::Shr,
-        NumberBitwise::ShiftRightUnsigned => Kind::UShr,
-    }))
+/// The row kind of a `Binary`'s operator class (`staged::BinaryClass`, the one classification of the operators):
+/// an arithmetic, bitwise or remainder operator's row. A relation as a value, or any other operator, has no Number row.
+pub(super) fn kind_of(class: BinaryClass) -> Option<Kind> {
+    use crate::vm::operations::{NumberArithmetic, NumberBitwise};
+    Some(match class {
+        BinaryClass::Arithmetic(NumberArithmetic::Add) => Kind::Add,
+        BinaryClass::Arithmetic(NumberArithmetic::Subtract) => Kind::Sub,
+        BinaryClass::Arithmetic(NumberArithmetic::Multiply) => Kind::Mul,
+        BinaryClass::Arithmetic(NumberArithmetic::Divide) => Kind::Div,
+        BinaryClass::Remainder => Kind::Rem,
+        BinaryClass::Bitwise(NumberBitwise::And) => Kind::And,
+        BinaryClass::Bitwise(NumberBitwise::Or) => Kind::Or,
+        BinaryClass::Bitwise(NumberBitwise::Xor) => Kind::Xor,
+        BinaryClass::Bitwise(NumberBitwise::ShiftLeft) => Kind::Shl,
+        BinaryClass::Bitwise(NumberBitwise::ShiftRight) => Kind::Shr,
+        BinaryClass::Bitwise(NumberBitwise::ShiftRightUnsigned) => Kind::UShr,
+        BinaryClass::Relation(_) | BinaryClass::Other => return None,
+    })
 }
 
 /// The row kind of a Number relation: the compare-and-jump rows and the relational `kind_of` both take it.
@@ -92,6 +86,9 @@ pub(super) struct Decoded {
     pub(super) hole: u64,
     /// How an instruction no row takes runs (`steps`), in place of the numeric `kind`.
     pub(super) step: Option<Step>,
+    /// The instruction a helper step runs packed (`WideInstruction::words`), where a family covers its opcode
+    /// and the helper table has the packed helper (`steps::packed_words`).
+    pub(super) packed: Option<[u64; 2]>,
     /// The atom a field store holds unnamed by method caches (`Known::stores`), a Stable fact.
     pub(super) atom: Option<Atom>,
     /// The receiver a folded prototype-held read stands on, with its value in `hole`.
@@ -153,7 +150,7 @@ pub(super) struct Decoded {
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, proven: false, flat: false, relies: false, admitted: false, recheck: false }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, proven: false, flat: false, relies: false, admitted: false, recheck: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -255,7 +252,7 @@ pub(super) fn staged_of(instruction: WideInstruction) -> Option<Operation<(), ()
 
 pub(super) fn binary(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
     let operator = instruction.binary_operator();
-    let kind = kind_of(operator, false).ok_or_else(|| format!("{:?}:{operator}", instruction.op()))?;
+    let kind = kind_of(BinaryClass::of_operator(operator)).ok_or_else(|| format!("{:?}:{operator}", instruction.op()))?;
     Ok(Decoded::number(
         kind,
         Some(instruction.result_register()),
@@ -277,6 +274,48 @@ pub(super) fn relation_jump(numbers: Numbers, instruction: WideInstruction, comp
         _ => return Err("comparison: not a Number relation".to_string()),
     };
     Ok(Decoded::number(kind, None, Some(source(numbers, left)?), Some(source(numbers, right)?), Some(instruction.jump_target())))
+}
+
+/// The row of a comparison jump no Number relation names (`BIT_TEST`, `NULLISH_EQ`/`NULLISH_NE`, `BOOL_TRUE`/`BOOL_FALSE`):
+/// `if (a & b)`, a loose test against `null` or `undefined` (`nullish_comparison`, the one derivation the lane
+/// shares), and `a === true` or `a === false` against a constant Boolean. The row runs the staged step of the same
+/// comparison, so each test reads only the operands it names.
+pub(super) fn test_row(numbers: Numbers, known: Known, instruction: WideInstruction) -> Option<Decoded> {
+    use crate::staged::compare::Comparison;
+    use crate::vm::operations::NumberBitwise;
+    let Some(Operation::CompareJump { comparison, left, right, negate: true }) = staged_of(instruction) else { return None };
+    let target = Some(instruction.jump_target());
+    match comparison {
+        Comparison::Bitwise(NumberBitwise::And) =>
+            Some(Decoded::number(Kind::BitTest, None, Some(source(numbers, left).ok()?), Some(source(numbers, right).ok()?), target)),
+        Comparison::Equality { strict: false, .. } => {
+            let nullish = crate::vm::compiled::nullish_comparison(&known.program.constants, instruction, |_| crate::typed_ir::Type::ANY)?;
+            let kind = if nullish.negated { Kind::NullishNe } else { Kind::NullishEq };
+            Some(Decoded::number(kind, None, Some(Source::Register(nullish.source)), None, target))
+        }
+        Comparison::Equality { strict: true, negated: false } => boolean_test(known, (left, right)).map(|(kind, register)| {
+            Decoded::number(kind, None, Some(Source::Register(register)), None, target)
+        }),
+        _ => None,
+    }
+}
+
+/// The Boolean identity test a register `===` a constant Boolean is: its row kind and the register.
+fn boolean_test(known: Known, (left, right): (crate::bytecode::Operand, crate::bytecode::Operand)) -> Option<(Kind, Register)> {
+    let constant = |operand: crate::bytecode::Operand| (operand.kind() == Some(OperandKind::Constant))
+        .then(|| known.constants.get(usize::from(operand.payload())).copied()).flatten();
+    let (register, expected) = match (left.register_index(), right.register_index()) {
+        (Some(register), None) => (register, constant(right)?),
+        (None, Some(register)) => (register, constant(left)?),
+        _ => return None,
+    };
+    if expected == Value::TRUE {
+        Some((Kind::BoolTrue, register))
+    } else if expected == Value::FALSE {
+        Some((Kind::BoolFalse, register))
+    } else {
+        None
+    }
 }
 
 pub(super) fn load_const(numbers: Numbers, destination: Register, index: usize) -> Result<Decoded, String> {
@@ -397,6 +436,7 @@ fn value_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
 pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     numeric_row(&|index| region.number_constant(index), instruction)
         .flatten()
+        .or_else(|| test_row(&|index| region.number_constant(index), known, instruction))
         .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0)
             .map(|row| Decoded { declined: row.stored_slot_type().map(|_| lowering(instruction, known, helpers)), ..row }))
         .or_else(|| value_row(known, instruction))

@@ -108,6 +108,12 @@ pub enum Kind {
     /// int32 `+` and `-` a tier proved exact (`staged::Overflow::Impossible`): no overflow test, int operands only.
     AddNoOverflow = library::ADD_NO_OVERFLOW,
     SubNoOverflow = library::SUB_NO_OVERFLOW,
+    /// The jumps of the tests a staged compare names with no Number relation (`library::BIT_TEST` and the rest).
+    BitTest = library::BIT_TEST,
+    NullishEq = library::NULLISH_EQ,
+    NullishNe = library::NULLISH_NE,
+    BoolTrue = library::BOOL_TRUE,
+    BoolFalse = library::BOOL_FALSE,
 }
 
 impl Kind {

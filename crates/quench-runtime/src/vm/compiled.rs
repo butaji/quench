@@ -1073,6 +1073,9 @@ lane_helper_inventory! { H;
     /// An instruction whose general step runs in place (`dispatch_fast::lane_body_step`), which the b-jit's
     /// helper steps and stepped calls make (`base_region::steps`).
     Step => super::dispatch_fast::lane_body_step::<H>,
+    /// `Step` for an instruction the planner decoded (`CallRow::HelperPacked`): a covered family runs it directly
+    /// (`dispatch_fast::lane_body_step_packed`).
+    StepPacked => super::dispatch_fast::lane_body_step_packed::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
     /// The array storage proofs a shorter array falsifies (`lane_retire_array_proofs`).

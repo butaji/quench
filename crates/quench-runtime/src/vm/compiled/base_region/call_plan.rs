@@ -290,11 +290,15 @@ pub(super) fn reload_part(place: Place, register: Register) -> Result<CallPart, 
     Ok(part(call::stencil(CallRow::Reload(place))?, padded_holes([slot(register)]), Vec::new()))
 }
 
-fn helper_part(call_pc: u32, helper: usize) -> Result<CallPart, String> {
+fn helper_part(call_pc: u32, helper: usize, packed: Option<[u64; 2]>) -> Result<CallPart, String> {
     if helper == 0 {
         return Err("call: no helper address".to_string());
     }
-    Ok(part(call::stencil(CallRow::Helper)?, padded_holes([u64::from(call_pc), helper as u64]), vec![Exit::At(call_pc), Exit::Status]))
+    let exits = vec![Exit::At(call_pc), Exit::Status];
+    match packed {
+        None => Ok(part(call::stencil(CallRow::Helper)?, padded_holes([u64::from(call_pc), helper as u64]), exits)),
+        Some([first, imm]) => Ok(part(call::stencil(CallRow::HelperPacked)?, padded_holes([u64::from(call_pc), helper as u64, first, imm]), exits)),
+    }
 }
 
 
@@ -347,9 +351,9 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
 
 /// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):
 /// the spills, the helper row, the reloads.
-pub(super) fn plan_step(pc: u32, helper: usize, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
+pub(super) fn plan_step(pc: u32, helper: usize, packed: Option<[u64; 2]>, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
     let mut parts = spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
-    parts.push(helper_part(pc, helper)?);
+    parts.push(helper_part(pc, helper, packed)?);
     for &(place, register) in reloads {
         parts.push(reload_part(place, register)?);
     }
@@ -385,7 +389,7 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
         records.push(owned);
     }
     parts.extend(refusal);
-    parts.push(helper_part(plan.shape.call_pc, plan.helper)?);
+    parts.push(helper_part(plan.shape.call_pc, plan.helper, None)?);
     for &(place, register) in plan.reloads {
         parts.push(reload_part(place, register)?);
     }

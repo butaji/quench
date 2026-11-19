@@ -406,8 +406,7 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     }
     #[inline(always)]
     fn count_edge(&mut self, _stage: &mut Concrete) -> Option<()> {
-        crate::places_guard::count_edge(&self.s);
-        Some(())
+        crate::places_guard::count_edge(&self.s).then_some(())
     }
     #[inline(always)]
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Representation) {

@@ -418,6 +418,16 @@ macro_rules! catalog {
     /// with `Overflow::Impossible`, so no overflow test. Int operands only; anything else leaves through exit 0.
     ADD_NO_OVERFLOW,
     SUB_NO_OVERFLOW,
+    /// The jump of `if (a & b)`: branches to the taken successor unless the int32 of `a & b` is nonzero
+    /// (`Comparison::Bitwise(And)`, the staged compare step's own bitwise test).
+    BIT_TEST,
+    /// The jump of `a == null` or `a == undefined` (loose, `Comparison::Nullish`); `NULLISH_NE` is `a != null`.
+    /// The tested operand's tag decides it; the row has no second operand.
+    NULLISH_EQ,
+    NULLISH_NE,
+    /// The jump of `a === true` and of `a === false` (`Comparison::Boolean`): the tested word's identity decides it.
+    BOOL_TRUE,
+    BOOL_FALSE,
     }
         }
     };
