@@ -2302,6 +2302,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "syn 2.0.119",
+ "target-lexicon",
  "unicode-normalization",
  "unicode-segmentation",
  "utf8_iter",

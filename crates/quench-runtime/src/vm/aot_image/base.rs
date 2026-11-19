@@ -34,7 +34,7 @@ impl BaseImage {
 pub(crate) fn lower(
     program: &ResidualProgram,
     facts: &AotFacts,
-    target: ImageTarget,
+    target: &ImageTarget,
     id: u32,
     symbols: &mut SymbolTable,
 ) -> Result<BaseImage, String> {

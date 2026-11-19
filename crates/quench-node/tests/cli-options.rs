@@ -223,7 +223,7 @@ fn internal_options_match_node_without_source_in_native_js_and_ts() {
         let inputs = manifest
             .compile()
             .unwrap()
-            .emit(&directory.join(extension))
+            .emit(&directory.join(extension), &quench_runtime::NativeTarget::default())
             .unwrap();
         let binary = directory.join(format!("native-{extension}"));
         support
