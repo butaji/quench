@@ -118,6 +118,37 @@ pub(super) fn decide(tiers: &Tiers, observed: &Observed, unplanned: bool, diagno
     picked
 }
 
+/// Whether the u-jit body `decide` admitted for `observed` compiles quick (`CompileLevel::Quick`):
+/// where the entries to come gain more from its cheaper compile than they lose to its slower code
+/// (`Priors::quick_body_share`, `quick_compile_permille`). A body entered many times takes the
+/// optimizing compile; one compiled quick moves to it once its entries repay that (`optimizes`).
+pub(super) fn compiles_quick(tiers: &Tiers, observed: &Observed, unplanned: bool) -> bool {
+    !tiers.admits_all && quick_ahead(&tiers.priors, observed, unplanned)
+}
+
+/// `compiles_quick` under `priors`.
+fn quick_ahead(priors: &Priors, observed: &Observed, unplanned: bool) -> bool {
+    let plan = if unplanned { priors.plan_ns_per_ir } else { 0 };
+    let wall = compile_wall_permille(priors);
+    let optimized = net_planned_ns(priors, priors.body_share, (plan, priors.compile_ns_per_ir), wall, observed);
+    let quick = net_planned_ns(priors, priors.quick_body_share, (plan, priors.compile_ns_per_ir * priors.quick_compile_permille / PER_MILLE), wall, observed);
+    quick > optimized
+}
+
+/// Whether a body compiled quick moves to an optimizing compile after `observed.entries` entries
+/// in all: the entries to come (`remaining_divisor`) at the optimized body's extra saving per
+/// entry repay its plan and compile.
+pub(super) fn optimizes(tiers: &Tiers, observed: &Observed) -> bool {
+    optimizes_under(&tiers.priors, observed)
+}
+
+fn optimizes_under(priors: &Priors, observed: &Observed) -> bool {
+    let work = (observed.length + observed.loop_work) * priors.interpreter_ns;
+    let gain = work * priors.quick_body_share.saturating_sub(priors.body_share) / PER_MILLE;
+    let future = u64::from(observed.entries) / priors.remaining_divisor;
+    future.saturating_mul(gain) > outlay_ns(observed.ir, priors.plan_ns_per_ir, priors.compile_ns_per_ir, compile_wall_permille(priors))
+}
+
 /// Whether the model admits the u-jit compile of `observed` (`decide` picks u-jit).
 #[cfg(test)]
 pub(super) fn admits(tiers: &Tiers, observed: &Observed, unplanned: bool, diagnostics: bool) -> bool {
@@ -159,6 +190,15 @@ mod tests {
 
     fn observed(length: u64, loop_work: u64, entries: u32, region_runs: u64, ir: usize) -> Observed { Observed { length, loop_work, entries, region_runs, ir } }
     fn net(observed: &Observed) -> i64 { net_ns(&PRIORS, PRIORS.body_share, PRIORS.compile_ns_per_ir, PER_MILLE, observed) }
+
+    #[test]
+    fn a_body_entered_rarely_compiles_quick_and_one_entered_often_optimized() {
+        let rare = observed(400, 0, 6000, 0, 4000);
+        let hot = observed(400, 0, 4_000_000, 0, 4000);
+        assert!(quick_ahead(&PRIORS, &rare, false));
+        assert!(!quick_ahead(&PRIORS, &hot, false));
+        assert!(!optimizes_under(&PRIORS, &rare) && optimizes_under(&PRIORS, &hot));
+    }
 
     #[test]
     fn a_short_leaf_never_repays_its_entry() {

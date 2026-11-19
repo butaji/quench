@@ -183,6 +183,19 @@ pub(super) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u
     super::tier_model::decide(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir }, unplanned, diagnostics)
 }
 
+/// Whether `caller`'s body, compiled quick from a plan of `ir` instructions, moves to an
+/// optimizing compile now that it has run `entries` times (`tier_model::optimizes`).
+pub(in crate::vm) fn optimizes_quick_body(tiers: &Tiers, caller: &super::super::dispatch_fast::LaneView, length: u64, entries: u32, ir: usize) -> bool {
+    super::tier_model::optimizes(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir })
+}
+
+/// Whether `function`'s u-jit body, which `pays_compile` admitted at `entries`, compiles quick
+/// (`tier_model::compiles_quick`).
+pub(super) fn compiles_quick(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView) -> bool {
+    let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
+    super::tier_model::compiles_quick(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir }, true)
+}
+
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a
 /// declined short callee warms again while the caller publishes at once, calling it through
 /// its entry cell. A callee the plan inlines has no call of it to bind.

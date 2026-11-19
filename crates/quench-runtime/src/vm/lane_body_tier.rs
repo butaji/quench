@@ -27,6 +27,12 @@ pub(super) struct LaneBodyHistory {
     demanded: bool,
     /// The timed runs of its current body and of the interpreter (`audit`).
     audit: audit::Audit,
+    /// The planned IR instructions of its body where that body compiled quick
+    /// (`tier_model::compiles_quick`), else 0: its completions weigh an optimizing compile.
+    quick_ir: u32,
+    /// Whether its next compile is the optimizing one its quick body's entries repaid
+    /// (`LaneView::optimize_body`): priced already, it compiles at its next entry.
+    optimize: bool,
 }
 
 #[path = "lane_body_audit.rs"]
@@ -102,7 +108,16 @@ impl LaneView {
         let LaneBody::Specialized { leaves_at, completed, recompiles, stuck, method, .. } = body else { return false };
         if completed_region || exit.completes() {
             completed.set(true);
-            if self.entry.note_completions(1) % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); }
+            let completions = self.entry.note_completions(1);
+            if completions % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); }
+            // A body compiled quick weighs the optimizing compile at each doubling of its runs.
+            let quick_ir = self.tier().history.get().quick_ir;
+            if quick_ir != 0 && completions.is_power_of_two()
+                && super::super::compiled::lane_facts::optimizes_quick_body(self.tiers, self, self.records.len() as u64, u32::try_from(completions).unwrap_or(u32::MAX), quick_ir as usize)
+            {
+                self.optimize_body();
+                return true;
+            }
             return false;
         }
         let exits = self.entry.note_leave();
@@ -128,6 +143,27 @@ impl LaneView {
         self.retire_body(body, next);
         true
     }
+
+    /// Retires its quick body for the optimizing compile its runs repaid, which starts at its next
+    /// entry (`LaneBodyHistory::optimize`); the quick body's direct callers keep running it.
+    fn optimize_body(&self) {
+        let history = self.tier().history.get();
+        self.tier().history.set(LaneBodyHistory { quick_ir: 0, optimize: true, ..history });
+        // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
+        let body = unsafe { &mut *self.tier().tier_lane.get() };
+        let LaneBody::Specialized { recompiles, stuck, .. } = body else { return };
+        let next = LaneBody::Unspecialized { entries: u32::from(self.tiers.lane_body.warmup()) - 1, recompiles: *recompiles, stuck: *stuck };
+        self.retire_body(body, next);
+    }
+
+    /// Notes the level of the compile it plans now: quick, of about `ir` IR instructions, or optimizing.
+    pub(in crate::vm) fn note_compile_level(&self, quick: bool, ir: usize) {
+        let history = self.tier().history.get();
+        self.tier().history.set(LaneBodyHistory { quick_ir: if quick { u32::try_from(ir.max(1)).unwrap_or(u32::MAX) } else { 0 }, ..history });
+    }
+
+    /// Whether its next compile is the optimizing one its quick body's runs repaid.
+    pub(in crate::vm) fn optimize_due(&self) -> bool { self.tier().history.get().optimize }
 
     /// Counts a leave inside this function's body that a native caller's run made, which no
     /// handler entry notes (`native_frames::advance_into_frames`): one add to the cell's word, on the leave.
@@ -315,6 +351,7 @@ impl LaneView {
         };
         use std::cell::Cell;
         self.audit_restart();
+        self.tier().history.set(LaneBodyHistory { optimize: false, ..self.tier().history.get() });
         // Native callers enter a closed body through the view's cell, and leave inside it
         // through the view's pin.
         if let Some(body) = method.lease().filter(|body| body.calls_only_natively()) {

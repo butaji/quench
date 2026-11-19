@@ -208,7 +208,7 @@ pub(super) enum Lowered {
 impl Lowered {
     /// Lowers `job` and compiles its code, reporting it under `census`; a plan that may inline
     /// less (`replans`) is not compiled where its IR is oversized.
-    fn of(job: &LoweringJob<'_>, census: Option<Census>, replans: bool) -> Self {
+    fn of(job: &LoweringJob<'_>, census: Option<Census>, replans: bool, level: super::jit_backend::CompileLevel) -> Self {
         let Some(mut lowered) = job.run().filter(|lowered| lowered.region.native != 0) else { return Self::Nothing };
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         let ir = native.dfg.num_insts();
@@ -216,7 +216,7 @@ impl Lowered {
             return Self::Oversized;
         }
         let started = std::time::Instant::now();
-        let code = image::compile(native, lowered.scalar.take(), super::jit_backend::CompileLevel::run_default());
+        let code = image::compile(native, lowered.scalar.take(), level);
         if let Some(census) = census {
             eprintln!("{}", Census { ir, ..census }.report(started.elapsed(), code.as_ref().map_or(0, |image| image.code.len())));
         }
@@ -477,15 +477,24 @@ impl<H: Host> Vm<H> {
         // each, the loop region's measure): inlining only adds to it.
         let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
         let planned = self.programs.planned_lane_ir(&site);
-        if let Some(entries) = observed {
-            let ir = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
+        let estimated = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
+        // A quick body whose runs repaid the optimizing compile was priced at that (`LaneView::optimize_due`).
+        let optimize = entry.is_none() && caller.optimize_due();
+        let mut level = super::jit_backend::CompileLevel::run_default();
+        if let Some(entries) = observed && !optimize {
+            let ir = estimated;
             match pays_compile(tiers, program, function, entries, ir, caller, true, false) {
                 super::tier_model::Pick::Ultra => {}
                 super::tier_model::Pick::Interpreter => return Err(Unstarted::Unpaid),
                 // A function whose u-jit body would never get ahead of a b-jit body's takes the b-jit body (`LaneBodyOutcome::Base`).
                 super::tier_model::Pick::Base => return Err(Unstarted::Base),
             }
+            // Few entries to come take the quick compile, which an optimizing one follows once they repay it.
+            if level == super::jit_backend::CompileLevel::Optimized && super::lane_facts::compiles_quick(tiers, program, function, entries, ir, caller) {
+                level = super::jit_backend::CompileLevel::Quick;
+            }
         }
+        if entry.is_none() { caller.note_compile_level(level == super::jit_backend::CompileLevel::Quick, estimated); }
         if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true) { return Err(Unstarted::Unpaid); }
         super::base_region::count(super::base_region::Event::BodyPlanned);
         let plan_started = std::time::Instant::now();
@@ -551,7 +560,7 @@ impl<H: Host> Vm<H> {
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, budget, tiers };
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         let replans = !plan.unit.frames.is_empty() && budget > 0;
-        let code = super::jit_backend::OffThread::guarded((job, census, replans), |(job, census, replans)| Lowered::of(&job, census, replans));
+        let code = super::jit_backend::OffThread::guarded((job, census, replans, level), |(job, census, replans, level)| Lowered::of(&job, census, replans, level));
         self.programs.note_pending_native_calls(&watch, plan.callees());
         Ok(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code, key, site, taken: Box::new(taken) })
     }
