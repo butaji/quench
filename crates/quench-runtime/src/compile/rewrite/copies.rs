@@ -17,7 +17,7 @@ pub(super) fn forward_move_sources(
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
 ) -> bool {
-    if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
+    if !function.code.iter().any(|instruction| instruction.op() == MOVE) {
         return false;
     }
     let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions) else {
@@ -33,7 +33,7 @@ pub(super) fn forward_move_sources(
         let uses = |instruction: Instr| liveness::uses(instruction.as_wide(), methods, field_sites, superinstructions);
         let definitions = |instruction: Instr| liveness::definitions(instruction.as_wide(), superinstructions);
         if let Some((at, rewritten)) = forwarded(function, &analysis, &scope, pc, (&uses, &definitions)) {
-            function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
+            function.code[pc] = Instr::new(NOP, 0, 0, 0, 0);
             function.code[at] = rewritten;
             rewritten_readers.insert(at);
             changed.extend([pc, at]);
@@ -73,7 +73,7 @@ impl Scope {
     /// (`a + i` then reads the loop's `i`). Only a parameter's register is reflected
     /// (`f.arguments`).
     fn forwards(&self, mov: Instr, pc: usize) -> bool {
-        mov.op() == Op::Move && !mov.is_wide() && !self.in_handler(pc)
+        mov.op() == MOVE && !mov.is_wide() && !self.in_handler(pc)
             && register_bit(mov.result_register()) & self.parameters == 0 && mov.register_b() != mov.result_register()
     }
 

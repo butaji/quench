@@ -1,27 +1,38 @@
 use super::*;
 use crate::bytecode::{
-    ControlFlowLayout, FieldLayout, ImmediateRole, InstructionField, Superinstruction, Traits, WideInstruction, widen,
+    ControlFlowLayout, FieldLayout, ImmediateRole, InstructionField, Superinstruction, Traits, WideInstruction,
+    negated_jump, op_table, row_ops, strict_variant, the_op, widen, OPCODE_COUNT,
 };
 use super::liveness::{RegisterSet, register_bit};
 mod copies;
 use copies::forward_move_sources;
+pub(super) use crate::bytecode::OpSet;
 
-#[derive(Clone, Copy)]
-struct Rule {
-    pattern: [Op; 2],
-    recipe: Recipe,
-}
+/// The one op each role names, derived from the catalog. The rewriter spells its ops by role,
+/// never by name: `NOP` is the filler of removed instructions, `MOVE` the register copy.
+const NOP: Op = the_op(Traits::NO_OP);
+const MOVE: Op = the_op(Traits::REGISTER_COPY);
+const RETURN: Op = the_op(Traits::RETURN_VALUE);
+const JUMP: Op = the_op(Traits::UNCONDITIONAL_JUMP);
+const JUMP_BINARY_FALSE: Op = the_op(Traits::FUSED_BINARY_JUMP);
+const SUPER_CONST_ARRAY_OBJECT2: Op = the_op(Traits::FUSED_CONST_ARRAY_OBJECT2);
+/// The `[MakeConstArray, Binary, Binary, MakeObject2]` window `SUPER_CONST_ARRAY_OBJECT2` fuses,
+/// in order, each element named by its trait.
+pub(super) const CONST_ARRAY_OBJECT2: [Op; 4] = [
+    the_op(Traits::CONST_ARRAY_OBJECT2_HEAD),
+    the_op(Traits::CONST_ARRAY_OBJECT2_OPERAND),
+    the_op(Traits::CONST_ARRAY_OBJECT2_OPERAND),
+    the_op(Traits::CONST_ARRAY_OBJECT2_TAIL),
+];
+/// Each jump's opposite-polarity twin (`JumpTrue` and `JumpFalse`), and each sloppy property store's
+/// strict form, both derived from the rows' traits and encodings.
+const NEGATED_JUMPS: [Option<Op>; OPCODE_COUNT] = op_table!(None, op => negated_jump(op));
+const STRICT_VARIANTS: [Option<Op>; OPCODE_COUNT] = op_table!(None, op => strict_variant(op));
 
 macro_rules! fusion_recipes {
-    ($($recipe:ident: [$($first:ident, $second:ident);* $(;)?] => $handler:expr;)+) => {
+    ($($recipe:ident => $handler:expr;)+) => {
         #[derive(Clone, Copy)]
         enum Recipe { $($recipe),+ }
-
-        const RULES: &[Rule] = &[
-            $($(Rule {
-                pattern: [Op::$first, Op::$second], recipe: Recipe::$recipe,
-            },)*)+
-        ];
 
         fn apply_recipe(
             recipe: Recipe,
@@ -39,11 +50,11 @@ macro_rules! fusion_recipes {
 // Ordered recipe entries are the complete overlap and semantic policy. The
 // macro derives recipe identity, pattern rows, and recipe dispatch together.
 // An empty pattern list means the recipe's pairs are derived from the opcode rows
-// (`derived_rules`), never listed by hand.
+// (`rules_for`), never listed by hand.
 fusion_recipes! {
     // Derived: a `CONSTANT_PRODUCERS` op, then an op whose B and C are `Operand` slots
     // (`CONSTANT_LEFT_SITES`). Left is tried before right, as the listed pairs were.
-    ConstantLeft: [] =>
+    ConstantLeft =>
         |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             let result = first.result_register();
             let constant = Operand::constant(first.constant_index() as u32)?;
@@ -55,7 +66,7 @@ fusion_recipes! {
             Some(second)
         };
     // Derived: a `CONSTANT_PRODUCERS` op, then any op whose C is an `Operand` (`CONSTANT_RIGHT_SITES`).
-    ConstantRight: [] =>
+    ConstantRight =>
         |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if second.operand_c().register_index() != Some(first.result_register()) { return None; }
             second.set_operand_c(Operand::constant(first.constant_index() as u32)?)?;
@@ -63,14 +74,14 @@ fusion_recipes! {
         };
     // Derived: a `FRAME_LOCAL_STORE` op, then a `FRAME_LOCAL_LOAD` op of the same slot. The slot
     // check stays here, a per-instruction condition.
-    StoreLoadLocal: [] =>
+    StoreLoadLocal =>
         |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.optional_register_b().is_some() || first.local_slot() != second.local_slot() { return None; }
             first.set_optional_register_b(Some(second.result_register()));
             Some(first)
         };
     // Derived: a `LOCAL_READERS` op, then a `FIELD_LOOKUPS` op reading its result as the base.
-    LocalField: [] =>
+    LocalField =>
         |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.numeric_local_store_target().is_some() || second.writes_current_this() {
                 return None;
@@ -87,21 +98,21 @@ fusion_recipes! {
             Some(second)
         };
     // Derived like `ReturnResult`: every op whose row writes one plain result (`plain_producer`).
-    ProducerMove: [] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
+    ProducerMove => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
         if second.register_b() != first.result_register() { return None; }
         first.set_result_register(second.result_register());
         Some(first)
     };
     // Derived: a `BINARY_RESULT` op, then a `JUMPS_ON_FALSE` op. The comparison-only condition is a
     // property of the operator (`fuses_with_jump_operator`), a per-instruction check kept here.
-    BinaryJumpFalse: [] =>
+    BinaryJumpFalse =>
         |first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
             // Only a comparison fuses (`ast::fuses_with_jump`): an arithmetic or bitwise
             // result stays a Number row whose truthiness the jump tests.
             if !super::ast::fuses_with_jump_operator(first.binary_operator()) { return None; }
             Some(Instr::new(
-                Op::JumpBinaryFalse,
+                JUMP_BINARY_FALSE,
                 first.binary_operator() as u16,
                 first.operand_b().0,
                 first.operand_c().0,
@@ -109,15 +120,15 @@ fusion_recipes! {
             ))
         };
     // Its pairs are derived, not listed: every op whose row declares a returnable result
-    // (`ResultLayout::allows_return`) followed by the `Return` of that result (`derived_rules`).
-    ReturnResult: [] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
+    // (`ResultLayout::allows_return`) followed by the `Return` of that result (`rules_for`).
+    ReturnResult => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
         if first.result_register() != second.register_a() { return None; }
         first.set_returns_from_frame();
         Some(first)
     };
     // Derived: a `ReturnableAndThis` op (`allows_this_write`, which is `GetField` alone), then a
     // `THIS_FIELD_SINK` op. `SetThisFieldStrict` is untagged, so a strict store stays a separate op.
-    GetSetThis: [] =>
+    GetSetThis =>
         |mut first: Instr, second: Instr, fields: &mut SiteTable<'_, FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
             let sink = (second.atom_index(), second.cache_site_index());
@@ -210,7 +221,7 @@ fn remove_dead_moves(
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
 ) -> bool {
-    let removable = |i: Instr| matches!(i.op(), Op::Move | Op::LoadConst) && !i.is_wide() && i.result_flags() == 0;
+    let removable = |i: Instr| i.op().traits().has(Traits::REMOVABLE_WHEN_DEAD) && !i.is_wide() && i.result_flags() == 0;
     if !function.code.iter().any(|&instruction| removable(instruction)) {
         return false;
     }
@@ -236,7 +247,7 @@ fn remove_dead_moves(
         {
             continue;
         }
-        function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
+        function.code[pc] = Instr::new(NOP, 0, 0, 0, 0);
         changed.push(pc);
     }
     hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
@@ -277,7 +288,7 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
     let mut map = vec![0usize; old.len() + 1];
     for (pc, &instruction) in old.iter().enumerate() {
         map[pc] = code.len();
-        if instruction.op() != Op::Nop {
+        if instruction.op() != NOP {
             if let Some(transfers) = &mut transfers {
                 transfers[code.len()] = transfers[pc];
             }
@@ -426,7 +437,7 @@ fn thread_jumps(function: &mut BcFunction) {
     let length = function.code.len();
     for pc in 0..length {
         let mut instruction = function.code[pc];
-        if instruction.op() != Op::Jump || instruction.is_wide() {
+        if instruction.op() != JUMP || instruction.is_wide() {
             continue;
         }
         let mut target = instruction.jump_target();
@@ -434,7 +445,7 @@ fn thread_jumps(function: &mut BcFunction) {
         for _ in 0..length {
             match function.code.get(target as usize) {
                 Some(next)
-                    if next.op() == Op::Jump && !next.is_wide() && next.jump_target() != target =>
+                    if next.op() == JUMP && !next.is_wide() && next.jump_target() != target =>
                 {
                     target = next.jump_target();
                 }
@@ -464,13 +475,11 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
         if branch.is_wide() || skipped.is_wide() {
             continue;
         }
-        let inverted = match branch.op() {
-            Op::JumpTrue => Op::JumpFalse,
-            Op::JumpFalse => Op::JumpTrue,
-            _ => continue,
+        let Some(inverted) = NEGATED_JUMPS[branch.op() as usize] else {
+            continue;
         };
         if protected.contains(pc + 1)
-            || skipped.op() != Op::Jump
+            || skipped.op() != JUMP
             || branch.jump_target() as usize != pc + 2
             || skipped.jump_target() as usize <= pc + 1
         {
@@ -478,7 +487,7 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
         }
         let target = skipped.jump_target();
         function.code[pc] = Instr::new(inverted, branch.register_a(), 0, 0, target);
-        function.code[pc + 1] = Instr::new(Op::Nop, 0, 0, 0, 0);
+        function.code[pc + 1] = Instr::new(NOP, 0, 0, 0, 0);
     }
 }
 
@@ -503,7 +512,7 @@ fn coalesce_distant_producer_moves(
     if !function
         .code
         .iter()
-        .any(|instruction| instruction.op() == Op::Move)
+        .any(|instruction| instruction.op() == MOVE)
     {
         return false;
     }
@@ -528,13 +537,13 @@ fn coalesce_distant_producer_moves(
     let mut live_exact = true;
     for target in 0..function.code.len() {
         let mov = function.code[target];
-        if mov.op() != Op::Move || mov.is_wide() || protected.contains(target) {
+        if mov.op() != MOVE || mov.is_wide() || protected.contains(target) {
             continue;
         }
         let (source, destination) = (mov.register_b(), mov.result_register());
         let pair = register_bit(source) | register_bit(destination);
         if source == destination {
-            function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
+            function.code[target] = Instr::new(NOP, 0, 0, 0, 0);
             changed.push(target);
             live_exact = false;
             continue;
@@ -553,7 +562,7 @@ fn coalesce_distant_producer_moves(
         let instruction = function.code[producer];
         if instruction.is_wide()
             || !function.handlers.iter().all(|handler| handler.end as usize <= producer || handler.start as usize > target)
-            || !fuses(instruction.op(), Op::Move, |recipe| {
+            || !fuses(instruction.op(), MOVE, |recipe| {
                 matches!(recipe, Recipe::ProducerMove)
             })
             || instruction.result_register() != source
@@ -565,7 +574,7 @@ fn coalesce_distant_producer_moves(
         let mut retargeted = instruction;
         retargeted.set_result_register(destination);
         function.code[producer] = retargeted;
-        function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
+        function.code[target] = Instr::new(NOP, 0, 0, 0, 0);
         changed.extend([producer, target]);
         let span = CoalescedSpan {
             producer,
@@ -655,11 +664,11 @@ pub(super) fn return_through_shared_returns(function: &mut BcFunction) {
     // Only a return's producer is decoded, and the region boundaries are found once one is.
     let mut boundaries = None;
     for pc in 1..function.code.len() {
-        if function.instruction_at(pc).op() != Op::Return {
+        if function.instruction_at(pc).op() != RETURN {
             continue;
         }
         let (producer, next) = (function.instruction_at(pc - 1), function.instruction_at(pc));
-        if !fuses(producer.op(), Op::Return, |recipe| matches!(recipe, Recipe::ReturnResult))
+        if !fuses(producer.op(), RETURN, |recipe| matches!(recipe, Recipe::ReturnResult))
             || producer.result_flags() != 0
             || producer.result_register() != next.register_a()
             || boundaries
@@ -683,11 +692,7 @@ pub(super) fn express_strict_sets(function: &mut BcFunction) {
     if !function.strict {
         return;
     }
-    let strict_op = |op| match op {
-        Op::SetField => Some(Op::SetFieldStrict),
-        Op::SetThisField => Some(Op::SetThisFieldStrict),
-        _ => None,
-    };
+    let strict_op = |op: Op| STRICT_VARIANTS[op as usize];
     for packed in &mut function.code {
         if packed.is_wide() {
             let wide = &mut function.wide[packed.wide_index()];
@@ -699,61 +704,6 @@ pub(super) fn express_strict_sets(function: &mut BcFunction) {
         }
     }
 }
-
-/// Whether some rule's pattern starts with each op: a pair whose first op starts none fuses
-/// with nothing, as most pairs do.
-const RULE_FIRSTS: [bool; Op::COUNT] = {
-    let mut firsts = [false; Op::COUNT];
-    let mut index = 0;
-    while index < RULES.len() {
-        firsts[RULES[index].pattern[0] as usize] = true;
-        index += 1;
-    }
-    firsts
-};
-
-/// The rules whose pattern is `[first, second]`, in rule order, then the derived ones.
-fn rules_for(first: Op, second: Op) -> impl Iterator<Item = &'static Rule> {
-    let candidates: &'static [Rule] = if RULE_FIRSTS[first as usize] { RULES } else { &[] };
-    candidates.iter().filter(move |rule| rule.pattern == [first, second]).chain(derived_rules(first, second).iter())
-}
-
-/// A per-op table, indexed by `Op as usize`: a derived set, computed from the opcode rows.
-pub(super) type OpSet = [bool; Op::COUNT];
-
-/// Builds an `OpSet` from a predicate over each op's rows. The predicate is a `const` expression,
-/// so every set is fixed at compile time and no list of ops can fall behind the rows.
-macro_rules! row_ops {
-    ($op:ident => $row:expr) => {{
-        let mut set: OpSet = [false; Op::COUNT];
-        let mut index = 0;
-        while index < Op::COUNT {
-            if let Some($op) = Op::from_index(index) {
-                set[index] = $row;
-            }
-            index += 1;
-        }
-        set
-    }};
-}
-
-/// `ReturnResult`'s rule, for any pair `derived_rules` admits.
-const RETURN_RESULT: Rule = Rule { pattern: [Op::Nop, Op::Return], recipe: Recipe::ReturnResult };
-/// `ProducerMove`'s rule, for any pair `derived_rules` admits.
-const PRODUCER_MOVE: Rule = Rule { pattern: [Op::Nop, Op::Move], recipe: Recipe::ProducerMove };
-/// `ConstantLeft`'s rule, for any pair `derived_rules` admits. Its pattern is a placeholder:
-/// derived rules match through their derived sets, not through `pattern`.
-const CONSTANT_LEFT: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::ConstantLeft };
-/// `ConstantRight`'s rule, for any pair `derived_rules` admits (placeholder pattern, as above).
-const CONSTANT_RIGHT: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::ConstantRight };
-/// `LocalField`'s rule, for any pair `derived_rules` admits (placeholder pattern, as above).
-const LOCAL_FIELD: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::LocalField };
-/// `StoreLoadLocal`'s rule, for any pair `derived_rules` admits (placeholder pattern, as above).
-const STORE_LOAD_LOCAL: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::StoreLoadLocal };
-/// `BinaryJumpFalse`'s rule, for any pair `derived_rules` admits (placeholder pattern, as above).
-const BINARY_JUMP_FALSE: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::BinaryJumpFalse };
-/// `GetSetThis`'s rule, for any pair `derived_rules` admits (placeholder pattern, as above).
-const GET_SET_THIS: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::GetSetThis };
 
 /// Whether `op`'s row makes one value into its result register and nothing else of its
 /// registers: field A is the result, which it does not read; no other field writes a register
@@ -774,7 +724,8 @@ const fn plain_producer(op: Op) -> bool {
         && other_field_plain(op.field_layout(InstructionField::C))
         && !op.result_layout().reads_result_register()
         && matches!(op.control_flow_layout(), ControlFlowLayout::Fallthrough | ControlFlowLayout::Call)
-        && !matches!(op, Op::Move | Op::Await | Op::Yield)
+        && !op.traits().has(Traits::REGISTER_COPY)
+        && !op.traits().has(Traits::SUSPENDS)
 }
 
 /// Which ops are `plain_producer`s: the rows that make one value into their result (`ProducerMove`).
@@ -844,36 +795,36 @@ pub(super) const NUMERIC_INDEX_CONSUMERS: OpSet = row_ops!(op =>
     matches!(op.field_layout(InstructionField::B), FieldLayout::NumericIndexOperand)
         && matches!(op.field_layout(InstructionField::C), FieldLayout::NumericIndexOperand));
 
-/// The rules a pair's rows imply, after its listed ones, in recipe order. Each set above
-/// states one row property the recipe relies on, so the rule holds for every op that has it.
-fn derived_rules(first: Op, second: Op) -> &'static [Rule] {
+/// The recipes a pair's rows imply, in recipe order. Each set above states one row property the
+/// recipe relies on, so the recipe holds for every op that has it.
+fn rules_for(first: Op, second: Op) -> &'static [Recipe] {
     let (first_index, second_index) = (first as usize, second as usize);
-    if second == Op::Return {
+    if second == RETURN {
         // An op whose row declares a returnable result completes its function itself when a
         // `Return` of that result follows it.
-        if first.result_layout().allows_return() { &[RETURN_RESULT] } else { &[] }
-    } else if second == Op::Move {
-        if PLAIN_PRODUCERS[first_index] { &[PRODUCER_MOVE] } else { &[] }
+        if first.result_layout().allows_return() { &[Recipe::ReturnResult] } else { &[] }
+    } else if second == MOVE {
+        if PLAIN_PRODUCERS[first_index] { &[Recipe::ProducerMove] } else { &[] }
     } else if CONSTANT_PRODUCERS[first_index] && CONSTANT_LEFT_SITES[second_index] {
-        &[CONSTANT_LEFT, CONSTANT_RIGHT]
+        &[Recipe::ConstantLeft, Recipe::ConstantRight]
     } else if CONSTANT_PRODUCERS[first_index] && CONSTANT_RIGHT_SITES[second_index] {
-        &[CONSTANT_RIGHT]
+        &[Recipe::ConstantRight]
     } else if LOCAL_READERS[first_index] && FIELD_LOOKUPS[second_index] {
-        &[LOCAL_FIELD]
+        &[Recipe::LocalField]
     } else if FRAME_LOCAL_STORES[first_index] && FRAME_LOCAL_LOADS[second_index] {
-        &[STORE_LOAD_LOCAL]
+        &[Recipe::StoreLoadLocal]
     } else if BINARY_RESULTS[first_index] && JUMPS_ON_FALSE[second_index] {
-        &[BINARY_JUMP_FALSE]
+        &[Recipe::BinaryJumpFalse]
     } else if THIS_WRITE_SOURCES[first_index] && THIS_FIELD_SINKS[second_index] {
-        &[GET_SET_THIS]
+        &[Recipe::GetSetThis]
     } else {
         &[]
     }
 }
 
-/// Whether a rule of the selected recipe fuses `[first, second]`.
+/// Whether a recipe of the selected kind fuses `[first, second]`.
 fn fuses(first: Op, second: Op, recipe: impl Fn(Recipe) -> bool) -> bool {
-    rules_for(first, second).any(|rule| recipe(rule.recipe))
+    rules_for(first, second).iter().any(|&rule| recipe(rule))
 }
 
 
@@ -882,10 +833,9 @@ struct SuperRule {
     fuse: fn(&[Instr], &mut SiteTable<'_, Superinstruction>) -> Option<Instr>,
 }
 
-pub(super) const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
 
 const SUPER_RULES: &[SuperRule] = &[SuperRule {
-    pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],
+    pattern: &CONST_ARRAY_OBJECT2,
     fuse: fuse_const_array_object2,
 }];
 
@@ -979,7 +929,7 @@ fn fuse_const_array_object2(
     let site = superinstructions.len() as u32;
     superinstructions.push(Superinstruction::new(code));
     Some(Instr::new(
-        Op::SuperConstArrayObject2,
+        SUPER_CONST_ARRAY_OBJECT2,
         object.result_register(),
         0,
         0,
@@ -1047,12 +997,12 @@ fn rewrite_once(
     let rewrites_pair = |first: &Instr, second: &Instr| {
         !first.is_wide()
             && !second.is_wide()
-            && rules_for(first.op(), second.op()).next().is_some()
+            && !rules_for(first.op(), second.op()).is_empty()
     };
     // A pass without a rule-shaped pair or a `Nop` changes nothing, and liveness is needed
     // only to judge pairs.
     let has_pair = function.code.windows(2).any(|pair| rewrites_pair(&pair[0], &pair[1]));
-    if !has_pair && !function.code.iter().any(|instruction| instruction.op() == Op::Nop) {
+    if !has_pair && !function.code.iter().any(|instruction| instruction.op() == NOP) {
         return false;
     }
     let analysis = has_pair
@@ -1078,7 +1028,7 @@ fn rewrite_once(
     let mut changed = false;
     while index < old.len() {
         map[index] = code.len();
-        if old[index].op() == Op::Nop {
+        if old[index].op() == NOP {
             index += 1;
             changed = true;
             continue;
@@ -1088,8 +1038,10 @@ fn rewrite_once(
             .filter(|second| !protected.contains(index + 1) && !old[index].is_wide() && !second.is_wide())
             .and_then(|second| {
                 let first = old[index];
-                let mut rules = rules_for(first.op(), second.op()).peekable();
-                rules.peek()?;
+                let rules = rules_for(first.op(), second.op());
+                if rules.is_empty() {
+                    return None;
+                }
                 // The same control-flow facts justify frame roots and every
                 // removed register write. An unavailable map keeps the pair.
                 let (live, successors) = live.as_ref()?;
@@ -1097,8 +1049,8 @@ fn rewrite_once(
                     liveness::definitions(first.as_wide(), superinstructions)
                         | liveness::definitions(second.as_wide(), superinstructions);
                 let live_out = liveness::live_out(successors, live, index + 1);
-                rules.find_map(|rule| {
-                    let replacement = apply_rule(*rule, first, *second, field_sites, &function.source_positions, index)?;
+                rules.iter().find_map(|&rule| {
+                    let replacement = apply_rule(rule, first, *second, field_sites, &function.source_positions, index)?;
                     let removed_definitions = original_definitions
                         & !liveness::definitions(replacement.as_wide(), superinstructions);
                     (live_out & removed_definitions == 0).then_some(replacement)
@@ -1148,16 +1100,16 @@ fn rewrite_once(
 }
 
 fn apply_rule(
-    rule: Rule,
+    recipe: Recipe,
     first: Instr,
     second: Instr,
     field_sites: &mut SiteTable<'_, FieldSite>,
     source_positions: &crate::bytecode::SourcePositions,
     pc: usize,
 ) -> Option<Instr> {
-    let replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
+    let replacement = apply_recipe(recipe, first, second, field_sites)?;
     let replacement = sound_replacement(first, second, replacement)?;
-    if matches!(rule.recipe, Recipe::GetSetThis)
+    if matches!(recipe, Recipe::GetSetThis)
         && let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
             // The entry in effect at a pc, found by the table's own lookup rather than a
             // decoded copy of the whole table.
@@ -1299,7 +1251,7 @@ fn relocated_source_positions(
 }
 
 fn source_instruction_survives(old_pc: usize, old_code: &[Instr], map: &[usize]) -> bool {
-    old_code[old_pc].op() != Op::Nop || map[old_pc] != map[old_pc + 1]
+    old_code[old_pc].op() != NOP || map[old_pc] != map[old_pc + 1]
 }
 
 #[cfg(test)]
@@ -1710,16 +1662,25 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
     }
 
     #[test]
-    fn recipe_schema_generates_ordered_pattern_rows() {
-        // Every recipe's pairs are derived from row traits and properties (`derived_rules`), so no
-        // pattern is listed by hand and no first op is registered in `RULE_FIRSTS`.
-        assert!(RULES.is_empty());
-        assert!(RULE_FIRSTS.iter().all(|first| !first));
+    fn role_constants_name_the_rows_they_derive() {
+        assert_eq!(NOP, Op::Nop);
+        assert_eq!(MOVE, Op::Move);
+        assert_eq!(RETURN, Op::Return);
+        assert_eq!(JUMP, Op::Jump);
+        assert_eq!(JUMP_BINARY_FALSE, Op::JumpBinaryFalse);
+        assert_eq!(SUPER_CONST_ARRAY_OBJECT2, Op::SuperConstArrayObject2);
+        assert_eq!(CONST_ARRAY_OBJECT2, [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2]);
+        assert_eq!(NEGATED_JUMPS[Op::JumpTrue as usize], Some(Op::JumpFalse));
+        assert_eq!(NEGATED_JUMPS[Op::JumpFalse as usize], Some(Op::JumpTrue));
+        assert_eq!(NEGATED_JUMPS[Op::Jump as usize], None);
+        assert_eq!(STRICT_VARIANTS[Op::SetField as usize], Some(Op::SetFieldStrict));
+        assert_eq!(STRICT_VARIANTS[Op::SetThisField as usize], Some(Op::SetThisFieldStrict));
+        assert_eq!(STRICT_VARIANTS[Op::Move as usize], None);
     }
 
     #[test]
     fn derived_rules_follow_row_properties_in_recipe_order() {
-        let recipes = |first: Op, second: Op| rules_for(first, second).map(|rule| rule.recipe).collect::<Vec<_>>();
+        let recipes = |first: Op, second: Op| rules_for(first, second).iter().copied().collect::<Vec<_>>();
         // A constant producer fuses into any op with operand B and C slots, left before right.
         for second in [Op::Binary, Op::NumericAdd, Op::NumericMultiply, Op::JumpBinaryFalse] {
             assert!(matches!(recipes(Op::LoadConst, second).as_slice(), [Recipe::ConstantLeft, Recipe::ConstantRight]));
