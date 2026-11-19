@@ -332,7 +332,7 @@ function scan(tree, branch, wantOwners) {
         add("specializer-driver", rel, lineOf(starts, f.at), f.name, `${f.name}: a separate specializer driver (principle 3: one specializer driver for every tier)`, { owner: "u-jit" });
     }
     // P12: delete dead paths.
-    for (const m of s.matchAll(/#!?\[allow\(dead_code\)\]/g))
+    for (const m of s.matchAll(/#!?\[(?:allow|expect)\((?:[a-z_]+, *)*dead_code\b[^\]]*\]/g))
       if (!inRanges(tests, m.index) && !pathIncluded.has(rel)) add("dead-code", rel, lineOf(starts, m.index), `dead@${lineOf(starts, m.index)}`, `#[allow(dead_code)] keeps a dead path (principle 12)`);
     // One policy home: QUENCH_* switches outside vm/switches.rs.
     if (inRuntime && !/vm\/switches\.rs$/.test(rel)) for (const m of src.matchAll(/env::var(?:_os)?\(\s*"(QUENCH_[A-Z0-9_]+)"/g))
