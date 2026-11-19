@@ -157,18 +157,21 @@ static Ast *nu_visit(NuCx *c, Ast *n) {
     Ast *t = mk_from(A_INTLITERAL, n);
     t->type = lit_type_new(n->type->tag, t);
     t->u.intLit.value = n->u.intLit.value;
+    t->u.intLit.dbl = n->u.intLit.dbl;
+    t->u.intLit.isDbl = n->u.intLit.isDbl;
     t->u.intLit.preferred = rw_plain(literal_preferred(n));
     return t;
   }
   case A_FLOATLITERAL: case A_DOUBLELITERAL: {
-    /* The JS copy is an IntLiteral holding the double (Rewriter.visitGenericLiteral, a FIXME there). The C
-     * int literal holds a long long, so the copy keeps its float class and exact value; the literal
-     * checker reads only the literal's type, so no pass after this one sees the difference. */
+    /* Rewriter.visitGenericLiteral: the JS copy is an IntLiteral holding the double (a FIXME there). The C
+     * IntLiteral has the isDbl field for it, so the copy keeps the exact double value like the JS. */
     if (!n->type) fatal_unsupported("literal without a type", n);
-    Ast *t = mk_from(n->tag, n);
+    Ast *t = mk_from(A_INTLITERAL, n);
     t->type = lit_type_new(n->type->tag, t);
-    t->u.fltLit.value = n->u.fltLit.value;
-    t->u.fltLit.preferred = rw_plain(literal_preferred(n));
+    t->u.intLit.isDbl = 1;
+    t->u.intLit.dbl = n->u.fltLit.value;
+    t->u.intLit.value = 0;
+    t->u.intLit.preferred = rw_plain(literal_preferred(n));
     return t;
   }
   case A_ENUMLITERAL: {

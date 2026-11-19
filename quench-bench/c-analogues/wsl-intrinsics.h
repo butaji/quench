@@ -155,7 +155,8 @@ static double lit_value(const Ast *n) {
   if (n->tag == A_INTLITERALTYPE || n->tag == A_UINTLITERALTYPE || n->tag == A_FLOATLITERALTYPE ||
       n->tag == A_DOUBLELITERALTYPE)
     n = n->u.litType.owner;
-  if (n->tag == A_INTLITERAL || n->tag == A_UINTLITERAL) return (double)n->u.intLit.value;
+  if (n->tag == A_INTLITERAL || n->tag == A_UINTLITERAL)
+    return n->u.intLit.isDbl ? n->u.intLit.dbl : (double)n->u.intLit.value;
   return n->u.fltLit.value;
 }
 

@@ -119,8 +119,9 @@ struct Ast {
     struct { Ast *target; } identity;
     /* EnumLiteral */
     struct { Ast *member; } enumLit;
-    /* IntLiteral, UintLiteral */
-    struct { long long value; Ast *preferred; } intLit;   /* preferred: GenericLiteralType.preferredType */
+    /* IntLiteral, UintLiteral. isDbl: the JS value is a double (a FloatLiteral or DoubleLiteral copied as an
+     * IntLiteral by Rewriter.visitGenericLiteral, a FIXME there); then dbl holds it and value is unused. */
+    struct { long long value; double dbl; int isDbl; Ast *preferred; } intLit;   /* preferred: GenericLiteralType.preferredType */
     /* FloatLiteral, DoubleLiteral: value is the double (float literals are rounded to float) */
     struct { double value; Ast *preferred; } fltLit;
     /* literal types: the literal expression whose type this is (its value and preferredType are read from it) */
@@ -131,6 +132,7 @@ struct Ast {
 /* ---- arena ---- */
 typedef struct { char *base; size_t used, cap; } Arena;
 static Arena AST_ARENA;
+static const char *js_num(double v);   /* wsl-strings.h: Number::toString */
 static void *arena_alloc(size_t n) {
   n = (n + 15) & ~(size_t)15;
   if (!AST_ARENA.base || AST_ARENA.used + n > AST_ARENA.cap) {
@@ -581,7 +583,8 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
     return;
   case A_INTLITERAL:
     buf_scalar_str(b, "kind", "int");
-    buf_fmt(b, " value=%lld", n->u.intLit.value);
+    if (n->u.intLit.isDbl) buf_fmt(b, " value=%s", js_num(n->u.intLit.dbl));
+    else buf_fmt(b, " value=%lld", n->u.intLit.value);
     end_scalars(b, n);
     return;
   case A_UINTLITERAL:
