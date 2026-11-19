@@ -307,8 +307,8 @@ function scan(tree, branch, wantOwners) {
     // H. Rules from principles.md and the project instructions.
     const inRuntime = /^crates\/quench-(runtime|bjit)\//.test(rel);
     const tierCode = /^crates\/quench-bjit\/|vm\/compiled|vm\/dispatch_fast|vm\/dispatch\.rs|vm\/tier_policy/.test(rel);
-    // P3: no opcode exclusion tables.
-    if (tierCode) for (const m of s.matchAll(/\b(?:const|static)\s+([A-Z_]*(?:EXCLUD|UNSUPPORTED|REJECT|DENY|REFUSE|NOT_SUPPORTED|DECLINE)[A-Z_]*)\b/g))
+    // P3: no opcode exclusion tables (arrays, sets, maps or masks; a scalar flag such as a refused bit is not a table).
+    if (tierCode) for (const m of s.matchAll(/\b(?:const|static)\s+([A-Z_]*(?:EXCLUD|UNSUPPORTED|REJECT|DENY|REFUSE|NOT_SUPPORTED|DECLINE)[A-Z_]*)\s*:\s*&?\s*(?:\[|&|[A-Za-z_:<]*(?:Set|Map|Table|Vec|Mask))/g))
       if (!inRanges(tests, m.index)) add("exclusion-table", rel, lineOf(starts, m.index), m[1], `${m[1]}: an exclusion table in tier code (principle 3: every op has a row, no exclusion tables)`);
     // P3: one frame model.
     if (inRuntime && !/staged\/frame\.rs$/.test(rel)) for (const m of s.matchAll(/\bstruct\s+([A-Za-z0-9_]*(?:Frame|Activation|Window)[A-Za-z0-9_]*)\b/g))
