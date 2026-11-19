@@ -514,6 +514,7 @@ fn a_strict_eval_var_is_a_register() {
         EvalContext::default(),
         &[],
         &[],
+        None,
     )
     .unwrap();
     let listing = eval.disassemble();
