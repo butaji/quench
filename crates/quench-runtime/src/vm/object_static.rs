@@ -266,6 +266,14 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The plain body answers when every copy is an ordinary data copy; it declines before
+        // any guest code could observe a difference, so only the spec slow tail is left below.
+        // A fast call that already declined (`declined_fast`) is not tried again.
+        if self.declined_fast.take() != Some(Native::ObjectAssign)
+            && let Some(target) = self.plain_object_assign(args)
+        {
+            return Ok(target);
+        }
         // The arguments and the target stay reachable on the call roots while sources' getters
         // and the target's setters run.
         self.with_call_roots(args.iter().copied(), |vm| {
@@ -435,10 +443,7 @@ impl<H: Host> Vm<H> {
         prototype: Value,
         realm: Option<Value>,
     ) -> Result<(), JsError> {
-        match realm {
-            None => self.install_native_rows(program, prototype, Holder::ObjectPrototype)?,
-            Some(global) => self.install_realm_native_rows(prototype, Holder::ObjectPrototype, global)?,
-        }
+        self.install_rows_in_realm(program, prototype, Holder::ObjectPrototype, realm)?;
         let prototype_atom = self.intern_atom("__proto__");
         let getter = self.realm_native_value_optional(Native::ObjectPrototypeProtoGetter, realm);
         let setter = self.realm_native_value_optional(Native::ObjectPrototypeProtoSetter, realm);

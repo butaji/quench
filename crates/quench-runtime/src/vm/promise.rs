@@ -320,19 +320,7 @@ mod then;
 pub(super) use then::ThenCapability;
 
 pub(super) const fn native_length_definition(kind: Native) -> Option<f64> {
-    let callbacks = super::typed_array_install::TYPED_ARRAY_CALLBACK_METHODS;
-    let mut index = 0;
-    while index < callbacks.len() {
-        let (_, typed_native, array_native) = callbacks[index];
-        if typed_native as u16 == kind as u16 {
-            return native_length_definition(array_native);
-        }
-        index += 1;
-    }
     if let Some(length) = super::string::string_native_length(kind) {
-        return Some(length);
-    }
-    if let Some(length) = super::date::date_native_length(kind) {
         return Some(length);
     }
     if let Some(length) = super::error::error_native_length(kind) {
@@ -758,28 +746,9 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", promise)?;
-        for (name, native) in [
-            ("then", Native::PromiseThen),
-            ("catch", Native::PromiseCatch),
-            ("finally", Native::PromiseFinally),
-        ] {
-            self.set_realm_builtin_named(program, prototype, name, native, method_realm)?;
-        }
+        self.install_rows_in_realm(program, prototype, super::native_rows::Holder::PromisePrototype, method_realm)?;
         self.install_builtin_to_string_tag(prototype, "Promise")?;
-        for (name, native) in [
-            ("resolve", Native::PromiseResolve),
-            ("reject", Native::PromiseReject),
-            ("withResolvers", Native::PromiseWithResolvers),
-            ("all", Native::PromiseAll),
-            ("allKeyed", Native::PromiseAllKeyed),
-            ("race", Native::PromiseRace),
-            ("allSettled", Native::PromiseAllSettled),
-            ("allSettledKeyed", Native::PromiseAllSettledKeyed),
-            ("any", Native::PromiseAny),
-            ("try", Native::PromiseTry),
-        ] {
-            self.set_realm_builtin_named(program, promise, name, native, method_realm)?;
-        }
+        self.install_rows_in_realm(program, promise, super::native_rows::Holder::PromiseConstructor, method_realm)?;
         self.install_species(promise, |vm| vm.realm_native_value(Native::PromiseSpeciesGetter, global, method_realm.is_none()))?;
         self.set_builtin_value_named(global, "Promise", promise)
     }

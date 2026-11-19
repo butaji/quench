@@ -3,13 +3,45 @@
 //! string in a specializer's code. The record's form is read in place
 //! (`vm::wtf16::native_string`): the two ASCII forms and the UTF-16 one; a rope, a slice, an
 //! append-buffer prefix and a parts string are other tags, and leave at the row's `miss`.
-//! The interpreter reads the same units through `FlatUnits::view` (`builtins::concrete_*`).
+//! The interpreter reads the same units through `FlatUnits::view`: `concrete_char_code_at` and
+//! `concrete_char_at` take the string in either form (`ConcreteString`).
 
 use super::builtins::{UnitWidth, char_at_ascii, char_code_at};
 use super::region::Region;
 use super::Stage;
 use crate::Value;
-pub(crate) use super::string_length::{FlatString, flat_string};
+use crate::vm::wtf16::native_string as form;
+use crate::vm::wtf16::{JsString, Units};
+
+/// A flat string's units as the words a row reads: the address of the first, how many there
+/// are, and whether each is two bytes (one) or one (zero).
+#[derive(Clone, Copy)]
+pub(crate) struct FlatString<W> {
+    pub(crate) units: W,
+    pub(crate) length: W,
+    pub(crate) wide: W,
+}
+
+/// The flat string `value` names among the string records at `record_base`: its units, length
+/// and width, read from its record (`string_length::flat_record`), or `None` (leaving at `miss`)
+/// where that leaves.
+#[inline(always)]
+pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
+    -> Option<FlatString<S::Word>> {
+    let (record, short, wide) = super::string_length::flat_record(stage, record_base, value, miss)?;
+    // Every form keeps the words of both layouts inside the record, so each is read and the
+    // form selects.
+    let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
+    let shared_units = stage.add_imm(pointer, form::shared_units_offset());
+    let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
+    let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
+    let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
+    let units = stage.select(short, short_units, shared_units);
+    let length = stage.select(short, short_length, shared_length);
+    let (one, zero) = (stage.constant(1), stage.constant(0));
+    let wide = stage.select(wide, one, zero);
+    Some(FlatString { units, length, wide })
+}
 
 /// `row` of `string` at its own width.
 #[inline(always)]
@@ -44,22 +76,53 @@ pub(crate) fn string_char_at<S: Stage>(stage: &mut S, string: FlatString<S::Word
     Some(character)
 }
 
-/// The interpreter's `string_char_code_at` of the string `value` among the records at
-/// `record_base`: `None` for a form the row does not read, which the caller reads through the
-/// string's units (`builtins::concrete_char_code_at`).
+/// A flat string a concrete caller holds, in either form: its record among the string records
+/// at `records`, read in place, or its units already viewed, which covers the forms a record
+/// read leaves.
+#[derive(Clone, Copy)]
+pub(crate) enum ConcreteString<'a> {
+    /// The string `value` among the string records at `records`.
+    Record { records: *const JsString, value: Value },
+    /// The units of a flat string.
+    Units(Units<'a>),
+}
+
+impl ConcreteString<'_> {
+    /// This string's units as the words a row reads, or `None` where a record read leaves.
+    #[inline(always)]
+    fn flat(self) -> Option<FlatString<u64>> {
+        match self {
+            Self::Record { records, value } => {
+                let mut stage = super::Concrete::new(std::ptr::null());
+                flat_string(&mut stage, records as u64, value.to_bits(), ())
+            }
+            Self::Units(units) => {
+                let wide = u64::from(matches!(units, Units::Wide(_)));
+                let (base, length) = match units {
+                    Units::Ascii(bytes) => (bytes.as_ptr() as u64, bytes.len() as u64),
+                    Units::Wide(units) => (units.as_ptr() as u64, units.len() as u64),
+                };
+                Some(FlatString { units: base, length, wide })
+            }
+        }
+    }
+}
+
+/// The interpreter's `string_char_code_at` of `string` at `index`; `None` where the row leaves,
+/// which the caller answers through the native.
 #[inline(always)]
-pub(crate) fn concrete_string_char_code_at(record_base: *const crate::vm::wtf16::JsString, value: Value, index: Value) -> Option<Value> {
+pub(crate) fn concrete_char_code_at(string: ConcreteString<'_>, index: Value) -> Option<Value> {
+    let string = string.flat()?;
     let mut stage = super::Concrete::new(std::ptr::null());
-    let string = flat_string(&mut stage, record_base as u64, value.to_bits(), ())?;
     string_char_code_at(&mut stage, string, index.to_bits(), ()).map(Value::from_bits)
 }
 
-/// The interpreter's `string_char_at` of the string `value`, from the table of one-unit strings
+/// The interpreter's `string_char_at` of `string` at `index`, from the table of one-unit strings
 /// at `table`; `None` where the row leaves.
 #[inline(always)]
-pub(crate) fn concrete_string_char_at(record_base: *const crate::vm::wtf16::JsString, table: *const Value, value: Value, index: Value) -> Option<Value> {
+pub(crate) fn concrete_char_at(string: ConcreteString<'_>, table: *const Value, index: Value) -> Option<Value> {
+    let string = string.flat()?;
     let mut stage = super::Concrete::new(std::ptr::null());
-    let string = flat_string(&mut stage, record_base as u64, value.to_bits(), ())?;
     string_char_at(&mut stage, string, index.to_bits(), table as u64, ()).map(Value::from_bits)
 }
 

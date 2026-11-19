@@ -16,22 +16,11 @@ impl<H: Host> Vm<H> {
         self.set_named_constant(program, constructor, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(global, "Symbol", constructor)?;
-        for (name, native) in [("for", Native::SymbolFor), ("keyFor", Native::SymbolKeyFor)] {
-            let method = self.native_with_realm(native, global, global);
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(constructor, name, method)?;
-        }
+        self.install_realm_native_rows(constructor, super::native_rows::Holder::SymbolConstructor, global)?;
         for (name, symbol) in self.well_known_symbols.clone().entries() {
             self.set_named_constant(program, constructor, name, symbol)?;
         }
-        for (name, native) in [
-            ("toString", Native::SymbolToString),
-            ("valueOf", Native::SymbolValueOf),
-        ] {
-            let method = self.native_with_realm(native, global, global);
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(prototype, name, method)?;
-        }
+        self.install_realm_native_rows(prototype, super::native_rows::Holder::SymbolPrototype, global)?;
         if let Some(to_primitive) = self.well_known_symbols.get(WellKnownSymbol::ToPrimitive) {
             let method = self.native_with_realm(Native::SymbolToPrimitive, global, global);
             self.set_builtin_function_name(method, "[Symbol.toPrimitive]")?;
