@@ -185,3 +185,74 @@ fn move_readers(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, p
     }
     found(readers, analysis.live.get(end).is_none_or(|&live| live & destination == 0))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `code` after one forwarding pass over a script body holding it.
+    fn forward_fixture(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
+        let mut program = Engine::specialize_unspecialized("", "rewrite-copies.js").unwrap();
+        let function = &mut program.functions[0];
+        function.code = code;
+        function.registers = registers;
+        function.local_registers = Default::default();
+        forward_move_sources(function, &[] as &[MethodSiteSpec], &[], &[], &mut None);
+        std::mem::take(&mut function.code)
+    }
+
+    fn add(result: Register, left: Register, right: Register) -> Instr {
+        let (left, right) = (Operand::register(left).0, Operand::register(right).0);
+        Instr::new(Op::Binary, result, left, right, BinaryOperator::Addition as u32)
+    }
+
+    fn operands(instruction: Instr) -> (Option<Register>, Option<Register>) {
+        (instruction.operand_b().register_index(), instruction.operand_c().register_index())
+    }
+
+    #[test]
+    fn forwards_both_operand_copies_into_one_reader() {
+        let code = vec![
+            Instr::new(Op::LoadConst, 1, 0, 0, 0),
+            Instr::new(Op::LoadConst, 2, 0, 0, 0),
+            Instr::new(Op::Move, 3, 1, 0, 0),
+            Instr::new(Op::Move, 4, 2, 0, 0),
+            add(5, 3, 4),
+            Instr::new(Op::Return, 5, 0, 0, 0),
+        ];
+        let forwarded = forward_fixture(code, 6);
+        assert_eq!((forwarded[2].op(), forwarded[3].op()), (Op::Nop, Op::Nop));
+        assert_eq!(operands(forwarded[4]), (Some(1), Some(2)));
+    }
+
+    #[test]
+    fn forwards_a_copy_into_every_reader_of_its_span() {
+        let code = vec![
+            Instr::new(Op::LoadConst, 1, 0, 0, 0),
+            Instr::new(Op::Move, 3, 1, 0, 0),
+            add(4, 3, 1),
+            add(5, 4, 3),
+            Instr::new(Op::Return, 5, 0, 0, 0),
+        ];
+        let forwarded = forward_fixture(code, 6);
+        assert_eq!(forwarded[1].op(), Op::Nop);
+        assert_eq!(operands(forwarded[2]), (Some(1), Some(1)));
+        assert_eq!(operands(forwarded[3]), (Some(4), Some(1)));
+    }
+
+    #[test]
+    fn keeps_a_copy_whose_source_changes_before_a_later_reader() {
+        let code = vec![
+            Instr::new(Op::LoadConst, 1, 0, 0, 0),
+            Instr::new(Op::Move, 3, 1, 0, 0),
+            add(4, 3, 3),
+            Instr::new(Op::LoadConst, 1, 0, 0, 0),
+            add(5, 4, 3),
+            add(5, 5, 1),
+            Instr::new(Op::Return, 5, 0, 0, 0),
+        ];
+        let forwarded = forward_fixture(code, 6);
+        assert_eq!(forwarded[1].op(), Op::Move);
+        assert_eq!(operands(forwarded[2]), (Some(3), Some(3)));
+    }
+}
