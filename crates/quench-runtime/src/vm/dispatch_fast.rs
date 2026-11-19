@@ -4995,6 +4995,43 @@ fn lane_object_literal_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, sit
     value
 }
 
+script_handler! {
+    /// `MakeObject`: an empty ordinary object (`Vm::object`), as the general loop makes it.
+    fn lane_make_object<>(cx, r, ip, i, view) {
+        if !staged_allocate(cx, r, i.a, Allocation::Empty) {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+lane_handler! {
+    /// `MakeArray`: a fresh array of the record's length in holes (`Vm::hole_array`).
+    fn lane_make_array<>(cx, r, ip, i, view) {
+        if !staged_allocate(cx, r, i.a, Allocation::Array { length: i.imm(), numbers: i.b == 1 }) {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `MakeArray` whose literal's `DefineArrayElement` records follow it, one per index in
+    /// order (`specialize_array_literals`): the array made with those elements at once, as
+    /// their definitions into its holes would leave it, and the run goes on past them.
+    fn lane_make_array_elements<>(cx, r, ip, i, view) {
+        let length = i.imm() as usize;
+        // SAFETY: `specialize_array_literals` matched the `length` records after this one.
+        let elements = RegisterList::collect(length, |index| unsafe { (*ip.add(index + 1)).a })
+            .expect("a fused literal fits the window");
+        if !staged_allocate(cx, r, i.a, Allocation::ArrayOf { elements }) {
+            return exit(ip);
+        }
+        // SAFETY: as above.
+        next!(cx, r, unsafe { ip.add(length + 1) }, view)
+    }
+}
+
 /// The array of the values in `elements` (`Vm::literal_array`), out of line as `lane_new_object`.
 #[inline(never)]
 fn lane_literal_array_value<H: Host>(vm: &mut Vm<H>, r: Registers, elements: RegisterList) -> Value {
@@ -5014,10 +5051,10 @@ fn lane_new_object<H: Host>(vm: &mut Vm<H>) -> Value {
     value
 }
 
-/// The `MakeArray` row's array of `length` holes, out of line as `lane_new_object`.
+/// `lane_make_array`'s array of `length` holes (`Vm::make_array`), out of line as `lane_new_object`.
 #[inline(never)]
-fn lane_new_hole_array<H: Host>(vm: &mut Vm<H>, length: usize) -> Value {
-    let value = vm.hole_array(length);
+fn lane_new_hole_array<H: Host>(vm: &mut Vm<H>, length: usize, numbers: bool) -> Value {
+    let value = vm.make_array(length, numbers);
     note_allocation(vm);
     value
 }

@@ -110,6 +110,7 @@ impl Compiler<'_> {
             &clobbered_local_slots,
         );
         function.strict = strict;
+        function.declared_key = source_span.map(|span| span.start);
         function.super_static = super_static;
         function.super_home = super_home;
         function.super_home_atom = super_home_atom;

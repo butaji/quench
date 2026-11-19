@@ -475,6 +475,9 @@ pub(super) struct DenseArrayView {
     /// Whether its backing counts no values (`emit_dense_array_uncounted` ran on the edge
     /// that proved the view): a store through it then writes the element alone.
     pub(super) uncounted: bool,
+    /// The double flag of a backing the staged row's proof admitted double
+    /// (`staged::elements::DenseView::double`); `None` where the view proved it wide.
+    pub(super) double: Option<ir::Value>,
 }
 
 /// The emission proofs a staged value operation carries: a dense array view with the cold
@@ -508,7 +511,7 @@ pub(super) fn emit_dense_array_view(
     }
     // The view's length is an `i32`, the width an int32 index has.
     let length = stage.raw_unary(Unary::Narrow(Lane::I32), length);
-    DenseArrayView { values, length, writable, uncounted: false }
+    DenseArrayView { values, length, writable, uncounted: false, double: None }
 }
 
 /// The backing's first value and length of the array `base` (tagged) an earlier view
@@ -531,6 +534,27 @@ pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload
     (values, stage.raw_unary(Unary::Narrow(Lane::I32), length))
 }
 
+/// The raw doubles of the array `base` (tagged) whose backing is double and holds no hole
+/// (`staged::elements::double_view`): their first word and their 64-bit count, as a typed view
+/// holds them; `writable` also proves in-place replacement. Any other base or backing leaves
+/// through `fallback`, with nothing read.
+pub(super) fn emit_double_array_view(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
+    writable: bool, fallback: ir::Block) -> (ir::Value, ir::Value) {
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
+    crate::staged::elements::double_view(&mut stage, record_base, base, writable, fallback)
+        .expect("the emit stage continues past its guards")
+}
+
+/// `emit_dense_array_reload` of a double view (`emit_double_array_view`): the backing read again,
+/// empty once it is no longer double (`staged::elements::reloaded_double_view`).
+pub(super) fn emit_double_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
+    let record = crate::staged::elements::array_record(&mut stage, record_base, base);
+    crate::staged::elements::reloaded_double_view(&mut stage, record)
+}
+
 /// The address of `view`'s present element `index` (an int32) and its value; an index past
 /// the elements (a negative one among them, compared unsigned) or a hole leaves through
 /// `fallback`.
@@ -541,6 +565,7 @@ pub(super) fn emit_dense_element(
     fallback: ir::Block,
     in_bounds: bool,
 ) -> (ir::Value, ir::Value) {
+    debug_assert!(view.double.is_none(), "a raw element access needs a view proved wide");
     let mut stage = object_slots::emit(builder);
     let element = if in_bounds {
         crate::staged::elements::present_element(&mut stage, view.values, index, fallback)

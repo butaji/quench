@@ -4258,6 +4258,7 @@ impl<'a> Compiler<'a> {
             function.push_function_name_binding(name, binding);
         }
         function.super_home_atom = options.super_home_atom;
+        function.declared_key = if parent.is_none() { Some(u32::MAX) } else { options.source_span.map(|span| span.start) };
         function.super_call_binds_this = options.derived_constructor
             || (parent.is_none()
                 && function

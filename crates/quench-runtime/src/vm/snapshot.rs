@@ -191,6 +191,8 @@ impl<H: Host> Vm<H> {
             runtime_atoms,
             // A proof of the running heap's methods; a restored heap proves its own.
             constructed_shapes: _,
+            // Names constructors and shapes of the running heap; a restored heap derives its own.
+            preshaped_receivers: _,
             // Templates name roots of the running heap; a restored heap starts without any,
             // and its hosts capture them again.
             object_templates: _,

@@ -191,28 +191,30 @@ fn staged_element<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A
 /// operation through the loop entry's view (`places_view::entry_read`).
 #[inline(always)]
 fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
-    if ENTRY {
-        places_view::entry_read::<D, B>(s, entry_dense::<HOLE_A>(payload))
-    } else {
-        let mut frame = Places::<D, MEM, B>::new(s);
-        match staged_element(&mut frame, Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT) }) {
-            Some(word) => deliver::<D>(frame.s, word),
-            None => Out::Exit(frame.s),
-        }
+    let index = need!(s, index_of::<B, HOLE_B>(&s));
+    if !ENTRY {
+        // A wide, double or narrow backing; the upper-word table a narrow element decodes through is hole 4.
+        let mut stage = StencilStage::from_hole(ELEMENT_SITES);
+        let (records, base) = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), array_word::<HOLE_A>(&s));
+        let word = need!(s, elements::record_element(&mut stage, records, base, u64::from(index as u32), hole64::<{ crate::words::LAST_HOLE }>(), ()));
+        return deliver::<D>(s, word);
     }
+    let (values, length, _) = need!(s, backing::<ENTRY, HOLE_A, false>(&s, payload));
+    let mut stage = StencilStage::from_hole(ELEMENT_SITES);
+    let word = need!(s, elements::read_element(&mut stage, elements::DenseView { values, length, packed: false, within: false, double: None }, u64::from(index as u32), ()));
+    deliver::<D>(s, word)
 }
 
 /// An element store: the array is hole 0, the value hole 1, the index hole 2. A dense store is the
 /// staged `ElementWrite`; an entry row's store is the same operation through the loop entry's view.
 #[inline(always)]
 fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
-    if ENTRY {
-        places_view::entry_write::<A, B>(s, entry_dense::<0>(payload))
-    } else {
-        let mut frame = Places::<MEM, A, B>::new(s);
-        let done = staged_element(&mut frame, Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT }).is_some();
-        finish(frame, done)
-    }
+    let index = need!(s, index_of::<B, HOLE_B>(&s));
+    let word = need!(s, number_word::<A, HOLE_A>(&s));
+    let (values, length, _) = need!(s, backing::<ENTRY, 0, true>(&s, payload));
+    let mut stage = StencilStage::from_hole(ELEMENT_SITES);
+    need!(s, elements::replace_present(&mut stage, elements::DenseView { values, length, packed: false, within: false, double: None }, u64::from(index as u32), word, ()));
+    Out::Next(s)
 }
 
 /// A typed element read: the entry words' offset is hole 1, the Number delivered as `Value::number` makes it

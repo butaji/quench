@@ -1214,6 +1214,18 @@ impl<H: Host> Vm<H> {
         self.heap.alloc_fresh_array(prototype, elements)
     }
 
+    /// `MakeArray`'s result (`Allocation::Array`): `hole_array`, or, for an empty literal whose
+    /// binding a TypeScript annotation declares an array of Numbers (`numbers`), an array whose
+    /// backing starts double (`ArrayElements::double_with_room`): its Numbers append unboxed
+    /// from the first, with no int32 backing to convert later.
+    pub(super) fn make_array(&mut self, length: usize, numbers: bool) -> Value {
+        if !numbers || length != 0 {
+            return self.hole_array(length);
+        }
+        let prototype = self.array_prototype_for_realm(self.realm.globals);
+        self.heap.alloc_fresh_array(prototype, crate::heap::ArrayElements::double_with_room())
+    }
+
     /// An array literal of `length` elements, each the value `element` gives for its index:
     /// `hole_array` with each hole's definition (`define_literal_element`) made at once.
     pub(super) fn literal_array(&mut self, length: usize, element: impl FnMut(usize) -> Value) -> Value {

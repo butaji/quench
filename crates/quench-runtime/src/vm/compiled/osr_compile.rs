@@ -470,7 +470,7 @@ impl LoopPlanner<'_> {
                 coverage: super::lane_region::Coverage::Loop { header, backedge, poll: true },
                 completion: super::lane_region::Completion::Body, views: self.views,
             },
-        }.specialize(self.program).ok().filter(|lowered| self.views == super::ElementViews::Dense || lowered.hoists_arrays)
+        }.specialize(self.program).ok().filter(|lowered| matches!(self.views, super::ElementViews::Dense | super::ElementViews::Double) || lowered.hoists_arrays)
     }
 }
 

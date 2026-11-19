@@ -24248,3 +24248,45 @@ fn declared_null_fields_seed_their_slot_type_at_the_first_add() {
     assert_eq!(global(&mut vm, "ok"), Value::TRUE);
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::ANY);
 }
+
+#[test]
+fn declared_class_layouts_allocate_receivers_without_showing_fields_early() {
+    // `x` and `y` are a layout (`DeclaredLayout`): receivers are made holding them. `Q`'s `b`
+    // initializer observes the receiver, so its layout is `a` alone and `c` is defined after it.
+    let source = r#"
+        class P { x: number; y: number; constructor(a: number) { this.y = a; this.x = a + 1; } }
+        class Q { a: number; b: string = (globalThis.seen = Object.keys(this).join() + '|' + ('c' in this) + '|' + this.hasOwnProperty('a')); c: number; }
+        class R extends P { z: number; constructor() { super(1); } }
+        const out: string[] = [];
+        for (let i = 0; i < 50; i++) { const p = new P(i); out.push(Object.keys(p).join() + '=' + p.x + ',' + p.y); }
+        new Q();
+        const r = new R();
+        globalThis.first = new P(1);
+        globalThis.second = new P(2);
+        globalThis.kept = [out[0], out[49], (globalThis as any).seen, Object.keys(r).join(), Object.keys(new Q()).join()].join(';');
+    "#;
+    let program = Engine::specialize_typescript(source, "declared-layouts.ts").unwrap();
+    let declared = program.declared_types.as_deref().expect("a typed program keeps its declarations");
+    let start = |name: &str| source.find(name).unwrap() as u32;
+    let names = |class: &str| declared.declared_layout(start(class)).map(|names| names.iter().map(|name| name.to_string()).collect::<Vec<_>>());
+    assert_eq!(names("class P"), Some(vec!["x".to_string(), "y".to_string()]));
+    assert_eq!(names("class Q"), Some(vec!["a".to_string()]));
+    assert_eq!(names("class R"), None);
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let kept = vm.intern_atom("kept");
+        let kept = vm.own_property(vm.realm.globals, kept).unwrap();
+        let joined = vm.to_string(&program, kept).unwrap();
+        assert_eq!(&*joined, "x,y=1,0;x,y=50,49;a|false|true;x,y,z;a,b,c");
+        let first = vm.intern_atom("first");
+        let first = vm.own_property(vm.realm.globals, first).unwrap();
+        let second = vm.intern_atom("second");
+        let second = vm.own_property(vm.realm.globals, second).unwrap();
+        let shape = |vm: &Vm<TestHost>, value| vm.object_data(value).map(|object| object.shape());
+        assert!(shape(&vm, first).is_some());
+        // One layout from birth.
+        assert_eq!(shape(&vm, first), shape(&vm, second));
+    }
+}

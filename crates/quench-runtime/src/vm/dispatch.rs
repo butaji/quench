@@ -738,7 +738,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::MakeArray => {
-                let v = self.hole_array(i.array_length());
+                let v = self.make_array(i.array_length(), i.boolean_field(crate::bytecode::InstructionField::B) == Some(true));
                 self.write(f, i.result_register(), v);
             }
             Op::MakeConstArray => {

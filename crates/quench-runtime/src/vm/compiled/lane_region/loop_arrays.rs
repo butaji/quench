@@ -79,6 +79,9 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             };
             let Some(source) = base.and_then(|base| array_source(unit, leaders, &written, |at| captured(header, at),
                 |slot| typed_captures.contains(&slot), pc, base)) else { continue };
+            // A double region stores raw doubles: a typed capture's raw NaN could carry a hole's
+            // bits (`heap::DOUBLE_LEN`), so its elements are read boxed, NaN canonical.
+            if views == ElementViews::Double && matches!(source, ArraySource::Capture(_)) { continue; }
             match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.source == source) {
                 Some(array) => array.writable |= stores,
                 None => {

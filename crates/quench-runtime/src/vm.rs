@@ -170,6 +170,7 @@ mod dynamic_strings;
 mod lane_exits;
 mod embedding;
 mod provenance;
+mod preshaped_receiver;
 mod inspection;
 mod caller_view;
 mod environment; mod name_scope;
@@ -2204,6 +2205,9 @@ pub(crate) struct Vm<H> {
     runtime_atoms: RuntimeAtoms,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
+    /// `Vm::preshape_receiver` answers: the declared layout a construction allocates its
+    /// receiver in; cleared by every collection.
+    preshaped_receivers: Box<[preshaped_receiver::PreshapedReceiver; preshaped_receiver::PRESHAPED_RECEIVER_ENTRIES]>,
     /// The host's object templates (`object_template`), indexed by their ids.
     object_templates: Vec<object_template::ObjectTemplate>,
     method_caches: method_cache::MethodCacheTable,

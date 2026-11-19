@@ -14,8 +14,10 @@ pub(crate) enum Allocation {
     /// An empty ordinary object (`Vm::object`).
     Empty,
     /// An array of `length` holes (`Vm::hole_array`); its elements, defined after it, are
-    /// stores of their own.
-    Array { length: u32 },
+    /// stores of their own. `numbers`: the literal's binding is declared an array of Numbers, so
+    /// an empty one starts with a double backing (`Vm::make_array`); a tier that makes it as any
+    /// other array is as exact, the backing turning double at its first Number that is no int32.
+    Array { length: u32, numbers: bool },
     /// An array holding the values of `elements`, in order (`Vm::literal_array`): the literal
     /// whose `DefineArrayElement` records follow its `MakeArray` back to back, made at once as
     /// their definitions into its holes would leave it. A fresh array needs no write barrier.
@@ -59,7 +61,8 @@ impl Allocation {
             Op::MakeObject => Self::Empty,
             Op::MakeArray => match literal_elements(instruction, following) {
                 Some(elements) => Self::ArrayOf { elements },
-                None => Self::Array { length: u32::try_from(instruction.array_length()).ok()? },
+                None => Self::Array { length: u32::try_from(instruction.array_length()).ok()?,
+                    numbers: instruction.boolean_field(crate::bytecode::InstructionField::B)? },
             },
             Op::MakeObject2 => Self::ObjectPair { site: u32::try_from(instruction.object_site_index()).ok()?,
                 first: instruction.register_b(), second: instruction.register_c() },
@@ -114,7 +117,7 @@ mod tests {
         assert_eq!(make(Op::MakeObject, 0, 0, 0), Some((3, Allocation::Empty)));
         assert_eq!(make(Op::MakeObject2, 1, 2, 5), Some((3, Allocation::ObjectPair { site: 5, first: 1, second: 2 })));
         assert_eq!(make(Op::MakeConstArray, 2, 0, 5), Some((3, Allocation::ConstArray { constant: 5, count: 2 })));
-        assert_eq!(make(Op::MakeArray, 0, 0, 4), Some((3, Allocation::Array { length: 4 })));
+        assert_eq!(make(Op::MakeArray, 0, 0, 4), Some((3, Allocation::Array { length: 4, numbers: false })));
         assert_eq!(make(Op::CreateRegExpLiteral, 0, 0, 6), Some((3, Allocation::RegExp { site: 6 })));
         assert!(matches!(make(Op::StringConcat, 1, 1, 0), Some((3, Allocation::Concat { .. }))));
         assert!(make(Op::Jump, 0, 0, 0).is_none());
@@ -130,15 +133,15 @@ mod tests {
         let rows = [define(9, 0), define(2, 1), define(7, 2)];
         let Some((4, Allocation::ArrayOf { elements })) = Allocation::decode(make(3), &rows) else { panic!("fused") };
         assert_eq!(elements.registers(), &[9, 2, 7]);
-        let holes = Some((4, Allocation::Array { length: 3 }));
+        let holes = Some((4, Allocation::Array { length: 3, numbers: false }));
         assert_eq!(Allocation::decode(make(3), &rows[..2]), holes, "a definition is missing");
         assert_eq!(Allocation::decode(make(3), &[rows[1], rows[0], rows[2]]), holes, "out of order");
         assert_eq!(Allocation::decode(make(3), &[rows[0], define(4, 1), rows[2]]), holes, "the array is its own element");
         assert_eq!(Allocation::decode(make(3), &[rows[0], WideInstruction::new(Op::DefineArrayElement, 2, 5, 0, 1), rows[2]]), holes,
             "another array's definition");
-        assert_eq!(Allocation::decode(make(0), &rows), Some((4, Allocation::Array { length: 0 })));
+        assert_eq!(Allocation::decode(make(0), &rows), Some((4, Allocation::Array { length: 0, numbers: false })));
         let long: Vec<_> = (0..=crate::bytecode::ARRAY_LITERAL_WINDOW as u32).map(|index| define(index as u16 + 8, index)).collect();
         assert_eq!(Allocation::decode(make(long.len() as u32), &long),
-            Some((4, Allocation::Array { length: long.len() as u32 })), "past the window");
+            Some((4, Allocation::Array { length: long.len() as u32, numbers: false })), "past the window");
     }
 }

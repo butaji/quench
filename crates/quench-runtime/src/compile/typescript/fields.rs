@@ -37,8 +37,63 @@ impl<'a> Visit<'a> for Collect<'_> {
                 _ => {}
             }
         }
+        if let Some(names) = layout(class) {
+            self.declarations.declare_layout(class_start, names);
+        }
         walk::walk_class(self, class);
     }
+}
+
+/// The receiver layout of `class` (`DeclaredLayout`): the leading run of its instance fields
+/// that define `undefined` before any code can observe the receiver, by name in order, without
+/// repeats; `None` where the run is empty or the class is derived, decorated or ambient. Read
+/// before admission, which erases `declare` and abstract fields (no run-time slot, skipped here)
+/// and moves parameter properties into the constructor's body (stores after the fields, never
+/// part of the layout); every other instance field stays a field its constructor defines first
+/// thing, in class order (`compile::class::emit_instance_fields`). Static members, methods,
+/// static blocks and index signatures define nothing on the receiver and are passed over. The
+/// run stops at the first field it cannot prove runs no code and defines a plain string key:
+/// one with an initializer (whose evaluation could reach the receiver), a computed, private,
+/// string-literal or numeric key, an `accessor`, a decorated field, or `__proto__`.
+fn layout(class: &Class<'_>) -> Option<Vec<Box<str>>> {
+    if class.heritage.is_some() || class.declare || !class.decorators.is_empty() {
+        return None;
+    }
+    let decorated = class.body.body.iter().any(|element| match element {
+        ClassElement::PropertyDefinition(property) => !property.decorators.is_empty(),
+        ClassElement::AccessorProperty(accessor) => !accessor.decorators.is_empty(),
+        ClassElement::MethodDefinition(method) => !method.decorators.is_empty()
+            || method.value.params.items.iter().any(|parameter| !parameter.decorators.is_empty()),
+        _ => false,
+    });
+    if decorated {
+        return None;
+    }
+    let mut names: Vec<Box<str>> = Vec::new();
+    for element in &class.body.body {
+        match element {
+            ClassElement::PropertyDefinition(property) => {
+                if property.r#static || property.declare || property.r#type == PropertyDefinitionType::TSAbstractPropertyDefinition {
+                    continue;
+                }
+                let PropertyKey::StaticIdentifier(identifier) = &property.key else { break };
+                if property.computed || property.value.is_some() || identifier.name.as_str() == "__proto__" {
+                    break;
+                }
+                if !names.iter().any(|name| &**name == identifier.name.as_str()) {
+                    names.push(Box::from(identifier.name.as_str()));
+                }
+            }
+            ClassElement::AccessorProperty(accessor) => {
+                if accessor.r#static || accessor.r#type == AccessorPropertyType::TSAbstractAccessorProperty {
+                    continue;
+                }
+                break;
+            }
+            ClassElement::MethodDefinition(_) | ClassElement::StaticBlock(_) | ClassElement::TSIndexSignature(_) => {}
+        }
+    }
+    (!names.is_empty()).then_some(names)
 }
 
 impl Collect<'_> {

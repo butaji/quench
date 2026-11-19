@@ -1907,7 +1907,7 @@ fn read_module_requests(input: &mut BinaryReader<'_>) -> Result<Vec<ModuleReques
 }
 
 /// The declared environment: none (0), or its declarations, enum constants, class fields, signatures,
-/// locals, parameter members, parameter classes and parameter language sets (1).
+/// locals, parameter members, parameter classes, parameter language sets and receiver layouts (1).
 fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::DeclaredTypes>) {
     let Some(declared) = declared else {
         out.u8(0);
@@ -1978,6 +1978,14 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
         out.u16(parameter.parameter);
         out.u16(parameter.languages);
     }
+    out.u32(declared.layouts.len() as u32);
+    for layout in &declared.layouts {
+        out.u32(layout.class_start);
+        out.u32(layout.names.len() as u32);
+        for name in &layout.names {
+            out.string(name);
+        }
+    }
 }
 
 fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super::DeclaredTypes>>, String> {
@@ -2040,8 +2048,13 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
     let parameters = input.list(|input| {
         Ok(super::DeclaredParameter { function: input.u32()?, parameter: input.u16()?, languages: input.u16()? })
     })?;
+    let layouts = input.list(|input| {
+        let class_start = input.u32()?;
+        let names = input.list(|input| Ok(input.string()?.into_boxed_str()))?;
+        Ok(super::declared_types::DeclaredLayout { class_start, names: names.into_boxed_slice() })
+    })?;
     Ok(Some(Box::new(super::DeclaredTypes {
-        declared, enum_constants, fields, signatures, locals, members, parameter_classes, parameters,
+        declared, enum_constants, fields, signatures, locals, members, parameter_classes, parameters, layouts,
     })))
 }
 
