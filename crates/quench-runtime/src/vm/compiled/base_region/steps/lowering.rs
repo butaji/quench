@@ -109,11 +109,11 @@ pub(in crate::vm::compiled::base_region) fn calls_in_place(instruction: WideInst
     chains(instruction) && instruction.result_flags() == 0 && call_plan::helper_address(helpers, LaneHelper::RegionCall).is_some()
 }
 
-/// The packed words of `instruction` where its step is the helper step and a family covers its opcode
+/// The packed words of `instruction` where its step is the helper step and the packed helper runs it directly
 /// (`dispatch_fast::family_helpers::covers`), with the helper table holding the packed helper: the helper
 /// row then runs the instruction as decoded here, not from its PC.
 fn packed_words(step: Step, instruction: WideInstruction, helpers: LaneHelpers) -> Option<[u64; 2]> {
-    let covered = step == Step::Helper && crate::vm::dispatch_fast::family_helpers::covers(instruction.op())
+    let covered = step == Step::Helper && crate::vm::dispatch_fast::family_helpers::covers(instruction)
         && call_plan::helper_address(helpers, LaneHelper::StepPacked).is_some();
     covered.then(|| {
         let (first, imm) = instruction.words();
