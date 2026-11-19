@@ -2317,6 +2317,11 @@ pub(super) struct LaneStack {
     activation_records: std::cell::UnsafeCell<LaneActivations>,
     /// The plain activations above the innermost record, whose headers the value stack holds.
     plain: PlainFrames,
+    /// The side records of the plain activations whose headers carry a side flag
+    /// (`lane_frames::Side`, `frame::SIDE_FLAGS`), innermost last: what a record would hold
+    /// beyond the header (one-frame-one-call.md F4). Written through `&mut self` and cleared by
+    /// `spill_plain`, which makes their frames records.
+    sides: std::cell::UnsafeCell<Vec<lane_frames::Side>>,
     /// The return trampoline of the native callbacks pushed as plain activations
     /// (`CallbackTrampoline`), at an address their headers name.
     callback_return: Box<CallbackTrampoline>,
@@ -2344,6 +2349,8 @@ pub(super) struct LaneStack {
     /// The reads call sites answered (`ReadMemo`), each in the slot its record names
     /// (`CallOperand::memo`).
     read_memos: Vec<ReadMemo>,
+    /// The callee each in-place native row admits in this generation (`native_calls::NativeIdentities`).
+    native_identities: native_calls::NativeIdentities,
     /// The forwarding constructors whose activations constructions skipped, one per
     /// `Completion::Forwarder` activation, innermost last.
     forwarders: Vec<SkippedForwarder>,
@@ -2514,7 +2521,7 @@ impl LaneStack {
     #[cold]
     #[inline(never)]
     fn spill_plain(&self) {
-        let depth = self.plain.depth.replace(0);
+        let depth = self.plain.depth.get();
         // The records grow by `depth`: the proved calls' bound no longer holds.
         self.plain.bound.set(0);
         // SAFETY: no reference into the records lives (`activations`).
@@ -2522,17 +2529,18 @@ impl LaneStack {
         let len = records.len();
         debug_assert!(len + depth <= records.capacity(), "the activation limit counts plain activations");
         // Innermost first, each into its own slot above the records, outermost lowest; each the
-        // record the frame view reads it as (`lane_frames::plain_record`).
-        let mut window = Registers(self.plain.registers.get());
-        for slot in (len..len + depth).rev() {
-            let (activation, caller_registers) = self.plain_record(window);
+        // record the frame view reads it as (`lane_frames::plain_record`), side record included.
+        for (slot, activation) in (len..len + depth).rev().zip(self.plain_frames_innermost()) {
             // SAFETY: the activation limit counts plain activations within the capacity, so
             // the slot lies in the allocation; the length covers it once all are written.
             unsafe { records.top_ptr().sub(len).add(slot).write(activation) };
-            window = caller_registers;
         }
         // SAFETY: every slot up to `len + depth` was written above.
         unsafe { records.set_len(len + depth) };
+        self.plain.depth.set(0);
+        // Every side record belonged to a plain activation, each a record now.
+        // SAFETY: the walk above ended; no reference into the side records lives.
+        unsafe { (*self.sides.get()).clear() };
     }
 
     /// Set `PlainFrames::bound` for plain activations pushed over the records from `floor`, the
@@ -2580,18 +2588,27 @@ impl LaneStack {
             && crate::staged::call::concrete_fits(self.values.room() as u64, u64::from(room))
     }
 
-    /// Whether `activation` may be a plain activation: a script activation of the lane's own
-    /// windows that completes plainly and keeps, forwards and promotes nothing.
+    /// Whether `activation` may be a plain activation whose header is all of it: a script
+    /// activation of the lane's own windows that completes plainly and keeps, forwards and
+    /// promotes nothing (`header_flags` of 0).
     #[inline(always)]
     fn is_plain(activation: &Activation, window: *mut Value) -> bool {
-        matches!(
-            activation.kind(),
-            ActivationKind::Script(ScriptActivation { completion: Completion::Plain, forwards: false, kept: 0, environment: false, record, .. })
-                if record.is_null()
-        ) && activation.native.callee.is_null()
+        Self::header_flags(activation, window) == Some(0)
+    }
+
+    /// The side-record flags of `activation` pushed as a header (one-frame-one-call.md F4,
+    /// `lane_frames::Side::flags_of`): any script activation of the lane's own windows with an
+    /// empty native prefix that promotes no record. `None` for every other (a native frame's,
+    /// Wasm, a window over a heap register file), which stays a record.
+    #[inline(always)]
+    fn header_flags(activation: &Activation, window: *mut Value) -> Option<u64> {
+        let ActivationKind::Script(script) = activation.kind() else { return None };
+        (script.record.is_null()
+            && activation.native.callee.is_null()
             && activation.native.body == 0
             && activation.native.this == 0
-            && window.addr() & lane_values::HEAP_WINDOW == 0
+            && window.addr() & lane_values::HEAP_WINDOW == 0)
+            .then(|| lane_frames::Side::flags_of(script))
     }
 
     /// Push a native's callback of `header` over the window at `window` as a plain activation
@@ -2657,6 +2674,7 @@ impl Default for LaneStack {
                 program: std::cell::Cell::new(ProgramId::MAIN),
                 bound: std::cell::Cell::new(0),
             },
+            sides: std::cell::UnsafeCell::new(Vec::new()),
             callback_return: Box::new(CallbackTrampoline::new()),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
@@ -2667,6 +2685,7 @@ impl Default for LaneStack {
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             construct_watches: Box::new([const { None }; CONSTRUCT_PLANS]),
             read_memos: Vec::new(),
+            native_identities: native_calls::NativeIdentities::new(),
             forwarders: Vec::new(),
             settling: Vec::new(),
             steps: Vec::new(),
@@ -2756,15 +2775,18 @@ impl LaneStack {
     /// The caller checked that the activations' capacity exceeds their length.
     #[inline(always)]
     unsafe fn push_activation(&mut self, mut activation: Activation, window: *mut Value) {
-        // A plain activation writes its header below its window instead of a record, while
-        // the plain activations above the innermost record share its program.
-        // The innermost plain activation runs in the caller's program, which a plain
-        // completion never leaves, so every plain activation shares it.
-        if Self::is_plain(&activation, window) {
-            debug_assert!(self.plain.depth.get() == 0 || self.plain.program.get() == activation.caller_program());
+        // Every script activation of the lane's own windows writes its header below its window
+        // instead of a record (one-frame-one-call.md F4), and what a record would hold past the
+        // header (keeping, environment, a completion past `Plain`, a caller of another program)
+        // goes to one side record its header's flags name (`lane_frames::Side`). The header
+        // names its caller's program (`PlainFrames::program`), which a side record keeps too.
+        if let Some(flags) = Self::header_flags(&activation, window) {
+            debug_assert!(self.plain_program_holds(activation.caller_program()));
             // The first plain activation over the records names their count to the proved
             // calls above it (`plain_room`).
             // Its window is filled already, so the bound counts from the window, not the top.
+            // Every header's window is the lane stack's, at least `CONTEXT` words, as the
+            // bound assumes.
             if self.plain.depth.get() == 0 { self.refresh_plain_bound(window.addr()); }
             let ActivationKind::Script(script) = activation.kind() else { unreachable!() };
             use crate::staged::protocol::{plain_packed, push_plain, PlainHeader};
@@ -2772,13 +2794,15 @@ impl LaneStack {
                 call: activation.call().expose_provenance() as u64,
                 caller_registers: activation.caller_registers().0.expose_provenance() as u64,
                 caller_base: activation.caller_base().expose_provenance() as u64,
-                packed: plain_packed(activation.function(), script.argc, 0),
+                packed: plain_packed(activation.function(), script.argc, flags),
                 callee: script.callee.to_bits(),
             };
+            let side = lane_frames::Side::of(script, activation.caller_program(), flags);
             push_plain(
                 &mut crate::staged::Concrete::new(std::ptr::null()),
                 self.plain_frames_word() as u64, window.expose_provenance() as u64, header, u64::from(activation.caller_program().raw()),
             );
+            if let Some(side) = side { self.sides.get_mut().push(side); }
             return;
         }
         activation.native.window = window.addr();
@@ -2816,6 +2840,14 @@ impl LaneStack {
 
     #[inline(always)]
     fn pop_activation(&mut self) -> Option<Activation> {
+        // The innermost plain activation pops its header and side record where they are, with
+        // no spill of the ones below (`lane_frames::pop_plain_frame`); it holds no Wasm storage.
+        if self.plain.depth.get() != 0 {
+            // SAFETY: a plain activation runs, tested above.
+            let activation = unsafe { self.pop_plain_frame() };
+            self.drop_owned_from(self.activation_count());
+            return Some(activation);
+        }
         let activation = self.activations_mut().pop()?;
         self.wasm_storage_bytes -= activation.frame_storage_bytes();
         self.drop_owned_from(self.activation_count());
@@ -2921,6 +2953,8 @@ impl LaneStack {
                 self.generation = NO_SCRIPT_GENERATION + 1;
             }
             self.generation_key = key;
+            // A collection may have freed a native the rows admitted and reused its id.
+            self.native_identities.forget();
             self.admission = Admission(Admission::new(self.generation, self.admission.program()).0 | self.refused);
         }
     }

@@ -8,8 +8,9 @@
 //! Writers still go through `LaneStack::activations_mut`, which spills: a view is a copy.
 use super::*;
 
-/// One activation as a reader sees it: a record, or a plain header read as the record its spill
-/// would write (`LaneStack::plain_record`), so a reader answers the same either way.
+/// One activation as a reader sees it: a record, or a plain header (with its side record, where
+/// its flags name one) read as the record its spill would write (`LaneStack::plain_record`), so
+/// a reader answers the same either way.
 #[derive(Clone, Copy)]
 pub(in crate::vm) struct FrameView {
     record: Activation,
@@ -52,21 +53,78 @@ impl FrameView {
     /// Whether it is a plain header in the value stack.
     #[inline(always)] pub(in crate::vm) fn is_plain(&self) -> bool { self.plain }
     /// The record it is, or would be once spilled, for the readers that still take an
-    /// `&Activation` (`lane_restore_caller`). Transitional: step F4 removes it.
+    /// `&Activation` (`lane_restore_caller`). Transitional: step F4's completion cut removes it.
     #[inline(always)] pub(super) fn record(&self) -> &Activation { &self.record }
+}
+
+/// What a frame holds beyond its 8-word header (one-frame-one-call.md F4): one entry of
+/// `LaneStack::sides` per frame whose packed word carries a side flag (`frame::SIDE_FLAGS`,
+/// `staged::call_complete::side_flags`), innermost last. A frame finds its own as the top of the
+/// side records while it is the innermost; a walk pairs frames with sides innermost first,
+/// taking one side per flagged frame.
+#[derive(Clone, Copy)]
+pub(super) struct Side {
+    /// What its return yields to its call (`frame::COMPLETION_FLAG`, `frame::CROSSES_FLAG`).
+    pub(super) completion: Completion,
+    /// It keeps the values passed past its registers (`frame::KEEPS_FLAG`, `ScriptActivation::forwards`).
+    pub(super) forwards: bool,
+    /// The register of the first value it keeps, 0 for none (`ScriptActivation::kept`).
+    pub(super) kept: u16,
+    /// Its environment and frame locals follow its registers (`frame::ENV_FLAG`).
+    pub(super) environment: bool,
+    /// The program its caller runs: another than its own where it crosses.
+    pub(super) caller_program: ProgramId,
+}
+
+impl Side {
+    /// The side record of a script activation pushed as a header with `flags`, `None` where the
+    /// header is all of it.
+    #[inline(always)]
+    pub(super) fn of(script: &ScriptActivation, caller_program: ProgramId, flags: u64) -> Option<Self> {
+        (flags != 0).then_some(Self {
+            completion: script.completion,
+            forwards: script.forwards,
+            kept: script.kept,
+            environment: script.environment,
+            caller_program,
+        })
+    }
+
+    /// The side-record flags a script activation's header carries (`frame::SIDE_FLAGS`): 0 for
+    /// one that completes plainly and keeps, forwards and carries nothing.
+    #[inline(always)]
+    pub(super) fn flags_of(script: &ScriptActivation) -> u64 {
+        crate::staged::call_complete::concrete_side_flags(
+            script.forwards || script.kept != 0,
+            script.environment,
+            script.completion.crosses(),
+            !matches!(script.completion, Completion::Plain | Completion::Cross),
+        )
+    }
+}
+
+/// Whether the frame header below `window` carries a side record.
+#[inline(always)]
+pub(super) fn header_sided(window: Registers) -> bool {
+    !crate::staged::call_complete::concrete_frame_completes_plainly(window.0.expose_provenance() as u64)
 }
 
 impl LaneStack {
     /// The record the plain activation whose window is `window` becomes when it spills, and its
-    /// caller's window, the next plain activation's where one remains below it. A native's
-    /// callback (`CallbackTrampoline`), always the outermost plain activation, becomes
-    /// `PreparedShape::of`'s record. An in-lane array step's callback (`steps_return`), whose
-    /// caller base word is its step's index, becomes the `Completion::ArrayStep` record
-    /// `lane_begin_array_iteration` pushed before, with the call record, caller registers and
-    /// base its step holds. The one definition `spill_plain` and the frame view share.
-    pub(super) fn plain_record(&self, window: Registers) -> (Activation, Registers) {
+    /// caller's window, the next plain activation's where one remains below it. `side` is its
+    /// side record where its header carries one (`header_sided`), and `program` the program its
+    /// caller runs where it carries none: the innermost's is `PlainFrames::program`, each other's
+    /// the caller program of the frame above it. A native's callback (`CallbackTrampoline`),
+    /// always the outermost plain activation, becomes `PreparedShape::of`'s record. An in-lane
+    /// array step's callback (`steps_return`), whose caller base word is its step's index,
+    /// becomes the `Completion::ArrayStep` record `lane_begin_array_iteration` pushed before,
+    /// with the call record, caller registers and base its step holds. The one definition
+    /// `spill_plain` and the frame view share.
+    pub(super) fn plain_record(&self, window: Registers, side: Option<Side>, program: ProgramId) -> (Activation, Registers) {
         let (call, caller_registers, caller_base) = window.plain_caller();
-        let (call, record_caller_registers, caller_base, completion) = if let Some((call, registers)) = self.callback_return.returns(call) {
+        let (call, record_caller_registers, caller_base, completion) = if let Some(side) = side {
+            (call, caller_registers, caller_base, side.completion)
+        } else if let Some((call, registers)) = self.callback_return.returns(call) {
             (call, registers, caller_base, Completion::ReturnsToNative)
         } else if self.callback_return.steps_return(call) {
             let step = &self.steps[caller_base.addr()];
@@ -76,20 +134,95 @@ impl LaneStack {
             (call, caller_registers, caller_base, Completion::Plain)
         };
         let (function, argc, callee) = window.plain_callee();
+        let (forwards, kept, environment, caller_program) =
+            side.map_or((false, 0, false, program), |side| (side.forwards, side.kept, side.environment, side.caller_program));
         let mut activation = Activation::of_parts(
-            crate::vm::compiled::ShadowFrame::EMPTY, function, call, caller_base, record_caller_registers, self.plain.program.get(),
+            crate::vm::compiled::ShadowFrame::EMPTY, function, call, caller_base, record_caller_registers, caller_program,
             ActivationKind::Script(ScriptActivation {
                 callee,
                 argc,
                 completion,
-                forwards: false,
-                kept: 0,
-                environment: false,
+                forwards,
+                kept,
+                environment,
                 record: std::ptr::null_mut(),
             }),
         );
         activation.native.window = window.0.addr();
         (activation, record_caller_registers)
+    }
+
+    /// The plain activations innermost first, each as the record its spill would write
+    /// (`plain_record`), its side record taken from the top of the side records down.
+    pub(super) fn plain_frames_innermost(&self) -> impl Iterator<Item = Activation> + '_ {
+        let mut window = Registers(self.plain.registers.get());
+        // SAFETY: the side records change only through `&mut self` and `spill_plain`, which no
+        // walk calls (`frames`'s contract).
+        let sides: &[Side] = unsafe { &*self.sides.get() };
+        let mut left = sides.len();
+        let mut program = self.plain.program.get();
+        (0..self.plain.depth.get()).map(move |_| {
+            let side = header_sided(window).then(|| {
+                left -= 1;
+                sides[left]
+            });
+            let (record, caller) = self.plain_record(window, side, program);
+            program = record.caller_program();
+            window = caller;
+            record
+        })
+    }
+
+    /// The side record of the innermost activation, where it is a plain one whose header
+    /// carries one.
+    #[inline(always)]
+    pub(super) fn innermost_side(&self) -> Option<Side> {
+        if self.plain.depth.get() == 0 || !header_sided(Registers(self.plain.registers.get())) {
+            return None;
+        }
+        // SAFETY: as `plain_frames_innermost`; the copy ends the read.
+        unsafe { (*self.sides.get()).last().copied() }
+    }
+
+    /// Whether a plain activation pushed by code running `program` may share the plain
+    /// activations' words: at depth 0, or where the innermost's caller runs it, or where the
+    /// innermost carries a side record (whose own caller program `PlainFrames::program` names
+    /// once it crosses, until a plain push over it names the running one).
+    pub(super) fn plain_program_holds(&self, program: ProgramId) -> bool {
+        self.plain.depth.get() == 0 || self.plain.program.get() == program || self.innermost_side().is_some()
+    }
+
+    /// Pop the innermost plain activation, header and side record, as the record its spill
+    /// would write and `activations_mut().pop()` would yield (one-frame-one-call.md F4): the
+    /// header's pop row (`staged::protocol::pop_plain`), then the side record its flags select
+    /// (`staged::call_complete::side_completion`). The window stays for the caller to release
+    /// (`lane_restore_caller`), as a popped record's does; the records and their bound are
+    /// untouched.
+    ///
+    /// # Safety
+    /// A plain activation runs (`plain.depth > 0`).
+    pub(super) unsafe fn pop_plain_frame(&mut self) -> Activation {
+        debug_assert!(self.plain.depth.get() != 0, "a plain activation runs");
+        let window = Registers(self.plain.registers.get());
+        let packed = crate::staged::call_complete::frame_packed(
+            &mut crate::staged::Concrete::new(std::ptr::null()), window.0.expose_provenance() as u64,
+        );
+        let side = crate::staged::call_complete::concrete_side_completion(packed);
+        let side = side.sided.then(|| *self.sides.get_mut().last().expect("a sided header has its side record"));
+        let (activation, caller_registers) = self.plain_record(window, side, self.plain.program.get());
+        crate::staged::protocol::pop_plain(
+            &mut crate::staged::Concrete::new(std::ptr::null()), self.plain_frames_word() as u64, window.0.expose_provenance() as u64,
+        );
+        // The row named the header's caller window; a trampoline's header names its scratch
+        // window, its record the real one, which the next plain activation's walk starts from.
+        self.plain.registers.set(caller_registers.0);
+        if let Some(side) = side {
+            self.sides.get_mut().pop();
+            // The caller program of the plain activation below, where it carries no side record
+            // (it runs its caller's program, which the popped one's caller ran).
+            self.plain.program.set(side.caller_program);
+        }
+        activation
     }
 
     /// The records alone, read without spilling.
@@ -119,7 +252,7 @@ impl LaneStack {
     #[inline]
     pub(in crate::vm) fn top_frame(&self) -> Option<FrameView> {
         if self.plain.depth.get() != 0 {
-            let (record, _) = self.plain_record(Registers(self.plain.registers.get()));
+            let (record, _) = self.plain_record(Registers(self.plain.registers.get()), self.innermost_side(), self.plain.program.get());
             return Some(FrameView { record, plain: true });
         }
         // SAFETY: the reference ends here.
@@ -137,13 +270,9 @@ impl LaneStack {
         let above = depth - records.len();
         let plain = self.plain.depth.get();
         if above >= plain { return None; }
-        let mut window = Registers(self.plain.registers.get());
-        // Each caller's window as `plain_record` reads it: an array step's header names the
-        // trampoline's result window, its step the real one.
-        for _ in 0..plain - 1 - above {
-            window = self.plain_record(window).1;
-        }
-        Some(FrameView { record: self.plain_record(window).0, plain: true })
+        // Each caller's window as `plain_record` reads it (an array step's header names the
+        // trampoline's result window, its step the real one), each side record in turn.
+        self.plain_frames_innermost().nth(plain - 1 - above).map(|record| FrameView { record, plain: true })
     }
 
     /// Every activation, outermost first, as `activations().iter()` would yield them once
@@ -152,15 +281,9 @@ impl LaneStack {
     pub(in crate::vm) fn frames(&self) -> impl Iterator<Item = FrameView> + '_ {
         // SAFETY: the walk's contract above.
         let records = unsafe { self.records_unspilled() };
-        let depth = self.plain.depth.get();
-        let mut plain = Vec::with_capacity(depth);
-        let mut window = Registers(self.plain.registers.get());
-        for _ in 0..depth {
-            let (record, caller) = self.plain_record(window);
-            plain.push(FrameView { record, plain: true });
-            window = caller;
-        }
-        records.iter().map(FrameView::of_record).chain(plain.into_iter().rev())
+        let mut plain: Vec<FrameView> = self.plain_frames_innermost().map(|record| FrameView { record, plain: true }).collect();
+        plain.reverse();
+        records.iter().map(FrameView::of_record).chain(plain)
     }
 
     /// Whether the innermost activation is a native frame the lane has not linked

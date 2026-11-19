@@ -372,6 +372,7 @@ impl NumericStage for Emit<'_, '_> {
     }
     fn i32_constant(&mut self, value: i32) -> ir::Value { self.raw_const(Lane::I32, i64::from(value)) }
     fn f64_constant(&mut self, value: f64) -> ir::Value { self.raw_const(Lane::F64, value.to_bits() as i64) }
+    fn f64_from_bits(&mut self, bits: ir::Value) -> ir::Value { self.raw_unary(Unary::Bitcast(Lane::F64), bits) }
     fn narrow(&mut self, a: ir::Value) -> ir::Value { self.raw_unary(Unary::Narrow(Lane::I32), a) }
     /// An int32 word, whether a 32-bit value or a zero-extended 64-bit one.
     fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value {

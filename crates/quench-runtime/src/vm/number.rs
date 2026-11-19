@@ -1,6 +1,7 @@
 use super::property_key::PropertyKey;
 use super::*;
 use crate::staged::math::FloatUnary;
+use crate::staged::call_native::MathCall;
 use num_bigint::{BigInt, Sign};
 
 const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
@@ -643,33 +644,38 @@ pub(super) fn math_numbers_inline(native: Native) -> bool {
         || math_unary_operation(native).is_some()
 }
 
+/// The staged row (`staged::call_native::math_call`) of the Math function `native`, whose
+/// call of Number arguments a site makes in place, int32 fast paths included; `None` for any
+/// other native.
+pub(super) const fn math_call(native: Native) -> Option<MathCall> {
+    Some(match native {
+        Native::MathSqrt => MathCall::Unary(FloatUnary::Sqrt),
+        Native::MathAbs => MathCall::Unary(FloatUnary::Abs),
+        Native::MathFloor => MathCall::Unary(FloatUnary::Floor),
+        Native::MathCeil => MathCall::Unary(FloatUnary::Ceil),
+        Native::MathRound => MathCall::Unary(FloatUnary::Round),
+        Native::MathTrunc => MathCall::Unary(FloatUnary::Trunc),
+        Native::MathFround => MathCall::Unary(FloatUnary::Fround),
+        Native::MathSign => MathCall::Sign,
+        Native::MathMax => MathCall::Extreme(true),
+        Native::MathMin => MathCall::Extreme(false),
+        Native::MathImul => MathCall::Imul,
+        _ => return None,
+    })
+}
+
 /// The value of a call of the Math function `native` (`math_numbers_inline`) with at most
-/// two Number arguments, none of whose conversions runs guest code: `Math.max` and
-/// `Math.min` of two int32s compare them, whose result is that int32 (an int32 is never
-/// -0); any other call takes `math_unary` or `math_numbers`. `None` for another native, any
-/// other argument or more arguments, which the native's call converts.
+/// two Number arguments, none of whose conversions runs guest code: a function with a staged
+/// row (`math_call`) runs it; any other call takes `math_unary` or `math_numbers`. `None` for
+/// another native, any other argument or more arguments, which the native's call converts.
 #[inline(always)]
 pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> {
+    if let Some(call) = math_call(native) {
+        return crate::staged::call_native::concrete_math_call(call, args);
+    }
     match *args {
-        [first, second] => {
-            if let (Some(x), Some(y)) = (first.as_int(), second.as_int()) {
-                match native {
-                    Native::MathMax => return Some(Value::integer(x.max(y))),
-                    Native::MathMin => return Some(Value::integer(x.min(y))),
-                    // ToInt32 of an int32 is itself: the product's low 32 bits.
-                    Native::MathImul => return Some(Value::integer(crate::staged::math::int_multiply(x, y))),
-                    _ => {}
-                }
-            }
-            math_numbers(native, &[first.as_number()?, second.as_number()?]).map(Value::number)
-        }
+        [first, second] => math_numbers(native, &[first.as_number()?, second.as_number()?]).map(Value::number),
         [only] => {
-            // An int32's absolute value is an int32 but at -2^31: no conversion to a double and
-            // back. (The integral functions keep their double path: their arguments are
-            // doubles far more often, and a test first costs those.)
-            if native == Native::MathAbs && let Some(x) = only.as_int() && x != i32::MIN {
-                return Some(Value::integer(x.abs()));
-            }
             let number = only.as_number()?;
             math_unary(native, number).or_else(|| math_numbers(native, &[number])).map(Value::number)
         }

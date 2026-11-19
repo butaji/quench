@@ -91,16 +91,42 @@ enum PackedFlag {
     Body,
     /// A plain frame a native (u-jit) direct call wrote.
     Native,
+    /// The window keeps passed values past its registers (a forwarded `arguments`, values past
+    /// the parameters): the side record names the first kept register (one-frame-one-call.md F4).
+    Keeps,
+    /// The window carries its environment entries and frame locals (`call_environment.rs`).
+    Env,
+    /// The completion is not `Plain`: the side record holds it.
+    Completion,
+    /// The caller runs another program: the side record holds the caller's program.
+    Crosses,
+    /// The window lies over another register file (a generator's): side record R. Reserved;
+    /// such frames stay records until step F4's heap-window cut.
+    HeapWindow,
+    /// The frame owns iterators, `with` objects or an eval record (indexed by depth). Reserved.
+    Owns,
+    /// A Wasm frame: side record W. Reserved for step F6.
+    Wasm,
 }
 
 pub(crate) const PLAIN_FLAG: u64 = 1 << PackedFlag::Plain as u32;
 pub(crate) const BODY_FLAG: u64 = 1 << PackedFlag::Body as u32;
 pub(crate) const NATIVE_FLAG: u64 = 1 << PackedFlag::Native as u32;
+/// The side-record flags (one-frame-one-call.md F4): a frame with any of them has one entry on
+/// the lane stack's side records (`LaneStack::sides`), innermost last; a frame with none
+/// completes plainly from its header alone.
+pub(crate) const KEEPS_FLAG: u64 = 1 << PackedFlag::Keeps as u32;
+pub(crate) const ENV_FLAG: u64 = 1 << PackedFlag::Env as u32;
+pub(crate) const COMPLETION_FLAG: u64 = 1 << PackedFlag::Completion as u32;
+pub(crate) const CROSSES_FLAG: u64 = 1 << PackedFlag::Crosses as u32;
+pub(crate) const SIDE_FLAGS: u64 = KEEPS_FLAG | ENV_FLAG | COMPLETION_FLAG | CROSSES_FLAG;
 pub(crate) const ARGC_SHIFT: u32 = FLAG_BASE + FLAG_BITS;
 const _: () = assert!(PLAIN_FLAG == 1 << 32);
 const _: () = assert!(BODY_FLAG == 1 << 33);
 const _: () = assert!(NATIVE_FLAG == 1 << 34);
 const _: () = assert!(ARGC_SHIFT == 48);
+const _: () = assert!(KEEPS_FLAG == 1 << 35 && ENV_FLAG == 1 << 36 && COMPLETION_FLAG == 1 << 37 && CROSSES_FLAG == 1 << 38);
+const _: () = assert!((PackedFlag::Wasm as u32) < ARGC_SHIFT, "the flags fit below argc");
 
 /// The plain activations' words (`PlainFrames`), in address order: depth, innermost window,
 /// program.

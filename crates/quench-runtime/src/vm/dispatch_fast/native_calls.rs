@@ -1,6 +1,7 @@
 //! Calls the lane answers in place for their common case (else `lane_native_call`), and
 //! for-in's step (`lane_for_in_next`).
 use super::*;
+use crate::staged::call_complete::{concrete_returns_callee_completion, concrete_write_call_result};
 use crate::vm::object_get::ordinary_chain::ChainRead;
 
 /// `charCodeAt` of a flat string at an integer index (`staged::builtins::char_code_at`): the
@@ -38,6 +39,8 @@ macro_rules! builtin_rows {
         fn builtin_handler<H: Host>(row: u8) -> Handler {
             match row { $($row => lane_call_builtin::<H, $row>,)* _ => lane_native_call::<H> }
         }
+        /// The builtin rows, whose identity slots come first (`NativeIdentities`).
+        const BUILTIN_ROWS: usize = [$($row),*].len();
     };
 }
 builtin_rows!(
@@ -48,8 +51,8 @@ builtin_rows!(
 
 /// The Math functions whose call a site makes under its own handler, one instantiation of
 /// `lane_call_math_native` per row: the native is a constant, so the site tests the callee's
-/// identity and runs the operation inline (`number::math_inline_call` folds to it) with no
-/// dispatch on the native. Every other inline Math native keeps `lane_call_math`.
+/// identity and runs the native's staged row (`math_row_call`) with no dispatch on the native.
+/// Every other inline Math native keeps `lane_call_math`.
 macro_rules! math_rows {
     ($($row:literal => $native:ident),* $(,)?) => {
         const fn math_row_native(row: u8) -> Native {
@@ -68,6 +71,8 @@ macro_rules! math_rows {
                 _ => None,
             }
         }
+        /// The Math rows, whose identity slots follow the builtin rows' (`NativeIdentities`).
+        const MATH_ROWS: usize = [$($row),*].len();
         pub(super) fn math_field_call_handlers<H: Host>() -> [*const (); 3 * [$($row),*].len()] {
             [$(lane_get_field_math_call::<H, $row> as *const (),
                lane_get_field_math_call2::<H, $row, false> as *const (),
@@ -80,16 +85,75 @@ math_rows!(
     6 => MathMin, 7 => MathMax, 8 => MathImul, 9 => MathFround, 10 => MathSign,
 );
 
+/// The staged row of Math row `row` (`number::math_call`), which every Math row has.
+const fn math_row_call(row: u8) -> crate::staged::call_native::MathCall {
+    match super::number::math_call(math_row_native(row)) {
+        Some(call) => call,
+        None => panic!("a Math row runs a staged row"),
+    }
+}
+
+/// The identity slots of the in-place native rows: one per builtin row, then one per Math row.
+const IDENTITY_SLOTS: usize = BUILTIN_ROWS + MATH_ROWS;
+
+/// The identity slot of Math row `row`.
+const fn math_slot(row: u8) -> usize {
+    BUILTIN_ROWS + row as usize
+}
+
+/// A slot no callee matches: the direct function word of an id no record has (record ids lie
+/// below the record space's capacity, 2^24).
+const UNPROVEN: u64 = crate::value::ValueLayout::DIRECT_FUNCTION_TAG | u32::MAX as u64;
+
+/// The callee word each in-place native row admits (`staged::call_native::admit_identity`), one
+/// slot per row: the function the lane proved, from its record, to be the row's native, `UNPROVEN`
+/// before. The proof is a dependency of the lane's generation: a new one (a collection, which may
+/// free a function and reuse its id, or another realm: `LaneStack::enter_generation`) forgets
+/// every identity, as it retires the script targets, and the next call proves it again.
+pub(super) struct NativeIdentities([u64; IDENTITY_SLOTS]);
+
+impl NativeIdentities {
+    pub(super) const fn new() -> Self {
+        Self([UNPROVEN; IDENTITY_SLOTS])
+    }
+
+    pub(super) fn forget(&mut self) {
+        self.0 = [UNPROVEN; IDENTITY_SLOTS];
+    }
+}
+
+/// Whether `callee` is `native`, the native of identity slot `slot`: the row's admission, one
+/// compare of the callee word against the identity the lane proved
+/// (`staged::call_native::admit_identity`), else the proof from the callee's record, made once a
+/// generation (`prove_native_identity`).
+#[inline(always)]
+fn native_admitted<H: Host>(vm: &mut Vm<H>, callee: Value, slot: usize, native: Native) -> bool {
+    crate::staged::call_native::concrete_admit_identity(callee.to_bits(), vm.lane_stack.native_identities.0[slot])
+        || prove_native_identity(vm, callee, slot, native)
+}
+
+/// `native_admitted` past its compare: whether `callee`'s record is `native`'s, which the slot
+/// then holds until the generation ends.
+#[cold]
+#[inline(never)]
+fn prove_native_identity<H: Host>(vm: &mut Vm<H>, callee: Value, slot: usize, native: Native) -> bool {
+    let proved = callee_is_native(vm, callee, native);
+    if proved {
+        vm.lane_stack.native_identities.0[slot] = callee.to_bits();
+    }
+    proved
+}
+
 script_handler! {
-    /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): its
-    /// value of Number arguments in place (`number::math_inline_call`). Any other callee or
-    /// argument takes `lane_call_math`.
+    /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): the
+    /// native's admission (`native_admitted`) and its staged row of Number arguments
+    /// (`staged::call_native::math_call`). Any other callee or argument takes `lane_call_math`.
     fn lane_call_math_native<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { math_row_native(ROW) };
-        let value = if callee_is_native(vm, r.get(i.b), native) {
+        let value = if native_admitted(vm, r.get(i.b), const { math_slot(ROW) }, native) {
             // SAFETY: the call's window is registers of the running function.
-            super::number::math_inline_call(native, unsafe { lane_call_window(r, i) })
+            crate::staged::call_native::concrete_math_call(const { math_row_call(ROW) }, unsafe { lane_call_window(r, i) })
         } else {
             None
         };
@@ -116,10 +180,9 @@ script_handler! {
         // SAFETY: the installer matched the `Move` and the `Call` that follow in this view.
         let (copy, call_ip) = (unsafe { &*move_ip }, following(move_ip));
         let call = unsafe { &*call_ip };
-        let native = const { math_row_native(ROW) };
         let argument = r.get(copy.b);
-        let value = if callee_is_native(unsafe { vm(cx) }, callee, native) {
-            super::number::math_inline_call(native, std::slice::from_ref(&argument))
+        let value = if native_admitted(unsafe { vm(cx) }, callee, const { math_slot(ROW) }, const { math_row_native(ROW) }) {
+            crate::staged::call_native::concrete_math_call(const { math_row_call(ROW) }, std::slice::from_ref(&argument))
         } else {
             None
         };
@@ -146,10 +209,9 @@ script_handler! {
         let call_ip = following(second_ip);
         // SAFETY: the installer matched the copies and the `Call` that follow in this view.
         let (first, second, call) = unsafe { (&*first_ip, &*second_ip, &*call_ip) };
-        let native = const { math_row_native(ROW) };
         let arguments = [r.get(first.b), if CONST_SECOND { second.constant() } else { r.get(second.b) }];
-        let value = if callee_is_native(unsafe { vm(cx) }, callee, native) {
-            super::number::math_inline_call(native, &arguments)
+        let value = if native_admitted(unsafe { vm(cx) }, callee, const { math_slot(ROW) }, const { math_row_native(ROW) }) {
+            crate::staged::call_native::concrete_math_call(const { math_row_call(ROW) }, &arguments)
         } else {
             None
         };
@@ -163,8 +225,52 @@ script_handler! {
     }
 }
 
-/// Fuses the call `call_ip`, which `native_call_handler` just gave Math row handler `handler`,
-/// with the `GetField` of its callee and the `Move` of its one argument before it
+/// A view record read through the instruction it was made from: the opcode the bytecode names
+/// at its PC, the registers and constant the record holds, so the catalog's decoder
+/// (`Operation::decode_flow`) says what the record does.
+#[derive(Clone, Copy)]
+struct ViewRecord<'a> {
+    instruction: WideInstruction,
+    record: &'a LaneInstruction,
+}
+
+impl crate::staged::Fields for ViewRecord<'_> {
+    fn op(self) -> Op { self.instruction.op() }
+    fn result_register(self) -> u16 { self.record.a }
+    fn register_a(self) -> u16 { self.record.a }
+    fn register_b(self) -> u16 { self.record.b }
+    fn constant(self, _: crate::staged::DecodeContext<'_>) -> Option<crate::staged::Constant> {
+        Some(crate::staged::Constant::untyped(self.record.constant()))
+    }
+    fn wide(self) -> WideInstruction { self.instruction }
+}
+
+/// What a fused handler writes in place of the record at `pc` of `function`, by the staged
+/// operation the catalog decodes for its instruction: a register copy (`Operation::Move`) or a
+/// constant (`Operation::LoadConst`), where the record's handler is still the one the view
+/// derived for it, so nothing else runs there. `None` for any other record.
+fn copy_record<H: Host>(function: &Function, pc: usize, record: &LaneInstruction) -> Option<crate::staged::Operation<u64, ()>> {
+    let instruction = function.instruction_at(pc);
+    let op = instruction.op();
+    let derived = const { &LaneTable::<H>::TABLES }[0][usize::from(ACC_NONE)].get(op as usize).copied().flatten()?;
+    if op.staged() != Some(crate::bytecode::Decoder::Flow) || record.handler != derived.handler as *const () {
+        return None;
+    }
+    let decoded = crate::staged::Operation::decode_flow(ViewRecord { instruction, record }, crate::staged::DecodeContext::EMPTY)?;
+    matches!(decoded, crate::staged::Operation::Move { .. } | crate::staged::Operation::LoadConst { .. }).then_some(decoded)
+}
+
+/// Whether `copy_record` decodes a register copy (`register`) or a constant into `window`.
+fn copies_into(copy: Option<crate::staged::Operation<u64, ()>>, window: u16, register: bool) -> bool {
+    match copy {
+        Some(crate::staged::Operation::Move { destination, .. }) => register && destination == window,
+        Some(crate::staged::Operation::LoadConst { destination, .. }) => !register && destination == window,
+        _ => false,
+    }
+}
+
+/// Fuses the call `call_ip`, which `native_call_handler` just gave a Math row handler, with the
+/// `GetField` of its callee and the copy of its one argument before it
 /// (`lane_get_field_math_call`): the field record a register's bound own read, writing the
 /// callee register; the copy a plain `Move` into the call's one-value window.
 pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip: Ip, native: Native) {
@@ -174,20 +280,23 @@ pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip:
     if pc < 2 {
         return;
     }
+    // SAFETY: the context's program outlives the lane run; the running function's view holds
+    // `call_ip`.
+    let Some(function) = (unsafe { &*(*cx).code }).function_get(lane_running_function(cx) as usize) else { return };
+    let pc = pc as usize;
     // SAFETY: as below; a two-argument call has its field record three before it.
     let call = unsafe { &*call_ip };
     if ImmediateLayout::argument_count(call.imm()) == 2 {
         if pc >= 3 {
-            install_math_field_call2::<H>(call_ip, native);
+            install_math_field_call2::<H>(function, (call_ip, pc), native);
         }
         return;
     }
     // SAFETY: both records precede the call in the same view.
     let (copy_ip, field_ip) = unsafe { (call_ip.sub(1), call_ip.sub(2)) };
-    let (call, copy, field) = unsafe { (&*call_ip, &*copy_ip, &*field_ip) };
-    let one_argument = ImmediateLayout::argument_count(call.imm()) == 1
-        && ImmediateLayout::call_window_base(call.imm()) == copy.a;
-    let copies = copy.handler == lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
+    let (copy, field) = unsafe { (&*copy_ip, &*field_ip) };
+    let one_argument = ImmediateLayout::argument_count(call.imm()) == 1;
+    let copies = copies_into(copy_record::<H>(function, pc - 1, copy), ImmediateLayout::call_window_base(call.imm()), true);
     let reads_callee = field.a == call.b
         && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if one_argument && copies && reads_callee && copy.a != field.a {
@@ -195,17 +304,17 @@ pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip:
     }
 }
 
-/// `install_math_field_call` of a two-argument call: a field record, a `Move` of the first
-/// argument and a `Move` or `LoadConst` of the second into the call's two-value window.
-fn install_math_field_call2<H: Host>(call_ip: Ip, native: Native) {
+/// `install_math_field_call` of a two-argument call at `pc`: a field record, a `Move` of the
+/// first argument and a `Move` or `LoadConst` of the second into the call's two-value window.
+fn install_math_field_call2<H: Host>(function: &Function, (call_ip, pc): (Ip, usize), native: Native) {
     // SAFETY: the three records precede the call in the same view (the caller checked).
     let (second_ip, first_ip, field_ip) = unsafe { (call_ip.sub(1), call_ip.sub(2), call_ip.sub(3)) };
     let (call, second, first, field) = unsafe { (&*call_ip, &*second_ip, &*first_ip, &*field_ip) };
     let window = ImmediateLayout::call_window_base(call.imm());
-    let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
-    let constant_second = second.handler == lane_row::<H, { opc::LoadConst }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
-    let shaped = first.handler == copy && (second.handler == copy || constant_second)
-        && first.a == window && second.a == window + 1;
+    let second_copy = copy_record::<H>(function, pc - 1, second);
+    let constant_second = copies_into(second_copy, window + 1, false);
+    let shaped = copies_into(copy_record::<H>(function, pc - 2, first), window, true)
+        && (constant_second || copies_into(second_copy, window + 1, true));
     let reads_callee = field.a == call.b && field.a != window && field.a != window + 1
         && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if shaped && reads_callee && let Some(fused) = math_field_call2_handler::<H>(native, constant_second) {
@@ -214,13 +323,14 @@ fn install_math_field_call2<H: Host>(call_ip: Ip, native: Native) {
 }
 
 script_handler! {
-    /// A `Call` site whose callee was the native of builtin row `ROW` (`native_call_handler`): that
-    /// call in its steady case (`Vm::steady_native_value`). Any other callee or case takes
+    /// A `Call` site whose callee was the native of builtin row `ROW` (`native_call_handler`): the
+    /// native's admission (`native_admitted`, the staged `admit_identity`), then the call out to
+    /// its steady case (`Vm::steady_native_value`). Any other callee or case takes
     /// `lane_native_call`.
     fn lane_call_builtin<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { row_native(ROW) };
-        let value = if !callee_is_native(vm, r.get(i.b), native) {
+        let value = if !native_admitted(vm, r.get(i.b), ROW as usize, native) {
             None
         } else if const { matches!(row_native(ROW), Native::RegExpTest | Native::RegExpExec) } {
             // A RegExp method's steady call (`Vm::steady_regexp_call`), entered from the site
@@ -261,7 +371,7 @@ script_handler! {
 /// whose result nothing reads (`result_dead`, asked only there) takes the form that may
 /// discard it (`lane_call_array_callback`'s `DISCARDS`).
 pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool) -> Handler {
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
+    if concrete_returns_callee_completion(i.a) {
         return lane_native_call::<H>;
     }
     match native {
@@ -293,7 +403,7 @@ pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, call: &sup
         return lane_body_native_out(cx, call, native, (callee, receiver), &args);
     };
     note_allocation(vm);
-    call.registers.set(call.site.result, value);
+    concrete_write_call_result(call.registers.0.expose_provenance() as u64, call.site.result, value);
     LANE_CALL_COMPLETED
 }
 
@@ -308,7 +418,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         // SAFETY: the window is registers of the running function, read before anything runs.
         let window = unsafe { lane_call_window(r, i) };
-        if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+        if concrete_returns_callee_completion(i.a) && !lane_returning_call_admitted(cx) {
             return exit(ip);
         }
         let read = match window {
@@ -356,7 +466,7 @@ fn lane_body_native_out<H: Host>(cx: *mut LaneContext<H>, call: &super::body_for
     };
     // Guest code the native ran may have made the activations frames, whose registers these are.
     let after = unsafe { (*cx).registers };
-    after.set(call.site.result, value);
+    concrete_write_call_result(after.0.expose_provenance() as u64, call.site.result, value);
     if after.0 == call.registers.0 { return LANE_CALL_COMPLETED; }
     unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
     LANE_CALL_LEFT
