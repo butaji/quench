@@ -551,21 +551,6 @@ impl ResidualProgram {
             if !function.derived_facts_hold(self) {
                 return Err(format!("function {index} carries facts its code does not derive"));
             }
-            // A lane lets the callee of a dead result skip building it, so each claim is the
-            // compiler's own derivation (`liveness::register_roots`).
-            // An activation fills only the registers below the live entry bound, so that bound
-            // is the compiler's own derivation too.
-            if !function.register_roots.dead_call_results().is_empty()
-                || function.register_roots.entry_fill(function.registers) < function.registers
-            {
-                let derived = crate::compile::liveness::register_roots(function, self, &self.field_sites, &self.superinstructions);
-                if derived.dead_call_results() != function.register_roots.dead_call_results() {
-                    return Err(format!("function {index} claims dead call results its liveness does not prove"));
-                }
-                if derived.entry_fill(function.registers) > function.register_roots.entry_fill(function.registers) {
-                    return Err(format!("function {index} claims an entry liveness its liveness does not prove"));
-                }
-            }
             if function
                 .self_binding_slot
                 .is_some_and(|slot| slot >= function.locals)
@@ -644,7 +629,7 @@ impl ResidualProgram {
             } else {
 function.plain_local_slots(&self.superinstructions)
             };
-            if let Some(initializer) = function.instance_initializer {
+            if let Some(initializer) = function.instance_initializer() {
                 let valid = self
                     .functions
                     .get(initializer as usize)
@@ -654,7 +639,7 @@ function.plain_local_slots(&self.superinstructions)
                             && plan.parent == function.parent
                             && plan.class_initializer
                             && !plan.constructible
-                            && plan.instance_initializer.is_none()
+                            && plan.instance_initializer().is_none()
                     });
                 if !valid {
                     return Err(format!(
@@ -1309,13 +1294,12 @@ mod tests {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
-            instance_initializer: None,
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
@@ -1334,7 +1318,6 @@ mod tests {
             local_registers: vec![].into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),

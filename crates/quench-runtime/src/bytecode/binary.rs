@@ -1077,8 +1077,8 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         for atom in &function.parameter_atoms {
             out.atom(*atom);
         }
-        out.u32(function.declared_parameters.len() as u32);
-        for declared in &function.declared_parameters {
+        out.u32(function.declared_parameters().len() as u32);
+        for declared in function.declared_parameters() {
             out.u16(*declared);
         }
         out.u8(u8::from(function.rest));
@@ -1086,7 +1086,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.u8(u8::from(function.is_generator));
         out.u8(u8::from(function.is_class_constructor));
         out.u8(u8::from(function.derived_constructor));
-        out.option_u32(function.instance_initializer);
+        out.option_u32(function.instance_initializer());
         out.option_atom(function.super_home_atom);
         out.u8(u8::from(function.constructible));
         out.u8(u8::from(function.class_initializer));
@@ -1162,12 +1162,6 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.u16(function.registers);
         out.u8(function.dispatch as u8);
         out.u8(u8::from(function.register_roots.covered()));
-        out.u16(function.register_roots.entry_live());
-        let dead_call_results = function.register_roots.dead_call_results();
-        out.u32(dead_call_results.len() as u32);
-        for &pc in dead_call_results {
-            out.u32(pc);
-        }
         out.u16(function.undefined_register.unwrap_or(NO_UNDEFINED_REGISTER));
         out.u16(
             function
@@ -1376,15 +1370,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         let registers = input.u16()?;
         let dispatch = input.dispatch_class()?;
         let covered = input.flag("register root coverage")?;
-        let entry_live = input.u16()?;
-        let dead_call_results = input.list(BinaryReader::u32)?;
-        if !dead_call_results.is_sorted_by(|before, after| before < after) || !covered && !dead_call_results.is_empty() {
-            return Err("invalid residual dead call results".into());
-        }
-        if !covered && entry_live != super::RegisterRoots::ALL_LIVE_AT_ENTRY {
-            return Err("invalid residual entry liveness".into());
-        }
-        let register_roots = super::RegisterRoots::with_entry_live(covered, entry_live, dead_call_results.into());
+        let register_roots = super::RegisterRoots::new(covered);
         let undefined_register =
             Some(input.u16()?).filter(|register| *register != NO_UNDEFINED_REGISTER);
         let parameter_registers = Some(input.u16()?).filter(|base| *base != NO_PARAMETER_REGISTERS);
@@ -1467,13 +1453,24 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             length,
             parameter_end_pc,
             parameter_atoms: parameter_atoms.into(),
-            declared_parameters: declared_parameters.into(),
+            rare: crate::bytecode::FunctionRare {
+                declared_parameters: declared_parameters.into(),
+                global_declarations: super::GlobalDeclarations {
+                    lexical: global_lexical_atoms,
+                    var: global_var_atoms,
+                    function: global_function_atoms,
+                    annex_b_var: global_annex_b_var_atoms,
+                    immutable: global_immutable_atoms,
+                }
+                .boxed(),
+                instance_initializer,
+            }
+            .boxed(),
             rest,
             is_async,
             is_generator,
             is_class_constructor,
             derived_constructor,
-            instance_initializer,
             super_home_atom,
             constructible,
             prototype_unobservable,
@@ -1494,14 +1491,6 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             environment_clones,
             name_bindings: crate::bytecode::NameBindings::flat(name_bindings),
             lexical_atoms: lexical_atoms.into(),
-            global_declarations: super::GlobalDeclarations::new(
-                global_lexical_atoms,
-                global_var_atoms,
-                global_function_atoms,
-                global_annex_b_var_atoms,
-                global_immutable_atoms,
-            )
-            .boxed(),
             binding_sites: binding_sites.into(),
             source_positions,
             code,

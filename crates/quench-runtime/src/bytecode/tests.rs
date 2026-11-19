@@ -174,13 +174,12 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
-            instance_initializer: None,
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
@@ -199,7 +198,6 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions,
@@ -304,13 +302,12 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
-            instance_initializer: None,
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
@@ -329,7 +326,6 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -470,9 +466,9 @@ fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
     // The invalid variants below change records in place, which needs them compiled.
     program.compile_released();
     let owner = (0..program.functions.len())
-        .position(|index| program.function(index).instance_initializer.is_some())
+        .position(|index| program.function(index).instance_initializer().is_some())
         .unwrap();
-    let initializer = program.function(owner).instance_initializer.unwrap();
+    let initializer = program.function(owner).instance_initializer().unwrap();
     let path = std::env::temp_dir().join(format!(
         "quench-instance-initializer-{}",
         std::process::id()
@@ -481,14 +477,14 @@ fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
     let bytes = std::fs::read(&path).unwrap();
     let decoded = ResidualProgram::read_binary(&path).unwrap();
     assert_eq!(
-        decoded.function(owner).instance_initializer,
+        decoded.function(owner).instance_initializer(),
         Some(initializer)
     );
     decoded.write_binary(&path).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
     for plan in [program.functions.len() as u32, owner as u32, 0] {
         let mut invalid = program.clone();
-        invalid.functions[owner].instance_initializer = Some(plan);
+        invalid.functions[owner].set_instance_initializer(plan);
         invalid.write_binary(&path).unwrap();
         assert!(ResidualProgram::read_binary(&path).is_err());
     }
@@ -780,31 +776,28 @@ fn compact_encoding_names_every_atom_by_its_text() {
 fn derived_function_facts_round_trip_and_match_their_derivation() {
     let source = "function g() { return 1; }\nfunction f(x) { g(); const kept = g(); x(); return kept + x(); }\nf(() => 2);";
     let program = crate::Engine::specialize(source, "dead-call-results.js").unwrap();
-    let mut claimed = 0;
-    for (index, function) in program.functions.iter().enumerate() {
+    let dead_calls = |program: &ResidualProgram, function: &Function, index: usize| -> Vec<u32> {
         let Some(masks) = program.register_root_masks(index as u32) else {
-            assert!(function.register_roots.dead_call_results().is_empty());
-            continue;
+            return Vec::new();
         };
-        let derived: Vec<u32> = function
+        function
             .instructions()
             .enumerate()
             .filter(|(pc, instruction)| {
-                instruction.op() == Op::Call
-                    && instruction.result_flags() == 0
-                    && masks.get(pc + 1).is_some_and(|after| {
-                        crate::compile::liveness::register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
-                    })
+                instruction.op() == Op::Call && crate::compile::liveness::call_result_dead(*instruction, *pc, masks)
             })
             .map(|(pc, _)| pc as u32)
-            .collect();
-        assert_eq!(function.register_roots.dead_call_results(), derived.as_slice(), "function {index}");
-        claimed += derived.len();
+            .collect()
+    };
+    let mut claimed = 0;
+    for (index, function) in program.functions.iter().enumerate() {
+        claimed += dead_calls(&program, function, index).len();
     }
     assert!(claimed > 0, "the unused `g()` and `x()` results are dead");
     let decoded = residual_round_trip(&program, "dead-call-results").unwrap();
-    for (original, decoded_function) in program.functions.iter().zip(&decoded.functions) {
-        assert_eq!(original.register_roots.dead_call_results(), decoded_function.register_roots.dead_call_results());
+    for (index, (original, decoded_function)) in program.functions.iter().zip(&decoded.functions).enumerate() {
+        assert_eq!(dead_calls(&program, original, index), dead_calls(&decoded, decoded_function, index));
+        assert_eq!(program.entry_fill(original), decoded.entry_fill(decoded_function));
         // The decoder seeds the facts the encoder derived (`Function::derived_facts`).
         assert_eq!(
             original.derived_facts(&program, original.names_resolve_statically(&program)),
@@ -893,4 +886,18 @@ fn load_encoded_records_decode_as_records_compiled_again() {
         // The encoding took the load's records; another compiles them again, as a clone does.
         assert_eq!(decode(&encoded).1, atoms);
     }
+}
+
+/// The function record's budget: 376 bytes before the TypeScript signature, global
+/// declarations and instance initializer moved behind `Function::rare` (one pointer for
+/// the three, in place of 24 bytes).
+const FUNCTION_RECORD_BUDGET: usize = 368;
+
+#[test]
+fn function_record_stays_within_its_size_budget() {
+    assert!(
+        size_of::<Function>() <= FUNCTION_RECORD_BUDGET,
+        "Function is {} bytes",
+        size_of::<Function>()
+    );
 }

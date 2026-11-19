@@ -3381,14 +3381,16 @@ impl<'a> Compiler<'a> {
             .map(|name| self.atom(name))
             .collect();
         if let Some(root) = self.functions.first_mut() {
-            root.global_declarations = crate::bytecode::GlobalDeclarations::new(
-                global_lexical_atoms,
-                global_var_atoms,
-                global_function_atoms,
-                global_annex_b_var_atoms,
-                global_immutable_atoms,
-            )
-            .boxed();
+            root.set_global_declarations(
+                crate::bytecode::GlobalDeclarations {
+                    lexical: global_lexical_atoms,
+                    var: global_var_atoms,
+                    function: global_function_atoms,
+                    annex_b_var: global_annex_b_var_atoms,
+                    immutable: global_immutable_atoms,
+                }
+                .boxed(),
+            );
             // A strict eval's vars are its own bindings, not the global object's.
             if !self.module_goal && !(self.eval_context.is_some() && strict_script) {
                 fn lower_global_var(
@@ -3499,7 +3501,7 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .enumerate()
                 .map(|(id, function)| match function {
-                    Some(function) => capture_layout::InstanceInitializer::Known(function.instance_initializer),
+                    Some(function) => capture_layout::InstanceInitializer::Known(function.instance_initializer()),
                     None if released.get(&id).is_some_and(|released| released.header.is_class_constructor) => {
                         capture_layout::InstanceInitializer::Unknown
                     }
@@ -4446,7 +4448,11 @@ impl<'a> Compiler<'a> {
                 0
             },
             parameter_atoms: parameter_atoms.into(),
-            declared_parameters: declared_parameters.into(),
+            rare: crate::bytecode::FunctionRare {
+                declared_parameters: declared_parameters.into(),
+                ..Default::default()
+            }
+            .boxed(),
             // A rest alias's list is no rest list of the function's own (`rest_alias`).
             rest: options.rest_override
                 || options.defaults.is_some_and(|value| value.rest.is_some()) != rest_alias.is_some(),
@@ -4454,7 +4460,6 @@ impl<'a> Compiler<'a> {
             is_generator: options.generator,
             is_class_constructor: options.class_constructor,
             derived_constructor: options.derived_constructor,
-            instance_initializer: None,
             super_home_atom: options.super_home_atom,
             constructible: !options.non_constructible
                 && !options.async_function
@@ -4475,7 +4480,6 @@ impl<'a> Compiler<'a> {
             local_registers: function.promoted_local_layout().into(),
             inherited_with_scope: options.with_depth != 0,
             lexical_atoms: lexical_atoms.into(),
-            global_declarations: None,
             name_bindings,
             binding_sites: function.binding_sites.into(),
             source_positions: function.source_positions,

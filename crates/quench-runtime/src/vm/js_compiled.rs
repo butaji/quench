@@ -85,7 +85,7 @@ pub(super) fn eligible(function: &Function, program: &crate::bytecode::ResidualP
         || function.is_class_constructor
         || function.derived_constructor
         || function.class_initializer
-        || function.instance_initializer.is_some()
+        || function.instance_initializer().is_some()
         || function.rest
         || !function.simple_parameters
         || !function.handlers.is_empty()
