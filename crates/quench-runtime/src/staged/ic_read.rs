@@ -3,8 +3,9 @@
 //! `Stage`, so the interpreter (`Concrete`) and the native tiers (`Emit`, the stencils) run the one definition.
 
 use super::Stage;
+use super::ic::Reached;
 use super::region::Region;
-use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, has_extras, inline_storage, own_layout, proto_link, read_slot_value};
+use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, formed_own_layout, has_extras, inline_storage, own_layout, proto_link, read_slot, read_slot_value};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::typed_ir::Representation;
 
@@ -29,6 +30,25 @@ pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, 
     Some(stage.add_imm(zero, value))
 }
 
+/// The own field the getter hint `(guard, watch, slot)` records for the object part at `record`:
+/// `None` (leaving at `miss`) where the record's layout word differs from `guard` (`holder_read`'s
+/// compare), or the watch on its prototype's values no longer holds. The field is then the tagged
+/// slot `LoadSlot` reads, as a getter's own-field return is.
+#[inline(always)]
+pub(crate) fn getter_own_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, slot: u16,
+    miss: S::Miss) -> Option<S::Word> {
+    let words = stage.load_u32(Region::ShapeWord.mutable(), record,
+        crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
+    let guard = stage.site(guard);
+    let same = stage.eq_imm(words, guard);
+    stage.guard(same, miss)?;
+    let watch = stage.site(watch);
+    let holds = stage.assumption(watch);
+    stage.guard(holds, miss)?;
+    let at = Reached::bare(record);
+    load_slot(stage, &at, (slot, Representation::Tagged), Form::Either, usize::from(slot) + 1, miss)
+}
+
 /// The value the own-constant hint `(record, watch, value)` records for the object part at
 /// `at`: `None` (leaving at `miss`) for any record but the hinted one, or once the watch on its
 /// values no longer holds. A receiver that is always one object, whose slot the code reads and
@@ -49,6 +69,14 @@ pub(crate) fn own_constant_read<S: Stage>(stage: &mut S, at: S::Word, record: u6
     Some(stage.add_imm(zero, value))
 }
 
+/// The per-site operand `bits` as a word (a record table's base the row names).
+#[inline(always)]
+pub(super) fn site_word<S: Stage>(stage: &mut S, bits: u64) -> S::Word {
+    let zero = stage.constant(0);
+    let bits = stage.site(bits);
+    stage.add_imm(zero, bits)
+}
+
 /// The value the string hint `(watch, value)` records for the receiver word `word`: `None`
 /// (leaving at `miss`) for any receiver but a direct string, or once the watch on
 /// `String.prototype`'s values no longer holds.
@@ -56,6 +84,23 @@ pub(crate) fn own_constant_read<S: Stage>(stage: &mut S, at: S::Word, record: u6
 pub(crate) fn string_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
     let string = super::value::is_direct_string(stage, word);
     stage.guard(string, miss)?;
+    let watch = stage.site(watch);
+    let holds = stage.assumption(watch);
+    stage.guard(holds, miss)?;
+    let zero = stage.constant(0);
+    let value = stage.site(value);
+    Some(stage.add_imm(zero, value))
+}
+
+/// The value the number hint `(watch, value)` records for the receiver word `word`: `None`
+/// (leaving at `miss`) for any receiver but a Number, an int32 or a binary64, or once the watch
+/// on `Number.prototype`'s values no longer holds.
+#[inline(always)]
+pub(crate) fn number_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
+    let integer = super::value::is_int(stage, word);
+    let double = super::value::is_double(stage, word);
+    let number = stage.any(integer, double);
+    stage.guard(number, miss)?;
     let watch = stage.site(watch);
     let holds = stage.assumption(watch);
     stage.guard(holds, miss)?;
@@ -120,7 +165,7 @@ pub(crate) fn form_of_layout(id: u32) -> Form {
 
 /// `IcOp::LoadSlot`: the value at `slot` of the reached record.
 #[inline(always)]
-fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation), form: Form, storage_len: usize,
+pub(super) fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation), form: Form, storage_len: usize,
     miss: S::Miss) -> Option<S::Word> {
     let layout = slot_layout(stage, at, form, storage_len, miss)?;
     Some(read_slot_value(stage, layout, slot, rep))
@@ -147,7 +192,7 @@ pub(super) fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>
 
 /// `IcOp::PrototypeConstants`: the value `values` pair with the link of `record`'s prototype.
 #[inline(always)]
-fn prototype_constants<S: Stage>(stage: &mut S, record: S::Word, values: &[(u32, u64)], miss: S::Miss) -> Option<S::Word> {
+pub(super) fn prototype_constants<S: Stage>(stage: &mut S, record: S::Word, values: &[(u32, u64)], miss: S::Miss) -> Option<S::Word> {
     let link = proto_link(stage, record);
     let ((first, bits), rest) = values.split_first()?;
     let mut matched = stage.eq_imm(link, u64::from(*first));
@@ -164,7 +209,7 @@ fn prototype_constants<S: Stage>(stage: &mut S, record: S::Word, values: &[(u32,
 
 /// `IcOp::LoadPrototypeSlot` of the record at `record`.
 #[inline(always)]
-fn prototype_slot<S: Stage>(stage: &mut S, record: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
+pub(super) fn prototype_slot<S: Stage>(stage: &mut S, record: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let inline = inline_storage(stage, record);
     let in_arena = stage.not(inline);
     stage.guard(in_arena, miss)?;

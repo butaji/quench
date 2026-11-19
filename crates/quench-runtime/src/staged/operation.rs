@@ -14,6 +14,19 @@ pub(crate) enum Operation<W, P> {
     LoadLocalPlain { destination: Register, slot: u16 },
     /// Write `source` to local slot `slot`, and to `result` where the instruction has one.
     StoreLocalPlain { source: Register, slot: u16, result: Option<Register> },
+    /// Define `destination` from local slot `slot` where its binding is initialized (LoadLocal): a
+    /// binding in its temporal dead zone, or a numeric local target (`numeric`), leaves at the
+    /// frame's miss edge. The stencil's LOAD_CHECKED row is this operation with `numeric` false
+    /// (`read_initialized_local`); a numeric target is the lane's, not the stencil's.
+    LoadLocalChecked { destination: Register, slot: u16, numeric: bool },
+    /// Write `source` to local slot `slot` where its binding is initialized, or whatever its state
+    /// where `initializing` (a declaration's own store), and to `result` where the instruction has
+    /// one (StoreLocal). An assignment to a binding in its temporal dead zone leaves at the miss edge.
+    /// The stencil's STORE_CHECKED row is this operation with `initializing` false (`write_initialized_local`);
+    /// its LOAD_CHECKED sibling is `LoadLocalChecked`.
+    StoreLocalChecked { source: Register, slot: u16, result: Option<Register>, initializing: bool },
+    /// Open the temporal dead zone of local slot `slot` by writing the deleted marker (InitializeTdz).
+    InitializeLocal { slot: u16 },
     /// Continue at the jump target.
     Jump,
     /// Continue at the jump target when register `register` is truthy, or when it is falsy
@@ -22,8 +35,9 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the activation's `this`; where the activation does not
     /// hold it, leave at the frame's miss edge.
     LoadThis { destination: Register },
-    /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
-    Nop,
+    /// Define `destination` with the function the running activation runs (`Frame::callee`); where
+    /// the frame does not hold it, leave at the frame's miss edge.
+    LoadCallee { destination: Register },
     /// A Number operation (`numeric`).
     Number(NumberOperation),
     /// Continue where register `register` is neither `null` nor `undefined`; those leave at
@@ -39,6 +53,13 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the `typeof` name index (int32) of register `source`'s value
     /// where its own word decides it; a heap value leaves at the frame's miss edge.
     TypeofIndex { destination: Register, source: Register },
+    /// Define `destination` with whether `typeof source` is the name at `index` in `TYPEOF_NAMES`,
+    /// negated where `negated` (`UNARY_TYPEOF_IS`); a heap value leaves at the frame's miss edge.
+    TypeofTest { destination: Register, source: Register, index: u64, negated: bool },
+    /// Define `destination` with the `typeof` result string of register `source`'s value (`typeof x`):
+    /// the interned string of its name, where the tag decides the name or the frame's kind of a heap
+    /// value does (`Frame::type_of`); a value neither decides leaves at the frame's miss edge.
+    TypeofString { destination: Register, source: Register },
     /// Store `value` at dense array element `index`, under `proof`.
     IndexWrite { index: W, value: W, proof: P },
     /// The empty object, object or array literal, constant array, regexp literal, closure,
@@ -101,10 +122,11 @@ pub(crate) enum Operation<W, P> {
     /// `left == right` (or `===`; negated for `!=`, `!==`) where the two words decide it: the
     /// same word, two int32s, or `null` and `undefined` under `==`. Any other pair leaves at the
     /// miss edge, where the VM compares (strings, BigInts, conversions that run guest code).
-    Equality { destination: Register, left: Register, right: Register, strict: bool, negated: bool },
-    /// Any other `Binary` of two registers (a string or BigInt relation, an arithmetic of other
-    /// than Numbers, `instanceof`, `in`): the VM's own operation, a callout.
-    Binary { destination: Register, left: Register, right: Register, operator: u32 },
+    Equality { destination: Register, left: Operand, right: Operand, strict: bool, negated: bool },
+    /// Any other `Binary` of two operands, each a register or a program constant (a string or BigInt
+    /// relation, an arithmetic of other than Numbers, `instanceof`, `in`): the VM's own operation, a
+    /// callout.
+    Binary { destination: Register, left: Operand, right: Operand, operator: u32 },
     /// Define `destination` from environment slot `slot` (`environment::environment_slot`); a
     /// sparse storage or an internal marker leaves at the frame's miss edge.
     LoadEnvLocal { destination: Register, slot: u16 },
@@ -113,12 +135,28 @@ pub(crate) enum Operation<W, P> {
     StoreEnvLocal { source: Register, slot: u16, result: Option<Register>, initialize: bool },
     /// Define `destination` with the length of the arguments binding in local `slot`.
     ArgumentsLength { destination: Register, slot: u16 },
+    /// Define `destination` with element `index` of the arguments binding in local `slot`: a keeping
+    /// activation's kept value, else the frame's or the VM's read (`CallOut::ArgumentGet`).
+    ArgumentGet { destination: Register, index: Register, slot: u16 },
+    /// Clone the running activation's environment by environment clone plan `plan`: a frame's own
+    /// environment, or an environment window's (`CallOut::CloneEnv`). Defines no register.
+    CloneEnv { plan: u32 },
     /// Define `destination` with the `typeof` name of the global `atom` through cache `site`
     /// (the lane's own read); an unresolvable name is `undefined`, not an error.
     GlobalTypeof { destination: Register, atom: u32, site: u16 },
+    /// SetFunctionName of the function in register `function` to the program atom `name` through cache
+    /// `site`: the frame's own naming (`Frame::set_function_name`); a frame that holds none leaves at the
+    /// miss edge, where the interpreter names it. Defines no register.
+    SetFunctionName { function: Register, name: u32, site: u16 },
     /// The global-name store of `source` to `atom` through cache `site`, an initialization
     /// where `initialize`; a binding the lane's store does not take leaves at the miss edge.
     GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool },
+    /// Define `destination` with the script-top-level binding the declaration `declaration` names (its
+    /// position in the root's global lexicals), through cache `site`; a temporal dead zone is the VM's to raise.
+    GlobalLexicalLoad { destination: Register, declaration: u32, site: u16 },
+    /// The store of `source` to the script-top-level binding the declaration `declaration` names, through
+    /// cache `site`, an initialization where `initialize`; the VM makes it (const and dead zone rules included).
+    GlobalLexicalStore { source: Register, declaration: u32, site: u16, initialize: bool },
     /// An iteration or spread step (`Protocol`) over the `operands` registers, defining
     /// `destination` where it has one; the generic protocol runs guest code, a callout.
     Protocol { step: Protocol, destination: Option<Register>, operands: [Option<Register>; 2] },
@@ -131,6 +169,20 @@ pub(crate) enum Operation<W, P> {
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     #[cfg_attr(not(test), allow(dead_code))] // no tier builds it until the call-out rows land
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
+    /// Push the iterator in register `iterator` with its `done` register on the running cleanup
+    /// stack (`Frame::iterator_push`), which closes it where the loop exits abruptly.
+    IteratorCleanupPush { iterator: Register, done: Register },
+    /// Pop the running cleanup stack's top entry (`Frame::iterator_pop`).
+    IteratorCleanupPop,
+    /// The index of the value in register `source` among the `count` program constants from `start`
+    /// (`Frame::case_index`), defined into `destination`: the switch's string-case selector.
+    StringCaseIndex { destination: Register, source: Register, start: u32, count: u16 },
+    /// Suspend the activation (`Suspension`: `await`, `yield`, `yield*`) with the value of `value`,
+    /// resuming with what it receives next in `destination` (`suspend::suspend`, which asks the
+    /// frame: `Frame::suspend_await`, `suspend_yield`, `suspend_yield_star`).
+    Suspend { kind: super::Suspension, destination: Register, value: Register },
+    /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
+    Nop,
     /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
     /// defines the result register.
     GetField { base: FieldBase, lookup: FieldLookup, destination: Register },
@@ -162,6 +214,9 @@ pub(crate) enum Operation<W, P> {
     SuperCall { destination: Register, callee: Register, arguments: Arguments, passing: Passing },
     /// Complete the activation with the value of `source` (`invoke::ret`).
     Return { source: Register },
+    /// Raise the value of register `source` (Throw). No staged row raises it: `step` leaves it
+    /// `Unresolved`, so each tier keeps its own throw path.
+    Throw { source: Register },
     /// The value `base[key]` reads, a present dense element where the array and the key's int32
     /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
     ElementRead { base: Register, key: Operand, destination: Register },
@@ -180,6 +235,9 @@ pub(crate) enum Operation<W, P> {
     LoadCapture { destination: Register, depth: u16, slot: u16, root: bool },
     /// Store `source` to the capture `slot`, `depth` scopes out (`Frame::store_capture`).
     StoreCapture { source: Register, depth: u16, slot: u16 },
+    /// A Wasm float, float conversion or select (`wasm_float`); the frame's Wasm words decide it, and
+    /// a trap or an operand the frame does not hold leaves at the miss edge.
+    WasmFloat(wasm_float_row::WasmFloatOperation),
     /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
     /// holds, or fails where `negate` (`JumpBinaryFalse`); otherwise continue after it.
     CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
@@ -197,8 +255,7 @@ pub(crate) enum Operation<W, P> {
     /// A Wasm direct load or store of the function's memory (`wasm_access`).
     WasmAccess(wasm_access::WasmAccessOperation),
     /// A Wasm SIMD operator or byte shuffle on the lane's vector registers (`wasm_simd`).
-    #[cfg(not(stencil_build))]
-    WasmVector(wasm_simd::VectorOperation),
+    WasmVector(wasm_vector_row::VectorOperation),
     /// The tier prologue of a frameless activation of `function` with `parameters` parameters
     /// (`TierPrologue`, a lane's synthetic record): the JavaScript tier enters it, and the activation
     /// continues where that completes it (`prologue::PrologueFrame::tier_prologue`).
@@ -353,22 +410,15 @@ impl<W, P> Operation<W, P> {
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
                 constant: instruction.constant(context)? },
-            Op::Nop => Self::Nop,
             Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
+            Op::Throw => Self::Throw { source: instruction.register_a() },
+            Op::Nop => Self::Nop,
             _ => Self::Return { source: instruction.register_a() },
         })
-    }
-
-    /// The destination and constant index of an instruction `decode_flow` reads as `LoadConst`,
-    /// for a tier that holds its constants in a table of its own (the b-jit's Numbers): the
-    /// same decode, with the constant left for the tier to look up.
-    #[inline(always)]
-    pub(crate) fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
-        (instruction.op() == Op::LoadConst).then(|| (instruction.result_register(), instruction.constant_index()))
     }
 
     /// The call operations of `decode`: a call or construction through its forms (`Invocation`),
@@ -413,6 +463,8 @@ impl<W, P> Operation<W, P> {
         Some(match instruction.op() {
             Op::LoadThis => Self::LoadThis {
                 destination: instruction.result_register() },
+            Op::LoadCallee => Self::LoadCallee {
+                destination: instruction.result_register() },
             Op::RequireObjectCoercible => Self::RequireObjectCoercible {
                 register: instruction.register_b() },
             Op::RequireIteratorResult => Self::RequireIteratorResult {
@@ -450,6 +502,7 @@ impl<W, P> Operation<W, P> {
             #[cfg(not(stencil_build))]
             _ if operator == oxc_ast::ast::UnaryOperator::Typeof as u32 => Self::TypeofString { destination, source },
             _ if operator == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex { destination, source },
+            #[cfg(not(stencil_build))]
             _ if operator == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 =>
                 Self::Number(NumberOperation::BitwiseNot { destination, source: Operand::register(source) }),
             #[cfg(not(stencil_build))]
@@ -464,6 +517,19 @@ impl<W, P> Operation<W, P> {
         }
     }
 
+    /// `operation` of a Number `source` in the int32 domain: an int32 operand decides it, a double
+    /// or a value no Number leaves to the frame's miss edge (`Unary`'s arm).
+    #[inline(always)]
+    fn number_unary(destination: Register, source: Register, operation: crate::vm::operations::NumberUnary) -> Self {
+        Self::Number(NumberOperation::Unary { destination, source: Operand::register(source), operation, domain: Domain::Int32 })
+    }
+
+    /// The Wasm integer operations of `decode` (`Decoder::WasmInt`), from a record's wide fields.
+    #[inline(always)]
+    pub(crate) fn decode_wasm_int(instruction: WideInstruction) -> Option<Self> {
+        wasm_int::decode(instruction).map(Self::WasmInt)
+    }
+
     /// The local-slot operations of `decode`.
     #[inline(always)]
     pub(crate) fn decode_local(instruction: WideInstruction) -> Option<Self> {
@@ -475,6 +541,17 @@ impl<W, P> Operation<W, P> {
                 source: instruction.register_a(),
                 slot: u16::try_from(instruction.local_slot()).ok()?,
                 result: instruction.optional_register_b() },
+            Op::LoadLocal => Self::LoadLocalChecked {
+                destination: instruction.result_register(),
+                slot: window_slot(instruction.imm()),
+                numeric: instruction.result_flags() & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 },
+            Op::StoreLocal => Self::StoreLocalChecked {
+                source: instruction.register_a(),
+                slot: window_slot(instruction.imm()),
+                result: instruction.optional_register_b(),
+                initializing: instruction.c() != 0 },
+            Op::InitializeTdz => Self::InitializeLocal {
+                slot: window_slot(instruction.imm()) },
             _ => return None,
         })
     }

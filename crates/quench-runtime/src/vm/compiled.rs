@@ -925,11 +925,11 @@ fn emit_unlogged_property_store_guard(
     // A marked owner would be logged by RecordSpace::store_logs; otherwise the
     // barrier is a no-op. Marks and block bases are refreshed after each callout.
     let list = match space {
-        crate::staged::RecordSpace::Object => MarkList {
+        crate::staged::StagedRecordSpace::Object => MarkList {
             blocks: std::mem::offset_of!(JsStepDispatch, head.object_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, head.object_mark_block_count),
         },
-        crate::staged::RecordSpace::Function => MarkList {
+        crate::staged::StagedRecordSpace::Function => MarkList {
             blocks: std::mem::offset_of!(JsStepDispatch, head.function_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, head.function_mark_block_count),
         },
