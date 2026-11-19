@@ -14,9 +14,9 @@
 //! - the step's delivery (`step_yielded`, `step_finished`): the `done` word, and the value of a
 //!   step that yielded one, into those registers, with no result object.
 //!
-//! The interpreter runs them on `Concrete` (`dispatch_fast::lane_iterator_step_reads`,
-//! `lane_iterator_step_binding`, `generator_windows::lane_resume_generator`); every miss is the
-//! handler's own general step (`lane_iterator_step`, `lane_generator_step`, the native call).
+//! The interpreter runs them on `Concrete` (`dispatch_fast::iterator_step_reads_miss`,
+//! `iterator_step_binding_miss`, `generator_windows::lane_resume_generator`); every miss is the
+//! handler's own general step (`iterator_step_miss`, `generator_step_miss`, the native call).
 #![allow(dead_code)]
 
 use super::call::admit_room;

@@ -10,18 +10,18 @@ script_handler! {
     /// and the stack room are those its activation would take, so the guest-call budget and
     /// a full stack decide as they would. A call of this leaf form the site does not make (a
     /// receiver whose binding reads the heap, values past the parameters, no room) takes
-    /// `lane_script_call_full`, which activates a leaf as any registers-only target. `ARGC`
+    /// `script_call_full_miss`, which activates a leaf as any registers-only target. `ARGC`
     /// is the record's argument count (`leaf_call_handler`), which a call returning its
     /// completion never has.
     ///
-    /// The proved form (leaf-keeping-c.md, as link-proofs.md's `lane_script_call`): the entry
+    /// The proved form (leaf-keeping-c.md, as link-proofs.md's `script_call_miss`): the entry
     /// the link names, masked to the cache, is tested whole by one admission compare (the
     /// generation, the program, the run's conditions, `DIAGNOSED`, and the proof `UNPROVEN`,
-    /// which `lane_script_call_leaf_prove` clears for a leaf entry whose cell body is
+    /// which `script_call_leaf_prove_miss` clears for a leaf entry whose cell body is
     /// unpublished), the callee's identity, the entry's form and the site's argument count
     /// against its parameters. The room is one compare (`LaneStack::plain_room`). Anything
-    /// else takes `lane_script_call_leaf_prove`, which makes the call as before.
-    fn lane_script_call_leaf<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
+    /// else takes `script_call_leaf_prove_miss`, which makes the call as before.
+    pub(super) fn script_call_leaf_miss<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
         debug_assert!(unsafe { (*cx).script_calls || !vm(cx).lane_stack.script_calls_allowed() });
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
@@ -35,7 +35,7 @@ script_handler! {
             || target.entry != CallEntry::leaf(LEAF)
             || !crate::staged::call::concrete_fits(u64::from(target.params), u64::from(ARGC))
         {
-            sibling!(lane_script_call_leaf_prove::<H, LEAF, ARGC>, r, ip, Carried::script(cx))
+            sibling!(script_call_leaf_prove_miss::<H, LEAF, ARGC>, r, ip, Carried::script(cx))
         }
         debug_assert!(!vm.programs.js_jit_diagnostics_enabled());
         // SAFETY: the target's view lives with its program.
@@ -49,29 +49,29 @@ script_handler! {
             lane_binds_directly(target, receiver).then_some(receiver)
         };
         let Some(this) = this else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script(cx))
         };
         // The activation count and the values' room in one compare, the depth loaded only by
         // the exact test past it; a leaf pushes no plain activation, so the bound stands.
         debug_assert_eq!(vm.lane_stack.plain_room(vm.lane_stack.plain.depth.get(), target.room), lane_activation_room(vm, target));
         if !vm.lane_stack.plain_room(vm.lane_stack.plain.depth.get(), target.room) {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script(cx))
         }
-        // SAFETY: as `lane_script_call_leaf_prove`'s.
+        // SAFETY: as `script_call_leaf_prove_miss`'s.
         let (registers, base) = unsafe { lane_run_leaf::<H, LEAF, ARGC>(cx, r, ip, i, target, this) };
         next!(cx, registers, base, Carried::script(cx))
     }
 }
 
 script_handler! {
-    /// `lane_script_call_leaf` of a site whose link is not proved: the target it links, whose
+    /// `script_call_leaf_miss` of a site whose link is not proved: the target it links, whose
     /// entry, where it is this form's leaf, is proved (`Admission::UNPROVEN` cleared) unless the
     /// tier's diagnostics count entries or its cell holds a body; then the call as the unproved
     /// leaf call always made it. A plain activation's entry takes it in place, another leaf
     /// form's call its handler, any other the full form.
     #[cold]
     #[inline(never)]
-    fn lane_script_call_leaf_prove<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
+    fn script_call_leaf_prove_miss<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         // A pending construction refuses every cached target (`LaneStack::set_refused`).
@@ -82,7 +82,7 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; nothing in the leaf resolves a target or collects.
         let Some(target) = target.map(|target| unsafe { &*target }) else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script(cx))
         };
         // A site meeting other callees too calls each as its own form would: a plain
         // activation's in place, another leaf form's through it, any other through the
@@ -113,14 +113,14 @@ script_handler! {
             lane_binds_directly(target, receiver).then_some(receiver)
         };
         let Some(this) = this else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script(cx))
         };
         // The cached target is of the running program (`Vm::script_call_holds`).
         debug_assert!(!lane_crosses::<H, true>(cx, target));
         // An admitted target runs under no `with` scope (`LaneStack::refuse_cached_calls`).
         debug_assert!(!vm.with_scope_entered);
         if !lane_admits_window(vm, target, ARGC) {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script(cx))
         }
         vm.programs.record_js_jit_lane_entry(target.program(), target.function);
         // SAFETY: the target is the running program's admitted leaf of form `LEAF`, whose
@@ -139,7 +139,7 @@ script_handler! {
 /// cached, whose parameters take `ARGC` values and whose activation's room the stack holds;
 /// `this` is the receiver its form binds.
 #[inline(always)]
-unsafe fn lane_run_leaf<H: Host, const LEAF: u8, const ARGC: u16>(
+pub(super) unsafe fn lane_run_leaf<H: Host, const LEAF: u8, const ARGC: u16>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -168,41 +168,44 @@ unsafe fn lane_run_leaf<H: Host, const LEAF: u8, const ARGC: u16>(
     (registers, base)
 }
 
-/// The `lane_script_call_leaf` form of `entry` for a record of `ARGC` arguments, or
-/// `lane_script_call_full` for no leaf, out of line: a site meeting another form's callee
+/// The `script_call_leaf_miss` form of `entry` for a record of `ARGC` arguments, or
+/// `script_call_full_miss` for no leaf, out of line: a site meeting another form's callee
 /// takes it from the leaf it was made for.
 #[cold]
 #[inline(never)]
 fn other_leaf_form<H: Host, const ARGC: u16>(entry: CallEntry) -> Handler {
     match entry.leaf_form() {
-        PLAIN_LEAF => lane_script_call_leaf::<H, PLAIN_LEAF, ARGC>,
-        CAPTURE_LEAF => lane_script_call_leaf::<H, CAPTURE_LEAF, ARGC>,
-        CONTEXT_LEAF => lane_script_call_leaf::<H, CONTEXT_LEAF, ARGC>,
-        THIS_LEAF => lane_script_call_leaf::<H, THIS_LEAF, ARGC>,
-        _ => lane_script_call_full::<H>,
+        PLAIN_LEAF => script_call_leaf_miss::<H, PLAIN_LEAF, ARGC>,
+        CAPTURE_LEAF => script_call_leaf_miss::<H, CAPTURE_LEAF, ARGC>,
+        CONTEXT_LEAF => script_call_leaf_miss::<H, CONTEXT_LEAF, ARGC>,
+        THIS_LEAF => script_call_leaf_miss::<H, THIS_LEAF, ARGC>,
+        _ => script_call_full_miss::<H>,
     }
 }
 
 /// The form a call record `i` whose linked target is a leaf (`entry`) calls it with: the
-/// `lane_script_call_leaf` instantiation of its entry and argument count, or, for a record
-/// past `FIXED_ARGUMENT_COPIES` or returning its completion, which completes its caller too,
-/// `lane_script_call_full`, which activates the leaf.
+/// protocol row of its entry and argument count, whose `LEAF_CALL` miss is the
+/// `script_call_leaf_miss` instantiation of the same form and count (`leaf_call_miss_of`), or,
+/// for a record past `FIXED_ARGUMENT_COPIES` or returning its completion, which completes its
+/// caller too, the row whose miss is `script_call_full_miss`, which activates the leaf.
 pub(super) fn leaf_call_handler<H: Host>(entry: CallEntry, i: &LaneInstruction) -> Handler {
+    use protocol_misses::leaf_call::leaf_parameters;
     const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
+    let full = call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>();
     macro_rules! leaf {
         ($form:ident) => {
             match ImmediateLayout::argument_count(i.imm()) {
-                0 => lane_script_call_leaf::<H, $form, 0>,
-                1 => lane_script_call_leaf::<H, $form, 1>,
-                2 => lane_script_call_leaf::<H, $form, 2>,
-                3 => lane_script_call_leaf::<H, $form, 3>,
-                4 => lane_script_call_leaf::<H, $form, 4>,
-                _ => lane_script_call_full::<H>,
+                0 => call_row::<H, { protocol_family::LEAF_CALL | leaf_parameters($form, 0) as u16 }>(),
+                1 => call_row::<H, { protocol_family::LEAF_CALL | leaf_parameters($form, 1) as u16 }>(),
+                2 => call_row::<H, { protocol_family::LEAF_CALL | leaf_parameters($form, 2) as u16 }>(),
+                3 => call_row::<H, { protocol_family::LEAF_CALL | leaf_parameters($form, 3) as u16 }>(),
+                4 => call_row::<H, { protocol_family::LEAF_CALL | leaf_parameters($form, 4) as u16 }>(),
+                _ => full,
             }
         };
     }
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
-        return lane_script_call_full::<H>;
+        return full;
     }
     match entry.leaf_form() {
         CONTEXT_LEAF => leaf!(CONTEXT_LEAF),
@@ -345,7 +348,7 @@ pub(super) fn lane_materialize_running_leaf<H: Host>(cx: *mut LaneContext<H>) {
 }
 
 /// A plain call record `i` of `target`, another program's leaf (`CallEntry::leaf`), run as
-/// `lane_script_call_leaf` runs its own program's: its records on a window at the lane
+/// `script_call_leaf_miss` runs its own program's: its records on a window at the lane
 /// stack's top without an activation, in its program, which its return leaves
 /// (`lane_complete_leaf`) and its materialization records as a crossing activation's
 /// (`Completion::Cross`). `None`, which changes nothing, for a call the leaf form does not
@@ -378,16 +381,16 @@ pub(super) fn lane_cross_leaf_call<H: Host>(
         return None;
     }
     vm.programs.record_js_jit_lane_entry(target.program(), target.function);
-    // SAFETY: as `lane_script_call_leaf`'s window.
+    // SAFETY: as `script_call_leaf_miss`'s window.
     let registers = unsafe {
         let registers = vm.lane_stack.values.top();
         fill_admitted_window(registers, usize::from(target.fill), usize::from(target.registers));
         copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), argc);
         Registers(registers)
     };
-    // SAFETY: as `lane_script_call_leaf`'s first record.
+    // SAFETY: as `script_call_leaf_miss`'s first record.
     let base = unsafe { (*target.view).records() };
-    // SAFETY: as `lane_script_call_leaf`'s leaf.
+    // SAFETY: as `script_call_leaf_miss`'s leaf.
     unsafe {
         let caller_program = (*cx).program;
         lane_enter_leaf(cx, registers, ip, r, target, form, argc, this, Some(caller_program));

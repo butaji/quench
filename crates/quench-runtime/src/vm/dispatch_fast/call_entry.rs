@@ -40,11 +40,11 @@ pub(super) enum CallEntry {
     Environment,
     /// An async function whose body never suspends, laid out as its registers
     /// (`CallPlan::settles_registers_only`): only a plain call of its own program activates
-    /// it (`lane_script_call_settles`), whose promise its return settles
+    /// it (`script_call_settles_miss`), whose promise its return settles
     /// (`Completion::SettlesPromise`).
     Settles,
     /// Its body is a leaf (`leaf_body`): a plain call of its own program runs its records on
-    /// a window of the lane stack without an activation (`lane_script_call_leaf`), which
+    /// a window of the lane stack without an activation (`script_call_leaf_miss`), which
     /// anything observing activations makes first (`lane_materialize_leaf`). Any other
     /// call activates it as `Activates`.
     Leaf,

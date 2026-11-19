@@ -2134,7 +2134,7 @@ pub(crate) struct Vm<H> {
     /// cleared with `reused_iterator_result`.
     shared_entry_pair: Value,
     /// Whether the entry step running now may yield `shared_entry_pair`
-    /// (`lane_iterator_step_reads`).
+    /// (`iterator_step_reads_miss`).
     share_entry_pair: bool,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so

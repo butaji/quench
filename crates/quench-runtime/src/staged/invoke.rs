@@ -94,6 +94,18 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    /// Hand the admitted direct call to the callee's activation in place of entering it
+    /// (`call_enter`): the frame fills the callee's window from the site's arguments itself (it
+    /// knows how much of it the callee reads before writing), pushes the callee's frame, which holds
+    /// `this`, and answers the control the caller's step ends in, which runs the callee's first
+    /// record; the callee's completion is its return's, not this step's. `None`, before any effect,
+    /// where the frame enters the callee through its cell and takes its completion here
+    /// (`call_enter`, `call_settle`). The lane's frame activates (`LaneControl::Resumed`).
+    #[inline(always)]
+    fn call_activate(&mut self, _stage: &mut S, _this: S::Word, _room: Room<S::Word>) -> Option<Self::Control> {
+        None
+    }
+
     /// Push the callee's frame, which holds `this`, and call the entry of its cell with its
     /// window filled.
     #[inline(always)]
@@ -150,7 +162,11 @@ pub(crate) fn invoke<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S
     let direct = match frame.call_entry(&site) {
         CallEntry::Direct(plan) | CallEntry::Inline(plan) => match plan.kind {
             CalleeKind::Native(native) => super::native_call::enter_native(stage, frame, miss, &site, (plan, native)),
-            CalleeKind::Script | CalleeKind::Class => enter_direct(stage, frame, miss, &site, plan),
+            CalleeKind::Script | CalleeKind::Class => match enter_direct(stage, frame, miss, &site, plan) {
+                Some(Direct::Activated(control)) => return Step::Control(control),
+                Some(Direct::Returned(word)) => Some(word),
+                None => None,
+            },
         },
         CallEntry::Helper => None,
     };
@@ -222,22 +238,32 @@ pub(super) fn fill_arguments<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &F
     Some(())
 }
 
+/// How a direct call ended its step: the callee returned the word, or the frame handed the call to
+/// the callee's activation (`CallFrame::call_activate`), whose control the step ends in.
+enum Direct<W, C> {
+    Returned(W),
+    Activated(C),
+}
+
 /// The direct call of `site` through `plan`: the call protocol's rows in order, on the words the
 /// frame keeps.
 #[inline(always)]
 fn enter_direct<S: Stage, F: CallFrame<S> + PropertyFrame<S>>(stage: &mut S, frame: &mut F, miss: S::Miss, site: &Invocation,
-    plan: DirectPlan) -> Option<S::Word> {
+    plan: DirectPlan) -> Option<Direct<S::Word, F::Control>> {
     let constructs = plan.kind.allocates_receiver();
     if constructs != site.constructs() || (constructs && plan.bound.is_some()) { return None; }
     let file = frame.call_registers(stage)?;
     let this = callee_this(stage, frame, file, miss, (site, &plan))?;
     let room = frame.call_room(stage, miss)?;
+    if let Some(control) = frame.call_activate(stage, this, room) {
+        return Some(Direct::Activated(control));
+    }
     fill_arguments(stage, frame, file, room.top, (site, &plan, plan.registers))?;
     let entered = frame.call_enter(stage, this, room)?;
     let receiver = constructs.then_some(this);
     let value = complete_call(stage, entered.status, entered.word, receiver, plan.returned, entered.unfinished)?;
     frame.call_settle(stage, site, entered, room, value)?;
-    Some(value)
+    Some(Direct::Returned(value))
 }
 
 impl<W, P> Operation<W, P> {

@@ -318,8 +318,10 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The call operations of `decode`: a call or construction through its forms (`Invocation`),
-    /// except `super(...)`, whose arguments the VM gathers (`spread`).
-    fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+    /// except `super(...)`, whose arguments the VM gathers (`spread`). A lane protocol row decodes its
+    /// record by it alone (`dispatch_fast::lane_frame::protocol_row`), so it folds into the row.
+    #[inline(always)]
+    pub(crate) fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         if instruction.op() == Op::Construct && instruction.is_super_construct() {
             return spread::decode(instruction);
         }

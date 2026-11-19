@@ -48,7 +48,7 @@ script_handler! {
     /// (`capture_int32_update`), the call's value, as the leaf's records would make it, without
     /// entering them. The body reads no parameter, receiver or frame state and runs no guest
     /// code, so nothing observes the call it does not make. Another target takes
-    /// `lane_script_call_requicken`, an update its record declines `lane_script_call_full`.
+    /// `script_call_requicken_miss`, an update its record declines `script_call_full_miss`.
     fn lane_script_call_update_capture<OP: u32>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
@@ -59,10 +59,10 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; the update resolves no target and collects nothing.
         let Some(target) = target.map(|target| unsafe { &*target }) else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script(cx))
         };
         if target.entry != CallEntry::CaptureLeaf {
-            sibling!(lane_script_call_requicken::<H>, r, ip, Carried::script(cx))
+            sibling!(script_call_requicken_miss::<H>, r, ip, Carried::script(cx))
         }
         // SAFETY: the program store keeps a derived view alive with its program.
         let view = unsafe { &*target.view };
@@ -70,10 +70,10 @@ script_handler! {
         if update.handler != lane_update_capture_int32::<H, OP, UPDATE_LOADS> as Handler as *const ()
             || !view.update_returns::<H>()
         {
-            sibling!(lane_script_call_requicken::<H>, r, ip, Carried::script(cx))
+            sibling!(script_call_requicken_miss::<H>, r, ip, Carried::script(cx))
         }
         let Some((_, value)) = capture_int32_update::<OP>(target.capture, update) else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))

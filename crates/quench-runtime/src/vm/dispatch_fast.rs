@@ -84,7 +84,7 @@ macro_rules! arithmetic_all {
 
 /// What a leaf's records read of the context its call runs them in (`leaf_body`), which is
 /// what the call makes its own and its return restores: the forms of its call
-/// (`lane_script_call_leaf`), its entry (`CallEntry::leaf`) and its return records
+/// (`script_call_leaf_miss`), its entry (`CallEntry::leaf`) and its return records
 /// (`LaneView::specialize_leaf_returns`). `NOT_LEAF` is a record of no leaf's records.
 /// The forms are the staged leaf row's (`staged::call_leaf`), the one definition every tier reads.
 type LeafForm = crate::staged::call_leaf::LeafForm;
@@ -134,10 +134,10 @@ const INLINE_SITE_TARGETS: usize = 1;
 
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
-/// The bit of a call link the plain call proved (`lane_script_call_prove`): its target activates
-/// plainly and takes the site's argument count, so `lane_script_call` tests only the callee's
+/// The bit of a call link the plain call proved (`script_call_prove_miss`): its target activates
+/// plainly and takes the site's argument count, so `script_call_miss` tests only the callee's
 /// identity. The index is the link without it (`link_index`); a link without the bit is out of
-/// range for `lane_script_call`, which proves it first.
+/// range for `script_call_miss`, which proves it first.
 const PLAIN_LINK: u16 = 1 << 15;
 const _: () = assert!(SCRIPT_CALL_TARGETS[0] < PLAIN_LINK as usize && SCRIPT_CALL_TARGETS[1] < PLAIN_LINK as usize);
 
@@ -274,7 +274,7 @@ pub(super) struct LoopSite {
     backedge: u32,
     jump: isize,
     /// The header record's own handler while the site holds that record
-    /// (`lane_loop_header`), which enters the loop's native code wherever control arrives at
+    /// (`loop_header_miss`), which enters the loop's native code wherever control arrives at
     /// the header; null otherwise.
     header_handler: std::cell::Cell<*const ()>,
     /// Whether the site may hold its header record (`lane_loop_hold_header`): one that is
@@ -1248,9 +1248,9 @@ impl LaneView {
 fn requicken<H: Host>(ip: Ip, handler: Handler) {
     // SAFETY: `ip` comes from `LaneView::records`, whose records live in `UnsafeCell`s; the
     // lane runs on the view's thread, and no reference to the handler field is live. A
-    // header record a loop site holds keeps `lane_loop_header`, and the site the handler.
+    // header record a loop site holds keeps `loop_header_miss`, and the site the handler.
     unsafe {
-        if (*ip).handler == lane_loop_header::<H> as Handler as *const () {
+        if (*ip).handler == loop_header_miss::<H> as Handler as *const () {
             let site = lane_header_site(ip);
             (*site).header_handler.set(handler as *const ());
             return;
@@ -1874,7 +1874,7 @@ pub(super) struct ToWasmCall {
 impl Completion {
     /// The completion of an activation a `new` made or not, of the caller's program or not,
     /// of a target whose return settles its call's promise or not. Only a plain call of the
-    /// caller's program settles one (`lane_script_call_settles`).
+    /// caller's program settles one (`script_call_settles_miss`).
     #[inline] fn of(constructs: bool, cross: bool, settles: bool) -> Self {
         debug_assert!(!settles || !constructs && !cross, "only a plain call of its own program settles");
         match (constructs, cross, settles) {
@@ -2070,13 +2070,13 @@ impl Admission {
     /// Every bit only the lane's admission carries.
     const CONDITIONS: u64 = Self::REFUSED | Self::NO_SCRIPT_CALLS;
     /// A bit a script call cache entry's admission carries until a plain call's link proves it
-    /// (`lane_script_call_prove`, link-proofs.md), or a leaf call's link proves a leaf entry
-    /// (`lane_script_call_leaf_prove`, leaf-keeping-c.md): its entry activates as its
+    /// (`script_call_prove_miss`, link-proofs.md), or a leaf call's link proves a leaf entry
+    /// (`script_call_leaf_prove_miss`, leaf-keeping-c.md): its entry activates as its
     /// registers alone (`CallEntry::activates`), the leaf call form's entry checked too, and its
     /// cell body unpublished. Every entry is remembered with it (`ScriptTargets::remember`), and
     /// publishing a body sets it again on every entry of the view (`Vm::unprove_view_entries`).
     /// The lane's admission never carries it, so the proved call's one admission compare
-    /// (`lane_script_call`) also tests the proof; every other test of an entry ignores it
+    /// (`script_call_miss`) also tests the proof; every other test of an entry ignores it
     /// (`Admission::admits`).
     const UNPROVEN: u64 = 1 << 61;
     /// A bit the lane's admission carries while the tier's diagnostics count every entry
@@ -2370,7 +2370,7 @@ pub(super) struct LaneStack {
     /// The JavaScript-backed import a Wasm call last activated (`wasm_calls::lane_activate_js_import`),
     /// read off its wrapper once; a collection forgets it (`forget_dead_callees`).
     pub(super) js_import: Option<JsImportPlan>,
-    /// The bound function without bound arguments a `lane_function_call` last forwarded through,
+    /// The bound function without bound arguments a `function_call_miss` last forwarded through,
     /// with its target and bound receiver, which never change (`Vm::bound_function_parts`); a
     /// collection forgets it (`forget_dead_callees`).
     pub(super) bound_call: Option<(Value, Value, Value)>,
@@ -3206,7 +3206,7 @@ struct LaneContext<H: Host> {
     /// toward one (`lane_body_activate`): its caller's leave says nothing of the caller's own
     /// specialization (`lane_leave_counts`).
     callee_warming: bool,
-    /// The leaf call whose records run (`lane_script_call_leaf`), which holds what its
+    /// The leaf call whose records run (`script_call_leaf_miss`), which holds what its
     /// activation would until its return or materialization; `NO_LEAF_CALL` for none.
     leaf: LeafCall,
     /// The dispatch payload of the native loop region running on this activation, zero for none
@@ -3884,6 +3884,7 @@ lane_handler! {
 
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
+mod protocol_misses; use protocol_misses::*;
 mod local_fields;
 use local_fields::local_field_handler;
 mod window_bodies;
@@ -3894,7 +3895,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_property_key, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{protocol_row, protocol_family, is_row, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_property_key, staged_require_iterator_result, staged_typeof_index};
 
 
 lane_handler! {
@@ -4912,7 +4913,7 @@ fn lane_own_handler<H: Host>(ip: Ip) -> *const () {
     // SAFETY: a record of the running view; a held header names its site.
     unsafe {
         let handler = (*ip).handler;
-        if handler == lane_loop_header::<H> as Handler as *const () {
+        if handler == loop_header_miss::<H> as Handler as *const () {
             return (*lane_header_site(ip)).header_handler.get();
         }
         handler
@@ -9021,7 +9022,7 @@ script_handler! {
 
 /// A lane `GetField` whose read meets the accessor its site cached
 /// (`Vm::cached_field_getter`): the getter runs as a frameless activation of the read's
-/// record, as `lane_script_call` runs a call, with the base as receiver and no arguments,
+/// record, as `script_call_miss` runs a call, with the base as receiver and no arguments,
 /// and its completion is the read's value. `Err` carries the record to continue at: the
 /// general path for any other read.
 #[inline(never)]
@@ -10895,7 +10896,7 @@ script_handler! {
 }
 
 /// The header record's own handler at `header`, as the interpreter runs it: the one `site`
-/// holds while it holds the record (`lane_loop_header`), which the backward jump thus does
+/// holds while it holds the record (`loop_header_miss`), which the backward jump thus does
 /// not try again.
 macro_rules! lane_at_header {
     ($cx:expr, $r:expr, $header:expr, $site:expr) => {{
@@ -11029,7 +11030,7 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
 }
 
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
-/// record runs `lane_loop_header`, and the site keeps the record's own handler.
+/// record runs `loop_header_miss`, and the site keeps the record's own handler.
 fn lane_loop_hold_header<H: Host>(header: Ip, site: &LoopSite) {
     // A retired site (`RETIRED_HEADER`) never holds its header again: its jump record is a plain
     // jump and the header's `call_link` a field hint, so `lane_header_site` would read garbage.
@@ -11039,7 +11040,7 @@ fn lane_loop_hold_header<H: Host>(header: Ip, site: &LoopSite) {
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view.
     unsafe {
         site.header_handler.set((*header).handler);
-        (*header.cast_mut()).handler = lane_loop_header::<H> as Handler as *const ();
+        (*header.cast_mut()).handler = loop_header_miss::<H> as Handler as *const ();
     }
 }
 
@@ -11060,7 +11061,7 @@ script_handler! {
     /// A loop's header record while its site holds it (`lane_loop_hold_header`): arriving at
     /// the header enters the loop's native code as its backward jump does, and otherwise
     /// runs the record's own handler.
-    fn lane_loop_header<>(cx, r, ip, i, view) {
+    fn loop_header_miss<>(cx, r, ip, i, view) {
         // SAFETY: a record runs this handler only while a site holds it.
         let site = unsafe { &*lane_header_site(ip) };
         if !script_below_floor(cx)
@@ -11626,7 +11627,7 @@ fn lane_region_field<H: Host>(
     }
 }
 
-/// The call target of an inlined `frame`'s callee, when `lane_script_call` would activate it
+/// The call target of an inlined `frame`'s callee, when `script_call_miss` would activate it
 /// in place now, binding the frame's receiver as its `this`: the target the call caches, an
 /// activation of the running program with room on the lane stack.
 fn lane_inlined_target<H: Host>(
@@ -12460,7 +12461,7 @@ impl<H: Host> FloatArithmetic<H> {
 lane_handler! {
     /// f64 square root: an arithmetic operator, so a NaN operand matters
     /// only as a NaN (see `float_bits64`), and its result is held in place.
-    fn lane_f64_sqrt<ACC: u8>(cx, r, ip, i, view) {
+    fn f64_sqrt_miss<ACC: u8>(cx, r, ip, i, view) {
         let input = f64::from_bits(read::<ACC, ACC_B>(r, i.b, view).float_bits64());
         produce!(cx, r, ip, i.a, Value::from_float_bits64(input.sqrt().to_bits()), view)
     }
@@ -14542,7 +14543,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `script_call_entry` of a callee of another program than the running one, whose
-    /// targets `LaneStack::cross_targets` holds (`lane_script_call_cross`).
+    /// targets `LaneStack::cross_targets` holds (`script_call_cross_miss`).
     #[inline(always)]
     fn cross_call_index(&self, callee: Value) -> Option<usize> {
         let set = self.lane_stack.cross_targets.set(callee)?;
@@ -14988,23 +14989,23 @@ fn lane_plan_anchor() {
 }
 
 script_handler! {
-    /// `lane_script_call` of a linked target whose entry is not a plain activation: the site
+    /// `script_call_miss` of a linked target whose entry is not a plain activation: the site
     /// calls the form for that entry directly from now on, an environment or keeping
     /// activation its own handler and any other entry the out-of-line form, which sorts them
-    /// out. Out of line, reached by `sibling!`, so `lane_script_call` makes no call.
+    /// out. Out of line, reached by `sibling!`, so `script_call_miss` makes no call.
     #[inline(never)]
-    fn lane_script_call_requicken<>(cx, r, ip, i, view) {
+    fn script_call_requicken_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let target = vm.linked_script_call_entry(r.get(i.b), &i.call_link);
         // SAFETY: as `Vm::script_call_entry`; nothing before this read resolves a target.
         let entry = target.map(|target| unsafe { (*target).entry });
         let handler: Handler = match entry {
-            Some(CallEntry::Environment) => lane_script_call_environment::<H>,
-            Some(CallEntry::Settles) => lane_script_call_settles::<H>,
+            Some(CallEntry::Environment) => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>(),
+            Some(CallEntry::Settles) => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::SETTLES as u16 }>(),
             Some(CallEntry::Keeps | CallEntry::Gathers) => lane_script_call_keeping::<H>,
             Some(entry) if entry.leaf_form() != NOT_LEAF => leaf_call_handler::<H>(entry, i),
-            Some(_) => lane_script_call_full::<H>,
-            None => sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script_in(cx, view)),
+            Some(_) => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>(),
+            None => sibling!(script_call_resolve_miss::<H>, r, ip, Carried::script_in(cx, view)),
         };
         // A capture leaf whose body is a capture's update takes the call that answers it.
         let handler = target
@@ -15037,7 +15038,7 @@ script_handler! {
     /// `ANY_ARGC`. `PLAIN` where the record's receiver is its function's `undefined`
     /// register (`Function::undefined_register`, `specialize_script_calls`), whose value the
     /// handler then knows without reading it.
-    fn lane_script_call<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
+    fn script_call_miss<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
         // A run that calls no script functions refuses every cached call
         // (`Admission::NO_SCRIPT_CALLS`), which the link's test below makes.
         debug_assert!(unsafe { (*cx).script_calls || !vm(cx).lane_stack.script_calls_allowed() });
@@ -15063,10 +15064,10 @@ script_handler! {
             || argc > FIXED_ARGUMENT_COPIES
             || !crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc))
         {
-            sibling!(lane_script_call_prove::<H, ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_prove_miss::<H, ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
         }
         debug_assert!(!lane_constructing(vm, callee));
-        // A leaf entry its own call form proved (`lane_script_call_leaf_prove`) activates as
+        // A leaf entry its own call form proved (`script_call_leaf_prove_miss`) activates as
         // `Activates` from any other call (`CallEntry::activates`).
         debug_assert!(target.entry.activates());
         // SAFETY: the target's view lives with its program.
@@ -15080,35 +15081,35 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_script_call` of a site whose link is not proved: the target it links, which
+    /// `script_call_miss` of a site whose link is not proved: the target it links, which
     /// takes its entry's form where that is not a plain activation
-    /// (`lane_script_call_requicken`) and the out-of-line form where the site's arguments are
+    /// (`script_call_requicken_miss`) and the out-of-line form where the site's arguments are
     /// more than it takes, else the entry is proved (`Admission::UNPROVEN` cleared) and the
     /// call runs plainly. A callee whose cell holds a body is never proved: its calls run the
     /// unproved activation from here, which enters the body.
     #[cold]
     #[inline(never)]
-    fn lane_script_call_prove<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
+    fn script_call_prove_miss<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
         if !unsafe { (*cx).script_calls } {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
         let Some(target) = vm.linked_script_call_entry(r.get(i.b), &i.call_link) else {
-            sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_resolve_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         if target.entry != CallEntry::Activates {
-            sibling!(lane_script_call_requicken::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_requicken_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         let argc = call_argument_count::<ARGC>(i);
         if argc > FIXED_ARGUMENT_COPIES || !crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         // The tier's diagnostics count every entry (`record_js_jit_lane_entry`), which a
         // proved call skips: under them no link is proved.
         if vm.programs.js_jit_diagnostics_enabled() {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         // A callee whose cell holds a body is entered through it (`lane_enter_cell_body`), which
         // a proved call never tests: its entry stays unproved, so every call of it comes here
@@ -15118,20 +15119,20 @@ script_handler! {
             lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, PLAIN)
         }
         // The proof (`Admission::UNPROVEN`): the entry, which the link names, now admits proved
-        // calls from every site whose arguments it takes (`lane_script_call`'s compare).
+        // calls from every site whose arguments it takes (`script_call_miss`'s compare).
         let (index, resolved) = (link_index(i.call_link.get()), std::ptr::from_ref(target));
         let entry = &mut vm.lane_stack.script_targets.entries[index];
         debug_assert!(std::ptr::eq(entry, resolved), "the link names the entry it resolved");
         entry.admission.0 &= !Admission::UNPROVEN;
         debug_assert!(entry.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
         i.call_link.set(i.call_link.get() | PLAIN_LINK);
-        sibling!(lane_script_call::<H, ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
+        sibling!(script_call_miss::<H, ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
     }
 }
 
 /// The plain activation of `target`, an `Activates` entry, for the call record `i` at `ip`
 /// whose argument count is `ARGC` (`call_argument_count`), past its target's proof
-/// (`lane_script_call`, `lane_script_call_leaf`).
+/// (`script_call_miss`, `script_call_leaf_miss`).
 macro_rules! lane_plain_activation {
     ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr) => {
         lane_plain_activation!($cx, $vm, $r, $ip, $i, $target, $argc, $plain, false)
@@ -15141,7 +15142,7 @@ macro_rules! lane_plain_activation {
     };
     ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr, $proven:literal) => {{
         let (cx, vm, r, ip, i, target) = ($cx, $vm, $r, $ip, $i, $target);
-        // A plain call's receiver is `undefined` by its record (`lane_script_call`'s `PLAIN`).
+        // A plain call's receiver is `undefined` by its record (`script_call_miss`'s `PLAIN`).
         // Its `this` is then its target's (`ScriptCallTarget::lexical_this`), one load.
         // A receiver whose binding needs the heap takes the out-of-line form, so this
         // handler makes no call and keeps its registers.
@@ -15150,7 +15151,7 @@ macro_rules! lane_plain_activation {
             target.lexical_this
         } else {
             let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
-                sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+                sibling!(script_call_full_miss::<H>, r, ip, Carried::script(cx))
             };
             this
         };
@@ -15158,7 +15159,7 @@ macro_rules! lane_plain_activation {
         // whose activation keeps them or grows the stack (`lane_activate`), and so does another
         // program's target (`lane_push_activation`).
         // So does a window past `FIXED_ARGUMENT_COPIES`, whose copy is a call.
-        // A proved call (`lane_script_call`) tested the argument count against the entry it
+        // A proved call (`script_call_miss`) tested the argument count against the entry it
         // found; the room stays per call, one compare (`LaneStack::plain_room`).
         let argc = call_argument_count::<$argc>(i);
         // The plain depth the proved push writes past (`LaneStack::plain_room`), loaded once.
@@ -15170,7 +15171,7 @@ macro_rules! lane_plain_activation {
         } else {
             argc > FIXED_ARGUMENT_COPIES || !lane_admits_window(vm, target, argc)
         } {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script(cx))
         }
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         // A `with` scope refuses every cached target (`LaneStack::refuse_cached_calls`), and
@@ -15224,7 +15225,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     let form = leaf.form;
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: the leaf's window starts at the stack's length, within its capacity
-    // (`lane_script_call_leaf`).
+    // (`script_call_leaf_miss`).
     let window = unsafe { (*cx).registers.0 };
     unsafe { stack.values.set_top(window.add(usize::from(target.registers) + lane_values::CONTEXT)) };
     let activation = Activation::of_parts(
@@ -15241,7 +15242,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     );
     // SAFETY: the call proved room for the activation (`lane_activation_room`).
     unsafe { stack.push_activation(activation, window) };
-    // The receiver the call proved it binds directly (`lane_script_call_leaf`), from the
+    // The receiver the call proved it binds directly (`script_call_leaf_miss`), from the
     // caller's registers, which the leaf does not write, for a form that binds none yet.
     let this = (!leaf_binds_this(form)).then(|| {
         lane_direct_call_this(vm, target, leaf.caller_registers.get(call.c))
@@ -15255,7 +15256,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     );
 }
 
-/// The `lane_script_call` argument count of a record its view did not resolve.
+/// The `script_call_miss` argument count of a record its view did not resolve.
 const ANY_ARGC: u16 = u16::MAX;
 
 /// The argument count of the call record `i`: `ARGC`, unless that is `ANY_ARGC`.
@@ -15264,9 +15265,42 @@ fn call_argument_count<const ARGC: u16>(i: &LaneInstruction) -> u16 {
     if ARGC == ANY_ARGC { ImmediateLayout::argument_count(i.imm()) } else { ARGC }
 }
 
-/// The `lane_script_call` instantiation of a call record whose immediate is `imm`: that of
-/// its argument count where the copy of its window is one fixed move
-/// (`FIXED_ARGUMENT_COPIES`), else the general one.
+/// The protocol row of a `Call` record whose miss is `MISS` (`protocol_family`): the staged call row
+/// over the lane frame, whose unresolved call completes in the miss body (`protocol_miss`).
+const fn call_row<H: Host, const MISS: u16>() -> Handler {
+    protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, MISS> as Handler
+}
+
+/// The protocol row of a script call of `argc` arguments, whose miss is `script_call_miss`'s
+/// instantiation of that count (`ANY_ARGC` past `FIXED_ARGUMENT_COPIES`).
+const fn script_call_row<H: Host>(argc: u16) -> Handler {
+    use protocol_misses::script_call as code;
+    match argc {
+        0 => call_row::<H, { protocol_family::SCRIPT_CALL | code::ARGC_0 as u16 }>(),
+        1 => call_row::<H, { protocol_family::SCRIPT_CALL | code::ARGC_1 as u16 }>(),
+        2 => call_row::<H, { protocol_family::SCRIPT_CALL | code::ARGC_2 as u16 }>(),
+        3 => call_row::<H, { protocol_family::SCRIPT_CALL | code::ARGC_3 as u16 }>(),
+        4 => call_row::<H, { protocol_family::SCRIPT_CALL | code::ARGC_4 as u16 }>(),
+        _ => call_row::<H, { protocol_family::SCRIPT_CALL | code::ARGC_ANY as u16 }>(),
+    }
+}
+
+/// `script_call_row` of a record whose receiver is its function's `undefined` register, `PLAIN`.
+const fn plain_script_call_row<H: Host>(argc: u16) -> Handler {
+    use protocol_misses::script_call as code;
+    match argc {
+        0 => call_row::<H, { protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_0 as u16 }>(),
+        1 => call_row::<H, { protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_1 as u16 }>(),
+        2 => call_row::<H, { protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_2 as u16 }>(),
+        3 => call_row::<H, { protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_3 as u16 }>(),
+        4 => call_row::<H, { protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_4 as u16 }>(),
+        _ => call_row::<H, { protocol_family::SCRIPT_CALL | code::PLAIN_ARGC_ANY as u16 }>(),
+    }
+}
+
+/// The protocol row of a call record whose immediate is `imm` (`script_call_row`), whose miss is
+/// the `script_call_miss` instantiation of its argument count where the copy of its window is one
+/// fixed move (`FIXED_ARGUMENT_COPIES`), else the general one.
 fn script_call_handler<H: Host>(imm: u32) -> Handler {
     script_call_handler_of::<H, false>(imm)
 }
@@ -15275,20 +15309,14 @@ fn script_call_handler<H: Host>(imm: u32) -> Handler {
 /// where `PLAIN`.
 fn script_call_handler_of<H: Host, const PLAIN: bool>(imm: u32) -> Handler {
     const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
-    match ImmediateLayout::argument_count(imm) {
-        0 => lane_script_call::<H, 0, PLAIN>,
-        1 => lane_script_call::<H, 1, PLAIN>,
-        2 => lane_script_call::<H, 2, PLAIN>,
-        3 => lane_script_call::<H, 3, PLAIN>,
-        4 => lane_script_call::<H, 4, PLAIN>,
-        _ => lane_script_call::<H, ANY_ARGC, PLAIN>,
-    }
+    let argc = ImmediateLayout::argument_count(imm);
+    if PLAIN { plain_script_call_row::<H>(argc) } else { script_call_row::<H>(argc) }
 }
 
-/// Gives each call record the `lane_script_call` instantiation of its argument count, and
+/// Gives each call record the protocol row of its argument count (`script_call_row`), and
 /// of a receiver that is the function's `undefined` register (`undefined`).
 fn specialize_script_calls<H: Host>(records: &mut [LaneInstruction], undefined: Option<crate::bytecode::Register>) {
-    let general = lane_script_call::<H, ANY_ARGC, false> as Handler as *const ();
+    let general = script_call_row::<H>(ANY_ARGC) as *const ();
     for record in records.iter_mut().filter(|record| record.handler == general) {
         let handler = if undefined.is_some_and(|register| u16::from(register) == record.c) {
             script_call_handler_of::<H, true>(record.imm())
@@ -15341,26 +15369,26 @@ fn lane_receiver_this<H: Host>(vm: &Vm<H>, binding: ThisBinding, receiver: Value
 }
 
 script_handler! {
-    /// `lane_script_call` out of line, so the plain call keeps its registers: a receiver
+    /// `script_call_miss` out of line, so the plain call keeps its registers: a receiver
     /// whose binding reads the heap (`lane_call_this`), a forwarding target, which takes
     /// `lane_script_call_keeping`, and a target whose body is a read (`CallEntry::Reads`,
     /// `CallEntry::ReadsElement`), whose hit (`lane_call_read`) completes the
     /// call with its value as the callee's return would; a call that returns its callee's
     /// completion completes its caller in turn (`lane_return_value!`). Anything else
     /// activates the callee. A site that called such a target calls this form directly, so it
-    /// makes `lane_script_call`'s own entry tests.
+    /// makes `script_call_miss`'s own entry tests.
     #[inline(never)]
-    fn lane_script_call_full<>(cx, r, ip, i, view) {
+    fn script_call_full_miss<>(cx, r, ip, i, view) {
         if !unsafe { (*cx).script_calls } {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         if lane_constructing(vm, callee) {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(native_call_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
-            sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_resolve_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
         let target = unsafe { &*target };
@@ -15369,18 +15397,18 @@ script_handler! {
         }
         if target.entry == CallEntry::Environment {
             // The site calls its environment target's form directly from now on.
-            requicken::<H>(ip, lane_script_call_environment::<H>);
-            sibling!(lane_script_call_environment::<H>, r, ip, Carried::script_in(cx, view))
+            requicken::<H>(ip, call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>());
+            sibling!(script_call_environment_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         if target.settles() {
-            sibling!(lane_script_call_settles::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_settles_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         if target.forwards() {
             sibling!(lane_script_call_keeping::<H>, r, ip, Carried::script_in(cx, view))
         }
         // A receiver whose binding reads the heap takes the general form.
         let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
-            sibling!(lane_script_call_general::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_general_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         #[cfg(feature = "profile-lane-exits")]
         profile_script_call_target(cx, ip, callee, target);
@@ -15405,7 +15433,7 @@ script_handler! {
                 || (returns && !lane_returning_call_admitted(cx))
                 || vm.with_scope_entered
             {
-                sibling!(lane_script_call_general::<H>, r, ip, Carried::script_in(cx, view))
+                sibling!(script_call_general_miss::<H>, r, ip, Carried::script_in(cx, view))
             }
             // SAFETY: the call's window of `r` holds its `argc` values.
             let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
@@ -15422,12 +15450,12 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_script_call_full`'s activation of a call its form declines: a receiver whose
+    /// `script_call_full_miss`'s activation of a call its form declines: a receiver whose
     /// binding reads the heap (`lane_call_this`), values past the parameters, which the
     /// keeping activation holds, or a full lane stack (`lane_activate`). Out of line, so the
     /// full form makes no call; it reads no target, which the full form already answered.
     #[inline(never)]
-    fn lane_script_call_general<>(cx, r, ip, i, view) {
+    fn script_call_general_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         let target = vm
@@ -15437,7 +15465,7 @@ script_handler! {
         let Some(target) = target.map(|target| unsafe { &*target }).filter(|target| {
             !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles) && !target.forwards()
         }) else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
             return exit(ip);
@@ -15453,27 +15481,27 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_script_call_full` of an environment target (`CallEntry::Environment`), out of
+    /// `script_call_full_miss` of an environment target (`CallEntry::Environment`), out of
     /// line so the other calls keep their registers: its activation holds its environment
     /// and locals (`lane_activate_environment`). Any other callee takes the full form.
     #[inline(never)]
-    fn lane_script_call_environment<>(cx, r, ip, i, view) {
+    fn script_call_environment_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         if !unsafe { (*cx).script_calls } || lane_constructing(vm, callee) {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         // The site's linked entry, which a fresh closure of a function already resolved relinks
         // (`Vm::linked_script_call_entry`); a callee with no target yet resolves in the full form.
         let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         if target.entry != CallEntry::Environment {
             // A site this form serves calls the full form once its callee's target differs.
-            requicken::<H>(ip, lane_script_call_full::<H>);
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+            requicken::<H>(ip, call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         let Some(this) = lane_call_this(vm, target, r.get(i.c)) else {
             return exit(ip);
@@ -15490,7 +15518,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_script_call_full` of a non-suspending async target (`CallEntry::Settles`), out of
+    /// `script_call_full_miss` of a non-suspending async target (`CallEntry::Settles`), out of
     /// line so the other calls keep their registers: the call makes its promise first, as
     /// `Vm::try_settling_call` does, then activates the body, whose return settles it
     /// (`Completion::SettlesPromise`). A call passing values past the parameters, a `with`
@@ -15498,7 +15526,7 @@ script_handler! {
     /// promise in a frame, and so does a full lane stack, which grows first
     /// (`lane_script_call_frame`). Any other callee takes the full form.
     #[inline(never)]
-    fn lane_script_call_settles<>(cx, r, ip, i, view) {
+    fn script_call_settles_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         let target = vm
@@ -15506,8 +15534,8 @@ script_handler! {
             .filter(|_| unsafe { (*cx).script_calls } && !lane_constructing(vm, callee));
         // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
         let Some(target) = target.map(|target| unsafe { *target }).filter(ScriptCallTarget::settles) else {
-            requicken::<H>(ip, lane_script_call_full::<H>);
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+            requicken::<H>(ip, call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         if ImmediateLayout::argument_count(i.imm()) > target.params
@@ -15548,18 +15576,18 @@ script_handler! {
     /// plain array (`Vm::step_present_array_value`): the step in place, with a result object
     /// only the step's `done` and `value` reads observe (`Vm::reused_iterator_result`). Any
     /// other step is the call it is.
-    fn lane_iterator_step<>(cx, r, ip, i, view) {
+    fn iterator_step_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (method, iterator) = (r.get(i.b), r.get(i.c));
         match vm.iteration_step(iterator, method) {
             super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
-                sibling!(lane_generator_step::<H>, r, ip, Carried::script_in(cx, view))
+                sibling!(generator_step_miss::<H>, r, ip, Carried::script_in(cx, view))
             }
-            super::iterators::IterationStep::Call => sibling!(lane_script_call::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view)),
+            super::iterators::IterationStep::Call => sibling!(script_call_miss::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view)),
             _ => {}
         }
         let Some(result) = lane_array_iteration_result(vm, iterator) else {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(native_call_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, result);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -15573,7 +15601,7 @@ script_handler! {
     /// `next` runs it (`Vm::generator_iteration_step`), with a result only the step's `done`
     /// and `value` reads observe.
     #[inline(never)]
-    fn lane_generator_step<>(cx, r, ip, i, view) {
+    fn generator_step_miss<>(cx, r, ip, i, view) {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
         if let Some((registers, start)) = lane_resume_generator_step(cx, r, ip, i, method, iterator) {
             next!(cx, registers, start, Carried::script_in(cx, view))
@@ -15584,13 +15612,13 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_iterator_step` of a for-of step (`lane_for_of_step`) over a plain array or a
+    /// `iterator_step_miss` of a for-of step (`lane_for_of_step`) over a plain array or a
     /// String, Map or Set iterator (`Vm::step_collection`): the
     /// step's `done` and `value` go to the registers its reads of `done` and `value` write,
     /// and the step goes on where they would, into the body or out of the loop. The result
     /// object only those reads observe is not written. Any other step runs as
-    /// `lane_iterator_step` and the records after it.
-    fn lane_iterator_step_reads<THREADED: bool>(cx, r, ip, i, view) {
+    /// `iterator_step_miss` and the records after it.
+    fn iterator_step_reads_miss<THREADED: bool>(cx, r, ip, i, view) {
         let form = if THREADED { ForOfTest::Threaded } else { ForOfTest::Emitted };
         let vm = unsafe { vm(cx) };
         let (method, iterator) = (r.get(i.b), r.get(i.c));
@@ -15601,11 +15629,11 @@ script_handler! {
         let kind = vm.iteration_step(iterator, method);
         match kind {
             super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
-            // A generator's step resumes it over its record, as `lane_iterator_step` makes it.
+            // A generator's step resumes it over its record, as `iterator_step_miss` makes it.
             super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
-                sibling!(lane_generator_step::<H>, r, ip, Carried::script_in(cx, view))
+                sibling!(generator_step_miss::<H>, r, ip, Carried::script_in(cx, view))
             }
-            _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view)),
+            _ => sibling!(iterator_step_miss::<H>, r, ip, Carried::script_in(cx, view)),
         }
         let step = if kind == super::iterators::IterationStep::Array {
             vm.step_present_array_value(iterator)
@@ -15620,7 +15648,7 @@ script_handler! {
             step
         };
         let Some(step) = step else {
-            sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(iterator_step_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         match step {
             Some(value) => {
@@ -15640,13 +15668,13 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_iterator_step` of a destructuring step (`lane_binding_step`) over a plain array
+    /// `iterator_step_miss` of a destructuring step (`lane_binding_step`) over a plain array
     /// or a String, Map or Set iterator: the step's `done` goes to the register its `done`
     /// read writes and the pattern's done flag the next record moves it to, its `value` to
     /// the register its `value` read writes, and the step goes on past them. The result
     /// object only those reads observe is not written. Any other step runs as
-    /// `lane_iterator_step` and the records after it.
-    fn lane_iterator_step_binding<>(cx, r, ip, i, view) {
+    /// `iterator_step_miss` and the records after it.
+    fn iterator_step_binding_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (method, iterator) = (r.get(i.b), r.get(i.c));
         // SAFETY: the view checked the step's records (`lane_binding_step`).
@@ -15657,7 +15685,7 @@ script_handler! {
         let kind = vm.iteration_step(iterator, method);
         match kind {
             super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
-            _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view)),
+            _ => sibling!(iterator_step_miss::<H>, r, ip, Carried::script_in(cx, view)),
         }
         let step = if kind == super::iterators::IterationStep::Array {
             vm.step_present_array_value(iterator)
@@ -15667,7 +15695,7 @@ script_handler! {
             step
         };
         let Some(step) = step else {
-            sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(iterator_step_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         match step {
             Some(value) => {
@@ -15693,7 +15721,7 @@ fn lane_step_atoms<H: Host>(vm: &Vm<H>) -> call_iteration::StepAtoms {
     call_iteration::StepAtoms { done: u64::from(vm.runtime_atoms.done), value: u64::from(vm.runtime_atoms.value) }
 }
 
-/// `lane_iterator_step`'s step and result, out of line: the first result allocates.
+/// `iterator_step_miss`'s step and result, out of line: the first result allocates.
 #[inline(never)]
 fn lane_array_iteration_result<H: Host>(vm: &mut Vm<H>, iterator: Value) -> Option<Value> {
     let step = match vm.step_present_array_value(iterator) {
@@ -15708,21 +15736,21 @@ fn lane_array_iteration_result<H: Host>(vm: &mut Vm<H>, iterator: Value) -> Opti
 script_handler! {
     /// A JavaScript `Call` of another program's frameless callee (`LaneStack::cross_targets`):
     /// its activation runs in the callee's program, which its return leaves
-    /// (`Completion::Cross`). A site whose callee is no such target calls `lane_script_call`
+    /// (`Completion::Cross`). A site whose callee is no such target calls `script_call_miss`
     /// again.
     #[inline(never)]
-    fn lane_script_call_cross<>(cx, r, ip, i, view) {
+    fn script_call_cross_miss<>(cx, r, ip, i, view) {
         if !unsafe { (*cx).script_calls } {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         if lane_constructing(vm, callee) {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(native_call_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         let Some(target) = vm.linked_cross_call_entry(callee, &i.call_link) else {
             requicken::<H>(ip, script_call_handler::<H>(i.imm()));
-            sibling!(lane_script_call::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_miss::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
@@ -15743,9 +15771,9 @@ script_handler! {
         };
         let arguments = ImmediateLayout::call_window_base(i.imm());
         // A plain activation of a window the fixed copies take, not completing its caller,
-        // pushes as `lane_script_call`'s does, entering the callee's program
+        // pushes as `script_call_miss`'s does, entering the callee's program
         // (`lane_enter_window`'s cross completion); the site calls its fixed form from now on
-        // (`lane_script_call_cross_plain`).
+        // (`script_call_cross_plain_miss`).
         let argc = ImmediateLayout::argument_count(i.imm());
         if target.entry == CallEntry::Activates
             && i.a & crate::bytecode::RETURN_REGISTER == 0
@@ -15774,11 +15802,11 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_script_call_cross` at a site whose last callee was another program's plain
+    /// `script_call_cross_miss` at a site whose last callee was another program's plain
     /// activation (`CallEntry::Activates`) of `ARGC` arguments, which no completion of its
     /// caller follows: that activation alone, with the fixed copy of its window. Any other
     /// call takes the general cross form.
-    fn lane_script_call_cross_plain<ARGC: u16>(cx, r, ip, i, view) {
+    fn script_call_cross_plain_miss<ARGC: u16>(cx, r, ip, i, view) {
         if !unsafe { (*cx).script_calls } {
             return exit(ip);
         }
@@ -15787,13 +15815,13 @@ script_handler! {
         let target = if lane_constructing(vm, callee) { None } else { vm.linked_cross_call_entry(callee, &i.call_link) };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let Some(target) = target.map(|target| unsafe { &*target }) else {
-            sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_cross_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         if target.entry != CallEntry::Activates || !lane_admits_window(vm, target, ARGC) {
-            sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_cross_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
-            sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_cross_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         // SAFETY: the record's window of `r` holds its values.
         let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
@@ -15802,32 +15830,32 @@ script_handler! {
     }
 }
 
-/// The `lane_script_call_cross_plain` instantiation of a window of `argc` values, at most
+/// The `script_call_cross_plain_miss` instantiation of a window of `argc` values, at most
 /// `FIXED_ARGUMENT_COPIES`.
 fn cross_plain_handler<H: Host>(argc: u16) -> Handler {
     const _: () = assert!(FIXED_ARGUMENT_COPIES == 4);
     match argc {
-        0 => lane_script_call_cross_plain::<H, 0>,
-        1 => lane_script_call_cross_plain::<H, 1>,
-        2 => lane_script_call_cross_plain::<H, 2>,
-        3 => lane_script_call_cross_plain::<H, 3>,
-        _ => lane_script_call_cross_plain::<H, 4>,
+        0 => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_0 as u16 }>(),
+        1 => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_1 as u16 }>(),
+        2 => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_2 as u16 }>(),
+        3 => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_3 as u16 }>(),
+        _ => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS_PLAIN_4 as u16 }>(),
     }
 }
 
 script_handler! {
-    /// `lane_script_call` of a callee its target cache does not hold: resolving it
+    /// `script_call_miss` of a callee its target cache does not hold: resolving it
     /// (`Vm::resolve_script_call_target`) makes a call, so it runs out of line and the call
-    /// continues at `lane_script_call`, which then finds it, or at `lane_native_call`.
+    /// continues at `script_call_miss`, which then finds it, or at `native_call_miss`.
     #[inline(never)]
-    fn lane_script_call_resolve<>(cx, r, ip, i, view) {
+    fn script_call_resolve_miss<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         if vm.cross_call_entry(callee).is_some() {
-            requicken::<H>(ip, lane_script_call_cross::<H>);
-            sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
+            requicken::<H>(ip, call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS as u16 }>());
+            sibling!(script_call_cross_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
             if target.program() == vm.active_program {
@@ -15836,15 +15864,15 @@ script_handler! {
                 if vm.lane_stack.refuses() {
                     return exit(ip);
                 }
-                sibling!(lane_script_call::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
+                sibling!(script_call_miss::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
             }
             // Another program's callee that needs a frame takes it as `lane_frame_call`
             // pushes one.
             if !target.entry.activates() {
                 sibling!(lane_frame_call::<H>, r, ip, Carried::script_in(cx, view))
             }
-            requicken::<H>(ip, lane_script_call_cross::<H>);
-            sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
+            requicken::<H>(ip, call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::CROSS as u16 }>());
+            sibling!(script_call_cross_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         // A site calling a native takes the native handler from now on, which hands any other
         // callee back.
@@ -15852,11 +15880,11 @@ script_handler! {
             let native = *native;
             let handler = native_call_handler::<H>(native, i, || lane_call_result_dead(cx, ip, i));
             requicken::<H>(ip, handler);
-            if handler as *const () != lane_native_call::<H> as *const () {
+            if handler as *const () != call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() as *const () {
                 native_calls::install_math_field_call::<H>(cx, ip, native);
             }
         }
-        sibling!(lane_native_call::<H>, r, ip, Carried::script_in(cx, view))
+        sibling!(native_call_miss::<H>, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -16186,7 +16214,7 @@ script_handler! {
     /// length (`Vm::array_of_length`), with the callee's own `prototype`. An invalid length,
     /// and any other construction, take the general path.
     #[inline(never)]
-    fn lane_native_construct<>(cx, r, ip, i, view) {
+    fn native_construct_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -16247,11 +16275,11 @@ script_handler! {
     /// A call that forwards without an observable step of its own (`Vm::forwarded_call`):
     /// `f.call(thisArg, ...args)`, a bound function without bound arguments, or an
     /// uncurried builtin (`uncurryThis(f)(thisArg, ...args)`). A frameless target's
-    /// activation is the one `lane_script_call` makes, and a native runs as
-    /// `lane_native_call` runs it, with the forwarded receiver and arguments. Any other
+    /// activation is the one `script_call_miss` makes, and a native runs as
+    /// `native_call_miss` runs it, with the forwarded receiver and arguments. Any other
     /// takes the general path.
     #[inline(never)]
-    fn lane_function_call<>(cx, r, ip, i, view) {
+    fn function_call_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // SAFETY: the call's window is registers of the running function, which the
         // activation or native call copies before anything can move them.
@@ -16302,7 +16330,7 @@ script_handler! {
     }
 }
 
-/// Remembers `callee` for `lane_function_call`'s bound fast path (`LaneStack::bound_call`)
+/// Remembers `callee` for `function_call_miss`'s bound fast path (`LaneStack::bound_call`)
 /// when it is a bound function without bound arguments of a user function.
 #[inline(never)]
 fn lane_remember_bound_call<H: Host>(vm: &mut Vm<H>, callee: Value) {
@@ -16315,14 +16343,14 @@ fn lane_remember_bound_call<H: Host>(vm: &mut Vm<H>, callee: Value) {
     }
 }
 
-/// `lane_function_call` of a bound function with bound arguments, which lead the values the
+/// `function_call_miss` of a bound function with bound arguments, which lead the values the
 /// call passes (ECMA-262 10.4.1.1): the forwarded call with the values copied out
 /// (`Vm::forwarded_call`), a user function's activation or frame call
 /// (`FrameCallArguments::List`), else the general path.
 #[inline(never)]
 fn lane_bound_arguments_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
     let vm = unsafe { vm(cx) };
-    // SAFETY: as in `lane_function_call`; the values are copied before anything runs.
+    // SAFETY: as in `function_call_miss`; the values are copied before anything runs.
     let window = unsafe { lane_call_window(r, i) };
     let copied = smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::from_slice(window);
     let Some(super::function::Forwarded { callee, receiver, args, kind, .. }) = vm.forwarded_call(r.get(i.b), r.get(i.c), copied) else {
@@ -16343,7 +16371,7 @@ fn lane_bound_arguments_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     }
 }
 
-/// `lane_function_call`'s activation of the frameless `callee` with the forwarded `receiver`
+/// `function_call_miss`'s activation of the frameless `callee` with the forwarded `receiver`
 /// and `args`: the callee's registers and first record, or the record to continue at. Out of line, as `lane_construct_keeping_activation`.
 #[inline(never)]
 fn lane_function_call_activation<H: Host>(
@@ -16516,7 +16544,7 @@ fn lane_activate_kept<H: Host, const MAY_CROSS: bool>(
     lane_activate_keeping::<H, MAY_CROSS>(cx, r, ip, target, arguments, this, false, None)
 }
 
-/// `lane_function_call` of a forwarded `callee` with no frameless target: a user function
+/// `function_call_miss` of a forwarded `callee` with no frameless target: a user function
 /// the general loop pushes in place (`Vm::in_loop_call_target`) takes its frame as
 /// `lane_frame_call` makes it, with the forwarded `receiver` and `args`, the call window's
 /// tail. Any other takes the general path.
@@ -16594,7 +16622,7 @@ script_handler! {
     /// native the running frame calls in place (`lane_call_native`); out of line, so script
     /// calls keep their code. Any other call takes the general path.
     #[inline(never)]
-    fn lane_native_call<>(cx, r, ip, i, view) {
+    fn native_call_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // The callee's kind, read once: a call changes no function record before it runs.
         let native = match vm.heap.function(r.get(i.b)) {
@@ -16605,10 +16633,10 @@ script_handler! {
             _ => sibling!(lane_frame_call::<H>, r, ip, Carried::script_in(cx, view)),
         };
         if matches!(native, Native::FunctionCall | Native::FunctionBoundCall) {
-            sibling!(lane_function_call::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(function_call_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         if matches!(native, Native::FunctionApply | Native::ReflectApply) {
-            sibling!(lane_apply_call::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(apply_call_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         if native == Native::ReflectGet {
             sibling!(reflect_get_call_handler::<H>(), r, ip, Carried::script_in(cx, view))
@@ -16623,16 +16651,16 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_native_call` of `Function.prototype.apply` or `Reflect.apply`: the applied
+    /// `native_call_miss` of `Function.prototype.apply` or `Reflect.apply`: the applied
     /// function's activation where its list allows one (`lane_apply_activation`), else the
     /// native's call. Apart, since the activation's result is a stack temporary of the
     /// handler that makes it, whose dispatch then is a call, not a sibling jump.
     #[inline(never)]
-    fn lane_apply_call<>(cx, r, ip, i, view) {
+    fn apply_call_miss<>(cx, r, ip, i, view) {
         let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) =
             (unsafe { vm(cx) }).heap.function(r.get(i.b))
         else {
-            unreachable!("lane_native_call routes only a native apply here");
+            unreachable!("native_call_miss routes only a native apply here");
         };
         let native = *native;
         if let Some(activation) = lane_apply_activation(cx, r, ip, i, native) {
@@ -16645,7 +16673,7 @@ script_handler! {
     }
 }
 
-/// The native call `lane_native_call` makes in place (`lane_native_value`), completed in its
+/// The native call `native_call_miss` makes in place (`lane_native_value`), completed in its
 /// result register or as its caller's return (`lane_native_complete`).
 #[inline(always)]
 fn lane_native_call_value<H: Host>(
@@ -16676,7 +16704,7 @@ script_handler! {
     /// passes them, which iterating it would yield and the activation copies, as a spread call's argument array
     /// (`lane_list_activation`); any other iterable takes the general path, which builds it.
     #[inline(never)]
-    fn lane_call_spread<>(cx, r, ip, i, view) {
+    fn call_spread_miss<>(cx, r, ip, i, view) {
         let list = r.get(ImmediateLayout::call_window_base(i.imm()));
         let Some(length) = (unsafe { vm(cx) }).intact_spread_length(list) else {
             if let Some(resumed) = list_calls::lane_spread_set_native_call(cx, ip, i, r.get(i.b), r.get(i.c), list) {
@@ -16703,7 +16731,7 @@ script_handler! {
     /// the callee's activation with its elements, as an applied call's
     /// (`lane_list_activation`); any other call takes the general path.
     #[inline(never)]
-    fn lane_call_array<>(cx, r, ip, i, view) {
+    fn call_array_miss<>(cx, r, ip, i, view) {
         let list = r.get(ImmediateLayout::call_window_base(i.imm()));
         let Some(length) = (unsafe { vm(cx) }).dense_list_length(list) else {
             return exit(ip);
@@ -16719,7 +16747,7 @@ script_handler! {
 /// Values an applied frame call copies out without allocating their list.
 const FRAME_CALL_INLINE_ARGUMENTS: usize = 8;
 
-/// `lane_call_spread` of a callee the site links: the elements of the intact `list`, `length`
+/// `call_spread_miss` of a callee the site links: the elements of the intact `list`, `length`
 /// of them, passed as `lane_passed_linked_call` passes values, read in place from a wide
 /// backing, decoded from a narrow one. `None` for any other call, which the general spread
 /// path makes.
@@ -16805,9 +16833,9 @@ script_handler! {
     /// register; `undefined` there means the keeping activation's entry kept the values passed,
     /// which, while array iteration is intact, a linked callee takes in place
     /// (`lane_passed_linked_call`) with no array made. Otherwise the rest array they make is
-    /// put in the window and the call is `lane_call_spread`'s, an array spread as any.
+    /// put in the window and the call is `call_spread_miss`'s, an array spread as any.
     #[inline(never)]
-    fn lane_call_rest<>(cx, r, ip, i, view) {
+    fn call_rest_miss<>(cx, r, ip, i, view) {
         let window = ImmediateLayout::call_window_base(i.imm());
         if r.get(window) == Value::UNDEFINED
             && let Some((argc, function)) = unsafe { lane_keeping_activation(cx) }
@@ -16826,7 +16854,7 @@ script_handler! {
             let rest = vm.rest_parameter_array(unsafe { std::slice::from_raw_parts(kept, usize::from(count)) });
             r.set(window, rest);
         }
-        sibling!(lane_call_spread::<H>, r, ip, view)
+        sibling!(call_spread_miss::<H>, r, ip, view)
     }
 }
 
@@ -17002,7 +17030,7 @@ script_handler! {
     /// A `Call` site whose callee was an array's callback method (`native_call_handler`,
     /// `Native::is_array_callback`), which no in-place shortcut of `lane_native_value` makes:
     /// the native's call out of the lane (`lane_call_native_out`), whose callback calls run in
-    /// this lane (`Vm::lane_native_callback`). Any other callee takes `lane_native_call`.
+    /// this lane (`Vm::lane_native_callback`). Any other callee takes `native_call_miss`.
     /// Where `DISCARDS`, nothing reads the call's result, so a `forEach` of one element is its
     /// callback's plain call (`lane_call_for_each_once`).
     #[inline(never)]
@@ -17010,7 +17038,7 @@ script_handler! {
         let callee = r.get(i.b);
         let native = match (unsafe { vm(cx) }).heap.function(callee) {
             Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) if native.is_array_callback() => *native,
-            _ => sibling!(lane_native_call::<H>, r, ip, Carried::script_in(cx, view)),
+            _ => sibling!(native_call_miss::<H>, r, ip, Carried::script_in(cx, view)),
         };
         // SAFETY: the call's window is registers of the running function, which the native
         // call copies before anything can move them.
@@ -17040,7 +17068,7 @@ fn callee_is_native<H: Host>(vm: &Vm<H>, callee: Value, native: Native) -> bool 
 script_handler! {
     /// A `Call` site whose callee was a Math function of Numbers (`native_call_handler`): the
     /// call of Number arguments in place (`number::math_inline_call`). Any other callee or
-    /// argument takes `lane_native_call`.
+    /// argument takes `native_call_miss`.
     fn lane_call_math<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let value = match vm.heap.function(r.get(i.b)) {
@@ -17051,7 +17079,7 @@ script_handler! {
             _ => None,
         };
         let Some(value) = value else {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(native_call_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -17125,7 +17153,7 @@ fn lane_regexp_call<H: Host>(
     }
 }
 
-/// A lane native call that `lane_native_call` does not make inline: a pure string method or
+/// A lane native call that `native_call_miss` does not make inline: a pure string method or
 /// a pure native in place, else the native through `lane_call_native`. Inline into its two callers: a native
 /// call otherwise pays this layer's own frame.
 #[inline(always)]
@@ -17443,7 +17471,7 @@ fn lane_construct_forwarded_parent<H: Host>(
 
 script_handler! {
     /// `new` of a frameless target that `Vm::inline_construct_target` would push: the
-    /// receiver it allocates, then the activation `lane_script_call` makes, whose
+    /// receiver it allocates, then the activation `script_call_miss` makes, whose
     /// completion substitutes the receiver for a non-object result. Any other
     /// construction takes the general path.
     fn lane_script_construct<>(cx, r, ip, i, view) {
@@ -17467,14 +17495,14 @@ script_handler! {
             if lane_script_target(cx, callee).is_some_and(|target| target.constructs()) {
                 sibling!(lane_script_construct::<H>, r, ip, Carried::script_in(cx, view))
             }
-            sibling!(lane_native_construct::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(native_construct_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         // SAFETY: as `Vm::script_call_entry`; the planned construction below resolves no
         // target, and any other path copies the target first.
         let target = unsafe { &*entry };
         // A class constructor's target constructs with entry `Frame`, which its calls take.
         if !target.constructs() {
-            sibling!(lane_native_construct::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(native_construct_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         // A planned construction, the common `new C(…)` or `return new C(…)`: the receiver
         // is the finished object, and the body completed with `undefined`.
@@ -17621,7 +17649,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_script_call` of a target that keeps its passed values
+    /// `script_call_miss` of a target that keeps its passed values
     /// (`ScriptCallTarget::forwards`): the keeping activation (`lane_call_keeping_activation`).
     /// Out of line, so ordinary calls keep their code.
     #[inline(never)]
@@ -17629,11 +17657,11 @@ script_handler! {
         match lane_call_keeping_activation(cx, r, ip, i) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Err(Some(next)) => next,
-            // A site this form serves since `lane_script_call` saw a keeping target calls
+            // A site this form serves since `script_call_miss` saw a keeping target calls
             // the full form once its callee keeps nothing.
             Err(None) => {
-                requicken::<H>(ip, lane_script_call_full::<H>);
-                sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+                requicken::<H>(ip, call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
+                sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
             }
         }
     }
@@ -17654,7 +17682,7 @@ fn lane_call_keeping_activation<H: Host>(
     }
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
-    // The site's linked entry, as `lane_script_call_environment` reads it, read in place: only
+    // The site's linked entry, as `script_call_environment_miss` reads it, read in place: only
     // an activation that allocates (a rest array) copies it first; any other callee takes the
     // general lookup.
     let linked = if lane_constructing(vm, callee) {
@@ -19129,7 +19157,7 @@ fn lane_carried_at<H: Host>(cx: *mut LaneContext<H>, view: *const LaneView, regi
 }
 
 /// A lane body's call at `call_pc` of the running activation (`lane_region`'s `Call`): the
-/// activation `lane_script_call`'s common form makes, then the callee's own lane body. A
+/// activation `script_call_miss`'s common form makes, then the callee's own lane body. A
 /// callee whose body returns completes the call (`lane_return_plain`), the result in the
 /// call's register; one that leaves, or has no body, leaves the lane at its record in that
 /// activation (`LaneContext::callee_resume`). A call the common form does not make misses,
@@ -19488,7 +19516,7 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
     this: Value,
     constructs: bool,
 ) -> (Registers, Ip) {
-    // Only `lane_script_call_settles` activates a settling target, and it says so statically,
+    // Only `script_call_settles_miss` activates a settling target, and it says so statically,
     // so the other call forms decide the completion without reading the target's entry.
     debug_assert_eq!(SETTLES, target.settles(), "a settling target activates through its own call form");
     let vm = unsafe { vm(cx) };
@@ -19676,7 +19704,7 @@ fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool, const
         lane_enter_program(cx, target.program());
     }
     // A proved plain call (`PLAIN_LINK`) never runs under the tier's diagnostics
-    // (`lane_script_call_prove`), so it skips their per-call test (`COUNTED`).
+    // (`script_call_prove_miss`), so it skips their per-call test (`COUNTED`).
     if COUNTED { vm.programs.record_js_jit_lane_entry(target.program(), target.function); }
     // A construction runs its body from the first record; the tier enters plain calls.
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
@@ -19731,7 +19759,7 @@ fn lane_enter_plain_window<H: Host>(
     }
     callee_registers.set_env(target.env);
     callee_registers.set_capture(target.capture);
-    // A proved call never runs under the tier's diagnostics (`lane_script_call_prove`), so it
+    // A proved call never runs under the tier's diagnostics (`script_call_prove_miss`), so it
     // records no tier entry (`lane_enter_window_of`'s `COUNTED`). It never constructs.
     (callee_registers, unsafe { (*target.view).start() })
 }
@@ -21401,7 +21429,7 @@ unsafe fn lane_memo_read<H: Host, const SHAPE: u8>(
 }
 
 script_handler! {
-    /// `lane_script_call_full` at a site whose read call made a memo (`lane_memoize_read`): the
+    /// `script_call_full_miss` at a site whose read call made a memo (`lane_memoize_read`): the
     /// memo's hits, of its shape `SHAPE` (`MemoRead::shape`), answer the call as the read
     /// target's would. A call the memo does not answer takes the full form, which the site
     /// then keeps; a run that admits no read call (`lane_returning_call_admitted`) takes it
@@ -21410,11 +21438,11 @@ script_handler! {
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         // A run that admits no read call leaves the memo to the next.
         if !unsafe { (*cx).script_calls } || (returns && !lane_returning_call_admitted(cx)) {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         let Some(value) = (unsafe { lane_memo_read::<H, SHAPE>(cx, r, i) }) else {
-            requicken::<H>(ip, lane_script_call_full::<H>);
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+            requicken::<H>(ip, call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
+            sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         if !returns {
             r.set(i.a, value);
@@ -22511,9 +22539,9 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::WasmGlobalSet => Some(lane_global_set::<H>),
         Class::WasmFillRegisters => Some(lane_fill_registers::<H>),
         Class::CallKnown => Some(known_call_handler::<H>()),
-        Class::Call => Some(lane_script_call::<H, ANY_ARGC, false>),
-        Class::CallArray => Some(lane_call_array::<H>),
-        Class::CallSpread => Some(lane_call_spread::<H>),
+        Class::Call => Some(script_call_row::<H>(ANY_ARGC)),
+        Class::CallArray => Some(protocol_row::<H, { crate::bytecode::Op::CallArray as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_ARRAY as u16 }> as Handler),
+        Class::CallSpread => Some(protocol_row::<H, { crate::bytecode::Op::CallSpread as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_SPREAD as u16 }> as Handler),
         Class::Delete => Some(lane_delete::<H>),
         Class::Construct => Some(lane_script_construct::<H>),
         Class::LoadName => Some(lane_load_name_resolve::<H, LOAD_NAME>),
@@ -22805,7 +22833,7 @@ fn lane_call_result_marked(
 /// Whether the `Call` at `pc` is an iteration step: no arguments, its result checked by the
 /// `RequireIteratorResult` after it, as the compiler emits a for-of or destructuring step,
 /// whose result register only the step's own `done` and `value` reads take
-/// (`lane_iterator_step`).
+/// (`iterator_step_miss`).
 fn lane_iteration_step(decoded: &[WideInstruction], pc: usize) -> bool {
     let call = decoded[pc];
     call.result_flags() == 0
@@ -22858,7 +22886,7 @@ impl ForOfTest {
 /// How the iteration step at `pc` (`lane_iteration_step`) begins a for-of step: after its
 /// `RequireIteratorResult`, a plain read of the result into a register, a test of that
 /// register (`ForOfTest`), and a second plain read of the result where the body begins.
-/// `lane_iterator_step_reads` then makes the reads from the step itself; their atoms it
+/// `iterator_step_reads_miss` then makes the reads from the step itself; their atoms it
 /// tests as it runs.
 fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest> {
     let result = decoded[pc].result_register();
@@ -22892,7 +22920,7 @@ const BINDING_VALUE_READ: usize = 5;
 /// Whether the iteration step at `pc` (`lane_iteration_step`) is a destructuring step as
 /// `binding_iterator_step` emits it once its test is threaded: a plain read of the result's
 /// `done`, a move of it to another register, a `JumpTrue` of it past the step, and a plain
-/// read of the result's `value`. `lane_iterator_step_binding` then makes the reads and the
+/// read of the result's `value`. `iterator_step_binding_miss` then makes the reads and the
 /// move from the step itself; their atoms it tests as it runs.
 fn lane_binding_step(decoded: &[WideInstruction], pc: usize) -> bool {
     let result = decoded[pc].result_register();
@@ -23104,11 +23132,11 @@ fn derive_lane_view<'live, H: Host>(
                 tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
                     .and_then(|_| {
                         LaneHandler::producer(match acc {
-                            ACC_NONE => lane_f64_sqrt::<H, ACC_NONE> as Handler,
-                            ACC_A => lane_f64_sqrt::<H, ACC_A> as Handler,
-                            ACC_B => lane_f64_sqrt::<H, ACC_B> as Handler,
-                            ACC_C => lane_f64_sqrt::<H, ACC_C> as Handler,
-                            _ => lane_f64_sqrt::<H, ACC_PAIR> as Handler,
+                            ACC_NONE => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_NONE, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_NONE as u16 }> as Handler,
+                            ACC_A => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_A, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_A as u16 }> as Handler,
+                            ACC_B => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_B, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_B as u16 }> as Handler,
+                            ACC_C => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_C, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_C as u16 }> as Handler,
+                            _ => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_PAIR, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_PAIR as u16 }> as Handler,
                         })
                     })
             } else if let Some(handler) = float_arithmetic(op, instruction.imm())
@@ -23137,7 +23165,7 @@ fn derive_lane_view<'live, H: Host>(
                     produces: false,
                 })
             } else if spreads_rest_view(instruction) {
-                Some(LaneHandler { handler: lane_call_rest::<H> as Handler, produces: false })
+                Some(LaneHandler { handler: call_rest_miss::<H> as Handler, produces: false })
             } else if op.reads_arguments() {
                 Some(LaneHandler {
                     handler: if op.class().eq(Class::ArgumentsLength) {
@@ -23150,10 +23178,10 @@ fn derive_lane_view<'live, H: Host>(
             } else if op.is_call() && lane_iteration_step(&decoded, pc) {
                 Some(LaneHandler {
                     handler: match lane_for_of_step(&decoded, pc) {
-                        Some(ForOfTest::Emitted) => lane_iterator_step_reads::<H, false> as Handler,
-                        Some(ForOfTest::Threaded) => lane_iterator_step_reads::<H, true> as Handler,
-                        None if lane_binding_step(&decoded, pc) => lane_iterator_step_binding::<H> as Handler,
-                        None => lane_iterator_step::<H> as Handler,
+                        Some(ForOfTest::Emitted) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::READS_EMITTED as u16 }> as Handler,
+                        Some(ForOfTest::Threaded) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::READS_THREADED as u16 }> as Handler,
+                        None if lane_binding_step(&decoded, pc) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::BINDING as u16 }> as Handler,
+                        None => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::STEP as u16 }> as Handler,
                     },
                     produces: false,
                 })

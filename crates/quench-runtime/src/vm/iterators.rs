@@ -3305,7 +3305,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// An iterator result `{ value, done }` whose object no code but the step that reads it
-    /// back observes (a `Call` the lane recognises as an iteration step, `lane_iterator_step`):
+    /// back observes (a `Call` the lane recognises as an iteration step, `iterator_step_miss`):
     /// one object, rewritten by each such step, in place of a fresh one per step.
     pub(super) fn reused_iterator_result(&mut self, value: Value, done: bool) -> Value {
         let result = self.reused_iterator_result;
