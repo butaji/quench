@@ -6,6 +6,7 @@
 
 use super::{RegisterSet, register_bit};
 use crate::bytecode::{ControlEdge, ControlFlowLayout, Function, Op};
+use crate::compile::CompileScratch;
 use std::ops::{BitAnd, BitOr, BitOrAssign, Not};
 
 /// A set of registers, one bit each, at a width that holds every register of the function.
@@ -63,20 +64,40 @@ pub(crate) fn analyze_transfers<M: LiveMask>(function: &Function, transfers: &[(
 pub(crate) fn analyze_wide(
     function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
 ) -> Vec<RegisterSet> {
+    analyze_wide_with(function, transfers, successors, &mut CompileScratch::default())
+}
+
+/// `analyze_wide`, narrowing its transfers into `scratch`'s buffers.
+pub(crate) fn analyze_wide_with(
+    function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
+    scratch: &mut CompileScratch,
+) -> Vec<RegisterSet> {
     match usize::from(function.registers) {
-        registers if registers <= u64::BITS as usize => analyze_narrowed::<u64>(function, transfers, successors),
-        registers if registers <= u128::BITS as usize => analyze_narrowed::<u128>(function, transfers, successors),
+        registers if registers <= u64::BITS as usize => {
+            let mut narrowed = std::mem::take(&mut scratch.narrowed_word);
+            let live = analyze_narrowed::<u64>(function, transfers, successors, &mut narrowed);
+            scratch.narrowed_word = narrowed;
+            live
+        }
+        registers if registers <= u128::BITS as usize => {
+            let mut narrowed = std::mem::take(&mut scratch.narrowed_pair);
+            let live = analyze_narrowed::<u128>(function, transfers, successors, &mut narrowed);
+            scratch.narrowed_pair = narrowed;
+            live
+        }
         _ => analyze_successors(function, transfers, successors),
     }
 }
 
 /// `analyze_successors` of `transfers` at the width `M`, which holds every register of the
-/// function, widened back to sets.
+/// function, widened back to sets. `narrowed` is the buffer the narrowed transfers are written to.
 fn analyze_narrowed<M: LiveMask>(
     function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
+    narrowed: &mut Vec<(M, M)>,
 ) -> Vec<RegisterSet> {
-    let narrowed: Vec<(M, M)> = transfers.iter().map(|&(read, written)| (M::narrow(read), M::narrow(written))).collect();
-    analyze_successors(function, &narrowed, successors).into_iter().map(Into::into).collect()
+    narrowed.clear();
+    narrowed.extend(transfers.iter().map(|&(read, written)| (M::narrow(read), M::narrow(written))));
+    analyze_successors(function, narrowed.as_slice(), successors).into_iter().map(Into::into).collect()
 }
 
 /// `analyze_transfers` over the function's successor table, `successors`.

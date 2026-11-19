@@ -1,4 +1,5 @@
 use super::*;
+use crate::compile::CompileScratch;
 
 fn sum(result: Register, left: Register, right: Register) -> Instr {
     Instr::new(
@@ -22,7 +23,7 @@ fn forwarded(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
     let function = &mut program.functions[0];
     function.code = code;
     function.registers = registers;
-    forward_move_sources(function, &[] as &[MethodSiteSpec], &[], &[], &mut None);
+    forward_move_sources(function, &[] as &[MethodSiteSpec], &[], &[], &mut None, &mut CompileScratch::default());
     std::mem::take(&mut function.code)
 }
 
@@ -32,7 +33,7 @@ fn coalesced(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
     let function = &mut program.functions[0];
     function.code = code;
     function.registers = registers;
-    while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None) {}
+    while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None, &mut CompileScratch::default()) {}
     std::mem::take(&mut function.code)
 }
 

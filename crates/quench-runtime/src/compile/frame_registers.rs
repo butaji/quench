@@ -13,7 +13,7 @@ const ARGUMENTS_NAME: &str = "arguments";
 use crate::bytecode::initialization;
 use crate::bytecode::{
     REGISTER_MOVE, WITH_ENTER_BINDING, EvalBindingLocation, Function, ImmediateRole, Instr, InstructionField, Op,
-    Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, ThrownValueSlot, Traits, WideInstruction, the_op,
+    Operand, OperandKind, REGISTER_MASK, Superinstruction, ThrownValueSlot, Traits, WideInstruction, the_op,
 };
 
 const LOAD_CONST_OP: Op = the_op(Traits::CONSTANT_LOAD);
@@ -147,7 +147,8 @@ pub(super) fn promote<'a>(
     }
     let mut exclude = |slot: usize| eligible.remove(slot);
     // The atoms by-name accesses resolve; a local of one of them keeps its slot.
-    let mut by_name = Vec::new();
+    let mut by_name = std::mem::take(&mut scratch.by_name);
+    by_name.clear();
     for instruction in function.instructions() {
         if instruction.op().immediate_role() == ImmediateRole::SuperinstructionIndex {
             for member in superinstructions[instruction.superinstruction_index()].wide {
@@ -184,6 +185,7 @@ pub(super) fn promote<'a>(
     }
     by_name.sort_unstable(); by_name.dedup();
     function.local_atoms.iter().enumerate().filter(|(_, local)| by_name.binary_search(local).is_ok()).for_each(|(slot, _)| exclude(slot));
+    scratch.by_name = by_name;
     // New registers follow the existing ones while liveness still covers the function and
     // operands can name them. A function whose registers already outnumber what liveness
     // covers has no root map to keep (`ROOT_MAP_REGISTERS`), so only the operand domain
@@ -192,7 +194,8 @@ pub(super) fn promote<'a>(
     let uncovered = function.registers >= ROOT_MAP_REGISTERS;
     // A slot no instruction or handler names (a local compilation already promoted) needs no
     // register: nothing reads or writes it, and each register costs every activation a fill.
-    let mut accessed = crate::bitset::BitSet::new(eligible.len());
+    let mut accessed = std::mem::take(&mut scratch.accessed);
+    accessed.reset(eligible.len());
     let mut access = |slot: usize| {
         accessed.checked_insert(slot);
     };
@@ -205,7 +208,9 @@ pub(super) fn promote<'a>(
         }
     }
     let mut next = function.registers;
-    let mut registers: Vec<Option<Register>> = vec![None; eligible.len()];
+    let mut registers = std::mem::take(&mut scratch.registers);
+    registers.clear();
+    registers.resize(eligible.len(), None);
     for (slot, register) in registers.iter_mut().enumerate() {
         if eligible.contains(slot)
             && accessed.contains(slot)
@@ -217,7 +222,9 @@ pub(super) fn promote<'a>(
             next += 1;
         }
     }
+    scratch.accessed = accessed;
     if next == function.registers {
+        scratch.registers = registers;
         return;
     }
     function.registers = next;
@@ -313,6 +320,7 @@ pub(super) fn promote<'a>(
     }
     function.code = code;
     scratch.recycle_code(old);
+    scratch.registers = registers;
 }
 
 /// `instruction` in the slot `packed` held: packed when it fits, else in the wide table,

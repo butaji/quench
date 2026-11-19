@@ -2268,7 +2268,7 @@ pub(crate) fn lower_settled<'a>(
 ) -> Option<Vec<liveness::RegisterSet>> {
     let LoweringTables { methods, field_sites, superinstructions, specialized, undefined_constant, object_sites } = *tables;
     if function.dispatch == DispatchClass::Numeric {
-        let live = liveness::analyze(function, methods, field_sites, superinstructions);
+        let live = liveness::buffers::analyze_with(function, methods, field_sites, superinstructions, scratch);
         numeric::apply(function, live.as_deref());
     }
     // Renaming a plain slot's operations keeps it plain (validation re-derives the same
@@ -2281,7 +2281,7 @@ pub(crate) fn lower_settled<'a>(
     frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name, &flow, scratch);
     if specialized {
         if coalescing_repays(function) {
-            rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
+            rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions, scratch);
         }
         object_registers::promote(function, methods, field_sites, superinstructions, object_sites, scratch);
         rewrite::hoist_loop_constants(function, methods, field_sites, superinstructions, scratch);
@@ -2293,7 +2293,7 @@ pub(crate) fn lower_settled<'a>(
         .iter()
         .any(|instruction| instruction.op().traits().has(Traits::PLAIN_LOCAL_STORE))
     {
-        let live = liveness::analyze(function, methods, field_sites, superinstructions);
+        let live = liveness::buffers::analyze_with(function, methods, field_sites, superinstructions, scratch);
         if !numeric::apply_plain_local_stores(function, live.as_deref()) {
             solved = live;
         }
@@ -4466,6 +4466,7 @@ impl<'a> Compiler<'a> {
                 methods,
                 &mut self.field_sites,
                 &mut self.superinstructions,
+                &mut self.scratch,
             );
         }
     }

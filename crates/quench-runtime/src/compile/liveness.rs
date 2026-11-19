@@ -7,10 +7,10 @@ use crate::bytecode::{
 /// derives, and the root masks a collection reads.
 pub(crate) use set::RegisterSet; mod set;
 
-mod solve; mod masks; pub(crate) mod windows; pub(crate) mod budget;
+mod solve; mod masks; pub(crate) mod windows; pub(crate) mod budget; pub(crate) mod buffers;
 // The interpreter runs raw webs once their opcode forms land (`raw-registers-design.md`).
 pub(crate) mod raw_webs;
-pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_transfers, analyze_wide};
+pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_transfers, analyze_wide_with};
 pub(crate) use masks::RegisterMasks;
 use solve::LiveMask;
 
@@ -144,8 +144,7 @@ pub(crate) fn analyze(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<RegisterSet>> {
-    let transfers = transfers(function, methods, fields, superinstructions)?;
-    Some(analyze_wide(function, &transfers, &crate::bytecode::Successors::of_code(function)))
+    buffers::analyze_with(function, methods, fields, superinstructions, &mut crate::compile::CompileScratch::default())
 }
 
 /// Each instruction's (uses, definitions) register masks, for a function whose registers fit
@@ -156,7 +155,8 @@ pub(super) fn transfers(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<(RegisterSet, RegisterSet)>> {
-    (function.registers <= ROOT_MAP_REGISTERS && budget::admits(function)).then(|| all_transfers(function, methods, fields, superinstructions))
+    let mut table = Vec::new();
+    buffers::transfers_into(function, methods, fields, superinstructions, &mut table).then_some(table)
 }
 
 /// Every instruction's transfers, at the set's width: a body past it is solved per window.

@@ -7,7 +7,7 @@ use super::liveness::{self, MethodArguments, RegisterSet, register_bit};
 use crate::bytecode::{FieldLookup, FieldSite, Function, Instr, ObjectSite, REGISTER_MOVE, Superinstruction, Traits};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Aliases {
+pub(super) struct Aliases {
     may: RegisterSet,
     must: RegisterSet,
 }
@@ -28,7 +28,7 @@ pub(super) fn promote(
     let mut pc = 0;
     while pc < function.code.len() {
         if let Some(width) = literal_values(function.code[pc]).map(|values| values.len() as u16)
-            && let Some(replacements) = replacement(function, pc, methods, fields, supers, objects)
+            && let Some(replacements) = replacement(function, pc, methods, fields, supers, objects, scratch)
         {
             let old = std::mem::take(&mut function.code);
             let mut code = scratch.code_buffer(old.len() + 1);
@@ -71,6 +71,7 @@ fn literal_values(make: Instr) -> Option<smallvec::SmallVec<[u16; 4]>> {
 fn replacement(
     function: &Function, allocation: usize, methods: &dyn MethodArguments,
     fields: &[FieldSite], supers: &[Superinstruction], objects: &[ObjectSite],
+    scratch: &mut CompileScratch,
 ) -> Option<Vec<Option<smallvec::SmallVec<[Instr; 2]>>>> {
     // Reuse the authoritative register-transfer domain. Exhausting its mask
     // representation leaves the original allocation intact.
@@ -81,14 +82,16 @@ fn replacement(
     let atoms = &objects.get(make.object_site_index())?.atoms;
     let distinct = atoms.iter().enumerate().all(|(index, atom)| !atoms[..index].contains(atom));
     if atoms.is_empty() || atoms.len() != values.len() || !distinct { return None; }
-    let transfers = liveness::transfers(function, methods, fields, supers)?;
-    let instructions: Vec<_> = function.instructions().collect();
-    let successors = crate::bytecode::Successors::of(function, &instructions);
-    let mut incoming = vec![None; instructions.len()];
+    // The tables are the scratch's own buffers, filled in place for this function.
+    let CompileScratch { transfers, successors, incoming, .. } = scratch;
+    if !liveness::buffers::transfers_into(function, methods, fields, supers, transfers) { return None; }
+    successors.refill(function);
+    incoming.clear();
+    incoming.resize(function.code.len(), None);
     incoming[0] = Some(Aliases { may: RegisterSet::default(), must: RegisterSet::default() });
     loop {
         let mut changed = false;
-        for (pc, instruction) in instructions.iter().copied().enumerate() {
+        for (pc, instruction) in function.instructions().enumerate() {
             let Some(before) = incoming[pc] else { continue };
             let definitions = transfers[pc].1;
             let mut after = Aliases { may: before.may & !definitions, must: before.must & !definitions };
@@ -130,10 +133,10 @@ fn replacement(
         let live = liveness::analyze(function, methods, fields, supers)?;
         if escaping & live[allocation] != 0 { return None; }
     }
-    let mut replacements = vec![None; instructions.len()];
+    let mut replacements = vec![None; function.code.len()];
     let scalar = |atom| atoms.iter().position(|candidate| *candidate == atom)
         .map(|index| function.registers + index as u16);
-    for (pc, instruction) in instructions.iter().copied().enumerate() {
+    for (pc, instruction) in function.instructions().enumerate() {
         let Some(aliases) = incoming[pc] else { continue };
         if aliases.may & observable != 0 { return None; }
         let uses = transfers[pc].0 & aliases.may;
