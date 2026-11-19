@@ -557,34 +557,7 @@ impl<H: Host> Vm<H> {
                 let text = self.to_string(p, value)?;
                 Ok(Value::number(super::number::parse_float(&text)))
             }
-            Native::MathFloor
-            | Native::MathAbs
-            | Native::MathCeil
-            | Native::MathRound
-            | Native::MathTrunc
-            | Native::MathSqrt
-            | Native::MathSign
-            | Native::MathAcos
-            | Native::MathAsin
-            | Native::MathAtan
-            | Native::MathCos
-            | Native::MathExp
-            | Native::MathSin
-            | Native::MathTan
-            | Native::MathAcosh
-            | Native::MathAsinh
-            | Native::MathAtanh
-            | Native::MathCbrt
-            | Native::MathCosh
-            | Native::MathExpm1
-            | Native::MathFround
-            | Native::MathLog10
-            | Native::MathLog1p
-            | Native::MathLog2
-            | Native::MathSinh
-            | Native::MathTanh
-            | Native::MathClz32
-            | Native::MathF16Round => {
+            native if super::number::is_math_unary(native) => {
                 let value = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 Ok(Value::number(
                     super::number::math_unary(native, value).expect("a unary Math native"),
