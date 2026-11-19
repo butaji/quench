@@ -215,6 +215,61 @@ pub(crate) enum NumberOperation {
     Imul { destination: Register, left: Operand, right: Operand },
 }
 
+/// A constant operand's int32 and Number readings (`NumericFrame::constant_operand`). The stencil
+/// build holds no constant table, so there no constant reaches them.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+fn constant_int(value: crate::Value) -> Option<i32> { value.as_int() }
+#[cfg(stencil_build)]
+#[inline(always)]
+fn constant_int(_value: crate::Value) -> Option<i32> { None }
+#[cfg(not(stencil_build))]
+#[inline(always)]
+fn constant_number(value: crate::Value) -> Option<f64> { value.as_number() }
+#[cfg(stencil_build)]
+#[inline(always)]
+fn constant_number(_value: crate::Value) -> Option<f64> { None }
+/// ToInt32 of a constant Number (`crate::value::number_to_u32`'s bits).
+#[cfg(not(stencil_build))]
+#[inline(always)]
+fn constant_int32(number: f64) -> i32 { crate::value::number_to_u32(number) as i32 }
+#[cfg(stencil_build)]
+#[inline(always)]
+fn constant_int32(_number: f64) -> i32 { 0 }
+
+/// The VM's general operation `call` defining `destination` (`callout::calling`). The stencil build
+/// carries no call-outs, so there the row stays unresolved and `call` is never built.
+macro_rules! general_call {
+    ($stage:expr, $frame:expr, $call:expr, $destination:expr) => {{
+        #[cfg(not(stencil_build))]
+        let step = super::callout::calling($stage, $frame, $call, $destination);
+        #[cfg(stencil_build)]
+        let step = { let _ = (&$stage, &$frame); Step::Unresolved };
+        step
+    }};
+}
+
+/// The VM's unary `operator` of the register `source`, defining `destination`, where the frame takes
+/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
+/// The operator expression is built only where call-outs exist (not in the stencil build).
+macro_rules! general_unary {
+    ($stage:expr, $frame:expr, $operator:expr, ($destination:expr, $source:expr)) => {
+        match $source.register_index() {
+            Some(_value) if $frame.general_operators() =>
+                general_call!($stage, $frame, super::CallOut::Unary { operator: $operator, value: _value }, Some($destination)),
+            _ => Step::Unresolved,
+        }
+    };
+}
+
+/// The VM's general operation `call` (ToNumeric or an update) defining `destination`, where the frame takes
+/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
+macro_rules! general_update {
+    ($stage:expr, $frame:expr, $call:expr, $destination:expr) => {
+        if $frame.general_operators() { general_call!($stage, $frame, $call, Some($destination)) } else { Step::Unresolved }
+    };
+}
+
 /// Run the Number `operation` on `frame`; its word, or `Unresolved` where it left.
 #[inline(always)]
 pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
@@ -245,7 +300,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         NumberOperation::Imul { destination, left, right } => imul(stage, frame, destination, left, right),
     };
     match (general, step) {
-        (Some((call, destination)), Step::Unresolved) => super::callout::calling(stage, frame, call, destination),
+        (Some((call, destination)), Step::Unresolved) => general_call!(stage, frame, call, destination),
         (_, step) => step,
     }
 }
@@ -325,7 +380,7 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         }
         Domain::Int32 => {
             let Some(value) = frame.int_operand(stage, source, miss) else {
-                return general_unary(stage, frame, unary_operator(operation), (destination, source));
+                return general_unary!(stage, frame, unary_operator(operation), (destination, source));
             };
             match operation {
                 NumberUnary::Plus => {
@@ -337,12 +392,12 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
                     // `-0` is no int32: a zero operand leaves, as `i32::MIN`'s overflow does; the VM's negation takes both.
                     let zero_operand = stage.i32_is_zero(value);
                     if stage.guard_false(zero_operand, miss).is_none() {
-                        return general_unary(stage, frame, unary_operator(operation), (destination, source));
+                        return general_unary!(stage, frame, unary_operator(operation), (destination, source));
                     }
                     let zero = stage.i32_constant(0);
                     match int_arithmetic_result(stage, frame, destination, zero, value,
                         NumberArithmetic::Subtract, LEAVES, miss) {
-                        Step::Unresolved => general_unary(stage, frame, unary_operator(operation), (destination, source)),
+                        Step::Unresolved => general_unary!(stage, frame, unary_operator(operation), (destination, source)),
                         step => step,
                     }
                 }
@@ -352,6 +407,7 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 }
 
 /// The oxc unary operator `operation` names, which the VM's `unary` takes (`CallOut::Unary`).
+#[cfg(not(stencil_build))]
 fn unary_operator(operation: NumberUnary) -> u32 {
     match operation {
         NumberUnary::Plus => oxc_ast::ast::UnaryOperator::UnaryPlus as u32,
@@ -359,17 +415,6 @@ fn unary_operator(operation: NumberUnary) -> u32 {
     }
 }
 
-/// The VM's unary `operator` of the register `source`, defining `destination`, where the frame takes
-/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
-#[inline(always)]
-fn general_unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operator: u32,
-    (destination, source): (Register, Operand)) -> Step<S::Word, F::Control> {
-    match source.register_index() {
-        Some(value) if frame.general_operators() =>
-            super::callout::calling(stage, frame, super::CallOut::Unary { operator, value }, Some(destination)),
-        _ => Step::Unresolved,
-    }
-}
 
 /// `~source` of an int32 `source`: `-1 - source`, which never overflows.
 #[inline(always)]
@@ -377,7 +422,7 @@ fn bitwise_not<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
     destination: Register, source: Operand) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let Some(value) = frame.int_operand(stage, source, miss) else {
-        return general_unary(stage, frame, oxc_ast::ast::UnaryOperator::BitwiseNot as u32, (destination, source));
+        return general_unary!(stage, frame, oxc_ast::ast::UnaryOperator::BitwiseNot as u32, (destination, source));
     };
     let all_ones = stage.i32_constant(-1);
     int_arithmetic_result(stage, frame, destination, all_ones, value,
@@ -401,7 +446,7 @@ fn operands<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 #[inline(always)]
 fn int32_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<S::Word> {
     match frame.constant_operand(operand) {
-        Some(value) => Some(stage.i32_constant(value.as_int()?)),
+        Some(value) => Some(stage.i32_constant(constant_int(value)?)),
         None => frame.int_operand(stage, operand, miss),
     }
 }
@@ -412,9 +457,9 @@ fn int32_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 pub(super) fn bitwise_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<S::Word> {
     match frame.constant_operand(operand) {
         Some(value) => {
-            let int = match value.as_int() {
+            let int = match constant_int(value) {
                 Some(int) => int,
-                None => crate::value::number_to_u32(value.as_number()?) as i32,
+                None => constant_int32(constant_number(value)?),
             };
             Some(stage.i32_constant(int))
         }
@@ -428,7 +473,7 @@ pub(super) fn bitwise_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, f
 #[inline(always)]
 fn float_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<S::Word> {
     match frame.constant_operand(operand) {
-        Some(value) => Some(stage.f64_constant(value.as_number()?)),
+        Some(value) => Some(stage.f64_constant(constant_number(value)?)),
         None => frame.number_operand(stage, operand, miss),
     }
 }
@@ -589,7 +634,7 @@ fn arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 fn number_arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, (left, right): (Operand, Operand), operation: NumberArithmetic) -> Option<S::Word> {
     let int_operands = match frame.tagged_number_fact() {
-        Some(fact) if operation.integral() => match (fast_int(stage, frame, left), fast_int(stage, frame, right)) {
+        Some(fact) if !matches!(operation, NumberArithmetic::Divide) => match (fast_int(stage, frame, left), fast_int(stage, frame, right)) {
             (Some(left), Some(right)) => Some((fact, left, right)),
             _ => None,
         },
@@ -728,7 +773,7 @@ fn remainder_float<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 fn fast_int<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operand: Operand) -> Option<(S::Word, Option<S::Cond>)> {
     match frame.constant_operand(operand) {
-        Some(value) => Some((stage.i32_constant(value.as_int()?), None)),
+        Some(value) => Some((stage.i32_constant(constant_int(value)?), None)),
         None => {
             let proven = operand.register_index()
                 .and_then(|register| frame.register_type(register))
@@ -751,7 +796,7 @@ fn to_numeric<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     let miss = frame.miss();
     match frame.prove_number(stage, source, miss) {
         Some(()) => Step::Value(frame.move_register(stage, destination, source)),
-        None => general_update(stage, frame, super::CallOut::ToNumeric { source }, destination),
+        None => general_update!(stage, frame, super::CallOut::ToNumeric { source }, destination),
     }
 }
 
@@ -762,12 +807,11 @@ fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     overflow: Overflow) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let operation = if decrement { NumberArithmetic::Subtract } else { NumberArithmetic::Add };
-    let update = super::CallOut::IncDec { source, decrement };
     let Some(value) = frame.int_operand(stage, Operand::register(source), miss) else {
         // A stage that found the operand no int32 (the interpreter's, or a tier that knows it a
         // binary64) steps the binary64 by one; any other operand is the VM's update.
         let Some(number) = frame.number_operand(stage, Operand::register(source), miss) else {
-            return general_update(stage, frame, update, destination);
+            return general_update!(stage, frame, super::CallOut::IncDec { source, decrement }, destination);
         };
         let one = stage.f64_constant(1.0);
         let result = stage.float_arithmetic(operation, number, one);
@@ -778,18 +822,11 @@ fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     let one = stage.i32_constant(1);
     match int_arithmetic_result(stage, frame, destination, value, one, operation, (overflow, NegativeZero::Exit), miss) {
         // An int32 overflow is the VM's update, which steps it as a double.
-        Step::Unresolved => general_update(stage, frame, update, destination),
+        Step::Unresolved => general_update!(stage, frame, super::CallOut::IncDec { source, decrement }, destination),
         step => step,
     }
 }
 
-/// The VM's general operation `call` (ToNumeric or an update) defining `destination`, where the frame takes
-/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
-#[inline(always)]
-fn general_update<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: super::CallOut,
-    destination: Register) -> Step<S::Word, F::Control> {
-    if frame.general_operators() { super::callout::calling(stage, frame, call, Some(destination)) } else { Step::Unresolved }
-}
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
