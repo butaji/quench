@@ -89,6 +89,7 @@ impl<H: Host> Vm<H> {
             native_program_resolver: _,
             execution_interrupt: _,
             active_call_roots: _,
+            prepared_roots: _,
             with_stack: _,
             startup_intrinsics,
             with_scope_entered, scope_names: _,

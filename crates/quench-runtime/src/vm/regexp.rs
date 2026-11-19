@@ -1036,48 +1036,55 @@ impl<H: Host> Vm<H> {
         }
 
         let mut output = super::wtf16::JsStringBuilder::default();
-        let mut next_source = 0;
-        for found in &matches {
-            let position = found.range.start;
-            let matched = JsString::from_unit_run(input.units().slice(found.range.clone()));
-            let captures = found
-                .captures
-                .iter()
-                .map(|range| {
-                    range.clone().map_or(Value::UNDEFINED, |range| {
-                        self.heap.alloc_string(JsString::from_unit_run(
-                            input.units().slice(range),
-                        ))
+        let callee = match replacement {
+            FastReplacement::Template(_) => Value::UNDEFINED,
+            FastReplacement::Function(function) => function,
+        };
+        self.with_prepared_callback(callee, Value::UNDEFINED, |vm, prepared| -> Result<(), JsError> {
+            let mut next_source = 0;
+            for found in &matches {
+                let position = found.range.start;
+                let matched = JsString::from_unit_run(input.units().slice(found.range.clone()));
+                let captures = found
+                    .captures
+                    .iter()
+                    .map(|range| {
+                        range.clone().map_or(Value::UNDEFINED, |range| {
+                            vm.heap.alloc_string(JsString::from_unit_run(
+                                input.units().slice(range),
+                            ))
+                        })
                     })
-                })
-                .collect::<Vec<_>>();
-            let named = regexp_named_capture_ranges(found);
-            let groups = self.regexp_groups_object(&named, input.units())?;
-            let text = self.with_call_roots(captures.iter().copied().chain([groups]), |vm| {
-                match replacement {
-                    FastReplacement::Template(template) => vm.replacement_substitution(
-                        p, template, input, position, &matched, &captures, groups,
-                    ),
-                    FastReplacement::Function(function) => {
-                        let matched = vm.heap.alloc_string(matched.clone());
-                        let mut args = Vec::with_capacity(captures.len() + 4);
-                        args.push(matched);
-                        args.extend(captures.iter().copied());
-                        args.push(Value::number(position as f64));
-                        args.push(input_value);
-                        if !groups.is_undefined() {
-                            args.push(groups);
+                    .collect::<Vec<_>>();
+                let named = regexp_named_capture_ranges(found);
+                let groups = vm.regexp_groups_object(&named, input.units())?;
+                let text = vm.with_call_roots(captures.iter().copied().chain([groups]), |vm| {
+                    match replacement {
+                        FastReplacement::Template(template) => vm.replacement_substitution(
+                            p, template, input, position, &matched, &captures, groups,
+                        ),
+                        FastReplacement::Function(_) => {
+                            let matched = vm.heap.alloc_string(matched.clone());
+                            let mut args = Vec::with_capacity(captures.len() + 4);
+                            args.push(matched);
+                            args.extend(captures.iter().copied());
+                            args.push(Value::number(position as f64));
+                            args.push(input_value);
+                            if !groups.is_undefined() {
+                                args.push(groups);
+                            }
+                            let value = vm.call_prepared(p, prepared, &args)?;
+                            vm.coerce_js_string(p, value)
                         }
-                        let value = vm.call_value(p, function, Value::UNDEFINED, &args)?;
-                        vm.coerce_js_string(p, value)
                     }
-                }
-            })?;
-            output.append_slice(input, next_source..position);
-            output.append(&text);
-            next_source = found.range.end;
-        }
-        output.append_slice(input, next_source..input.units().len());
+                })?;
+                output.append_slice(input, next_source..position);
+                output.append(&text);
+                next_source = found.range.end;
+            }
+            output.append_slice(input, next_source..input.units().len());
+            Ok(())
+        })?;
         let output = self.string_build_result(p, output.finish())?;
         Ok(self.heap.alloc_string(output))
     }
