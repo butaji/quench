@@ -1419,7 +1419,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     /// A raw return's word completes the Wasm activation it returns from (`lane_complete_wasm_activation`),
-    /// as `lane_return_wasm64` did: the word is the returned value where no tag claims it. The resumption
+    /// the word is the returned value where no tag claims it. The resumption
     /// is held for `generated_row` to take (`Edge::Transfer`). A tag-claimed word, or no Wasm activation to
     /// return to, leaves the row to its miss.
     #[inline(always)]
