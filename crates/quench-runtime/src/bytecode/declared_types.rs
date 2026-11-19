@@ -70,6 +70,25 @@ pub(crate) struct DeclaredField {
     pub(crate) is_static: bool,
 }
 
+/// The receiver layout a base class's construction reaches before any code can observe the
+/// receiver (`compile::typescript::fields::layout`): the names of the leading run of the class's
+/// instance fields that have no initializer, in order and without repeats. A base class's
+/// [[Construct]] makes the receiver, then defines its instance fields first thing
+/// (InitializeInstanceElements precedes the body and the parameter bindings), and a field with no
+/// initializer defines `undefined` (CreateDataPropertyOrThrow on a fresh extensible ordinary
+/// object, which cannot fail or run code). So until the first field outside this run, no code
+/// runs and the receiver is unreachable but by the constructor: a receiver made already holding
+/// these names, each `undefined`, in this order, is the receiver those defines make
+/// (`Vm::preshaped_receiver_layout`). The run stops at the first instance field with an
+/// initializer, a computed, private, string or numeric key, an `accessor`, a decorator, or the
+/// name `__proto__`; a derived or decorated class has none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DeclaredLayout {
+    /// The class's source span start (as `DeclaredField::class_start`).
+    pub(crate) class_start: u32,
+    pub(crate) names: Box<[Box<str>]>,
+}
+
 /// A function's declared signature beyond its parameters (`Function::declared_parameters`).
 /// Each set is a language set (`typed_ir::language_bit`), `DECLARED_ANY` where unknown.
 #[derive(Clone, Debug, PartialEq)]
@@ -155,6 +174,8 @@ pub(crate) struct DeclaredTypes {
     pub(crate) parameter_classes: Vec<DeclaredParameterClass>,
     /// The parameters whose named-resolved language sets differ from their name-free ones, in source order.
     pub(crate) parameters: Vec<DeclaredParameter>,
+    /// The receiver layouts of base classes (`DeclaredLayout`), in source order.
+    pub(crate) layouts: Vec<DeclaredLayout>,
 }
 
 impl DeclaredTypes {
@@ -186,10 +207,14 @@ impl DeclaredTypes {
         self.parameters.push(DeclaredParameter { function, parameter, languages });
     }
 
+    pub(crate) fn declare_layout(&mut self, class_start: u32, names: Vec<Box<str>>) {
+        self.layouts.push(DeclaredLayout { class_start, names: names.into_boxed_slice() });
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.declared.is_empty() && self.enum_constants.is_empty() && self.fields.is_empty()
             && self.signatures.is_empty() && self.locals.is_empty() && self.members.is_empty()
-            && self.parameter_classes.is_empty() && self.parameters.is_empty()
+            && self.parameter_classes.is_empty() && self.parameters.is_empty() && self.layouts.is_empty()
     }
 
     /// Narrows the declared parameter sets of the functions in `functions` with the named-resolved
@@ -216,6 +241,11 @@ impl DeclaredTypes {
             languages[slot] = if merged == 0 { entry.languages } else { merged };
             function.declared_parameters = languages.into();
         }
+
+    /// The receiver layout (`DeclaredLayout`) of the base class starting at `class_start`, when
+    /// the program declares one.
+    pub(crate) fn declared_layout(&self, class_start: u32) -> Option<&[Box<str>]> {
+        self.layouts.iter().rev().find(|layout| layout.class_start == class_start).map(|layout| &*layout.names)
     }
 
     /// The folded value of `enumeration.member`, when the program declares one.
