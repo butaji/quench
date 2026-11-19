@@ -101,23 +101,41 @@ pub(crate) const NARROW_LEN: u32 = 1 << 31;
 /// (`replace_in_place`, `push_double`); any other write makes it generic first (`make_mut`),
 /// for good (`KEEP_WIDE`). An all-int32 backing becomes double where it takes its first
 /// other Number. Dense capacities stay below this bit (`grow_to`), and no backing is both
-/// narrow and double. Format: research/nojit/n2-n4/double-kind-format.txt. Native readers
-/// miss on it with the narrow flag (`ENCODED_LEN`), and only `QUENCH_DEV=double-elements`
-/// makes one until compiled tiers guard it.
+/// narrow and double. Format: research/nojit/n2-n4/double-kind-format.txt.
+///
+/// Who may write a double backing's words, the invariant every tier keeps:
+/// - `ArrayElements` itself (`replace_encoded_in_place`, `push_double`, `enter_double`), each
+///   writing `double_word`s alone, on a backing of one owner;
+/// - the staged in-place replacement through a view proved writable and double
+///   (`staged::elements::replace_present`'s double arm): a Number that is no int32, whose
+///   `Value` word is its double's bits, NaN canonical, so the word it writes is `double_word`'s.
+///
+/// No other native write reaches one: the staged views proved wide (`array_backing`, a loop's
+/// hoisted view, `writable_backing`, the appends) miss on this flag; a view proved wide before
+/// the backing turned double in place reads it as empty (`emit_dense_array_reload`,
+/// `staged::entry::entry_backing`), and turning double retires the lane's array storage
+/// proofs (`enter_double`). Native readers take the Number (`staged::elements::read_element`,
+/// `record_element`, `any_backing_element`); `QUENCH_DEV=no-double-elements` makes none.
 pub(crate) const DOUBLE_LEN: u32 = 1 << 30;
 
 /// Either flag of a backing whose values are not 8-byte `Value`s in place.
 pub(crate) const ENCODED_LEN: u32 = NARROW_LEN | DOUBLE_LEN;
 
-/// Whether backings may take the double kind (`DOUBLE_LEN`).
+/// Whether backings may take the double kind (`DOUBLE_LEN`): in production unless
+/// `QUENCH_DEV=no-double-elements`; in a test only where it asks (`TEST_DOUBLES`), as tests
+/// slice backings as wide values.
+#[cfg(not(test))]
 #[inline(always)]
 fn double_elements() -> bool {
-    #[cfg(test)]
-    if TEST_DOUBLES.get() {
-        return true;
-    }
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| crate::trace::Dev::DoubleElements.on())
+    *ON.get_or_init(|| !crate::trace::Dev::NoDoubleElements.on())
+}
+
+/// `double_elements` in a test.
+#[cfg(test)]
+#[inline(always)]
+fn double_elements() -> bool {
+    TEST_DOUBLES.get()
 }
 
 #[cfg(test)]
@@ -699,10 +717,13 @@ impl ArrayElements {
 
     /// Turns a wide backing of int32 values alone (`holds_only_int32`), which this array
     /// owns alone, into a double one in place: each value's word becomes its double's bits.
+    /// The words stop being `Value`s, so the running lane's array storage proofs, which read
+    /// and write them as such, retire first (`DOUBLE_LEN`).
     #[cold]
     #[inline(never)]
     fn enter_double(&mut self) {
         debug_assert!(self.is_unique() && self.header().others == 0);
+        super::array_proofs::retire_array_storage_proofs();
         let words = self.double_words();
         for index in 0..self.len() {
             // SAFETY: the backing holds `len` initialized int32 values, this array's own.
@@ -793,6 +814,10 @@ impl ArrayElements {
     /// A wide copy of this backing, of one owner.
     fn widened(&self) -> Self {
         if self.is_encoded() {
+            // An empty double backing (`double_with_room`) widens to no allocation.
+            if self.is_empty() {
+                return Self::new();
+            }
             let mut copy = Self::from_fn(self.len(), |index| self.read(index));
             if self.is_narrow() {
                 copy.make_mut().set_others(self.header().others);

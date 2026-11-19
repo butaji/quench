@@ -307,7 +307,12 @@ pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::
     let address = stage.add_imm(entry, offset);
     let values = stage.load_table(Region::LoopEntry.readonly(), address);
     let length = stage.load_u32(Region::Elements.mutable(), values, ARRAY.header_length_offset as i32 - ARRAY.header_values_offset as i32);
-    (values, length)
+    // The entry proved a wide backing; one the VM's store has since turned double in place
+    // (`ArrayElements::replace_in_place`) flags its length word (`ENCODED_LEN`), and its words
+    // are no `Value`s: the view then reads as empty, so every access leaves at its bounds test.
+    let encoded = stage.ugt_imm(length, u64::from(!crate::heap::ENCODED_LEN));
+    let empty = stage.constant(0);
+    (values, stage.select(encoded, empty, length))
 }
 
 /// The interpreter's `site_read` of `object` through the stored field cache entry `entry` (at

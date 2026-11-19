@@ -177,7 +177,7 @@ fn array_row(s: S) -> Out {
 fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     let index = need!(s, index_of::<B, HOLE_B>(&s));
     if !ENTRY {
-        // A wide or narrow backing; the upper-word table a narrow element decodes through is hole 4.
+        // A wide, double or narrow backing; the upper-word table a narrow element decodes through is hole 4.
         let mut stage = StencilStage::from_hole(ELEMENT_SITES);
         let (records, base) = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), array_word::<HOLE_A>(&s));
         let word = need!(s, elements::record_element(&mut stage, records, base, u64::from(index as u32), hole64::<{ crate::words::LAST_HOLE }>(), ()));
@@ -185,7 +185,7 @@ fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) 
     }
     let (values, length, _) = need!(s, backing::<ENTRY, HOLE_A, false>(&s, payload));
     let mut stage = StencilStage::from_hole(ELEMENT_SITES);
-    let word = need!(s, elements::read_element(&mut stage, elements::DenseView { values, length, packed: false, within: false }, u64::from(index as u32), ()));
+    let word = need!(s, elements::read_element(&mut stage, elements::DenseView { values, length, packed: false, within: false, double: None }, u64::from(index as u32), ()));
     deliver::<D>(s, word)
 }
 
@@ -196,7 +196,7 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
     let word = need!(s, number_word::<A, HOLE_A>(&s));
     let (values, length, _) = need!(s, backing::<ENTRY, 0, true>(&s, payload));
     let mut stage = StencilStage::from_hole(ELEMENT_SITES);
-    need!(s, elements::replace_present(&mut stage, elements::DenseView { values, length, packed: false, within: false }, u64::from(index as u32), word, ()));
+    need!(s, elements::replace_present(&mut stage, elements::DenseView { values, length, packed: false, within: false, double: None }, u64::from(index as u32), word, ()));
     Out::Next(s)
 }
 

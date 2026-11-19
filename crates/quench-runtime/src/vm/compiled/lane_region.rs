@@ -4012,7 +4012,7 @@ impl Lowering<'_, '_> {
             let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
             // A grown backing may count its values again; stores through the view keep none.
             if array.writable {
-                super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true, uncounted: false });
+                super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true, uncounted: false, double: None });
             }
             self.builder.def_var(variables.values, values);
             self.builder.def_var(variables.length, length);
@@ -4048,7 +4048,7 @@ impl Lowering<'_, '_> {
         let key = self.tagged(state, instruction.register_c());
         let (slow, done) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(slow);
-        let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
+        let view = super::DenseArrayView { values, length, writable: true, uncounted: true, double: None };
         // The view's backing counts no values (`hoist_arrays`): the store writes the element.
         self.index_write(state, index, value, view, slow, in_bounds);
         self.goto(done, &[]);

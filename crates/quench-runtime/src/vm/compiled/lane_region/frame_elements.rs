@@ -82,13 +82,13 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         };
         let (view, (packed, within)) = held.or_else(|| self.state.proofs.arrays.iter()
             .find(|(known, view)| *known == base && (view.writable || !writable)).map(|(_, view)| (*view, (false, false))))?;
-        Some(ElementView::Dense(DenseView { values: view.values, length: stage.uextend32(view.length), packed, within }))
+        Some(ElementView::Dense(DenseView { values: view.values, length: stage.uextend32(view.length), packed, within, double: view.double }))
     }
 
     fn keep_view(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, writable: bool, view: DenseView<ir::Value>) {
         let length = stage.raw_unary(Unary::Narrow(Lane::I32), view.length);
         self.state.proofs.arrays.retain(|(known, _)| *known != base);
-        self.state.proofs.arrays.push((base, super::super::DenseArrayView { values: view.values, length, writable, uncounted: false }));
+        self.state.proofs.arrays.push((base, super::super::DenseArrayView { values: view.values, length, writable, uncounted: false, double: view.double }));
     }
 
     /// The dense read, and where it leaves (a hole, an index past the backing) the VM's, which

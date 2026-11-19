@@ -97,7 +97,7 @@ impl Lowering<'_, '_> {
         let (values, length) = self.hoisted_view(array);
         match array.views {
             ElementViews::Dense => frame_elements::Held::Dense(super::super::DenseArrayView {
-                values, length, writable: array.writable, uncounted: array.writable }, proved),
+                values, length, writable: array.writable, uncounted: array.writable, double: None }, proved),
             ElementViews::Typed(_) => frame_elements::Held::Typed(TypedView { values, length, kind: self.hoisted_kind(array), within: proved.1 }),
         }
     }

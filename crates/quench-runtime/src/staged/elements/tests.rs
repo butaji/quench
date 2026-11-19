@@ -14,12 +14,28 @@ fn a_dense_element_reads_present_values_and_leaves_past_the_backing_or_at_a_hole
 #[test]
 fn a_packed_view_reads_a_hole_as_the_value_its_consumer_rejects_and_still_leaves_past_the_backing() {
     let elements = [Value::number(1.5), Value::DELETED];
-    let view = |packed| DenseView { values: elements.as_ptr() as u64, length: elements.len() as u64, packed, within: false };
+    let view = |packed| DenseView { values: elements.as_ptr() as u64, length: elements.len() as u64, packed, within: false, double: None };
     let read = |packed, index| read_element(&mut Concrete::new(std::ptr::null()), view(packed), index, ());
     assert_eq!(read(false, 1), None, "an unpacked read leaves at a hole");
     assert_eq!(read(true, 1), Some(Value::DELETED.to_bits()), "a packed read has no hole test");
     assert_eq!(read(true, 0), Some(Value::number(1.5).to_bits()));
     assert_eq!(read(true, 2), None, "past the backing leaves either way");
+}
+
+#[test]
+fn a_double_view_reads_numbers_canonically_and_replaces_only_numbers_that_are_no_int32() {
+    let mut words = [3.0f64.to_bits(), Value::DELETED.to_bits(), 0.5f64.to_bits()];
+    let view = DenseView { values: words.as_mut_ptr() as u64, length: 3, packed: true, within: false,
+        double: Some(u64::from(crate::heap::DOUBLE_LEN)) };
+    let mut stage = Concrete::new(std::ptr::null());
+    assert_eq!(read_element(&mut stage, view, 0, ()), Some(Value::integer(3).to_bits()), "a whole double reads as its int32");
+    assert_eq!(read_element(&mut stage, view, 1, ()), None, "a hole leaves even through a packed view");
+    assert_eq!(read_element(&mut stage, view, 2, ()), Some(Value::number(0.5).to_bits()));
+    assert_eq!(read_element(&mut stage, view, 3, ()), None, "past the backing leaves");
+    assert!(replace_present(&mut stage, view, 2, Value::integer(1).to_bits(), ()).is_none(), "an int32 converts on the VM's path");
+    assert!(replace_present(&mut stage, view, 1, Value::number(2.5).to_bits(), ()).is_none(), "a hole is no present element");
+    assert!(replace_present(&mut stage, view, 2, Value::number(2.5).to_bits(), ()).is_some());
+    assert_eq!(words[2], 2.5f64.to_bits());
 }
 
 /// `append_element` on `Concrete` over `elements`' own backing, with its room.
