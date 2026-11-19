@@ -48,6 +48,32 @@ for (const f of files) {
 }
 const run = code => vm.runInContext(code, ctx);
 
+// --unify: the pairwise unification harness (the C side is unify_harness in wsl-types.h). The first
+// 60 types in the order: struct fields (statement order), function parameter and return types
+// (functions map order), protocol signature types (statement order). One character per ordered
+// pair: bit 0 is Node.unify, bit 1 is Node.equals.
+const unifyMode = process.argv.includes("--unify");
+if (unifyMode) run(`function __unifyHarness(p) {
+    const NL = String.fromCharCode(10);
+    const plain = t => {
+        if (t instanceof TypeRef) return t.typeArguments.every(plain);
+        if (t instanceof PtrType || t instanceof ArrayRefType) return plain(t.elementType);
+        return t instanceof TypeVariable || t instanceof StructType || t instanceof EnumType || t instanceof NativeType;
+    };
+    const out = [];
+    const push = t => { if (out.length < 60 && plain(t)) out.push(t); };
+    for (const t of p.types.values()) if (t instanceof StructType) for (const f of t.fields) push(f.type);
+    for (const funcs of p.functions.values()) for (const f of funcs) { for (const q of f.parameters) push(q.type); push(f.returnType); }
+    for (const pr of p.protocols.values()) for (const s of pr.signatures) { for (const q of s.parameters) push(q.type); push(s.returnType); }
+    let text = "types " + out.length + NL;
+    for (const a of out) {
+        let row = "";
+        for (const b of out) row += String.fromCharCode(48 + (a.unify(new UnificationContext(), b) ? 1 : 0) + (a.equals(b) ? 2 : 0));
+        text += row + NL;
+    }
+    return text;
+}`);
+
 // ---- input collection (the same rules as the C analogue) ----
 const inputs = [];
 inputs.push({ kind: "stdlib", text: run("standardLibrary") });
@@ -267,7 +293,10 @@ const rows = inputs.map((input, i) => {
     let dump = "";
     let nodes = 0;
     try {
-        if (input.kind === "doLex") {
+        if (unifyMode) {
+            if (input.kind === "doLex") { dump = ""; }
+            else { anonRoles.clear(); resolveInput(input, stage); dump = run("__unifyHarness(__p)"); }
+        } else if (input.kind === "doLex") {
             const toks = lexTokens(input.text);
             dump = toks.join("\n");
             nodes = toks.length;
@@ -288,6 +317,12 @@ const rows = inputs.map((input, i) => {
     return { i, kind: input.kind, textHash: hex8(fnv(input.text)), status, nodes, dump, dumpHash: hex8(fnv(dump)) };
 });
 
+if (unifyMode) {
+    const fs = require("fs");
+    const bytes = Buffer.from(rows.map(r => r.dump).join(""));
+    for (let off = 0; off < bytes.length;) off += fs.writeSync(1, bytes, off, bytes.length - off);
+    process.exit(0);
+}
 for (const r of rows) console.log([r.i, r.kind, r.textHash, r.status, r.nodes, r.dumpHash].join(" "));
 const okCount = rows.filter(r => r.status === "ok").length;
 const totalNodes = rows.reduce((a, r) => a + r.nodes, 0);

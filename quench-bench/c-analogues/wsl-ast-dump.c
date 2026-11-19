@@ -14,6 +14,7 @@
 #include "wsl-clone.h"
 #include "wsl-prep.h"
 #include "wsl-names.h"
+#include "wsl-types.h"
 #include "wsl-synth.h"
 
 static uint32_t fnv_bytes(uint32_t h, const char *s, size_t n) {
@@ -119,6 +120,7 @@ static void bench_parse(int iterations) {
  * parses a doPrep input into the clone and reduces it with programWithUnnecessaryThingsRemoved),
  * then folds constexprs. The standard library is parsed once and kept below the arena mark. */
 static int STAGE = 0;
+static int UNIFY_MODE = 0;   /* --unify: the pairwise unification harness instead of the dump */
 static Program STD_PROG, PREP_IN, PREP_OUT;
 static size_t STD_MARK;
 
@@ -188,6 +190,11 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
     if (STAGE >= 6) flatten_protocol_extends(&PREP_OUT);
   }
   WSL_NH = 0;
+  if (UNIFY_MODE) {
+    unify_harness(&PREP_OUT, b);
+    WSL_NH = 0;
+    return 0;
+  }
   buf_str(b, "program\n");
   for (int k = 0; k < PREP_OUT.statements.n; k++) dump_node(b, PREP_OUT.statements.v[k], 1);
   long nodes = -1;
@@ -201,6 +208,7 @@ int main(int argc, char **argv) {
   int benchIterations = 0;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--stage") == 0 && i + 1 < argc) STAGE = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--unify") == 0) UNIFY_MODE = 1;
     else if (strcmp(argv[i], "--clone") == 0) CLONE_FLAG = 1;
     else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
     else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc) benchIterations = atoi(argv[++i]);
@@ -237,6 +245,12 @@ int main(int argc, char **argv) {
       nodes = parse_one(i, in, &b, status, sizeof status);
       if (nodes < 0) { b.n = 0; nodes = 0; }
     }
+    if (UNIFY_MODE) {
+      /* the harness text for each input (doLex inputs have none) */
+      if (!(i > 0 && in->native)) fwrite(b.s, 1, b.n, stdout);
+      free(b.s);
+      continue;
+    }
     /* the dump text has no trailing newline; the reference hashes it without one */
     size_t dlen = b.n && b.s[b.n - 1] == '\n' ? b.n - 1 : b.n;
     uint32_t dumpHash = fnv_bytes(0x811c9dc5u, b.s ? b.s : "", dlen);
@@ -248,7 +262,7 @@ int main(int argc, char **argv) {
     if (i == dumpAt && b.s) { dumpOut = b; dumpOut.s[dlen] = 0; dumpOut.n = dlen; }
     else free(b.s);
   }
-  printf("summary inputs %d ok %d errors %d nodes %ld hash %08x\n", NINPUTS, ok, nerr, totalNodes, all);
+  if (!UNIFY_MODE) printf("summary inputs %d ok %d errors %d nodes %ld hash %08x\n", NINPUTS, ok, nerr, totalNodes, all);
   if (dumpOut.s) printf("%s\n", dumpOut.s);
   return 0;
 }
