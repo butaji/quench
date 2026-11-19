@@ -154,8 +154,8 @@ fn rewritten_reader(
 /// The instructions after the `Move` at `pc` that read its destination while it holds the
 /// moved value. The span they lie in starts at the move and runs through instructions that
 /// fall through without writing the move's source or destination; it ends before a protected
-/// position or the window's end, or at an instruction that writes either
-/// register or leaves the block. The moved value must be dead where the span ends: not live
+/// position or the window's end, or at an instruction that writes either register or leaves
+/// the block. The moved value must be dead where the span ends: not live
 /// into the position it stops before, or not live out of the instruction it stops at unless
 /// that instruction overwrites the destination.
 fn move_readers(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: usize) -> Option<Readers> {
