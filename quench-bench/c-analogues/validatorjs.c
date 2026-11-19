@@ -1,5 +1,5 @@
 // jetstream-row: validatorjs
-// jetstream-files: validatorjs/src/test.mjs
+// jetstream-files: validatorjs/dist/bundle.es6.min.js validatorjs/benchmark.js
 // iterations: 120
 /* C analogue of JetStream's validatorjs row (validator.js 13.15 test suite).
  *

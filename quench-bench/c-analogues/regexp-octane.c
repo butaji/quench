@@ -1,6 +1,7 @@
 // jetstream-row: regexp-octane
 // jetstream-files: Octane/regexp.js
 // iterations: 120
+// jetstream-driver: deterministic=true
 /* C analogue of JetStream's Octane/regexp.js: the same 237 regular expressions,
  * the same input strings (the setup statements are translated in source order,
  * with the computeInputVariants() arrays built by replaying JetStream's

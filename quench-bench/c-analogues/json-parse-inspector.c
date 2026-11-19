@@ -1,6 +1,7 @@
 // jetstream-row: json-parse-inspector
 // jetstream-files: SeaMonster/inspector-json-payload.js.z SeaMonster/json-parse-inspector.js
 // iterations: 20
+// jetstream-driver: exports=obj
 /* C analogue of JetStream's SeaMonster/json-parse-inspector.js. Setup (untimed, as in the JS
  * constructor) inflates the same payload, builds the object, and serializes it to the input
  * string. Each timed iteration parses that string into a fresh DOM, one heap node per JSON value,

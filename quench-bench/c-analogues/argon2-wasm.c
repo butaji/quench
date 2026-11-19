@@ -1,6 +1,7 @@
 // jetstream-row: argon2-wasm
 // jetstream-files: wasm/argon2/build/argon2.js wasm/argon2/benchmark.js
 // iterations: 30
+// jetstream-driver: class=WasmEMCC preload=wasmBinary=wasm/argon2/build/argon2.wasm.z deterministic=true
 // c-sources: wasm/argon2/src/blake2/blake2b.c wasm/argon2/src/argon2.c wasm/argon2/src/core.c wasm/argon2/src/encoding.c wasm/argon2/src/thread.c wasm/argon2/src/opt.c -Iwasm/argon2/include -DARGON2_NO_THREADS
 /* C analogue of the argon2-wasm row: the argon2 library sources the row's Wasm was built from
  * (without the SIMD flags only the Wasm build needs), driven as its benchmark.js does: each

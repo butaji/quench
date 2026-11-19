@@ -1,6 +1,7 @@
 // jetstream-row: proxy-mobx
 // jetstream-files: proxy/common.js proxy/mobx-bundle.js proxy/mobx-benchmark.js
 // iterations: 360
+// jetstream-driver: class=Async
 /*
  * C analogue of the JetStream 3 proxy-mobx row: proxy/mobx-benchmark.js run
  * on top of the reminder model and test script in proxy/common.js.

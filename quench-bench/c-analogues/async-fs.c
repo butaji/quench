@@ -1,6 +1,7 @@
 // jetstream-row: async-fs
 // jetstream-files: generators/async-file-system.js
 // iterations: 80
+// jetstream-driver: class=Async deterministic=true
 /*
  * C analogue of JetStream's async-fs (generators/async-file-system.js). The tree, the
  * file bytes, the swap, the deletion pattern and the visits are the same work as the JS

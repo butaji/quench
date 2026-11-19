@@ -1,6 +1,7 @@
 // jetstream-row: doxbee-async
 // jetstream-files: simple/doxbee-async.js
 // iterations: 120
+// jetstream-driver: class=Async
 /*
  * C analogue of JetStream's doxbee-async (simple/doxbee-async.js): the same fake database
  * and the same 10,000 doxbee(i, "foo") calls per iteration, followed by Promise.all, as in

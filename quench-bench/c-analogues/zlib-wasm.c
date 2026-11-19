@@ -1,6 +1,7 @@
 // jetstream-row: zlib-wasm
 // jetstream-files: wasm/zlib/build/zlib.js wasm/zlib/benchmark.js
 // iterations: 40
+// jetstream-driver: class=WasmEMCC preload=wasmBinary=wasm/zlib/build/zlib.wasm
 // c-sources: wasm/zlib/src/zpipe.c wasm/zlib/src/main.c -Dmain=jetstream_row_main -lz
 /* C analogue of the zlib-wasm row: zpipe.c and main.c, the sources its Wasm was built from, linked
  * against the system zlib, driven as its benchmark.js does: each iteration writes the row's input

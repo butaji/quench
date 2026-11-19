@@ -1,6 +1,7 @@
 // jetstream-row: proxy-vue
 // jetstream-files: proxy/common.js proxy/vue-bundle.js proxy/vue-benchmark.js
 // iterations: 120
+// jetstream-driver: class=Async
 /*
  * C analogue of the JetStream 3 proxy-vue row: proxy/vue-benchmark.js run on
  * top of the reminder model and test script in proxy/common.js.

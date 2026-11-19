@@ -1,6 +1,7 @@
 // jetstream-row: json-stringify-inspector
 // jetstream-files: SeaMonster/inspector-json-payload.js.z SeaMonster/json-stringify-inspector.js
 // iterations: 20
+// jetstream-driver: exports=obj
 /* C analogue of JetStream's SeaMonster/json-stringify-inspector.js. Setup (untimed) inflates the
  * same payload and builds the object in a C DOM; the canonical JSON text is produced once, as the
  * JS constructor does not serialize, so it is only used for validation. Each timed iteration

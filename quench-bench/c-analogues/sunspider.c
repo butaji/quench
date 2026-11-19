@@ -1,6 +1,7 @@
 // jetstream-row: Sunspider
 // jetstream-files: SunSpider/3d-cube.js SunSpider/3d-raytrace.js SunSpider/base64.js SunSpider/crypto-aes.js SunSpider/crypto-md5.js SunSpider/crypto-sha1.js SunSpider/date-format-tofte.js SunSpider/date-format-xparb.js SunSpider/n-body.js SunSpider/regex-dna.js SunSpider/string-unpack-code.js SunSpider/tagcloud.js
 // iterations: 120
+// jetstream-driver: group=file
 /* C analogue of the JetStream "Sunspider" row: C ports of the twelve SunSpider
  * tests the driver runs, in the driver's order (3d-cube, 3d-raytrace, base64,
  * crypto-aes, crypto-md5, crypto-sha1, date-format-tofte, date-format-xparb,

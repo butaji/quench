@@ -1,6 +1,7 @@
 // jetstream-row: Box2D
 // jetstream-files: Octane/box2d.js
 // iterations: 120
+// jetstream-driver: deterministic=true
 /* C analogue of JetStream's Octane/box2d.js: the same Box2D 2.2 world (static ground edge,
  * a 10x5 grid of 1x1 dynamic boxes at density 5, gravity -10), the same per-iteration work
  * (build the world, then 20 steps of dt = 1/60 with 10 velocity and 3 position iterations)

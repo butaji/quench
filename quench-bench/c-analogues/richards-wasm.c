@@ -1,6 +1,7 @@
 // jetstream-row: richards-wasm
 // jetstream-files: wasm/richards/build/richards.js wasm/richards/benchmark.js
 // iterations: 50
+// jetstream-driver: class=WasmEMCC preload=wasmBinary=wasm/richards/build/richards.wasm
 // c-sources: wasm/richards/richards.c -I../c-analogues/support
 /* C analogue of the richards-wasm row: richards.c, the source its Wasm was built from, driven as
  * its benchmark.js does: setup(200000) per iteration, scheduleIter() until it returns 0, then the

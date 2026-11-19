@@ -65,10 +65,18 @@ fn resolve(token: &str, jetstream: &Path) -> String {
 }
 
 /// The compile inputs in cc's order: the driver, then the `c-sources` tokens resolved against
-/// `jetstream`.
+/// `jetstream`. A path after `-include` is a header of the analogue's own directory, so it
+/// resolves there.
 fn compile_inputs(analogue: &Analogue, jetstream: &Path) -> Vec<String> {
-    let driver = analogue.source.display().to_string();
-    std::iter::once(driver).chain(analogue.c_sources.iter().map(|token| resolve(token, jetstream))).collect()
+    let directory = analogue.source.parent().unwrap_or(Path::new("."));
+    let mut inputs = vec![analogue.source.display().to_string()];
+    let mut included = false;
+    for token in &analogue.c_sources {
+        let resolved = if included { directory.join(token).display().to_string() } else { resolve(token, jetstream) };
+        included = token == "-include";
+        inputs.push(resolved);
+    }
+    inputs
 }
 
 /// The C reference: the analogue's driver and sources compiled with `-O2` into `directory`.

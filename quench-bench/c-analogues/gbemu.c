@@ -1,6 +1,7 @@
 // jetstream-row: gbemu
 // jetstream-files: Octane/gbemu-part1.js Octane/gbemu-part2.js
 // iterations: 120
+// jetstream-driver: deterministic=true
 /* C analogue of JetStream's Octane/gbemu-part1.js and gbemu-part2.js: a Game Boy Color
  * emulator (Grant Galitz's GameBoyCore, adapted by Google as a benchmark) that runs the
  * embedded cartridge for 250,000 instructions and checks the final processor and memory

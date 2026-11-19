@@ -1,6 +1,7 @@
 // jetstream-row: crypto
 // jetstream-files: Octane/crypto.js
 // iterations: 120
+// jetstream-driver: deterministic=true
 /* C analogue of JetStream 3's Octane/crypto.js (Tom Wu's JavaScript RSA on a BigInteger class):
  * the same 28-bit digit representation and am3 inner loop, the same Montgomery reduction,
  * CRT private-key path with the windowed modPow, the same PKCS#1 v1.5 padding drawn from an

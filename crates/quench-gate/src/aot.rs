@@ -6,6 +6,7 @@
 //! adds test262 and the Wasm spec suite in AOT mode (`suites`).
 
 mod analogue;
+mod driver;
 mod exact;
 mod program;
 mod ratios;

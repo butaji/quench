@@ -1,6 +1,7 @@
 // jetstream-row: HashSet-wasm
 // jetstream-files: wasm/HashSet/build/HashSet.js wasm/HashSet/benchmark.js
 // iterations: 50
+// jetstream-driver: class=WasmEMCC preload=wasmBinary=wasm/HashSet/build/HashSet.wasm
 // c-sources: wasm/HashSet/HashSet.cpp -std=c++11 -DNDEBUG=1 -Dmain=jetstream_row_main -include ../c-analogues/support/hashset-prelude.h
 /* C++ analogue of the HashSet-wasm row: HashSet.cpp, the source its Wasm was built from, driven as
  * its benchmark.js does: main() per iteration. main() is renamed in its translation unit so this

@@ -1,6 +1,7 @@
 // jetstream-row: gcc-loops-wasm
 // jetstream-files: wasm/gcc-loops/build/gcc-loops.js wasm/gcc-loops/benchmark.js
 // iterations: 50
+// jetstream-driver: class=WasmEMCC preload=wasmBinary=wasm/gcc-loops/build/gcc-loops.wasm
 // c-sources: wasm/gcc-loops/gcc-loops.cpp -DSMALL_PROBLEM_SIZE=1 -Dmain=jetstream_row_main
 /* C++ analogue of the gcc-loops-wasm row: gcc-loops.cpp, the source its Wasm was built from
  * (SMALL_PROBLEM_SIZE as in build.sh), driven as its benchmark.js does: main() per iteration.

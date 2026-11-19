@@ -1,6 +1,7 @@
 // jetstream-row: doxbee-promise
 // jetstream-files: simple/doxbee-promise.js
 // iterations: 120
+// jetstream-driver: class=Async
 /*
  * C analogue of JetStream's doxbee-promise (simple/doxbee-promise.js). Each iteration
  * starts 10,000 doxbee(i, "foo") calls, keeps their promises in an array, then drains the

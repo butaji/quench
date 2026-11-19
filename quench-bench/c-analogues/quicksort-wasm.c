@@ -1,6 +1,7 @@
 // jetstream-row: quicksort-wasm
 // jetstream-files: wasm/quicksort/build/quicksort.js wasm/quicksort/benchmark.js
 // iterations: 50
+// jetstream-driver: class=WasmEMCC preload=wasmBinary=wasm/quicksort/build/quicksort.wasm
 // c-sources: wasm/quicksort/quicksort.c -Dmain=jetstream_row_main
 /* C analogue of the quicksort-wasm row: quicksort.c, the source its Wasm was built from, driven as
  * its benchmark.js does: main() per iteration. main() is renamed in its translation unit so this

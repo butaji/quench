@@ -8,15 +8,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use super::driver::Driver;
+
 pub const DIRECTORY: &str = "quench-bench/c-analogues";
 /// The extensions of analogue drivers: `c`, and `cc` for an analogue whose workload is C++.
 const SOURCE_EXTENSIONS: [&str; 2] = ["c", "cc"];
 /// The lines a header takes, from the top of the file.
-const HEADER_LINES: usize = 4;
+const HEADER_LINES: usize = 8;
 const ROW_KEY: &str = "// jetstream-row: ";
 const FILES_KEY: &str = "// jetstream-files: ";
 const ITERATIONS_KEY: &str = "// iterations: ";
 const C_SOURCES_KEY: &str = "// c-sources: ";
+const DRIVER_KEY: &str = "// jetstream-driver: ";
 
 /// One analogue: its C driver, the JetStream row it mirrors, and what the driver links.
 #[derive(Debug)]
@@ -29,6 +32,8 @@ pub struct Analogue {
     /// The `// c-sources:` tokens in order: source paths relative to the JetStream submodule, and
     /// the flags cc takes (`-D…`, `-I…` in attached form, `-l…`). Empty when the header has none.
     pub c_sources: Vec<String>,
+    /// How JetStream's driver runs the row (`// jetstream-driver:`; the default when absent).
+    pub driver: Driver,
 }
 
 /// The rest of the header line that starts with `key`, if the header has one.
@@ -49,10 +54,11 @@ impl Analogue {
         let files: Vec<String> = field(&header, FILES_KEY)?.split_whitespace().map(str::to_owned).collect();
         let iterations: u64 = field(&header, ITERATIONS_KEY)?.trim().parse().map_err(|error| format!("iterations: {error}"))?;
         let c_sources: Vec<String> = optional_field(&header, C_SOURCES_KEY).unwrap_or_default().split_whitespace().map(str::to_owned).collect();
+        let driver = Driver::parse(optional_field(&header, DRIVER_KEY).unwrap_or_default())?;
         if row.is_empty() || files.is_empty() {
             return Err(format!("{}: the header names no row or no files", source.display()));
         }
-        Ok(Self { row, files, iterations, source: source.to_owned(), c_sources })
+        Ok(Self { row, files, iterations, source: source.to_owned(), c_sources, driver })
     }
 }
 
