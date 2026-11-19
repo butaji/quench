@@ -141,6 +141,14 @@ impl<H: Host> Vm<H> {
     /// its non-index names. `None` for any other target or key, and wherever the walk meets an
     /// exotic link.
     pub(in crate::vm) fn reflect_chain_read(&mut self, target: Value, key: Value) -> Option<ChainRead> {
+        // An ordinary record first, the common target (a proxy's): no array probe.
+        if self.heap.object_record(target).is_some() {
+            let atom = self.lookup_string_atom(key)?;
+            if self.is_private_name(atom) {
+                return None;
+            }
+            return self.ordinary_chain_read_proved(target, atom).filter(|read| !matches!(read, ChainRead::Exotic(_)));
+        }
         if let Some(array) = self.heap.array(target) {
             let index = super::super::object_static::array_index(self.heap.string(key)?.host_string());
             if let Some(index) = index {
@@ -152,9 +160,6 @@ impl<H: Host> Vm<H> {
         let atom = self.lookup_string_atom(key)?;
         if self.is_private_name(atom) {
             return None;
-        }
-        if self.heap.object_record(target).is_some() {
-            return self.ordinary_chain_read_proved(target, atom).filter(|read| !matches!(read, ChainRead::Exotic(_)));
         }
         self.heap.array(target)?;
         if atom == self.length_atom {
