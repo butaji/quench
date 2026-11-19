@@ -159,7 +159,7 @@ pub(crate) fn settle_deferred_rewrite(program: &crate::bytecode::ResidualProgram
         RewritePlan::Append => rewrite::apply(function, program, &mut SiteTable::grow(fields), &mut SiteTable::grow(supers)),
     }
     // The rewrites leave their `Nop`s in place; this settles the record without lowering it.
-    rewrite::remove_nops(function, &mut None);
+    rewrite::remove_nops(function, &mut None, &mut CompileScratch::default());
     function.dispatch = Compiler::dispatch_class(&function.code, &function.wide);
 }
 

@@ -13,6 +13,7 @@
 
 use super::liveness::ROOT_MAP_REGISTERS;
 use super::rewrite::relocate;
+use super::CompileScratch;
 /// The binding legacy argument reflection looks for.
 const ARGUMENTS_NAME: &str = "arguments";
 
@@ -92,6 +93,7 @@ pub(super) fn promote<'a>(
     undefined_constant: u32,
     atom_name: impl Fn(usize) -> Option<&'a str>,
     flow: &initialization::FlowCell,
+    scratch: &mut CompileScratch,
 ) {
     // A by-name read inside `with` resolves a local through its frame slot.
     if eligible.is_empty()
@@ -231,8 +233,9 @@ pub(super) fn promote<'a>(
     // a promoted slot some read can reach before any store gets `undefined` on entry.
     let promoted = crate::bitset::BitSet::from_fn(registers.len(), |slot| registers[slot].is_some());
     let written_first = initialization::initialized_before_reads(function, superinstructions, &promoted, &promoted, flow);
-    let old = function.code.clone();
-    let mut code = Vec::with_capacity(old.len());
+    // The code is moved out, not copied: nothing below reads `function.code` before it is set back.
+    let old = std::mem::take(&mut function.code);
+    let mut code = scratch.code_buffer(old.len());
     for (slot, target) in registers.iter().enumerate() {
         if let Some(target) = *target
             && !written_first.contains(slot)
@@ -241,7 +244,7 @@ pub(super) fn promote<'a>(
             code.push(encode(load, Instr::new(NOP_OP, 0, 0, 0, 0), &mut function.wide));
         }
     }
-    let mut map = vec![0; old.len() + 1];
+    let map = scratch.remap(old.len());
     for (pc, &packed) in old.iter().enumerate() {
         map[pc] = code.len();
         let mut instruction = function.widened(packed);
@@ -301,7 +304,7 @@ pub(super) fn promote<'a>(
     relocate(
         &mut code,
         &mut function.wide,
-        &map,
+        &*map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
         &mut function.binding_sites,
@@ -316,6 +319,7 @@ pub(super) fn promote<'a>(
         }
     }
     function.code = code;
+    scratch.recycle_code(old);
 }
 
 /// `instruction` in the slot `packed` held: packed when it fits, else in the wide table,

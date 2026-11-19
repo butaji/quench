@@ -2,6 +2,7 @@
 //!
 //! The residual program itself owns the promoted fields, so interpreter recovery
 //! and native execution see the same registers and need no virtual-object cache.
+use super::CompileScratch;
 use super::liveness::{self, MethodArguments, RegisterSet, register_bit};
 use crate::bytecode::{FieldLookup, FieldSite, Function, Instr, ObjectSite, REGISTER_MOVE, Superinstruction, Traits};
 
@@ -17,6 +18,7 @@ pub(super) fn promote(
     fields: &[FieldSite],
     supers: &[Superinstruction],
     objects: &[ObjectSite],
+    scratch: &mut CompileScratch,
 ) {
     // Exceptional/suspended entries and dynamic binding observers need their own
     // object materialization proof. Keep their original residual program.
@@ -29,22 +31,24 @@ pub(super) fn promote(
             && let Some(replacements) = replacement(function, pc, methods, fields, supers, objects)
         {
             let old = std::mem::take(&mut function.code);
-            let mut code = Vec::with_capacity(old.len() + 1);
-            let mut map = Vec::with_capacity(old.len() + 1);
-            for (instruction, replacement) in old.iter().zip(replacements) {
-                map.push(code.len());
+            let mut code = scratch.code_buffer(old.len() + 1);
+            let map = scratch.remap(old.len());
+            for (index, (instruction, replacement)) in old.iter().zip(replacements).enumerate() {
+                map[index] = code.len();
                 match replacement {
                     Some(instructions) => code.extend(instructions),
                     None => code.push(*instruction),
                 }
             }
-            map.push(code.len());
-            super::rewrite::relocate(&mut code, &mut function.wide, &map, &mut function.handlers,
+            map[old.len()] = code.len();
+            super::rewrite::relocate(&mut code, &mut function.wide, &*map, &mut function.handlers,
                 &mut function.parameter_end_pc, &mut function.binding_sites,
                 &mut function.source_positions, &old);
+            let next = map[pc] + usize::from(width);
             function.code = code;
+            scratch.recycle_code(old);
             function.registers += width;
-            pc = map[pc] + usize::from(width);
+            pc = next;
         } else { pc += 1; }
     }
 }

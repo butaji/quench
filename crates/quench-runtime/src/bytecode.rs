@@ -2097,8 +2097,8 @@ pub(crate) fn widen(packed: Instr, wide: &[WideInstruction]) -> WideInstruction 
 impl Function {
     /// Releases the spare capacity of the tables a compilation grew, once it is finished.
     pub(crate) fn shrink_to_fit(&mut self) {
-        self.code.shrink_to_fit();
-        self.wide.shrink_to_fit();
+        crate::compile::trim_slack(&mut self.code);
+        crate::compile::trim_slack(&mut self.wide);
     }
 
     /// The TypeScript parameter types, by argument index (`FunctionRare::declared_parameters`).
@@ -4517,6 +4517,7 @@ impl ResidualProgram {
                 undefined_constant,
             },
             |atom| self.atoms.get(atom),
+            &mut crate::compile::CompileScratch::default(),
         );
         function.register_roots = crate::compile::liveness::register_roots_from(&function, self, &self.field_sites, &self.superinstructions, solved);
         function.shrink_to_fit();
