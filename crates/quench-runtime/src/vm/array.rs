@@ -963,7 +963,9 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if let Some(sliced) = self.plain_array_slice(this, args) {
+        if self.declined_fast.take() != Some(Native::ArraySlice)
+            && let Some(sliced) = self.plain_array_slice(this, args)
+        {
             return Ok(sliced);
         }
         let object = self.box_object_or_type_error(p, this)?;
@@ -1156,7 +1158,9 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if let Some(found) = self.dense_search_call(Native::ArrayIncludes, this, args) {
+        if self.declined_fast.take() != Some(Native::ArrayIncludes)
+            && let Some(found) = self.dense_search_call(Native::ArrayIncludes, this, args)
+        {
             return Ok(found);
         }
         let object = self.box_object_or_type_error(p, this)?;

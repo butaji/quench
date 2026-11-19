@@ -174,7 +174,6 @@ mod owner_step; mod var_owner;
 mod root_bindings;
 mod handler_entry;
 mod equality; mod error; mod eval;
-mod fdlibm_math;
 mod field_cache;
 mod in_presence;
 mod instanceof_walk;
@@ -1821,6 +1820,10 @@ pub(crate) struct Vm<H> {
     /// Whether the innermost running job queue has entered the host's context for unobserved
     /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.
     unobserved_jobs_entered: bool,
+    /// The native whose fast in-place body a dispatcher tried and declined on the call that is
+    /// about to reach its general native, so that native skips that body (the one-shot flag is
+    /// taken at each such native's entry, and cleared at each dispatcher attempt).
+    declined_fast: Option<Native>,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,

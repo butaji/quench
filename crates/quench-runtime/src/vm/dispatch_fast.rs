@@ -11913,17 +11913,26 @@ impl<H: Host> Vm<H> {
     /// `None` leaves the call to the native itself, whose own steps begin with the same cases.
     #[inline(always)]
     fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+        // A new attempt clears any flag a previous attempt left for its general native.
+        self.declined_fast = None;
         let first = args.first().copied();
         match native {
             Native::ArrayPush => self.array_push_dense(receiver, args),
             Native::ArrayPop => self.array_pop_dense(receiver),
             Native::StringCharCodeAt => self.string_char_code_at_core(receiver, first?),
             Native::StringCharAt => self.string_char_at_core(receiver, first?),
-            Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas
+            Native::MapGet | Native::MapHas => {
+                let found = self.pure_collection_lookup(native, receiver, first.unwrap_or(Value::UNDEFINED));
+                self.fast_declined(native, found)
+            }
+            Native::SetHas | Native::WeakMapGet | Native::WeakMapHas
             | Native::WeakSetHas => self.pure_collection_lookup(native, receiver, first.unwrap_or(Value::UNDEFINED)),
             Native::MapSet if self.map_set(receiver, args) => Some(receiver),
             Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED)).map(Value::boolean),
-            Native::JsonStringify => self.json_stringify_steady(args),
+            Native::JsonStringify => {
+                let text = self.json_stringify_steady(args);
+                self.fast_declined(native, text)
+            }
             Native::DateNow => Some(self.date_now()),
             _ => None,
         }

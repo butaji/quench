@@ -531,23 +531,23 @@ fn math_operator(native: Native) -> Option<MathFunction> {
         Native::MathMax => Extreme(true),
         Native::MathMin => Extreme(false),
         Native::MathImul => Imul,
-        Native::MathPow => Binary(super::operations::exponentiate),
-        Native::MathAtan2 => Binary(super::fdlibm_math::atan2),
+        Native::MathPow => Binary(crate::staged::math::power),
+        Native::MathAtan2 => Binary(crate::staged::math::atan2),
         _ => return None,
     })
 }
 
 /// The Math functions of one Number that are not machine rows: staged bodies, or libm's.
 fn math_unary_function(native: Native) -> Option<MathFunction> {
-    use crate::staged::math::{atanh, clz32, f16_round, sign};
+    use crate::staged::math::{atan, atanh, cbrt, clz32, f16_round, sign};
     use MathFunction::Unary;
     Some(match native {
         Native::MathSign => Unary(sign),
         Native::MathClz32 => Unary(clz32),
         Native::MathF16Round => Unary(f16_round),
         Native::MathAtanh => Unary(atanh),
-        Native::MathAtan => Unary(super::fdlibm_math::atan),
-        Native::MathCbrt => Unary(super::fdlibm_math::cbrt),
+        Native::MathAtan => Unary(atan),
+        Native::MathCbrt => Unary(cbrt),
         Native::MathAcos => Unary(f64::acos),
         Native::MathAsin => Unary(f64::asin),
         Native::MathCos => Unary(f64::cos),

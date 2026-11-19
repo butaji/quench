@@ -500,27 +500,17 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
 unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, Views), callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
-    let (facts, targets) = unsafe { (callees.facts(), callees.targets()) };
-    let function = spec.known.program.function(spec.function as usize);
-    // The prototypes the entry may check and the rows may fold on: none where the function's rows reshape an object.
-    let classes = super::declared::class_prototypes(function, spec.known.classes);
-    let known = Known { classes: &classes, ..spec.known };
-    let sites = Sites { function, id: spec.function, callees, facts: &facts, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known, ending, views };
-    let built = assemble(region, spec, sites, helpers);
+    let facts = unsafe { callees.facts() };
+    let sites = Sites { function: spec.known.program.function(spec.function as usize), id: spec.function, callees, facts: &facts, context: Context::root(spec.function, spec.registers, spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
+    let built = assemble(region, spec, sites, helpers).map(|body| with_native_holders(body, callees));
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built
 }
 
-/// The first register past `function`'s own (`registers`) that the code's rows may write: an inlined
-/// callee's window and a body's scratch (`expanded`). A region and a body alike run over an activation
-/// that may keep its environment window (its header words, the environment among them, and its
-/// locals) right past its registers, in a lane activation's value stack or a VM frame's register file
-/// (`lane_context_locals_in_window`); the rows' registers start past it, so they never overlap it
-/// whatever the activation, and the run is admitted only where the storage reaches them
-/// (`dispatch_fast::lane_frame_holds_window`, `lane_body_admits`). A body's scratch written at
-/// `registers` overwrote the environment word (JetStream earley-boyer's "invalid local environment").
-fn inline_base(function: &crate::bytecode::Function, registers: u16) -> u16 {
-    registers.saturating_add(crate::vm::dispatch_fast::WINDOW_LOCALS).saturating_add(function.locals)
+/// `body` with the holders its builtin calls' guards depend on (`Callees::native_holders`) among its own.
+fn with_native_holders(mut body: Body, callees: &Callees) -> Body {
+    body.holders = body.holders.iter().copied().chain(callees.native_holders()).collect();
+    body
 }
 
 /// The bit of a widened key that says the instruction is an inlined callee's (`inlined_exit_key`).
@@ -577,9 +567,8 @@ fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Pa
 }
 
 fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
-    let (ending, callees, function) = (sites.ending, sites.targets, sites.function);
-    // The class-typed receivers the entry checks, as `build` limited them (`Known::classes`): the same list the rows fold on.
-    let prototypes = sites.known.classes.to_vec();
+    let (ending, callees) = (sites.ending, sites.facts);
+    let builtins = sites.callees.builtins();
     let stitched = stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
     let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
@@ -599,15 +588,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
         return Err(format!("interprets in the loop: row {} {:?}", generic.0, generic.1.step));
     }
     let invalidation = spec.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(Decoded::makes_calls));
-    // A body proves the realm it was compiled in at its entry, whatever it folds: a program shared by
-    // realms enters it only in that one, so a realm switch need not retire it (`LaneMethod::realm_bound`).
-    let realm = (ending == Ending::Body || !stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
-    let relies: Vec<bool> = decoded.iter().map(|row| row.relies).collect();
-    let (guards, numbers) = (super::declared::entry_guards(function), super::declared::entry_numbers(function));
-    let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities().collect();
-    identities.sort_unstable();
-    identities.dedup();
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, guards, numbers, prototypes, identities };
+    let realm = (!stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
+    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, builtins: &builtins };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     let (code, resumes) = link(&layout, &planned)?;

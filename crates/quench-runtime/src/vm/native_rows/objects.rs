@@ -1,0 +1,76 @@
+//! The rows of the `Object` constructor and `Object.prototype`, `Function.prototype`, `Reflect`,
+//! `JSON`, `Proxy`'s `revocable`, the `Symbol` and `Boolean` methods.
+
+use super::*;
+
+natives! {
+    // `Object`, in the order the specification lists its properties (Node's order).
+    (ObjectConstructor, "assign", ObjectAssign, 2),
+    (ObjectConstructor, "getOwnPropertyDescriptor", ObjectGetOwnPropertyDescriptor, 2),
+    (ObjectConstructor, "getOwnPropertyDescriptors", ObjectGetOwnPropertyDescriptors, 1),
+    (ObjectConstructor, "getOwnPropertyNames", ObjectGetOwnPropertyNames, 1),
+    (ObjectConstructor, "getOwnPropertySymbols", ObjectGetOwnPropertySymbols, 1),
+    (ObjectConstructor, "hasOwn", ObjectHasOwn, 2),
+    (ObjectConstructor, "is", ObjectIs, 2),
+    (ObjectConstructor, "preventExtensions", ObjectPreventExtensions, 1),
+    (ObjectConstructor, "seal", ObjectSeal, 1),
+    (ObjectConstructor, "create", ObjectCreate, 2),
+    (ObjectConstructor, "defineProperties", ObjectDefineProperties, 2),
+    (ObjectConstructor, "defineProperty", ObjectDefineProperty, 3),
+    (ObjectConstructor, "freeze", ObjectFreeze, 1),
+    (ObjectConstructor, "getPrototypeOf", ObjectGetPrototypeOf, 1),
+    (ObjectConstructor, "setPrototypeOf", ObjectSetPrototypeOf, 2),
+    (ObjectConstructor, "isExtensible", ObjectIsExtensible, 1),
+    (ObjectConstructor, "isFrozen", ObjectIsFrozen, 1),
+    (ObjectConstructor, "isSealed", ObjectIsSealed, 1),
+    (ObjectConstructor, "keys", ObjectKeys, 1),
+    (ObjectConstructor, "entries", ObjectEntries, 1),
+    (ObjectConstructor, "fromEntries", ObjectFromEntries, 1),
+    (ObjectConstructor, "values", ObjectValues, 1),
+    (ObjectConstructor, "groupBy", ObjectGroupBy, 2),
+    // `Object.prototype`, in installation order (`__proto__` is an accessor, not a row).
+    (ObjectPrototype, "toLocaleString", ObjectPrototypeToLocaleString, 0),
+    (ObjectPrototype, "toString", ObjectPrototypeToString, 0),
+    (ObjectPrototype, "valueOf", ObjectPrototypeValueOf, 0),
+    (ObjectPrototype, "hasOwnProperty", ObjectPrototypeHasOwnProperty, 1),
+    (ObjectPrototype, "propertyIsEnumerable", ObjectPrototypePropertyIsEnumerable, 1),
+    (ObjectPrototype, "__lookupGetter__", ObjectPrototypeLookupGetter, 1),
+    (ObjectPrototype, "__lookupSetter__", ObjectPrototypeLookupSetter, 1),
+    (ObjectPrototype, "__defineGetter__", ObjectPrototypeDefineGetter, 2),
+    (ObjectPrototype, "__defineSetter__", ObjectPrototypeDefineSetter, 2),
+    (ObjectPrototype, "isPrototypeOf", ObjectPrototypeIsPrototypeOf, 1),
+    // `Function.prototype`, in installation order (`[Symbol.hasInstance]` is symbol-keyed, not a row).
+    (FunctionPrototype, "call", FunctionCall, 1),
+    (FunctionPrototype, "apply", FunctionApply, 2),
+    (FunctionPrototype, "bind", FunctionBind, 1),
+    (FunctionPrototype, "toString", FunctionToString, 0),
+    // `Reflect`, in installation order.
+    (Reflect, "get", ReflectGet, 2),
+    (Reflect, "has", ReflectHas, 2),
+    (Reflect, "apply", ReflectApply, 3),
+    (Reflect, "getOwnPropertyDescriptor", ReflectGetOwnPropertyDescriptor, 2),
+    (Reflect, "defineProperty", ReflectDefineProperty, 3),
+    (Reflect, "deleteProperty", ReflectDeleteProperty, 2),
+    (Reflect, "preventExtensions", ReflectPreventExtensions, 1),
+    (Reflect, "isExtensible", ReflectIsExtensible, 1),
+    (Reflect, "set", ReflectSet, 3),
+    (Reflect, "ownKeys", ReflectOwnKeys, 1),
+    (Reflect, "getPrototypeOf", ReflectGetPrototypeOf, 1),
+    (Reflect, "setPrototypeOf", ReflectSetPrototypeOf, 2),
+    (Reflect, "construct", ReflectConstruct, 2),
+    // `JSON`, in installation order.
+    (Json, "parse", JsonParse, 2),
+    (Json, "stringify", JsonStringify, 3),
+    (Json, "rawJSON", JsonRawJson, 1),
+    (Json, "isRawJSON", JsonIsRawJson, 1),
+    // `Proxy`.
+    (ProxyConstructor, "revocable", ProxyRevocable, 2),
+    // `Symbol`: its statics, then its prototype's methods.
+    (SymbolConstructor, "for", SymbolFor, 1),
+    (SymbolConstructor, "keyFor", SymbolKeyFor, 1),
+    (SymbolPrototype, "toString", SymbolToString, 0),
+    (SymbolPrototype, "valueOf", SymbolValueOf, 0),
+    // `Boolean.prototype`, in installation order.
+    (BooleanPrototype, "toString", BooleanToString, 0),
+    (BooleanPrototype, "valueOf", BooleanValueOf, 0),
+}

@@ -136,7 +136,9 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if let Some(found) = self.dense_search_call(Native::ArrayIndexOf, this, args) {
+        if self.declined_fast.take() != Some(Native::ArrayIndexOf)
+            && let Some(found) = self.dense_search_call(Native::ArrayIndexOf, this, args)
+        {
             return Ok(found);
         }
         let object = self.box_object_or_type_error(p, this)?;

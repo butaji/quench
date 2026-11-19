@@ -93,7 +93,8 @@ impl<H: Host> Vm<H> {
         // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
         // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`lane_call_this`).
         let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
-        Callees::of(code, candidates, &inline_body, stable)
+        let natives = self.native_callees(program, function, code);
+        Callees::of(code, candidates, &inline_body, stable, natives)
     }
 
     /// The realm a stitch finds its inlined callees in: the active one, which its entry proves active.

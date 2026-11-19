@@ -1,12 +1,17 @@
 // Platform-independent binary64 approximations used by the shared Math operations.
-// See fdlibm_math.LICENSE for the retained Sun and V8 terms.
+// See fdlibm.LICENSE for the retained Sun and V8 terms.
 // Adapted from V8 src/base/ieee754.cc at Node 26.12's pinned source.
 // Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
 // Developed at SunSoft, a Sun Microsystems, Inc. business.
 // Permission to use, copy, modify, and distribute this software is freely
 // granted, provided that this notice is preserved.
 // Modified significantly by Google Inc.; Copyright 2016 the V8 project authors.
-pub(super) fn cbrt(x: f64) -> f64 {
+
+/// The divisor of an exponent or high word in the cube root's first estimate.
+const CUBE_ROOT_DIVISOR: u32 = 3;
+
+/// `Math.cbrt`: the cube root of `x`, to within an ulp, with the sign of `x`.
+pub(crate) fn cbrt(x: f64) -> f64 {
     // fdlibm high-word biases for normal and scaled subnormal exponents.
     // These include its -0.03306235651 correction to the rough cube root.
     const NORMAL_BIAS: u32 = 715094163;
@@ -37,9 +42,9 @@ pub(super) fn cbrt(x: f64) -> f64 {
         }
         let scaled = x * ((1_u64 << (f64::MANTISSA_DIGITS + 1)) as f64);
         let high = (scaled.abs().to_bits() >> u32::BITS) as u32;
-        high / 3 + SUBNORMAL_BIAS
+        high / CUBE_ROOT_DIVISOR + SUBNORMAL_BIAS
     } else {
-        magnitude / 3 + NORMAL_BIAS
+        magnitude / CUBE_ROOT_DIVISOR + NORMAL_BIAS
     };
     let mut t = f64::from_bits(u64::from(sign | rough) << u32::BITS);
     let r = (t * t) * (t / x);
@@ -53,16 +58,19 @@ pub(super) fn cbrt(x: f64) -> f64 {
     t + t * r
 }
 
-pub(super) fn atan(value: f64) -> f64 {
+/// `Math.atan`: the arc tangent of `value` in radians, from libm.
+pub(crate) fn atan(value: f64) -> f64 {
     libm::atan(value)
 }
 
-pub(super) fn atan2(y: f64, x: f64) -> f64 {
+/// `Math.atan2`: the angle of the point (`x`, `y`) in radians, in `[-π, π]`, from fdlibm's
+/// quadrant reconstruction over `atan`.
+pub(crate) fn atan2(y: f64, x: f64) -> f64 {
     const PI_LO: f64 = f64::from_bits(0x3ca1a62633145c07);
     // fdlibm changes quadrant reconstruction beyond this exponent separation.
     const LARGE_RATIO_EXPONENT: i32 = 60;
     const HIGH_WORD_FRACTION_BITS: u32 = f64::MANTISSA_DIGITS - 1 - u32::BITS;
-    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+    use core::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
     if x.is_nan() || y.is_nan() {
         return x + y;
     }

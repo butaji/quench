@@ -514,8 +514,8 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     let helper = if shape.form == CallForm::Plain { layout.ending.call_helper() } else { shape.form.helper() };
     let helper = call_plan::helper_address(helpers, helper).ok_or("call: no helper address")?;
     let (spills, reloads) = (layout.spills(pc), if shape.returning { Vec::new() } else { layout.spills(pc + 1) });
-    let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads };
-    let CallChain { parts, records: record, choice } = call_plan::plan_call(&plan)?;
+    let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads, builtin: layout.builtin(shape.call_pc) };
+    let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     #[cfg(test)]
     if choice == Choice::Direct {

@@ -158,24 +158,19 @@ pub(super) struct Layout<'a> {
     pub(super) invalidation: Option<usize>,
     /// The realm the entry proves active, where the code inlines callees.
     pub(super) realm: Option<RealmProof>,
-    /// Per row, whether a proof the body established reaches it (`Decoded::relies`): no resume stub enters there.
-    /// Proofs the entry seed alone reaches get a stub, whose entry rows re-run the declared guards (`guards`).
-    pub(super) relies: &'a [bool],
-    /// The entry tests of the declared parameters the function never writes (`declared::entry_guards`).
-    pub(super) guards: Vec<EntryGuard>,
-    /// The declared Number parameters the function never writes, which the entry's Number guards prove
-    /// (`declared::entry_numbers`).
-    pub(super) numbers: Vec<Register>,
-    /// The class-typed parameters the function never writes, with the prototype each entry checks (`declared::class_prototypes`).
-    pub(super) prototypes: Vec<super::function::ClassProto>,
-    /// The captured declarations the body calls by identity, each with the function its entry checks (`Callees::captured_identities`).
-    pub(super) identities: Vec<(u16, u64)>,
+    /// Per caller PC, the builtin its callee is, where the b-jit runs it on a row (`Callees::builtins`).
+    pub(super) builtins: &'a [Option<super::call_plan::builtin::BuiltinCall>],
 }
 
 impl Layout<'_> {
     /// What the call at caller PC `pc` recorded of each callee it reached, latest first.
     pub(super) fn callees(&self, pc: u32) -> &[DirectFacts] {
         self.callees.get(pc as usize).map_or(&[], Vec::as_slice)
+    }
+
+    /// The builtin the call at caller PC `pc` runs on its row, if its callee is one.
+    pub(super) fn builtin(&self, pc: u32) -> Option<super::call_plan::builtin::BuiltinCall> {
+        self.builtins.get(pc as usize).copied().flatten()
     }
 
     fn origin(&self, row: u32) -> Option<Origin> {

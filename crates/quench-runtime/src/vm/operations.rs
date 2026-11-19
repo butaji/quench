@@ -18,10 +18,6 @@ pub(super) enum ArrayLikeElementKind {
     PropertyKey,
 }
 
-const EXPONENTIATION_ZERO: f64 = 0.0;
-const EXPONENTIATION_ONE: f64 = 1.0;
-const EXPONENTIATION_TWO: f64 = 2.0;
-const ODD_INTEGER_PARITY: f64 = 1.0;
 /// The comparison operators occupy the binary operator discriminants up to this one.
 pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
 
@@ -2221,55 +2217,9 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// `Number ** Number` (`Math.pow`), the value `staged::math::power` computes.
 pub(super) fn exponentiate(base: f64, exponent: f64) -> f64 {
-    if exponent.is_nan() {
-        return f64::NAN;
-    }
-    if exponent == EXPONENTIATION_ZERO {
-        return EXPONENTIATION_ONE;
-    }
-    if base.is_nan() || base.abs() == EXPONENTIATION_ONE && exponent.is_infinite() {
-        return f64::NAN;
-    }
-    if base.is_infinite() {
-        return infinite_power(base, exponent);
-    }
-    if base == EXPONENTIATION_ZERO {
-        return zero_power(base, exponent);
-    }
-    base.powf(exponent)
-}
-
-fn infinite_power(base: f64, exponent: f64) -> f64 {
-    let magnitude = if exponent.is_sign_positive() {
-        f64::INFINITY
-    } else {
-        EXPONENTIATION_ZERO
-    };
-    signed_power_magnitude(base, exponent, magnitude)
-}
-
-fn zero_power(base: f64, exponent: f64) -> f64 {
-    let magnitude = if exponent.is_sign_positive() {
-        EXPONENTIATION_ZERO
-    } else {
-        f64::INFINITY
-    };
-    signed_power_magnitude(base, exponent, magnitude)
-}
-
-fn signed_power_magnitude(base: f64, exponent: f64, magnitude: f64) -> f64 {
-    if base.is_sign_negative() && is_odd_integer(exponent) {
-        -magnitude
-    } else {
-        magnitude
-    }
-}
-
-fn is_odd_integer(value: f64) -> bool {
-    value.is_finite()
-        && value.fract() == EXPONENTIATION_ZERO
-        && value.abs() % EXPONENTIATION_TWO == ODD_INTEGER_PARITY
+    crate::staged::math::power(base, exponent)
 }
 
 /// Whether an equality operator is strict and whether it is negated; `None` for any other.

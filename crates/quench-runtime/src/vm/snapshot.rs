@@ -49,6 +49,7 @@ impl<H: Host> Vm<H> {
             typed_views: _,
             native_microtask_running: _,
             queue_resumed: _,
+            declined_fast: _,
             unobserved_jobs_entered: _,
             main_realm,
             host,

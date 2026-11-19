@@ -136,22 +136,36 @@ impl<H: Host> Vm<H> {
         }).collect()
     }
 
-    /// The Slot read `read` at `pc` of a global name, where the function the global object holds now is the native `parseInt`
-    /// (`GlobalRead::NativeSlot`: the slot's read, with the function's identity held by the global object's watched shape).
-    /// Any other read is `read`.
-    fn native_slot(&mut self, pc: usize, unit: &lane_unit::Unit, read: GlobalRead) -> GlobalRead {
-        let GlobalRead::Slot(slot) = read else { return read };
-        let atom = unit.instructions[pc].atom_index();
-        let Some(Some(value)) = self.own_plain_data(slot.global, atom) else { return read };
-        let Some(crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(native), .. }) = self.heap.function(value) else { return read };
+    /// The native function each call site's callee register holds, by PC, where a field read defines it: a method
+    /// of strings or arrays (`method_native`), or a member of a Stable global read by name (`Math.floor`). Each
+    /// with its identity, which the call guards, and the holder whose values the code depends on (the b-jit's
+    /// builtin rows, `base_region::call_plan::builtin`).
+    pub(in crate::vm) fn native_callees(&mut self, program: &ResidualProgram, function: u32, code: &[crate::bytecode::WideInstruction])
+        -> Vec<Option<(crate::value::Value, crate::vm::Native, u32)>> {
+        let entered = branch_targets(code);
+        (0..code.len()).map(|call| {
+            if !code[call].op().is_call() { return None; }
+            let member = straight_definition(code, &entered, call)?;
+            self.native_member_callee(program, function, code, &entered, member)
+        }).collect()
+    }
+
+    /// The native a field read at `member` defines, as `native_callees` names it.
+    fn native_member_callee(&mut self, program: &ResidualProgram, function: u32, code: &[crate::bytecode::WideInstruction],
+        entered: &cranelift_codegen::bitset::CompoundBitSet, member: usize) -> Option<(crate::value::Value, crate::vm::Native, u32)> {
+        if let Some(GlobalRead::NativeMember { value, native, holder }) = self.method_native(&code[member]) {
+            return Some((value, native, holder));
+        }
+        let crate::bytecode::FieldLookup::Atom { atom, base, .. } = code[member].field_lookup()? else { return None };
+        let read = member.checked_sub(1)?;
+        if entered.contains(member) || base.register_index()? != code[read].result_register() { return None; }
+        let load = code[read];
+        if !load.op().is_throwing_name_load() || !self.reads_global_scope(program, function, load.atom_index()) { return None; }
+        let GlobalRead::Stable { value: object, .. } = self.stable_global_read(program, load.atom_index(), load.cache_site_index()) else { return None };
+        let value = self.own_plain_data(object, atom)??;
+        let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(native), .. } = self.heap.function(value)? else { return None };
         let native = *native;
-        if native != crate::vm::Native::ParseInt {
-            return read;
-        }
-        match self.native_holder(slot.global) {
-            Some(holder) => GlobalRead::NativeSlot { slot, value, native, holder },
-            None => read,
-        }
+        Some((value, native, self.native_holder(object)?))
     }
 
     /// The field read `instruction` of a method of strings or arrays that a call runs inline

@@ -9,6 +9,8 @@ pub(crate) use crate::bytecode::Register;
 pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 #[path = "../../quench-runtime/src/staged/math.rs"] pub(crate) mod math;
 #[path = "../../quench-runtime/src/staged/numeric.rs"] pub(crate) mod numeric;
+#[path = "../../quench-runtime/src/staged/builtins.rs"] pub(crate) mod builtins;
+#[path = "../../quench-runtime/src/staged/strings.rs"] pub(crate) mod strings;
 pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 #[path = "../../quench-runtime/src/staged/value.rs"] pub(crate) mod value;
 #[path = "../../quench-runtime/src/staged/guard.rs"] mod guard;

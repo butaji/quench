@@ -27,6 +27,74 @@ pub enum CallRow {
     /// The unconditional leave at the instruction: successor EXIT0 alone, every register as it
     /// came (the exit stub writes the live pinned ones back).
     Here,
+    /// A builtin of a native the callee is, run on its staged row (`stencils/builtin_rows.rs`): value
+    /// hole 0 is the `CallRecord`'s address, whose `callee` is the identity the callee register must hold;
+    /// successors TAKEN (completed: the result is in the call's register), NEXT (a miss, nothing written:
+    /// the helper row the planner lays out behind it).
+    Builtin(BuiltinRow),
+}
+
+/// The builtins a call row runs on their staged rows (`stencils/builtin_rows.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BuiltinRow {
+    /// `String.prototype.charCodeAt` of a flat string.
+    CharCodeAt,
+    /// `Number.isInteger` of a Number.
+    IsInteger,
+    /// `Math.floor` of a Number.
+    Floor,
+    /// `Math.ceil` of a Number.
+    Ceil,
+    /// `Math.trunc` of a Number.
+    Trunc,
+    /// `Math.abs` of a Number.
+    Abs,
+    /// `Math.sqrt` of a Number.
+    Sqrt,
+    /// `Math.fround` of a Number.
+    Fround,
+    /// `Math.round` of a Number.
+    Round,
+    /// `Math.max` of two Numbers.
+    Max,
+    /// `Math.min` of two Numbers.
+    Min,
+    /// `Math.imul` of two int32 operands.
+    Imul,
+}
+
+impl BuiltinRow {
+    /// Every builtin row, each with its own stencil.
+    pub const ALL: [BuiltinRow; 12] = [
+        BuiltinRow::CharCodeAt, BuiltinRow::IsInteger, BuiltinRow::Floor, BuiltinRow::Ceil, BuiltinRow::Trunc, BuiltinRow::Abs,
+        BuiltinRow::Sqrt, BuiltinRow::Fround, BuiltinRow::Round, BuiltinRow::Max, BuiltinRow::Min, BuiltinRow::Imul,
+    ];
+
+    /// The row's name in the stencil object, after `call_builtin_`.
+    pub const fn symbol(self) -> &'static str {
+        match self {
+            BuiltinRow::CharCodeAt => "char_code_at",
+            BuiltinRow::IsInteger => "is_integer",
+            BuiltinRow::Floor => "floor",
+            BuiltinRow::Ceil => "ceil",
+            BuiltinRow::Trunc => "trunc",
+            BuiltinRow::Abs => "abs",
+            BuiltinRow::Sqrt => "sqrt",
+            BuiltinRow::Fround => "fround",
+            BuiltinRow::Round => "round",
+            BuiltinRow::Max => "max",
+            BuiltinRow::Min => "min",
+            BuiltinRow::Imul => "imul",
+        }
+    }
+
+    /// The arguments the builtin reads after its receiver's window: the count the planner must match.
+    pub const fn arguments(self) -> u16 {
+        match self {
+            BuiltinRow::Max | BuiltinRow::Min | BuiltinRow::Imul => 2,
+            _ => 1,
+        }
+    }
 }
 
 /// How a direct row binds the callee's `this`: the receiver as it is (strict), boxed or the
@@ -48,6 +116,7 @@ impl CallRow {
                 Ok(format!("call_direct_a{argc}_{mode}{}", if checked { "" } else { "_unchecked" }))
             }
             CallRow::Reload(place @ (Place::Pin(_) | Place::PinF(_))) => Ok(format!("reload_{}", place.code())),
+            CallRow::Builtin(row) => Ok(format!("call_builtin_{}", row.symbol())),
             other => Err(format!("no call row {other:?}")),
         }
     }
@@ -76,7 +145,8 @@ mod tests {
         let direct = (0..=MAX_DIRECT_ARGC as u8).flat_map(|argc| [ThisRow::Strict, ThisRow::Sloppy, ThisRow::Lexical].into_iter()
             .flat_map(move |this| [true, false].map(|checked| CallRow::Direct { argc, this, checked })));
         let pins = (0..crate::PINNED as u8).map(Place::Pin).chain((0..crate::PINNED_F as u8).map(Place::PinF)).map(CallRow::Reload);
-        [CallRow::Helper, CallRow::Here].into_iter().chain(direct).chain(pins).collect()
+        let builtins = BuiltinRow::ALL.into_iter().map(CallRow::Builtin);
+        [CallRow::Helper, CallRow::Here].into_iter().chain(direct).chain(pins).chain(builtins).collect()
     }
 
     /// Every row the planner can name was built, and its successors and holes are the contract's.
@@ -102,6 +172,10 @@ mod tests {
                 CallRow::Reload(_) => {
                     assert!(successors.iter().all(|s| *s == NEXT), "{successors:?}");
                     assert!(stencil.imm32.iter().any(|field| field.index == 0), "the slot offset is hole 0");
+                }
+                CallRow::Builtin(_) => {
+                    assert!([NEXT, TAKEN].iter().all(|s| successors.contains(s)), "{successors:?}");
+                    assert!(values.contains(&0), "the record address is the value hole: {values:?}");
                 }
             }
         }

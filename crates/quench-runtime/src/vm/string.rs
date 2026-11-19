@@ -576,7 +576,9 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if let Some(parts) = self.split_in_place(Native::StringSplit, this, args) {
+        if self.declined_fast.take() != Some(Native::StringSplit)
+            && let Some(parts) = self.split_in_place(Native::StringSplit, this, args)
+        {
             return Ok(parts);
         }
         self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
@@ -737,7 +739,9 @@ impl<H: Host> Vm<H> {
         replace_all: bool,
     ) -> Result<Value, JsError> {
         let native = if replace_all { Native::StringReplaceAll } else { Native::StringReplace };
-        if let Some(replaced) = self.replace_string_pattern(p, native, this, args) {
+        if self.declined_fast.take() != Some(native)
+            && let Some(replaced) = self.replace_string_pattern(p, native, this, args)
+        {
             return replaced;
         }
         self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {

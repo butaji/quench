@@ -1,8 +1,10 @@
 //! One row per builtin function that a method table installs: the native, the object that
-//! holds it, its property name, its `length` and its flags. The installation tables
-//! (`ARRAY_PROTOTYPE_METHODS`, `ARRAY_STATIC_METHODS`, `STRING_METHODS`, `MATH_FUNCTIONS`) and
-//! the lengths of these natives (`native_lengths::ROW_LENGTHS`) are derived from the rows, so
-//! each fact about one of these builtins is stated once, here.
+//! holds it, its property name, its `length` and its flags. The rows are written in the
+//! child modules (`base`, `collections`, `objects`, `typed`, `promises`), one table per domain,
+//! and concatenated into `NATIVE_ROWS`. The installation tables (`ARRAY_PROTOTYPE_METHODS`,
+//! `STRING_METHODS`, `MATH_FUNCTIONS`, ...) and the lengths of these natives
+//! (`native_lengths::ROW_LENGTHS`) are derived from the rows, so each fact about one of these
+//! builtins is stated once.
 //!
 //! The `Native` enum itself stays in `heap/cell.rs`, whose order fixes the discriminants that
 //! tables index and snapshots serialize; the rows name its variants and change none of them.
@@ -36,12 +38,60 @@ pub(super) enum Holder {
     WeakSetPrototype,
     /// `DataView.prototype`.
     DataViewPrototype,
+    /// The `String` constructor: `fromCharCode`, `fromCodePoint`, `raw`.
+    StringConstructor,
+    /// The `Object` constructor's statics.
+    ObjectConstructor,
+    /// `Object.prototype`.
+    ObjectPrototype,
+    /// `Function.prototype`.
+    FunctionPrototype,
+    /// The `Reflect` namespace.
+    Reflect,
+    /// The `JSON` namespace.
+    Json,
+    /// The `Proxy` constructor: `revocable`.
+    ProxyConstructor,
+    /// The `Symbol` constructor: `for`, `keyFor`.
+    SymbolConstructor,
+    /// `Symbol.prototype`.
+    SymbolPrototype,
+    /// `Boolean.prototype`.
+    BooleanPrototype,
+    /// `Date.prototype`.
+    DatePrototype,
+    /// The `Date` constructor: `now`, `parse`, `UTC`.
+    DateConstructor,
+    /// `%TypedArray%.prototype`.
+    TypedArrayPrototype,
+    /// `%TypedArray%`: `from`, `of`.
+    TypedArrayConstructor,
+    /// `Uint8Array.prototype`'s own base64 and hex methods.
+    Uint8ArrayPrototype,
+    /// `Uint8Array`'s `fromBase64` and `fromHex`.
+    Uint8ArrayConstructor,
+    /// `Promise.prototype`.
+    PromisePrototype,
+    /// The `Promise` constructor's statics.
+    PromiseConstructor,
 }
 
 /// A function of `Math` (`Native::is_math_function`).
 pub(super) const MATH: u8 = 1 << 0;
 /// A pure `String.prototype` method (`Native::is_pure_string_method`).
 pub(super) const PURE_STRING: u8 = 1 << 1;
+/// A method a compiled lane runs inline by name (`lane_sites`): `charCodeAt`, `charAt`, `push`, `pop`.
+pub(super) const LANE_METHOD: u8 = 1 << 2;
+
+/// A row's `length`: stated, or shared with an Array native. The `%TypedArray%.prototype` callbacks
+/// run the Array method of the same name, which the spec gives the same length: `SameAs` names it.
+#[derive(Clone, Copy)]
+pub(super) enum Length {
+    /// The `length` the specification gives the function.
+    Fixed(u8),
+    /// The length of the Array native this row's function runs.
+    SameAs(Native),
+}
 
 /// A builtin function as its holder installs it.
 #[derive(Clone, Copy)]
@@ -50,228 +100,139 @@ pub(super) struct NativeRow {
     /// The property name, and the function's `name`.
     pub(super) name: &'static str,
     pub(super) native: Native,
-    /// The function's `length`, as the specification gives it.
-    pub(super) length: u8,
-    /// `MATH`, `PURE_STRING`.
+    /// The function's `length`.
+    pub(super) length: Length,
+    /// `MATH`, `PURE_STRING`, `LANE_METHOD`.
     pub(super) flags: u8,
 }
 
-/// `(Holder, "name", NativeVariant, length, FLAG...)` rows to `NATIVE_ROWS`. Rows of one holder
-/// keep their order, which is the order its properties are installed in.
+/// A row's `length` as its macro token states it: a number or a `[ArrayNative]` shared length.
+macro_rules! length_of {
+    ([$twin:ident]) => {
+        Length::SameAs(Native::$twin)
+    };
+    ($fixed:expr) => {
+        Length::Fixed(($fixed) as u8)
+    };
+}
+
+/// `(Holder, "name", NativeVariant, length, FLAG...)` rows to a table's `ROWS`. A length is a
+/// number, a named constant, or `[ArrayNative]` for a shared length. Rows of one holder keep
+/// their order, which is the order its properties are installed in.
 macro_rules! natives {
-    ($( ($holder:ident, $name:literal, $native:ident, $length:literal $(, $flag:ident)*) ),* $(,)?) => {
-        /// Every row, grouped by holder, each holder's rows in installation order.
-        pub(super) const NATIVE_ROWS: &[NativeRow] = &[
+    ($( ($holder:ident, $name:literal, $native:ident, $length:tt $(, $flag:ident)*) ),* $(,)?) => {
+        /// This table's rows, in installation order.
+        pub(super) const ROWS: &[NativeRow] = &[
             $( NativeRow {
                 holder: Holder::$holder,
                 name: $name,
                 native: Native::$native,
-                length: $length,
+                length: length_of!($length),
                 flags: 0 $(| $flag)*,
             }, )*
         ];
     };
 }
 
-natives! {
-    // `Array.prototype`, in installation order.
-    (ArrayPrototype, "push", ArrayPush, 1),
-    (ArrayPrototype, "pop", ArrayPop, 0),
-    (ArrayPrototype, "slice", ArraySlice, 2),
-    (ArrayPrototype, "includes", ArrayIncludes, 1),
-    (ArrayPrototype, "join", ArrayJoin, 1),
-    (ArrayPrototype, "concat", ArrayConcat, 1),
-    (ArrayPrototype, "flat", ArrayFlat, 0),
-    (ArrayPrototype, "reverse", ArrayReverse, 0),
-    (ArrayPrototype, "shift", ArrayShift, 0),
-    (ArrayPrototype, "unshift", ArrayUnshift, 1),
-    (ArrayPrototype, "splice", ArraySplice, 2),
-    (ArrayPrototype, "fill", ArrayFill, 1),
-    (ArrayPrototype, "at", ArrayAt, 1),
-    (ArrayPrototype, "lastIndexOf", ArrayLastIndexOf, 1),
-    (ArrayPrototype, "indexOf", ArrayIndexOf, 1),
-    (ArrayPrototype, "copyWithin", ArrayCopyWithin, 2),
-    (ArrayPrototype, "with", ArrayWith, 2),
-    (ArrayPrototype, "forEach", ArrayForEach, 1),
-    (ArrayPrototype, "map", ArrayMap, 1),
-    (ArrayPrototype, "filter", ArrayFilter, 1),
-    (ArrayPrototype, "some", ArraySome, 1),
-    (ArrayPrototype, "every", ArrayEvery, 1),
-    (ArrayPrototype, "find", ArrayFind, 1),
-    (ArrayPrototype, "findIndex", ArrayFindIndex, 1),
-    (ArrayPrototype, "findLast", ArrayFindLast, 1),
-    (ArrayPrototype, "findLastIndex", ArrayFindLastIndex, 1),
-    (ArrayPrototype, "flatMap", ArrayFlatMap, 1),
-    (ArrayPrototype, "reduce", ArrayReduce, 1),
-    (ArrayPrototype, "reduceRight", ArrayReduceRight, 1),
-    (ArrayPrototype, "toReversed", ArrayToReversed, 0),
-    (ArrayPrototype, "toSpliced", ArrayToSpliced, 2),
-    (ArrayPrototype, "sort", ArraySort, 1),
-    (ArrayPrototype, "toSorted", ArrayToSorted, 1),
-    (ArrayPrototype, "toString", ArrayToString, 0),
-    (ArrayPrototype, "toLocaleString", ArrayToLocaleString, 0),
-    (ArrayPrototype, "keys", ArrayKeys, 0),
-    (ArrayPrototype, "values", ArrayValues, 0),
-    (ArrayPrototype, "entries", ArrayEntries, 0),
-    // `Array`, in installation order.
-    (ArrayConstructor, "from", ArrayFrom, 1),
-    (ArrayConstructor, "fromAsync", ArrayFromAsync, 1),
-    (ArrayConstructor, "of", ArrayOf, 0),
-    (ArrayConstructor, "isArray", ArrayIsArray, 1),
-    // `String.prototype`, in installation order (the HTML methods and aliases follow, from `string.rs`).
-    (StringPrototype, "at", StringAt, 1, PURE_STRING),
-    (StringPrototype, "charAt", StringCharAt, 1, PURE_STRING),
-    (StringPrototype, "charCodeAt", StringCharCodeAt, 1, PURE_STRING),
-    (StringPrototype, "codePointAt", StringCodePointAt, 1, PURE_STRING),
-    (StringPrototype, "concat", StringConcat, 1, PURE_STRING),
-    (StringPrototype, "endsWith", StringEndsWith, 1, PURE_STRING),
-    (StringPrototype, "includes", StringIncludes, 1, PURE_STRING),
-    (StringPrototype, "isWellFormed", StringIsWellFormed, 0),
-    (StringPrototype, "indexOf", StringIndexOf, 1, PURE_STRING),
-    (StringPrototype, "lastIndexOf", StringLastIndexOf, 1, PURE_STRING),
-    (StringPrototype, "localeCompare", StringLocaleCompare, 1),
-    (StringPrototype, "match", StringMatch, 1),
-    (StringPrototype, "matchAll", StringMatchAll, 1),
-    (StringPrototype, "normalize", StringNormalize, 0),
-    (StringPrototype, "padEnd", StringPadEnd, 1, PURE_STRING),
-    (StringPrototype, "padStart", StringPadStart, 1, PURE_STRING),
-    (StringPrototype, "repeat", StringRepeat, 1, PURE_STRING),
-    (StringPrototype, "replace", StringReplace, 2),
-    (StringPrototype, "replaceAll", StringReplaceAll, 2),
-    (StringPrototype, "search", StringSearch, 1),
-    (StringPrototype, "slice", StringSlice, 2, PURE_STRING),
-    (StringPrototype, "split", StringSplit, 2, PURE_STRING),
-    (StringPrototype, "startsWith", StringStartsWith, 1, PURE_STRING),
-    (StringPrototype, "substr", StringSubstr, 2, PURE_STRING),
-    (StringPrototype, "substring", StringSubstring, 2, PURE_STRING),
-    (StringPrototype, "toLocaleLowerCase", StringToLocaleLowerCase, 0),
-    (StringPrototype, "toLocaleUpperCase", StringToLocaleUpperCase, 0),
-    (StringPrototype, "toLowerCase", StringToLowerCase, 0, PURE_STRING),
-    (StringPrototype, "toString", StringToString, 0),
-    (StringPrototype, "toWellFormed", StringToWellFormed, 0),
-    (StringPrototype, "toUpperCase", StringToUpperCase, 0, PURE_STRING),
-    (StringPrototype, "trim", StringTrim, 0, PURE_STRING),
-    (StringPrototype, "trimEnd", StringTrimEnd, 0, PURE_STRING),
-    (StringPrototype, "trimStart", StringTrimStart, 0, PURE_STRING),
-    (StringPrototype, "valueOf", StringValueOf, 0),
-    // `Math`, in installation order (after its value properties).
-    (Math, "abs", MathAbs, 1, MATH),
-    (Math, "acos", MathAcos, 1, MATH),
-    (Math, "acosh", MathAcosh, 1, MATH),
-    (Math, "asin", MathAsin, 1, MATH),
-    (Math, "asinh", MathAsinh, 1, MATH),
-    (Math, "atan", MathAtan, 1, MATH),
-    (Math, "atanh", MathAtanh, 1, MATH),
-    (Math, "atan2", MathAtan2, 2, MATH),
-    (Math, "ceil", MathCeil, 1, MATH),
-    (Math, "cbrt", MathCbrt, 1, MATH),
-    (Math, "expm1", MathExpm1, 1, MATH),
-    (Math, "clz32", MathClz32, 1, MATH),
-    (Math, "cos", MathCos, 1, MATH),
-    (Math, "cosh", MathCosh, 1, MATH),
-    (Math, "exp", MathExp, 1, MATH),
-    (Math, "floor", MathFloor, 1, MATH),
-    (Math, "fround", MathFround, 1, MATH),
-    (Math, "f16round", MathF16Round, 1, MATH),
-    (Math, "hypot", MathHypot, 2, MATH),
-    (Math, "imul", MathImul, 2, MATH),
-    (Math, "log", MathLog, 1, MATH),
-    (Math, "log1p", MathLog1p, 1, MATH),
-    (Math, "log2", MathLog2, 1, MATH),
-    (Math, "log10", MathLog10, 1, MATH),
-    (Math, "max", MathMax, 2, MATH),
-    (Math, "min", MathMin, 2, MATH),
-    (Math, "pow", MathPow, 2, MATH),
-    (Math, "random", MathRandom, 0, MATH),
-    (Math, "round", MathRound, 1, MATH),
-    (Math, "sign", MathSign, 1, MATH),
-    (Math, "sin", MathSin, 1, MATH),
-    (Math, "sinh", MathSinh, 1, MATH),
-    (Math, "sqrt", MathSqrt, 1, MATH),
-    (Math, "sumPrecise", MathSumPrecise, 1, MATH),
-    (Math, "tan", MathTan, 1, MATH),
-    (Math, "tanh", MathTanh, 1, MATH),
-    (Math, "trunc", MathTrunc, 1, MATH),
-    // `Number.prototype`, in installation order.
-    (NumberPrototype, "toString", NumberString, 1),
-    (NumberPrototype, "valueOf", NumberValueOf, 0),
-    (NumberPrototype, "toLocaleString", NumberToLocaleString, 0),
-    (NumberPrototype, "toFixed", NumberFixed, 1),
-    (NumberPrototype, "toExponential", NumberExponential, 1),
-    (NumberPrototype, "toPrecision", NumberPrecision, 1),
-    // `Number`, in installation order: `parseInt` and `parseFloat` are aliases of the global ones.
-    (NumberConstructor, "isNaN", NumberIsNaN, 1),
-    (NumberConstructor, "isFinite", NumberIsFinite, 1),
-    (NumberConstructor, "isInteger", NumberIsInteger, 1),
-    (NumberConstructor, "isSafeInteger", NumberIsSafeInteger, 1),
-    (NumberConstructor, "parseInt", ParseInt, 2),
-    (NumberConstructor, "parseFloat", NumberParseFloat, 1),
-    // The global object, in installation order.
-    (GlobalObject, "parseInt", ParseInt, 2),
-    (GlobalObject, "parseFloat", NumberParseFloat, 1),
-    (GlobalObject, "isNaN", GlobalIsNaN, 1),
-    (GlobalObject, "isFinite", GlobalIsFinite, 1),
-    // `Map.prototype`, in installation order (the `size` getter is not a row).
-    (MapPrototype, "get", MapGet, 1),
-    (MapPrototype, "set", MapSet, 2),
-    (MapPrototype, "has", MapHas, 1),
-    (MapPrototype, "delete", MapDelete, 1),
-    (MapPrototype, "clear", MapClear, 0),
-    (MapPrototype, "keys", MapKeys, 0),
-    (MapPrototype, "values", MapValues, 0),
-    (MapPrototype, "entries", MapEntries, 0),
-    (MapPrototype, "forEach", MapForEach, 1),
-    (MapPrototype, "getOrInsert", MapGetOrInsert, 2),
-    (MapPrototype, "getOrInsertComputed", MapGetOrInsertComputed, 2),
-    // `Set.prototype`, in installation order (`keys` aliases `values` and is not a row).
-    (SetPrototype, "add", SetAdd, 1),
-    (SetPrototype, "has", SetHas, 1),
-    (SetPrototype, "delete", SetDelete, 1),
-    (SetPrototype, "clear", SetClear, 0),
-    (SetPrototype, "values", SetValues, 0),
-    (SetPrototype, "entries", SetEntries, 0),
-    (SetPrototype, "forEach", SetForEach, 1),
-    (SetPrototype, "difference", SetDifference, 1),
-    (SetPrototype, "intersection", SetIntersection, 1),
-    (SetPrototype, "symmetricDifference", SetSymmetricDifference, 1),
-    (SetPrototype, "union", SetUnion, 1),
-    (SetPrototype, "isDisjointFrom", SetIsDisjointFrom, 1),
-    (SetPrototype, "isSubsetOf", SetIsSubsetOf, 1),
-    (SetPrototype, "isSupersetOf", SetIsSupersetOf, 1),
-    // `WeakMap.prototype`, in installation order.
-    (WeakMapPrototype, "get", WeakMapGet, 1),
-    (WeakMapPrototype, "set", WeakMapSet, 2),
-    (WeakMapPrototype, "has", WeakMapHas, 1),
-    (WeakMapPrototype, "delete", WeakMapDelete, 1),
-    (WeakMapPrototype, "getOrInsert", WeakMapGetOrInsert, 2),
-    (WeakMapPrototype, "getOrInsertComputed", WeakMapGetOrInsertComputed, 2),
-    // `WeakSet.prototype`, in installation order.
-    (WeakSetPrototype, "add", WeakSetAdd, 1),
-    (WeakSetPrototype, "has", WeakSetHas, 1),
-    (WeakSetPrototype, "delete", WeakSetDelete, 1),
-    // `DataView.prototype` methods, in installation order.
-    (DataViewPrototype, "getInt8", DataViewGetInt8, 1),
-    (DataViewPrototype, "getUint8", DataViewGetUint8, 1),
-    (DataViewPrototype, "getInt16", DataViewGetInt16, 1),
-    (DataViewPrototype, "getUint16", DataViewGetUint16, 1),
-    (DataViewPrototype, "getInt32", DataViewGetInt32, 1),
-    (DataViewPrototype, "getUint32", DataViewGetUint32, 1),
-    (DataViewPrototype, "getFloat16", DataViewGetFloat16, 1),
-    (DataViewPrototype, "getFloat32", DataViewGetFloat32, 1),
-    (DataViewPrototype, "getFloat64", DataViewGetFloat64, 1),
-    (DataViewPrototype, "getBigInt64", DataViewGetBigInt64, 1),
-    (DataViewPrototype, "getBigUint64", DataViewGetBigUint64, 1),
-    (DataViewPrototype, "setInt8", DataViewSetInt8, 2),
-    (DataViewPrototype, "setUint8", DataViewSetUint8, 2),
-    (DataViewPrototype, "setInt16", DataViewSetInt16, 2),
-    (DataViewPrototype, "setUint16", DataViewSetUint16, 2),
-    (DataViewPrototype, "setInt32", DataViewSetInt32, 2),
-    (DataViewPrototype, "setUint32", DataViewSetUint32, 2),
-    (DataViewPrototype, "setFloat16", DataViewSetFloat16, 2),
-    (DataViewPrototype, "setFloat32", DataViewSetFloat32, 2),
-    (DataViewPrototype, "setFloat64", DataViewSetFloat64, 2),
-    (DataViewPrototype, "setBigInt64", DataViewSetBigInt64, 2),
-    (DataViewPrototype, "setBigUint64", DataViewSetBigUint64, 2),
+mod base;
+mod collections;
+mod objects;
+mod promises;
+mod typed;
+
+/// The rows of every table, one table per module, in table order.
+const TABLES: [&[NativeRow]; 5] = [base::ROWS, collections::ROWS, objects::ROWS, typed::ROWS, promises::ROWS];
+/// The number of rows in `TABLES`.
+const ROW_COUNT: usize = row_count(&TABLES);
+/// Every row, in table order: each holder's rows keep their installation order.
+pub(super) const NATIVE_ROWS: [NativeRow; ROW_COUNT] = concat_rows(&TABLES);
+
+/// The number of rows in `tables`.
+const fn row_count(tables: &[&[NativeRow]]) -> usize {
+    let mut count = 0;
+    let mut table = 0;
+    while table < tables.len() {
+        count += tables[table].len();
+        table += 1;
+    }
+    count
+}
+
+/// The rows of `tables`, concatenated in order; `N` is `row_count(tables)`.
+const fn concat_rows<const N: usize>(tables: &[&[NativeRow]]) -> [NativeRow; N] {
+    let mut rows = [FILLER_ROW; N];
+    let mut filled = 0;
+    let mut table = 0;
+    while table < tables.len() {
+        let part = tables[table];
+        let mut index = 0;
+        while index < part.len() {
+            rows[filled] = part[index];
+            filled += 1;
+            index += 1;
+        }
+        table += 1;
+    }
+    assert!(filled == N, "concat_rows: N is not the row count");
+    rows
+}
+
+/// The placeholder `concat_rows` starts from; every slot is overwritten.
+const FILLER_ROW: NativeRow = NativeRow {
+    holder: Holder::Math,
+    name: "",
+    native: Native::Print,
+    length: Length::Fixed(0),
+    flags: 0,
+};
+
+/// `row`'s `length`: a fixed one as written, a shared one as the Array native's row states it.
+pub(super) const fn resolved_length(row: NativeRow) -> u8 {
+    match row.length {
+        Length::Fixed(length) => length,
+        Length::SameAs(native) => match fixed_length(native) {
+            Some(length) => length,
+            None => panic!("a shared length names a native with no fixed length"),
+        },
+    }
+}
+
+/// The fixed `length` of the first row that names `native`, if one does.
+const fn fixed_length(native: Native) -> Option<u8> {
+    let mut index = 0;
+    while index < NATIVE_ROWS.len() {
+        let row = NATIVE_ROWS[index];
+        if row.native as u16 == native as u16
+            && let Length::Fixed(length) = row.length
+        {
+            return Some(length);
+        }
+        index += 1;
+    }
+    None
+}
+
+/// The name `holder` installs `native` under, if it has a row for it.
+pub(super) fn method_name(holder: Holder, native: Native) -> Option<&'static str> {
+    NATIVE_ROWS.iter().find(|row| row.holder == holder && row.native == native).map(|row| row.name)
+}
+
+/// The name of some row that names `native`: a native's `name` as its holder installs it.
+pub(super) fn row_name(native: Native) -> Option<&'static str> {
+    NATIVE_ROWS.iter().find(|row| row.native == native).map(|row| row.name)
+}
+
+/// The Array native a `%TypedArray%.prototype` callback runs, if `native` is one.
+pub(super) fn shared_array_native(native: Native) -> Option<Native> {
+    NATIVE_ROWS.iter().find_map(|row| match row.length {
+        Length::SameAs(twin) if row.native == native => Some(twin),
+        _ => None,
+    })
+}
+
+/// The rows a compiled lane runs inline by name (`LANE_METHOD`).
+pub(super) fn lane_method(name: &str) -> Option<NativeRow> {
+    NATIVE_ROWS.iter().copied().find(|row| row.flags & LANE_METHOD != 0 && row.name == name)
 }
 
 /// The number of rows `holder` holds.
@@ -312,7 +273,7 @@ const fn named_with_lengths<const N: usize>(holder: Holder) -> [(&'static str, N
     while index < NATIVE_ROWS.len() {
         let row = NATIVE_ROWS[index];
         if row.holder as u8 == holder as u8 {
-            triples[filled] = (row.name, row.native, row.length as f64);
+            triples[filled] = (row.name, row.native, resolved_length(row) as f64);
             filled += 1;
         }
         index += 1;
@@ -386,7 +347,10 @@ const _: () = {
         while later < NATIVE_ROWS.len() {
             let other = NATIVE_ROWS[later];
             if other.native as u16 == row.native as u16 {
-                assert!(other.length == row.length && other.flags == row.flags, "alias rows disagree on length or flags");
+                assert!(
+                    resolved_length(other) == resolved_length(row) && other.flags == row.flags,
+                    "alias rows disagree on length or flags"
+                );
                 assert!(same_name(other.name, row.name), "alias rows disagree on name");
             }
             later += 1;

@@ -38,6 +38,8 @@
 //! validity sends the call to the helper row, which resolves the target anew.
 
 pub(super) mod inline;
+pub(super) mod builtin;
+use builtin::BuiltinCall;
 use super::{Exit, SLOT};
 use super::super::direct_callee::DirectCallee;
 use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
@@ -269,6 +271,8 @@ pub(super) struct CallPlan<'a> {
     pub(super) helper: usize,
     pub(super) spills: &'a [(Place, Register)],
     pub(super) reloads: &'a [(Place, Register)],
+    /// The builtin the callee is, where the site's native callee is one the b-jit runs on a row (`builtin::of`).
+    pub(super) builtin: Option<BuiltinCall>,
 }
 
 /// The address of `helper` in a process helper table; none for a linked or symbolic one.
@@ -350,6 +354,21 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
     Ok((part(stencil, quench_bjit::padded_holes([std::ptr::from_ref(&*record).addr() as u64, u64::from(shape.call_pc)]), vec![Exit::Status]), record))
 }
 
+/// The builtin row of a call of the builtin's arity whose callee is that builtin, and the record the row reads (its
+/// callee identity and registers); none for another call. The row's miss is the helper row behind it.
+fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Option<(CallPart, Box<CallRecord>)>, String> {
+    let Some(BuiltinCall { identity, row }) = builtin else { return Ok(None) };
+    if shape.form != CallForm::Plain || shape.returning || shape.argc != row.arguments() {
+        return Ok(None);
+    }
+    let record = Box::new(CallRecord {
+        callee: identity, cell: 0, expected: 0, descriptor: 0, captures: 0, global_this: 0, frame_bytes: 0,
+        callee_register: shape.callee, this_register: shape.this, args_register: shape.window, result_register: shape.result,
+    });
+    let stencil = call::stencil(CallRow::Builtin(row))?;
+    Ok(Some((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), Vec::new()), record)))
+}
+
 /// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):
 /// the spills, the helper row, the reloads.
 pub(super) fn plan_step(pc: u32, helper: usize, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
@@ -366,13 +385,18 @@ pub(super) fn plan_step(pc: u32, helper: usize, spills: &[(Place, Register)], re
 /// (NEXT), the last to the helper row, so a site alternating between known callees calls each by its
 /// entry, as the interpreter's own link does, and only an unknown one takes the helper.
 pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
-    let choices: Vec<(Choice, &DirectFacts)> = plan.direct.iter().map(|facts| (choose(&plan.shape, Some(facts)), facts)).collect();
-    let choice = choices.iter().map(|(choice, _)| *choice).find(|choice| *choice == Choice::Direct)
-        .unwrap_or_else(|| choices.first().map_or_else(|| choose(&plan.shape, None), |(choice, _)| *choice));
-    let arguments = argument_places(plan);
-    let mut directs = Vec::new();
-    for (_, facts) in choices.into_iter().filter(|(choice, _)| *choice == Choice::Direct) {
-        directs.push(direct_part(&plan.shape, facts, arguments)?);
+    let mut parts = plan.spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
+    let choice = choose(&plan.shape, plan.direct);
+    let direct = match (choice, plan.direct) {
+        (Choice::Direct, Some(facts)) => Some(direct_part(&plan.shape, facts)?),
+        _ => builtin_part(&plan.shape, plan.builtin)?,
+    };
+    let mut record = None;
+    if let Some((mut row, owned)) = direct {
+        // Past the direct row and the helper row that follows it: the first reload, or the next instruction.
+        row.taken = Some(parts.len() + ROWS_PAST_DIRECT);
+        parts.push(row);
+        record = Some(owned);
     }
     // The spills before the direct rows; the spills of pinned arguments that only the refusal path reads
     // (`refusal_only`) follow them, where the rows' NEXT falls to the helper row. Without a direct row, all come first.
@@ -454,8 +478,7 @@ mod tests {
     }
 
     fn plan<'a>(direct: Option<&'a DirectFacts>, spills: &'a [(Place, Register)], reloads: &'a [(Place, Register)]) -> CallPlan<'a> {
-        let direct = direct.map_or(&[][..], std::slice::from_ref);
-        CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads }
+        CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads, builtin: None }
     }
 
     #[cfg(target_arch = "x86_64")]

@@ -12,6 +12,7 @@
 use super::*;
 use super::call_plan::inline::{Callee, Context, InlineSite};
 use super::call_plan::{CallForm, CallShape, DirectFacts};
+use super::call_plan::builtin::{self, BuiltinCall};
 use super::super::{DirectCallee, DirectCandidates};
 use crate::bytecode::Function;
 use crate::compile::liveness::RegisterMasks;
@@ -65,28 +66,12 @@ pub(in crate::vm::compiled) struct Callees {
     /// the one a stitch may inline, every one a direct row of the call's chain calls.
     at: Vec<Option<std::ops::Range<usize>>>,
     bodies: Vec<Option<InlineBody>>,
-    /// By PC, what holds the callee its call site recorded (`Vm::stable_callees`).
-    stable: Vec<Option<Held>>,
-}
-
-/// What holds a call site's callee register, so that the register need not be checked: a Stable global cell
-/// (its change retires the body), or a captured declaration whose identity the body's entry checks once
-/// (`Captured`, `base_region::link::entry_rows`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::vm::compiled) enum Held {
-    Global(GlobalFact),
-    /// The depth-0 capture at `slot` holds `callee` (its word) at every entry of the body.
-    Captured { slot: u16, callee: u64 },
-}
-
-impl Held {
-    /// The Stable global fact, if it is one.
-    pub(in crate::vm::compiled) fn global(held: Held) -> Option<GlobalFact> {
-        match held {
-            Held::Global(fact) => Some(fact),
-            Held::Captured { .. } => None,
-        }
-    }
+    /// By PC, the Stable fact holding the callee its call site recorded: the global cell its
+    /// callee register is read from (`Vm::stable_callees`).
+    stable: Vec<Option<GlobalFact>>,
+    /// By PC, the native function the call site's callee register holds, where a field read defines it
+    /// (`Vm::native_callees`), with the holder whose values the code depends on.
+    natives: Vec<Option<(crate::value::Value, crate::vm::Native, u32)>>,
 }
 
 /// Whether the call at `instruction` is a plain call a body's call chain makes: a call whose result
@@ -115,7 +100,8 @@ impl Callees {
 
     /// The callee each call site of `code` calls (`candidates`, by PC), `body_of` the function it
     /// runs, and `stable` the Stable fact holding it by PC.
-    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<Held>>) -> Self {
+    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<GlobalFact>>,
+        natives: Vec<Option<(crate::value::Value, crate::vm::Native, u32)>>) -> Self {
         let mut owned = Vec::new();
         let at = code.iter().zip(candidates).map(|(instruction, site)| {
             let callees = reached(*instruction, site);
@@ -124,7 +110,20 @@ impl Callees {
             (!callees.is_empty()).then_some(start..owned.len())
         }).collect();
         let bodies = owned.iter().map(body_of).collect();
-        Self { owned: owned.into_boxed_slice(), at, bodies, stable }
+        Self { owned: owned.into_boxed_slice(), at, bodies, stable, natives }
+    }
+
+    /// The builtin each call site runs on its row, by PC: a site whose callee is a native the b-jit runs on one.
+    pub(super) fn builtins(&self) -> Vec<Option<BuiltinCall>> {
+        self.natives.iter().map(|native| {
+            let (value, native, _) = (*native)?;
+            Some(BuiltinCall { identity: value.to_bits(), row: builtin::of(native)? })
+        }).collect()
+    }
+
+    /// The holders the builtins' guards depend on: a change of a holder's values retires the body (`Body::holders`).
+    pub(super) fn native_holders(&self) -> Vec<u32> {
+        self.natives.iter().flatten().filter(|(_, native, _)| builtin::of(*native).is_some()).map(|(_, _, holder)| *holder).collect()
     }
 
     /// Whether every call of `code` is a direct one (`LaneMethod::closed`).
