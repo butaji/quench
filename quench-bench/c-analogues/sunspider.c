@@ -25,7 +25,6 @@
 #include <string.h>
 #include <time.h>
 
-#pragma STDC FP_CONTRACT OFF
 
 #define JS_PI 3.141592653589793
 #define ITERATIONS 120
@@ -7913,9 +7912,18 @@ static size_t js_num_to_str(double x, char *buf) {
   if (x == 0) return (size_t)sprintf(buf, "0");
   if (isinf(x)) return (size_t)sprintf(buf, x < 0 ? "-Infinity" : "Infinity");
   if (x < 0) { buf[o++] = '-'; x = -x; }
-  for (p = 1; p <= 17; p++) {
+  /* Shortest precision that round-trips. Round-tripping is monotone in the
+   * precision, so a binary search finds the same p as a linear scan. */
+  {
+    int lo = 1, hi = 17;
+    while (lo < hi) {
+      int mid = (lo + hi) / 2;
+      snprintf(tmp, sizeof tmp, "%.*e", mid - 1, x);
+      if (strtod(tmp, NULL) == x) hi = mid;
+      else lo = mid + 1;
+    }
+    p = lo;
     snprintf(tmp, sizeof tmp, "%.*e", p - 1, x);
-    if (strtod(tmp, NULL) == x) break;
   }
   for (const char *s = tmp; *s && *s != 'e'; s++)
     if (*s >= '0' && *s <= '9') digits[nd++] = *s;
@@ -8978,9 +8986,12 @@ static const char *DATE_MONTHS_LONG[12] = {"January", "February", "March", "Apri
                                            "August", "September", "October", "November", "December"};
 static const char *DATE_MONTHS_SHORT[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-static const char *DATE_SUFFIX[31] = {"st", "nd", "rd", "th", "th", "th", "th", "th", "th", "th", "th",
-                                      "th", "th", "th", "th", "th", "th", "th", "th", "th", "th", "st",
-                                      "nd", "rd", "th", "th", "th", "th", "th", "th", "th", "st"};
+static const char *DATE_SUFFIX[31] = {
+    "st", "nd", "rd", "th", "th", "th", "th",   /* 1st - 7th */
+    "th", "th", "th", "th", "th", "th", "th",   /* 8th - 14th */
+    "th", "th", "th", "th", "th", "th", "st",   /* 15th - 21st */
+    "nd", "rd", "th", "th", "th", "th", "th",   /* 22nd - 28th */
+    "th", "th", "st"};                          /* 29th - 31st */
 static const int DATE_DAYS_IN_MONTH[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
 /* The benchmark's start: new Date("1/1/2007 1:11:11") in local time. */

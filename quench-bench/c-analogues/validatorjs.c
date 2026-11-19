@@ -29,7 +29,6 @@
 #include <string.h>
 #include <time.h>
 
-#pragma STDC FP_CONTRACT OFF
 
 #define ITERATIONS 120
 
@@ -97,8 +96,8 @@ static int ipv4_ok(const char *s, size_t n) {
 }
 
 /* IPv6 (RFC 4291 text form): hex groups with at most one "::", an optional
- * dotted-quad tail counted as two groups, and an optional %zone of letters and
- * digits. */
+ * dotted-quad tail counted as two groups, and an optional %zone of one or more
+ * letters, digits or dots (validator.js: (%[0-9a-zA-Z.]{1,})?). */
 static int ipv6_ok(const char *s, size_t n) {
   size_t i, body_len;
   int extra = 0, explicit_groups = 0, dbl = 0;
@@ -109,7 +108,7 @@ static int ipv6_ok(const char *s, size_t n) {
     size_t k;
     if (i + 1 >= n) return 0;
     for (k = i + 1; k < n; k++)
-      if (!is_alnum_c((unsigned char)s[k])) return 0;
+      if (!is_alnum_c((unsigned char)s[k]) && s[k] != '.') return 0;
     n = i;
   }
   if (n == 0) return 0;

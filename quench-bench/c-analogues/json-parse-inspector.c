@@ -5,12 +5,12 @@
  * constructor) inflates the same payload, builds the object, and serializes it to the input
  * string. Each timed iteration parses that string into a fresh DOM, one heap node per JSON value,
  * as JSON.parse allocates one JS value per node. The last result is serialized again and must
- * equal the input string. Usage: json-parse-inspector [iterations] [jetstream-root] */
+ * equal the input string. Usage: json-parse-inspector [jetstream-root]; run from the repo root. */
 #include "json-analogue.h"
 
 int main(int argc, char **argv) {
-  int iterations = argc > 1 ? atoi(argv[1]) : 20;
-  const char *root = argc > 2 ? argv[2] : "../jetstream";
+  const int iterations = 20; /* // iterations: header */
+  const char *root = argc > 1 ? argv[1] : "quench-bench/jetstream";
   char path[4096];
   snprintf(path, sizeof path, "%s/SeaMonster/inspector-json-payload.js.z", root);
 
