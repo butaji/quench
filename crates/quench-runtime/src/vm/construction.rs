@@ -531,6 +531,10 @@ impl<H: Host> Vm<H> {
         env: Value,
         realm: Value,
     ) -> Result<Value, JsError> {
+        // A root closure starts a run of its program's root (`Vm::note_root_run`).
+        if id == super::ROOT_FUNCTION_ID {
+            self.note_root_run();
+        }
         // No `with` was ever entered, so no closure captures a `with` object
         // (`Vm::with_scope_entered`): a recorded closure needs none of the scope work below.
         if !self.with_scope_entered
@@ -542,6 +546,20 @@ impl<H: Host> Vm<H> {
             self.with_stack[frame.with_base.min(self.with_stack.len())..].to_vec()
         });
         self.closure_over_scope(p, id, env, realm, &chain)
+    }
+
+    /// Notes that the active program's root starts another run (its root closure is made); from
+    /// its second, `root_slot_written_once` answers for no slot.
+    pub(in crate::vm) fn note_root_run(&self) {
+        self.programs.note_root_run(self.active_program);
+    }
+
+    /// Whether root `slot` of `program` is written once while the root has run at most once
+    /// (`ProgramStore::root_slot_written_once`): a read that found it initialized may keep the
+    /// value for every later read.
+    #[allow(dead_code)]
+    pub(crate) fn root_slot_written_once(&self, program: ProgramId, slot: u16) -> bool {
+        self.programs.root_slot_written_once(program, slot)
     }
 
     /// `function`'s own `prototype` property holding `prototype`, as a function's creation

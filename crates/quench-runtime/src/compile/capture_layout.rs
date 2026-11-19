@@ -1,6 +1,6 @@
 use super::CompilerAtoms;
 
-use crate::bytecode::{Function, Op, Traits, WITH_ENTER_BINDING, the_op};
+use crate::bytecode::{Function, Op, Traits, WITH_ENTER_BINDING, the_op, may_repeat};
 
 const ENV_LOCAL_LOAD_OP: Op = the_op(Traits::ENV_LOCAL_LOAD);
 const ENV_LOCAL_STORE_OP: Op = the_op(Traits::ENV_LOCAL_STORE);
@@ -465,7 +465,7 @@ fn remove_unobservable_clones(function: &mut Function, captured: &[u16]) {
             .iter()
             .any(|slot| captured.binary_search(slot).is_ok())
     };
-    let backward = backward_transfers(function);
+    let backward = function.backward_transfers();
     // A site that runs once runs after every instruction before it in code order: only
     // forward transfers reach it.
     let first_closure = function
@@ -482,31 +482,6 @@ fn remove_unobservable_clones(function: &mut Function, captured: &[u16]) {
             *instruction = crate::bytecode::Instr::new(NOP_OP, 0, 0, 0, 0);
         }
     }
-}
-
-/// Every control transfer of `function` to an instruction at or before its source, as
-/// (target, source): jumps, branch table entries (which are jumps), and exception and
-/// `finally` continuations, taken from the last instruction their range covers.
-fn backward_transfers(function: &Function) -> Vec<(usize, usize)> {
-    // The jumps are the body's back edges, listed by source; the handler edges below are the
-    // transfers `back_edges` does not cover.
-    let mut transfers: Vec<(usize, usize)> = function.back_edges().map(|(source, target)| (target, source)).collect();
-    for handler in function.handlers.iter() {
-        let last = handler.end.saturating_sub(1) as usize;
-        for target in std::iter::once(handler.target).chain(handler.return_target) {
-            if target as usize <= last {
-                transfers.push((target as usize, last));
-            }
-        }
-    }
-    transfers
-}
-
-/// Whether the instruction at `pc` may run more than once in one activation. A cycle through
-/// `pc` must leave it for an instruction before it, by a transfer from at or after `pc` to at
-/// or before it, which `backward` lists.
-fn may_repeat(backward: &[(usize, usize)], pc: usize) -> bool {
-    backward.iter().any(|&(target, source)| target <= pc && pc <= source)
 }
 
 fn rewrite_if_captured(instruction: &mut crate::bytecode::Instr, captured: &[u16]) {
