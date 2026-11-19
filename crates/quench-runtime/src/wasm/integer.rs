@@ -159,7 +159,7 @@ impl super::Lowering<'_> {
         &mut self,
         op: &wasmparser::Operator<'_>,
     ) -> Result<bool, crate::Diagnostic> {
-        use crate::bytecode::Op;
+        use crate::staged::wasm_emit;
         use I64BinaryOperator as Binary;
         let (arithmetic, product_high) = match op {
             wasmparser::Operator::I64Add128 => (Binary::Add, None),
@@ -181,9 +181,9 @@ impl super::Lowering<'_> {
             let depth = self.depth;
             self.depth = right + 1;
             let high = self.push()?;
-            self.emit(Op::WasmI64Binary, high, left, right, product_high as u32)?;
-            self.emit(Op::WasmI64Binary, left, left, right, arithmetic as u32)?;
-            self.emit(Op::Move, right, high, 0, 0)?;
+            self.emit_emission(wasm_emit::i64_binary(product_high, high, left, right))?;
+            self.emit_emission(wasm_emit::i64_binary(arithmetic, left, left, right))?;
+            self.emit_emission(wasm_emit::move_register(right, high))?;
             self.depth = depth;
         } else {
             let right_high = self.pop()?;
@@ -195,42 +195,27 @@ impl super::Lowering<'_> {
             let low = self.push()?;
             let carry = self.push()?;
             let high = self.push()?;
-            self.emit(
-                Op::WasmI64Binary,
-                low,
-                left_low,
-                right_low,
-                arithmetic as u32,
-            )?;
+            self.emit_emission(wasm_emit::i64_binary(arithmetic, low, left_low, right_low))?;
             let (compare_left, compare_right) = if arithmetic == Binary::Add {
                 (low, left_low)
             } else {
                 (left_low, right_low)
             };
-            self.emit(
-                Op::WasmI64Binary,
+            self.emit_emission(wasm_emit::i64_binary(
+                Binary::LessUnsigned,
                 carry,
                 compare_left,
                 compare_right,
-                Binary::LessUnsigned as u32,
-            )?;
-            self.emit(
-                Op::WasmScalarConvert,
+            ))?;
+            self.emit_emission(wasm_emit::scalar_convert(
                 carry,
                 carry,
-                0,
-                super::conversion::ScalarConversionOperator::ExtendI32Unsigned as u32,
-            )?;
-            self.emit(
-                Op::WasmI64Binary,
-                high,
-                left_high,
-                right_high,
-                arithmetic as u32,
-            )?;
-            self.emit(Op::WasmI64Binary, high, high, carry, arithmetic as u32)?;
-            self.emit(Op::Move, left_low, low, 0, 0)?;
-            self.emit(Op::Move, left_high, high, 0, 0)?;
+                super::conversion::ScalarConversionOperator::ExtendI32Unsigned,
+            ))?;
+            self.emit_emission(wasm_emit::i64_binary(arithmetic, high, left_high, right_high))?;
+            self.emit_emission(wasm_emit::i64_binary(arithmetic, high, high, carry))?;
+            self.emit_emission(wasm_emit::move_register(left_low, low))?;
+            self.emit_emission(wasm_emit::move_register(left_high, high))?;
             self.depth = depth;
         }
         self.push()?;
@@ -307,102 +292,6 @@ impl I64UnaryOperator {
             Width::I64 => WasmValue::I64(word as i64),
         }
     }
-}
-
-// First-class i32 opcodes name their operator so dispatch decodes no selector.
-// `I32BinaryOperator::evaluate` executes them through `staged::wasm::integer_binary`.
-macro_rules! i32_direct_operators {
-    ($($name:ident => $register:ident, $immediate:ident;)+) => {
-        impl I32BinaryOperator {
-            #[cfg(not(stencil_build))]
-            pub(crate) const fn register_op(self) -> crate::bytecode::Op {
-                match self { $(Self::$name => crate::bytecode::Op::$register,)+ }
-            }
-            #[cfg(not(stencil_build))]
-            pub(crate) const fn immediate_op(self) -> crate::bytecode::Op {
-                match self { $(Self::$name => crate::bytecode::Op::$immediate,)+ }
-            }
-            /// The i64 operator of the same name: the i64 selectors extend the i32 ones.
-            #[inline]
-            pub(crate) const fn widen(self) -> I64BinaryOperator {
-                match self { $(Self::$name => I64BinaryOperator::$name,)+ }
-            }
-            #[cfg(not(stencil_build))]
-            pub(crate) const fn from_register_op(op: crate::bytecode::Op) -> Option<Self> {
-                match op { $(crate::bytecode::Op::$register => Some(Self::$name),)+ _ => None }
-            }
-            #[cfg(not(stencil_build))]
-            pub(crate) const fn from_immediate_op(op: crate::bytecode::Op) -> Option<Self> {
-                match op { $(crate::bytecode::Op::$immediate => Some(Self::$name),)+ _ => None }
-            }
-        }
-    };
-}
-i32_direct_operators! {
-    Add => WasmI32Add, WasmI32AddImmediate;
-    Subtract => WasmI32Subtract, WasmI32SubtractImmediate;
-    Multiply => WasmI32Multiply, WasmI32MultiplyImmediate;
-    DivideSigned => WasmI32DivideSigned, WasmI32DivideSignedImmediate;
-    DivideUnsigned => WasmI32DivideUnsigned, WasmI32DivideUnsignedImmediate;
-    RemainderSigned => WasmI32RemainderSigned, WasmI32RemainderSignedImmediate;
-    RemainderUnsigned => WasmI32RemainderUnsigned, WasmI32RemainderUnsignedImmediate;
-    And => WasmI32And, WasmI32AndImmediate;
-    Or => WasmI32Or, WasmI32OrImmediate;
-    Xor => WasmI32Xor, WasmI32XorImmediate;
-    ShiftLeft => WasmI32ShiftLeft, WasmI32ShiftLeftImmediate;
-    ShiftRightSigned => WasmI32ShiftRightSigned, WasmI32ShiftRightSignedImmediate;
-    ShiftRightUnsigned => WasmI32ShiftRightUnsigned, WasmI32ShiftRightUnsignedImmediate;
-    RotateLeft => WasmI32RotateLeft, WasmI32RotateLeftImmediate;
-    RotateRight => WasmI32RotateRight, WasmI32RotateRightImmediate;
-    Equal => WasmI32Equal, WasmI32EqualImmediate;
-    NotEqual => WasmI32NotEqual, WasmI32NotEqualImmediate;
-    LessSigned => WasmI32LessSigned, WasmI32LessSignedImmediate;
-    LessUnsigned => WasmI32LessUnsigned, WasmI32LessUnsignedImmediate;
-    GreaterSigned => WasmI32GreaterSigned, WasmI32GreaterSignedImmediate;
-    GreaterUnsigned => WasmI32GreaterUnsigned, WasmI32GreaterUnsignedImmediate;
-    LessEqualSigned => WasmI32LessEqualSigned, WasmI32LessEqualSignedImmediate;
-    LessEqualUnsigned => WasmI32LessEqualUnsigned, WasmI32LessEqualUnsignedImmediate;
-    GreaterEqualSigned => WasmI32GreaterEqualSigned, WasmI32GreaterEqualSignedImmediate;
-    GreaterEqualUnsigned => WasmI32GreaterEqualUnsigned, WasmI32GreaterEqualUnsignedImmediate;
-}
-
-// A comparison and the conditional jump taken when it holds, with its negation.
-macro_rules! i32_comparison_jumps {
-    ($($name:ident => $jump:ident, $immediate:ident, $negation:ident;)+) => {
-        impl I32BinaryOperator {
-            #[cfg(not(stencil_build))]
-            pub(crate) const fn jump_op(self) -> Option<crate::bytecode::Op> {
-                match self { $(Self::$name => Some(crate::bytecode::Op::$jump),)+ _ => None }
-            }
-            #[cfg(not(stencil_build))]
-            pub(crate) const fn immediate_jump_op(self) -> Option<crate::bytecode::Op> {
-                match self { $(Self::$name => Some(crate::bytecode::Op::$immediate),)+ _ => None }
-            }
-            pub(crate) const fn negated_comparison(self) -> Option<Self> {
-                match self { $(Self::$name => Some(Self::$negation),)+ _ => None }
-            }
-            #[cfg(not(stencil_build))]
-            pub(crate) const fn from_jump_op(op: crate::bytecode::Op) -> Option<Self> {
-                match op { $(crate::bytecode::Op::$jump => Some(Self::$name),)+ _ => None }
-            }
-            #[cfg(not(stencil_build))]
-            pub(crate) const fn from_immediate_jump_op(op: crate::bytecode::Op) -> Option<Self> {
-                match op { $(crate::bytecode::Op::$immediate => Some(Self::$name),)+ _ => None }
-            }
-        }
-    };
-}
-i32_comparison_jumps! {
-    Equal => WasmJumpI32Equal, WasmJumpI32EqualImmediate, NotEqual;
-    NotEqual => WasmJumpI32NotEqual, WasmJumpI32NotEqualImmediate, Equal;
-    LessSigned => WasmJumpI32LessSigned, WasmJumpI32LessSignedImmediate, GreaterEqualSigned;
-    LessUnsigned => WasmJumpI32LessUnsigned, WasmJumpI32LessUnsignedImmediate, GreaterEqualUnsigned;
-    GreaterSigned => WasmJumpI32GreaterSigned, WasmJumpI32GreaterSignedImmediate, LessEqualSigned;
-    GreaterUnsigned => WasmJumpI32GreaterUnsigned, WasmJumpI32GreaterUnsignedImmediate, LessEqualUnsigned;
-    LessEqualSigned => WasmJumpI32LessEqualSigned, WasmJumpI32LessEqualSignedImmediate, GreaterSigned;
-    LessEqualUnsigned => WasmJumpI32LessEqualUnsigned, WasmJumpI32LessEqualUnsignedImmediate, GreaterUnsigned;
-    GreaterEqualSigned => WasmJumpI32GreaterEqualSigned, WasmJumpI32GreaterEqualSignedImmediate, LessSigned;
-    GreaterEqualUnsigned => WasmJumpI32GreaterEqualUnsigned, WasmJumpI32GreaterEqualUnsignedImmediate, LessUnsigned;
 }
 
 /// A bit-field extraction: `(value >>> shift) & mask`, the shared semantics of

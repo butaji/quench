@@ -22,8 +22,8 @@ use super::super::wasm_gc_allocate::{allocating_reads, allocating_result, pack};
 use super::super::wasm_gc_callout::GcCall;
 use super::super::wasm_gc_stage::{field_registers, structure_access};
 use super::{Planned, World, leak, slot};
-use crate::bytecode::{Op, WideInstruction};
-use crate::staged::wasm_gc::GcOp;
+use crate::bytecode::WideInstruction;
+use crate::staged::wasm_gc::{GcOp, GcStep};
 use crate::wasm::gc::{GcField, GcFieldAccess, GcFieldValue};
 use quench_bjit::padded_holes;
 use quench_bjit::wasm as codes;
@@ -68,7 +68,7 @@ fn callout(call: GcCall, flags: u32, destination: u16, operands: [Option<u16>; 3
 /// stores its data word, whose class the callout converts.
 fn field(instruction: WideInstruction, world: &World<'_>) -> Option<Vec<Planned>> {
     let op = instruction.op();
-    let access = GcFieldAccess::from_op(op)?;
+    let access = GcStep::of(op)?.field()?.1;
     let field = GcField::from_tag(instruction.imm())?;
     if matches!(field.value(), GcFieldValue::Vector) {
         return None;
@@ -131,13 +131,13 @@ pub(super) fn gc(pc: usize, instruction: WideInstruction, op: GcOp, world: &Worl
     let imm = instruction.imm();
     // A reference result is written whole (no wrap); an i32 result is wrapped by the row.
     let wrapped = codes::CALLOUT_RESULT | codes::CALLOUT_WRAP;
-    match (op, instruction.op()) {
-        (GcOp::ArrayLength, Op::WasmArrayLen) => callout(GcCall::ArrayLength, wrapped, a, [Some(b), None, None], imm, world),
-        (GcOp::Null, Op::WasmRefIsNull) => callout(GcCall::IsNull, wrapped, a, [Some(b), None, None], imm, world),
-        (GcOp::Null, Op::WasmRefAsNonNull) => callout(GcCall::AsNonNull, codes::CALLOUT_RESULT, a, [Some(b), None, None], imm, world),
-        (GcOp::Equal, Op::WasmRefEq) => callout(GcCall::RefEq, wrapped, a, [Some(b), Some(c), None], imm, world),
-        (GcOp::Test, Op::WasmRefTest) => callout(GcCall::RefTest, wrapped, a, [Some(b), None, None], imm, world),
-        (GcOp::Test, Op::WasmRefCast) => callout(GcCall::RefCast, codes::CALLOUT_RESULT, a, [Some(b), None, None], imm, world),
+    match (op, GcStep::of(instruction.op())) {
+        (GcOp::ArrayLength, Some(GcStep::ArrayLen)) => callout(GcCall::ArrayLength, wrapped, a, [Some(b), None, None], imm, world),
+        (GcOp::Null, Some(GcStep::IsNull)) => callout(GcCall::IsNull, wrapped, a, [Some(b), None, None], imm, world),
+        (GcOp::Null, Some(GcStep::AsNonNull)) => callout(GcCall::AsNonNull, codes::CALLOUT_RESULT, a, [Some(b), None, None], imm, world),
+        (GcOp::Equal, Some(GcStep::Equal)) => callout(GcCall::RefEq, wrapped, a, [Some(b), Some(c), None], imm, world),
+        (GcOp::Test, Some(GcStep::Test { cast: false, descriptor: false })) => callout(GcCall::RefTest, wrapped, a, [Some(b), None, None], imm, world),
+        (GcOp::Test, Some(GcStep::Test { cast: true, descriptor: false })) => callout(GcCall::RefCast, codes::CALLOUT_RESULT, a, [Some(b), None, None], imm, world),
         (GcOp::Field, _) => field(instruction, world),
         (GcOp::Allocating, _) => allocating(pc, instruction, world),
         _ => None,

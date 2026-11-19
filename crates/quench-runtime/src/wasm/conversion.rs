@@ -85,48 +85,26 @@ impl ScalarConversionOperator {
     }
 }
 
-/// The truncated values a `bits`-wide integer represents: `lower <= value <
-/// limit`.
-pub(crate) fn truncation_bounds(bits: u32, signed: bool) -> (f64, f64) {
-    let limit = (1_u128 << if signed { bits - 1 } else { bits }) as f64;
-    (if signed { -limit } else { 0.0 }, limit)
-}
-
-/// `value` truncated toward zero and clamped to the `bits`-wide integers; a NaN is 0.
-pub(crate) fn saturate(value: f64, bits: u32, signed: bool) -> i64 {
-    match (bits, signed) {
-        (i32::BITS, true) => i64::from(value as i32),
-        (i32::BITS, false) => i64::from(value as u32 as i32),
-        (i64::BITS, true) => value as i64,
-        (i64::BITS, false) => value as u64 as i64,
-        _ => unreachable!("Wasm integer width"),
-    }
-}
-
+/// The declared float-to-integer conversion, trapping or saturating, written from the spec alone:
+/// the oracle the staged rules (`staged::wasm_float::convert`, `saturated`) are tested against.
 #[cfg(test)]
-fn trunc_to_integer(
-    value: f64,
-    bits: u32,
-    signed: bool,
-    saturating: bool,
-) -> Result<i64, WasmTrap> {
-    if saturating {
-        return Ok(saturate(value, bits, signed));
-    }
-    if value.is_nan() {
-        return Err(WasmTrap::InvalidConversionToInteger);
-    }
-
-    let value = value.trunc();
-    let (lower, limit) = truncation_bounds(bits, signed);
-    if value < lower || value >= limit {
-        return Err(WasmTrap::IntegerOverflow);
-    }
-    Ok(if signed {
-        value as i64
+fn trunc_to_integer(value: f64, bits: u32, signed: bool, saturating: bool) -> Result<i64, WasmTrap> {
+    let (min, max): (i128, i128) = if signed {
+        (-(1_i128 << (bits - 1)), (1_i128 << (bits - 1)) - 1)
     } else {
-        value as u64 as i64
-    })
+        (0, (1_i128 << bits) - 1)
+    };
+    if value.is_nan() {
+        return if saturating { Ok(0) } else { Err(WasmTrap::InvalidConversionToInteger) };
+    }
+    let value = value.trunc();
+    if value < min as f64 {
+        return if saturating { Ok(min as i64) } else { Err(WasmTrap::IntegerOverflow) };
+    }
+    if value >= (max + 1) as f64 {
+        return if saturating { Ok(max as i64) } else { Err(WasmTrap::IntegerOverflow) };
+    }
+    Ok(if signed { value as i64 } else { value as u64 as i64 })
 }
 
 scalar_conversions! { value;

@@ -2,8 +2,10 @@
 
 use super::machine::{Machine, MachineStage};
 use super::wasm::Width;
-use super::wasm_float::{Float, Truncation};
-use crate::wasm::conversion::{ScalarConversionOperator, saturate, truncation_bounds};
+use super::wasm_float::{
+    Float, Truncation, copysign_bits, saturated, truncation_limits, unsigned_to_f32, unsigned_to_f64, widen,
+};
+use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 use crate::wasm::numeric::{canonical_nan_bits, sign_mask};
@@ -118,7 +120,7 @@ macro_rules! float_width {
                     Ok(<$float>::from_bits(left.to_bits() & right.to_bits()))
                 }
                 FloatBinary::Maximum => Ok(left.max(right)),
-                FloatBinary::CopySign => Ok(left.copysign(right)),
+                FloatBinary::CopySign => unreachable!("CopySign is `copysign_bits`"),
                 FloatBinary::Equal => Err(left == right),
                 FloatBinary::NotEqual => Err(left != right),
                 FloatBinary::Less => Err(left < right),
@@ -161,15 +163,6 @@ macro_rules! float_width {
 float_width!(operate_f32, operate_unary_f32, f32, u32);
 float_width!(operate_f64, operate_unary_f64, f64, u64);
 
-/// The float a word holds, exactly, as an f64.
-#[inline]
-fn float_value(float: Float, word: u64) -> f64 {
-    match float {
-        Float::F32 => f64::from(f32::from_bits(word as u32)),
-        Float::F64 => f64::from_bits(word),
-    }
-}
-
 impl Machine for ConcreteWasm {
     type Word = u64;
 }
@@ -208,13 +201,14 @@ impl MachineStage for ConcreteWasm {
 
     #[inline(always)]
     fn operate_float(&mut self, operator: FloatBinary, float: Float, left: u64, right: u64) -> u64 {
-        match float {
-            Float::F32 => operate_f32(
+        match (operator, float) {
+            (FloatBinary::CopySign, _) => copysign_bits(float, left, right),
+            (_, Float::F32) => operate_f32(
                 operator,
                 f32::from_bits(left as u32),
                 f32::from_bits(right as u32),
             ),
-            Float::F64 => operate_f64(operator, f64::from_bits(left), f64::from_bits(right)),
+            (_, Float::F64) => operate_f64(operator, f64::from_bits(left), f64::from_bits(right)),
         }
     }
 
@@ -228,7 +222,7 @@ impl MachineStage for ConcreteWasm {
 
     #[inline(always)]
     fn float_unordered(&mut self, float: Float, left: u64, right: u64) -> u64 {
-        u64::from(float_value(float, left).is_nan() || float_value(float, right).is_nan())
+        u64::from(widen(float, left).is_nan() || widen(float, right).is_nan())
     }
 
     #[inline(always)]
@@ -243,8 +237,8 @@ impl MachineStage for ConcreteWasm {
 
     #[inline(always)]
     fn truncation_overflows(&mut self, truncation: Truncation, value: u64) -> u64 {
-        let truncated = float_math!(f64, trunc, float_value(truncation.float, value));
-        let (lower, limit) = truncation_bounds(truncation.width.bits(), truncation.signed);
+        let truncated = float_math!(f64, trunc, widen(truncation.float, value));
+        let (lower, limit) = truncation_limits(truncation.width.bits(), truncation.signed);
         u64::from(truncated < lower || truncated >= limit)
     }
 
@@ -253,9 +247,7 @@ impl MachineStage for ConcreteWasm {
         use ScalarConversionOperator as Conversion;
         // A trapping truncation's operand is in range, where it truncates as it saturates.
         if let Some((truncation, _)) = operator.float_to_integer() {
-            let value = float_value(truncation.float, value);
-            let width = truncation.width;
-            return self.constant(width, saturate(value, width.bits(), truncation.signed));
+            return saturated(widen(truncation.float, value), truncation.width.bits(), truncation.signed);
         }
         // A 32-bit word is its payload zero-extended, as `WasmValue::from_bits` reads it.
         let low = value as u32;
@@ -267,11 +259,11 @@ impl MachineStage for ConcreteWasm {
             Conversion::ConvertI32SignedF32 => u64::from((low as i32 as f32).to_bits()),
             Conversion::ConvertI32UnsignedF32 => u64::from((low as f32).to_bits()),
             Conversion::ConvertI64SignedF32 => u64::from((value as i64 as f32).to_bits()),
-            Conversion::ConvertI64UnsignedF32 => u64::from((value as f32).to_bits()),
+            Conversion::ConvertI64UnsignedF32 => u64::from(unsigned_to_f32(value).to_bits()),
             Conversion::ConvertI32SignedF64 => f64::from(low as i32).to_bits(),
             Conversion::ConvertI32UnsignedF64 => f64::from(low).to_bits(),
             Conversion::ConvertI64SignedF64 => (value as i64 as f64).to_bits(),
-            Conversion::ConvertI64UnsignedF64 => (value as f64).to_bits(),
+            Conversion::ConvertI64UnsignedF64 => unsigned_to_f64(value).to_bits(),
             Conversion::PromoteF32 => f64::from(single()).to_bits(),
             Conversion::DemoteF64 => u64::from((double() as f32).to_bits()),
             Conversion::ReinterpretF32I32 | Conversion::ReinterpretI32F32 => u64::from(low),

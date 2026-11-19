@@ -138,3 +138,22 @@ fn check_division<S: WasmStage>(
     let overflow = stage.operate(Binary::And, Width::I32, is_minimum, is_negative_one);
     stage.trap_when(overflow, WasmTrap::IntegerOverflow)
 }
+
+/// The integer operator a tag names. A tag outside the family names no row, so the first operator
+/// stands in (the dispatch never reaches it).
+#[cfg(stencil_build)]
+pub(crate) const fn binary_operator(tag: u32) -> Binary {
+    match Binary::from_tag(tag) {
+        Some(operator) => operator,
+        None => Binary::Add,
+    }
+}
+
+/// The integer unary operator a tag names, as `binary_operator`.
+#[cfg(stencil_build)]
+pub(crate) const fn unary_operator(tag: u32) -> Unary {
+    match Unary::from_tag(tag) {
+        Some(operator) => operator,
+        None => Unary::EqualZero,
+    }
+}

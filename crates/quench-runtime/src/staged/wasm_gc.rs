@@ -301,8 +301,9 @@ pub(crate) enum GcStep {
 
 /// The one table of the Wasm GC value opcodes the value lane runs, each with its step (`GcStep::of`)
 /// or `None` for a call target (`Call`, which the step does not own). `wasm_gc_table!` hands the
-/// entries to a projector: `wasm_gc_step_of` makes `GcStep::of`'s match, `wasm_gc_names` the bare
-/// names the lane's handler table and `wasm_gc_value_ops!` apply their macro to. The list is written
+/// entries to a projector: `wasm_gc_step_of` makes `GcStep::of`'s match, `wasm_gc_op_of` makes
+/// `GcStep::op`'s reverse match, `wasm_gc_names` the bare names the lane's handler table and
+/// `wasm_gc_value_ops!` apply their macro to. The list is written
 /// here once; nothing else names these opcodes as a set.
 macro_rules! wasm_gc_table {
     ($projector:ident $extra:ident) => {
@@ -358,6 +359,18 @@ macro_rules! wasm_gc_step_of {
 }
 pub(crate) use wasm_gc_step_of;
 
+/// Projects `wasm_gc_table!`'s entries to the reverse map `GcStep::op`: the opcode whose entry is
+/// the step `$step`. Each value step has one entry, so the first match is the one.
+macro_rules! wasm_gc_op_of {
+    ($step:ident ; $($name:ident => $entry:expr,)*) => {
+        {
+            $(if $entry == $step { return Op::$name; })*
+            unreachable!("every GC value step has an opcode")
+        }
+    };
+}
+pub(crate) use wasm_gc_op_of;
+
 /// Projects `wasm_gc_table!`'s entries to the bare opcode names, applying `$then!` to them.
 macro_rules! wasm_gc_names {
     ($then:ident ; $($name:ident => $group:expr,)*) => {
@@ -384,10 +397,37 @@ const fn read_access(signed: Option<bool>) -> GcFieldAccess {
     }
 }
 
+/// The signedness of a read access, as `GcStep::StructGet` and `ArrayGet` carry it; a write has
+/// none (`None`), and no field step asks for one.
+const fn read_signed(access: GcFieldAccess) -> Option<bool> {
+    match access {
+        GcFieldAccess::Read | GcFieldAccess::Write => None,
+        GcFieldAccess::ReadSigned => Some(true),
+        GcFieldAccess::ReadUnsigned => Some(false),
+    }
+}
+
 impl GcStep {
     /// The step of `op`, `None` for an opcode that is no GC value operation (a call target is none).
     pub(crate) const fn of(op: Op) -> Option<Self> {
         wasm_gc_table!(wasm_gc_step_of op)
+    }
+
+    /// The opcode of this step: the one whose table entry is this step (the reverse of `of`).
+    pub(crate) fn op(self) -> Op {
+        let step = Some(self);
+        wasm_gc_table!(wasm_gc_op_of step)
+    }
+
+    /// The field step of an access of `aggregate` with `access`: a struct's or an array's read,
+    /// packed or plain, or its write.
+    pub(crate) const fn field_step(aggregate: Aggregate, access: GcFieldAccess) -> Self {
+        match (aggregate, access) {
+            (Aggregate::Struct, GcFieldAccess::Write) => Self::StructSet,
+            (Aggregate::Array, GcFieldAccess::Write) => Self::ArraySet,
+            (Aggregate::Struct, access) => Self::StructGet { signed: read_signed(access) },
+            (Aggregate::Array, access) => Self::ArrayGet { signed: read_signed(access) },
+        }
     }
 
     /// The group the tiers match: the coarse `GcOp` of this step.

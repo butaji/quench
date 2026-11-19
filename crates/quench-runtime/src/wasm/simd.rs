@@ -1,22 +1,16 @@
-//! Exact vector bits and admitted SIMD lane operations; no host SIMD dependency.
+//! Exact vector bits and admitted SIMD lane operations; no host SIMD dependency. The operators'
+//! semantics are `staged::wasm_simd_lanes` (shared with the b-jit rows); this module adds the
+//! `WasmValue` boundary, the kernel table the interpreter reads, and the interpreter's fast paths.
 
 use super::{V128_BYTES, WasmType, WasmValue};
 use crate::bytecode::{Op, Register};
+pub(crate) use crate::staged::wasm_simd_lanes::{SimdOperator, lane, lane_mask, replace};
 
 mod bits;
-mod integer;
 pub(crate) use bits::{bits_of, value_of};
 
 const SELECTOR_LANE_BITS: u32 = u8::BITS;
 const SELECTOR_LANE_MASK: u32 = u8::MAX as u32;
-
-#[inline(always)]
-fn vector(value: WasmValue) -> u128 {
-    let WasmValue::V128(bits) = value else {
-        unreachable!("decoded SIMD operand")
-    };
-    bits
-}
 
 #[inline(always)]
 fn scalar(value: WasmValue) -> u64 {
@@ -29,140 +23,15 @@ fn scalar(value: WasmValue) -> u64 {
     }
 }
 
-#[inline(always)] pub(crate) fn width_mask(width: u32) -> u128 {
-    u128::MAX >> (u128::BITS - width)
-}
-#[inline(always)] pub(crate) fn lane(bits: u128, width: u32, index: u8) -> u64 {
-    ((bits >> (width * u32::from(index))) & width_mask(width)) as u64
-}
-#[inline(always)] pub(crate) fn replace(bits: u128, width: u32, index: u8, value: u64) -> u128 {
-    let shift = width * u32::from(index);
-    let mask = width_mask(width);
-    (bits & !(mask << shift)) | ((u128::from(value) & mask) << shift)
-}
-#[inline(always)]
-fn splat(value: u64, width: u32) -> u128 {
-    (0..u128::BITS / width).fold(0, |bits, index| replace(bits, width, index as u8, value))
-}
-
-#[inline(always)] fn map_lanes(
-    left: u128,
-    right: Option<u128>,
-    width: u32,
-    mut operation: impl FnMut(u64, Option<u64>) -> u64,
-) -> WasmValue {
-    let mut result = 0;
-    for index in 0..u128::BITS / width {
-        let index = index as u8;
-        let value = operation(
-            lane(left, width, index),
-            right.map(|bits| lane(bits, width, index)),
-        );
-        result = replace(result, width, index, value);
-    }
-    WasmValue::V128(result)
-}
-
-macro_rules! float_lane_projection {
-    ($binary_fn:ident, $unary_fn:ident, $pseudo_fn:ident, $float:ty, $bits:ty, $binary:ident, $unary:ident) => {
-        #[inline(always)]
-        fn $binary_fn(left: u128, right: u128, operator: super::float::$binary) -> WasmValue {
-            map_lanes(left, Some(right), <$bits>::BITS, |left, right| {
-                let value = operator.evaluate(
-                    <$float>::from_bits(left as $bits),
-                    <$float>::from_bits(right.unwrap() as $bits),
-                );
-                match value {
-                    WasmValue::I32(comparison) => {
-                        if comparison != 0 {
-                            width_mask(<$bits>::BITS) as u64
-                        } else {
-                            0
-                        }
-                    }
-                    value => scalar(value),
-                }
-            })
-        }
-        #[inline(always)]
-        fn $unary_fn(value: u128, operator: super::float::$unary) -> WasmValue {
-            map_lanes(value, None, <$bits>::BITS, |bits, _| {
-                scalar(operator.evaluate(<$float>::from_bits(bits as $bits)))
-            })
-        }
-        #[inline(always)]
-        fn $pseudo_fn(left: u128, right: u128, comparison: super::float::$binary) -> WasmValue {
-            map_lanes(left, Some(right), <$bits>::BITS, |left, right| {
-                let right = right.unwrap();
-                // The comparison decides selection; the original bits own the result.
-                let WasmValue::I32(select_right) = comparison.evaluate(
-                    <$float>::from_bits(left as $bits),
-                    <$float>::from_bits(right as $bits),
-                ) else {
-                    unreachable!("pseudo-extrema comparison")
-                };
-                if select_right != 0 { right } else { left }
-            })
-        }
-    };
-}
-float_lane_projection!(
-    f32_binary,
-    f32_unary,
-    f32_pseudo,
-    f32,
-    u32,
-    F32BinaryOperator,
-    F32UnaryOperator
-);
-float_lane_projection!(
-    f64_binary,
-    f64_unary,
-    f64_pseudo,
-    f64,
-    u64,
-    F64BinaryOperator,
-    F64UnaryOperator
-);
-
-// Scalar conversion signatures determine lane interpretation and active lanes.
-// Narrowing zeroes the unused upper lanes; widening reads only the low lanes.
-#[inline(always)]
-fn convert(value: u128, op: super::conversion::ScalarConversionOperator) -> WasmValue {
-    use super::ScalarBits;
-    let width = |ty| match ty {
-        WasmType::I32 | WasmType::F32 => u32::BITS,
-        WasmType::F64 => u64::BITS,
-        _ => unreachable!("admitted SIMD conversion signature"),
-    };
-    let source = op.source_type();
-    let source_width = width(source);
-    let result_width = width(op.result_type());
-    let mut result = 0;
-    for index in 0..u128::BITS / source_width.max(result_width) {
-        let bits = lane(value, source_width, index as u8);
-        let bits = if source_width == u32::BITS {
-            ScalarBits::Bits32(bits as u32)
-        } else {
-            ScalarBits::Bits64(bits)
-        };
-        let input = source.decode(bits).expect("scalar lane signature");
-        let output = op.evaluate(input).expect("nontrapping SIMD conversion");
-        result = replace(result, result_width, index as u8, scalar(output));
-    }
-    WasmValue::V128(result)
-}
-
-/// An operator as an execution needs it (`SimdOperator::kernel`).
+/// An operator as an execution needs it (`SimdKernel::of`): its operand and result types, its lane
+/// count, and the operator whose bits body computes it.
 pub(crate) struct SimdKernel {
     pub(crate) left: WasmType,
     pub(crate) right: Option<WasmType>,
     /// How many lanes a lane immediate may name: one for an operator without one.
     lanes: u32,
-    pub(crate) apply: fn(WasmValue, Option<WasmValue>, u8) -> WasmValue,
-    /// `apply` on operands and result as bits (`apply_bits`), monomorphic per operator: its
-    /// body is the same expression with the operand types folded in.
-    pub(crate) bits: fn(u128, u128, u8) -> u128,
+    result: WasmType,
+    operator: SimdOperator,
 }
 
 impl SimdKernel {
@@ -179,323 +48,90 @@ impl SimdKernel {
         if (lane as u32) < kernel.lanes { Some((kernel, lane)) } else { None }
     }
 
-    /// The type of the operator's result, read off its own semantics: a kernel is pure and
-    /// total, so applied to zero operands it answers with a value of that type.
-    pub(crate) fn result_type(&self, lane: u8) -> WasmType {
-        self.apply_bits_typed(0, 0, lane).ty()
+    /// The type of the operator's result, from its table entry.
+    pub(crate) fn result_type(&self, _lane: u8) -> WasmType {
+        self.result
+    }
+
+    /// The type of the result of the operator `selector` names.
+    pub(crate) fn result_of(selector: u32) -> WasmType {
+        SimdOperator::KERNELS[(selector >> SELECTOR_LANE_BITS) as usize].result
+    }
+
+    /// The operator applied to operands given as bits, its result as bits: a vector whole, a
+    /// scalar in the low bits (`ScalarBits`), as compiled code holds them.
+    #[inline(always)]
+    pub(crate) fn apply_bits(&self, left: u128, right: u128, lane: u8) -> u128 {
+        self.operator.bits(left, right, lane)
     }
 }
 
-/// An operand of `ty` given as bits, as `SimdKernel::bits` reads it.
-#[inline(always)]
-fn bits_value(ty: WasmType, bits: u128) -> WasmValue {
-    match ty {
-        WasmType::V128 => WasmValue::V128(bits),
-        ty => WasmValue::from_bits(ty, bits as u64),
-    }
-}
-
-/// A result as bits: a vector whole, a scalar in the low bits (`ScalarBits`).
-#[inline(always)]
-fn value_bits(value: WasmValue) -> u128 {
-    match value {
-        WasmValue::V128(bits) => bits,
-        value => u128::from(scalar(value)),
-    }
-}
-
-/// The lanes a lane immediate may name, from the operator's lane width when it has one.
-const fn total_lanes(widths: &[u32]) -> u32 {
-    match widths {
-        [width] => u128::BITS / *width,
+/// The lanes a lane immediate may name: the width's count when the operator takes one (`indexed`),
+/// one otherwise.
+const fn lane_count(indexed: &[&str], width: u32) -> u32 {
+    match indexed {
+        [_] => 128 / width,
         _ => 1,
     }
 }
 
-macro_rules! simd_operators {
-    ($($name:ident [$($lane:ident: $width:expr)?]: $left:ident, $right:expr => |$a:ident, $b:ident, $l:ident| $body:expr;)* ) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        #[repr(u32)]
-        pub(crate) enum SimdOperator { $($name,)* }
+/// The kernel table, one entry per operator in tag order, generated from the operator list.
+macro_rules! simd_kernels {
+    ($($name:ident $([$lane:ident])? : $width:expr, $left:ident, $right:expr, $result:ident => |$a:ident, $b:ident, $l:ident| $body:expr;)*) => {
         impl SimdOperator {
-            const ALL: &'static [Self] = &[$(Self::$name,)*];
-            /// Each operator's signature and body by selector position, so an execution reads
-            /// one table entry instead of matching the operator for each of them.
             const KERNELS: &'static [SimdKernel] = &[$(SimdKernel {
                 left: WasmType::$left,
                 right: $right,
-                lanes: total_lanes(&[$($width)?]),
-                apply: |$a, $b, $l| { let _ = (&$a, &$b, &$l); $body },
-                bits: |left: u128, right: u128, $l: u8| {
-                    let $a = bits_value(WasmType::$left, left);
-                    let $b = { let ty: Option<WasmType> = $right; ty.map(|ty| bits_value(ty, right)) };
-                    let _ = (&$a, &$b, &$l);
-                    value_bits($body)
-                },
+                lanes: lane_count(&[$(stringify!($lane))?], $width),
+                result: WasmType::$result,
+                operator: SimdOperator::$name,
             },)*];
-            pub(crate) fn from_selector(selector: u32) -> Option<(Self, u8)> {
-                let (_, lane) = SimdKernel::of(selector)?;
-                Some((Self::ALL[(selector >> SELECTOR_LANE_BITS) as usize], lane))
-            }
-            pub(crate) fn selector(self, lane: u8) -> u32 { ((self as u32) << SELECTOR_LANE_BITS) | u32::from(lane) }
+        }
+    };
+}
+crate::staged::wasm_simd_lanes::simd_operator_list!(simd_kernels);
+
+/// The wasmparser operator of each SIMD operator, generated from the operator list: a lane
+/// operator's lane immediate is read from the instruction.
+macro_rules! wasm_operators {
+    ($($name:ident $([$lane:ident])? : $width:expr, $left:ident, $right:expr, $result:ident => |$a:ident, $b:ident, $l:ident| $body:expr;)*) => {
+        impl SimdOperator {
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, u8)> {
                 match op {
-                    $(wasmparser::Operator::$name $({$lane})? => Some((Self::$name, [$(*$lane)?].first().copied().unwrap_or(0))),)*
+                    $(wasmparser::Operator::$name $({ $lane })? => Some((Self::$name, [$(*$lane)?].first().copied().unwrap_or(0))),)*
                     _ => None,
                 }
             }
-            pub(crate) fn right_type(self) -> Option<WasmType> { Self::KERNELS[self as usize].right }
-            pub(crate) fn apply(self, left: WasmValue, right: Option<WasmValue>, index: u8) -> WasmValue {
-                match self {
-                    $(Self::$name => { let ($a, $b, $l) = (left, right, index); let _ = (&$a, &$b, &$l); $body },)*
-                }
-            }
         }
+    };
+}
+crate::staged::wasm_simd_lanes::simd_operator_list!(wasm_operators);
 
+impl SimdOperator {
+    pub(crate) fn from_selector(selector: u32) -> Option<(Self, u8)> {
+        let (_, lane) = SimdKernel::of(selector)?;
+        Some((Self::ALL[(selector >> SELECTOR_LANE_BITS) as usize], lane))
+    }
+
+    pub(crate) fn selector(self, lane: u8) -> u32 {
+        ((self as u32) << SELECTOR_LANE_BITS) | u32::from(lane)
+    }
+
+    pub(crate) fn right_type(self) -> Option<WasmType> {
+        Self::KERNELS[self as usize].right
+    }
+
+    /// The operator on `left` and `right` at the `WasmValue` boundary: the bits body, typed by the
+    /// kernel's result.
+    pub(crate) fn apply(self, left: WasmValue, right: Option<WasmValue>, index: u8) -> WasmValue {
+        let right = right.map_or(0, bits_of);
+        value_of(Self::KERNELS[self as usize].result, self.bits(bits_of(left), right, index))
     }
 }
 
-simd_operators! {
-  V128Not []: V128, None => |a,b,l| WasmValue::V128(!vector(a));
-  V128And []: V128, Some(WasmType::V128) => |a,b,l| WasmValue::V128(vector(a) & vector(b.unwrap()));
-  V128AndNot []: V128, Some(WasmType::V128) => |a,b,l| WasmValue::V128(vector(a) & !vector(b.unwrap()));
-  V128Or []: V128, Some(WasmType::V128) => |a,b,l| WasmValue::V128(vector(a) | vector(b.unwrap()));
-  V128Xor []: V128, Some(WasmType::V128) => |a,b,l| WasmValue::V128(vector(a) ^ vector(b.unwrap()));
-  V128AnyTrue []: V128, None => |a,b,l| WasmValue::I32(i32::from(vector(a) != 0));
-  I8x16Swizzle []: V128, Some(WasmType::V128) => |a,b,l| WasmValue::V128(swizzle(vector(a), vector(b.unwrap())));
-  I8x16Splat []: I32, None => |a,b,l| WasmValue::V128(splat(scalar(a), u8::BITS));
-  I16x8Splat []: I32, None => |a,b,l| WasmValue::V128(splat(scalar(a), u16::BITS));
-  I32x4Splat []: I32, None => |a,b,l| WasmValue::V128(splat(scalar(a), u32::BITS));
-  I64x2Splat []: I64, None => |a,b,l| WasmValue::V128(splat(scalar(a), u64::BITS));
-  F32x4Splat []: F32, None => |a,b,l| WasmValue::V128(splat(scalar(a), u32::BITS));
-  F64x2Splat []: F64, None => |a,b,l| WasmValue::V128(splat(scalar(a), u64::BITS));
-  I8x16ExtractLaneS [lane: u8::BITS]: V128, None => |a,b,l| WasmValue::I32(lane(vector(a), u8::BITS,l) as u8 as i8 as i32);
-  I8x16ExtractLaneU [lane: u8::BITS]: V128, None => |a,b,l| WasmValue::I32(lane(vector(a), u8::BITS,l) as i32);
-  I16x8ExtractLaneS [lane: u16::BITS]: V128, None => |a,b,l| WasmValue::I32(lane(vector(a), u16::BITS,l) as u16 as i16 as i32);
-  I16x8ExtractLaneU [lane: u16::BITS]: V128, None => |a,b,l| WasmValue::I32(lane(vector(a), u16::BITS,l) as i32);
-  I32x4ExtractLane [lane: u32::BITS]: V128, None => |a,b,l| WasmValue::I32(lane(vector(a), u32::BITS,l) as i32);
-  I64x2ExtractLane [lane: u64::BITS]: V128, None => |a,b,l| WasmValue::I64(lane(vector(a), u64::BITS,l) as i64);
-  F32x4ExtractLane [lane: u32::BITS]: V128, None => |a,b,l| WasmValue::F32(lane(vector(a), u32::BITS,l) as u32);
-  F64x2ExtractLane [lane: u64::BITS]: V128, None => |a,b,l| WasmValue::F64(lane(vector(a), u64::BITS,l));
-  I8x16ReplaceLane [lane: u8::BITS]: V128, Some(WasmType::I32) => |a,b,l| WasmValue::V128(replace(vector(a),u8::BITS,l,scalar(b.unwrap())));
-  I16x8ReplaceLane [lane: u16::BITS]: V128, Some(WasmType::I32) => |a,b,l| WasmValue::V128(replace(vector(a),u16::BITS,l,scalar(b.unwrap())));
-  I32x4ReplaceLane [lane: u32::BITS]: V128, Some(WasmType::I32) => |a,b,l| WasmValue::V128(replace(vector(a),u32::BITS,l,scalar(b.unwrap())));
-  I64x2ReplaceLane [lane: u64::BITS]: V128, Some(WasmType::I64) => |a,b,l| WasmValue::V128(replace(vector(a),u64::BITS,l,scalar(b.unwrap())));
-  F32x4ReplaceLane [lane: u32::BITS]: V128, Some(WasmType::F32) => |a,b,l| WasmValue::V128(replace(vector(a),u32::BITS,l,scalar(b.unwrap())));
-  F64x2ReplaceLane [lane: u64::BITS]: V128, Some(WasmType::F64) => |a,b,l| WasmValue::V128(replace(vector(a),u64::BITS,l,scalar(b.unwrap())));
-  F32x4Add []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::Add);
-  F32x4Sub []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::Subtract);
-  F32x4Mul []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::Multiply);
-  F32x4Div []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::Divide);
-  F32x4Min []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::Minimum);
-  F32x4Max []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::Maximum);
-  F32x4Eq []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::Equal);
-  F32x4Ne []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::NotEqual);
-  F32x4Lt []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::Less);
-  F32x4Gt []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::Greater);
-  F32x4Le []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::LessEqual);
-  F32x4Ge []: V128, Some(WasmType::V128) => |a,b,l| f32_binary(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::GreaterEqual);
-  F32x4PMin []: V128, Some(WasmType::V128) => |a,b,l| f32_pseudo(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::Greater);
-  F32x4PMax []: V128, Some(WasmType::V128) => |a,b,l| f32_pseudo(vector(a),vector(b.unwrap()),super::float::F32BinaryOperator::Less);
-  F32x4Abs []: V128, None => |a,b,l| f32_unary(vector(a),super::float::F32UnaryOperator::Absolute);
-  F32x4Neg []: V128, None => |a,b,l| f32_unary(vector(a),super::float::F32UnaryOperator::Negate);
-  F32x4Sqrt []: V128, None => |a,b,l| f32_unary(vector(a),super::float::F32UnaryOperator::SquareRoot);
-  F32x4Ceil []: V128, None => |a,b,l| f32_unary(vector(a),super::float::F32UnaryOperator::Ceiling);
-  F32x4Floor []: V128, None => |a,b,l| f32_unary(vector(a),super::float::F32UnaryOperator::Floor);
-  F32x4Trunc []: V128, None => |a,b,l| f32_unary(vector(a),super::float::F32UnaryOperator::Truncate);
-  F32x4Nearest []: V128, None => |a,b,l| f32_unary(vector(a),super::float::F32UnaryOperator::Nearest);
-  F64x2Add []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::Add);
-  F64x2Sub []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::Subtract);
-  F64x2Mul []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::Multiply);
-  F64x2Div []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::Divide);
-  F64x2Min []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::Minimum);
-  F64x2Max []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::Maximum);
-  F64x2Eq []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::Equal);
-  F64x2Ne []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::NotEqual);
-  F64x2Lt []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::Less);
-  F64x2Gt []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::Greater);
-  F64x2Le []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::LessEqual);
-  F64x2Ge []: V128, Some(WasmType::V128) => |a,b,l| f64_binary(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::GreaterEqual);
-  F64x2PMin []: V128, Some(WasmType::V128) => |a,b,l| f64_pseudo(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::Greater);
-  F64x2PMax []: V128, Some(WasmType::V128) => |a,b,l| f64_pseudo(vector(a),vector(b.unwrap()),super::float::F64BinaryOperator::Less);
-  F64x2Abs []: V128, None => |a,b,l| f64_unary(vector(a),super::float::F64UnaryOperator::Absolute);
-  F64x2Neg []: V128, None => |a,b,l| f64_unary(vector(a),super::float::F64UnaryOperator::Negate);
-  F64x2Sqrt []: V128, None => |a,b,l| f64_unary(vector(a),super::float::F64UnaryOperator::SquareRoot);
-  F64x2Ceil []: V128, None => |a,b,l| f64_unary(vector(a),super::float::F64UnaryOperator::Ceiling);
-  F64x2Floor []: V128, None => |a,b,l| f64_unary(vector(a),super::float::F64UnaryOperator::Floor);
-  F64x2Trunc []: V128, None => |a,b,l| f64_unary(vector(a),super::float::F64UnaryOperator::Truncate);
-  F64x2Nearest []: V128, None => |a,b,l| f64_unary(vector(a),super::float::F64UnaryOperator::Nearest);
-  I8x16Eq []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::Equal);
-  I8x16Ne []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::NotEqual);
-  I8x16LtS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::LessSigned);
-  I8x16GtS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::GreaterSigned);
-  I8x16LeS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::LessEqualSigned);
-  I8x16GeS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::GreaterEqualSigned);
-  I8x16LtU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::LessUnsigned);
-  I8x16GtU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::GreaterUnsigned);
-  I8x16LeU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::LessEqualUnsigned);
-  I8x16GeU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::GreaterEqualUnsigned);
-  I8x16Add []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::Add);
-  I8x16Sub []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::Subtract);
-  I8x16Abs []: V128, None => |a,b,l| integer::absolute(vector(a),u8::BITS);
-  I8x16Neg []: V128, None => |a,b,l| integer::negate(vector(a),u8::BITS);
-  I8x16AllTrue []: V128, None => |a,b,l| integer::all_true(vector(a),u8::BITS);
-  I8x16Bitmask []: V128, None => |a,b,l| integer::bitmask(vector(a),u8::BITS);
-  I8x16Shl []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u8::BITS,super::integer::I64BinaryOperator::ShiftLeft);
-  I8x16ShrS []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u8::BITS,super::integer::I64BinaryOperator::ShiftRightSigned);
-  I8x16ShrU []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u8::BITS,super::integer::I64BinaryOperator::ShiftRightUnsigned);
-  I8x16MinS []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::LessSigned);
-  I8x16MinU []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::LessUnsigned);
-  I8x16MaxS []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::GreaterSigned);
-  I8x16MaxU []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u8::BITS,super::integer::I64BinaryOperator::GreaterUnsigned);
-  I8x16AddSatS []: V128, Some(WasmType::V128) => |a,b,l| integer::saturating(vector(a),vector(b.unwrap()),u8::BITS,integer::Signedness::Signed,super::integer::I64BinaryOperator::Add);
-  I8x16AddSatU []: V128, Some(WasmType::V128) => |a,b,l| integer::saturating(vector(a),vector(b.unwrap()),u8::BITS,integer::Signedness::Unsigned,super::integer::I64BinaryOperator::Add);
-  I8x16SubSatS []: V128, Some(WasmType::V128) => |a,b,l| integer::saturating(vector(a),vector(b.unwrap()),u8::BITS,integer::Signedness::Signed,super::integer::I64BinaryOperator::Subtract);
-  I8x16SubSatU []: V128, Some(WasmType::V128) => |a,b,l| integer::saturating(vector(a),vector(b.unwrap()),u8::BITS,integer::Signedness::Unsigned,super::integer::I64BinaryOperator::Subtract);
-  I8x16AvgrU []: V128, Some(WasmType::V128) => |a,b,l| integer::average(vector(a),vector(b.unwrap()),u8::BITS);
-  I8x16NarrowI16x8S []: V128, Some(WasmType::V128) => |a,b,l| integer::narrow(vector(a),vector(b.unwrap()),u8::BITS,integer::Signedness::Signed);
-  I8x16NarrowI16x8U []: V128, Some(WasmType::V128) => |a,b,l| integer::narrow(vector(a),vector(b.unwrap()),u8::BITS,integer::Signedness::Unsigned);
-  I16x8Eq []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::Equal);
-  I16x8Ne []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::NotEqual);
-  I16x8LtS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::LessSigned);
-  I16x8GtS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::GreaterSigned);
-  I16x8LeS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::LessEqualSigned);
-  I16x8GeS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::GreaterEqualSigned);
-  I16x8LtU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::LessUnsigned);
-  I16x8GtU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::GreaterUnsigned);
-  I16x8LeU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::LessEqualUnsigned);
-  I16x8GeU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::GreaterEqualUnsigned);
-  I16x8Add []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::Add);
-  I16x8Sub []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::Subtract);
-  I16x8Mul []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::Multiply);
-  I16x8Abs []: V128, None => |a,b,l| integer::absolute(vector(a),u16::BITS);
-  I16x8Neg []: V128, None => |a,b,l| integer::negate(vector(a),u16::BITS);
-  I16x8AllTrue []: V128, None => |a,b,l| integer::all_true(vector(a),u16::BITS);
-  I16x8Bitmask []: V128, None => |a,b,l| integer::bitmask(vector(a),u16::BITS);
-  I16x8Shl []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u16::BITS,super::integer::I64BinaryOperator::ShiftLeft);
-  I16x8ShrS []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u16::BITS,super::integer::I64BinaryOperator::ShiftRightSigned);
-  I16x8ShrU []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u16::BITS,super::integer::I64BinaryOperator::ShiftRightUnsigned);
-  I16x8MinS []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::LessSigned);
-  I16x8MinU []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::LessUnsigned);
-  I16x8MaxS []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::GreaterSigned);
-  I16x8MaxU []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u16::BITS,super::integer::I64BinaryOperator::GreaterUnsigned);
-  I16x8AddSatS []: V128, Some(WasmType::V128) => |a,b,l| integer::saturating(vector(a),vector(b.unwrap()),u16::BITS,integer::Signedness::Signed,super::integer::I64BinaryOperator::Add);
-  I16x8AddSatU []: V128, Some(WasmType::V128) => |a,b,l| integer::saturating(vector(a),vector(b.unwrap()),u16::BITS,integer::Signedness::Unsigned,super::integer::I64BinaryOperator::Add);
-  I16x8SubSatS []: V128, Some(WasmType::V128) => |a,b,l| integer::saturating(vector(a),vector(b.unwrap()),u16::BITS,integer::Signedness::Signed,super::integer::I64BinaryOperator::Subtract);
-  I16x8SubSatU []: V128, Some(WasmType::V128) => |a,b,l| integer::saturating(vector(a),vector(b.unwrap()),u16::BITS,integer::Signedness::Unsigned,super::integer::I64BinaryOperator::Subtract);
-  I16x8AvgrU []: V128, Some(WasmType::V128) => |a,b,l| integer::average(vector(a),vector(b.unwrap()),u16::BITS);
-  I16x8ExtendLowI8x16S []: V128, None => |a,b,l| integer::extend(vector(a),u16::BITS,integer::Signedness::Signed,integer::Half::Low);
-  I16x8ExtMulLowI8x16S []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u16::BITS,integer::Signedness::Signed,integer::Half::Low);
-  I16x8ExtendLowI8x16U []: V128, None => |a,b,l| integer::extend(vector(a),u16::BITS,integer::Signedness::Unsigned,integer::Half::Low);
-  I16x8ExtMulLowI8x16U []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u16::BITS,integer::Signedness::Unsigned,integer::Half::Low);
-  I16x8ExtendHighI8x16S []: V128, None => |a,b,l| integer::extend(vector(a),u16::BITS,integer::Signedness::Signed,integer::Half::High);
-  I16x8ExtMulHighI8x16S []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u16::BITS,integer::Signedness::Signed,integer::Half::High);
-  I16x8ExtendHighI8x16U []: V128, None => |a,b,l| integer::extend(vector(a),u16::BITS,integer::Signedness::Unsigned,integer::Half::High);
-  I16x8ExtMulHighI8x16U []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u16::BITS,integer::Signedness::Unsigned,integer::Half::High);
-  I16x8ExtAddPairwiseI8x16S []: V128, None => |a,b,l| integer::pairwise_add(vector(a),u16::BITS,integer::Signedness::Signed);
-  I16x8ExtAddPairwiseI8x16U []: V128, None => |a,b,l| integer::pairwise_add(vector(a),u16::BITS,integer::Signedness::Unsigned);
-  I16x8NarrowI32x4S []: V128, Some(WasmType::V128) => |a,b,l| integer::narrow(vector(a),vector(b.unwrap()),u16::BITS,integer::Signedness::Signed);
-  I16x8NarrowI32x4U []: V128, Some(WasmType::V128) => |a,b,l| integer::narrow(vector(a),vector(b.unwrap()),u16::BITS,integer::Signedness::Unsigned);
-  I32x4Eq []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::Equal);
-  I32x4Ne []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::NotEqual);
-  I32x4LtS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::LessSigned);
-  I32x4GtS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::GreaterSigned);
-  I32x4LeS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::LessEqualSigned);
-  I32x4GeS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::GreaterEqualSigned);
-  I32x4LtU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::LessUnsigned);
-  I32x4GtU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::GreaterUnsigned);
-  I32x4LeU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::LessEqualUnsigned);
-  I32x4GeU []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::GreaterEqualUnsigned);
-  I32x4Add []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::Add);
-  I32x4Sub []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::Subtract);
-  I32x4Mul []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::Multiply);
-  I32x4Abs []: V128, None => |a,b,l| integer::absolute(vector(a),u32::BITS);
-  I32x4Neg []: V128, None => |a,b,l| integer::negate(vector(a),u32::BITS);
-  I32x4AllTrue []: V128, None => |a,b,l| integer::all_true(vector(a),u32::BITS);
-  I32x4Bitmask []: V128, None => |a,b,l| integer::bitmask(vector(a),u32::BITS);
-  I32x4Shl []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u32::BITS,super::integer::I64BinaryOperator::ShiftLeft);
-  I32x4ShrS []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u32::BITS,super::integer::I64BinaryOperator::ShiftRightSigned);
-  I32x4ShrU []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u32::BITS,super::integer::I64BinaryOperator::ShiftRightUnsigned);
-  I32x4MinS []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::LessSigned);
-  I32x4MinU []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::LessUnsigned);
-  I32x4MaxS []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::GreaterSigned);
-  I32x4MaxU []: V128, Some(WasmType::V128) => |a,b,l| integer::extrema(vector(a),vector(b.unwrap()),u32::BITS,super::integer::I64BinaryOperator::GreaterUnsigned);
-  I32x4ExtendLowI16x8S []: V128, None => |a,b,l| integer::extend(vector(a),u32::BITS,integer::Signedness::Signed,integer::Half::Low);
-  I32x4ExtMulLowI16x8S []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u32::BITS,integer::Signedness::Signed,integer::Half::Low);
-  I32x4ExtendLowI16x8U []: V128, None => |a,b,l| integer::extend(vector(a),u32::BITS,integer::Signedness::Unsigned,integer::Half::Low);
-  I32x4ExtMulLowI16x8U []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u32::BITS,integer::Signedness::Unsigned,integer::Half::Low);
-  I32x4ExtendHighI16x8S []: V128, None => |a,b,l| integer::extend(vector(a),u32::BITS,integer::Signedness::Signed,integer::Half::High);
-  I32x4ExtMulHighI16x8S []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u32::BITS,integer::Signedness::Signed,integer::Half::High);
-  I32x4ExtendHighI16x8U []: V128, None => |a,b,l| integer::extend(vector(a),u32::BITS,integer::Signedness::Unsigned,integer::Half::High);
-  I32x4ExtMulHighI16x8U []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u32::BITS,integer::Signedness::Unsigned,integer::Half::High);
-  I32x4ExtAddPairwiseI16x8S []: V128, None => |a,b,l| integer::pairwise_add(vector(a),u32::BITS,integer::Signedness::Signed);
-  I32x4ExtAddPairwiseI16x8U []: V128, None => |a,b,l| integer::pairwise_add(vector(a),u32::BITS,integer::Signedness::Unsigned);
-  I64x2Eq []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u64::BITS,super::integer::I64BinaryOperator::Equal);
-  I64x2Ne []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u64::BITS,super::integer::I64BinaryOperator::NotEqual);
-  I64x2LtS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u64::BITS,super::integer::I64BinaryOperator::LessSigned);
-  I64x2GtS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u64::BITS,super::integer::I64BinaryOperator::GreaterSigned);
-  I64x2LeS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u64::BITS,super::integer::I64BinaryOperator::LessEqualSigned);
-  I64x2GeS []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u64::BITS,super::integer::I64BinaryOperator::GreaterEqualSigned);
-  I64x2Add []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u64::BITS,super::integer::I64BinaryOperator::Add);
-  I64x2Sub []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u64::BITS,super::integer::I64BinaryOperator::Subtract);
-  I64x2Mul []: V128, Some(WasmType::V128) => |a,b,l| integer::binary(vector(a),vector(b.unwrap()),u64::BITS,super::integer::I64BinaryOperator::Multiply);
-  I64x2Abs []: V128, None => |a,b,l| integer::absolute(vector(a),u64::BITS);
-  I64x2Neg []: V128, None => |a,b,l| integer::negate(vector(a),u64::BITS);
-  I64x2AllTrue []: V128, None => |a,b,l| integer::all_true(vector(a),u64::BITS);
-  I64x2Bitmask []: V128, None => |a,b,l| integer::bitmask(vector(a),u64::BITS);
-  I64x2Shl []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u64::BITS,super::integer::I64BinaryOperator::ShiftLeft);
-  I64x2ShrS []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u64::BITS,super::integer::I64BinaryOperator::ShiftRightSigned);
-  I64x2ShrU []: V128, Some(WasmType::I32) => |a,b,l| integer::shift(vector(a),scalar(b.unwrap()) as u32,u64::BITS,super::integer::I64BinaryOperator::ShiftRightUnsigned);
-  I64x2ExtendLowI32x4S []: V128, None => |a,b,l| integer::extend(vector(a),u64::BITS,integer::Signedness::Signed,integer::Half::Low);
-  I64x2ExtMulLowI32x4S []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u64::BITS,integer::Signedness::Signed,integer::Half::Low);
-  I64x2ExtendLowI32x4U []: V128, None => |a,b,l| integer::extend(vector(a),u64::BITS,integer::Signedness::Unsigned,integer::Half::Low);
-  I64x2ExtMulLowI32x4U []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u64::BITS,integer::Signedness::Unsigned,integer::Half::Low);
-  I64x2ExtendHighI32x4S []: V128, None => |a,b,l| integer::extend(vector(a),u64::BITS,integer::Signedness::Signed,integer::Half::High);
-  I64x2ExtMulHighI32x4S []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u64::BITS,integer::Signedness::Signed,integer::Half::High);
-  I64x2ExtendHighI32x4U []: V128, None => |a,b,l| integer::extend(vector(a),u64::BITS,integer::Signedness::Unsigned,integer::Half::High);
-  I64x2ExtMulHighI32x4U []: V128, Some(WasmType::V128) => |a,b,l| integer::extend_multiply(vector(a),vector(b.unwrap()),u64::BITS,integer::Signedness::Unsigned,integer::Half::High);
-  I8x16Popcnt []: V128, None => |a,b,l| integer::population_count(vector(a));
-  I16x8Q15MulrSatS []: V128, Some(WasmType::V128) => |a,b,l| integer::q15(vector(a),vector(b.unwrap()));
-  I32x4DotI16x8S []: V128, Some(WasmType::V128) => |a,b,l| integer::dot(vector(a),vector(b.unwrap()));
-  I32x4TruncSatF32x4S []: V128, None => |a,b,l| convert(vector(a), super::conversion::ScalarConversionOperator::SaturateF32SignedI32);
-  I32x4TruncSatF32x4U []: V128, None => |a,b,l| convert(vector(a), super::conversion::ScalarConversionOperator::SaturateF32UnsignedI32);
-  F32x4ConvertI32x4S []: V128, None => |a,b,l| convert(vector(a), super::conversion::ScalarConversionOperator::ConvertI32SignedF32);
-  F32x4ConvertI32x4U []: V128, None => |a,b,l| convert(vector(a), super::conversion::ScalarConversionOperator::ConvertI32UnsignedF32);
-  I32x4TruncSatF64x2SZero []: V128, None => |a,b,l| convert(vector(a), super::conversion::ScalarConversionOperator::SaturateF64SignedI32);
-  I32x4TruncSatF64x2UZero []: V128, None => |a,b,l| convert(vector(a), super::conversion::ScalarConversionOperator::SaturateF64UnsignedI32);
-  F64x2ConvertLowI32x4S []: V128, None => |a,b,l| convert(vector(a), super::conversion::ScalarConversionOperator::ConvertI32SignedF64);
-  F64x2ConvertLowI32x4U []: V128, None => |a,b,l| convert(vector(a), super::conversion::ScalarConversionOperator::ConvertI32UnsignedF64);
-  F32x4DemoteF64x2Zero []: V128, None => |a,b,l| convert(vector(a), super::conversion::ScalarConversionOperator::DemoteF64);
-  F64x2PromoteLowF32x4 []: V128, None => |a,b,l| convert(vector(a), super::conversion::ScalarConversionOperator::PromoteF32);
-  // Choose deterministic outcomes admitted by the relaxed SIMD contract.
-  I8x16RelaxedSwizzle []: V128, Some(WasmType::V128) => |a,b,l| Self::I8x16Swizzle.apply(a,b,l);
-  I32x4RelaxedTruncF32x4S []: V128, None => |a,b,l| Self::I32x4TruncSatF32x4S.apply(a,b,l);
-  I32x4RelaxedTruncF32x4U []: V128, None => |a,b,l| Self::I32x4TruncSatF32x4U.apply(a,b,l);
-  I32x4RelaxedTruncF64x2SZero []: V128, None => |a,b,l| Self::I32x4TruncSatF64x2SZero.apply(a,b,l);
-  I32x4RelaxedTruncF64x2UZero []: V128, None => |a,b,l| Self::I32x4TruncSatF64x2UZero.apply(a,b,l);
-  F32x4RelaxedMin []: V128, Some(WasmType::V128) => |a,b,l| Self::F32x4Min.apply(a,b,l);
-  F32x4RelaxedMax []: V128, Some(WasmType::V128) => |a,b,l| Self::F32x4Max.apply(a,b,l);
-  F64x2RelaxedMin []: V128, Some(WasmType::V128) => |a,b,l| Self::F64x2Min.apply(a,b,l);
-  F64x2RelaxedMax []: V128, Some(WasmType::V128) => |a,b,l| Self::F64x2Max.apply(a,b,l);
-  I16x8RelaxedQ15mulrS []: V128, Some(WasmType::V128) => |a,b,l| Self::I16x8Q15MulrSatS.apply(a,b,l);
-  I16x8RelaxedDotI8x16I7x16S []: V128, Some(WasmType::V128) => |a,b,l| integer::relaxed_dot(vector(a),vector(b.unwrap()));
-}
-
-fn swizzle(bits: u128, indices: u128) -> u128 {
-    let bytes = bits.to_le_bytes();
-    u128::from_le_bytes(
-        indices
-            .to_le_bytes()
-            .map(|index| bytes.get(index as usize).copied().unwrap_or(0)),
-    )
-}
+/// A shuffle's sixteen byte indices, applied to `left` and `right` (the operands' bytes, `left` first).
 pub(crate) fn shuffle(left: u128, right: u128, indices: [u8; V128_BYTES]) -> u128 {
-    // Both operands' bytes in index order: validation keeps every index below their count
-    // (`shuffle_indices_valid`), which the mask restates without a branch.
-    let mut both = [0u8; SHUFFLE_SOURCE_BYTES];
-    both[..V128_BYTES].copy_from_slice(&left.to_le_bytes());
-    both[V128_BYTES..].copy_from_slice(&right.to_le_bytes());
-    u128::from_le_bytes(indices.map(|index| both[usize::from(index) & (SHUFFLE_SOURCE_BYTES - 1)]))
+    crate::staged::wasm_simd_lanes::shuffle(left, right, u128::from_le_bytes(indices))
 }
 /// The bytes a shuffle selects from: both operands'.
 const SHUFFLE_SOURCE_BYTES: usize = V128_BYTES * 2;

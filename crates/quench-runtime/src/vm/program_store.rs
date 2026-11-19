@@ -1345,13 +1345,20 @@ impl ProgramStore {
                     crate::staged::WasmRecordCheck::IndirectTarget => {
                         signatures.type_signature(instruction.imm()).is_some()
                     }
-                    _ if crate::wasm::gc::StructConstruction::from_op(instruction.op()).is_some() => {
-                        let mode = crate::wasm::gc::StructConstruction::from_op(instruction.op()).unwrap();
+                    _ if matches!(
+                        crate::staged::wasm_gc::GcStep::of(instruction.op()),
+                        Some(crate::staged::wasm_gc::GcStep::StructNew { .. })
+                    ) => {
+                        let Some(crate::staged::wasm_gc::GcStep::StructNew { default, descriptor }) =
+                            crate::staged::wasm_gc::GcStep::of(instruction.op())
+                        else {
+                            unreachable!("guarded by the struct constructor test")
+                        };
                         signatures
                             .declarations
                             .struct_fields(instruction.imm())
                             .is_some_and(|fields| {
-                                mode.described()
+                                descriptor
                                     == signatures
                                         .declarations
                                         .descriptor_type(instruction.imm())
@@ -1364,15 +1371,15 @@ impl ProgramStore {
                                                 .declarations
                                                 .callable_value_type(ty)
                                                 .is_some()
-                                                && (!mode.defaulted() || ty.is_defaultable())
+                                                && (!default || ty.is_defaultable())
                                         }
                                     })
-                                    && (mode == crate::wasm::gc::StructConstruction::Default
+                                    && (default && !descriptor
                                         || usize::from(instruction.register_window().count)
-                                            == if mode.defaulted() {
+                                            == if default {
                                                 1
                                             } else {
-                                                fields.len() + usize::from(mode.described())
+                                                fields.len() + usize::from(descriptor)
                                             })
                             })
                     }
@@ -1380,17 +1387,19 @@ impl ProgramStore {
                         .declarations
                         .descriptor_type(instruction.imm())
                         .is_some(),
-                    crate::staged::WasmRecordCheck::ArraySegment => {
-                        use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind};
+                    crate::bytecode::Class::WasmArrayNewData
+                    | crate::bytecode::Class::WasmArrayNewElem => {
+                        use crate::wasm::gc::ArraySegmentInput;
                         instruction.register_window().count == ArraySegmentInput::COUNT
                             && signatures
                                 .declarations
                                 .array_field(instruction.imm())
                                 .is_some_and(|field| {
-                                    ArraySegmentKind::from_op(instruction.op())
-                                        .unwrap()
-                                        .accepts(field.element_type)
-                                        && match field.element_type {
+                                    matches!(
+                                        crate::staged::wasm_gc::GcStep::of(instruction.op()),
+                                        Some(crate::staged::wasm_gc::GcStep::ArraySegment { kind, .. })
+                                            if kind.accepts(field.element_type)
+                                    ) && match field.element_type {
                                             wasmparser::StorageType::Val(ty) => signatures
                                                 .declarations
                                                 .callable_value_type(ty)

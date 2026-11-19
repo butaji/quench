@@ -2,6 +2,8 @@
 //! (`TableOp`): one `call_w_21_<OP>_1_0` (kind `CALLOUT`) row per OP (`wasm_library.rs`, `CALLOUT`). It calls
 //! `table_op_callout::<H>` (`vm/compiled/wasm_table_ops_stage.rs`), the callout the u-jit's
 //! `Emitter::table_op` calls with the same request and words, so both tiers run one semantics.
+//! The protocol is the staged rule `staged::wasm_call::call_table_op` (the callout, the memory
+//! reload, the status check, the `i32` widening of a result).
 //!
 //! The callout's ABI, which the u-jit uses unchanged:
 //!
@@ -31,75 +33,43 @@
 //!
 //! The callout's address is per compiled program's Host type: the stitched code is produced by
 //! `Vm<H>` for its own `H`, so it names that `H`'s callout (`stitched_entry`, `compiled.rs`).
+//!
+//! The allocating GC step (`gc_allocate`) is the same kind of callout with its own ABI: it runs
+//! the staged `allocate_step` rule, which checks the status and writes a result when the instruction
+//! has one. It does no reload: the step runs no interpreter code (`vm/compiled/wasm_gc_allocate.rs`).
 
+use crate::staged::wasm_call::{allocate_step, call_table_op};
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, LAST_HOLE, Out, S, hole64};
-use crate::wasm_codes::{CALLOUT_ABSENT, CALLOUT_RESULT, CALLOUT_WRAP};
+use crate::wasm_codes::{CALLOUT_RESULT, CALLOUT_WRAP, FRAME_HEADER_WORDS};
 
-use super::reload_memory;
+use super::wasm_call_stage::{CallStage, leave_with};
+use super::wasm_frame::{high, low, operand};
 
-/// The table callout's shape (see the header).
-type Callout = unsafe extern "C" fn(usize, u64, u64, u64, u64, u64, *mut u64) -> i64;
-
-#[inline(always)]
-fn low(word: u64) -> u32 {
-    word as u32
-}
-
-#[inline(always)]
-fn high(word: u64) -> u32 {
-    (word >> 32) as u32
-}
-
-/// The word at frame offset `offset`, or zero where the operand is absent.
-#[inline(always)]
-unsafe fn operand(frame: usize, offset: u32) -> u64 {
-    if offset == CALLOUT_ABSENT {
-        0
-    } else {
-        unsafe { *((frame + offset as usize) as *const u64) }
-    }
-}
-
-/// The table callout of `OP` (`CALLOUT_RESULT`, `CALLOUT_WRAP`): the operation's words from the
-/// frame, its result to the destination when `CALLOUT_RESULT`, then the memory pins reloaded. A
-/// nonzero status leaves.
+/// `D = the table operation OP`: the callout with the frame's operands, its result to the
+/// destination when `CALLOUT_RESULT`, then the staged protocol (`call_table_op`).
 #[inline(always)]
 pub(crate) unsafe fn callout<const OP: u32>(mut s: S) -> Out {
-    let (h_callout, h_a, h_b, h_fourth, h_request) =
-        (hole64::<0>(), hole64::<HOLE_A>(), hole64::<HOLE_B>(), hole64::<HOLE_FOURTH>(), hole64::<LAST_HOLE>());
-    let (frame, context) = (s.frame, s.ctx);
-    let (destination, first) = (low(h_a), high(h_a));
-    let (second, third) = (low(h_b), high(h_b));
-    let (reference, length_at) = (low(h_fourth), high(h_fourth) as usize);
-    let mut scratch = 0u64;
     unsafe {
-        let a = operand(frame, first);
-        let b = operand(frame, second);
-        let c = operand(frame, third);
-        let value = operand(frame, reference);
+        let (h_callout, h_a, h_b, h_fourth, h_request) =
+            (hole64::<0>(), hole64::<HOLE_A>(), hole64::<HOLE_B>(), hole64::<HOLE_FOURTH>(), hole64::<LAST_HOLE>());
+        let frame = s.frame;
+        let (destination, first) = (low(h_a), high(h_a));
+        let (second, third) = (low(h_b), high(h_b));
+        let (reference, length_at) = (low(h_fourth), high(h_fourth) as usize);
+        let operands = [operand(frame, first), operand(frame, second), operand(frame, third), operand(frame, reference)];
+        let mut scratch = 0u64;
         let out = if OP & CALLOUT_RESULT != 0 {
-            (frame + destination as usize) as *mut u64
+            frame + destination as usize
         } else {
-            core::ptr::addr_of_mut!(scratch)
+            core::ptr::addr_of_mut!(scratch) as usize
         };
-        let callout: Callout = core::mem::transmute(h_callout as usize);
-        let status = callout(context, h_request, a, b, c, value, out);
-        reload_memory(&mut s, length_at);
-        if status != 0 {
-            s.p[0] = status as usize;
-            return Out::Exit(s);
-        }
-        if OP & CALLOUT_WRAP != 0 {
-            *out = u64::from(*out as u32);
-        }
+        let result = {
+            let mut stage = CallStage { s: &mut s };
+            call_table_op(&mut stage, h_callout as usize, h_request, operands, out, length_at, OP & CALLOUT_WRAP != 0)
+        };
+        leave_with(s, result)
     }
-    Out::Next(s)
 }
-
-/// The allocating GC step's callout (`vm/compiled/wasm_gc_allocate.rs`, `allocate_frame`):
-/// (context, the packed instruction, the immediate and count word, the frame, the operand
-/// descriptor, the result word) -> status.
-type Allocate = unsafe extern "C" fn(usize, u64, u64, usize, usize, *mut u64) -> i64;
 
 /// The bit of the immediate-and-count word that says the step has a result, for the instruction's
 /// destination `a` (`wasm_stitch_gc.rs`, `allocating`).
@@ -113,17 +83,16 @@ const RESULT_BIT: u32 = 40;
 pub(crate) unsafe fn gc_allocate(mut s: S) -> Out {
     unsafe {
         let (packed, meta, descriptor) = (hole64::<HOLE_A>(), hole64::<HOLE_B>(), hole64::<HOLE_FOURTH>());
-        let callout: Allocate = core::mem::transmute::<usize, Allocate>(hole64::<0>() as usize);
+        let callout = hole64::<0>() as usize;
+        let frame = s.frame;
+        let destination = ((meta >> RESULT_BIT) & 1 != 0)
+            .then(|| frame + 8 * (FRAME_HEADER_WORDS as usize + ((packed >> 16) & 0xffff) as usize));
         let mut word = 0u64;
-        let status = callout(s.ctx, packed, meta, s.frame, descriptor as usize, core::ptr::addr_of_mut!(word));
-        if status != 0 {
-            s.p[0] = status as usize;
-            return Out::Exit(s);
-        }
-        if (meta >> RESULT_BIT) & 1 != 0 {
-            let destination = s.frame + 8 * (crate::wasm_codes::FRAME_HEADER_WORDS as usize + ((packed >> 16) & 0xffff) as usize);
-            *(destination as *mut u64) = word;
-        }
+        let out = core::ptr::addr_of_mut!(word) as usize;
+        let result = {
+            let mut stage = CallStage { s: &mut s };
+            allocate_step(&mut stage, callout, (packed, meta), (frame, descriptor as usize), out, destination)
+        };
+        leave_with(s, result)
     }
-    Out::Next(s)
 }

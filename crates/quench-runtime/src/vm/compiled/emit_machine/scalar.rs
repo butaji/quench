@@ -7,8 +7,8 @@ use super::{Builds, of_in_lane, machine_type};
 use super::super::{Emitter, Host, scalar_ir};
 use crate::staged::machine::{Binary, Lane, MachineOperator, MachineScalar, MachineStage, Order, Relation, Unary};
 use crate::staged::wasm::Width;
-use crate::staged::wasm_float::{Float, Truncation};
-use crate::wasm::conversion::{ScalarConversionOperator as Conversion, truncation_bounds};
+use crate::staged::wasm_float::{Float, Truncation, truncation_limits};
+use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as IntegerBinary, I64UnaryOperator as IntegerUnary};
 use cranelift_codegen::ir::{
@@ -413,7 +413,7 @@ impl<H: Host> MachineStage for Emitter<'_, '_, H> {
             Float::F64 => value,
         };
         let truncated = self.raw_unary(Unary::Truncate, wide);
-        let (lower, limit) = truncation_bounds(truncation.width.bits(), truncation.signed);
+        let (lower, limit) = truncation_limits(truncation.width.bits(), truncation.signed);
         let lower = self.raw_const(Lane::F64, lower.to_bits() as i64);
         let limit = self.raw_const(Lane::F64, limit.to_bits() as i64);
         let below = self.raw_compare(Relation::FloatLess, truncated, lower);

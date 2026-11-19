@@ -10,12 +10,16 @@
 //! (`Plan::references`): a register that is a reference on every path to the call, whose `I64`
 //! view holds its reference bits. A register that is a reference on one path and a number on
 //! another is not among them, so no number's bits are pushed as a Value.
+//!
+//! The push and the restore are the staged rules (`staged::wasm_roots`), which the stencil runs
+//! over its own roots too: this file is the `WasmRoots` of the Cranelift emitter.
 
 use super::instance_context::NativeRoots;
+use super::wasm_stage::infallible;
 use super::{CONTEXT_NATIVE_ROOTS, Emitter, Host, Kind, invariant};
-use crate::WasmTrap;
 use crate::staged::machine::{MachineAccess, MachineStage};
 use crate::staged::wasm::Width;
+use crate::staged::wasm_roots::{WasmRoots, push, restore};
 use crate::wasm::integer::I64BinaryOperator as Binary;
 use cranelift_codegen::ir::{self, MemFlagsData};
 
@@ -32,26 +36,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         if registers.is_empty() {
             return None;
         }
-        let flags = MemFlagsData::trusted();
-        let context = self.body.core.context;
-        let roots = self.load_word(Width::I64, invariant(), context, CONTEXT_NATIVE_ROOTS);
-        let depth = self.load_word(Width::I64, flags, roots, NativeRoots::DEPTH);
-        let count = self.constant(Width::I64, registers.len() as i64);
-        let needed = self.operate(Binary::Add, Width::I64, depth, count);
-        let capacity = self.load_word(Width::I64, flags, roots, NativeRoots::CAPACITY);
-        let exhausted = self.operate(Binary::LessUnsigned, Width::I64, capacity, needed);
-        self.trap_if(exhausted, WasmTrap::CallStackExhausted);
-        let slots = self.load_word(Width::I64, flags, roots, NativeRoots::SLOTS);
-        let size = self.constant(Width::I64, ROOT as i64);
-        let offset = self.operate(Binary::Multiply, Width::I64, depth, size);
-        let top = self.operate(Binary::Add, Width::I64, slots, offset);
-        for (index, register) in registers.iter().enumerate() {
-            // A reference's Wasm bits are its Value bits, the `I64` view of the register.
-            let value = self.read(*register, Kind::Reference);
-            self.store_word(flags, value, top, (index * ROOT) as i32);
-        }
-        self.store_word(flags, needed, roots, NativeRoots::DEPTH);
-        Some(depth)
+        // A reference's Wasm bits are its Value bits, the `I64` view of the register.
+        let values: Vec<ir::Value> = registers.iter().map(|register| self.read(*register, Kind::Reference)).collect();
+        Some(infallible(push(self, &values)))
     }
 
     /// Releases the roots `root` held: the depth it returned is restored. Emitted before the
@@ -60,8 +47,37 @@ impl<H: Host> Emitter<'_, '_, H> {
         let Some(depth) = depth else {
             return;
         };
+        restore(self, depth);
+    }
+}
+
+impl<H: Host> WasmRoots for Emitter<'_, '_, H> {
+    /// The roots' address, a value in the function: the rule loads it once and every access reuses it.
+    type Roots = ir::Value;
+
+    fn native_roots(&mut self) -> ir::Value {
         let context = self.body.core.context;
-        let roots = self.load_word(Width::I64, invariant(), context, CONTEXT_NATIVE_ROOTS);
+        self.load_word(Width::I64, invariant(), context, CONTEXT_NATIVE_ROOTS)
+    }
+
+    fn root_depth(&mut self, roots: ir::Value) -> ir::Value {
+        self.load_word(Width::I64, MemFlagsData::trusted(), roots, NativeRoots::DEPTH)
+    }
+
+    fn root_capacity(&mut self, roots: ir::Value) -> ir::Value {
+        self.load_word(Width::I64, MemFlagsData::trusted(), roots, NativeRoots::CAPACITY)
+    }
+
+    fn store_root(&mut self, roots: ir::Value, depth: ir::Value, index: usize, value: ir::Value) {
+        let flags = MemFlagsData::trusted();
+        let slots = self.load_word(Width::I64, flags, roots, NativeRoots::SLOTS);
+        let size = self.constant(Width::I64, ROOT as i64);
+        let offset = self.operate(Binary::Multiply, Width::I64, depth, size);
+        let top = self.operate(Binary::Add, Width::I64, slots, offset);
+        self.store_word(flags, value, top, (index * ROOT) as i32);
+    }
+
+    fn set_root_depth(&mut self, roots: ir::Value, depth: ir::Value) {
         self.store_word(MemFlagsData::trusted(), depth, roots, NativeRoots::DEPTH);
     }
 }

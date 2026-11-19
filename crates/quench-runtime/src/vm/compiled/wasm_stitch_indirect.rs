@@ -44,7 +44,7 @@ fn is_reference(instruction: WideInstruction) -> bool {
 /// Whether `instruction` loads a constant: the lowering places the call's signature constant
 /// between the target and the call.
 fn is_constant(instruction: WideInstruction) -> bool {
-    instruction.op() == crate::bytecode::Op::LoadConst
+    crate::staged::wasm_instance::Instance::of(instruction.op()) == Some(crate::staged::wasm_instance::Instance::Constant)
 }
 
 /// The `Call::Reference` the target at `pc` feeds: the first instruction after it that loads no

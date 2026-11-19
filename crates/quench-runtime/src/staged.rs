@@ -129,6 +129,7 @@ pub(crate) mod wasm_concrete;
 pub(crate) mod wasm_gc;
 pub(crate) mod wasm_exception;
 pub(crate) mod wasm_call;
+pub(crate) mod wasm_roots;
 pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;
 pub(crate) mod wasm_machine;
@@ -137,8 +138,10 @@ pub(crate) mod wasm_table_ops;
 pub(crate) mod wasm_operation;
 pub(crate) mod wasm_simd;
 pub(crate) mod wasm_simd_concrete;
+pub(crate) mod wasm_simd_lanes;
 pub(crate) mod wasm_step;
 pub(crate) mod wasm_atomic;
+pub(crate) mod wasm_emit;
 pub(crate) use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
 pub(crate) mod trace;
