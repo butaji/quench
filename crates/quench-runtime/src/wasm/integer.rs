@@ -47,12 +47,10 @@ macro_rules! binary_family {
     };
 }
 
-/// Each operator is declared once, with its rule and, in brackets, the machine row it is
-/// (`staged::machine::MachineOperator`): the Cranelift tier's operator rows are generated from
-/// these declarations (`I64BinaryOperator::machine`), not listed again beside the backend.
+/// Each operator is declared once, with its rule, in `i64_binary_list!` (`staged/wasm_lists.rs`).
 macro_rules! integer_binary_operators {
-    ($aliases:tt, $arguments:tt; $($name:ident, $i32:ident, $i64:ident [$($machine:tt)+] => $body:expr;)+
-     @i64 $($wide_name:ident, $wide_wasm:ident [$($wide_machine:tt)+] => $wide_body:expr;)+) => {
+    ($aliases:tt, $arguments:tt; $($name:ident, $i32:ident, $i64:ident => $body:expr;)+
+     @i64 $($wide_name:ident, $wide_wasm:ident => $wide_body:expr;)+) => {
         binary_family!(I32BinaryOperator, i32, u32, I32, $aliases, $arguments; $($name, $i32 => $body;)+);
         binary_family!(@decoded I64BinaryOperator, i64, u64, I64, $aliases, $arguments; $($name, $i64 => $body;)+ $($wide_name, $wide_wasm => $wide_body;)+);
     };
