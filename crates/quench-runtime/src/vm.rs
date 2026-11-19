@@ -230,6 +230,7 @@ mod object_integrity;
 mod object_keys;
 mod object_static;
 mod object_symbols;
+mod object_shape_adopt;
 #[cfg(test)] mod lane_loop_tests;
 #[cfg(test)] mod float_slot_tests;
 #[cfg(test)] mod lane_native_callback_tests;

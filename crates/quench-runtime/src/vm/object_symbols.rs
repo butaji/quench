@@ -275,6 +275,9 @@ impl<H: Host> Vm<H> {
     /// `copy_data_properties` when a plain copy (`copy_plain_properties`) answers it, or the
     /// source is null or undefined; `false`, before any effect, for any other copy.
     pub(super) fn copy_plain_data_properties(&mut self, target: Value, source: Value, exclusions: Value) -> bool {
+        if self.adopt_source_shape(target, source, exclusions) {
+            return true;
+        }
         if source.is_null() || source.is_undefined() {
             return true;
         }
