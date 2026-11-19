@@ -351,7 +351,8 @@ fn tag_init(s: S) -> Out {
 #[inline(always)]
 fn remainder<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, domain: Domain) -> bool {
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
-    staged(frame, NumberOperation::Remainder { destination: DEST, left, right, domain }).is_some()
+    staged(frame, NumberOperation::Remainder { destination: DEST, left, right, domain, zero: NegativeZero::Exit,
+        divisor_nonzero: false }).is_some()
 }
 
 /// A remainder row: the int32 remainder where the row speculates int32s or both operands are ints, else the staged

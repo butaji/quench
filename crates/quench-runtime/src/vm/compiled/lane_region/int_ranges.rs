@@ -34,13 +34,31 @@ pub(super) struct IntRanges {
     signless: Vec<usize>,
     /// The products no operands make a negative zero of.
     zero_free: CompoundBitSet,
+    /// The remainders whose dividend the point before them proves no negative, so no `-0` (`prove_at`).
+    non_negative_dividend: CompoundBitSet,
+    /// The remainders whose divisor the point before them proves no zero, so no zero-divisor test.
+    nonzero_divisor: CompoundBitSet,
+    /// The element stores whose value the point before them holds a Number of (`Point::numeric_store`).
+    numeric_stores: CompoundBitSet,
 }
 
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
-            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
+            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions),
+            non_negative_dividend: CompoundBitSet::with_capacity(instructions), nonzero_divisor: CompoundBitSet::with_capacity(instructions),
+            numeric_stores: CompoundBitSet::with_capacity(instructions) }
     }
+
+    /// Whether the remainder at `pc` has a dividend no negative: its `-0` is no zero it can make.
+    pub(super) fn non_negative_dividend(&self, pc: usize) -> bool { self.non_negative_dividend.contains(pc) }
+
+    /// Whether the element store at `pc` stores a Number, by the facts' type of its value at `pc` (a
+    /// point the analysis never visits proves none).
+    pub(super) fn numeric_store(&self, pc: usize) -> bool { self.numeric_stores.contains(pc) }
+
+    /// Whether the remainder at `pc` has a divisor no zero: its zero-divisor test is redundant.
+    pub(super) fn nonzero_divisor(&self, pc: usize) -> bool { self.nonzero_divisor.contains(pc) }
 
     /// Whether the product at `pc` may keep the int32 zero for a negative one: no operands make a
     /// negative zero of it, or no consumer reads its sign.
@@ -128,7 +146,8 @@ impl Lowering<'_, '_> {
         leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> Vec<(Register, IntRange)> {
         if self.entering.is_empty() { return Vec::new(); }
         let dense = |pc: usize| self.hoisted_access(pc);
-        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
+        let typed = |pc: usize| self.typed_access(pc);
+        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
         let reads = self.element_reads(instructions);
         let signless = self.signless_products(instructions);
         let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
@@ -145,7 +164,8 @@ impl Lowering<'_, '_> {
     pub(super) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
         leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {
         let dense = |pc: usize| self.hoisted_access(pc);
-        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
+        let typed = |pc: usize| self.typed_access(pc);
+        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
         let reads = self.element_reads(instructions);
         let signless = self.signless_products(instructions);
         let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
@@ -177,8 +197,25 @@ impl Lowering<'_, '_> {
             proved.index_ranges.push((pc, range));
             if self.hoistable(pc, instruction, point) { seen.hoistable.push(pc); }
         }
+        if point.numeric_store(instruction) { proved.numeric_stores.insert(pc); } else { proved.numeric_stores.remove(pc); }
         if point.zero_free(&self.program.constants, instruction) { proved.zero_free.insert(pc); }
+        if let Some((dividend, divisor)) = self.remainder_ranges(point, instruction) {
+            if dividend.min >= 0 { proved.non_negative_dividend.insert(pc); }
+            if divisor.min > 0 || divisor.max < 0 { proved.nonzero_divisor.insert(pc); }
+        }
         if self.decidable(instruction, point) { seen.decisions.push(pc); }
+    }
+
+    /// The ranges of the operands of the `%` at `instruction` the point proves: a register's integer
+    /// range, or an int32 constant's singleton. `None` for any other instruction or an unranged operand.
+    fn remainder_ranges(&self, point: &Point, instruction: WideInstruction) -> Option<(IntRange, IntRange)> {
+        if instruction.op().js_denotation() != JsDenotation::NumericBinary || instruction.binary_operator() != crate::vm::operations::REMAINDER {
+            return None;
+        }
+        let range = |operand: Operand| operand.register_index().map_or_else(
+            || self.int32_constant(operand).map(|value| IntRange::singleton(i64::from(value))),
+            |register| point.int_range(register));
+        Some((range(instruction.operand_b())?, range(instruction.operand_c())?))
     }
 
     /// Whether the jump `instruction` is a relation the VM decides from two registers one of which

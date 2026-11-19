@@ -104,7 +104,7 @@ pub(super) fn offer_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &
     let inline = |pc: usize| function.code.get(pc).is_some_and(|packed| {
         let call = function.widened(*packed);
         vm.heap.function(r.get(call.register_b())).is_some_and(|callee| match callee.kind {
-            FunctionKind::Native(native) => super::super::compiled::inlines_keeping_arrays(native),
+            FunctionKind::Native(native) => super::super::compiled::inlines_in_loop(native),
             _ => true,
         })
     });

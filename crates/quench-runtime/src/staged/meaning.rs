@@ -43,6 +43,16 @@ pub(crate) enum Meaning {
     ArgumentGet,
     /// `SetFunctionName`.
     SetFunctionName,
+    /// A register-to-register move.
+    Move,
+    /// An instruction that does nothing.
+    Nop,
+    /// An unconditional jump.
+    Jump,
+    /// A jump taken on one value's truth (`JumpIf`).
+    TruthJump,
+    /// A jump taken on a binary comparison (`CompareJump`).
+    CompareJump,
 }
 
 /// Whether `instruction` denotes an operation of `meaning`.
@@ -65,5 +75,10 @@ pub(crate) fn means(instruction: impl std::borrow::Borrow<WideInstruction>, mean
         Meaning::InitializeTdz => op.class() == Class::InitializeTdz,
         Meaning::ArgumentGet => op.class() == Class::ArgumentGet,
         Meaning::SetFunctionName => op.class() == Class::SetFunctionName,
+        Meaning::Move => op.class() == Class::Move,
+        Meaning::Nop => op.class() == Class::Nop,
+        Meaning::Jump => op.class() == Class::Jump,
+        Meaning::TruthJump => matches!(op.class(), Class::JumpTrue | Class::JumpFalse),
+        Meaning::CompareJump => op.class() == Class::JumpBinaryFalse,
     }
 }

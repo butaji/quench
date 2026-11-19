@@ -86,6 +86,11 @@ pub(crate) struct DenseView<W> {
     /// backing's form. `None` where the proof admitted a wide backing alone (a loop's hoisted
     /// view, a loop entry's).
     pub(crate) double: Option<W>,
+    /// Whether the backing counts no others for this view (`OTHERS_UNKNOWN`, as a loop's hoisted
+    /// writable view holds it: `emit_dense_array_uncounted`), so a store through it writes the
+    /// element alone (`replace_uncounted_element`). A view proved by a store's own check keeps the
+    /// count, `false`.
+    pub(crate) uncounted: bool,
 }
 
 /// The view of the direct array `base` among the array records at `records`, writable where
@@ -96,7 +101,7 @@ pub(crate) fn prove_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Wor
     miss: S::Miss) -> Option<DenseView<S::Word>> {
     let backing = if writable { writable_array_backing(stage, records, base, miss)? } else { flagged_backing(stage, records, base, miss)? };
     let (length, double) = wide_or_double(stage, backing.length, miss)?;
-    Some(DenseView { values: backing.values, length, packed: false, within: false, double: Some(double) })
+    Some(DenseView { values: backing.values, length, packed: false, within: false, double: Some(double), uncounted: false })
 }
 
 /// A backing's flagged length word (`ENCODED_LEN`) as a view reads it: the count, and the
@@ -162,7 +167,8 @@ fn replace_wide<S: Stage>(stage: &mut S, view: DenseView<S::Word>, index: S::Wor
     miss: S::Miss) -> Option<()> {
     let (address, old) = if view.within { present_element(stage, view.values, index, miss)? }
         else { dense_element(stage, view.values, view.length, index, miss)? };
-    replace_element(stage, view.values, address, old, value);
+    if view.uncounted { replace_uncounted_element(stage, address, value); }
+    else { replace_element(stage, view.values, address, old, value); }
     Some(())
 }
 

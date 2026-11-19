@@ -115,7 +115,7 @@ mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_facts::bind_callees as bind_region_callees;
 pub(super) use lane_region::ElementViews;
-pub(in crate::vm) use lane_region::inlines_keeping_arrays;
+pub(in crate::vm) use lane_region::inlines_in_loop;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 
@@ -320,8 +320,7 @@ fn emit_js_tagged_truthiness(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
 
 /// Decode an already-proved Number without repeating its semantic type check.
 fn emit_known_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
-    let mut stage = object_slots::emit(builder);
-    crate::staged::value_machine::known_number_f64(&mut stage, bits)
+    crate::staged::value::known_number_f64(&mut object_slots::emit(builder), bits)
 }
 
 /// Unbox a tagged JavaScript Number, branching to the current instruction's
@@ -332,6 +331,10 @@ fn emit_js_tagged_number(
     bits: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
+    use crate::staged::machine::{Lane, Relation, Unary};
+    let nan = builder.create_block();
+    let tagged = builder.create_block();
+    let integer_block = builder.create_block();
     let join = builder.create_block();
     builder.append_block_param(join, types::F64);
     let mut stage = object_slots::emit(builder);
@@ -360,13 +363,6 @@ fn emit_js_tagged_number(
     builder.seal_block(join);
     builder.switch_to_block(join);
     builder.block_params(join)[0]
-}
-
-/// An exact int32 projection of a Number, including its zero sign. The predicate
-/// rejects fractions, nonfinite values, saturation and -0 before the view is used.
-fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> (ir::Value, ir::Value) {
-    let mut stage = object_slots::emit(builder);
-    crate::staged::value_machine::exact_int32(&mut stage, number)
 }
 
 // The boxes `emit_js_box_number` made while a lowering records them (`record_boxed_numbers`):
@@ -401,8 +397,12 @@ pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::
 
 /// `emit_js_box_number` with no branch: the integer, double and NaN encodings, selected.
 fn emit_js_box_number_pure(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    let mut stage = object_slots::emit(builder);
-    crate::staged::value_machine::number_word(&mut stage, number)
+    crate::staged::value::number_word(&mut object_slots::emit(builder), number)
+}
+
+/// The int32 a double converts to exactly, and whether it does (`staged::value::exact_int32`).
+fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> (ir::Value, ir::Value) {
+    crate::staged::value::exact_int32(&mut object_slots::emit(builder), number)
 }
 
 fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
@@ -410,11 +410,11 @@ fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value)
     builder.set_cold_block(cold);
     let result = builder.append_block_param(join, types::I64);
     let mut stage = object_slots::emit(builder);
-    let (whole_or_nan, bits) = crate::staged::value_machine::number_bits_unless_whole(&mut stage, number);
+    let (whole_or_nan, bits) = crate::staged::value::number_bits_unless_whole(&mut stage, number);
     stage.branch_if(whole_or_nan, (cold, &[]), (join, &[bits]));
     stage.builder.switch_to_block(cold);
     stage.builder.seal_block(cold);
-    let encoded = crate::staged::value_machine::number_word(&mut stage, number);
+    let encoded = crate::staged::value::number_word(&mut stage, number);
     stage.goto(join, &[encoded]);
     builder.switch_to_block(join);
     builder.seal_block(join);
@@ -434,11 +434,10 @@ pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir
     {
         return *integer;
     }
-    // The truncate-to-int32 row: its candidate, leaving to `exit` beyond the exact I64 range.
     let mut stage = object_slots::emit(builder);
-    let (int, exact) = crate::staged::value_machine::truncate_int32(&mut stage, number);
+    let (int32, exact) = crate::staged::value::truncate_int32(&mut stage, number);
     stage.guard(exact, exit);
-    int
+    int32
 }
 
 /// Continue native code only when one guard holds. All failures share the exact-PC
@@ -1080,6 +1079,9 @@ lane_helper_inventory! { H;
     IndexSet => index_set_in_lane::<H>,
     /// Room for a loop's append to a dense array (`array_append_room_in_lane`).
     AppendRoom => array_append_room_in_lane::<H>,
+    /// Whether no prototype of an array holds an index (`prototypes_hold_no_index`), for a loop's
+    /// element search (`Lowering::element_search`).
+    PrototypesHoldNoIndex => prototypes_hold_no_index_in_lane::<H>,
     FunctionBinding => function_binding_in_lane::<H>,
     InterruptOwner => interrupt_owner_in_lane,
     GlobalGet => global_get_in_lane::<H>,
@@ -4187,6 +4189,13 @@ unsafe extern "C" fn array_append_room_in_lane<H: Host>(vm: u64, _residual: u64,
     // SAFETY: as `field_get_in_lane`; a growth moves only this array's backing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     vm.reserve_native_array_append(Value::from_bits(object)).map_or(0, |room| room as u64)
+}
+
+/// 1 where no prototype of the array `object` holds an index (`Vm::prototypes_hold_no_index`), else 0.
+unsafe extern "C" fn prototypes_hold_no_index_in_lane<H: Host>(vm: u64, _residual: u64, object: u64) -> u64 {
+    // SAFETY: as `array_append_room_in_lane`; the check reads the heap and writes nothing.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    u64::from(vm.prototypes_hold_no_index(Value::from_bits(object)))
 }
 
 impl<H: Host> Vm<H> {
@@ -8163,7 +8172,7 @@ impl<H: Host> Vm<H> {
             let body = program.function_get(function as usize)?;
             let last_pc = body.code.len().checked_sub(1)?;
             let terminal = body.code.get(last_pc)?.as_wide();
-            if matches!(crate::vm::compiled::decoded(terminal), Some(crate::staged::Operation::Return { .. })) {
+            if meaning_compiled::is_return(terminal) {
                 return Some((last_pc, terminal.register_a(), value));
             }
         }
@@ -8373,7 +8382,7 @@ impl<H: Host> Vm<H> {
         let value = compiled.call(arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
         let terminal = function.code.get(last_pc)?.as_wide();
-        matches!(crate::vm::compiled::decoded(terminal), Some(crate::staged::Operation::Return { .. })).then_some((last_pc, terminal.register_a(), value))
+        (meaning_compiled::is_return(terminal)).then_some((last_pc, terminal.register_a(), value))
     }
 
     /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
@@ -8498,7 +8507,7 @@ impl<H: Host> Vm<H> {
         (compiled.params() == params).then_some(())?;
         let return_pc = body.code.len().checked_sub(1)?;
         let terminal = body.code.get(return_pc)?.as_wide();
-        matches!(crate::vm::compiled::decoded(terminal), Some(crate::staged::Operation::Return { .. })).then_some(())?;
+        (meaning_compiled::is_return(terminal)).then_some(())?;
         Some(DirectTierEntry {
             compiled: Rc::downgrade(compiled),
             return_pc,
@@ -9647,9 +9656,9 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
-pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
-    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
-        || body.code.iter().any(|packed| crate::staged::meaning::means(super::dispatch_fast::decoded_instruction(body, *packed), crate::staged::meaning::Meaning::Call))
+pub(super) fn body_may_amortize_in_lane(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
+    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
+        || body.code.iter().any(|packed| crate::staged::Operation::<u64, ()>::is_plain_call(super::dispatch_fast::decoded_instruction(body, *packed)))
 }
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's

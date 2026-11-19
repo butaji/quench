@@ -3,12 +3,13 @@
 //! (`Model`) tracks them beside the registers' types; a relation dies with either register's
 //! next write, and one to an array's length with any instruction that may change it.
 
-use super::run::{Model, Point};
+use super::run::{Model, Point, TypedAccess};
 use crate::bytecode::{FieldLookup, Operand, Register, ResidualProgram, WideInstruction};
+use super::super::meaning_compiled::is_numeric_binary;
 use crate::staged::{DecodeContext, NumberOperation, Operation};
 use crate::typed_ir::{IntRange, Type};
 use crate::compile::liveness::RegisterSet;
-use super::super::super::operations::NumberRelation;
+use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
 #[derive(Clone, Default)]
 pub(in crate::vm::compiled) struct Relations {
@@ -19,6 +20,12 @@ pub(in crate::vm::compiled) struct Relations {
     /// Registers known below the value of the named register, whatever it holds: a bound a loop's
     /// entry may compare with an array's length once (`IndexProof::Versioned`).
     pub(super) under: Vec<Option<Register>>,
+    /// Registers known at most the `length` of the named register's array: the array's length itself
+    /// or a register below it, which a loop's bound keeps (`bound_below`) across its back edge.
+    pub(super) atmost: Vec<Option<Register>>,
+    /// Registers known below twice the value of the named register, a sum of two registers where the
+    /// smaller is non-negative and below the larger (`relate_sum`), which a zero-fill shift halves (`relate_shift`).
+    pub(super) twice: Vec<Option<Register>>,
     /// Whether any relation may be held: false makes a write's or a length change's retirement
     /// free, as it is in the many units that read no length (each would scan every table).
     pub(super) held: bool,
@@ -39,18 +46,24 @@ pub(super) fn meet(known: &mut Option<Register>, incoming: Option<Register>) -> 
 
 impl Relations {
     pub(super) fn new(registers: usize) -> Self {
-        Self { length_of: vec![None; registers], below: vec![None; registers], under: vec![None; registers], held: false,
-            named: RegisterSet::default(), wide: false }
+        Self { length_of: vec![None; registers], below: vec![None; registers], under: vec![None; registers],
+            atmost: vec![None; registers], twice: vec![None; registers], held: false, named: RegisterSet::default(), wide: false }
     }
 
     /// The relations of these rows, with the registers they name.
-    pub(super) fn of_rows(length_of: Vec<Option<Register>>, below: Vec<Option<Register>>, under: Vec<Option<Register>>) -> Self {
+    pub(super) fn of_rows(length_of: Vec<Option<Register>>, below: Vec<Option<Register>>, under: Vec<Option<Register>>,
+        atmost: Vec<Option<Register>>, twice: Vec<Option<Register>>) -> Self {
         let (mut named, mut wide, mut held) = (RegisterSet::default(), false, false);
-        for &register in [&length_of, &below, &under].into_iter().flat_map(|rows| rows.iter().flatten()) {
+        for &register in [&length_of, &below, &under, &atmost, &twice].into_iter().flat_map(|rows| rows.iter().flatten()) {
             held = true;
             if usize::from(register) < RegisterSet::BITS as usize { named.insert(usize::from(register)); } else { wide = true; }
         }
-        Self { length_of, below, under, held, named, wide }
+        Self { length_of, below, under, atmost, twice, held, named, wide }
+    }
+
+    /// Every table, by the relation each keeps.
+    fn tables_mut(&mut self) -> [&mut Vec<Option<Register>>; 5] {
+        [&mut self.length_of, &mut self.below, &mut self.under, &mut self.atmost, &mut self.twice]
     }
 
     /// Notes that a relation names `register`.
@@ -62,11 +75,13 @@ impl Relations {
     pub(super) fn kill(&mut self, register: Register) {
         if !self.held { return; }
         if self.wide || self.named.contains(usize::from(register)) {
-            for slot in self.length_of.iter_mut().chain(self.below.iter_mut()).chain(self.under.iter_mut()) {
-                if *slot == Some(register) { *slot = None; }
+            for table in self.tables_mut() {
+                for slot in table.iter_mut() {
+                    if *slot == Some(register) { *slot = None; }
+                }
             }
         }
-        for table in [&mut self.length_of, &mut self.below, &mut self.under] {
+        for table in self.tables_mut() {
             if let Some(slot) = table.get_mut(usize::from(register)) { *slot = None; }
         }
     }
@@ -77,18 +92,22 @@ impl Relations {
         if !self.held { return; }
         self.length_of.fill(None);
         self.below.fill(None);
+        self.atmost.fill(None);
     }
 
     /// `to` takes `from`'s relations, but not to itself.
     pub(super) fn copy(&mut self, to: Register, from: Register) {
-        let [length, below, under] = [&self.length_of, &self.below, &self.under]
+        let [length, below, under, atmost, twice] = [&self.length_of, &self.below, &self.under, &self.atmost, &self.twice]
             .map(|table| table.get(usize::from(from)).copied().flatten());
+        // A register at most the length of an array is at most that length, as a register below one is.
+        let at_most = atmost.or(length).or(below);
         self.kill(to);
-        for (table, array) in [(&mut self.length_of, length), (&mut self.below, below), (&mut self.under, under)] {
+        for (table, array) in [(&mut self.length_of, length), (&mut self.below, below), (&mut self.under, under),
+            (&mut self.atmost, at_most), (&mut self.twice, twice)] {
             if let Some(slot) = table.get_mut(usize::from(to)) { *slot = array.filter(|array| *array != to); }
         }
         if usize::from(to) < self.length_of.len() {
-            for array in [length, below, under].into_iter().flatten().filter(|array| *array != to) { self.name(array); }
+            for array in [length, below, under, at_most, twice].into_iter().flatten().filter(|array| *array != to) { self.name(array); }
         }
     }
 
@@ -97,7 +116,8 @@ impl Relations {
     fn bound_below(&mut self, [small, big]: [Operand; 2]) {
         let Some((index, bound)) = small.register_index().zip(big.register_index()).filter(|(index, bound)| index != bound) else { return };
         if let Some(slot) = self.under.get_mut(usize::from(index)) { *slot = Some(bound); self.name(bound); }
-        if let Some(array) = self.length_of.get(usize::from(bound)).copied().flatten()
+        let length = [&self.length_of, &self.atmost].into_iter().find_map(|table| table.get(usize::from(bound)).copied().flatten());
+        if let Some(array) = length
             && array != index
             && let Some(slot) = self.below.get_mut(usize::from(index)) {
             *slot = Some(array);
@@ -123,35 +143,133 @@ impl Relations {
             && let Some(slot) = self.length_of.get_mut(usize::from(instruction.result_register())) {
             *slot = Some(array);
             self.name(array);
+            if let Some(slot) = self.atmost.get_mut(usize::from(instruction.result_register())) { *slot = Some(array); }
+        }
+    }
+
+    /// `result` is the sum of `instruction`'s operands where it is an int32 addition (`relate_sum_of`).
+    fn relate_sum(&mut self, lookup: &dyn Fn(Operand) -> Option<IntRange>, instruction: WideInstruction) {
+        if instruction.result_flags() != 0 || !is_numeric_binary(instruction)
+            || NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()) != Some(NumberArithmetic::Add) { return; }
+        let (Some(first), Some(second)) = (instruction.operand_b().register_index(), instruction.operand_c().register_index()) else { return };
+        self.relate_sum_of(instruction.result_register(), first, second, lookup);
+    }
+
+    /// `result` is the sum of `first` and `second` where one is below the other (`under`) and the
+    /// smaller is non-negative (`lookup`, the operands' ranges before the instruction): the sum is
+    /// below twice the larger, as the smaller is below it and the larger is not negative.
+    pub(super) fn relate_sum_of(&mut self, result: Register, first: Register, second: Register, lookup: &dyn Fn(Operand) -> Option<IntRange>) {
+        for (small, big) in [(first, second), (second, first)] {
+            let below = self.under.get(usize::from(small)).copied().flatten() == Some(big);
+            let non_negative = lookup(Operand::register(small)).is_some_and(|range| range.min >= 0);
+            if below && non_negative && let Some(slot) = self.twice.get_mut(usize::from(result)) {
+                *slot = Some(big);
+                self.name(big);
+                return;
+            }
+        }
+    }
+
+    /// `result` is a zero-fill shift by a known count that is not zero (`relate_shift_of`).
+    fn relate_shift(&mut self, lookup: &dyn Fn(Operand) -> Option<IntRange>, instruction: WideInstruction) {
+        if instruction.result_flags() != 0 || !is_numeric_binary(instruction)
+            || NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator()) != Some(NumberBitwise::ShiftRightUnsigned) { return; }
+        let count = lookup(instruction.operand_c()).filter(|count| count.min == count.max);
+        if !count.is_some_and(|count| (count.min as u32) & crate::value::WORD32_SHIFT_MASK != 0) { return; }
+        let Some(source) = instruction.operand_b().register_index() else { return };
+        self.relate_shift_of(instruction.result_register(), source);
+    }
+
+    /// `result` is the zero-fill shift of `source` by a nonzero count, where `source` is below twice
+    /// a bound (`relate_sum_of`): the result is below the bound, and at most the length of the array
+    /// the bound is at most the length of.
+    pub(super) fn relate_shift_of(&mut self, result: Register, source: Register) {
+        let Some(bound) = self.twice.get(usize::from(source)).copied().flatten() else { return };
+        if let Some(slot) = self.under.get_mut(usize::from(result)) { *slot = Some(bound); }
+        self.name(bound);
+        let array = self.atmost.get(usize::from(bound)).copied().flatten();
+        if let Some(array) = array && array != result && let Some(slot) = self.atmost.get_mut(usize::from(result)) {
+            *slot = Some(array);
+            self.name(array);
+        }
+    }
+
+    /// `result` is `first - step` where `step` is a constant of at least one: `result` is below `first`
+    /// (`under`), whatever `first` is, as the subtraction only lowers it.
+    fn relate_difference(&mut self, lookup: &dyn Fn(Operand) -> Option<IntRange>, instruction: WideInstruction) {
+        if instruction.result_flags() != 0 || !is_numeric_binary(instruction)
+            || NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()) != Some(NumberArithmetic::Subtract) { return; }
+        let Some(first) = instruction.operand_b().register_index() else { return };
+        let result = instruction.result_register();
+        let step = lookup(instruction.operand_c()).filter(|step| step.min == step.max && step.min >= 1);
+        if step.is_none() || first == result { return; }
+        if let Some(slot) = self.under.get_mut(usize::from(result)) {
+            *slot = Some(first);
+            self.name(first);
+        }
+    }
+
+    /// `register` is decremented in place: the relations it holds stay true of its lower value (a value
+    /// below a bound is below it once lowered), but a relation another register holds to its value (a
+    /// bound it is below) does not, so only those are dropped. Its length is no longer its array's.
+    fn decrement(&mut self, register: Register) {
+        let index = usize::from(register);
+        let kept = [&self.below, &self.under, &self.atmost, &self.twice].map(|table| table.get(index).copied().flatten());
+        self.kill(register);
+        for (table, array) in [&mut self.below, &mut self.under, &mut self.atmost, &mut self.twice].into_iter().zip(kept) {
+            if let Some(slot) = table.get_mut(index) { *slot = array; }
+        }
+    }
+
+    /// The register `instruction` decrements in place, where it is `register--` (no flags).
+    fn decremented(instruction: WideInstruction) -> Option<Register> {
+        if instruction.result_flags() != 0 { return None; }
+        match crate::vm::compiled::decoded(instruction) {
+            Some(Operation::Number(NumberOperation::IncDec { destination, source, decrement: true, .. })) if destination == source => Some(destination),
+            _ => None,
         }
     }
 
     /// The relations after `instruction` at `pc`.
     pub(super) fn step(&mut self, model: &Model<'_>, pc: usize, instruction: WideInstruction,
-        written: &dyn Fn(WideInstruction) -> Vec<Register>) {
+        written: &dyn Fn(WideInstruction) -> Vec<Register>, lookup: &dyn Fn(Operand) -> Option<IntRange>, numeric_store: bool) {
         if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Move { .. })) && instruction.result_flags() == 0 {
             self.copy(instruction.result_register(), instruction.register_b());
+        } else if let Some(register) = Self::decremented(instruction) {
+            self.decrement(register);
         } else {
             for register in written(instruction) { self.kill(register); }
         }
-        if model.disturbs_lengths(pc, instruction) { self.clear(); }
+        if model.disturbs_lengths(pc, instruction, numeric_store) { self.clear(); }
         self.relate_read(model.program, instruction);
+        self.relate_sum(lookup, instruction);
+        self.relate_shift(lookup, instruction);
+        self.relate_difference(lookup, instruction);
     }
 }
 
 impl Model<'_> {
     /// Whether `instruction` may change an array's length or run guest code that can: all but
     /// numeric steps, moves, jumps and reads of a hoisted view, whose misses leave.
-    pub(in crate::vm::compiled) fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction) -> bool {
+    /// `numeric_store`: the store at `pc`, where it is one, takes a Number value (`Relations::step`).
+    pub(in crate::vm::compiled) fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction, numeric_store: bool) -> bool {
         use crate::staged::Operation as Staged;
         let decoded = crate::vm::compiled::decoded(instruction);
         let completed = crate::vm::compiled::decoded_completed(instruction);
+        // A hoisted typed view's `length` is its array's own, which no guest code changes, and its
+        // Number store changes no length nor runs one: neither leaves the body for the VM.
+        let typed = match (self.typed)(pc) {
+            Some(TypedAccess::Length) => true,
+            Some(TypedAccess::Store) => numeric_store,
+            None => false,
+        };
         let quiet = matches!(decoded, Some(Staged::Move { .. } | Staged::Jump | Staged::Nop | Staged::JumpIf { .. }
                 | Staged::CompareJump { .. } | Staged::Number(crate::staged::NumberOperation::IncDec { .. })
                 | Staged::IncDecLocal { .. }))
             || crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
             || super::super::meaning_compiled::is_numeric_binary(instruction)
-            || (matches!(completed, Some(Staged::ElementRead { .. } | Staged::ElementReadOperand { .. })) && (self.dense)(pc));
+            || (matches!(completed, Some(Staged::ElementRead { .. } | Staged::ElementReadOperand { .. })) && (self.dense)(pc))
+            || typed;
         !quiet || self.generic.contains(&pc)
     }
 }
@@ -169,6 +287,13 @@ pub(in crate::vm::compiled) enum IndexProof {
 }
 
 impl Point {
+    /// Whether `instruction` is an element store whose value the point holds a Number of: a store that
+    /// runs no guest code, where its view is typed (`Model::typed`).
+    pub(in crate::vm::compiled) fn numeric_store(&self, instruction: WideInstruction) -> bool {
+        matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementWrite { value, .. })
+            if self.types.get(usize::from(value)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)))
+    }
+
     /// The register `register` is known below the value of, if any.
     pub(in crate::vm::compiled) fn under_of(&self, register: Register) -> Option<Register> {
         self.relations.under.get(usize::from(register)).copied().flatten()
@@ -199,6 +324,8 @@ impl Point {
         let related = |table: &[Option<Register>]| table.get(usize::from(index)).copied().flatten();
         match (related(&self.relations.below), related(&self.relations.under)) {
             (Some(held), _) if held == array => IndexProof::Proven,
+            // Below a bound that is at most the array's length.
+            (_, Some(bound)) if self.relations.atmost.get(usize::from(bound)).copied().flatten() == Some(array) => IndexProof::Proven,
             (_, Some(bound)) if bound != array => IndexProof::Versioned { array, bound },
             _ => IndexProof::Check,
         }

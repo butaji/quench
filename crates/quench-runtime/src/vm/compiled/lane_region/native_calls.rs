@@ -62,6 +62,23 @@ impl Inline {
         matches!(self, Self::Builtin(builtin) if builtin.mutates_arrays())
     }
 
+    /// Whether a loop holds the operation natively: it changes no array, or it appends to one
+    /// and reloads the views the append may move (`Lowering::hoisted_push`).
+    const fn holds_in_loop(self) -> bool {
+        !self.mutates_arrays() || self.appends()
+    }
+
+    /// Whether the operation appends a value to an array (`push`).
+    const fn appends(self) -> bool {
+        matches!(self, Self::Builtin(Builtin::Push))
+    }
+
+    /// Whether the operation searches an array's elements (`includes`, `indexOf`): its
+    /// receiver's view is hoisted around a loop like a store's (`Lowering::element_search`).
+    const fn searches(self) -> bool {
+        matches!(self, Self::Builtin(Builtin::Includes | Builtin::IndexOf))
+    }
+
     /// The operation on `numbers`: a Float64 value; `Imul` is lowered by the caller.
     fn emit(self, builder: &mut FunctionBuilder<'_>, numbers: &[ir::Value]) -> ir::Value {
         let mut stage = super::super::object_slots::emit(builder);
@@ -77,16 +94,33 @@ impl Inline {
 /// Each with the function it held and the exact shape of the prototype holding it.
 pub(super) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
 
-/// Whether a lane body runs a call of `native` inline and the call changes no array: a loop
-/// whose calls are all such runs natively in a body (`loop_body::offer_body`).
-pub(in crate::vm) fn inlines_keeping_arrays(native: Native) -> bool {
-    Inline::of(native).is_some_and(|inline| !inline.mutates_arrays())
+/// Whether a lane body runs a call of `native` inline and a loop holds it natively: the call
+/// changes no array, or appends to one (`holds_in_loop`). A loop whose calls are all such runs
+/// natively in a body (`loop_body::offer_body`).
+pub(in crate::vm) fn inlines_in_loop(native: Native) -> bool {
+    Inline::of(native).is_some_and(Inline::holds_in_loop)
 }
 
-/// Whether the call at `pc` runs inline and changes no array, so a loop holds it natively and
-/// the Stable facts its code folded survive it.
+/// Whether the call at `pc` runs inline and changes no array, so the Stable facts its code
+/// folded survive it.
 pub(super) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| !inline.mutates_arrays())
+}
+
+/// Whether a loop holds the call at `pc` natively (`holds_in_loop`).
+pub(super) fn holds_in_loop(intrinsics: &Intrinsics, pc: usize) -> bool {
+    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.holds_in_loop())
+}
+
+/// Whether the call at `pc` appends to an array (`appends`): the array's length may grow.
+pub(super) fn appends(intrinsics: &Intrinsics, pc: usize) -> bool {
+    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.appends())
+}
+
+/// Whether the call at `pc` searches an array's elements (`searches`): its receiver's view is
+/// hoisted around the loop that holds the call (`loop_arrays`).
+pub(super) fn searches(intrinsics: &Intrinsics, pc: usize) -> bool {
+    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.searches())
 }
 
 /// The calls of `unit` that run inline, by PC: a call's callee register was defined by a field
@@ -115,6 +149,10 @@ impl Lowering<'_, '_> {
     /// dense array). False where the call is not one.
     pub(super) fn intrinsic_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(&Some((callee, inline, holder))) = self.intrinsics.get(pc) else { return false };
+        // An element search scans for an int32 word (`element_search`): a search value not proved
+        // int32 takes the call's generic path, which compares it by the array's own steps.
+        if let Inline::Builtin(Builtin::Includes | Builtin::IndexOf) = inline
+            && !state.values[usize::from(crate::bytecode::ImmediateLayout::call_window_base(instruction.imm()))].value.ty.is_subtype(Type::INT32) { return false; }
         // The callee's identity is held by its holder, a dependency that retires this code
         // before the function can die and its id be reused.
         if !self.holds_holders() { return false; }
@@ -124,7 +162,7 @@ impl Lowering<'_, '_> {
         let same = self.is_identity(held, callee);
         emit_js_guard(&mut self.builder, same, exit);
         match inline {
-            Inline::Builtin(builtin) => self.builtin_call(state, instruction, builtin, exit),
+            Inline::Builtin(builtin) => self.builtin_call(state, pc, instruction, builtin, exit),
             _ => self.math_call(state, instruction, inline, exit),
         }
         true

@@ -149,8 +149,11 @@ pub(crate) enum NumberOperation {
     /// is above `i32::MAX`, which no int32 holds: it leaves.
     Bitwise { destination: Register, left: Operand, right: Operand, operation: NumberBitwise },
     /// `left % right` with both operands in `domain`. An int32 result that is no int32 (a
-    /// zero divisor's NaN, a negative dividend's `-0`) leaves.
-    Remainder { destination: Register, left: Operand, right: Operand, domain: Domain },
+    /// zero divisor's NaN, a negative dividend's `-0`) leaves. A tier that proved the divisor no
+    /// zero (`divisor_nonzero`) skips that test, and one whose consumers read no sign of a zero
+    /// (`zero: Ignore`) keeps the int32 zero of a negative dividend.
+    Remainder { destination: Register, left: Operand, right: Operand, domain: Domain,
+        zero: NegativeZero, divisor_nonzero: bool },
     /// `source ± 1` (`++`, or `--` where `decrement`) of an int32 `source`.
     IncDec { destination: Register, source: Register, decrement: bool, overflow: Overflow },
     /// `+source` or `-source` of a Number `source`, in `domain`; any other value leaves.
@@ -193,8 +196,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             relation_value(stage, frame, destination, left, right, relation, domain),
         NumberOperation::Bitwise { destination, left, right, operation } =>
             bitwise_value(stage, frame, destination, left, right, operation),
-        NumberOperation::Remainder { destination, left, right, domain } =>
-            remainder(stage, frame, destination, left, right, domain),
+        NumberOperation::Remainder { destination, left, right, domain, zero, divisor_nonzero } =>
+            remainder(stage, frame, destination, left, right, domain, (zero, divisor_nonzero)),
         NumberOperation::IncDec { destination, source, decrement, overflow } =>
             increment(stage, frame, destination, source, decrement, overflow),
         NumberOperation::BitwiseNot { destination, source } => bitwise_not(stage, frame, destination, source),
@@ -489,7 +492,8 @@ pub(crate) fn binary_operation(operator: u32, destination: Register, left: Opera
             overflow: Overflow::Widen, zero: NegativeZero::Ignore });
     }
     if operator == BinaryOperator::Remainder as u32 {
-        return Some(NumberOperation::Remainder { destination, left, right, domain: Domain::Float64 });
+        return Some(NumberOperation::Remainder { destination, left, right, domain: Domain::Float64,
+            zero: NegativeZero::Exit, divisor_nonzero: false });
     }
     if let Some(operation) = NumberBitwise::from_operator(operator) {
         return Some(NumberOperation::Bitwise { destination, left, right, operation });
@@ -656,7 +660,10 @@ fn both_tests<S: NumericStage>(stage: &mut S, tests: [Option<S::Cond>; 2]) -> Op
 /// Float64 remainder takes `remainder_number`'s int32 fast path where both operands are int32.
 #[inline(always)]
 fn remainder<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    destination: Register, left: Operand, right: Operand, domain: Domain) -> Step<S::Word, F::Control> {
+    destination: Register, left: Operand, right: Operand, domain: Domain,
+    (zero, divisor_nonzero): (NegativeZero, bool)) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let Some((left, right)) = operands(stage, frame, left, right, domain) else { return Step::Unresolved };
     let (result, fact) = match domain {
         Domain::Float64 => {
             let (result, miss_cond) = stage.integral_remainder(left, right);
@@ -666,18 +673,20 @@ fn remainder<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             (result, frame.number_fact())
         }
         Domain::Int32 => {
-            let miss = frame.miss();
-            let Some((left, right)) = operands(stage, frame, left, right, domain) else { return Step::Unresolved };
-            let zero_divisor = stage.i32_is_zero(right);
-            if stage.guard_false(zero_divisor, miss).is_none() {
-                return Step::Unresolved;
+            if !divisor_nonzero {
+                let zero_divisor = stage.i32_is_zero(right);
+                if stage.guard_false(zero_divisor, miss).is_none() {
+                    return Step::Unresolved;
+                }
             }
             let result = stage.int_remainder(left, right);
-            let zero = stage.i32_is_zero(result);
-            let negative = stage.i32_is_negative(left);
-            let negative_zero = stage.both(zero, negative);
-            if stage.guard_false(negative_zero, miss).is_none() {
-                return Step::Unresolved;
+            if zero == NegativeZero::Exit {
+                let is_zero = stage.i32_is_zero(result);
+                let negative = stage.i32_is_negative(left);
+                let negative_zero = stage.both(is_zero, negative);
+                if stage.guard_false(negative_zero, miss).is_none() {
+                    return Step::Unresolved;
+                }
             }
             (frame.int_result(stage, result), frame.int_fact())
         }

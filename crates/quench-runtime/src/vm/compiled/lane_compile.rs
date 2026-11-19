@@ -81,7 +81,7 @@ fn root_constants<H: Host>(vm: &Vm<H>, function: u32, unit: &lane_unit::Unit) ->
 /// inlined callee's (`Lowering::virtual_construct_plan`).
 fn construction_sites(unit: &lane_unit::Unit, function: u32) -> impl Iterator<Item = (u32, u32)> + '_ {
     unit.instructions.iter().enumerate()
-        .filter(|(_, instruction)| instruction.op().class() == crate::bytecode::Class::Construct)
+        .filter(|(_, instruction)| crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Construct))
         .filter_map(move |(pc, _)| match unit.origins.get(pc).copied()? {
             lane_unit::Origin::Caller(record) => Some((function, record)),
             lane_unit::Origin::Inlined { frame, pc } => Some((unit.frames[frame].target.function, pc)),
@@ -117,7 +117,7 @@ impl FactTables {
             }
         }
         for instruction in &unit.instructions {
-            if instruction.op() == crate::bytecode::Op::SetFunctionName {
+            if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::SetFunctionName) {
                 let key = (instruction.cache_site_index(), instruction.atom_index());
                 if let Some(name) = vm.native_function_name(key.0, key.1) { tables.names.insert(key, name); }
             }

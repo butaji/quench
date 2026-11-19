@@ -69,13 +69,29 @@ impl Lowering<'_, '_> {
         if !self.division().folds(BindingTime::Stable) { return; }
         let Some(end) = self.loop_end(header) else { return };
         let global = self.loop_realm(header, end);
-        let folds = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })));
-        let stable = folds && (header..=end).all(|pc| self.keeps_stable_facts(pc, self.unit.instructions[pc]));
+        let stores = self.loop_holds_stores(header, end);
+        let reads = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })));
+        // A store may write a prototype's field that a read's folded holder value names, which the inline
+        // store does not retire; a loop that both stores and reads a Stable fact holds none.
+        let folds = reads || stores;
+        let stable = folds && !(stores && reads) && (header..=end).all(|pc| self.keeps_stable_facts(pc, self.unit.instructions[pc]));
         if !(stable || global.is_some()) || !self.enters_only_at_header(header, end) { return; }
         let exit = self.guard_exit(state, header as u32);
         if stable && !state.proofs.stable { self.read_invalidation(state, exit); }
+        // A loop whose stores all leave on a miss runs no store that could unset `stores_specialized`.
+        if stable && stores { self.hold_specialized(state, exit); }
         if let Some(realm) = global.filter(|_| !state.proofs.realm) { self.test_realm(state, exit, realm); }
         self.hold_in_loop(header, end, stable, global.is_some());
+    }
+
+    /// Whether loop `header..=end` holds a field store that leaves on a miss (`store_keeps_facts`),
+    /// the stores whose Stable proofs `hoist_stable` may hold on the entering edge.
+    fn loop_holds_stores(&self, header: usize, end: usize) -> bool {
+        (header..=end).any(|pc| {
+            let instruction = self.unit.instructions[pc];
+            matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. }))
+                && self.store_keeps_facts(pc, instruction)
+        })
     }
 
     /// The last backedge of the loop at `header`, if one closes there.

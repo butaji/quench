@@ -542,7 +542,10 @@ impl<H: Host> Vm<H> {
         env: Value,
         realm: Value,
     ) -> Result<Value, JsError> {
-        let env = if p.closure_takes_no_environment(id) { Value::NULL } else { env };
+        // A root closure starts a run of its program's root (`Vm::note_root_run`).
+        if id == super::ROOT_FUNCTION_ID {
+            self.note_root_run();
+        }
         // No `with` was ever entered, so no closure captures a `with` object
         // (`Vm::with_scope_entered`): a recorded closure needs none of the scope work below.
         if !self.with_scope_entered

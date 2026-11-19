@@ -28,7 +28,9 @@ use crate::staged::typed_elements::{NativeKind, ViewKind};
 use crate::staged::typed_view::{prove_typed_view, TypedRecords, ViewAccess};
 use std::collections::{BTreeMap, BTreeSet};
 /// The direct callees of a body's call sites, by unit PC.
-pub(super) type DirectSites = BTreeMap<usize, *const DirectCallee>;
+/// The direct callees of each call site, by PC, in the order a chain of identity tests takes them
+/// (`Lowering::polymorphic_call`); one for a site that is not polymorphic.
+pub(super) type DirectSites = BTreeMap<usize, Vec<*const DirectCallee>>;
 use cranelift_codegen::bitset::CompoundBitSet;
 use cranelift_codegen::entity::EntityRef;
 
@@ -47,7 +49,7 @@ mod int_ranges_tests;
 mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
 #[path = "lane_region/builtin_calls.rs"] mod builtin_calls;
-pub(in crate::vm) use native_calls::inlines_keeping_arrays;
+pub(in crate::vm) use native_calls::inlines_in_loop;
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]
@@ -1319,7 +1321,7 @@ fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: Wid
 }
 
 /// Whether a loop may hold `instruction` natively: a read, an own-field or element store, or a
-/// call lowered as an intrinsic that changes no array (`native_calls::keeps_arrays`).
+/// call lowered as an intrinsic the loop holds (`native_calls::holds_in_loop`).
 fn stays_native(constants: &[Constant], instruction: WideInstruction, intrinsic: bool) -> bool {
     intrinsic || reads_only(constants, instruction) || stores_own(instruction) || stores_element(instruction)
 }
@@ -1342,13 +1344,14 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
         if (entries != 1 && !entry_header) || side
             || (header + 1..=back).contains(&start)
-            || !body.iter().enumerate().all(|(offset, candidate)| stays_native(constants, *candidate, native_calls::keeps_arrays(intrinsics, header + offset))) { continue }
+            || !body.iter().enumerate().all(|(offset, candidate)| stays_native(constants, *candidate, native_calls::holds_in_loop(intrinsics, header + offset))) { continue }
         loops.push((header, back));
     }
     loops
 }
 
-fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<InvariantRead>> {
+fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loops: &[(usize, usize)],
+    intrinsics: &native_calls::Intrinsics, quiet_store: &dyn Fn(usize) -> bool) -> BTreeMap<usize, Vec<InvariantRead>> {
     let mut hoists = BTreeMap::new();
     let boundaries = leaders(&unit.instructions);
     for &(header, back) in loops {
@@ -1356,8 +1359,12 @@ fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loo
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
-        // An element store may append, which changes its array's `length`.
-        let resizes = body.iter().any(|candidate| stores_element(*candidate));
+        // An element store or an append may grow its array, which changes its `length`; a store
+        // `quiet_store` proves through a typed view changes none.
+        let resizes = body.iter().enumerate().any(|(offset, candidate)| {
+            let pc = header + offset;
+            (stores_element(*candidate) && !quiet_store(pc)) || native_calls::appends(intrinsics, pc)
+        });
         let mut reads: Vec<InvariantRead> = body.iter().enumerate().filter_map(|(offset, candidate)| {
             let pc = header + offset;
             if matches!(crate::vm::compiled::performed(candidate), Some(crate::staged::Operation::LoadCapture { .. }))
@@ -1949,11 +1956,21 @@ pub(super) fn lower(
     lowering.require_object_latches(&instructions, &leaders, &loops);
     for &pc in generic { lowering.facts.widen(pc); }
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, &loops, &leaders)); }
-    lowering.hoists = invariant_reads(program, unit, &loops);
+    // A preliminary run of the facts over the arrays the loops index without their captured reads
+    // (`loop_arrays` before the hoists): a typed or double view's store the run proves a Number store
+    // changes no length, so it does not keep a loop's `length` from its entry (`invariant_reads`).
+    lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders, |_, _| false,
+        lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+    lowering.entering = lowering.entering_ranges(entry_pc);
+    lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
+    let preliminary = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
+    let quiet_store = |pc: usize| preliminary.numeric_store(pc) && lowering.typed_access(pc) == Some(super::facts::TypedAccess::Store);
+    let hoists = invariant_reads(program, unit, &loops, &lowering.intrinsics, &quiet_store);
+    lowering.hoists = hoists;
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && matches!(crate::vm::compiled::performed(&instructions[at]), Some(crate::staged::Operation::LoadCapture { .. })))),
-        lowering.views, typed_captures, |pc| coverage.lowered(pc));
+        lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
     lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
@@ -2173,6 +2190,21 @@ impl Lowering<'_, '_> {
             return true;
         }
         false
+    }
+
+    /// Whether the int32 remainder written to `register` at `pc` is read only by a sum or difference
+    /// (`Add` or `Subtract`) whose own result only its ToInt32 is read of (`truncated`), and `register`
+    /// is dead past that sum unless the sum writes it. ToInt32 reads a `-0` and a `0` alike, and a sum
+    /// with either differs from the other in the sign of a zero only, so the remainder's sign is unread.
+    pub(super) fn truncated_sum_operand(&self, pc: usize, register: Register) -> bool {
+        let (at, reader) = self.reader(pc + 1, register);
+        let Some(next) = self.unit.instructions.get(at).copied() else { return false };
+        if !crate::staged::meaning::means(next, crate::staged::meaning::Meaning::Binary) || next.returns_from_frame()
+            || next.writes_current_this() || next.result_flags() != 0 { return false; }
+        if !matches!(crate::vm::compiled::number_arithmetic(next, next.binary_operator()),
+            Some(crate::vm::operations::NumberArithmetic::Add | crate::vm::operations::NumberArithmetic::Subtract)) { return false; }
+        let reads = [next.operand_b(), next.operand_c()].iter().filter(|operand| operand.register_index() == Some(reader)).count();
+        reads > 0 && (next.result_register() == reader || self.dead_after(at, reader)) && self.truncated(at, next.result_register())
     }
 
     /// Whether only the ToInt32 of the int32 result written to `register` at `pc` is read: through
@@ -3460,27 +3492,39 @@ impl Lowering<'_, '_> {
         };
         let missed = self.guard_exit(state, pc as u32);
         self.home_written(state, pc);
-        let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
+        let completed = self.builder.create_block();
         let raised = cold_block(&mut self.builder);
         let entered = self.builder.create_block();
         // The callee's exception block is filled before the call's blocks, from the state the call is made in.
         self.goto(entered, &[]);
         self.raised_call(state, pc, record, raised);
         self.builder.switch_to_block(entered);
-        // SAFETY: the body owns the callee for as long as its code runs.
-        let callee = self.direct.get(&pc).map(|callee| unsafe { &**callee });
-        // A construction of a stores-only constructor, whose arguments are a window of the caller's
-        // registers (`CallSite::initializing`): its receiver is allocated finished and its body not entered.
-        let initializing = match (site.arguments, callee) {
-            // A forwarding site's target is the forwarded initializer, whose receiver its forwarder's plan
-            // allocates (`DirectCallee::forwarder`): that path keeps its body.
-            (crate::staged::Arguments::Window { first, count }, Some(callee))
-                if site.constructs() && callee.forwarder.is_none() && self.initializes_on_construction(callee.target.function) => Some((first, count)),
-            _ => None,
-        };
-        let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed, raised,
-            stop: self.call_out_stop(), leave: self.leave_site(), initializing };
-        self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
+        // SAFETY: the body owns its callees for as long as its code runs.
+        let callees: Vec<&DirectCallee> = self.direct.get(&pc).map(|sites| sites.iter().map(|callee| unsafe { &**callee }).collect()).unwrap_or_default();
+        // The declared result the call's completion conforms to: the callee's, where every candidate declares the same one.
+        let returns = callees.iter().filter(|_| !site.constructs())
+            .map(|callee| declared::declared_return(self.program, callee.target.function))
+            .reduce(|first, next| if first == next { first } else { None }).flatten();
+        match site.callee {
+            crate::staged::forms::Callee::Register(register) if callees.len() >= 2 && !site.constructs() =>
+                self.polymorphic_call(state, site, record, register, &callees, (completed, missed, raised)),
+            _ => {
+                let callee = callees.first().copied();
+                let generic = self.builder.create_block();
+                // A construction of a stores-only constructor, whose arguments are a window of the caller's
+                // registers (`CallSite::initializing`): its receiver is allocated finished and its body not entered.
+                let initializing = match (site.arguments, callee) {
+                    // A forwarding site's target is the forwarded initializer, whose receiver its forwarder's plan
+                    // allocates (`DirectCallee::forwarder`): that path keeps its body.
+                    (crate::staged::Arguments::Window { first, count }, Some(callee))
+                        if site.constructs() && callee.forwarder.is_none() && self.initializes_on_construction(callee.target.function) => Some((first, count)),
+                    _ => None,
+                };
+                let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed, raised,
+                    stop: self.call_out_stop(), leave: self.leave_site(), initializing };
+                self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
+            }
+        }
         self.reentries.push(completed);
         // A returning call's completion is its activation's: the lane completes it with the
         // result, which the call left in its register (`LaneExit::Returned`).
@@ -3493,6 +3537,39 @@ impl Lowering<'_, '_> {
         self.reload_result(state, site.result);
         if let Some(ty) = returns { self.conform_declared_result(state, pc, site.result, ty); }
         true
+    }
+
+    /// A call of a register callee that one of `callees` may be (several direct candidates of the
+    /// site): a chain of tests on the callee register, each leading to its candidate's direct call,
+    /// and the last to a call by the VM alone. A test's candidate is the one its step guards again,
+    /// which holds. Each step gets its own miss block, which its VM call fills (`CallFrame::call_helper`
+    /// appends the call to the block it is given, so blocks are not shared). The steps share `completed`,
+    /// `missed` and `raised`, and the chain ends at `completed`.
+    fn polymorphic_call(&mut self, state: &mut State, site: crate::staged::Invocation, record: u32, register: Register,
+        callees: &[&DirectCallee], (completed, missed, raised): (ir::Block, ir::Block, ir::Block)) {
+        use crate::staged::{CallOperation, Operation};
+        let (stop, leave, context, registers) = (self.call_out_stop(), self.leave_site(), self.context, self.registers_base);
+        // The callee register is read once: the steps write nothing before a test runs.
+        let word = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(register));
+        let tests: Vec<ir::Block> = callees.iter().map(|_| self.builder.create_block()).collect();
+        let fallback = self.builder.create_block();
+        self.goto(tests[0], &[]);
+        for (index, &callee) in callees.iter().enumerate() {
+            self.builder.switch_to_block(tests[index]);
+            let arm = self.builder.create_block();
+            let next = tests.get(index + 1).copied().unwrap_or(fallback);
+            let matched = self.raw_compare_imm(Relation::Equal, word, callee.callee.to_bits() as i64);
+            self.branch_if(matched, (arm, &[]), (next, &[]));
+            self.builder.switch_to_block(arm);
+            let miss = cold_block(&mut self.builder);
+            let call = CallSite { callee: Some(callee), record, context, registers, completed, missed, raised, stop, leave, initializing: None };
+            self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
+        }
+        // No candidate's identity: the VM's call alone, as a site with no direct entry makes it.
+        self.builder.switch_to_block(fallback);
+        let miss = cold_block(&mut self.builder);
+        let call = CallSite { callee: None, record, context, registers, completed, missed, raised, stop, leave, initializing: None };
+        self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
     }
 
     /// The activation completes with `register`, by the staged return (`Frame::ret`) at the
@@ -4633,7 +4710,7 @@ impl Lowering<'_, '_> {
             return Some(true);
         }
         match (arithmetic, bitwise) {
-            _ if remainder => { self.remainder(state, destination, [left, right], exit); }
+            _ if remainder => { self.remainder(state, pc, destination, [left, right], exit); }
             (Some(arithmetic), _) => { self.arithmetic(state, pc, instruction, arithmetic, exit)?; }
             (_, Some(bitwise)) => {
                 let left_int = self.operand_to_int32(state, left, exit)?;
