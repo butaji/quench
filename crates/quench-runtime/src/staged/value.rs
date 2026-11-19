@@ -52,6 +52,7 @@ pub(crate) mod language {
     pub(crate) const NULL: u16 = 1 << 1;
     pub(crate) const BOOLEAN: u16 = 1 << 2;
     pub(crate) const NUMBER: u16 = 1 << 3;
+    pub(crate) const STRING: u16 = 1 << 4;
     pub(crate) const OBJECT: u16 = 1 << 7;
     pub(crate) const FUNCTION: u16 = 1 << 8;
     pub(crate) const ARRAY: u16 = 1 << 9;
@@ -65,7 +66,8 @@ const TAG_SPAN: u64 = (ValueLayout::TAG_FIELD_SPAN + 1) << ValueLayout::TAG_SHIF
 /// The language bits (`language`) a word's tag alone sets: a Number (an int32 or a double), a Boolean,
 /// `null`, `undefined`, a direct object family record (`OBJECT`, and `OBJECT_PLAIN` for a plain one), a
 /// direct array (`ARRAY`, with the `OBJECT` bit, as the family test the object family makes), a direct
-/// function (`FUNCTION`). A heap value no tag decides (a string, a symbol, a BigInt) sets none.
+/// function (`FUNCTION`), a direct string (`STRING`, the exact family test `is_direct_string` makes). A heap value
+/// no tag decides (a rope or heap string, a symbol, a BigInt) sets none.
 #[inline(always)]
 pub(crate) fn tag_languages<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
     let mut object = family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG);
@@ -84,8 +86,10 @@ pub(crate) fn tag_languages<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
     let plain = family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG);
     let array = family_is(stage, bits, ValueLayout::DIRECT_ARRAY_TAG);
     let function = family_is(stage, bits, ValueLayout::DIRECT_FUNCTION_TAG);
+    let string = is_direct_string(stage, bits);
     let classes = [(number, language::NUMBER), (boolean, language::BOOLEAN), (null, language::NULL), (undefined, language::UNDEFINED),
-        (object, language::OBJECT), (plain, language::OBJECT_PLAIN), (array, language::ARRAY), (function, language::FUNCTION)];
+        (object, language::OBJECT), (plain, language::OBJECT_PLAIN), (array, language::ARRAY), (function, language::FUNCTION),
+        (string, language::STRING)];
     let mut languages = stage.constant(0);
     for (hit, bit) in classes {
         let flag = stage.constant(u64::from(bit));

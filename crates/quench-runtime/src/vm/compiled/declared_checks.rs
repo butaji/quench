@@ -26,9 +26,9 @@ pub(crate) const UNDEFINED: u16 = language_bit(ValueType::Undefined);
 pub(crate) const OBJECT: u16 = language_bit(ValueType::Object);
 /// A direct function word: one tag test in both tiers.
 pub(crate) const FUNCTION: u16 = language_bit(ValueType::Function);
-/// A string. The u-jit accepts a direct string by its tag and any other string by the VM's `typeof`
-/// on a slow path; the b-jit has no tag test for it yet (a direct string is a family word its
-/// `tag_languages` does not set), so a String set gets no b-jit entry check.
+/// A string. Both tiers test a direct string by its tag (the b-jit's `tag_languages` sets `STRING` for it).
+/// The u-jit accepts any other string by the VM's `typeof` on a slow path; the b-jit's tag test leaves on
+/// a rope or heap string, which is sound because the entry exits and the interpreter runs the activation.
 pub(crate) const STRING: u16 = language_bit(ValueType::String);
 /// A direct array word (`DIRECT_ARRAY_TAG`): one tag test in the b-jit. The u-jit has no `Type` for
 /// an array, so an array set gets no u-jit entry check.
@@ -47,6 +47,6 @@ pub(crate) const DECLARED_CHECKED: u16 = NUMBER | BOOLEAN | NULL | UNDEFINED | O
 pub(crate) const LANE_TESTED: u16 = BOOLEAN | NULL | UNDEFINED | OBJECT | FUNCTION | STRING;
 
 /// The members of `DECLARED_CHECKED` the b-jit's entry test decides with a tag (`Heap::Declared`,
-/// `staged::value::tag_languages`): a Number, the immediates, the direct object, array, plain and
-/// function families. A String is not in it, for the reason `STRING` gives.
-pub(crate) const BASE_TESTED: u16 = NUMBER | BOOLEAN | NULL | UNDEFINED | OBJECT | FUNCTION | ARRAY | OBJECT_PLAIN;
+/// `staged::value::tag_languages`): a Number, the immediates, the direct object, array, plain, function
+/// and string families. A direct string word is decided by its exact family tag, as the other families are.
+pub(crate) const BASE_TESTED: u16 = NUMBER | BOOLEAN | NULL | UNDEFINED | OBJECT | FUNCTION | STRING | ARRAY | OBJECT_PLAIN;

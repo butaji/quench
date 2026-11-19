@@ -34,13 +34,15 @@ const _: () = {
     use crate::staged::value::language as tier;
     assert!(tier::UNDEFINED == bits::UNDEFINED && tier::NULL == bits::NULL && tier::BOOLEAN == bits::BOOLEAN);
     assert!(tier::NUMBER == bits::NUMBER && tier::OBJECT == bits::OBJECT && tier::FUNCTION == bits::FUNCTION);
+    assert!(language(ValueType::String) == bits::STRING && tier::STRING == bits::STRING);
     assert!(tier::ARRAY == bits::ARRAY && tier::OBJECT_PLAIN == bits::OBJECT_PLAIN);
 };
 
 /// The language types a value's tag word alone decides, with no heap read: the members of the
 /// shared declared set (`declared_checks::DECLARED_CHECKED`) the b-jit's tag test decides
-/// (`declared_checks::BASE_TESTED`). A String, a Symbol or a BigInt needs a heap read or a family
-/// test this tier has no row for, so a set naming one gets no entry check.
+/// (`declared_checks::BASE_TESTED`). A Symbol or a BigInt needs a heap read or a family test this
+/// tier has no row for, so a set naming one gets no entry check. A String is decided only for a
+/// direct string; a rope or heap string leaves the entry at run time.
 const TAG_DECIDED: u16 = super::super::declared_checks::DECLARED_CHECKED & super::super::declared_checks::BASE_TESTED;
 
 /// What a declared parameter type gives the b-jit's entry: exactly a Number, proved through the
@@ -269,7 +271,8 @@ mod tests {
     fn tag_decided_sets_are_tested_at_entry() {
         for set in [language(ValueType::Boolean), language(ValueType::Null) | language(ValueType::Undefined),
             language(ValueType::Object), language(ValueType::Function), language(ValueType::Number) | language(ValueType::Undefined),
-            ARRAY, OBJECT_PLAIN, ARRAY | OBJECT_PLAIN | language(ValueType::Undefined)] {
+            ARRAY, OBJECT_PLAIN, ARRAY | OBJECT_PLAIN | language(ValueType::Undefined), language(ValueType::String),
+            language(ValueType::String) | language(ValueType::Number)] {
             assert_eq!(DeclaredFact::of(set), Some(DeclaredFact::Languages(set)));
         }
     }
@@ -277,7 +280,6 @@ mod tests {
     #[test]
     fn sets_a_tag_does_not_decide_get_no_check() {
         assert_eq!(DeclaredFact::of(u16::MAX), None);
-        assert_eq!(DeclaredFact::of(language(ValueType::String)), None);
         assert_eq!(DeclaredFact::of(language(ValueType::Number) | language(ValueType::BigInt)), None);
         assert_eq!(DeclaredFact::of(0), None);
     }

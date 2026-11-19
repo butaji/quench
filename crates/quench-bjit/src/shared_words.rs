@@ -27,6 +27,9 @@ pub mod language {
     pub const NULL: u16 = 1 << 1;
     pub const BOOLEAN: u16 = 1 << 2;
     pub const NUMBER: u16 = 1 << 3;
+    /// A direct string word (`DIRECT_STRING_TAG` exactly). A rope or heap string is no tag decision and
+    /// sets no bit, so a set naming `string` leaves on it at the entry (`staged::value::tag_languages`).
+    pub const STRING: u16 = 1 << 4;
     pub const OBJECT: u16 = 1 << 7;
     pub const FUNCTION: u16 = 1 << 8;
     /// A direct array word (`DIRECT_ARRAY_TAG` exactly). Its `OBJECT` bit is also set, as every direct
