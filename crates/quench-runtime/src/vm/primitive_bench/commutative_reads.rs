@@ -6,7 +6,7 @@ fn operator(destination: u16, left: u16, right: u16) -> LaneInstruction {
     LaneInstruction {
         handler: std::ptr::null(), operand: LaneOperand { imm: 0 },
         a: destination, b: left, c: right,
-        call_link: std::cell::Cell::new(NO_CALL_LINK),
+        call_link: std::cell::Cell::new(NO_CALL_LINK), mode: 0,
     }
 }
 

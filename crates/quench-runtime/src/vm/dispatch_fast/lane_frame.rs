@@ -408,7 +408,7 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// (`lane_complete_wasm_activation`), where the row is one (`returns_raw_row`). `None` otherwise.
     wasm_return: Option<(*mut (), unsafe fn(*mut (), Value) -> Option<Resumed>)>,
     /// The row's double result keeps its double bits, not an int32 canonical form: set for a fused
-    /// record's raw producer (`FUSED_RAW`'s `A`, or a last link with `FUSED_RAW_OUT` / `CHAIN_RAW_OUT`),
+    /// record's raw producer (its `mode` raw mask: `raw_bit(0)` for `A`, or a last link with `MODE_RAW_OUT`),
     /// whose one reader is the next Number row. A NaN still canonicalizes (`write`).
     raw_result: bool,
     /// How the running activation suspends in place, for a staged suspension row.

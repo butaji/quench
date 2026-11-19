@@ -116,19 +116,25 @@ const fn leaf_swaps_env(form: LeafForm) -> bool {
     form == CONTEXT_LEAF || form == CAPTURE_LEAF
 }
 
-/// One instruction of a lane view.
+/// One instruction of a lane view. The first 16 bytes hold what every dispatch reads: the handler
+/// and the three register fields, with the call link filling the word. Two records share a 64-byte
+/// cache line. The operand and the fused `mode` word follow.
 #[repr(C)]
 pub(super) struct LaneInstruction {
     /// The opcode's [`Handler`] for the VM that built the view.
     handler: *const (),
-    operand: LaneOperand,
     a: u16,
     b: u16,
     c: u16,
     /// A call record's hint of the script call target cache entry that answered it last
     /// (`Vm::linked_script_call_entry`), which the record's next call tests first; `NO_CALL_LINK`
-    /// for none. It fills the record's padding, so every record keeps its size.
+    /// for none. It fills the record's word, so every record keeps its size.
     call_link: std::cell::Cell<u16>,
+    operand: LaneOperand,
+    /// The runtime settings of a fused record (`staged::MODE_DEAD_FIRST`, `MODE_BACKWARD`, and the raw
+    /// mask from `staged::RAW_SHIFT`), written by the fusion passes with its handler and read by the
+    /// handler at run time. Zero for every other record, whose handlers ignore it.
+    mode: u64,
 }
 
 /// The callees a site's history holds unspilled: sites stay monomorphic (mandreel: 131K, none
@@ -155,7 +161,8 @@ const _: () = assert!(SCRIPT_CALL_TARGETS[0] < PLAIN_LINK as usize && SCRIPT_CAL
 /// The script target index a call link names, with or without `PLAIN_LINK`.
 #[inline(always)]
 fn link_index(link: u16) -> usize { usize::from(link & !PLAIN_LINK) }
-const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::size_of::<u64>());
+const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 4 * std::mem::size_of::<u64>());
+const _: () = assert!(std::mem::offset_of!(LaneInstruction, a) == 8 && std::mem::offset_of!(LaneInstruction, call_link) + 2 <= 16);
 
 /// The immediate, resolved by its role: a jump target becomes the byte
 /// distance from the record, a constant index becomes the constant.
@@ -1248,6 +1255,7 @@ impl LaneView {
                 b: u16::from(binds_this),
                 c: 0,
                 call_link: std::cell::Cell::new(NO_CALL_LINK),
+                mode: 0,
             };
         }
         self.start.set(prologue.cast_const());
@@ -7630,7 +7638,9 @@ fn loop_retire_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite
     if site.backedge > site.header {
         // SAFETY: the record before the backedge is the loop body's, in the same view as the jump.
         let update = unsafe { ip.sub(1) };
-        if let Some(fused) = update_fusion::<H>(unsafe { &*update }, unsafe { &*ip }, Some(header)) {
+        if let Some((fused, mode)) = update_fusion::<H>(unsafe { &*update }, unsafe { &*ip }, Some(header)) {
+            // SAFETY: the record is the running view's, on this thread; its handler is requickened next.
+            unsafe { (*update.cast_mut()).mode = mode };
             requicken::<H>(update, fused);
         }
     }
@@ -17311,6 +17321,7 @@ fn derive_lane_view<'live, H: Host>(
                     instruction.c()
                 },
                 call_link: std::cell::Cell::new(NO_CALL_LINK),
+                mode: 0,
             }
         })
         .collect();
@@ -17533,6 +17544,7 @@ fn derive_lane_view<'live, H: Host>(
             b: 0,
             c: 0,
             call_link: std::cell::Cell::new(NO_CALL_LINK),
+            mode: 0,
         }),
         tier_direct: std::cell::Cell::new(None),
         tier: std::cell::OnceCell::new(),
@@ -18032,7 +18044,9 @@ fn fuse_target_backedges<H: Host>(records: &mut [LaneInstruction], osr_loop: boo
             let latch = osr_loop && (plain_row::<H, { crate::staged::MOVE_ROW }>(first) || plain_row::<H, { crate::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first));
             if !latch {
                 if let Some(handler) = target_run_handler(forms, target_handler, &after) {
+                    let word = target_word(&records[jump]);
                     records[head].handler = handler as *const ();
+                    records[head].mode = word;
                 }
             }
             continue;
@@ -18054,7 +18068,9 @@ fn fuse_target_backedges<H: Host>(records: &mut [LaneInstruction], osr_loop: boo
 /// record instead (`pair_target_forms`), so the target run runs in the same dispatch. The loader's
 /// `fuse_rows` pass and a loop site that retires (`loop_retire_in_lane`) fuse by it, so a declined loop runs
 /// what the interpreter's own does. The target record keeps its own row.
-fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction, target: Option<Ip>) -> Option<Handler> {
+///
+/// Returns the handler and the record's `mode` word (`target_word`), which the caller writes with it.
+fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction, target: Option<Ip>) -> Option<(Handler, u64)> {
     update_direction::<H>(update)?;
     let backward = match jump.handler {
         plain if plain == jump_row::<H, JUMP>(true) as *const () => true,
@@ -18069,10 +18085,17 @@ fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction, targ
         // (a copy is a value row, so the record after it is one too).
         let after = |k: usize| unsafe { (*(0..k).fold(target, |at, _| following(at))).handler };
         if let Some(handler) = target_run_handler(&forms, target_handler, &after) {
-            return Some(handler);
+            return Some((handler, target_word(jump)));
         }
     }
-    Some(lane_frame::fused_row::<H, { crate::staged::INC_DEC_ROW }, { crate::staged::JUMP_ROW }, { crate::staged::FUSED_PLAIN }>(backward))
+    let pair = lane_frame::fused_row::<H, { crate::staged::INC_DEC_ROW }, { crate::staged::JUMP_ROW }, { crate::staged::FUSED_PLAIN }>(backward);
+    Some((pair, target_word(jump)))
+}
+
+/// The `mode` word of a `FUSED_ROWS` or `FUSED_TARGET` pair record whose second row is the jump `jump`:
+/// its direction (`MODE_BACKWARD` where the jump's distance is not positive, as `fused_rows` reads it).
+fn target_word(jump: &LaneInstruction) -> u64 {
+    if jump.jump() <= 0 { crate::staged::MODE_BACKWARD } else { 0 }
 }
 
 /// Whether `record`, an `IncDec` running its row (`generated_row`), decrements (its immediate flag);
