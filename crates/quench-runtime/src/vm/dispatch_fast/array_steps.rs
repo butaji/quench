@@ -2,7 +2,6 @@
 //! callbacks' activations in the calling lane, each return stepping the loop
 //! (`lane_begin_array_iteration`).
 use super::*;
-use super::super::array_indexed::ArrayIteration;
 use crate::staged::array_iteration::{self as step_rules, Kind};
 #[cfg(test)]
 mod tests;

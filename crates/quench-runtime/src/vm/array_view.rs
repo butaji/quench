@@ -87,7 +87,7 @@ fn number_kind(number: f64, mode: Match) -> Kind {
 }
 
 /// The offset of the first (last when `reverse`) value that is a hole or satisfies `matches`.
-fn first_stop<I>(values: I, reverse: bool, matches: impl Fn(Value) -> bool) -> Option<usize>
+fn first_stop<I>(mut values: I, reverse: bool, matches: impl Fn(Value) -> bool) -> Option<usize>
 where
     I: DoubleEndedIterator<Item = Value> + ExactSizeIterator,
 {
