@@ -2025,6 +2025,14 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
                 out.bool(name.alias);
                 out.bool(name.class.is_some());
                 out.u32(name.class.unwrap_or(0));
+                out.bool(name.members.is_some());
+                if let Some(members) = &name.members {
+                    out.u32(members.len() as u32);
+                    for (member, languages) in members.iter() {
+                        out.string(member);
+                        out.u16(*languages);
+                    }
+                }
             }
         }
     }
@@ -2112,7 +2120,12 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
                 let alias = input.bool()?;
                 let has_class = input.bool()?;
                 let class = input.u32()?;
-                Ok(super::SavedTypeName { name, languages, alias, class: has_class.then_some(class) })
+                let members = if input.bool()? {
+                    Some(input.list(|input| Ok((input.string()?.into_boxed_str(), input.u16()?)))?.into_boxed_slice())
+                } else {
+                    None
+                };
+                Ok(super::SavedTypeName { name, languages, alias, class: has_class.then_some(class), members })
             })?;
             Some(names.into())
         }

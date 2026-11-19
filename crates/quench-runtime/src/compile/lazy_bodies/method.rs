@@ -50,8 +50,9 @@ impl Compiler<'_> {
         // Bodies parse lazily past the method's own start, so its own parses whole again.
         let own = offset + (method.value.span.start - span.start);
         let mut allocator = self.lazy_arenas.pop().unwrap_or_else(|| super::arena(&text));
+        let saved_names = self.body_type_names();
         let nesting = if self.replay_target.is_some() { Nesting::Recorded(&self.lazy_bodies) } else { Nesting::Parse(&mut self.first_call.free_names, self.first_call.direct) };
-        let mut reparsed = reparse(&allocator, &text, own, span.start.wrapping_sub(offset), self.source_type, nesting, self.body_type_names());
+        let mut reparsed = reparse(&allocator, &text, own, span.start.wrapping_sub(offset), self.source_type, nesting, saved_names);
         // The method's declarations join the program's, and it resolves its annotations against the names they were admitted with.
         let names = match reparsed.as_mut() {
             Ok(reparsed) => {

@@ -2889,6 +2889,7 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         context: replay::PlainFunctionContext,
     ) -> u32 {
+        let saved_names = self.body_type_names();
         let nesting = if self.replay_target.is_some() {
             lazy_bodies::Nesting::Recorded(&self.lazy_bodies)
         } else {
@@ -2901,7 +2902,7 @@ impl<'a> Compiler<'a> {
             function.span.start.wrapping_sub(offset),
             self.source_type,
             nesting,
-            self.body_type_names(),
+            saved_names,
         );
         let reparsed = match reparsed {
             Ok(reparsed) => Some(reparsed),

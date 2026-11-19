@@ -100,6 +100,7 @@ impl<'a> TypeNames<'a> {
                 Named::Class(class) | Named::Resolved { class: Some(class), .. } => Some(class),
                 _ => None,
             },
+            members: self.named_members(name, 0, &mut Vec::new()).map(Vec::into_boxed_slice),
         }).collect();
         if let Some(saved) = &self.saved {
             entries.extend(saved.iter().filter(|entry| !self.names.contains_key(&*entry.name)).cloned());
@@ -162,10 +163,18 @@ impl<'a> TypeNames<'a> {
         let members = match self.get(name)? {
             Named::Interface => self.interface_members(name, depth, path),
             Named::Alias { annotation, .. } => self.type_members(annotation, depth + 1, path),
+            Named::Resolved { .. } => self.saved_members(name),
             Named::Class(_) | Named::Enum(_) | Named::Unknown => None,
         };
         path.pop();
         members
+    }
+
+    /// The members the program saved for its top-level name `name` when it loaded.
+    fn saved_members(&self, name: &str) -> Option<Members> {
+        let saved = self.saved.as_deref()?;
+        let at = saved.binary_search_by(|entry| (*entry.name).cmp(name)).ok()?;
+        saved[at].members.as_deref().map(<[_]>::to_vec)
     }
 
     /// The members of the interface `name`: its own blocks' members, which override each `extends`

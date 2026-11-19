@@ -184,6 +184,9 @@ pub(crate) struct SavedTypeName {
     pub(crate) alias: bool,
     /// The class's source span start, for a class.
     pub(crate) class: Option<u32>,
+    /// The property members an interface or object alias resolves to (`TypeNames::members_of`), so a
+    /// body compiled later keeps the member facts the eager path gives.
+    pub(crate) members: Option<Box<[(Box<str>, u16)]>>,
 }
 
 /// The `DeclaredLocal::function` of top-level code.
@@ -278,6 +281,7 @@ impl DeclaredTypes {
             fields: self.fields.iter().filter(|field| inside(field.class_start)).cloned().collect(),
             signatures: self.signatures.iter().filter(|signature| inside(signature.start)).cloned().collect(),
             locals: self.locals.iter().filter(|local| inside(local.function)).cloned().collect(),
+            local_members: self.local_members.iter().filter(|member| inside(member.function)).cloned().collect(),
             members: self.members.iter().filter(|member| inside(member.function)).cloned().collect(),
             parameter_classes: self.parameter_classes.iter().filter(|entry| inside(entry.function)).copied().collect(),
             parameters: self.parameters.iter().filter(|entry| inside(entry.function)).copied().collect(),
