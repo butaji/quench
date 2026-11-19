@@ -372,6 +372,10 @@ impl Traits {
     /// register file alone (`Operation::decode_flow`, `decode_local`). Tagged: `Move`, `LoadLocalPlain`,
     /// `StoreLocalPlain`, `Jump`, `JumpFalse`, `JumpTrue`.
     pub(crate) const REGISTER_ROW: Self = Self(1 << 48);
+    /// An op whose step may allocate a heap value or call guest code, so its step may make a collection due
+    /// (`note_allocation`). Conservative: every op is tagged unless its step only moves registers, jumps or
+    /// reads and writes a frame local, or is a Wasm op whose effect is pure or control alone.
+    pub(crate) const MAY_ALLOCATE: Self = Self(1 << 49);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }

@@ -1538,6 +1538,22 @@ impl MemoryView {
     }
 }
 
+/// Whether each opcode's field A is its result register (`FieldLayout::ResultRegister`), indexed by the
+/// opcode's catalog index. Built from the catalog once, so a general step reads one entry for it instead of
+/// looking up the operand layout per step (`Carried::stepped`).
+const RESULT_A_OPS: [bool; crate::bytecode::Op::COUNT] = {
+    let mut table = [false; crate::bytecode::Op::COUNT];
+    let mut index = 0;
+    while index < crate::bytecode::Op::COUNT {
+        table[index] = match crate::bytecode::Op::from_index(index) {
+            Some(op) => matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister),
+            None => panic!("catalog index is below the opcode count"),
+        };
+        index += 1;
+    }
+    table
+};
+
 /// The state handlers carry from one to the next in machine registers.
 #[derive(Clone, Copy)]
 struct Carried {
@@ -1576,7 +1592,7 @@ impl Carried {
     /// (`LaneHandler::produces`) and the next record may read the accumulator for it.
     #[inline(always)]
     fn stepped<H: Host>(cx: *mut LaneContext<H>, incoming: Carried, r: Registers, instruction: WideInstruction) -> Self {
-        let produced = matches!(instruction.op().field_layout(InstructionField::A), FieldLayout::ResultRegister);
+        let produced = RESULT_A_OPS[instruction.op() as usize];
         let acc = if produced { Slot::of(r.get(instruction.result_register())) } else { Slot::unset() };
         Self { acc, ..Self::script_in(cx, incoming) }
     }
@@ -4006,8 +4022,11 @@ lane_handler! {
                 return exit(ip);
             }
         }
-        // The step may allocate, which can make a collection due.
-        note_allocation(vm);
+        // A step that may allocate or call guest code can make a collection due. An opcode without
+        // `Traits::MAY_ALLOCATE` allocates nothing, so no collection can have become due by it.
+        if instruction.op().traits().has(Traits::MAY_ALLOCATE) {
+            note_allocation(vm);
+        }
         // SAFETY: the step continues at a record of the running frame's view.
         let target = unsafe { (*cx).base.add(next) };
         if next > pc { next!(cx, r, target, Carried::stepped(cx, view, r, instruction)) } else { exit(target) }
