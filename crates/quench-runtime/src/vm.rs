@@ -1814,6 +1814,10 @@ pub(crate) struct Vm<H> {
     /// Whether the innermost running job queue has entered the host's context for unobserved
     /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.
     unobserved_jobs_entered: bool,
+    /// The programs the running job queues return to, innermost last (`Vm::run_job_queue`):
+    /// an await's job leaves its function's program active for the queue's next jobs, so a
+    /// collection keeps each of these, which the queue makes active again when it ends.
+    job_queue_programs: Vec<ProgramId>,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,

@@ -15,6 +15,7 @@ impl<H: Host> Vm<H> {
             native_microtask_running: false,
             queue_resumed: Value::UNDEFINED,
             unobserved_jobs_entered: false,
+            job_queue_programs: Vec::new(),
             specialized: true,
             heap: Heap::new(),
             realm: Realm {

@@ -19,7 +19,36 @@ impl<H: Host> Vm<H> {
         rejected: bool,
         value: Value,
     ) -> Result<Value, JsError> {
-        let Some((role, realm, promise)) = self.heap.await_state(state).and_then(AwaitState::pending) else {
+        let pending = self.heap.await_state(state).and_then(AwaitState::pending);
+        self.resume_pending_await(p, (state, pending), (rejected, value), false)
+    }
+
+    /// `resume_await` of the reaction a job queue runs (`Vm::run_promise_reaction`), whose look
+    /// at the await `state` found it an await state with `pending` (`AwaitState::pending`). The
+    /// activation's program stays active after its run, which the queue's next resumption of
+    /// the same program finds in place (`Vm::run_job_queue`), unless the host observes promise
+    /// lifecycles, whose hooks run between the job's steps as they always have.
+    pub(in crate::vm) fn resume_queued_await(
+        &mut self,
+        p: &ResidualProgram,
+        (state, pending): (Value, Option<(AwaitRole, Value, Value)>),
+        rejected: bool,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let keeps_program = !self.job_queue_programs.is_empty() && !self.host.observes_promise_lifecycle();
+        self.resume_pending_await(p, (state, pending), (rejected, value), keeps_program)
+    }
+
+    /// `resume_await` of `state`, whose lookup gave `pending`: `keeps_program` leaves the
+    /// activation's program active after its run (`resume_queued_await`).
+    fn resume_pending_await(
+        &mut self,
+        p: &ResidualProgram,
+        (state, pending): (Value, Option<(AwaitRole, Value, Value)>),
+        (rejected, value): (bool, Value),
+        keeps_program: bool,
+    ) -> Result<Value, JsError> {
+        let Some((role, realm, promise)) = pending else {
             return Err(JsError("stale async continuation".into()));
         };
         let resume = AwaitResume { state: Some(state), promise, role, rejected };
@@ -28,7 +57,7 @@ impl<H: Host> Vm<H> {
         // state) and has run any due collection; the run may detach the promise and the
         // generator from the state it spends or arms again.
         let settled = self.with_call_roots([promise, role.generator().unwrap_or(Value::UNDEFINED)], |vm| {
-            vm.resume_awaited(p, state, resume, value)?;
+            vm.resume_awaited(p, state, resume, value, keeps_program)?;
             match role.generator() {
                 Some(generator) => vm.resume_async_generator_queue(p, generator),
                 None => Ok(()),
@@ -53,8 +82,9 @@ impl<H: Host> Vm<H> {
 
     /// The activation of `resume`, whose await `state` its reaction runs, resumes with `value`
     /// or its rejection. A fulfilled await of a `yield`'s value resumes no frame: it settles the
-    /// request with the value, the frame parked in the generator's record.
-    fn resume_awaited(&mut self, p: &ResidualProgram, state: Value, resume: AwaitResume, value: Value) -> Result<(), JsError> {
+    /// request with the value, the frame parked in the generator's record. `keeps_program`
+    /// leaves the activation's program active after the run (`resume_queued_await`).
+    fn resume_awaited(&mut self, p: &ResidualProgram, state: Value, resume: AwaitResume, value: Value, keeps_program: bool) -> Result<(), JsError> {
         if let AwaitRole::AsyncGeneratorYield(generator) = resume.role
             && !resume.rejected
         {
@@ -70,7 +100,7 @@ impl<H: Host> Vm<H> {
         } else {
             JobResume::Sends(value)
         };
-        self.resume_suspended(p, StopOwner::Async(resume), how).map(drop)
+        self.resume_job(p, StopOwner::Async(resume), how, keeps_program).map(drop)
     }
 
     /// An async generator's request `promise` resumes its suspended `generator` with `how`, as
@@ -99,11 +129,17 @@ impl<H: Host> Vm<H> {
     /// where it is the function's own, so the common run takes no reference on the program
     /// store's.
     pub(in crate::vm) fn resume_suspended(&mut self, p: &ResidualProgram, owner: StopOwner, how: JobResume) -> Stop {
+        self.resume_job(p, owner, how, false)
+    }
+
+    /// `resume_suspended`, leaving the activation's program active after the run where
+    /// `keeps_program` (`resume_queued_await`), else making the caller's active again.
+    fn resume_job(&mut self, p: &ResidualProgram, owner: StopOwner, how: JobResume, keeps_program: bool) -> Stop {
         let job = owner.job();
         let frame = self.job_frame(job).ok_or_else(|| JsError("stale async continuation".into()))?;
         let (program, frame) = (frame.program, std::ptr::from_ref(frame));
         if self.programs.residual(program).is_some_and(|code| std::ptr::eq(code, p)) {
-            return self.resume_suspended_in(p, program, (owner, job, frame), how);
+            return self.resume_suspended_in(p, program, (owner, job, frame), (how, keeps_program));
         }
         let Some(code) = self.programs.get(program) else {
             let message = match job.kind {
@@ -112,17 +148,17 @@ impl<H: Host> Vm<H> {
             };
             return Err(JsError(message.into()));
         };
-        self.resume_suspended_in(&code, program, (owner, job, frame), how)
+        self.resume_suspended_in(&code, program, (owner, job, frame), (how, keeps_program))
     }
 
     /// `resume_suspended` in `code`, the program `program` of the function whose suspended
-    /// `frame` the job resumes.
+    /// `frame` the job resumes, which stays active after it where `keeps_program`.
     fn resume_suspended_in(
         &mut self,
         code: &ResidualProgram,
         program: ProgramId,
         (owner, job, frame): (StopOwner, JobRoot, *const FrameRecord),
-        how: JobResume,
+        (how, keeps_program): (JobResume, bool),
     ) -> Stop {
         let previous_program = self.replace_active_program(program);
         let resumed = if self.native_microtask_running && job.kind == SuspendKind::AsyncFunction { job.object } else { Value::UNDEFINED };
@@ -137,7 +173,9 @@ impl<H: Host> Vm<H> {
             self.spend_await(state);
         }
         let settled = self.settle_job_end(code, owner, end);
-        self.restore_active_program(previous_program);
+        if !keeps_program {
+            self.restore_active_program(previous_program);
+        }
         settled
     }
 }

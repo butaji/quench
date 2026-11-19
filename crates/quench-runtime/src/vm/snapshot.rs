@@ -50,6 +50,7 @@ impl<H: Host> Vm<H> {
             native_microtask_running: _,
             queue_resumed: _,
             unobserved_jobs_entered: _,
+            job_queue_programs: _,
             host,
             specialized,
             heap,

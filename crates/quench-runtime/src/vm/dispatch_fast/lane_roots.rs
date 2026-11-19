@@ -183,6 +183,8 @@ impl<H: Host> Vm<H> {
         registers.set_this(this);
         registers.set_env(Value::DELETED);
         registers.set_capture(std::ptr::null());
+        let (views, constants) = self.programs.lane_tables(program);
+        let (views, constants) = (std::ptr::from_ref(views), std::ptr::from_ref(constants));
         LaneContext {
             binding: LaneBinding { object_base: self.heap.object_record_base().unwrap_or(std::ptr::null()), resume: resume_lane_binding::<H> },
             vm: self,
@@ -193,8 +195,8 @@ impl<H: Host> Vm<H> {
             base,
             pending,
             executing,
-            views: self.programs.lane_views(program).map_or(&[][..], |views| views) as *const _,
-            constants: self.programs.constants(program) as *const _,
+            views,
+            constants,
             inline_calls: inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm,
             script_calls,
             script_constructs,

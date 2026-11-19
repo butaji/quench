@@ -365,6 +365,7 @@ impl<H: Host> Vm<H> {
         };
         reference(ProgramId::MAIN);
         reference(self.active_program);
+        self.job_queue_programs.iter().copied().for_each(&mut reference);
         self.direct_eval_var_program
             .into_iter()
             .for_each(&mut reference);
@@ -1196,13 +1197,18 @@ impl<H: Host> Vm<H> {
     /// Runs queued jobs while `more` holds. A job runs in its realm, and the queue stays
     /// there until work of another realm comes: consecutive jobs of one realm share one
     /// realm entry, and the drain's own realm returns for module advancement, a host job,
-    /// and the drain's end, however it ends.
+    /// and the drain's end, however it ends. The active program is kept the same way: an
+    /// await's job leaves its function's program active (`Vm::resume_queued_await`), so
+    /// consecutive resumptions of one program switch to it once, and the queue's own program
+    /// returns where its realm does.
     fn run_job_queue(
         &mut self,
         program: &ResidualProgram,
         mut more: impl FnMut(&Self) -> bool,
     ) -> Result<(), JsError> {
         let home = self.realm.globals;
+        let home_program = self.active_program;
+        self.job_queue_programs.push(home_program);
         // An enclosing queue's entry stays in place below this queue's own.
         let outer = std::mem::replace(&mut self.unobserved_jobs_entered, false);
         let result = (|| {
@@ -1210,6 +1216,7 @@ impl<H: Host> Vm<H> {
                 self.check_execution_interrupt()?;
                 if matches!(job, PendingJob::Call { .. }) {
                     self.leave_unobserved_jobs();
+                    self.restore_active_program(home_program);
                 }
                 self.run_pending_job(program, job, home)?;
                 // Static continuations may become ready after a reaction. Import
@@ -1217,6 +1224,7 @@ impl<H: Host> Vm<H> {
                 if self.static_module_jobs_pending() {
                     self.leave_unobserved_jobs();
                     self.switch_realm_global(home);
+                    self.restore_active_program(home_program);
                     self.advance_static_module_jobs(program)?;
                 }
             }
@@ -1225,7 +1233,18 @@ impl<H: Host> Vm<H> {
         self.leave_unobserved_jobs();
         self.unobserved_jobs_entered = outer;
         self.switch_realm_global(home);
+        self.restore_active_program(home_program);
+        self.job_queue_programs.pop();
         result
+    }
+
+    /// Makes the innermost running job queue's own program active again, where an await's job
+    /// left its function's (`Vm::run_job_queue`): a host's job hooks run in it, as they would
+    /// had the job restored it.
+    pub(super) fn restore_queue_program(&mut self) {
+        if let Some(&home) = self.job_queue_programs.last() {
+            self.restore_active_program(home);
+        }
     }
 
     /// Leaves the context unobserved Promise jobs of the running queue share, if entered: a
