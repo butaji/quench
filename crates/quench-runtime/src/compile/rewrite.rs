@@ -147,7 +147,7 @@ fusion_recipes! {
                         first: (atom, cache_site),
                         second: None,
                         sink: Some(sink),
-                        sources: [None; 3],
+                        sources: [FieldSite::NO_SOURCE; 3],
                     });
                     first.set_field_lookup_site(fields.len() - 1);
                 }
@@ -1084,10 +1084,10 @@ fn apply_rule(
             // decoded copy of the whole table.
             let at = |pc: usize| u32::try_from(pc).ok().and_then(|pc| source_positions.at(pc));
             let site = &mut field_sites[index];
-            if site.sources[0].is_none() {
-                site.sources[0] = at(pc);
+            if site.sources[0] == FieldSite::NO_SOURCE {
+                site.sources[0] = FieldSite::source_word(at(pc));
             }
-            site.sources[2] = at(second_pc);
+            site.sources[2] = FieldSite::source_word(at(second_pc));
         }
     Some(replacement)
 }

@@ -603,9 +603,9 @@ fn fused_field_source_locations_survive_binary_round_trip_and_validate_coordinat
         let decoded = ResidualProgram::read_binary(&path).unwrap();
         crate::Runtime::new(crate::SystemHost).execute(&decoded).unwrap();
         let site = program.field_sites.iter().position(|site| site.second.is_some()).expect("nested field site");
-        for offset in [u32::MAX] {
+        for offset in [u32::MAX - 1] {
             let mut invalid = program.clone();
-            invalid.field_sites[site].sources[0] = Some(offset);
+            invalid.field_sites[site].sources[0] = offset;
             invalid.write_binary(&path).unwrap();
             assert!(ResidualProgram::read_binary(&path).unwrap_err().contains("invalid field site"));
         }

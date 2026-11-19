@@ -385,7 +385,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         out.atom_pair(site.first);
         out.optional_atom_pair(site.second);
         out.optional_atom_pair(site.sink);
-        for source in site.sources {
+        for source in site.source_offsets() {
             out.u8(source.is_some() as u8);
             if let Some(offset) = source {
                 out.u32(offset);
@@ -682,11 +682,11 @@ fn decode_program(
         )),
         0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
         1 => Ok(Constant::String(input.string()?.into())),
-        7 => Ok(Constant::StringUnits(input.u16s()?)),
-        6 => Ok(Constant::BigInt(input
+        7 => Ok(Constant::StringUnits(input.u16s()?.into())),
+        6 => Ok(Constant::BigInt(Box::new(input
             .string()?
             .parse()
-            .map_err(|_| "invalid residual BigInt constant")?)),
+            .map_err(|_| "invalid residual BigInt constant")?))),
         2 => Ok(Constant::Boolean(true)),
         3 => Ok(Constant::Boolean(false)),
         4 => Ok(Constant::Null),
@@ -757,9 +757,9 @@ fn decode_program(
             second: input.optional_atom_pair()?,
             sink: input.optional_atom_pair()?,
             sources: [
-                input.optional_source_offset()?,
-                input.optional_source_offset()?,
-                input.optional_source_offset()?,
+                field_source_word(input)?,
+                field_source_word(input)?,
+                field_source_word(input)?,
             ],
         })
     })?;
@@ -1667,6 +1667,16 @@ impl BinaryWriter {
     pub(super) fn strings(&mut self, values: &AtomTable) { self.u32(values.len() as u32); for value in values.iter() { self.string(value); } }
     pub(super) fn u16s(&mut self, values: &[u16]) { self.u32(values.len() as u32); for value in values { self.u16(*value); } }
     pub(super) fn option_u32(&mut self, value: Option<u32>) { self.u32(value.unwrap_or(u32::MAX)); }
+}
+
+/// A field site's source word, read as its optional offset (`FieldSite::sources`): an offset
+/// of `FieldSite::NO_SOURCE` names no source, so an encoding that stores one is invalid.
+fn field_source_word(input: &mut BinaryReader<'_>) -> Result<u32, String> {
+    match input.optional_source_offset()? {
+        None => Ok(FieldSite::NO_SOURCE),
+        Some(FieldSite::NO_SOURCE) => Err("invalid field site".into()),
+        Some(offset) => Ok(offset),
+    }
 }
 
 pub(super) struct BinaryReader<'a> {

@@ -890,7 +890,7 @@ function.plain_local_slots(&self.superinstructions)
             }
         }
         for site in &self.field_sites {
-            if site.sources.iter().flatten().any(|offset| source_end.is_some_and(|end| *offset as usize > end))
+            if site.source_offsets().into_iter().flatten().any(|offset| source_end.is_some_and(|end| offset as usize > end))
                 || !field_base_in_bounds(site.base.0, REGISTER_MASK, 0)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
                 || !cache_in_bounds(site.first.1, self.cache_sites.get())

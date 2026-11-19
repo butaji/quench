@@ -117,14 +117,17 @@ pub enum Constant {
     /// Shared with the heap strings materialized from it (`JsString::from_shared_text`), so a
     /// long literal's text is held once.
     String(std::rc::Rc<str>),
-    StringUnits(Vec<u16>),
-    BigInt(num_bigint::BigInt),
+    /// Boxed so that the rare wide payloads do not size every constant of the program table
+    /// (a `BigInt` is 32 bytes inline; boxed, the enum is 24 bytes).
+    StringUnits(Box<[u16]>),
+    BigInt(Box<num_bigint::BigInt>),
     WasmBits64(u64),
     WasmV128([u8; crate::wasm::V128_BYTES]),
     Boolean(bool),
     Null,
     Undefined,
 }
+const _: () = assert!(size_of::<Constant>() == 24);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Effect(u8);
 
@@ -3531,12 +3534,28 @@ pub(crate) struct FieldSite {
     pub first: (Atom, u16),
     pub second: Option<(Atom, u16)>,
     pub sink: Option<(Atom, u16)>,
-    /// The compiled-source offsets the site's parts come from.
-    pub sources: [Option<u32>; 3],
+    /// The compiled-source offsets the site's parts come from, each a `source_word`.
+    pub(crate) sources: [u32; 3],
 }
 impl FieldSite {
+    /// The `sources` word of a part with no compiled-source offset. It is never an offset: a
+    /// source of `u32::MAX` bytes cannot be named (`source_word`).
+    pub(crate) const NO_SOURCE: u32 = u32::MAX;
+
+    /// `offset` as a `sources` word.
+    pub(crate) const fn source_word(offset: Option<u32>) -> u32 {
+        match offset {
+            Some(offset) if offset != Self::NO_SOURCE => offset,
+            _ => Self::NO_SOURCE,
+        }
+    }
+
+    pub(crate) fn source_offsets(self) -> [Option<u32>; 3] {
+        self.sources.map(|word| (word != Self::NO_SOURCE).then_some(word))
+    }
+
     pub(crate) fn source(self, part: FieldPart) -> Option<u32> {
-        self.sources[match part {
+        self.source_offsets()[match part {
             FieldPart::First => 0,
             FieldPart::Second => 1,
             FieldPart::Sink => 2,

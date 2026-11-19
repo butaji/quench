@@ -618,7 +618,7 @@ impl FunctionCompiler<'_, '_> {
             let second_site = self.owner.cache_site();
             let access = self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
             let first_offset = self.owner.source_offset(inner.property.span.start);
-            self.owner.field_sites[access as usize].sources[0] = Some(first_offset);
+            self.owner.field_sites[access as usize].sources[0] = FieldSite::source_word(Some(first_offset));
             self.emit(Op::GetField, dst, FieldBase::NESTED, 0, access);
             return dst;
         }
@@ -647,7 +647,11 @@ impl FunctionCompiler<'_, '_> {
             first,
             second,
             sink: None,
-            sources: [self.current_source_position, second.and(self.current_source_position), None],
+            sources: [
+                FieldSite::source_word(self.current_source_position),
+                FieldSite::source_word(second.and(self.current_source_position)),
+                FieldSite::NO_SOURCE,
+            ],
         });
         site
     }
