@@ -16,7 +16,8 @@ use crate::staged::{emit, plan_entry, CallEntry, CalleeKind, DirectPlan, Identit
 use crate::typed_ir::BindingTime;
 use crate::value::Value;
 #[path = "lane_unit/admission.rs"] mod admission;
-use admission::{inlinable, restartable, returns_or_keeps};
+pub(super) use admission::{inlinable, InlineScope};
+use admission::{restartable, returns_or_keeps};
 use super::admission::{admit_callee, CalleeUse};
 #[path = "lane_unit/weights.rs"] mod weights;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_unit/static_hints.rs"] mod static_hints;
@@ -470,7 +471,7 @@ impl Planner<'_, '_> {
 /// Whether every instruction of an inlined callee renames, and one of them completes it (a
 /// multi-instruction completion or a returning call).
 fn lowerable(code: &[WideInstruction]) -> bool {
-    code.iter().all(|instruction| inlinable(*instruction) && renamable(*instruction))
+    code.iter().all(|instruction| inlinable(*instruction, InlineScope::Lane) && renamable(*instruction))
         && code.iter().any(|instruction| completion_length(*instruction) > 1
             || (Operation::<u64, ()>::is_plain_call(*instruction) && instruction.returns_from_frame()))
 }
