@@ -1,5 +1,5 @@
 //! Machine code with relocations: a function compiled with every run-time address a symbol,
-//! linked by patching. Stencils (`native_stencil`) and ahead-of-time lane regions
+//! linked by patching. Ahead-of-time images (`aot_image`) and lane regions
 //! (`compiled::lane_region::relocs`) both link through `apply_relocation`.
 use cranelift_codegen::{CompiledCode, RelocTarget, binemit::Reloc, ir};
 
@@ -55,7 +55,7 @@ impl RelocatableCode {
 
     /// The code patched for `address`, each symbol resolved by `resolve`; an error names the
     /// first symbol it cannot resolve or relocation it cannot fill.
-    pub(in crate::vm) fn link(&self, address: u64, resolve: impl Fn(u32, u32) -> Option<u64>) -> Result<Vec<u8>, String> {
+    pub(in crate::vm) fn link(&self, address: u64, mut resolve: impl FnMut(u32, u32) -> Option<u64>) -> Result<Vec<u8>, String> {
         let mut linked = self.code.to_vec();
         for relocation in &*self.relocations {
             let value = resolve(relocation.namespace, relocation.key)

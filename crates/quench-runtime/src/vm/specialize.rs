@@ -9,7 +9,7 @@
 //! that instruction's residual code, so applying it across a program is a
 //! compiler derived from the interpreter. Rust monomorphization produces the
 //! per-opcode semantic entries at build time, and copy-and-patch stencils
-//! compile the residual shapes once per process (`native_stencil`).
+//! compile the residual shapes once per process.
 //!
 //! The contract, the division table and the plan live in
 //! `Linear TOD-1232`.

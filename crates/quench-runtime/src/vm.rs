@@ -11,9 +11,7 @@ pub(crate) mod aot_image;
 #[cfg(feature = "aot")]
 pub(crate) mod native_object;
 #[cfg(feature = "aot")]
-pub(crate) mod native_graph;
 #[cfg(all(feature = "aot", feature = "jit"))]
-pub(crate) mod native_stencil;
 mod specializer;
 #[cfg(feature = "aot")]
 pub(crate) mod specialize;

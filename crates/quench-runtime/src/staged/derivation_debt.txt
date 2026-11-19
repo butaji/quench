@@ -918,7 +918,6 @@ vm/generator/window_steps.rs fn:lane_* 1
 vm/lane_body_tier.rs is:is_call 1
 vm/loop_tier.rs fn:lane_* 4
 vm/loop_tier.rs is:is_load_capture 2
-vm/native_graph.rs fn:lane_* 1
 vm/object_static/for_in_keys.rs fn:lane_* 1
 vm/operand_feedback.rs is:is_binary_arithmetic 1
 vm/operations.rs is:is_binary 2

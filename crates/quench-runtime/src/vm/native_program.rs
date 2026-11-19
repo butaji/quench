@@ -91,18 +91,10 @@ impl<H: Host> Clone for NativeJsProgram<H> {
 }
 
 impl<H: Host> NativeJsProgram<H> {
-    /// Compile every function before execution using the object backend's graph
-    /// and the JIT's executable-memory publisher. No hotness or fallback tier.
+    /// Compile every function before execution as one AOT image. No hotness or fallback tier.
     #[cfg(feature = "aot")]
     pub fn compile_eager(program: ResidualProgram) -> Result<Self, String> {
-        Self::compile_eager_with_options(program, crate::NativeJsCodegenOptions::default())
-    }
-
-    #[cfg(feature = "aot")]
-    pub fn compile_eager_with_options(
-        program: ResidualProgram, options: crate::NativeJsCodegenOptions,
-    ) -> Result<Self, String> {
-        super::compiled::compile_eager_native(program, options)
+        super::compiled::compile_eager_native(program)
     }
 
     /// Adopt a statically linked image table emitted by `lower_native_js_module`.

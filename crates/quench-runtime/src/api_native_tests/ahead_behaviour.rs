@@ -30,8 +30,7 @@ fn ended(result: Result<(), crate::JsError>) -> String {
 }
 
 fn compile_image(program: &ResidualProgram) -> crate::NativeJsProgram<TestHost> {
-    let options = crate::NativeJsCodegenOptions { backend: crate::NativeJsBackend::Cranelift, ..Default::default() };
-    crate::NativeJsProgram::compile_eager_with_options(program.clone(), options).unwrap()
+    crate::NativeJsProgram::compile_eager(program.clone()).unwrap()
 }
 
 /// Runs `program` in `mode`, as an eager image where `image` is set.

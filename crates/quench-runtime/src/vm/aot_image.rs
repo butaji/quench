@@ -9,7 +9,7 @@
 //! `quench compile` executable), this process's memory (`live`, eager publication and tests),
 //! and a file a VM loads at start (`file`). The image replaces the call-threaded graph
 //! (`native_graph::lower_body`), the per-PC semantic fallback (`ahead_entry`'s loop, `eager`'s
-//! fallback table) and `native_stencil.rs`, which are deleted once their callers use it.
+//! fallback table) and `native_stencil.rs`, which this image replaces.
 //!
 //! Facts are the program's alone (`compile::aot_facts`): whole-program call targets,
 //! constructor shapes, number representations and frozen globals, each a dependency whose
