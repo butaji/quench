@@ -31,6 +31,7 @@ impl<H: Host> Vm<H> {
             WasmHostStep::WasmArrayCopy(_) | WasmHostStep::WasmArrayFill(_) | WasmHostStep::WasmArrayGet(_) | WasmHostStep::WasmArrayGetS(_) | WasmHostStep::WasmArrayGetU(_)
             | WasmHostStep::WasmArrayLen(_) | WasmHostStep::WasmArrayNew(_) | WasmHostStep::WasmArrayNewDefault(_) | WasmHostStep::WasmArrayNewFixed(_)
             | WasmHostStep::WasmArraySet(_) | WasmHostStep::WasmStructGet(_) | WasmHostStep::WasmStructGetS(_) | WasmHostStep::WasmStructGetU(_) | WasmHostStep::WasmStructSet(_)
+            | WasmHostStep::WasmStructGetRaw(_) | WasmHostStep::WasmStructSetRaw(_) | WasmHostStep::WasmArrayGetRaw(_) | WasmHostStep::WasmArraySetRaw(_)
             | WasmHostStep::WasmStructNew(_) | WasmHostStep::WasmStructNewDefault(_) | WasmHostStep::WasmStructNewDefaultDesc(_) | WasmHostStep::WasmStructNewDesc(_)
             | WasmHostStep::WasmRefGetDesc(_) | WasmHostStep::WasmRefIsNull(_) | WasmHostStep::WasmRefAsNonNull(_) | WasmHostStep::WasmRefEq(_) | WasmHostStep::WasmRefTest(_)
             | WasmHostStep::WasmRefCast(_) | WasmHostStep::WasmDescriptorTest(_) | WasmHostStep::WasmDescriptorCast(_) | WasmHostStep::WasmI31(_)

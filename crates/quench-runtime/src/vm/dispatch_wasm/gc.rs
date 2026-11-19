@@ -39,6 +39,9 @@ pub(in crate::vm) struct FieldOperands {
     pub(in crate::vm) field: GcField,
     pub(in crate::vm) access: GcFieldAccess,
     pub(in crate::vm) value: Option<Value>,
+    /// Whether the access is a `*Raw` form: the data register holds the field's Wasm bits as a raw
+    /// word (`compile::liveness::raw_webs`), which moves to or from the storage untouched.
+    pub(in crate::vm) raw: bool,
 }
 
 /// The operands of a bulk array step (`array.fill`, `array.copy`), decoded from the registers: the
@@ -158,16 +161,17 @@ impl<H: Host> Vm<H> {
         let (aggregate, access) = step.field().expect("field step");
         let write = access == GcFieldAccess::Write;
         let field = GcField::from_tag(i.imm()).expect("validated field operand");
+        let raw = i.op().traits().has(crate::bytecode::Traits::RAW_FORM);
         if aggregate == Aggregate::Struct {
             let reference = read(self, if write { i.register_a() } else { i.register_b() });
             let value = write.then(|| read(self, i.register_b()));
-            return Ok(FieldOperands { reference, location: GcFieldIndex::Struct(field.index()), field, access, value });
+            return Ok(FieldOperands { reference, location: GcFieldIndex::Struct(field.index()), field, access, value, raw });
         }
         let (reference, index) =
             if write { (i.register_a(), i.register_b()) } else { (i.register_b(), i.register_c()) };
         let location = GcFieldIndex::Array(Self::wasm_u32_operand(read(self, index))?);
         let value = write.then(|| read(self, i.register_c()));
-        Ok(FieldOperands { reference: read(self, reference), location, field, access, value })
+        Ok(FieldOperands { reference: read(self, reference), location, field, access, value, raw })
     }
 
     /// The field access the GC rules make on the heap (`staged::wasm_gc`): the value it reads, or
@@ -180,6 +184,7 @@ impl<H: Host> Vm<H> {
         field: GcField,
         access: GcFieldAccess,
         value: Option<Value>,
+        raw: bool,
     ) -> Result<Option<Value>, JsError> {
         let (aggregate, index) = match location {
             GcFieldIndex::Struct(index) => (Aggregate::Struct, index),
@@ -189,12 +194,12 @@ impl<H: Host> Vm<H> {
         let mut stage = HeapStage { vm: self };
         match value {
             Some(value) => {
-                let bits = stage.vm.wasm_stored_bits(field, value);
+                let bits = if raw { value.to_bits() } else { stage.vm.wasm_stored_bits(field, value) };
                 field_write(&mut stage, aggregate, reference, index, field, bits).map(|()| None)
             }
             None => {
                 let word = field_read(&mut stage, aggregate, reference, index, field, access)?;
-                Ok(Some(stage.vm.wasm_field_value(field, access, word)))
+                Ok(Some(if raw { Value::from_bits(word) } else { stage.vm.wasm_field_value(field, access, word) }))
             }
         }
     }
@@ -207,8 +212,8 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value + Copy,
     ) -> Result<Option<Value>, JsError> {
-        let FieldOperands { reference, location, field, access, value } = self.wasm_field_operands(step, i, read)?;
-        self.wasm_field_rule(reference, location, field, access, value)
+        let FieldOperands { reference, location, field, access, value, raw } = self.wasm_field_operands(step, i, read)?;
+        self.wasm_field_rule(reference, location, field, access, value, raw)
     }
 
     /// The bulk operations of an array: `array.len`, `array.fill` and `array.copy`, whose operands
