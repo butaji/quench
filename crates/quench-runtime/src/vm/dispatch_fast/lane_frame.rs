@@ -1205,7 +1205,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
                 let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
                 decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
             }
-            CallOut::Protocol { .. } | CallOut::ForInNext { .. } => {
+            CallOut::Protocol { .. } | CallOut::ForInNext { .. } | CallOut::PropertyKey { .. } => {
                 let (context, step) = self.names?;
                 let operands = operation.operands().fixed;
                 let operands = operands.map(|operand| operand.and_then(|operand| self.operand_word(stage, operand)).map(Value::from_bits));
@@ -2220,8 +2220,10 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
             |context, operator, left, right| unsafe { super::binary_values::<H>(context.cast(), operator, left, right) };
         // Its operands may name a constant, a plain local or a capture, and a comparison pair its words
         // leave is the VM's steady decision (`staged::step` over the comparison).
+        // Its `ToPropertyKey` answers a primitive's key through the names step (`fast_names_step`).
+        let names: NamesStep = fast_names_step::<H>;
         return LaneFrame::<ACC> { binary: Some((cx.cast(), binary)), decisions: Some(Decisions::of(cx)), reads: Reads::of_jump::<H>(cx, None),
-            ..LaneFrame::<ACC>::new(r, view) };
+            names: Some((cx.cast(), names)), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Literal)) } {
         // An allocation or an element definition makes its value in the lane context, as a staged
@@ -3623,6 +3625,35 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
         }
         // The next key of a listed snapshot, `Value::DELETED` once none is left (which takes the exit).
         CallOut::ForInNext { .. } => vm.for_in_step_listed(second?).map(|key| key.unwrap_or(Value::DELETED)),
+        // ToPropertyKey of a primitive: the VM's conversion, which runs no guest code for one. An object's
+        // conversion calls its `toString` or `valueOf`, so the general step makes it.
+        CallOut::PropertyKey { .. } => {
+            let source = second?;
+            if vm.is_object_like(source) {
+                return None;
+            }
+            // SAFETY: the context's program outlives the lane run.
+            let program = unsafe { &*(*cx.cast::<LaneContext<H>>()).code };
+            let key = vm.to_property_key(program, source).ok()?;
+            note_allocation(vm);
+            Some(key)
+        }
+        // A template object's cache of the running frame (`Vm::cache_template_object`, `load_template_object`),
+        // keyed as the VM keys it. A frameless activation beside the lane leaves the step to the general path.
+        CallOut::Protocol { step: Protocol::Literal(crate::staged::protocol_literals::LiteralStep::CacheTemplate { site }), .. } => {
+            let frame = unsafe { (*cx.cast::<LaneContext<H>>()).frame() };
+            if !vm.lane_stack.activations().is_empty() || frame >= vm.frames.len() {
+                return None;
+            }
+            Some(vm.cache_template_object(frame, site, first?))
+        }
+        CallOut::Protocol { step: Protocol::Literal(crate::staged::protocol_literals::LiteralStep::LoadTemplate { site }), .. } => {
+            let frame = unsafe { (*cx.cast::<LaneContext<H>>()).frame() };
+            if !vm.lane_stack.activations().is_empty() || frame >= vm.frames.len() {
+                return None;
+            }
+            Some(vm.load_template_object(frame, site))
+        }
         // A spread onto the literal's array with no elisions before it, from a source whose
         // iteration runs no guest code: the append defines no register, so its value is unused.
         CallOut::Protocol { step: Protocol::AppendArray { length: 0, spread: true }, .. } => {

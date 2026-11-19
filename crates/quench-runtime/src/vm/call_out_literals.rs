@@ -77,15 +77,25 @@ impl<H: Host> Vm<H> {
             LiteralStep::RegExp { site } => self.regexp_literal(p, frame, site),
             LiteralStep::CacheTemplate { site } => {
                 let value = first.expect("CacheTemplateObject names its template object");
-                let key = self.template_key(frame, site);
-                Ok(*self.realm.template_objects.entry(key).or_insert(value))
+                Ok(self.cache_template_object(frame, site, value))
             }
-            LiteralStep::LoadTemplate { site } => {
-                let key = self.template_key(frame, site);
-                Ok(self.realm.template_objects.get(&key).copied().unwrap_or(Value::UNDEFINED))
-            }
+            LiteralStep::LoadTemplate { site } => Ok(self.load_template_object(frame, site)),
             _ => unreachable!("{step:?} is no literal site step"),
         }
+    }
+
+    /// The template object `site` of the function running in `frame`: `value` if none is cached yet, else
+    /// the cached one (`CacheTemplateObject`). No guest code runs.
+    pub(in crate::vm) fn cache_template_object(&mut self, frame: usize, site: u32, value: Value) -> Value {
+        let key = self.template_key(frame, site);
+        *self.realm.template_objects.entry(key).or_insert(value)
+    }
+
+    /// The template object `site` cached for the function running in `frame`, or `undefined` before its
+    /// first make (`LoadCachedTemplateObject`). No guest code runs.
+    pub(in crate::vm) fn load_template_object(&self, frame: usize, site: u32) -> Value {
+        let key = self.template_key(frame, site);
+        self.realm.template_objects.get(&key).copied().unwrap_or(Value::UNDEFINED)
     }
 
     /// The key of the template object `site` of the function running in `frame`.
