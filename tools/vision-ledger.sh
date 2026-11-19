@@ -29,8 +29,13 @@ while IFS='|' read -r owner branch; do
   j="$work/scan-$(echo "$owner" | tr ' ,' '__').json"
   node "$here/vision-ledger.mjs" scan "$wt" "$branch@$(git -C "$wt" rev-parse --short=10 HEAD)" "$j" --owner "$owner"
   scans+=("$j")
-  base="$work/v2-merged"
-  if [ "$branch" != v2-merged ] && [ -d "$base" ]; then
+  # Budgets only shrink: compare with the merge base, so only the branch's own edits count.
+  if [ "$branch" != v2-merged ]; then
+    mb=$(git -C "$clone" merge-base "origin/$branch" origin/v2-merged 2>/dev/null || true)
+    base="$work/base-$(echo "$owner" | tr ' ,' '__')"; rm -rf "$base"; mkdir -p "$base/crates/quench-tier-corpus"
+    for f in ir_budget.txt ir_floor.txt tier_inversions.txt; do
+      [ -n "$mb" ] && git -C "$clone" show "$mb:crates/quench-tier-corpus/$f" > "$base/crates/quench-tier-corpus/$f" 2>/dev/null || rm -f "$base/crates/quench-tier-corpus/$f"
+    done
     b="$work/budgets-$(echo "$owner" | tr ' ,' '__').json"
     node "$here/vision-ledger.mjs" budgets "$base" "$wt" "$branch" "$owner" "$b" && scans+=("$b")
   fi

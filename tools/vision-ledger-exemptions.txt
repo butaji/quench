@@ -11,3 +11,4 @@ builtin-bodies	.	^(Error|Boolean|Promise.*|Wasm.*|HostFunction|MathInitialize|Ty
 handler-not-row	vm/dispatch_fast/array_steps\.rs$	^lane_(callback_target|admits_activation|array_object|array_complete|run_array_iteration_from_frame|apply_array_step|apply_step_value)$	call protocol and heap access with no value semantics (Builtins triage)
 per-call-recheck	vm/dispatch_fast/array_steps\.rs$	^lane_call_for_each_once$	one context-flag load, not a re-proof (Builtins triage)
 *	.	^default_locale_compare$	wraps host collation (ICU), which has no staged form (Builtins triage)
+hand-table	quench-bjit/build/transfer\.rs$	.	AArch64 ISA encodings (A64_* masks), not engine layout; no disassembler crate for them (b-jit triage)
