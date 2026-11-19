@@ -139,7 +139,7 @@ script_handler! {
 /// cached, whose parameters take `ARGC` values and whose activation's room the stack holds;
 /// `this` is the receiver its form binds.
 #[inline(always)]
-unsafe fn lane_run_leaf<H: Host, const LEAF: u8, const ARGC: u16>(
+pub(super) unsafe fn lane_run_leaf<H: Host, const LEAF: u8, const ARGC: u16>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
