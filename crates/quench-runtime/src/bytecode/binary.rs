@@ -160,6 +160,9 @@ const KEPT_SOURCE_TRAILER: usize = size_of::<u64>() + size_of::<u64>() + size_of
 /// mapping the program keeps for its records, instead of holding a copy on the heap for its
 /// whole run (V8-v7 RegExp: 118 KiB at its heap's peak).
 pub(crate) fn append_kept_source(entry: &mut Vec<u8>, source: &str) {
+    // Sized once: the entry lives as long as the program that reads its text, and `extend`
+    // would grow it by doubling, leaving up to half of the source's size in spare capacity.
+    entry.reserve_exact(source.len() + KEPT_SOURCE_TRAILER);
     entry.extend_from_slice(source.as_bytes());
     entry.extend_from_slice(&compact_checksum(source.as_bytes()).to_le_bytes());
     entry.extend_from_slice(&(source.len() as u64).to_le_bytes());

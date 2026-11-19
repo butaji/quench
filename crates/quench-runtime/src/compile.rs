@@ -2040,6 +2040,8 @@ fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
         table.push((offset, excess));
         offset += character.len_utf8();
     }
+    // A replay keeps the table, so it keeps no doubling slack.
+    table.shrink_to_fit();
     table
 }
 
@@ -3571,6 +3573,14 @@ impl<'a> Compiler<'a> {
         method_sites.shrink_to_fit();
         method_arguments.shrink_to_fit();
         let field_sites = self.field_sites.into_vec();
+        // Built by pushes, so each may hold doubling slack the program would keep for good.
+        let mut module_requests = module_requests;
+        module_requests.shrink_to_fit();
+        let mut module_imports = module_imports;
+        module_imports.shrink_to_fit();
+        let mut declared_types = std::mem::take(&mut self.declared_types);
+        declared_types.declared.shrink_to_fit();
+        declared_types.enum_constants.shrink_to_fit();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
             // Eval code is code compiled for an eval; a host script that only captures its
@@ -3585,7 +3595,7 @@ impl<'a> Compiler<'a> {
             module_requests,
             module_imports,
             module_link_plan,
-            declared_types: (!self.declared_types.is_empty()).then(|| Box::new(std::mem::take(&mut self.declared_types))),
+            declared_types: (!declared_types.is_empty()).then(|| Box::new(declared_types)),
             source_name: self.source.to_owned(),
             source: Some(self.first_call.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
                 text: source_text::kept(self.text, self.eval_context.is_some()),
