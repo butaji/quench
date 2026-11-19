@@ -275,7 +275,7 @@ pub(in crate::vm::dispatch_fast) fn staged_jump(r: Registers, view: Carried) -> 
 
 /// What the staged `await` conversion (`staged::await_source`) asks the lane context, erased of
 /// its host so the frame names no `H`: whether a value is an object, and PromiseResolve where it
-/// observes nothing (`Vm::lane_promise_resolve`).
+/// observes nothing (`Vm::intrinsic_promise_resolve`).
 #[derive(Clone, Copy)]
 pub(in crate::vm::dispatch_fast) struct AwaitSource {
     object_like: fn(*mut (), Value) -> bool,
@@ -290,9 +290,8 @@ impl AwaitSource {
             resolve: |context, value| {
                 let cx = context.cast::<LaneContext<H>>();
                 let vm = unsafe { vm(cx) };
-                let promise = vm.intrinsic_promise_constructor();
                 // SAFETY: the context's program outlives the lane run.
-                vm.lane_promise_resolve(unsafe { &*(*cx).code }, promise, value)
+                vm.intrinsic_promise_resolve(unsafe { &*(*cx).code }, value)
             },
         }
     }

@@ -78,7 +78,23 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
+        self.intrinsic_promise_resolve(p, value)
+    }
+
+    /// `lane_promise_resolve` of the realm's own `%Promise%`, the receiver an `await`'s
+    /// PromiseResolve always has, without looking that receiver up to compare it: a promise
+    /// whose layout the species proof answers (`promise_species_proved`) reads its
+    /// `constructor` as this realm's `%Promise%`, which the proof was recorded for, so it is
+    /// returned as is before the look-up the unproved read needs.
+    pub(in crate::vm) fn intrinsic_promise_resolve(&mut self, p: &ResidualProgram, value: Value) -> Option<Value> {
+        if self.host.observes_promise_lifecycle() {
+            return None;
+        }
         if self.is_promise(value) {
+            if self.promise_species_proved(value) {
+                return Some(value);
+            }
+            let receiver = self.intrinsic_promise_constructor();
             return self.promise_constructor_is_intrinsic(value, receiver).then_some(value);
         }
         let then = self.plain_resolution_then(value)?;

@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
     /// (`Host::enter_unobserved_job` answering a context) runs it as an observed job, which ends
     /// the chain.
     fn chain_next_job(&mut self, p: &ResidualProgram, program: ProgramId, ended: AwaitResume) -> ChainStep {
-        let Some((role, promise)) = self.chained_front(program, ended) else {
+        let Some((role, promise, frame)) = self.chained_front(program, ended) else {
             return ChainStep::Ends;
         };
         let Some(PendingJob::Reaction(reaction)) = self.realm.jobs.pop_front() else {
@@ -103,9 +103,6 @@ impl<H: Host> Vm<H> {
             return ChainStep::Ran(ran.map(|()| None));
         }
         let job = role.job(reaction.handler);
-        let Some(frame) = self.job_frame(job).map(std::ptr::from_ref) else {
-            return ChainStep::Ran(Err(JsError("stale async continuation".into())));
-        };
         let how = if reaction.rejected {
             JobResume::Throws(JsError::thrown(reaction.value, "await rejected".into()))
         } else {
@@ -121,8 +118,15 @@ impl<H: Host> Vm<H> {
     /// queue's unobserved jobs share the host's context, and `ended`'s call roots lie on top
     /// (`chain_roots_hold`); and the job is the reaction of a pending await of an async function
     /// of `program`, with no host context of its own nor derived promise, in the current realm,
-    /// where its function awaited too. Its await's role and the promise it settles.
-    fn chained_front(&self, program: ProgramId, ended: AwaitResume) -> Option<(AwaitRole, Value)> {
+    /// where its function awaited too. Its await's role, the promise it settles, and the frame
+    /// its await state keeps (`Vm::job_frame`), found by the one look at the state.
+    ///
+    /// The frame stays valid for the chain's run of the job: the state keeps it boxed while
+    /// pending, and between this look and the run the job only leaves the queue, the host's
+    /// unobserved context ends and is entered (whose released roots free nothing before a
+    /// collection, and none runs), and the job's call roots are written, none of which touches
+    /// the state.
+    fn chained_front(&self, program: ProgramId, ended: AwaitResume) -> Option<(AwaitRole, Value, *const FrameRecord)> {
         if self.host.observes_promise_lifecycle()
             || !self.unobserved_jobs_entered
             || self.check_execution_interrupt().is_err()
@@ -139,12 +143,14 @@ impl<H: Host> Vm<H> {
         if reaction.execution_context.get().is_some() || !reaction.next.is_undefined() || reaction.realm != realm {
             return None;
         }
-        let (role, awaited_realm, promise) = self.heap.await_state(reaction.handler)?.pending()?;
+        let state = self.heap.await_state(reaction.handler)?;
+        let (role, awaited_realm, promise) = state.pending()?;
         if !matches!(role, AwaitRole::AsyncFunction) || awaited_realm != realm {
             return None;
         }
-        let frame = self.job_frame(role.job(reaction.handler))?;
-        (frame.program == program).then_some((role, promise))
+        // An async function's pending state keeps its frame (`AwaitState::suspended_frame`).
+        let frame = state.suspended_frame()?;
+        (frame.program == program).then_some((role, promise, std::ptr::from_ref(frame)))
     }
 
     /// Whether the call roots of the await job of `ended` lie on top of the call root stack, as

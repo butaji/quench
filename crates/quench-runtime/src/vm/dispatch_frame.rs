@@ -1639,7 +1639,7 @@ impl<H: Host> Vm<H> {
         let value = self.read(frame, instruction.register_b());
         // An async generator's `yield` resolves a promise for the value, as the general step
         // does (`promise_for_value`), where that observes nothing.
-        let value = if asynchronous { self.lane_promise_resolve(p, self.intrinsic_promise_constructor(), value)? } else { value };
+        let value = if asynchronous { self.intrinsic_promise_resolve(p, value)? } else { value };
         self.frames[frame].pc = pc + 1;
         self.frames[frame].pc_is_resume = true;
         Some(FrameOutcome::Suspend(
@@ -1672,7 +1672,7 @@ impl<H: Host> Vm<H> {
         let _ = destination;
         let awaited = self.read(frame, awaited);
         let value = if self.is_object_like(awaited) {
-            self.lane_promise_resolve(p, self.intrinsic_promise_constructor(), awaited)?
+            self.intrinsic_promise_resolve(p, awaited)?
         } else {
             awaited
         };
