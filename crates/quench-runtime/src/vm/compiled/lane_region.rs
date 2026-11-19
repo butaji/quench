@@ -378,6 +378,9 @@ pub(super) struct LoweredLane {
     pub(super) clif: Option<String>,
     /// The function's scalar entry (`scalar`), which its direct calls of itself call: compiled beside the body.
     pub(super) scalar: Option<ir::Function>,
+    /// The body's proven entry (`ProvenEntry`): the same body past its parameter guards, and the entry types those guards
+    /// test (`LoweredRegion::entry_types`). Its code must be the body's dependencies (`LoweredRegion::stable`).
+    pub(super) proven: Option<(ir::Function, Box<[Type]>)>,
 }
 
 /// One typed numeric return edge, materialized after joining all return facts.
@@ -445,12 +448,15 @@ pub(super) struct LoweredRegion {
     /// Whether a loop of the region hoists an array view, so a typed variant may differ.
     pub(super) hoists_arrays: bool,
     pub(super) stable: StableFacts,
+    /// The entry types of the function's parameters, as a proven entry's lowering holds them (`VmFacts::proven_entry`):
+    /// the types its entry guards test, which a caller must prove each argument has. Empty elsewhere.
+    pub(super) entry_types: Box<[Type]>,
 }
 
 impl Default for LoweredRegion {
     /// A region that lowered nothing (`LoweredLane`'s default): an empty function.
     fn default() -> Self {
-        Self { number_result: None, function: ir::Function::new(), native: 0, fault_poll: false, hoists_arrays: false, stable: StableFacts::default() }
+        Self { number_result: None, function: ir::Function::new(), native: 0, fault_poll: false, hoists_arrays: false, stable: StableFacts::default(), entry_types: Box::default() }
     }
 }
 
@@ -1692,9 +1698,17 @@ pub(super) fn lower_body(
     let abi = scalar::ScalarAbi::of(program, function_id, unit, direct).filter(|_| entry.is_none());
     let scalar = abi.and_then(|abi| scalar::lowered(program, RegionSpecializer { generic: &[], facts: VmFacts { scalar: Some(abi), ..vm }, plan: scalar::plan(abi), ..body }));
     let region = RegionSpecializer { facts: VmFacts { scalar: abi.filter(|_| scalar.is_some()), ..vm }, ..body }.specialize(program).ok()?;
+    // The proven entry lowers the same body with its parameters' entry guards taken as proved (`VmFacts::proven_entry`).
+    // It is kept only where it folds exactly the body's Stable facts, which its publication takes once for both.
+    let params = program.function_get(function_id as usize).is_some_and(|function| function.params > 0);
+    let proven = (entry.is_none() && params).then(|| RegionSpecializer { facts: VmFacts { proven_entry: true, ..vm }, ..body }
+        .specialize(program).ok()).flatten()
+        .filter(|proven| proven.stable == region.stable && proven.fault_poll == region.fault_poll && proven.hoists_arrays == region.hoists_arrays
+            && proven.entry_types.iter().any(|ty| *ty != Type::ANY))
+        .map(|proven| (proven.function, proven.entry_types));
     super::residuals::report_clif(function_id, &region.function);
     let clif = native_dump_directory().map(|_| region.function.to_string());
-    Some(LoweredLane { region, clif, scalar })
+    Some(LoweredLane { region, clif, scalar, proven })
 }
 
 /// The position a failed entry contract takes in a lane body's leave set
@@ -2022,6 +2036,7 @@ pub(super) fn lower(
     }
     lowering.entered.insert(entry_pc);
     lowering.stable.start = entry_pc;
+    let mut proven_types: Box<[Type]> = Box::default();
     {
         let pc = entry_pc;
         let block = lowering.builder.create_block();
@@ -2063,6 +2078,17 @@ pub(super) fn lower(
             let miss = lowering.guard_exit(&state, pc as u32);
             let available = lowering.raw_compare_imm(Relation::NotEqual, interrupt, 0);
             emit_js_guard(&mut lowering.builder, available, miss);
+        }
+        // A proven entry's caller proved each argument has its parameter's entry type (`call_frames::call_target`), so the
+        // guards those types make are not run: the state holds them, and the entry conform proves them with no test. A
+        // shape is not held this way: its guard runs in every entry.
+        if lowering.vm.proven_entry {
+            let entered: Vec<Type> = lowering.facts.at(pc).map(|types| types.iter().copied().take(usize::from(function.params)).collect()).unwrap_or_default();
+            for (index, ty) in entered.iter().copied().enumerate() {
+                if !lowering.is_live(pc, index as Register) || ty.object_shape().is_some() { continue; }
+                state.values[index] = RegisterFact { tagged: state.values[index].tagged, ..RegisterFact::definition(ty, Representation::Tagged) };
+            }
+            proven_types = entered.into_boxed_slice();
         }
         lowering.entry_conform(&mut state, pc, coverage);
         // A region whose sole entry is this loop header has no earlier source
@@ -2188,7 +2214,7 @@ pub(super) fn lower(
     let decided = known_branches::decide(&mut native);
     if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
     if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
-    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable })
+    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable, entry_types: proven_types })
 }
 
 impl Lowering<'_, '_> {
@@ -3162,7 +3188,7 @@ impl Lowering<'_, '_> {
             roots: &mut self.stable.roots, number_returns: &mut self.number_returns, fields,
             call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda, tiers: self.vm.tiers,
             prototype: sites.prototype, table_entry: self.entry.as_ref(),
-            held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site };
+            held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site, proven_arguments: Default::default() };
         super::record_boxed_numbers();
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.
