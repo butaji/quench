@@ -82,7 +82,9 @@ mod site_posterior;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
 #[path = "compiled/numeric_image.rs"] mod numeric_image; #[cfg(test)] pub(super) use numeric_image::compile_js_typed_numeric_region;
 pub(super) use numeric_image::NumericImage;
-#[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
+#[path = "compiled/ahead_images.rs"] mod ahead_images;
+#[cfg(feature = "aot")]
+mod array_kinds; pub use ahead_images::AheadImages;
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, BodyEntry, BodyReturn};
 pub(super) use lane_body_abi::lane_body_signature;
 #[path = "compiled/lane_facts.rs"]
@@ -1367,6 +1369,11 @@ pub(in crate::vm::compiled) fn ahead_loop_region(program: &ResidualProgram, func
     // no run-time feedback is needed to specialize them: the kind is read from the record once
     // (`ElementViews::Typed(None)`, a dynamic kind) rather than the dense indexed path being
     // taken per element. A loop whose typed view cannot be proved lowers dense instead.
+    // The program names the arrays' element kind where it constructs them (`loop_element_kind`),
+    // so a loop over `new Int32Array(…)` lowers the kind's rows directly; the region proves the
+    // kind at its entry, so the dynamic dispatch (`Typed(None)`) stays only for a loop whose
+    // arrays the program does not name.
+    let static_kind = array_kinds::loop_element_kind(program, function_id, (header, backedge));
     let plan = |views| lane_region::RegionPlan { entry_bounds: true,
         // No run observed this loop's inputs: each int32 the index arithmetic reads is assumed
         // and checked once at the entry, instead of every use converting a Number.
@@ -1374,7 +1381,9 @@ pub(in crate::vm::compiled) fn ahead_loop_region(program: &ResidualProgram, func
         coverage: lane_region::Coverage::Loop { header: region.header as usize, backedge: region.backedge as usize, poll: true },
         completion: lane_region::Completion::Body, views };
     let mut failure = String::from("region lowers no record");
-    for views in [lane_region::ElementViews::Typed(None), lane_region::ElementViews::Dense] {
+    let dynamic = lane_region::ElementViews::Typed(None);
+    let attempts = [static_kind.map_or(dynamic, |kind| lane_region::ElementViews::Typed(Some(kind))), dynamic];
+    for views in attempts.into_iter().chain(std::iter::once(lane_region::ElementViews::Dense)) {
         let lowered = lane_region::RegionSpecializer { function_id, unit: &unit, helpers: LaneHelpers::Ahead,
             fields: &[], global_reads: &crate::vm::global_facts::GlobalReads::default(), facts: VmFacts::STATIC, generic: &[],
             direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
