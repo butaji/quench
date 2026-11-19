@@ -116,7 +116,7 @@ pub(crate) fn install(runtime: &mut Runtime<NodeHost>) {
     });
 }
 
-/// The command line's AOT command, if it is one: `compile ...` or `<x>.qimg ...`.
+/// The image command line, if it is one: an executable with an embedded image, or `<x>.qimg ...`.
 pub fn route(arguments: &[String]) -> Option<Result<ExitCode, String>> {
     if let Some(payload) = embedded() { return Some(run_file("this executable", &payload, arguments.iter().cloned())); }
     match arguments {

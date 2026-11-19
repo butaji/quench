@@ -93,11 +93,10 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
     let arguments: Vec<_> = std::env::args().skip(1).collect();
-    // `compile` is the builder's own command; `--build-aot` is the same closed-world build
-    // reached through the Node-compatible command line.
+    // `compile` is the AOT compile command; `--build-aot` is an alias of it.
     let result = if let Some(result) = quench_node::qimg::route(&arguments) {
         result
-    } else if arguments.first().is_some_and(|argument| argument == "--build-aot") {
+    } else if arguments.first().is_some_and(|argument| argument == "compile" || argument == "--build-aot") {
         quench_node::aot::cli::run(arguments.into_iter().skip(1).collect())
     } else {
         quench_node::shared_run::run_shared_cli(arguments)
