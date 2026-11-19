@@ -21,10 +21,9 @@
 //   MakeLiteralTemplate, CreateRegExpLiteral, StringConcat.
 // - Hand semantics with no staged row yet: CloneEnv (environment clone plan), LoadThis, LoadCallee,
 //   LoadImportMeta, InitializeThis, InitializeTdz, CallFirstChunk, ResolveName, LoadResolvedName, StoreResolvedName, DeleteName,
-//   ValidateClassHeritage, RequireObjectCoercible, RequireIteratorResult, SuperCallCheck,
-//   SetFunctionName, SetFunctionNameKey, SetFunctionDebugName,
-//   SetThisField, SetThisFieldStrict, DefinePropertyRecord, DefinePrivateField, DefineField,
-//   DefineComputedField, DefineArrayElement, CopyDataProperties, CheckPrivate, PrivateIn, MarkPrivateName,
+//   RequireObjectCoercible, RequireIteratorResult, SetFunctionName (these three need frame methods the
+//   host frame does not implement), SetThisField, SetThisFieldStrict (the frame holds no `this` for a row),
+//   DefineArrayElement (its element definer is the interpreter frame's, not a call-out),
 //   ArgumentsLength, ArgumentGet, WasmBranchTable.
 
 use super::*;
@@ -784,40 +783,6 @@ impl<H: Host> Vm<H> {
                     RowRun::Stop(stop) => return stop,
                 }
             }
-            Op::CheckPrivate => {
-                let object = self.read(f, i.register_a());
-                let atom = i.atom_index();
-                // A private field found under its home's brand proves the brand check.
-                if self.private_field_value(p, object, atom).is_some() {
-                    return Ok(StepResult::Continue);
-                }
-                self.check_private_brand(p, object, atom)?;
-                if self.private_field_value(p, object, atom).is_none()
-                    && self.own_property(object, atom).is_none()
-                    && self.property_accessor(object, atom).is_none()
-                {
-                    return Err(
-                        self.type_error(p, "private member is not present on this object".into())
-                    );
-                }
-            }
-            Op::PrivateIn => {
-                let object = self.read(f, i.register_b());
-                if !self.is_object_like(object) {
-                    return Err(
-                        self.type_error(p, "right-hand side of 'in' is not an object".into())
-                    );
-                }
-                let result = self.has_private_brand(p, object, i.atom_index());
-                self.write(
-                    f,
-                    i.result_register(),
-                    if result { Value::TRUE } else { Value::FALSE },
-                );
-            }
-            Op::MarkPrivateName => {
-                self.mark_private_name(p, self.read(f, i.register_b()), self.read(f, i.register_c()), i.atom_index())?;
-            }
             Op::ResolveName => {
                 let strict = i
                     .boolean_field(crate::bytecode::InstructionField::B)
@@ -837,13 +802,6 @@ impl<H: Host> Vm<H> {
                 let object = self.read(f, i.register_b());
                 let value = self.load_resolved_name(p, object, i.atom_index(), strict)?;
                 self.write(f, i.result_register(), value);
-            }
-            Op::ValidateClassHeritage => {
-                let heritage = self.read(f, i.register_a());
-                if !heritage.is_null() && !self.is_constructable(heritage) {
-                    return Err(self
-                        .type_error(p, "Class extends value is not a constructor or null".into()));
-                }
             }
             Op::DeleteName => {
                 let value =
@@ -867,12 +825,6 @@ impl<H: Host> Vm<H> {
                     RowRun::Stop(stop) => return stop,
                 }
             }
-            Op::CopyDataProperties => self.copy_data_properties(
-                p,
-                self.read(f, i.register_a()),
-                self.read(f, i.register_b()),
-                self.read(f, i.register_c()),
-            )?,
             Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart | Op::Delete => {
                 self.staged_value_step(p, super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc }, i)?;
             }
@@ -880,7 +832,6 @@ impl<H: Host> Vm<H> {
                 self.require_object_coercible(p, self.read(f, i.register_b()))?;
             }
             Op::RequireIteratorResult => self.require_iterator_result(p, self.read(f, i.register_b()))?,
-            Op::SuperCallCheck => self.check_super_call(p)?,
             // The running frame's iterator cleanup stack, as its staged rows (`Frame::iterator_push`, `iterator_pop`).
             Op::IteratorCleanupPush | Op::IteratorCleanupPop => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
@@ -888,9 +839,6 @@ impl<H: Host> Vm<H> {
                     RowRun::Declined => unreachable!("the interpreter frame answers every iterator cleanup step"),
                     RowRun::Stop(stop) => return stop,
                 }
-            }
-            Op::SetFunctionDebugName => {
-                self.set_function_debug_name(self.read(f, i.register_a()), i.atom_index());
             }
             Op::ArgumentsLength | Op::ArgumentGet => {
                 let binding = self.load_local_binding(p, VarOwner::Frame(f), i.local_slot(), None)?;
@@ -900,13 +848,6 @@ impl<H: Host> Vm<H> {
             }
             Op::SetFunctionName => {
                 self.set_function_name(p, self.read(f, i.register_a()), (i.atom_index(), i.cache_site_index()))?;
-            }
-            Op::SetFunctionNameKey => {
-                self.set_function_name_key(
-                    self.read(f, i.register_a()),
-                    self.read(f, i.register_b()),
-                    i.function_name_prefix(),
-                );
             }
             Op::InitializeTdz => {
                 let slot = i.local_slot();
@@ -933,44 +874,6 @@ impl<H: Host> Vm<H> {
                     }
                     RowRun::Stop(stop) => return stop,
                 }
-            }
-            Op::DefinePropertyRecord => {
-                let mode = i.property_definition_mode().ok_or_else(|| {
-                    JsError::validation("invalid property definition mode".into())
-                })?;
-                let target = self.read(f, i.register_b());
-                let key = self.read(f, i.register_c());
-                let descriptor =
-                    super::object_descriptors::PropertyDescriptorRecord::for_definition(
-                        mode,
-                        self.read(f, i.register_a()),
-                    );
-                self.define_property_or_throw(p, target, key, descriptor)?;
-            }
-            Op::DefinePrivateField => {
-                self.initialize_private_field(
-                    p,
-                    self.read(f, i.register_b()),
-                    self.read(f, i.register_c()),
-                    i.atom_index(),
-                    self.read(f, i.register_a()),
-                )?;
-            }
-            Op::DefineField => {
-                let object = self.read(f, i.register_b());
-                let value = self.read(f, i.register_a());
-                self.define_field_cached(p, object, i.atom_index(), value, i.cache_site_index(), self.frames[f].function)?;
-            }
-            Op::DefineComputedField => {
-                let object = self.read(f, i.register_b());
-                let key = self.read(f, i.register_c());
-                let key = self.to_property_key(p, key)?;
-                let key = match self.heap.get(key).cloned() {
-                    _ if let Some(atom) = self.string_key_atom(key) => PropertyKey::string(atom),
-                    _ if self.heap.is_symbol(key) => PropertyKey::symbol(key),
-                    _ => return Err(JsError::validation("invalid class field key".into())),
-                };
-                self.define_class_field(p, object, key, self.read(f, i.register_a()))?;
             }
             Op::SetThisField | Op::SetThisFieldStrict => {
                 let this = self.checked_this_binding(p, f)?;
