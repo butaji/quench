@@ -14,7 +14,7 @@ pub(super) const FIELD_LEAVES_WORD: usize = 2;
 pub(super) const FIELD_LEAVES_SHIFT: u32 = 24;
 pub(super) const FIELD_BYTE: u32 = 0xff;
 
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_host::TestHost;

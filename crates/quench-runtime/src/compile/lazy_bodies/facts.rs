@@ -39,7 +39,6 @@ pub(in crate::compile) struct BodyFacts {
     /// The functions checked without their tree whose bodies may stream, which their
     /// compilation finds by reading their statements first (`statement_stream`).
     pub(in crate::compile) stream_candidates: FxHashSet<u32>,
-    #[cfg(feature = "aot")]
     pub(in crate::compile) native_source_requests: Option<(bool, Vec<crate::compile::NativeSourceKey>)>,
 }
 
@@ -55,7 +54,7 @@ impl BodyFacts {
     /// generation: an analysis per function between the records code generation keeps left
     /// the heap their holes (JetStream +2-3% max RSS).
     /// False where `stub` and the check needs the body's tree (`LazyBody::stub`).
-    pub(in crate::compile) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function, early, stub, functions_inside }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) -> bool {
+    pub(in crate::compile) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function, early, stub, functions_inside }: oxc_parser::LazyBody<'_, '_>, global_script_calls: &[(String, String)]) -> bool {
         if self.failed {
             return true;
         }
@@ -100,7 +99,6 @@ impl BodyFacts {
                 eprintln!("early-verify: free names differ at {}: semantic {:?} parse {:?}", program.span.start, semantic.map(|names| names.1), tracked.map(|names| names.1));
             }
         }
-        #[cfg(feature = "aot")]
         if let Some((specialized, requests)) = &mut self.native_source_requests {
             requests.extend(crate::compile::Engine::native_source_requests(program, built.semantic.scoping(), *specialized, global_script_calls));
         }
@@ -113,7 +111,6 @@ impl BodyFacts {
     /// valid, with its free names. A function about to be called where it is made, or whose
     /// names it cannot bound inside a function, is declined and its body parses whole.
     pub(in crate::compile) fn skim(&mut self, body: oxc_parser::SkimmedBody<'_>, text: &str) -> bool {
-        #[cfg(feature = "aot")]
         if self.native_source_requests.is_some() {
             return false;
         }
@@ -139,7 +136,6 @@ impl BodyFacts {
     /// (`LazyBody::functions_inside`). Then its free names are the parse's, and no semantic
     /// analysis runs. False where the full check must run.
     fn checked_by_parse(&mut self, program: &Program<'_>, call_assignment_targets: bool, in_function: bool, early: &[&str], functions_inside: bool) -> bool {
-        #[cfg(feature = "aot")]
         if self.native_source_requests.is_some() {
             return false;
         }
@@ -295,10 +291,10 @@ pub(in crate::compile) fn parse_collecting<'a>(
     facts: &RefCell<BodyFacts>,
     inherited_strict: bool,
     recognize: crate::compile::annex_b_targets::Recognize,
-    #[cfg(feature = "aot")] global_script_calls: &[(String, String)],
+    global_script_calls: &[(String, String)],
 ) -> oxc_parser::ParserReturn<'a> {
     let direct = lazy.is_some() && facts.borrow().arrows;
-    let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.borrow_mut().check(body, #[cfg(feature = "aot")] global_script_calls);
+    let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.borrow_mut().check(body, global_script_calls);
     let mut skim = |body: oxc_parser::SkimmedBody<'_>| facts.borrow_mut().skim(body, source);
     // SAFETY: `check` and `skim` live through the parse, which alone calls them.
     let (check, skim) = unsafe { ((lazy.is_some() && !direct).then(|| oxc_parser::LazyBodyCheck::new(&mut check)), direct.then(|| oxc_parser::LazyBodySkim::new(&mut skim))) };

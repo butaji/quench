@@ -2889,7 +2889,6 @@ impl NodeHost {
         #[cfg(feature = "native-execution")]
         if let Some(module) = self.embedded_import(referrer, specifier)? { return Ok(Some(module)); }
         let module = self.resolve_filesystem_import(referrer, specifier, from_require)?;
-        #[cfg(feature = "aot")]
         if let Some(module) = &module { self.record_import(referrer, specifier, module)?; }
         Ok(module)
     }
@@ -2993,7 +2992,6 @@ impl NodeHost {
             .and_then(|value| value.to_str())
             .unwrap_or("");
         if extension == "wasm" {
-            #[cfg(feature = "aot")]
             self.record_module_bytes(path, quench_runtime::SourceKind::Module, &bytes).map_err(|error| error.to_string())?;
             // Node's `wasm` format: the module record is a facade over the instance.
             let source = esm_wasm::facade(&name, path, &bytes)?;
@@ -3005,7 +3003,6 @@ impl NodeHost {
         // the file beyond the loader's own compile; the loader's compile is single-parse.
         let kind = if extension == "json" { quench_runtime::SourceKind::Script }
             else { commonjs::source_kind_of_real_bytes(path, &bytes)? };
-        #[cfg(feature = "aot")]
         self.record_module_bytes(path, kind, &bytes).map_err(|error| error.to_string())?;
         let source = if extension == "json" {
             commonjs::source_text(&bytes).into_owned()
@@ -3017,7 +3014,6 @@ impl NodeHost {
             }
             source
         } else {
-            #[cfg(feature = "aot")]
             self.record_module_resolution(path, &path.to_string_lossy(), path)?;
             let filename = serde_json::to_string(&path.to_string_lossy())
                 .map_err(|error| error.to_string())?;

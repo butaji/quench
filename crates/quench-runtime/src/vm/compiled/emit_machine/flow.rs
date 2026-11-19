@@ -2,7 +2,7 @@
 
 use super::{Builds, machine_type};
 use crate::staged::machine::{Lane, MachineFlow};
-#[cfg(all(feature = "aot", feature = "jit"))]
+#[cfg(feature = "jit")]
 use crate::staged::machine::MachineTail;
 use cranelift_codegen::ir::{self, InstBuilder};
 
@@ -103,7 +103,7 @@ impl<'b, B: Builds<'b>> MachineFlow for B {
     }
 }
 
-#[cfg(all(feature = "aot", feature = "jit"))]
+#[cfg(feature = "jit")]
 impl<'b, B: Builds<'b>> MachineTail for B {
     fn tail_call(&mut self, target: ir::FuncRef, arguments: &[ir::Value]) {
         self.function_builder().ins().return_call(target, arguments);

@@ -9,7 +9,6 @@ impl<H: crate::Host> crate::Runtime<H> {
     }
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn eager_publication_reports_lane_bodies() {
     // A loop the lane lowering admits: the eager publisher must enter the hot function
@@ -37,14 +36,12 @@ fn eager_publication_reports_lane_bodies() {
     assert_eq!(runtime.rooted_value(answer).unwrap().as_number(), Some(999_000.0));
 }
 
-#[cfg(feature = "aot")]
 fn compile_frozen(source: &str) -> (ResidualProgram, crate::NativeJsProgram<TestHost>) {
     let program = Engine::specialize(source, "frozen.js").unwrap();
     let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
     (program, native)
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn a_frozen_image_folds_the_unnamed_method_atoms_of_its_stores() {
     let (program, native) = compile_frozen(
@@ -53,7 +50,6 @@ fn a_frozen_image_folds_the_unnamed_method_atoms_of_its_stores() {
     assert!(native.frozen_atoms().contains(&a), "held atoms: {:?}", native.frozen_atoms());
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn a_named_method_atom_retires_the_image_and_the_shared_body_runs() {
     let (program, native) = compile_frozen(
@@ -71,7 +67,6 @@ fn a_named_method_atom_retires_the_image_and_the_shared_body_runs() {
     assert_eq!(runtime.native_execution_rejections(), 0, "the deopt stays inside the image");
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn a_later_method_cache_name_retires_the_image() {
     let (program, native) = compile_frozen(
@@ -85,7 +80,6 @@ fn a_later_method_cache_name_retires_the_image() {
     assert!(native.frozen_invalidated(), "the subscription retires the image");
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn a_frozen_image_folds_whole_program_globals_and_guards_a_change() {
     // `SCALE` is written once at its declaration, so the closed program gives it 3 at
@@ -111,7 +105,6 @@ fn a_frozen_image_folds_whole_program_globals_and_guards_a_change() {
     assert_eq!(runtime.native_execution_rejections(), 0, "counts: {counts:?}");
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn a_frozen_image_folds_a_prototype_value_and_guards_a_redefinition() {
     // `C.prototype.k` is stored once with an immediate, so the closed program gives every
@@ -139,7 +132,6 @@ fn a_frozen_image_folds_a_prototype_value_and_guards_a_redefinition() {
     assert_eq!(runtime.native_execution_rejections(), 0, "counts: {counts:?}");
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn a_retired_image_leaves_its_lane_bodies_for_the_semantic_fallback() {
     // The loop function's entry is a trampoline over its lane body, which reads the image's
@@ -166,7 +158,6 @@ fn a_retired_image_leaves_its_lane_bodies_for_the_semantic_fallback() {
     assert_eq!(runtime.native_execution_rejections(), 0);
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn a_frozen_image_materializes_heap_string_constants_and_deopts_on_retirement() {
     // The image allocates the literal once at load and the lane body reads the block
@@ -189,7 +180,6 @@ fn a_frozen_image_materializes_heap_string_constants_and_deopts_on_retirement() 
     assert_eq!(runtime.native_execution_rejections(), 0);
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn functions_past_the_set_width_keep_a_windowed_map() {
     let locals = crate::compile::liveness::ROOT_MAP_REGISTERS as usize + 1;
@@ -207,7 +197,6 @@ fn functions_past_the_set_width_keep_a_windowed_map() {
         "a windowed body has a precise map: {:?}", native.publication_counts());
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn a_function_past_the_old_width_still_has_a_stack_map() {
     // Between the old 256-register width and the current 512, the root map must exist.
@@ -219,7 +208,6 @@ fn a_function_past_the_old_width_still_has_a_stack_map() {
         "{:?}", native.publication_counts());
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn functions_past_4096_registers_keep_precise_maps() {
     let parameters = (0..4097).map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
@@ -231,7 +219,6 @@ fn functions_past_4096_registers_keep_precise_maps() {
     assert!(masks.is_windowed() && masks.live_at(0, 4096).is_some(), "nine precise windows");
 }
 
-#[cfg(feature = "aot")]
 fn run_native_answer(source: &str) {
     let (_program, native) = compile_frozen(source);
     let mut runtime = Runtime::new(TestHost::default());
@@ -240,7 +227,6 @@ fn run_native_answer(source: &str) {
     assert_eq!(runtime.native_execution_rejections(), 0);
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn a_lane_body_leave_continues_in_the_per_pc_fallback() {
     // `String(i)` is no lane instruction: the body leaves there, the fallback runs it and
@@ -252,7 +238,6 @@ fn a_lane_body_leave_continues_in_the_per_pc_fallback() {
     "#);
 }
 
-#[cfg(feature = "aot")]
 #[test]
 fn an_ahead_body_reads_the_activations_receiver() {
     run_native_answer(r#"

@@ -233,7 +233,6 @@ pub(crate) enum FieldLayout {
     SignedConstant,
 }
 
-#[cfg(feature = "aot")]
 pub(crate) use crate::typed_ir::BindingTime;
 
 impl FieldLayout {
@@ -263,7 +262,6 @@ impl FieldLayout {
         matches!(self, Self::Operand | Self::NumericIndexOperand)
     }
 
-    #[cfg(feature = "aot")]
     /// An operand field is a location whose encoding may instead carry a
     /// constant; the constant is static, which the instruction decides.
     pub(crate) const fn binding_time(self) -> BindingTime {
@@ -294,7 +292,6 @@ impl FieldLayout {
     }
 }
 
-#[cfg(feature = "aot")]
 impl ImmediateRole {
     /// A layout-encoded immediate packs register windows or capture slots
     /// unless it is a plain scalar.
@@ -361,7 +358,6 @@ impl ImmediateRole {
     }
 }
 
-#[cfg(feature = "aot")]
 impl Op {
     /// The binding time of each input, in field order `a`, `b`, `c`, then the
     /// immediate: Ershov's division of this instruction.
@@ -3868,7 +3864,6 @@ pub(crate) struct ProgramSource {
 
 impl ProgramSource {
     /// Project admitted facts with a retained wrapper body, without reparsing it.
-    #[cfg(feature = "aot")]
     pub(crate) fn retain_body(&mut self, text: SourceText, base: u32) {
         self.text = text;
         self.base = base;
@@ -4183,7 +4178,6 @@ impl ResidualProgram {
     }
 
     /// Resolve source-derived native error descriptions before publication.
-    #[cfg(feature = "aot")]
     pub fn freeze_native_diagnostics(&self) {
         crate::vm::freeze_call_sites(self);
     }

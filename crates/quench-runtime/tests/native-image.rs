@@ -1,8 +1,6 @@
 //! Explicit, expensive executable-link check. Set QUENCH_NATIVE_RUNTIME_RLIB to
-//! the aot-enabled rlib reported by cargo build --message-format=json, then run
-//! cargo test --profile iteration -p quench-runtime --features aot --test native-image -- --ignored
-
-#![cfg(feature = "aot")]
+//! the runtime rlib reported by cargo build --message-format=json, then run
+//! cargo test --profile iteration -p quench-runtime --test native-image -- --ignored
 
 use cranelift_codegen::{
     cursor::{Cursor, FuncCursor},
@@ -89,7 +87,7 @@ fn compile_driver(directory: &Path, library: &Path, js: &Path, ts: &Path, output
 fn linked_images_run_without_external_sources_and_reject_an_incompatible_abi() {
     let library = PathBuf::from(
         std::env::var_os("QUENCH_NATIVE_RUNTIME_RLIB")
-            .expect("set QUENCH_NATIVE_RUNTIME_RLIB to this build's aot-enabled runtime rlib"),
+            .expect("set QUENCH_NATIVE_RUNTIME_RLIB to this build's runtime rlib"),
     );
     assert!(library.is_absolute() && library.is_file());
     let directory = std::env::temp_dir().join(format!(

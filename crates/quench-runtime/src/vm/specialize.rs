@@ -144,7 +144,6 @@ impl<E> CallThreaded<E> {
     /// The offline publication: static inputs and locations only.
     pub(crate) fn new(extension: E) -> Self { Self { extension, division: Division::Offline } }
     /// An eager image's publication: whole-program Stable facts, no feedback sites.
-    #[cfg(feature = "aot")]
     pub(crate) fn frozen(extension: E) -> Self { Self { extension, division: Division::Frozen } }
 }
 

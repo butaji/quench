@@ -23,7 +23,6 @@ pub extern "C" fn quench_entry_compiled() {
 }
 
 /// Preserve the profiling boundary in the native image's exported interface.
-#[cfg(feature = "aot")]
 pub(crate) const COMPILED_ENTRY_SYMBOL: &str = stringify!(quench_entry_compiled);
 
 /// The kernel's per-process status, for `phase_peak`.

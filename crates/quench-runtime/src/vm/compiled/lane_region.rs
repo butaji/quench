@@ -40,7 +40,7 @@ mod clif_census;
 mod packed_ranges;
 #[path = "lane_region/int_ranges.rs"]
 mod int_ranges;
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 #[path = "lane_region/int_ranges_tests.rs"]
 mod int_ranges_tests;
 #[path = "lane_region/global_reads.rs"]
@@ -64,8 +64,8 @@ mod polls;
 #[path = "lane_region/int_inputs.rs"] mod int_inputs;
 #[path = "lane_region/loop_versions.rs"] mod loop_versions;
 #[path = "lane_region/exits.rs"] mod exits;
-#[cfg(all(test, feature = "aot"))] #[path = "lane_region/exit_tests.rs"] mod exit_tests;
-#[cfg(all(test, feature = "aot"))] #[path = "lane_region/home_tests.rs"] mod home_tests;
+#[cfg(test)] #[path = "lane_region/exit_tests.rs"] mod exit_tests;
+#[cfg(test)] #[path = "lane_region/home_tests.rs"] mod home_tests;
 #[path = "lane_region/catches.rs"] mod catches;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
@@ -104,7 +104,7 @@ use call_frames::{CallSite, Leave, ReturnSite, Site};
 #[cfg(test)] #[path = "lane_region/element_tests.rs"] mod element_tests;
 #[cfg(test)] #[path = "lane_region/loop_shape_tests.rs"] mod loop_shape_tests;
 use loop_arrays::{ArraySource, LoopArray};
-#[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
+#[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
 use frame_fields::{FieldFacts, HeldRead, StableHold};
 use field_plans::{with_read_plan, LanePlans, LinkInput};
@@ -1745,7 +1745,6 @@ pub(super) fn lower(
         seen_headers.insert(target);
     }
     let interrupt = super::native_interrupt_pointer(&mut builder, context, fault_poll);
-    #[cfg(feature = "aot")]
     let helpers = if let LaneHelpers::Linked(symbol, narrow_table) = helpers {
         let signature = builder.import_signature(native_lane_helpers_signature(isa));
         let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
@@ -2395,9 +2394,7 @@ impl Lowering<'_, '_> {
     fn entry_facts(&mut self, instructions: &[WideInstruction], _loops: &[(usize, usize)], _leaders: &CompoundBitSet) -> Entry {
         let this_bits = match self.helpers {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
-            #[cfg(feature = "aot")]
             LaneHelpers::Bound(..) => self.fixed_this(),
-            #[cfg(feature = "aot")]
             LaneHelpers::Linked(..) => unreachable!("helper table bound before entry facts"),
             _ => self.entry_receiver_bits(),
         };
@@ -2480,7 +2477,6 @@ impl Lowering<'_, '_> {
                 emit_js_guard(&mut self.builder, matched, exit);
             }
         }
-        #[cfg(feature = "aot")]
         let fields = {
             let mut fields = smallvec::SmallVec::new();
             if matches!(self.helpers, LaneHelpers::Bound(..)) {
@@ -2542,8 +2538,6 @@ impl Lowering<'_, '_> {
             }
             fields
         };
-        #[cfg(not(feature = "aot"))]
-        let fields = smallvec::SmallVec::new();
         self.admit_store_domains(instructions, &mut miss);
         let records = self.entry_field_records(instructions, &receiver, object_table, &mut miss);
         if let Some(miss) = miss {

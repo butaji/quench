@@ -8,7 +8,7 @@ mod materialized_stops;
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
 
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

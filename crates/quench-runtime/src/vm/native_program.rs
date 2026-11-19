@@ -92,7 +92,6 @@ impl<H: Host> Clone for NativeJsProgram<H> {
 
 impl<H: Host> NativeJsProgram<H> {
     /// Compile every function before execution as one AOT image. No hotness or fallback tier.
-    #[cfg(feature = "aot")]
     pub fn compile_eager(program: ResidualProgram) -> Result<Self, String> {
         super::compiled::compile_eager_native(program)
     }
@@ -130,37 +129,37 @@ impl<H: Host> NativeJsProgram<H> {
     pub fn publication_counts(&self) -> NativeJsPublicationCounts { self.counts }
 
     /// The whole-program globals the image folded (tests).
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn frozen_global_atoms_for_test(&self) -> &[crate::bytecode::Atom] {
         self.frozen.as_ref().map_or(&[], |frozen| &frozen.globals)
     }
 
     /// Retire the image's stable facts, as a changed assumption would (tests).
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn invalidate_frozen(&self) {
         if let Some(frozen) = &self.frozen { frozen.watch.retire() }
     }
 
     /// How many constants the image materializes (tests).
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn materialized_constants(&self) -> usize {
         self.frozen.as_ref().map_or(0, |frozen| frozen.constants.borrow().len())
     }
 
     /// The whole-program prototype values the image folded (tests).
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn frozen_field_atoms_for_test(&self) -> &[crate::bytecode::Atom] {
         self.frozen.as_ref().map_or(&[], |frozen| &frozen.fields)
     }
 
     /// The method atoms the image holds unnamed, replayed at load.
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn frozen_atoms(&self) -> &[crate::bytecode::Atom] {
         self.frozen.as_ref().map_or(&[], |frozen| &frozen.atoms)
     }
 
     /// Whether a replayed assumption retired the image's stable facts.
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn frozen_invalidated(&self) -> bool {
         self.frozen.as_ref().is_some_and(|frozen| frozen.invalidation.is_set())
     }
