@@ -8,7 +8,8 @@ const TRUE_TEXT: &[u8] = b"true";
 const FALSE_TEXT: &[u8] = b"false";
 const NULL_TEXT: &[u8] = b"null";
 const UNDEFINED_TEXT: &[u8] = b"undefined";
-/// The bytes `Vm::ascii_string_concat` joins on the stack before it allocates.
+/// The radix of an integer's decimal digits, which `int_text_len` counts.
+const DECIMAL_BASE: u32 = 10;
 /// The most text a string of parts may hold in its known parts (regexp -3% at 256, flat at 64):
 /// past it the copy a flat concatenation makes costs more than its record saves, and a string
 /// read soon is copied twice.
@@ -291,37 +292,78 @@ impl<H: Host> Vm<H> {
     }
 
     /// `string_concat` of parts that are numbers, booleans, null, undefined and flat ASCII
-    /// strings, short together: each part written once into a buffer on the stack (a number
-    /// formatted in place), then the buffer copied once into the result's storage. `None` for
-    /// any other part, which `converted_string_concat` converts, or for a result past
-    /// `JsString::copies_whole`.
+    /// strings, short together: the total length is measured first (`ascii_part_len`), then each
+    /// part is written once straight into the result's storage (`JsString::from_ascii_filled`).
+    /// `None` for any other part, which `converted_string_concat` converts, or for a result past
+    /// `STRING_CONCAT_MAX_BYTES`.
     #[inline(always)]
     pub(super) fn ascii_string_concat(&self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<JsString> {
-        let mut text = StackText::new();
+        let mut length = 0;
         for index in 0..count {
-            let value = part(self, index);
-            if let Some(int) = value.as_int() {
-                text.append(itoa::Buffer::new().format(int).as_bytes());
-            } else if let Some(number) = value.as_number() {
-                crate::number_to_string::write(number, &mut text);
-            } else if let Some(boolean) = value.as_bool() {
-                text.append(if boolean { TRUE_TEXT } else { FALSE_TEXT });
-            } else if value.is_null() {
-                text.append(NULL_TEXT);
-            } else if value.is_undefined() {
-                text.append(UNDEFINED_TEXT);
-            } else {
-                match self.heap.flat_text(value)? {
-                    crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes)) => text.append(bytes),
-                    crate::heap::FlatText::Record(super::wtf16::Units::Wide(_)) => return None,
-                    crate::heap::FlatText::Small(small) => text.append(small.as_bytes()),
-                }
-            }
-            if text.overflowed {
+            length += self.ascii_part_len(part(self, index))?;
+            if length > STRING_CONCAT_MAX_BYTES {
                 return None;
             }
         }
-        Some(JsString::from_ascii_bytes(text.bytes()))
+        Some(JsString::from_ascii_filled(length, |out| {
+            let mut at = 0;
+            for index in 0..count {
+                at = self.write_ascii_part(part(self, index), out, at);
+            }
+            assert_eq!(at, out.len(), "the parts fill the length `ascii_part_len` measured");
+        }))
+    }
+
+    /// The byte length `write_ascii_part` writes for the part `value`; `None` for a part that is
+    /// not flat ASCII text, which the concatenation does not join.
+    #[inline(always)]
+    fn ascii_part_len(&self, value: Value) -> Option<usize> {
+        if let Some(int) = value.as_int() {
+            return Some(int_text_len(int));
+        }
+        if let Some(number) = value.as_number() {
+            return Some(number_text(number).len());
+        }
+        if let Some(boolean) = value.as_bool() {
+            return Some(if boolean { TRUE_TEXT.len() } else { FALSE_TEXT.len() });
+        }
+        if value.is_null() {
+            return Some(NULL_TEXT.len());
+        }
+        if value.is_undefined() {
+            return Some(UNDEFINED_TEXT.len());
+        }
+        match self.heap.flat_text(value)? {
+            crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes)) => Some(bytes.len()),
+            crate::heap::FlatText::Record(super::wtf16::Units::Wide(_)) => None,
+            crate::heap::FlatText::Small(small) => Some(small.as_bytes().len()),
+        }
+    }
+
+    /// Writes the text of the part `value` into `out` at `at`, returning the offset past it. The
+    /// part was measured by `ascii_part_len`, so it is flat ASCII text.
+    #[inline(always)]
+    fn write_ascii_part(&self, value: Value, out: &mut [std::mem::MaybeUninit<u8>], at: usize) -> usize {
+        if let Some(int) = value.as_int() {
+            return put_text(out, at, itoa::Buffer::new().format(int).as_bytes());
+        }
+        if let Some(number) = value.as_number() {
+            return put_text(out, at, &number_text(number));
+        }
+        if let Some(boolean) = value.as_bool() {
+            return put_text(out, at, if boolean { TRUE_TEXT } else { FALSE_TEXT });
+        }
+        if value.is_null() {
+            return put_text(out, at, NULL_TEXT);
+        }
+        if value.is_undefined() {
+            return put_text(out, at, UNDEFINED_TEXT);
+        }
+        match self.heap.flat_text(value) {
+            Some(crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes))) => put_text(out, at, bytes),
+            Some(crate::heap::FlatText::Small(small)) => put_text(out, at, small.as_bytes()),
+            _ => unreachable!("`ascii_part_len` measured this part as flat ASCII"),
+        }
     }
 
     /// `string_concat` of any parts: each converted by ToString in order, then joined.
@@ -341,51 +383,37 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The longest result `ascii_string_concat` gathers: the longest text a string copies whole
+/// The longest result `ascii_string_concat` makes: the longest text a string copies whole
 /// (`JsString::copies_whole`); a longer one is a rope of its parts.
-const STRING_CONCAT_STACK_BYTES: usize = 512;
+const STRING_CONCAT_MAX_BYTES: usize = 512;
 
-/// `ascii_string_concat`'s buffer: bytes on the stack, never initialized past `len`, and
-/// whether a part did not fit, which ends the attempt.
-struct StackText {
-    bytes: [std::mem::MaybeUninit<u8>; STRING_CONCAT_STACK_BYTES],
-    len: usize,
-    overflowed: bool,
+/// The decimal text of `int` has `int_text_len` bytes: its digits, and a sign when negative.
+#[inline(always)]
+fn int_text_len(int: i32) -> usize {
+    let mut magnitude = int.unsigned_abs();
+    let mut digits = 1;
+    while magnitude >= DECIMAL_BASE {
+        magnitude /= DECIMAL_BASE;
+        digits += 1;
+    }
+    usize::from(int < 0) + digits
 }
 
-impl StackText {
-    #[inline(always)]
-    fn new() -> Self {
-        Self { bytes: [std::mem::MaybeUninit::uninit(); STRING_CONCAT_STACK_BYTES], len: 0, overflowed: false }
-    }
-
-    /// Appends `bytes`, or notes the overflow when they do not fit.
-    #[inline(always)]
-    fn append(&mut self, bytes: &[u8]) {
-        if bytes.len() > STRING_CONCAT_STACK_BYTES - self.len {
-            self.overflowed = true;
-            return;
-        }
-        // SAFETY: the buffer holds `bytes.len()` more bytes past `len`; `bytes` is elsewhere.
-        unsafe { crate::number_to_string::copy_short(bytes, self.bytes.as_mut_ptr().add(self.len).cast()) };
-        self.len += bytes.len();
-    }
-
-    /// The bytes written so far.
-    #[inline(always)]
-    fn bytes(&self) -> &[u8] {
-        // SAFETY: the first `len` bytes were written.
-        unsafe { std::slice::from_raw_parts(self.bytes.as_ptr().cast(), self.len) }
-    }
+/// Number::toString(10) of `number` as ASCII text, held on the stack.
+#[inline(always)]
+fn number_text(number: f64) -> crate::number_to_string::Short {
+    let mut text = crate::number_to_string::Short::new();
+    crate::number_to_string::write(number, &mut text);
+    text
 }
 
-impl crate::number_to_string::Output for StackText {
-    #[inline(always)]
-    fn push(&mut self, byte: u8) {
-        self.append(&[byte]);
-    }
-    #[inline(always)]
-    fn extend_from_slice(&mut self, bytes: &[u8]) {
-        self.append(bytes);
-    }
+/// Copies `bytes` into `out` at `at`, returning the offset past them.
+#[inline(always)]
+fn put_text(out: &mut [std::mem::MaybeUninit<u8>], at: usize, bytes: &[u8]) -> usize {
+    let target = &mut out[at..at + bytes.len()];
+    // SAFETY: `target` has exactly `bytes.len()` slots, which `bytes` cannot overlap (it is a
+    // borrow of the heap, a constant or a formatting buffer, never of `out`); `u8` and
+    // `MaybeUninit<u8>` share a layout, so the copy initializes the slots.
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), target.as_mut_ptr().cast::<u8>(), bytes.len()) };
+    at + bytes.len()
 }
