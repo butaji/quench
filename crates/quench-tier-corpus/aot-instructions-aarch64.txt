@@ -5,11 +5,11 @@
 # disassembling every `loop-*` dump (`quench-gate --only aot-instructions`).
 # Counts only shrink.
 # kernel loops aot c-aot
-crc 2 37 14
-dot 2 52 8
+crc 2 35 14
+dot 2 23 8
 fib 0 - 8
-matmul 3 83 6
-nbody 1 193 34
-qsort 3 47 4
+matmul 3 50 6
+nbody 1 13 34
+qsort 3 41 4
 structs 2 9 17
-sum 2 23 7
+sum 2 16 7

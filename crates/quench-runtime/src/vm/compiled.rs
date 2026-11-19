@@ -1362,14 +1362,29 @@ pub(in crate::vm::compiled) fn ahead_loop_region(program: &ResidualProgram, func
         .map_err(|failure| format!("region rejected: {:?}", failure.reason))?;
     let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
         &|callee| program.function_get(callee as usize)).ok_or("no unit")?;
-    lane_region::RegionSpecializer { function_id, unit: &unit, helpers: LaneHelpers::Ahead,
-        fields: &[], global_reads: &crate::vm::global_facts::GlobalReads::default(), facts: VmFacts::STATIC, generic: &[],
-        direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-        plan: lane_region::RegionPlan { entry_bounds: true,
-            coverage: lane_region::Coverage::Loop { header: region.header as usize, backedge: region.backedge as usize, poll: true },
-            completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
-        .specialize(program)
+    // The arrays a loop indexes are typed arrays in the common case, and the region proves each
+    // at its entering edge (a kind and bounds check, with an exit where it does not hold), so
+    // no run-time feedback is needed to specialize them: the kind is read from the record once
+    // (`ElementViews::Typed(None)`, a dynamic kind) rather than the dense indexed path being
+    // taken per element. A loop whose typed view cannot be proved lowers dense instead.
+    let plan = |views| lane_region::RegionPlan { entry_bounds: true,
+        coverage: lane_region::Coverage::Loop { header: region.header as usize, backedge: region.backedge as usize, poll: true },
+        completion: lane_region::Completion::Body, views };
+    let mut failure = String::from("region lowers no record");
+    for views in [lane_region::ElementViews::Typed(None), lane_region::ElementViews::Dense] {
+        let lowered = lane_region::RegionSpecializer { function_id, unit: &unit, helpers: LaneHelpers::Ahead,
+            fields: &[], global_reads: &crate::vm::global_facts::GlobalReads::default(), facts: VmFacts::STATIC, generic: &[],
+            direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
+            entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
+            plan: plan(views) }
+            .specialize(program);
+        match lowered {
+            Ok(lowered) if lowered.native != 0 => return Ok(lowered),
+            Ok(_) => failure = format!("{views:?}: lowers no record"),
+            Err(error) => failure = format!("{views:?}: {error}"),
+        }
+    }
+    Err(failure)
 }
 
 /// `ahead_loop_region`'s native record count.
