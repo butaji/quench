@@ -44,7 +44,10 @@ impl<H: Host> Vm<H> {
         depth: usize,
     ) {
         // SAFETY: the caller's; nothing since its lookup freed the generator or ran its frame.
-        unsafe { &mut *record }.resume_suspended_window();
+        unsafe {
+            (*record).resume_suspended_window();
+            (*suspended.0).resuming_generator = record;
+        }
         self.enter_windowed(suspended, sent);
         // The frames the lane's activations become sit below the generator's.
         self.realm.promise.active_native.push(super::super::activation::NativeActivation {
@@ -84,12 +87,15 @@ impl<H: Host> Vm<H> {
         depth: usize,
     ) {
         self.realm.promise.active_native.pop();
-        debug_assert!(!frame.is_null());
         // SAFETY: the generator's record keeps the frame its activation runs over boxed, and
         // parking reads the lane stack, not the record.
-        self.park_frame(unsafe { &mut *frame }, pc, depth);
-        let record = self.generator_record_mut(generator).expect("a windowed yield belongs to a generator");
-        record.park_windowed(Completion::Yield(value), Some(destination), false);
+        let frame = unsafe { &mut *frame };
+        self.park_frame(frame, pc, depth);
+        let record = frame.resuming_generator;
+        debug_assert!(self.generator_record_mut(generator).is_some_and(|found| std::ptr::eq(found, record)));
+        // SAFETY: the record that resumed the window (`resume_generator_window`), boxed in the
+        // generator's cell, which the native activation popped above rooted for the run.
+        unsafe { (*record).park_windowed(Completion::Yield(value), Some(destination), false) };
     }
 
     /// Parks the frame of the windowed run `record` holds, in place, at `pc`, with what it

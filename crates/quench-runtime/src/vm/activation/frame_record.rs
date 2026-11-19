@@ -65,6 +65,11 @@ pub(crate) struct FrameRecord {
     /// The resume pc of the binding site the direct eval the activation is running was called
     /// at (`CallerView::binding_site`).
     pub(in crate::vm) binding_site_pc: Option<u32>,
+    /// The record of the generator whose lane window runs the frame, set as the window resumes
+    /// it (`Vm::resume_generator_window`) and read as it yields (`Vm::suspend_generator_window`):
+    /// a running generator is rooted, and its record boxed, so its yield needs no lookup. Null
+    /// where no generator's window ran the frame; stale once the run ends, and read by none then.
+    pub(in crate::vm) resuming_generator: *mut super::GeneratorRecord,
 }
 
 #[cfg(test)]
@@ -207,6 +212,7 @@ impl FrameRecord {
             js_jit_skip_entry_once: false,
             environment_window: false,
             binding_site_pc: None,
+            resuming_generator: std::ptr::null_mut(),
         };
         record.bind_window();
         Box::new(record)
@@ -284,6 +290,7 @@ impl FrameRecord {
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             traces_live: false, suspended_epoch: 0, suspension_live: None, window_plan: None, js_jit_skip_entry_once, environment_window: false,
             binding_site_pc: None,
+            resuming_generator: std::ptr::null_mut(),
         };
         record.bind_window();
         Box::new(record)
@@ -306,6 +313,7 @@ impl FrameRecord {
             prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             traces_live: _, suspended_epoch: _, suspension_live: _, window_plan: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
+            resuming_generator: _,
         } = *self;
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
@@ -376,6 +384,7 @@ impl Clone for FrameRecord {
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
             environment_window: false,
             binding_site_pc: None,
+            resuming_generator: std::ptr::null_mut(),
         };
         copy.bind_window();
         copy
@@ -432,6 +441,7 @@ impl Snap for FrameRecord {
             js_jit_skip_entry_once: false,
             environment_window: false,
             binding_site_pc: None,
+            resuming_generator: std::ptr::null_mut(),
         };
         record.bind_window();
         Ok(record)
