@@ -557,7 +557,6 @@ impl<H: Host> Vm<H> {
     /// Whether root `slot` of `program` is written once while the root has run at most once
     /// (`ProgramStore::root_slot_written_once`): a read that found it initialized may keep the
     /// value for every later read.
-    #[allow(dead_code)]
     pub(crate) fn root_slot_written_once(&self, program: ProgramId, slot: u16) -> bool {
         self.programs.root_slot_written_once(program, slot)
     }

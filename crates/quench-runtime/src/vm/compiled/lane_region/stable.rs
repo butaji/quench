@@ -29,6 +29,9 @@ pub(crate) struct StableFacts {
     /// Exact shapes of objects whose layout it holds past a call (`Vm::shape_is_stable`): the
     /// first object to leave one retires it (`Heap::subscribe_shape`).
     pub(crate) shapes: Box<[u32]>,
+    /// The program whose root constant the code folds (`Lowering::root_constant_read`): its
+    /// publication subscribes the program's second root run (`ProgramStore::subscribe_root_constants`).
+    pub(crate) root_program: Option<crate::vm::program_store::ProgramId>,
 }
 
 /// The Stable facts a lowering folded so far.
@@ -50,6 +53,8 @@ pub(super) struct StableUses {
     slots: Vec<crate::code_dependencies::SlotDependency>,
     /// Constructors whose `prototype` the code took as a constant for an `instanceof`.
     instanceofs: BTreeSet<crate::code_dependencies::InstanceofFact>,
+    /// The program whose root constant the code folded, if any (`StableFacts::root_program`).
+    pub(super) root_program: Option<crate::vm::program_store::ProgramId>,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
     /// (`Lowering::hoist_stable`): their blocks hold the proof.
     realm_loops: Vec<(usize, usize)>,
@@ -69,7 +74,7 @@ impl StableUses {
             globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
             layouts: std::mem::take(&mut self.layouts).into_iter().collect(),
             slots: std::mem::take(&mut self.slots).into_iter().collect(),
-            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect() }
+            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect(), root_program: self.root_program.take() }
     }
 }
 

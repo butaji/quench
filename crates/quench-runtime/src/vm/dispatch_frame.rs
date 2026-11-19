@@ -1260,6 +1260,10 @@ impl<H: Host> Vm<H> {
         let (mut locals, bindings) = (std::mem::take(&mut state.locals), std::mem::take(&mut state.dynamic_bindings));
         let (program, function, parent) = (state.program, state.function, state.env);
         let (env, _) = self.promoted_environment(parent, program, function, &mut locals, bindings);
+        // A root's promoted environment is the one its written-once slots are read from (`root_environment`).
+        if function == super::ROOT_FUNCTION_ID {
+            self.programs.note_root_environment(program, env);
+        }
         // The locals' buffer stays with the frame for its next activation.
         let state = &mut *self.frames[frame];
         state.locals = locals;

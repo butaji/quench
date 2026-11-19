@@ -3,6 +3,7 @@
 //! initialized holds that value for every later read, while the root has run at most once,
 //! so its root environment is the program's only one.
 use super::{ProgramId, ProgramStore};
+use crate::Value;
 use crate::code_dependencies::{CodeReaders, DependentCode};
 use std::rc::Rc;
 
@@ -20,6 +21,10 @@ pub(super) struct RootConstants {
     /// The published code that folded a written-once slot's value (`Identity::Folded`), retired
     /// by the program's second root run (`ProgramStore::note_root_run`).
     readers: std::cell::RefCell<CodeReaders>,
+    /// The environment of the root's first activation that captured its locals
+    /// (`ProgramStore::note_root_environment`): the one a written-once slot is read from, while
+    /// the root has run at most once. A GC root (`ProgramStore::extend_roots`).
+    pub(super) environment: std::cell::Cell<Option<Value>>,
 }
 
 /// The root runs past which a program has more than one root environment.
@@ -29,7 +34,6 @@ impl ProgramStore {
     /// Whether root `slot` of program `id` holds the binding itself and is written once, while
     /// the program's root has run at most once: a value a read found initialized there is then
     /// every later read's.
-    #[allow(dead_code)]
     pub(crate) fn root_slot_written_once(&self, id: ProgramId, slot: u16) -> bool {
         let Some(entry) = self.entry(id) else { return false };
         if entry.root_constants.root_runs.get() > ONE_ROOT_RUN
@@ -65,5 +69,28 @@ impl ProgramStore {
     pub(crate) fn subscribe_root_constant(&self, id: ProgramId, code: &Rc<dyn DependentCode>) -> bool {
         let Some(entry) = self.entry(id) else { return false };
         entry.root_constants.readers.borrow_mut().subscribe(0, code)
+    }
+
+    /// `subscribe_root_constant` for each of `programs`, the programs whose root constants a body
+    /// folds (`LaneDependencies::root_programs`); whether all subscribed.
+    pub(crate) fn subscribe_root_constants(&self, programs: &[ProgramId], code: &Rc<dyn DependentCode>) -> bool {
+        programs.iter().all(|program| self.subscribe_root_constant(*program, code))
+    }
+
+    /// Records `environment`, the environment a root activation of program `id` promoted its
+    /// locals to, where none is recorded yet: a written-once slot is read from it at compile time
+    /// (`root_environment`). Its entry is marked traced anew (`entry_mut`), so a minor collection
+    /// that finds it young keeps it.
+    pub(crate) fn note_root_environment(&mut self, id: ProgramId, environment: Value) {
+        if self.entry(id).is_none_or(|entry| entry.root_constants.environment.get().is_some()) { return; }
+        if let Some(entry) = self.entry_mut(id) {
+            entry.root_constants.environment.set(Some(environment));
+        }
+    }
+
+    /// The root environment of program `id`: its module environment, or the one its root
+    /// activation recorded (`note_root_environment`).
+    pub(crate) fn root_environment(&self, id: ProgramId) -> Option<Value> {
+        self.module_environment(id).or_else(|| self.entry(id)?.root_constants.environment.get())
     }
 }

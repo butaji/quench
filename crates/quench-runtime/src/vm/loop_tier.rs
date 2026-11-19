@@ -192,7 +192,7 @@ impl LoopTier {
             return true;
         }
         use super::super::compiled::OsrCompile;
-        match pending.poll(&mut vm.heap, vm.method_cache_atoms.readers()) {
+        match pending.poll(&mut vm.heap, vm.method_cache_atoms.readers(), &vm.programs) {
             Err(pending) => {
                 self.wait = site.tiers.lane_body.compile_poll_interval;
                 self.pending = Some(pending);
@@ -217,7 +217,7 @@ impl LoopTier {
     /// Holds the compile `started`, while the facts its code names hold, and looks for its
     /// code at once.
     fn start<H: Host>(&mut self, started: Option<super::super::compiled::PendingOsrRegion>, vm: &mut Vm<H>, site: &LoopSite) {
-        self.pending = started.filter(|pending| pending.watch(&mut vm.heap, vm.method_cache_atoms.readers())).map(Box::new);
+        self.pending = started.filter(|pending| pending.watch(&mut vm.heap, vm.method_cache_atoms.readers(), &vm.programs)).map(Box::new);
         self.wait = 0;
         if self.pending.is_none() {
             self.compilations = site.tiers.loops.max_compilations;

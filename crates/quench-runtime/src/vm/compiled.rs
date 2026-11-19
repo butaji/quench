@@ -1342,6 +1342,9 @@ pub(super) struct OnlineFacts<'a> {
     /// The own member of a constant-marked object that the VM holds for `atom` (`Vm::own_constant_of`):
     /// a read of it folds under an identity guard and a dependency on the object's exact shape.
     pub(super) own_constant: &'a dyn Fn(Atom) -> Option<OwnConstant>,
+    /// The root constant a capture read at a PC takes (`FactTables::root_constant`): a written-once root
+    /// binding's function, with the program whose root it is; `None` where none may be held.
+    pub(super) root_constant: &'a dyn Fn(usize) -> Option<(crate::vm::program_store::ProgramId, Value)>,
 }
 
 /// An own member a constant-marked object holds (`Vm::own_constant_of`): the object a lane body

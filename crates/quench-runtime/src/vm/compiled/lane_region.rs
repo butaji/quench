@@ -2813,6 +2813,8 @@ impl Lowering<'_, '_> {
                 Some(false)
             }
             // A capture's read or store, by its staged row.
+            // A read of a written-once root binding whose function is held (`root_constant_read`).
+            _ if plain && self.root_constant_at(pc).is_some() => self.root_constant_read(state, pc, instruction),
             _ if self.is_capture_row(pc, instruction) => Some(self.capture_step(state, pc, instruction)),
             _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => {
                 let ran = self.fold_native_member(state, pc, instruction)

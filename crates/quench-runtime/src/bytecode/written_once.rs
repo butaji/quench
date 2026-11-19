@@ -11,8 +11,8 @@
 //! the derivation excludes for every function (`Function::own_names_resolve_statically`). A
 //! function whose record is not built, or whose body is a first-call stub, is judged by the
 //! captures the compiler laid its scopes out for (`ClosureReads::captures`), loads included.
-// Read through `Vm::root_slot_written_once`, which has no caller in this patch (the u-jit fold
-// is its first); the interpreter's root-constant load is not part of it.
+// Read through `Vm::root_slot_written_once`, whose caller is the u-jit's root constant fold
+// (`FactTables::root_constants`); the interpreter's root-constant load is not part of it.
 #![allow(dead_code)]
 
 use super::{Effect, Function, ImmediateRole, Op, ResidualProgram, WideInstruction, may_repeat};

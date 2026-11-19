@@ -41,6 +41,40 @@ pub(super) struct FactTables {
     /// By (function, PC) of each construction of the unit, the scalar plan its callee builds by
     /// (`OnlineFacts::construct_plans`).
     construct_plans: std::collections::BTreeMap<(u32, u32), ScalarConstructPlan>,
+    /// The capture reads of the unit's own instructions that reach the program root's environment
+    /// at a slot the root writes once, by PC, with the function each holds now (`root_constants`).
+    root_constants: std::collections::BTreeMap<usize, Value>,
+    /// The program those root constants belong to: the active one (`Vm::root_slot_written_once`).
+    root_program: crate::vm::program_store::ProgramId,
+}
+
+/// Whether the `depth`-th enclosing function of `function`, by the program's static parent chain,
+/// is the root: depth zero is the parent (a capture read's environment is its closure's scope).
+fn reaches_root(program: &ResidualProgram, function: u32, depth: u16) -> bool {
+    let mut current = function;
+    for _ in 0..=depth {
+        let Some(parent) = program.function_get(current as usize).and_then(|body| body.parent) else { return false };
+        current = parent;
+    }
+    current == crate::vm::ROOT_FUNCTION_ID
+}
+
+/// The capture reads of `unit`'s own instructions that read a written-once root binding of the
+/// active program (`Vm::root_slot_written_once`), by PC, with the value the root environment's
+/// slot holds now, where that value is an initialized function. A read reaches the root by
+/// `reaches_root`; the root environment is the one its activation promoted (`root_environment`).
+fn root_constants<H: Host>(vm: &Vm<H>, function: u32, unit: &lane_unit::Unit) -> std::collections::BTreeMap<usize, Value> {
+    let program_id = vm.active_program;
+    let (Some(program), Some(environment)) = (vm.programs.residual(program_id), vm.programs.root_environment(program_id)) else {
+        return Default::default();
+    };
+    unit.instructions.iter().enumerate().filter_map(|(pc, instruction)| {
+        let Some(crate::staged::Operation::LoadCapture { depth, slot, .. }) = crate::vm::compiled::decoded(instruction) else { return None };
+        let own = matches!(unit.origins.get(pc)?, lane_unit::Origin::Caller(_));
+        if !own || !reaches_root(program, function, depth) || !vm.root_slot_written_once(program_id, slot) { return None; }
+        let value = vm.heap.environment_slot(environment, usize::from(slot))?;
+        (value != Value::DELETED && vm.heap.function(value).is_some()).then_some((pc, value))
+    }).collect()
 }
 
 /// The (function, PC) each construction of `unit` is recorded at: the caller's own PC, or the
@@ -90,6 +124,8 @@ impl FactTables {
         }
         tables.own_constants = vm.own_constants();
         tables.construct_plans = construction_plans(unit, function, construct);
+        tables.root_program = vm.active_program;
+        tables.root_constants = root_constants(vm, function, unit);
         tables
     }
 
@@ -111,6 +147,11 @@ impl FactTables {
 
     fn name(&self, site: u16, atom: Atom) -> Option<(crate::staged::add_plan::Transition, u64)> {
         self.names.get(&(site, atom)).copied()
+    }
+
+    /// The root constant the capture read at `pc` takes (`root_constants`), with its program.
+    fn root_constant(&self, pc: usize) -> Option<(crate::vm::program_store::ProgramId, Value)> {
+        self.root_constants.get(&pc).map(|value| (self.root_program, *value))
     }
 }
 
@@ -163,10 +204,11 @@ impl LoweringJob<'_> {
         let names = |site: u16, atom| self.tables.name(site, atom);
         let shape_stable = |shape: u32| self.tables.shape_stable(shape);
         let own_constant = |atom: Atom| self.tables.own_constant(atom);
+        let root_constant = |pc: usize| self.tables.root_constant(pc);
         let construct_plans = |function: u32, pc: u32| self.tables.construct_plan(function, pc);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &self.method_cache_atoms,
             invalidation: self.invalidation, constants: &self.constants, instanceofs: &instanceofs, shape_stable: &shape_stable,
-            names: Some(&names), own_constant: &own_constant }), construct_plans: Some(&construct_plans), ..self.facts };
+            names: Some(&names), own_constant: &own_constant, root_constant: &root_constant }), construct_plans: Some(&construct_plans), ..self.facts };
         lane_region::lower_body(&self.program, self.function, &self.unit, self.helpers, &self.fields, &self.global_reads, facts,
             &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.number_reads)
     }

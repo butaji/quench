@@ -41,6 +41,20 @@ impl LaneDependencies {
             && self.subscribe_callees(code, heap, method_atoms)
     }
 
+    /// The programs whose root constants the code folds, its own and its direct callees' and theirs
+    /// in turn (`StableFacts::root_program`), each once: `ProgramStore::subscribe_root_constants`
+    /// subscribes the code to them.
+    pub(in crate::vm) fn root_programs(&self, stable: &lane_region::StableFacts) -> Vec<crate::vm::program_store::ProgramId> {
+        let mut programs: Vec<crate::vm::program_store::ProgramId> = Vec::new();
+        programs.extend(stable.root_program);
+        for callee in &self.callees {
+            for program in callee.dependencies.root_programs(&callee.stable) {
+                if !programs.contains(&program) { programs.push(program); }
+            }
+        }
+        programs
+    }
+
     /// Subscribes `code` to the Stable facts of its direct callees' bodies, and theirs in turn.
     fn subscribe_callees(&self, code: &Rc<dyn crate::code_dependencies::DependentCode>,
         heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
