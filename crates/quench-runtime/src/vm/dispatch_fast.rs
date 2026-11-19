@@ -5169,7 +5169,66 @@ pub(super) unsafe fn context_captures<H: Host>(context: usize) -> Option<((*cons
 /// `context` is the running lane's context.
 pub(super) unsafe fn context_this_in_lane<H: Host>(context: usize) -> Value {
     let cx = context as *mut LaneContext<H>;
-    unsafe { this_in_lane(cx, (*cx).registers) }.unwrap_or(Value::DELETED)
+    unsafe { lane_this(cx, (*cx).registers) }.unwrap_or(Value::DELETED)
+}
+
+script_handler! {
+    /// `CreateRegExpLiteral` (`Vm::regexp_literal`), which allocates and runs no guest code; a
+    /// callee-argument site (field B names the callee) may answer its shared object
+    /// (`regexp_argument_in_lane`).
+    fn lane_regexp_literal<>(cx, r, ip, i, view) {
+        if i.b != crate::bytecode::NO_OPTIONAL_REGISTER {
+            if !regexp_argument_in_lane(cx, r, [i.a, i.b], i.imm()) {
+                return exit(ip);
+            }
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
+        if !staged_allocate(cx, r, i.a, Allocation::RegExp { site: i.imm() }) {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+/// The object a callee-argument regexp literal record (`[destination, encoded callee]`, of
+/// literal `site`) makes in a frame's own lane run, written to its destination: the general
+/// loop's (`Vm::regexp_literal_argument_of`), keyed by the frame. False, writing nothing, inside
+/// a lane activation, which the general path makes it for, and where the site raises, which
+/// `Vm::lane_raised` reports at the record.
+#[inline(never)]
+fn regexp_argument_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, [destination, callee]: [u16; 2], site: u32) -> bool {
+    let vm = unsafe { vm(cx) };
+    if !vm.lane_stack.activations.is_empty() || !unsafe { (*cx).has_frame() } {
+        return false;
+    }
+    let Some(callee) = callee.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) else {
+        return false;
+    };
+    // SAFETY: the context's program outlives the lane run.
+    let (code, program, frame) = unsafe { (&*(*cx).code, (*cx).program, (*cx).frame()) };
+    let callee = r.get(callee);
+    let result = vm.regexp_literal_argument_of(code, program, frame, site as usize, callee);
+    note_allocation(vm);
+    match result {
+        Ok(value) => {
+            r.set(destination, value);
+            true
+        }
+        Err(error) => {
+            vm.lane_completion.raise(error);
+            false
+        }
+    }
+}
+
+script_handler! {
+    /// `MakeClosure` in a frame's own lane run: the staged closure row (`lane_closure_value_of`).
+    fn lane_make_closure<>(cx, r, ip, i, view) {
+        if !staged_allocate(cx, r, i.a, Allocation::Closure { function: i.imm() }) {
+            return exit(ip);
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
 }
 
 /// The closure a `MakeClosure` record makes as the general loop does, in a frame's own lane

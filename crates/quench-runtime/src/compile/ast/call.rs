@@ -261,7 +261,8 @@ impl FunctionCompiler<'_, '_> {
             return result;
         }
         let (callee, this) = self.callee(&value.callee);
-        let (base, count) = self.arguments(&value.arguments);
+        let regexp_callee = Self::regexp_argument_call(value).then_some(callee);
+        let (base, count) = self.arguments_with_regexp_callee(&value.arguments, regexp_callee);
         let dst = self.reg();
         let direct_eval = super::super::early::is_direct_eval_call(value);
         if direct_eval
@@ -311,9 +312,41 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
-    /// `f.apply(receiver, arguments)`, or of a rest alias (`compile::rest_alias`): passes the
-    /// `arguments` binding on, never materialized then (`CallPlan::forwards_arguments`).
-    fn forwards_arguments(&self, value: &CallExpression<'_>) -> bool {
+    /// `s.replace(/re/, y)`, `s.match(/re/)`, `s.search(/re/)` or `s.split(/re/, n)`: a
+    /// method call whose first argument is a regexp literal, which the literal's instruction
+    /// then names the callee of (`regexp_argument_literal`). Each later argument is one whose
+    /// evaluation cannot suspend the frame (no `await` or `yield`): between the literal and
+    /// the call the frame stays on the stack, so no other evaluation of the site in this frame
+    /// can come between them (`Vm::regexp_literal_argument_of`).
+    fn regexp_argument_call(value: &CallExpression<'_>) -> bool {
+        if value.optional {
+            return false;
+        }
+        let Expression::StaticMemberExpression(member) = &value.callee else {
+            return false;
+        };
+        if member.optional || !matches!(member.property.name.as_str(), "replace" | "match" | "search" | "split") {
+            return false;
+        }
+        if !matches!(value.arguments.first(), Some(Argument::RegExpLiteral(_))) {
+            return false;
+        }
+        value.arguments.iter().skip(1).all(|argument| match argument {
+            Argument::StringLiteral(_)
+            | Argument::NumericLiteral(_)
+            | Argument::BooleanLiteral(_)
+            | Argument::NullLiteral(_)
+            | Argument::Identifier(_)
+            | Argument::FunctionExpression(_)
+            | Argument::ArrowFunctionExpression(_) => true,
+            Argument::TemplateLiteral(template) => template.expressions.is_empty(),
+            _ => false,
+        })
+    }
+
+    /// `f.apply(receiver, arguments)`: the call passes the activation's `arguments` binding
+    /// on, which the activation may then never materialize (`CallPlan::forwards_arguments`).
+    fn forwards_arguments(value: &CallExpression<'_>) -> bool {
         matches!(&value.callee, Expression::StaticMemberExpression(member)
             if !member.optional && member.property.name == "apply")
             && matches!(
@@ -622,18 +655,30 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn arguments(&mut self, values: &[Argument<'_>]) -> (Register, u16) {
+        self.arguments_with_regexp_callee(values, None)
+    }
+
+    /// `arguments`, where `regexp_callee` names the callee register of a call whose first
+    /// argument is a regexp literal that may share its object (`regexp_argument_call`).
+    fn arguments_with_regexp_callee(&mut self, values: &[Argument<'_>], regexp_callee: Option<Register>) -> (Register, u16) {
         // Evaluate first, then reserve the contiguous ABI argument window.
         // Reserving targets before expression lowering lets expression
         // temporaries occupy later argument registers. A primitive literal has no
         // evaluation effect, so it loads straight into its window slot instead.
         let arguments = values
             .iter()
-            .filter_map(|argument| {
+            .enumerate()
+            .filter_map(|(index, argument)| {
                 let Some(expression) = argument.as_expression() else {
                     self.owner
                         .reject(argument.span(), "spread arguments unsupported");
                     return None;
                 };
+                if index == 0
+                    && let (Expression::RegExpLiteral(literal), Some(callee)) = (expression, regexp_callee)
+                {
+                    return Some(Ok(self.regexp_argument_literal(literal, callee)));
+                }
                 Some(match Self::primitive_literal(expression) {
                     Some(constant) => Err(constant),
                     None => Ok(self.expression(expression)),

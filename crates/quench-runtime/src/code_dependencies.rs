@@ -234,66 +234,39 @@ impl Drop for CodeReaders {
 
 /// How a fuse's holder names its method.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FuseKey {
-    IteratorSymbol,
-    /// `next`, of an iterator prototype.
-    Next,
-    Named(&'static str),
-    /// The method a row names: its key is the row's name (`native_rows::row_name`).
-    Method,
-    /// `@@species`, a getter-only accessor whose slot holds the getter.
-    SpeciesSymbol,
-}
-
-/// The one list of fuses: each variant with its holder's key and the realm's intrinsic. The
-/// enum, its count and its key/intrinsic table (`IntactFuse::SPEC`) are derived from it.
-macro_rules! intact_fuses {
-    ($($(#[$doc:meta])* $name:ident => ($key:expr, $native:ident),)*) => {
-        /// A fact about one realm's intrinsic method that fast paths rely on with no check per use
-        /// (a fuse): the realm's holder keeps the fuse's key as an own data property holding the
-        /// realm's intrinsic. A lookup proves it once (`Vm::fuse_intact`); a write to that slot of the
-        /// holder pops it for good (`Fuses::note_slot_write`), and a change of the holder's layout,
-        /// which may move the slot, only sends the next use back to one proof.
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        #[repr(u8)]
-        pub(crate) enum IntactFuse {
-            $($(#[$doc])* $name,)*
-        }
-
-        impl IntactFuse {
-            pub(crate) const COUNT: usize = [$(IntactFuse::$name),*].len();
-            /// Each fuse's key and intrinsic, in variant order.
-            pub(crate) const SPEC: [(FuseKey, crate::heap::Native); IntactFuse::COUNT] =
-                [$(($key, crate::heap::Native::$native)),*];
-        }
-    };
-}
-
-intact_fuses! {
+#[repr(u8)]
+pub(crate) enum IntactFuse {
     /// `Array.prototype[@@iterator]` is the realm's `Array.prototype.values`.
-    ArrayIterator => (FuseKey::IteratorSymbol, ArrayValues),
+    ArrayIterator,
     /// `%ArrayIteratorPrototype%.next` is the realm's intrinsic `next`.
-    ArrayIteratorNext => (FuseKey::Next, ArrayIteratorNext),
+    ArrayIteratorNext,
     /// `Set.prototype[@@iterator]` is the realm's `Set.prototype.values`.
-    SetIterator => (FuseKey::IteratorSymbol, SetValues),
+    SetIterator,
     /// `%SetIteratorPrototype%.next` is the realm's intrinsic `next`.
-    SetIteratorNext => (FuseKey::Next, IteratorNext),
+    SetIteratorNext,
     /// `Map.prototype[@@iterator]` is the realm's `Map.prototype.entries`.
-    MapIterator => (FuseKey::IteratorSymbol, MapEntries),
+    MapIterator,
     /// `%MapIteratorPrototype%.next` is the realm's intrinsic `next`.
-    MapIteratorNext => (FuseKey::Next, IteratorNext),
+    MapIteratorNext,
     /// `String.prototype[@@iterator]` is the realm's intrinsic.
-    StringIterator => (FuseKey::IteratorSymbol, StringValues),
+    StringIterator,
     /// `%StringIteratorPrototype%.next` is the realm's intrinsic `next`.
-    StringIteratorNext => (FuseKey::Next, StringIteratorNext),
-    StringCharCodeAt => (FuseKey::Method, StringCharCodeAt),
-    StringIncludes => (FuseKey::Method, StringIncludes),
-    RegExpTest => (FuseKey::Named("test"), RegExpTest),
-    RegExpExec => (FuseKey::Named("exec"), RegExpExec),
+    StringIteratorNext,
+    StringCharCodeAt,
+    StringIncludes,
+    RegExpTest,
+    RegExpExec,
     /// `Array.prototype.constructor` is the realm's `Array`.
-    ArrayConstructor => (FuseKey::Named("constructor"), Array),
+    ArrayConstructor,
     /// `Array[@@species]` is the intrinsic getter, a getter-only accessor.
-    ArraySpecies => (FuseKey::SpeciesSymbol, ArraySpecies),
+    ArraySpecies,
+    /// `RegExp[@@species]` is the intrinsic getter, a getter-only accessor: the splitter
+    /// `@@split` constructs is the realm's RegExp (`Vm::regexp_literal_argument_of`).
+    RegExpSpecies,
+}
+
+impl IntactFuse {
+    pub(crate) const COUNT: usize = 15;
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]

@@ -210,6 +210,23 @@ impl FunctionCompiler<'_, '_> {
     /// A regexp literal; `receiver` when its only use is the receiver of a `test` or `exec`
     /// call, which lets every evaluation share one object (`RegExpLiteralSite::receiver`).
     pub(super) fn regexp_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>, receiver: bool) -> Register {
+        self.regexp_literal_site_value(value, receiver, None)
+    }
+
+    /// A regexp literal that is the first argument of a `replace`/`match`/`search`/`split`
+    /// call whose callee register `callee` holds (`FunctionCompiler::regexp_argument_call`): the
+    /// instruction names it, so the site may share one object while that callee is the
+    /// realm's String method (`Vm::regexp_literal_argument_of`).
+    pub(super) fn regexp_argument_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>, callee: Register) -> Register {
+        self.regexp_literal_site_value(value, false, Some(callee))
+    }
+
+    fn regexp_literal_site_value(
+        &mut self,
+        value: &oxc_ast::ast::RegExpLiteral<'_>,
+        receiver: bool,
+        callee: Option<Register>,
+    ) -> Register {
         let pattern = self
             .owner
             .constant(Constant::String(value.regex.pattern.text.as_str().into()));
@@ -231,7 +248,7 @@ impl FunctionCompiler<'_, '_> {
         let flags = self.owner.constant(Constant::String(flags.into()));
         let site = self.owner.regexp_literal_site(pattern, flags, receiver);
         let destination = self.reg();
-        self.emit(Op::CreateRegExpLiteral, destination, 0, 0, site);
+        self.emit(Op::CreateRegExpLiteral, destination, crate::bytecode::encode_optional_register(callee), 0, site);
         destination
     }
     pub(super) fn parameter_binding_atom(&self, atom: Atom) -> Atom {

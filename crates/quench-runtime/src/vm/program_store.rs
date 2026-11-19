@@ -629,6 +629,18 @@ impl JitTierManager {
     }
 }
 
+/// The one object a callee-argument RegExp literal site shares (`Vm::regexp_literal_argument_of`),
+/// and what keeps it unobservable: it is answered again only in `frame`, the frame of the
+/// evaluation that made it, while the current realm is `realm`, `watch` (on the values of
+/// `RegExp.prototype`) is published and the `@@species` fuse of `constructor` holds.
+pub(crate) struct RegExpArgumentShare {
+    pub(crate) object: Value,
+    pub(crate) frame: usize,
+    pub(crate) realm: Value,
+    pub(crate) constructor: Value,
+    pub(crate) watch: crate::heap::PrototypeValueWatch,
+}
+
 struct ProgramEntry {
     residual: Residual,
     #[cfg(feature = "native-execution")]
@@ -649,6 +661,9 @@ struct ProgramEntry {
     /// The one object each receiver-only literal site evaluates to while it cannot escape
     /// (`RegExpLiteralSite::receiver`, `Vm::regexp_literal_receiver`).
     regexp_receivers: FxHashMap<u32, Value>,
+    /// The one object each callee-argument literal site shares while it cannot escape
+    /// (`Vm::regexp_literal_argument_of`).
+    regexp_arguments: FxHashMap<u32, RegExpArgumentShare>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
@@ -1292,6 +1307,7 @@ impl ProgramStore {
             function_sources,
             regexp_literals,
             regexp_receivers: FxHashMap::default(),
+            regexp_arguments: FxHashMap::default(),
             module_environment: None,
             import_meta: None,
             module_imports: Vec::new(),
@@ -2797,6 +2813,30 @@ impl ProgramStore {
         }
     }
 
+    /// The object callee-argument literal `site` of program `id` shares, with what its sharing
+    /// was proved under (`Vm::regexp_literal_argument_of`).
+    pub(crate) fn regexp_literal_argument(&self, id: ProgramId, site: usize) -> Option<&RegExpArgumentShare> {
+        self.entry(id)?.regexp_arguments.get(&u32::try_from(site).ok()?)
+    }
+
+    /// Keeps `share` as callee-argument literal `site`'s shared object, in place of any
+    /// object it shared before, which it never answers again.
+    pub(crate) fn cache_regexp_literal_argument(&mut self, id: ProgramId, site: usize, share: RegExpArgumentShare) {
+        if let (Some(entry), Ok(site)) = (self.entry_mut(id), u32::try_from(site)) {
+            entry.regexp_arguments.insert(site, share);
+        }
+    }
+
+    /// Drops callee-argument literal `site`'s shared object, which it never answers again.
+    pub(crate) fn forget_regexp_literal_argument(&mut self, id: ProgramId, site: usize) {
+        let Ok(site) = u32::try_from(site) else { return };
+        if self.entry(id).is_some_and(|entry| entry.regexp_arguments.contains_key(&site))
+            && let Some(entry) = self.entry_mut(id)
+        {
+            entry.regexp_arguments.remove(&site);
+        }
+    }
+
     pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
@@ -2845,6 +2885,7 @@ impl ProgramStore {
             roots.extend_from_slice(&entry.constants);
             roots.extend(entry.function_sources.values().copied());
             roots.extend(entry.regexp_receivers.values().copied());
+            roots.extend(entry.regexp_arguments.values().flat_map(|share| [share.object, share.realm, share.constructor]));
             roots.extend(entry.module_environment);
             roots.extend(entry.root_constants.environment.get());
             roots.extend(entry.import_meta);
