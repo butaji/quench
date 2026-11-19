@@ -592,6 +592,11 @@ impl Value {
     /// and array records, which hold only ordinary objects and arrays and so never "", 0n or
     /// the IsHTMLDDA function. `None` leaves another heap value to its cell.
     #[inline(always)] pub(crate) fn truthiness(self) -> Option<bool> {
+        // The common jump operands first, each one compare and no decode: the two booleans, then
+        // an int32 (its low word is nonzero). Everything else takes the general test.
+        if self.0 == Self::TRUE.0 { return Some(true); }
+        if self.0 == Self::FALSE.0 { return Some(false); }
+        if (self.0 & TAG_MASK) == TAG_INT { return Some(self.0 as u32 != 0); }
         let (undecided, truthy) = crate::staged::value::tagged_truthiness(
             &mut crate::staged::Concrete::new(std::ptr::null()),
             self.0,

@@ -3326,6 +3326,19 @@ impl<H: Host> Vm<H> {
         Some(Some(value))
     }
 
+    /// `step_present_array_value` for a step calling `method`, when `method` is the shared
+    /// %ArrayIteratorPrototype%.next the native table roots (`NativeTable::get`). That function
+    /// is the one `is_current_realm_native(method, ArrayIteratorNext)` admits (`is_shared_native`),
+    /// so the check is one compare against the table, with no heap read. Any other `method`
+    /// answers `None`, and the caller takes the general dispatch, which makes the full check.
+    #[inline(always)]
+    pub(super) fn array_values_step(&mut self, iterator: Value, method: Value) -> Option<Option<Value>> {
+        if self.natives.get(Native::ArrayIteratorNext) != Some(method) {
+            return None;
+        }
+        self.step_present_array_value(iterator)
+    }
+
     /// An iterator result `{ value, done }` whose object no code but the step that reads it
     /// back observes (a `Call` the lane recognises as an iteration step, `iterator_step_miss`):
     /// one object, rewritten by each such step, in place of a fresh one per step.

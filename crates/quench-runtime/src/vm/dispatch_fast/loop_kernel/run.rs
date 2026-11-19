@@ -199,7 +199,7 @@ impl LoopKernel {
     /// Runs the loop from the registers' current state (module documentation).
     pub(super) unsafe fn run<H: Host>(&self, cx: *mut LaneContext<H>, r: Registers, ip: Ip) {
         // SAFETY: the kernel's state, used by one run at a time (the body calls nothing).
-        let state = unsafe { &mut **self.state.get() };
+        let state: &mut State = unsafe { &mut **(*self.state.get()).get_or_insert_with(|| Box::new(State::EMPTY)) };
         let Some(()) = self.enter(cx, r, state) else {
             if crate::trace::Channel::LoopKernel.on() {
                 eprintln!("loop-kernel: entry declined ({} declines)", self.declines.get());

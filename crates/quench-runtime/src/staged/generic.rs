@@ -4,7 +4,7 @@
 //! code), which the frame makes in place (`Frame::vm_step`) or declines, so every tier shares
 //! the one rule and the one boundary.
 
-use super::value::{is_direct_string, is_int};
+use super::value::{is_direct_string, is_double, is_heap, is_int};
 use super::*;
 use crate::bytecode::OperandKind;
 use crate::value::ValueLayout;
@@ -128,8 +128,10 @@ pub(super) fn nullish<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Cond 
 }
 
 /// The equality predicate where the two words decide it: `(decided, equal)`. The same word is
-/// equal unless it is NaN; two distinct int32 words are unequal; `null` and `undefined` are
-/// equal under `==` only.
+/// equal unless it is NaN. For `===`, two words that are not identical are unequal unless the
+/// words cannot tell: two heap values (strings and BigInts compare by content), two doubles (zero
+/// and negative zero), or an int32 and a double (the same Number). For `==`, two distinct int32
+/// words are unequal; `null` and `undefined` are equal under `==` only.
 #[inline(always)]
 pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2], strict: bool) -> (S::Cond, S::Cond) {
     let gap = stage.sub(left, right);
@@ -138,8 +140,29 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
     let same = stage.both(identical, ordered);
     let (left_int, right_int) = (is_int(stage, left), is_int(stage, right));
     let ints = stage.both(left_int, right_int);
+    if strict {
+        // Identical words and two int32s are settled by one compare each. Any other pair is tested
+        // by its tags only where it is not settled: the VM's `===` is false for two values that are
+        // neither both Numbers nor both heap values, so the pair is apart unless it is one of those.
+        let settled = stage.either(identical, ints);
+        let apart_word = stage.choose(settled, |stage| stage.constant(0), |stage| {
+            let (left_double, right_double) = (is_double(stage, left), is_double(stage, right));
+            let (left_heap, right_heap) = (is_heap(stage, left), is_heap(stage, right));
+            let heap_pair = stage.both(left_heap, right_heap);
+            let double_pair = stage.both(left_double, right_double);
+            let int_double = stage.both(left_int, right_double);
+            let double_int = stage.both(left_double, right_int);
+            let mixed = stage.either(int_double, double_int);
+            let open = stage.any(heap_pair, double_pair);
+            let open = stage.any(open, mixed);
+            let apart = stage.not(open);
+            let (apart_bit, none) = (stage.constant(1), stage.constant(0));
+            stage.select(apart, apart_bit, none)
+        });
+        let apart = stage.ne_imm(apart_word, 0u64);
+        return (stage.either(settled, apart), same);
+    }
     let by_words = stage.either(identical, ints);
-    if strict { return (by_words, same); }
     let (left_nullish, right_nullish) = (nullish(stage, left), nullish(stage, right));
     let nullish_pair = stage.both(left_nullish, right_nullish);
     (stage.either(by_words, nullish_pair), stage.either(same, nullish_pair))

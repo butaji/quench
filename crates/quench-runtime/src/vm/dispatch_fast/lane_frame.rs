@@ -783,6 +783,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     }
 
     /// A frame that may read and write the activation's local slots.
+    #[inline(always)]
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
@@ -1190,7 +1191,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
                 let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
                 decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
             }
-            CallOut::Protocol { .. } | CallOut::ForInNext { .. } => {
+            CallOut::Protocol { .. } | CallOut::ForInNext { .. } | CallOut::PropertyKey { .. } => {
                 let (context, step) = self.names?;
                 let operands = operation.operands().fixed;
                 let operands = operands.map(|operand| operand.and_then(|operand| self.operand_word(stage, operand)).map(Value::from_bits));
@@ -1836,6 +1837,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         (operand.kind() == Some(crate::bytecode::OperandKind::Constant)).then(|| self.reads.word(operand)).flatten()
     }
 
+    #[inline(always)]
     fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let word = self.operand_word(stage, operand)?;
         Value::from_bits(word).as_number().map(f64::to_bits)
@@ -1843,6 +1845,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
 
     /// The constructor's live `prototype` link, where the VM proved its `instanceof` steady: the
     /// interpreter reads it from the objects each time, so it needs no dependency.
+    #[inline(always)]
     fn stable_prototype(&mut self, stage: &mut Concrete, constructor: Register) -> Option<u64> {
         let Decisions { context, prototype, .. } = self.decisions?;
         prototype(context, Value::from_bits(self.read(stage, constructor))).map(u64::from)
@@ -1850,13 +1853,16 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
 
     /// ToInt32 of a Number operand, as the bitwise operators read it: an int32 is its own ToInt32, so it
     /// is read as an int and never converted to binary64.
+    #[inline(always)]
     fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let value = Value::from_bits(self.operand_word(stage, operand)?);
         if let Some(int) = value.as_int() {
             return Some(u64::from(int as u32));
         }
+        // A double takes the staged row's own ToInt32 (`NumericStage::to_int32`), so the lane
+        // computes no conversion of its own.
         let number = value.as_number()?;
-        Some(u64::from(crate::value::number_to_u32(number)))
+        crate::staged::NumericStage::to_int32(stage, number.to_bits(), ())
     }
 
     #[inline(always)]
@@ -2200,8 +2206,10 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
             |context, operator, left, right| unsafe { super::binary_values::<H>(context.cast(), operator, left, right) };
         // Its operands may name a constant, a plain local or a capture, and a comparison pair its words
         // leave is the VM's steady decision (`staged::step` over the comparison).
+        // Its `ToPropertyKey` answers a primitive's key through the names step (`fast_names_step`).
+        let names: NamesStep = fast_names_step::<H>;
         return LaneFrame::<ACC> { binary: Some((cx.cast(), binary)), decisions: Some(Decisions::of(cx)), reads: Reads::of_jump::<H>(cx, None),
-            ..LaneFrame::<ACC>::new(r, view) };
+            names: Some((cx.cast(), names)), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Literal)) } {
         // An allocation or an element definition makes its value in the lane context, as a staged
@@ -3483,6 +3491,7 @@ unsafe fn delete_value_in_lane<H: Host>(cx: *mut (), base: Value, key: Value) ->
 /// in the inlined frame `row_frame` builds, so the call inlines.
 #[inline(always)]
 unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: [Option<Value>; 2]) -> Option<Value> {
+    use crate::staged::protocol_classes::ClassStep;
     let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
     match call {
         // A built-in iterator whose chain lacks `return` closes with `undefined`.
@@ -3511,6 +3520,91 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
         }
         // The next key of a listed snapshot, `Value::DELETED` once none is left (which takes the exit).
         CallOut::ForInNext { .. } => vm.for_in_step_listed(second?).map(|key| key.unwrap_or(Value::DELETED)),
+        // ToPropertyKey of a primitive: the VM's conversion, which runs no guest code for one. An object's
+        // conversion calls its `toString` or `valueOf`, so the general step makes it.
+        CallOut::PropertyKey { .. } => {
+            let source = second?;
+            if vm.is_object_like(source) {
+                return None;
+            }
+            // SAFETY: the context's program outlives the lane run.
+            let program = unsafe { &*(*cx.cast::<LaneContext<H>>()).code };
+            let key = vm.to_property_key(program, source).ok()?;
+            note_allocation(vm);
+            Some(key)
+        }
+        // A template object's cache of the running frame (`Vm::cache_template_object`, `load_template_object`),
+        // keyed as the VM keys it. A frameless activation beside the lane leaves the step to the general path.
+        CallOut::Protocol { step: Protocol::Literal(crate::staged::protocol_literals::LiteralStep::CacheTemplate { site }), .. } => {
+            let frame = unsafe { (*cx.cast::<LaneContext<H>>()).frame() };
+            if !vm.lane_stack.activations().is_empty() || frame >= vm.frames.len() {
+                return None;
+            }
+            Some(vm.cache_template_object(frame, site, first?))
+        }
+        CallOut::Protocol { step: Protocol::Literal(crate::staged::protocol_literals::LiteralStep::LoadTemplate { site }), .. } => {
+            let frame = unsafe { (*cx.cast::<LaneContext<H>>()).frame() };
+            if !vm.lane_stack.activations().is_empty() || frame >= vm.frames.len() {
+                return None;
+            }
+            Some(vm.load_template_object(frame, site))
+        }
+        // `SetFunctionNameKey` (`Vm::set_function_name_key`): the function named by a key, which runs no guest
+        // code (a string or symbol key names it; any other key names nothing, as the VM's helper does).
+        CallOut::Protocol { step: Protocol::Class(ClassStep::SetFunctionNameKey { prefix }), .. } => {
+            let (function, key) = (first?, second?);
+            vm.set_function_name_key(function, key, prefix);
+            note_allocation(vm);
+            Some(Value::UNDEFINED)
+        }
+        // `DefineComputedField` (`Vm::define_class_field` of the key's conversion): a primitive key converts
+        // without guest code, and an object key's `toString` or `valueOf` runs guest code, so it takes the
+        // general step. A proxy target's define runs its trap, and a keeping activation beside the lane
+        // holds registers that are not the frame's, so both leave to the general step too.
+        CallOut::Protocol { step: Protocol::Class(ClassStep::DefineComputedField { key: key_register }), .. } => {
+            if !vm.lane_stack.activations().is_empty() {
+                return None;
+            }
+            let (value, object) = (first?, second?);
+            if vm.proxy_parts(object).is_some() {
+                return None;
+            }
+            // SAFETY: the context's program outlives the lane run, and its registers are the running frame's.
+            let (program, source) = unsafe {
+                let context = cx.cast::<LaneContext<H>>();
+                (&*(*context).code, (*context).registers.get(key_register))
+            };
+            if vm.is_object_like(source) {
+                return None;
+            }
+            let source = vm.to_property_key(program, source).ok()?;
+            let key = if let Some(atom) = vm.string_key_atom(source) {
+                crate::vm::PropertyKey::string(atom)
+            } else if vm.heap.is_symbol(source) {
+                crate::vm::PropertyKey::symbol(source)
+            } else {
+                return None;
+            };
+            vm.define_class_field(program, object, key, value).ok()?;
+            note_allocation(vm);
+            Some(Value::UNDEFINED)
+        }
+        // `CopyDataProperties` (`Vm::copy_plain_data_properties`): a plain copy runs no guest code and cannot
+        // throw; a copy it declines leaves to the row's miss, which takes the general step. The exclusions are
+        // the running frame's registers, so a keeping activation beside the lane leaves the copy to its miss.
+        CallOut::Protocol { step: Protocol::Literal(crate::staged::protocol_literals::LiteralStep::CopyDataProperties { exclusions }), .. } => {
+            if !vm.lane_stack.activations().is_empty() {
+                return None;
+            }
+            let (target, source) = (first?, second?);
+            // SAFETY: as for `DefineComputedField`.
+            let exclusions = unsafe { (*cx.cast::<LaneContext<H>>()).registers }.get(exclusions);
+            if !vm.copy_plain_data_properties(target, source, exclusions) {
+                return None;
+            }
+            note_allocation(vm);
+            Some(Value::UNDEFINED)
+        }
         // A spread onto the literal's array with no elisions before it, from a source whose
         // iteration runs no guest code: the append defines no register, so its value is unused.
         CallOut::Protocol { step: Protocol::AppendArray { length: 0, spread: true }, .. } => {
