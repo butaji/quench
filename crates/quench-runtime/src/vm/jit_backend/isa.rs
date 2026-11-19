@@ -159,12 +159,7 @@ impl NativeTarget {
     }
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn host_builder() -> Result<isa::Builder, String> {
     cranelift_native::builder().map_err(|error| error.to_string())
 }
 
-#[cfg(not(any(feature = "jit", feature = "aot")))]
-fn host_builder() -> Result<isa::Builder, String> {
-    Err("host CPU detection is not built in".into())
-}

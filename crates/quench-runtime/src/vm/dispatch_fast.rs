@@ -22370,7 +22370,7 @@ mod field_pair_census_tests;
 
 #[cfg(test)]
 mod leaf_call_tests;
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod retirement_tests;
 
 /// Counts a leave of a lane body at a place its body had not named before on the field sites of

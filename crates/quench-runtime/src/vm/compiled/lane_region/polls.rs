@@ -42,7 +42,6 @@ fn interrupt_owner_address(cursor: &mut cranelift_codegen::cursor::FuncCursor<'_
     let build = cursor.ins();
     match helpers.table_address(LaneHelper::InterruptOwner) {
         HelperAddress::Embedded(address) => build.iconst(types::I64, address),
-        #[cfg(feature = "aot")]
         HelperAddress::Loaded { table, offset } => build.load(types::I64, super::super::invariant(), table, offset),
     }
 }
@@ -55,11 +54,9 @@ fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers,
     use cranelift_codegen::cursor::{Cursor, FuncCursor};
     let entry = function.layout.entry_block().expect("native entry");
     let after = match helpers {
-        #[cfg(feature = "aot")]
         LaneHelpers::Bound(table, _) => match function.dfg.value_def(table) {
             ir::ValueDef::Result(inst, _) => Some(inst), _ => unreachable!("bound helper table"),
         },
-        #[cfg(feature = "aot")]
         LaneHelpers::Linked(..) => unreachable!("helpers bind before lowering"),
         _ => None,
     };

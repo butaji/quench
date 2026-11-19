@@ -131,7 +131,7 @@ pub(in crate::vm) use lane_region::relocs::RelocKind;
 pub(super) mod emit_machine;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 #[path = "compiled/lane_unit_polymorphic_tests.rs"]
 mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
@@ -187,11 +187,10 @@ mod wasm_codes_check;
 #[cfg(target_arch = "x86_64")]
 mod wasm_call_vm;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 pub(super) use lane_unit::static_call_targets;
 /// `emit` with its guards exempt from the forced-deopt switch: the status dispatch of a call
 /// protocol is no speculation (`forced_miss::exempt`).
-#[cfg(feature = "aot")]
 #[inline(always)]
 fn unforced<T>(emit: impl FnOnce() -> T) -> T {
     #[cfg(test)]
@@ -210,7 +209,6 @@ pub(in crate::vm) mod forced_miss {
     }
     /// Runs `emit`, whose guards are not deopt points: they dispatch on a status the code
     /// already holds, which no speculation could make fail, so they are neither counted nor forced.
-    #[cfg(feature = "aot")]
     pub(in crate::vm::compiled) fn exempt<T>(emit: impl FnOnce() -> T) -> T {
         let outer = EXEMPT.replace(true);
         let result = emit();
@@ -269,13 +267,9 @@ pub(super) use frameless::Frameless;
 use direct_call::direct_call;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
 mod guard_aarch64;
-#[cfg(feature = "aot")]
 mod eager;
-#[cfg(feature = "aot")]
 mod frozen;
-#[cfg(feature = "aot")]
 pub(super) use frozen::{frozen_fields, frozen_global_reads, frozen_globals};
-#[cfg(feature = "aot")]
 pub(super) use eager::compile_eager_native;
 #[cfg(unix)]
 #[path = "compiled/fault_handler.rs"]
@@ -617,12 +611,10 @@ struct FieldSlotBinding {
 #[derive(Clone, Copy)]
 enum FieldArena {
     Unbound { values: ir::Value, length: ir::Value },
-    #[cfg(feature = "aot")]
     BoundSlot { base: ir::Value, remaining: ir::Value },
 }
 
 impl FieldArena {
-    #[cfg(feature = "aot")]
     fn bind(self, builder: &mut FunctionBuilder<'_>, slot: ir::Value) -> Self {
         let Self::Unbound { values, length } = self else { return self; };
         let (base, remaining) = crate::staged::object::bind_arena_slot(&mut object_slots::emit(builder), values, length, slot);
@@ -637,7 +629,6 @@ impl FieldArena {
                 let slot = slot.read(builder);
                 (values, length, object_slots::emit(builder).add(storage, slot))
             }
-            #[cfg(feature = "aot")]
             Self::BoundSlot { base, remaining } => (base, remaining, storage),
         };
         crate::staged::object::arena_slot_address(&mut object_slots::emit(builder), values, length, position, fallback)
@@ -650,14 +641,12 @@ impl FieldArena {
 #[derive(Clone, Copy)]
 enum FieldSlot {
     Row(ir::Value),
-    #[cfg(feature = "aot")]
     Bound(ir::Value),
 }
 
 impl FieldSlot {
     fn read(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
         match self {
-            #[cfg(feature = "aot")]
             Self::Bound(value) => value,
             Self::Row(row) => crate::staged::entry::entry_slot(&mut object_slots::emit(builder), row),
         }
@@ -937,12 +926,10 @@ fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value
 #[derive(Clone, Copy)]
 enum NarrowTable {
     Process,
-    #[cfg(feature = "aot")]
     Linked(u32),
 }
 
 /// The linked data symbol `symbol` as a global value of `builder`'s function.
-#[cfg(feature = "aot")]
 fn linked_data_symbol(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::GlobalValue {
     let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
         super::native_object::NATIVE_DATA_NAMESPACE, symbol));
@@ -959,7 +946,6 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
     use crate::staged::machine::{Lane, Unary};
     let table = match table {
         NarrowTable::Process => object_slots::emit(builder).constant(crate::value::NarrowLayout::upper_words() as u64),
-        #[cfg(feature = "aot")]
         NarrowTable::Linked(symbol) => {
             let global = linked_data_symbol(builder, symbol);
             object_slots::emit(builder).symbol_address(global)
@@ -1188,7 +1174,6 @@ thread_local! {
 }
 
 /// An object's atom table is the data symbol after its narrow table.
-#[cfg(feature = "aot")]
 pub(super) const NATIVE_ATOM_TABLE_OFFSET: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1198,9 +1183,7 @@ pub(super) enum LaneHelpers {
     Process(&'static [*const (); LaneHelper::COUNT]),
     /// The compile target "ahead": every run-time address `RelocKind` names is a symbol (`Process`, "live", embeds them).
     Ahead,
-    #[cfg(feature = "aot")]
     Linked(u32, u32),
-    #[cfg(feature = "aot")]
     Bound(ir::Value, u32),
 }
 /// The process helper table a JIT publication binds.
@@ -1226,7 +1209,6 @@ impl LaneHelpers {
         match self {
             Self::Process(_) => object_slots::emit(builder).constant(u64::from(atom)),
             Self::Numeric | Self::Ahead => lane_region::atom_symbol(builder, atom),
-            #[cfg(feature = "aot")]
             Self::Linked(_, narrow) | Self::Bound(_, narrow) => {
                 use crate::staged::machine::{Lane, Unary};
                 let table = linked_data_symbol(builder, narrow + NATIVE_ATOM_TABLE_OFFSET);
@@ -1245,7 +1227,6 @@ impl LaneHelpers {
         let mut stage = object_slots::emit(builder);
         match self.table_address(helper) {
             HelperAddress::Embedded(address) => stage.raw_const(crate::staged::machine::Lane::I64, address),
-            #[cfg(feature = "aot")]
             HelperAddress::Loaded { table, offset } =>
                 stage.raw_load(crate::staged::machine::Lane::I64, invariant(), table, offset),
         }
@@ -1262,10 +1243,8 @@ impl LaneHelpers {
             Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
             Self::Ahead => unreachable!("an ahead region names its helper by symbol"),
             Self::Process(addresses) => HelperAddress::Embedded(addresses[helper as usize] as i64),
-            #[cfg(feature = "aot")]
             Self::Bound(table, _) => HelperAddress::Loaded {
                 table, offset: (helper as usize * std::mem::size_of::<usize>()) as i32 },
-            #[cfg(feature = "aot")]
             Self::Linked(..) => unreachable!("linked helpers bind at region entry"),
         }
     }
@@ -1275,7 +1254,6 @@ impl LaneHelpers {
 #[derive(Clone, Copy)]
 enum HelperAddress {
     Embedded(i64),
-    #[cfg(feature = "aot")]
     Loaded { table: ir::Value, offset: i32 },
 }
 
@@ -1286,7 +1264,6 @@ pub fn native_js_lane_helpers<H: Host>() -> *const () {
     LaneHelper::addresses::<H>().as_ptr().cast()
 }
 
-#[cfg(feature = "aot")]
 pub(super) fn native_lane_helpers_signature(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Signature {
     call_signature::word_signature(isa.default_call_conv(), 0, 1, isa.pointer_type())
 }
@@ -1458,7 +1435,6 @@ impl<H: Host> Vm<H> {
 /// `function_id` lowered as an ahead lane body (`Coverage::Prefix`, the lane body ABI) under
 /// `helpers` and `facts`: it runs from the first record and leaves at the first instruction
 /// it does not lower. `None` for the root and where nothing lowers.
-#[cfg(feature = "aot")]
 fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
     helpers: LaneHelpers, facts: VmFacts<'_>, global_reads: &crate::vm::global_facts::GlobalReads,
 ) -> Option<lane_region::LoweredRegion> {
@@ -1477,7 +1453,6 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
 }
 
 /// `lowered_lane_body`'s code with the atoms it stores without a method-cache test.
-#[cfg(feature = "aot")]
 pub(super) fn lower_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
     helpers: LaneHelpers, facts: VmFacts<'_>, global_reads: &crate::vm::global_facts::GlobalReads,
 ) -> Option<(ir::Function, Box<[Atom]>)> {
@@ -4867,7 +4842,6 @@ pub fn native_js_operation_entry_for<H: Host>(opcode: usize) -> Option<NativeJsO
     Op::from_index(opcode).map(Op::native_semantic_entry::<H>)
 }
 
-#[cfg(feature = "aot")]
 pub(super) fn native_js_operation_signature(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Signature {
@@ -4876,7 +4850,6 @@ pub(super) fn native_js_operation_signature(
 }
 
 pub(super) use quench_bjit::call_record::NATIVE_JS_STOPPED;
-#[cfg(feature = "aot")]
 pub(super) const NATIVE_JS_INVALID_PC: u32 = 2;
 #[cfg(feature = "native-execution")]
 const JS_NO_STOP_PC: usize = usize::MAX;
@@ -4996,7 +4969,6 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
     }
 }
 
-#[cfg(feature = "aot")]
 pub(super) fn native_js_start_pc(builder: &mut FunctionBuilder<'_>, context: ir::Value) -> ir::Value {
     use crate::staged::machine::Lane;
     let pointer = emit_machine::of_in_lane(builder.func.signature.params[0].value_type);
@@ -9699,7 +9671,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "aarch64", any(feature = "jit", feature = "aot")))]
+    #[cfg(target_arch = "aarch64")]
     #[test]
     fn aarch64_logical_right_shift_selection_preserves_all_integer_widths() {
         // A64 Logical (shifted register): fixed class bits, N=0; shift kind
@@ -9776,7 +9748,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "aot", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     fn assert_aarch64_cfg_edges(code: &cranelift_codegen::CompiledCode) {
         // A64 direct branch encodings; this fixture has no calls, jump tables
         // or literal islands. Compare the metadata with actual branch targets.
@@ -9820,7 +9792,6 @@ mod tests {
             code.bb_starts, bytes.as_chunks::<{ std::mem::size_of::<u32>() }>().0.iter().map(|word| u32::from_le_bytes(*word)).collect::<Vec<_>>(), code.vcode);
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn private_store_commits_preserve_overlapping_bytes_and_zero_trips() {
         let isa = super::super::jit_backend::target_isa().unwrap();
@@ -9869,7 +9840,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn conditional_xor_masks_preserve_integer_words_and_bit_positions() {
         let isa = super::super::jit_backend::target_isa().unwrap();
@@ -10118,7 +10088,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn countdown_induction_preserves_words_checkpoints_and_labels() {
         use cranelift_codegen::settings::Configurable;
@@ -10256,7 +10225,6 @@ mod tests {
         assert!(optimized >= 3 * 4, "each width must optimize both directions from zero and increasing from signed minimum");
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn loop_carried_updates_reuse_the_comparison_value() {
         use std::sync::atomic::AtomicU8;
@@ -10366,7 +10334,6 @@ mod tests {
         }}
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn loop_carried_updates_share_branch_store_and_backedge_placement() {
         use std::sync::atomic::AtomicU8;
@@ -10479,7 +10446,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn loop_constants_share_conditional_entries_and_preserve_exact_exits() {
         use std::sync::atomic::AtomicU8;
@@ -10579,7 +10545,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn slot_widening_unlinks_compiled_readers_without_releasing_active_code() {
         let program = crate::Engine::specialize(
@@ -10612,7 +10577,6 @@ mod tests {
         assert!(weak.upgrade().is_none());
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn numeric_result_signature_joins_typed_returns_and_preserves_float_values() {
         let integer = "function choose(n,x){n=n|0;x=x|0;if(n<0)return x|0;for(let i=0;i<n;i=(i+1)|0)x=(x+1)|0;return x|0;}";
@@ -10716,7 +10680,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn bound_field_arena_preserves_slot_bounds() {
         let isa = super::super::jit_backend::target_isa().unwrap();
@@ -10763,7 +10726,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn nullable_slot_observations_keep_checks_across_execution_tiers() {
         let source = include_str!("../../tests/fixtures/nullable-slot-writes.js");
@@ -10781,7 +10743,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_holder_read_does_not_require_receiver_arena_storage() {
         for (source, inline_holder) in [
@@ -10855,7 +10816,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn activation_admits_only_authoritative_this_and_dense_function_captures() {
         let mut vm = semantic_vm("throw 7;");
@@ -10881,7 +10841,6 @@ mod tests {
         }).unwrap();
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn typed_native_loops_preserve_stores_in_native_only_and_unspecialized_execution() {
         let source = "function tail(node) { while(node.next!==null) { node.mark=node.mark+1; node=node.next; } return node; } const end={next:null,mark:0}; const head={next:end,mark:0}; for(let i=0;i<40;i++) { if(tail(head)!==end) throw 'identity'; } throw head.mark;";
@@ -10896,14 +10855,6 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "native-execution", not(any(feature = "jit", feature = "aot"))))]
-    #[test]
-    fn static_lane_call_helper_declines_without_dynamic_context() {
-        // Execution-only images lend no interpreter lane, so even a null context
-        // must decline before inspecting it or publishing a dynamic continuation.
-        let status = unsafe { super::super::dispatch_fast::body_call_helper::<crate::test_host::TestHost>(0, 0, 0, 0) };
-        assert_eq!(status, LANE_CALL_MISSED);
-    }
 
     #[test]
     fn nested_lane_entry_restores_outer_fault_binding() {
@@ -11049,13 +11000,11 @@ mod tests {
         for inst in polls { assert_eq!(native.dfg.inst_args(inst), &[owners[0]]); }
     }
 
-    #[cfg(feature = "aot")]
     pub(super) fn semantic_vm(source: &str) -> Vm<crate::test_host::TestHost> {
         let program = crate::Engine::specialize(source, "semantic-entry.js").unwrap();
         semantic_program(program)
     }
 
-    #[cfg(feature = "aot")]
     fn semantic_program(program: ResidualProgram) -> Vm<crate::test_host::TestHost> {
         let mut vm = Vm::new(crate::test_host::TestHost::default());
         vm.initialize_for_snapshot(&program).unwrap();
@@ -11070,7 +11019,6 @@ mod tests {
         vm
     }
 
-    #[cfg(feature = "aot")]
     fn semantic_instruction(vm: &Vm<crate::test_host::TestHost>, opcode: Op) -> (usize, WideInstruction) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let body = program.function(0);
@@ -11080,7 +11028,6 @@ mod tests {
         }).expect("test operation exists")
     }
 
-    #[cfg(feature = "aot")]
     fn invoke_semantic(
         vm: &mut Vm<crate::test_host::TestHost>, pc: usize,
         entry: unsafe extern "C" fn(*mut std::ffi::c_void, u64, *const u64, *mut u64) -> i64,
@@ -11097,7 +11044,6 @@ mod tests {
         })
     }
 
-    #[cfg(feature = "aot")]
     fn with_semantic_context(
         vm: &mut Vm<crate::test_host::TestHost>, pc: usize,
         run: impl FnOnce(*mut CallContext, *mut u64) -> i64,
@@ -11120,7 +11066,6 @@ mod tests {
 
     /// Publishes compiled `code` of a function lowered with `native_entry_signature` to
     /// executable memory, and its entry.
-    #[cfg(feature = "aot")]
     #[test]
     fn native_object_table_binding_tracks_heap_lifetime() {
         let source = "globalThis.tableProbe=0; throw 7;";
@@ -11169,7 +11114,6 @@ mod tests {
         assert_binding(&mut other, other_base);
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_activation_owns_metadata_without_retaining_it_between_entries() {
         let vm_source = "throw 7;";
@@ -11206,7 +11150,6 @@ mod tests {
         assert_eq!(vm.own_property(vm.realm.globals, atom), None);
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn static_semantic_entry_executes_one_store_and_returns_to_native_control() {
         let mut vm = semantic_vm("globalThis.x = 1; globalThis.y = 2;");
@@ -11224,7 +11167,6 @@ mod tests {
         assert_eq!(vm.own_property(vm.realm.globals, y), None);
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn static_semantic_entry_rejects_mismatched_or_invalid_opcodes_before_effects() {
         let mut vm = semantic_vm("globalThis.x = 1;");
@@ -11242,7 +11184,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn static_semantic_entry_admits_wide_opcodes_without_decoding_source_operands() {
         let mut program = crate::Engine::specialize("throw 7;", "wide-semantic-entry.js").unwrap();
@@ -11268,7 +11209,6 @@ mod tests {
         assert_eq!(error.thrown_value(), Some(Value::number(7.0)));
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn static_semantic_entry_preserves_thrown_value_and_exact_pc() {
         let mut vm = semantic_vm("throw 7;");
@@ -11285,7 +11225,6 @@ mod tests {
         assert_eq!(error.thrown_value(), Some(value));
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn static_semantic_entry_checks_termination_before_guest_effects() {
         let mut vm = semantic_vm("globalThis.x = 1;");

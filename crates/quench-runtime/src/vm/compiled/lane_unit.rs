@@ -18,8 +18,8 @@ use crate::value::Value;
 #[path = "lane_unit/admission.rs"] mod admission;
 use admission::{inlinable, restartable, returns_or_keeps};
 #[path = "lane_unit/weights.rs"] mod weights;
-#[cfg(all(test, feature = "aot"))] #[path = "lane_unit/static_hints.rs"] mod static_hints;
-#[cfg(all(test, feature = "aot"))] pub(crate) use static_hints::static_call_targets;
+#[cfg(test)] #[path = "lane_unit/static_hints.rs"] mod static_hints;
+#[cfg(test)] pub(crate) use static_hints::static_call_targets;
 
 /// Binding time of a callee: a published closure, whose identity the call compares, or a
 /// static body whose actual closure and environment are admitted at the call. Function

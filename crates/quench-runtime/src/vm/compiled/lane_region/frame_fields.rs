@@ -291,7 +291,6 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         builder.switch_to_block(packed);
         let narrow = emit(builder).load_i32(Region::Payload.mutable(), packed_address, 0);
         let table = match self.helpers {
-            #[cfg(feature = "aot")]
             LaneHelpers::Bound(_, symbol) => NarrowTable::Linked(symbol),
             _ => NarrowTable::Process,
         };

@@ -6,7 +6,6 @@
 use crate::Host;
 use crate::bytecode::ResidualProgram;
 
-#[cfg(feature = "aot")]
 pub(crate) fn compile_eager_native<H: Host>(program: ResidualProgram) -> Result<crate::NativeJsProgram<H>, String> {
     let _ = program;
     Err("eager publication links its image into a VM, and compile_eager has none yet".into())
