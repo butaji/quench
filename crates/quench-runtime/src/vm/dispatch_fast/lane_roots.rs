@@ -326,20 +326,45 @@ impl<H: Host> Vm<H> {
             return Err(resume);
         };
         let mut pending = self.pending_call_stacks.pop().unwrap_or_default();
+        let end = self.drive_job_window(code, job, window, resume, &mut pending);
+        self.pending_call_stacks.push(pending);
+        Ok(end)
+    }
+
+    /// `run_lane_job` of a job a chain of await jobs resumes (`Vm::run_job_chain`), over the
+    /// pending general calls `pending`, which the chain keeps for all its jobs instead of taking
+    /// a stack from `pending_call_stacks` and giving it back for each one. `pending` is empty
+    /// when the run starts and when it ends.
+    pub(in crate::vm) fn run_chained_lane_job(
+        &mut self,
+        code: &ResidualProgram,
+        (job, frame): (JobRoot, *const FrameRecord),
+        resume: JobResume,
+        pending: &mut Vec<PendingGeneralCall>,
+    ) -> Result<JobEnd, JobResume> {
+        let Some(window) = self.admit_job(code, job, frame, resume.sent()) else {
+            return Err(resume);
+        };
+        Ok(self.drive_job_window(code, job, window, resume, pending))
+    }
+
+    /// The lane run of `job`'s activation over `window`, which `admit_job` admitted, entered
+    /// with `resume`, its general calls pending on `pending`, which it leaves empty. How the
+    /// run ended (`job_end`).
+    fn drive_job_window(&mut self, code: &ResidualProgram, job: JobRoot, window: JobWindow, resume: JobResume, pending: &mut Vec<PendingGeneralCall>) -> JobEnd {
         let mut executing = ExecutingProgram { id: window.entry.program, retained: None };
         let caller_registers = self.active_registers;
         let entered = self.enter_lane_floor(code, window.entry.program);
-        let start = job_start(code, job, &window, (&raw mut pending, &raw mut executing), entered.cell);
+        let start = job_start(code, job, &window, (std::ptr::from_mut(pending), &raw mut executing), entered.cell);
         let mut context = self.lane_context(start);
         let ip = self.drive_lane(&mut context, entered, |cx| match resume {
             JobResume::Sends(_) => window.enter(cx),
             JobResume::Throws(error) => window.enter_raising(cx, error),
         });
-        let end = self.job_end(code, job, &context, ip, &mut pending, executing);
+        let end = self.job_end(code, job, &context, ip, pending, executing);
         pending.clear();
-        self.pending_call_stacks.push(pending);
         self.active_registers = caller_registers;
-        Ok(end)
+        end
     }
 
     /// The window `job`'s activation runs over, once the lane admits the run, and the frame's

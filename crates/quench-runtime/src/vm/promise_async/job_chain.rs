@@ -14,6 +14,8 @@ use super::*;
 use super::settle::Stop;
 use super::super::activation::{FrameRecord, JobResume, JobRoot, SuspendKind};
 use super::super::promise::PromiseJob;
+use super::super::dispatch_fast::JobEnd;
+use super::super::dispatch_frame::PendingGeneralCall;
 
 /// The most jobs one chain runs, the first included, before the queue's loop takes the next job
 /// itself.
@@ -61,13 +63,31 @@ impl<H: Host> Vm<H> {
     /// it runs and `outer` once it stops, and its stop settles (`settle_job_end`) before the next
     /// leaves the queue. The stop of the last one run, or the first error a stop settles with,
     /// which ends the chain as it would have ended the job.
+    ///
+    /// The chain's jobs share one stack of pending general calls (`run_chained_job`), taken from
+    /// `pending_call_stacks` once and given back when the chain ends.
     pub(super) fn run_job_chain(&mut self, code: &ResidualProgram, program: ProgramId, first: ChainedJob, outer: Value) -> Stop {
+        let mut pending = self.pending_call_stacks.pop().unwrap_or_default();
+        let stop = self.run_chained_jobs(code, program, first, outer, &mut pending);
+        self.pending_call_stacks.push(pending);
+        stop
+    }
+
+    /// The loop of `run_job_chain`, its jobs' general calls pending on `pending`.
+    fn run_chained_jobs(
+        &mut self,
+        code: &ResidualProgram,
+        program: ProgramId,
+        first: ChainedJob,
+        outer: Value,
+        pending: &mut Vec<PendingGeneralCall>,
+    ) -> Stop {
         let mut current = first;
         let mut left = JOB_CHAIN_LIMIT;
         loop {
             let ChainedJob { resume, job, frame, how } = current;
             self.queue_resumed = job.object;
-            let end = self.run_job(code, job, frame, how);
+            let end = self.run_chained_job(code, (job, frame), how, pending);
             self.queue_resumed = outer;
             let settled = self.settle_job_end(code, StopOwner::Async(resume), end);
             left -= 1;
@@ -79,6 +99,24 @@ impl<H: Host> Vm<H> {
                 ChainStep::Ends => return settled,
                 ChainStep::Ran(stop) => return stop,
             };
+        }
+    }
+
+    /// `Vm::run_job` of a chained job's activation `job`, suspended in `frame`, resumed with
+    /// `how`, its general calls pending on `pending`. No lane run is live: `job_chain_admits`
+    /// found none for the chain's first job, and each job's run and settlement leave the lane
+    /// stack as they found it, so the run is never nested and enters the lane directly.
+    fn run_chained_job(
+        &mut self,
+        code: &ResidualProgram,
+        (job, frame): (JobRoot, *const FrameRecord),
+        how: JobResume,
+        pending: &mut Vec<PendingGeneralCall>,
+    ) -> JobEnd {
+        debug_assert!(self.lane_stack.activations.is_empty() && self.lane_deferred.is_none(), "a chained job's run is not nested");
+        match self.run_chained_lane_job(code, (job, frame), how, pending) {
+            Ok(end) => end,
+            Err(refused) => self.run_job_frame(code, job, refused),
         }
     }
 
