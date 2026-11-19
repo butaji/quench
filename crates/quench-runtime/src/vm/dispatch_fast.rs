@@ -2419,7 +2419,7 @@ struct ForwardedResolution {
 }
 
 /// Fields a `ConstructPlan` names; an initializer storing more keeps running its adds.
-const CONSTRUCT_PLAN_FIELDS: usize = 8;
+pub(in crate::vm) const CONSTRUCT_PLAN_FIELDS: usize = 8;
 // A plan's values fill a receiver's inline slots (`ConstructPlan::allocate`).
 const _: () = assert!(INLINE_PROPERTY_COUNT <= CONSTRUCT_PLAN_FIELDS);
 // `ConstructPlan::defaulted` holds a bit per field.

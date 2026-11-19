@@ -650,7 +650,7 @@ impl<H: Host> Vm<H> {
         // A construction's plan is asked of the callee it was planned for: its code tests the
         // callee, so another callee at the site only leaves.
         let construct = |function: u32, pc: u32| taken.tables.construct_plans.get(&(function, pc))
-            .and_then(|plan| super::super::dispatch_fast::scalar_construct_plan(self, plan.callee));
+            .and_then(|plan| super::super::dispatch_fast::scalar_construct_plan(self, plan.callee.live()?));
         // A field's formed layout id (the view's own-field hint) is guarded where the code reads
         // it, so a hint that moved since only leaves: the fields compare without it.
         let unformed = |fields: &[Option<Vec<NativeFieldLoad>>]| fields.iter()

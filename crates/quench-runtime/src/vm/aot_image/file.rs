@@ -17,6 +17,7 @@ const RECIPE_INTRINSIC: u8 = 0;
 const RECIPE_GLOBAL: u8 = 1;
 const RECIPE_CONSTANT: u8 = 2;
 const RECIPE_PROTOTYPE_OF: u8 = 3;
+const RECIPE_CLOSURE_OF: u8 = 4;
 const RELOC_ABS8: u8 = 0;
 const RELOC_X86_PC_REL4: u8 = 1;
 const RELOC_X86_CALL_PC_REL4: u8 = 2;
@@ -143,6 +144,7 @@ fn put_heap_value(out: &mut Vec<u8>, value: &HeapValueRecipe) {
         HeapValueRecipe::Global(key) => (RECIPE_GLOBAL, key),
         HeapValueRecipe::Constant(key) => (RECIPE_CONSTANT, key),
         HeapValueRecipe::PrototypeOf(key) => (RECIPE_PROTOTYPE_OF, key),
+        HeapValueRecipe::ClosureOf(key) => (RECIPE_CLOSURE_OF, key),
     };
     out.push(tag);
     out.extend(key.to_le_bytes());
@@ -242,6 +244,7 @@ fn read_heap_value(words: &mut Words<'_>) -> Result<HeapValueRecipe, String> {
         RECIPE_GLOBAL => HeapValueRecipe::Global(key),
         RECIPE_CONSTANT => HeapValueRecipe::Constant(key),
         RECIPE_PROTOTYPE_OF => HeapValueRecipe::PrototypeOf(key),
+        RECIPE_CLOSURE_OF => HeapValueRecipe::ClosureOf(key),
         _ => return Err("an AOT image heap value recipe has an unknown kind".into()),
     })
 }

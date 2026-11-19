@@ -8,6 +8,7 @@ use crate::vm::aot_image::{LaneImage, base::{BaseImage, NO_ENTRY}, symbols::{Sym
 use crate::compile::aot_facts::AotFacts;
 use super::lane_unit::Origin;
 use crate::vm::aot_image::{self, AotImage, ImageTarget, file::Words, live::{self, LiveImage}};
+#[path = "ahead_images/constructions.rs"] mod constructions;
 
 /// Names the build whose machine code and layouts the images are (`build.rs`); a file from another build is rejected.
 pub(crate) const AHEAD_BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
@@ -63,7 +64,8 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
 /// The lane body of `function` for an AOT image under the closed-world `facts`, its leaves
 /// continuing at `base`'s entries (`join`): every leave's target is interned in `symbols`. The
 /// whole-program values of `frozen` fold at their reads, each read checked where it is made
-/// (`GlobalRead::Frozen`, `VmFacts::frozen_fields`), as the JIT's frozen division folds them.
+/// (`GlobalRead::Frozen`, `VmFacts::frozen_fields`), as the JIT's frozen division folds them. A
+/// construction the closed world proves keeps its receiver as its fields (`constructions`).
 /// `None` where it gives no native record, or polls for faults: the lowering does not report
 /// the poll's offset, so the base body runs such a function.
 pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen),
@@ -72,9 +74,11 @@ pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32,
     let unit = unit_of(program, function, facts)?;
     let targets = leave_targets(&unit, function, base, symbols);
     let calls = proven_calls(program, &unit, calls, symbols);
+    let plans = constructions::construct_plans(program, &unit, function, facts, symbols);
+    let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
     let global_reads = super::frozen::frozen_unit_reads(program, &unit, function, &frozen.globals);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { targets: &targets, calls: &calls }), closed: Some(facts),
-        frozen_fields: Some(&frozen.fields), ..VmFacts::STATIC };
+        frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
     (!fault_poll).then_some(LaneImage { code, fault_poll: None })
 }

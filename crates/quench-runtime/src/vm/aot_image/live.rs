@@ -80,7 +80,7 @@ pub(crate) fn install<H: Host>(image: &AotImage, vm: &mut Vm<H>) -> Result<LiveI
 }
 
 /// The lane body of `function` linked against `live`, at address 0 for a copy into a new body
-/// (`LanePlan::finish`), with the heap values it names (`HeapValueRecipe::Global`, `PrototypeOf`),
+/// (`LanePlan::finish`), with the heap values it names (`HeapValueRecipe::Global`, `PrototypeOf`, `ClosureOf`),
 /// which its publication keeps alive (`PublishedCode::hold_roots`): a collected object's id is
 /// reused, and the code would take the next object for it. `None` where the function has no lane
 /// body or a symbol does not link.

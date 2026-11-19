@@ -69,6 +69,9 @@ pub(crate) enum HeapValueRecipe {
     Constant(u32),
     /// The `prototype` object of function `function`'s closure in the root activation.
     PrototypeOf(u32),
+    /// Function `function`'s closure, where the running program made exactly one: the callee a
+    /// construction the closed world proves (`AotFacts::construct_target`) guards by identity.
+    ClosureOf(u32),
 }
 
 /// How the loader builds a shape the code folded: the prototype it has and its own fields in
@@ -244,17 +247,23 @@ fn heap_value<H: Host>(image: &AotImage, vm: &mut Vm<H>, key: u32) -> Option<Val
             vm.own_property(globals, atom)
         }
         HeapValueRecipe::PrototypeOf(function) => prototype_of(vm, function),
+        HeapValueRecipe::ClosureOf(function) => closure_of(vm, function),
         HeapValueRecipe::Constant(_) => None,
     }
 }
 
-/// The own `prototype` of function `function`'s closure in the running program, where the program
-/// made exactly one (a top-level function, recorded as `Vm::cached_functions` finds it): with
-/// several, no one prototype is the function's, so the recipe resolves to none.
-fn prototype_of<H: Host>(vm: &mut Vm<H>, function: u32) -> Option<Value> {
+/// Function `function`'s closure in the running program, where the program made exactly one (a
+/// top-level function, recorded as `Vm::cached_functions` finds it): with several, no one closure
+/// is the function's, so the recipe resolves to none.
+fn closure_of<H: Host>(vm: &Vm<H>, function: u32) -> Option<Value> {
     let mut closures = vm.cached_functions(vm.active_program, function);
     let closure = closures.next()?;
-    if closures.next().is_some() { return None; }
+    closures.next().is_none().then_some(closure)
+}
+
+/// The own `prototype` of function `function`'s one closure (`closure_of`), an object.
+fn prototype_of<H: Host>(vm: &mut Vm<H>, function: u32) -> Option<Value> {
+    let closure = closure_of(vm, function)?;
     let atom = vm.prototype_atom();
     vm.own_property(closure, atom).filter(|prototype| prototype.is_heap())
 }

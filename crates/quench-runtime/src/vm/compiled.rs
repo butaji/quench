@@ -1333,9 +1333,27 @@ pub(super) struct OwnConstant {
 /// keeps the values and allocates the receiver only at a leave.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ScalarConstructPlan {
-    pub(super) callee: Value,
+    pub(super) callee: PlanCallee,
+    /// The receiver's shape: its id, or for an image's plan (`PlanCallee::Image`) its
+    /// `Symbol::Shape` key, which the loader interns.
     pub(super) shape: u32,
     pub(super) fields: smallvec::SmallVec<[(Atom, ScalarField); 4]>,
+}
+
+/// The callee a `ScalarConstructPlan` constructs by, which its code guards by identity: a closure
+/// the VM made, or in an ahead image the `Symbol::HeapValue` key of the closure the closed world
+/// proves the site constructs (`HeapValueRecipe::ClosureOf`), which the loader resolves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum PlanCallee {
+    Live(Value),
+    Image(u32),
+}
+
+impl PlanCallee {
+    /// The closure, where the VM made it.
+    pub(super) fn live(self) -> Option<Value> {
+        match self { Self::Live(callee) => Some(callee), Self::Image(_) => None }
+    }
 }
 
 /// Where a field of a `ScalarConstructPlan` takes its value.
