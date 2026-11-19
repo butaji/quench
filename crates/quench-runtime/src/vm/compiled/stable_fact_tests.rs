@@ -25,7 +25,7 @@ fn name_in_a_method_cache(vm: &mut Vm<crate::test_host::TestHost>, owner: Value,
     let site = vm.method_caches.len();
     vm.method_caches.push([super::super::EMPTY_METHOD_CACHE; 2]);
     vm.record_method_cache(site, super::super::MethodCache { shape, atom, proto: owner, callee,
-        guard: super::super::MethodGuard { owner, owner_shape: shape, slot, depth: 0, cell: None }, target: Some(target) });
+        guard: super::super::MethodGuard { owner, owner_shape: shape, slot, depth: 0 }, target: Some(target) });
 }
 
 #[test]

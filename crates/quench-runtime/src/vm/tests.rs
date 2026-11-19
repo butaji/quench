@@ -23016,7 +23016,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
         let site = vm.method_caches.len();
         vm.method_caches.push([super::EMPTY_METHOD_CACHE; 2]);
         vm.record_method_cache(site, MethodCache { shape, atom: left, proto: object,
-            callee: original, guard: super::MethodGuard { owner: object, owner_shape: shape, slot, depth: 0, cell: None },
+            callee: original, guard: super::MethodGuard { owner: object, owner_shape: shape, slot, depth: 0 },
             target: Some(target) });
         assert!(vm.method_caches_may_name(left));
         let id = program.functions.iter().position(|body|

@@ -127,6 +127,7 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
         proved.write(written);
     }
     allocated(&mut proved, row);
+    typed_object(&mut proved, row);
     if let (Some(dst), Some(source)) = (row.dst, source) && dst != source {
         proved.copies.push((dst, source));
     }
@@ -147,6 +148,19 @@ fn established(proved: &mut Proved, row: &Decoded) {
         if !proved.established.contains(&root) {
             proved.established.push(root);
         }
+    }
+}
+
+/// The destination of a typed object read (`Decoded::typed` of the object family) is a direct object after it: the
+/// inline-cache row's hit delivers a word the slot's dependency holds to be one, and the site row's path tests it
+/// (`plan::ic_plan`). The rows after it then test no family for it, as for a receiver the access proved.
+fn typed_object(proved: &mut Proved, row: &Decoded) {
+    let Some(dst) = row.dst.filter(|_| row.typed.is_some_and(|dependency| dependency.ty == crate::typed_ir::Type::DIRECT_OBJECT_FAMILY)) else { return };
+    if !proved.objects.contains(&dst) {
+        proved.objects.push(dst);
+    }
+    if !proved.established.contains(&dst) {
+        proved.established.push(dst);
     }
 }
 

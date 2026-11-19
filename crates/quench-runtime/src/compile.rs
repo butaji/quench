@@ -2301,6 +2301,10 @@ pub(crate) fn lower_settled<'a>(
         .iter()
         .any(|instruction| instruction.op().traits().has(Traits::PLAIN_LOCAL_STORE))
     {
+        // This solve stays even when the first one ran: the passes above rewrite the code it
+        // reads (`drop_unread_self_binding`, the promotions, `hoist_loop_constants`, `rest_reads`),
+        // and none of them reports whether it changed anything, so the first solve's sets are
+        // not known to match it.
         let live = liveness::buffers::analyze_with(function, methods, field_sites, superinstructions, scratch);
         if !numeric::apply_plain_local_stores(function, live.as_deref()) {
             solved = live;

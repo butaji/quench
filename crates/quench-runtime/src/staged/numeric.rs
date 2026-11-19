@@ -604,10 +604,10 @@ fn relation_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     let Some(tests) = both_tests(stage, [left_test, right_test]) else {
         return Some(stage.relation(relation, Domain::Int32, left_int, right_int));
     };
-    let word = stage.choose_leaving(tests, |stage| {
+    let word = stage.choose_leaving(tests, #[inline(always)] |stage| {
         let holds = stage.relation(relation, Domain::Int32, left_int, right_int);
         Some(stage.cond_word(holds))
-    }, |stage| {
+    }, #[inline(always)] |stage| {
         let holds = relation_float(stage, frame, (left, right), relation)?;
         Some(stage.cond_word(holds))
     })?;
@@ -666,13 +666,13 @@ fn number_arithmetic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
     };
     let packed = match both_tests(stage, [left_test, right_test]) {
         Some(tests) => stage.choose(tests,
-            |stage| int_fast_result(stage, operation, left_int, right_int),
-            |stage| stage.constant(NOT_INT32)),
+            #[inline(always)] |stage| int_fast_result(stage, operation, left_int, right_int),
+            #[inline(always)] |stage| stage.constant(NOT_INT32)),
         None => int_fast_result(stage, operation, left_int, right_int),
     };
     let taken = stage.ne_imm(packed, NOT_INT32);
     let boxed_int = frame.int_result(stage, packed);
-    let boxed = stage.choose_leaving(taken, |_| Some(boxed_int), |stage| {
+    let boxed = stage.choose_leaving(taken, |_| Some(boxed_int), #[inline(always)] |stage| {
         let number = float_operation(stage, frame, (left, right), operation)?;
         Some(stage.box_number(number))
     })?;
@@ -774,10 +774,10 @@ fn remainder_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
     for test in [left_test, right_test].into_iter().flatten() {
         fast = stage.both(fast, test);
     }
-    stage.choose_leaving(fast, |stage| {
+    stage.choose_leaving(fast, #[inline(always)] |stage| {
         let remainder = stage.int_remainder(left_int, right_int);
         Some(stage.i32_to_f64(remainder))
-    }, |stage| remainder_float(stage, frame, left, right))
+    }, #[inline(always)] |stage| remainder_float(stage, frame, left, right))
 }
 
 /// `left % right` of two binary64 operands (`float_word`), the general remainder.
@@ -897,11 +897,11 @@ fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
             }
             None => {}
         }
-        let number = stage.choose(widen, |stage| {
+        let number = stage.choose(widen, #[inline(always)] |stage| {
             let left = stage.i32_to_f64(left_value);
             let right = stage.i32_to_f64(right_value);
             stage.float_arithmetic(operation, left, right)
-        }, |stage| stage.i32_to_f64(result));
+        }, #[inline(always)] |stage| stage.i32_to_f64(result));
         let fact = frame.number_fact();
         frame.write(stage, destination, number, fact);
         return Step::Value(number);
