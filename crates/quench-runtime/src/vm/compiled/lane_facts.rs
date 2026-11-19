@@ -132,7 +132,7 @@ fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
 /// Whether a straight-line unit of `instructions` instructions repays its entry: the share of
 /// its interpreted time the body keeps exceeds the body's entry cost.
 fn straight_line_repays(priors: &tier_policy::Priors, instructions: usize) -> bool {
-    instructions as u64 * priors.interpreter_ns * (tier_policy::PER_MILLE - priors.body_share) / tier_policy::PER_MILLE > priors.body_entry_ns
+    instructions >= priors.repaying_length(priors.body_share)
 }
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was

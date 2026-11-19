@@ -168,9 +168,6 @@ pub(in crate::vm) struct LaneBody {
     /// runs: total Ir -2%, richards unchanged; Nov 18).
     pub(in crate::vm) max_callee_recompiles: u8,
     pub(in crate::vm) late_call_calls: u32,
-    /// The length below which a lane body without loops or inlined calls declines
-    /// (`Vm::compile_lane_method`).
-    pub(in crate::vm) min_instructions: usize,
     /// The longest callee body a unit or a call plan inlines (`staged::plan_entry`): each copy of it
     /// costs code and compile time at every call site, and short bodies (accessors, field updates)
     /// are where a call costs most relative to its work.
@@ -327,19 +324,25 @@ impl LaneBody {
 impl Tiers {
     /// The length a body without loops or calls needs for one entry to pay in the lane body
     /// `tier` compiles: none where every eligible compile is admitted (`Tiers::admits_all`), so
-    /// a fixture too short to repay one still gets its body. A Cranelift body asks
-    /// `min_instructions`; a stencil body asks the entry's crossing (`body_entry_ns`, the one entry
-    /// driver's) over the interpretation it saves per bytecode (`interpreter_ns` less its
-    /// `base_body_share`), as it compiles in microseconds and charges no compile.
+    /// a fixture too short to repay one still gets its body. Each tier asks the entry's crossing
+    /// (`body_entry_ns`, the one entry driver's) over the interpretation its code saves per
+    /// bytecode (`Priors::repaying_length`): a stencil body keeps `base_body_share` of it, a
+    /// Cranelift body `body_share`.
     pub(in crate::vm) fn amortizing_instructions(&self, tier: Tier) -> usize {
         if self.admits_all { return 0; }
         match tier {
-            Tier::Base => {
-                let saved = self.priors.interpreter_ns * (PER_MILLE - self.priors.base_body_share);
-                (self.priors.body_entry_ns * PER_MILLE).div_ceil(saved) as usize
-            }
-            Tier::Quick | Tier::Ultra => self.lane_body.min_instructions,
+            Tier::Base => self.priors.repaying_length(self.priors.base_body_share),
+            Tier::Quick | Tier::Ultra => self.priors.repaying_length(self.priors.body_share),
         }
+    }
+}
+
+impl Priors {
+    /// The fewest straight-line bytecodes whose interpretation, less the `share` per mille code
+    /// still takes of it, covers a body's entry (`body_entry_ns`): shorter, no entry repays itself.
+    pub(in crate::vm) fn repaying_length(&self, share: u64) -> usize {
+        let saved = (self.interpreter_ns * (PER_MILLE - share)).max(1);
+        (self.body_entry_ns * PER_MILLE).div_ceil(saved) as usize
     }
 }
 
@@ -374,7 +377,6 @@ const MEASURED: Tiers = Tiers {
         max_lifetimes: 8,
         max_callee_recompiles: 1,
         late_call_calls: 4096,
-        min_instructions: 40,
         max_inlined_instructions: 96,
         compile_poll_interval: 64,
         audit_period: 64,
@@ -697,9 +699,9 @@ pub(in crate::vm) const JS_COMPILED_MAX_CODE_BYTES: usize = 64 * 1024;
 mod tests {
     use super::*;
 
-    /// A stencil body pays for the one entry both tiers' bodies cross in the bytecodes whose saved
-    /// interpretation covers it: more than a Cranelift body needs, which saves more per bytecode
-    /// behind the same entry; a Cranelift body asks `min_instructions`.
+    /// A body pays for the one entry both tiers' bodies cross in the bytecodes whose saved
+    /// interpretation covers it: a stencil body needs more than a Cranelift body, which saves more
+    /// per bytecode behind the same entry.
     #[test]
     fn each_lane_body_tier_has_its_own_amortizing_length() {
         let tiers = TierRows::PROCESS.table();
@@ -708,8 +710,9 @@ mod tests {
         let priors = &tiers.priors;
         let saves = |share: u64, length: usize| length as u64 * priors.interpreter_ns * (PER_MILLE - share) / PER_MILLE;
         assert!(saves(priors.base_body_share, base) >= priors.body_entry_ns && saves(priors.base_body_share, base - 1) < priors.body_entry_ns, "{base}");
-        assert!(saves(priors.body_share, base) >= saves(priors.base_body_share, base), "{base} and {ultra}");
-        assert_eq!([ultra, tiers.amortizing_instructions(Tier::Quick)], [tiers.lane_body.min_instructions; 2]);
+        assert!(saves(priors.body_share, ultra) >= priors.body_entry_ns && saves(priors.body_share, ultra - 1) < priors.body_entry_ns, "{ultra}");
+        assert!(ultra <= base, "{base} and {ultra}");
+        assert_eq!(ultra, tiers.amortizing_instructions(Tier::Quick));
     }
 
     #[test]
