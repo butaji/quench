@@ -10,7 +10,7 @@ script_handler! {
     pub(super) fn row_get_field_getter_refresh<>(cx, r, ip, i, view) {
         let base = unsafe { field_base_in_lane(cx, r, crate::bytecode::FieldBase(i.b)) };
         let Some(value) = base.and_then(|base| unsafe { AccessorCall::of(cx).hold_getter_hint(ip, i, base) }) else {
-            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>);
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>);
             sibling!(get_field_getter_miss::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);

@@ -549,36 +549,36 @@ impl LaneView {
                     };
                 }
                 let returns = [
-                    (return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::Return, returning_code(CONSTANT_KIND, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::Return, returning_code(CONSTANT_KIND, $leaf)) as Handler),
-                    (returning_row_of!(crate::bytecode::Op::Unary, RETURNING_UNARY, NOT_LEAF) as Handler,
-                        returning_row_of!(crate::bytecode::Op::Unary, RETURNING_UNARY, $leaf) as Handler),
-                    (returning_row_of!(crate::bytecode::Op::Binary, RETURNING_BINARY, NOT_LEAF) as Handler,
-                        returning_row_of!(crate::bytecode::Op::Binary, RETURNING_BINARY, $leaf) as Handler),
+                    (return_row!(crate::bytecode::RETURN_ROW, returning_code(RETURN_KIND, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::RETURN_ROW, returning_code(RETURN_KIND, $leaf)) as Handler),
+                    (return_row!(crate::bytecode::RETURN_ROW, returning_code(CONSTANT_KIND, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::RETURN_ROW, returning_code(CONSTANT_KIND, $leaf)) as Handler),
+                    (returning_row_of!(crate::bytecode::UNARY_ROW, RETURNING_UNARY, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::UNARY_ROW, RETURNING_UNARY, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::BINARY_ROW, RETURNING_BINARY, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::BINARY_ROW, RETURNING_BINARY, $leaf) as Handler),
                     (row_returning_field_first::<H, NOT_LEAF>, row_returning_field_first::<H, { $leaf }>),
                     (row_returning_field_miss::<H, NOT_LEAF>, row_returning_field_miss::<H, { $leaf }>),
                     (generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, NOT_LEAF) }>,
                         generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, { $leaf }) }>),
                     (generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, NOT_LEAF) }>,
                         generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, { $leaf }) }>),
-                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD, NOT_LEAF) as Handler,
-                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD, $leaf) as Handler),
-                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_OWN, NOT_LEAF) as Handler,
-                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_OWN, $leaf) as Handler),
-                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF) as Handler,
-                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_POLYMORPHIC, $leaf) as Handler),
-                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_HOLDER, NOT_LEAF) as Handler,
-                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_HOLDER, $leaf) as Handler),
-                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_INHERITED, NOT_LEAF) as Handler,
-                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_INHERITED, $leaf) as Handler),
-                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_NESTED, NOT_LEAF) as Handler,
-                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_NESTED, $leaf) as Handler),
-                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_PRIVATE, NOT_LEAF) as Handler,
-                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_PRIVATE, $leaf) as Handler),
-                    (returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_GETTER, NOT_LEAF) as Handler,
-                        returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_GETTER, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_OWN, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_OWN, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, $leaf) as Handler),
                 ];
                 returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
             }};
@@ -5996,7 +5996,7 @@ script_handler! {
             let private: Handler = single_base_handler(i.b,
                 generated_row::<H, FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_THIS>,
                 generated_row::<H, FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_REGISTER>,
-$1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::GET_PRIVATE_FIELD as u16 }>);
+$1protocol_row::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::GET_PRIVATE_FIELD as u16 }>);
             requicken::<H>(ip, private);
             sibling!(private, r, ip, Carried::script_in(cx, view))
         }
@@ -6115,9 +6115,9 @@ script_handler! {
             _ if string_base && (unsafe { vm(cx) }).string_field_site_cacheable(code, i.imm()) => {
                 Some(single_base_handler(
                     i.b,
-$1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>,
+$1protocol_row::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>,
                     generated_row::<H, FIELD_LEAF_READ, ACC_NONE, STRING_SITE>,
-$1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>,
+$1protocol_row::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>,
                 ))
             }
             _ if string_base => Some(general_handler::<H>(i.b)),
@@ -6134,7 +6134,7 @@ $1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protoc
                 ))
             }
             FieldSiteTier::Nested if nested_row_site(unsafe { vm(cx) }, code, i) => Some(generated_row::<H, FIELD_LEAF_READ, ACC_NONE, NESTED_SITE>),
-            FieldSiteTier::Nested => Some(protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_NESTED as u16 }> as Handler),
+            FieldSiteTier::Nested => Some(protocol_row::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_NESTED as u16 }> as Handler),
             FieldSiteTier::General => Some(general_handler::<H>(i.b)),
             // A getter's own-field hint is the generated read (`GETTER_THIS`, `GETTER_REGISTER`); a
             // local base, which no row names, reads through the getter's activation.
@@ -6142,7 +6142,7 @@ $1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protoc
                 i.b,
                 generated_row::<H, FIELD_LEAF_READ, ACC_NONE, GETTER_THIS>,
                 generated_row::<H, FIELD_LEAF_READ, ACC_NONE, GETTER_REGISTER>,
-$1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>,
+$1protocol_row::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>,
             )),
             FieldSiteTier::Polymorphic if is_single_field_base(i.b) =>
                 Some(generated_row::<H, FIELD_LEAF_READ, ACC_NONE, POLYMORPHIC_SITE> as Handler),
@@ -9437,7 +9437,7 @@ script_handler! {
         let handler: Handler = match entry {
             Some(CallEntry::Environment) => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>(),
             Some(CallEntry::Settles) => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::SETTLES as u16 }>(),
-            Some(CallEntry::Keeps | CallEntry::Gathers) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>,
+            Some(CallEntry::Keeps | CallEntry::Gathers) => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>,
             Some(entry) if entry.leaf_form() != NOT_LEAF => leaf_call_handler::<H>(entry, i),
             Some(_) => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>(),
             None => sibling!(script_call_resolve_miss::<H>, r, ip, Carried::script_in(cx, view)),
@@ -9651,7 +9651,7 @@ fn call_argument_count<const ARGC: u16>(i: &LaneInstruction) -> u16 {
 
 /// The protocol row of a `Call` record that runs the miss body `MISS` (`protocol_misses`).
 const fn call_row<H: Host, const MISS: u16>() -> Handler {
-    protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, MISS> as Handler
+    protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, MISS> as Handler
 }
 
 /// The protocol row of a `Call` record whose argument count is `argc` (`ANY_ARGC` past four),
@@ -11869,11 +11869,11 @@ script_handler! {
             vm.note_site_callee(unsafe { &(*ip).call_link }, super::compiled::CallTarget {
                 callee: super::compiled::CalleeBinding::Identity(callee), function: target.function });
             if i.a & crate::bytecode::RETURN_REGISTER == 0 {
-                requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT as u16 }>);
+                requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT as u16 }>);
                 r.set(i.a, this);
                 next!(cx, r, following(ip), Carried::script_in(cx, view))
             }
-            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT_RETURNED as u16 }>);
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT_RETURNED as u16 }>);
             if let Some(resumed) = complete_activation_in_lane(cx, ip, this) {
                 resume!(cx, resumed)
             }
@@ -11883,7 +11883,7 @@ script_handler! {
         if target.forwards() {
             // The site constructs a forwarding target: later runs enter the keeping
             // construction directly, which moves the record back for any other target.
-            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT_KEEPING as u16 }>);
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT_KEEPING as u16 }>);
             sibling!(script_construct_keeping_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         let built = if target.initializes() {
@@ -11959,7 +11959,7 @@ script_handler! {
     fn planned_construct_full_in_lane<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(this) = planned_construction_in_lane(vm, r.get(i.b), r, i) else {
-            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
             sibling!(script_construct_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         // Allocating the receiver can make a collection due.
@@ -11994,7 +11994,7 @@ script_handler! {
             .then(|| planned_construction_in_lane(vm, r.get(i.b), r, i))
             .flatten();
         let Some(this) = planned else {
-            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
             sibling!(script_construct_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         // Allocating the receiver can make a collection due.
@@ -12188,7 +12188,7 @@ script_handler! {
             }
             Err(Some(next)) => next,
             Err(None) => {
-                requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
+                requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
                 sibling!(script_construct_miss::<H>, r, ip, Carried::script_in(cx, view))
             }
         }
@@ -15111,10 +15111,10 @@ impl LeafRead {
             return Some(Self::Element { base: entry.b, field: FieldHit::of::<H>(entry)?, index: element.c });
         }
         let handler = entry.handler;
-        if handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_NESTED, NOT_LEAF) as *const () {
+        if handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, NOT_LEAF) as *const () {
             return Some(Self::Nested { site: entry.imm() });
         }
-        if handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_PRIVATE, NOT_LEAF) as *const () {
+        if handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, NOT_LEAF) as *const () {
             return Some(Self::Private {
                 base: entry.b,
                 atom: entry.imm(),
@@ -15123,13 +15123,13 @@ impl LeafRead {
                 function: target.function,
             });
         }
-        let kind = if handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF) as *const () {
+        let kind = if handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF) as *const () {
             RETURNING_FIELD_POLYMORPHIC
-        } else if returning_own_row::<H>(handler) || handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_OWN, NOT_LEAF) as *const () {
+        } else if returning_own_row::<H>(handler) || handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_OWN, NOT_LEAF) as *const () {
             RETURNING_FIELD_OWN
-        } else if handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_HOLDER, NOT_LEAF) as *const () {
+        } else if handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, NOT_LEAF) as *const () {
             RETURNING_FIELD_HOLDER
-        } else if handler == returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_INHERITED, NOT_LEAF) as *const () {
+        } else if handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, NOT_LEAF) as *const () {
             RETURNING_FIELD_INHERITED
         } else {
             return None;
@@ -15392,7 +15392,7 @@ fn script_call_memo_handler<H: Host>(shape: u8) -> Handler {
     macro_rules! shapes {
         ($($shape:expr),*) => {
             match shape {
-                $(shape if shape == $shape => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::FRAME_CALL | ($shape as u16) }> as Handler,)*
+                $(shape if shape == $shape => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::FRAME_CALL | ($shape as u16) }> as Handler,)*
                 _ => unreachable!("a memo shape is a leaf step, forwarded or not"),
             }
         };
@@ -15812,7 +15812,7 @@ fn returning_field_first_kind<H: Host, const LEAF: u8>(
     if is_single_field_base(i.b) && !vm.reads_function_info(i.imm()) {
         by_leaf!(LEAF, |L| single_base_handler(i.b, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, L) }>,
             generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, L) }>,
-            returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD, L) as Handler))
+            returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD, L) as Handler))
     } else if field_site_tier_in_lane(vm, code, i) == FieldSiteTier::Nested {
         field_return_row::<H, LEAF>(RETURNING_FIELD_NESTED)
     } else {
@@ -15824,14 +15824,14 @@ fn returning_field_first_kind<H: Host, const LEAF: u8>(
 /// `LEAF`: its RETURN code (`returning_code`), which `returning_miss` completes.
 fn field_return_row<H: Host, const LEAF: u8>(kind: u8) -> Handler {
     by_leaf!(LEAF, |L| match kind {
-        RETURNING_FIELD => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD, L) as Handler,
-        RETURNING_FIELD_OWN => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_OWN, L) as Handler,
-        RETURNING_FIELD_POLYMORPHIC => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_POLYMORPHIC, L) as Handler,
-        RETURNING_FIELD_HOLDER => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_HOLDER, L) as Handler,
-        RETURNING_FIELD_INHERITED => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_INHERITED, L) as Handler,
-        RETURNING_FIELD_NESTED => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_NESTED, L) as Handler,
-        RETURNING_FIELD_PRIVATE => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_PRIVATE, L) as Handler,
-        RETURNING_FIELD_GETTER => returning_row_of!(crate::bytecode::Op::GetField, RETURNING_FIELD_GETTER, L) as Handler,
+        RETURNING_FIELD => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD, L) as Handler,
+        RETURNING_FIELD_OWN => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_OWN, L) as Handler,
+        RETURNING_FIELD_POLYMORPHIC => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, L) as Handler,
+        RETURNING_FIELD_HOLDER => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, L) as Handler,
+        RETURNING_FIELD_INHERITED => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, L) as Handler,
+        RETURNING_FIELD_NESTED => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, L) as Handler,
+        RETURNING_FIELD_PRIVATE => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, L) as Handler,
+        RETURNING_FIELD_GETTER => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, L) as Handler,
         _ => unreachable!("a returning GetField's kind is a field kind"),
     })
 }
@@ -16664,10 +16664,10 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
 /// definition, a method's brand, and the brand checks of a read and of `#x in`.
 const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode {
-        _ if crate::staged::private_field_definition_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::DefinePrivateField as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PRIVATE_FIELD as u16 }> as Handler),
-        _ if crate::staged::private_name_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::MarkPrivateName as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::MARK_PRIVATE_NAME as u16 }> as Handler),
-        _ if crate::staged::private_check_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CheckPrivate as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::CHECK_PRIVATE as u16 }> as Handler),
-        _ if crate::staged::private_in_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::PrivateIn as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::PRIVATE_IN as u16 }> as Handler),
+        _ if crate::staged::private_field_definition_family(opcode) => Some(protocol_row::<H, { crate::bytecode::PRIVATE_FIELD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PRIVATE_FIELD as u16 }> as Handler),
+        _ if crate::staged::private_name_family(opcode) => Some(protocol_row::<H, { crate::bytecode::PRIVATE_NAME_MARK as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::MARK_PRIVATE_NAME as u16 }> as Handler),
+        _ if crate::staged::private_check_family(opcode) => Some(protocol_row::<H, { crate::bytecode::PRIVATE_CHECK as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::CHECK_PRIVATE as u16 }> as Handler),
+        _ if crate::staged::private_in_family(opcode) => Some(protocol_row::<H, { crate::bytecode::PRIVATE_IN as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::PRIVATE_IN as u16 }> as Handler),
         _ => None,
     }
 }
@@ -16682,21 +16682,21 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         _ if crate::staged::field_read_family(opcode) => Some(row_get_field_first::<H>),
         // merge: theirs' `lane_set_object_field_own` / `lane_set_this_field_own` are undefined; HEAD's `field_store_row` serves both receivers.
         _ if opcode.field_store().is_some() => opcode.field_store().map(|store| field_store_row::<H>(store)),
-        _ if crate::staged::property_record_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::DefinePropertyRecord as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PROPERTY_RECORD as u16 }> as Handler),
-        _ if crate::staged::field_definition_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::DefineField as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_FIELD as u16 }> as Handler),
+        _ if crate::staged::property_record_family(opcode) => Some(protocol_row::<H, { crate::bytecode::PROPERTY_RECORD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PROPERTY_RECORD as u16 }> as Handler),
+        _ if crate::staged::field_definition_family(opcode) => Some(protocol_row::<H, { crate::bytecode::FIELD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_FIELD as u16 }> as Handler),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
-        _ if crate::staged::copy_properties_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CopyDataProperties as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::COPY_DATA_PROPERTIES as u16 }> as Handler),
+        _ if crate::staged::copy_properties_family(opcode) => Some(protocol_row::<H, { crate::bytecode::COPY_DATA_PROPERTIES as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::COPY_DATA_PROPERTIES as u16 }> as Handler),
         _ if opcode.steps_in_lane() => Some(general_step_in_lane::<H>),
         _ if crate::staged::element_read_family(opcode) => Some(protocol_row::<H, ELEMENT_READ, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_INDEX as u16 }> as Handler),
         _ if crate::staged::element_write_family(opcode) => Some(protocol_row::<H, ELEMENT_WRITE, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler),
         _ if crate::staged::known_call_family(opcode) => Some(known_call_handler::<H>()),
         _ if crate::staged::call_family(opcode) => Some(script_call_row::<H>(ANY_ARGC)),
-        _ if crate::staged::call_array_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CallArray as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_ARRAY as u16 }> as Handler),
-        _ if crate::staged::call_spread_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CallSpread as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_SPREAD as u16 }> as Handler),
-        _ if crate::staged::delete_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::Delete as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::DELETE as u16 }> as Handler),
-        _ if crate::staged::construction_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>),
-        _ if crate::staged::forwarded_call_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CallForwardingArguments as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::FORWARD_CALL as u16 }>),
-        _ if crate::staged::return_family(opcode) => Some(return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, NOT_LEAF))),
+        _ if crate::staged::call_array_family(opcode) => Some(protocol_row::<H, { crate::bytecode::CALL_ARRAY as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_ARRAY as u16 }> as Handler),
+        _ if crate::staged::call_spread_family(opcode) => Some(protocol_row::<H, { crate::bytecode::CALL_SPREAD as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_SPREAD as u16 }> as Handler),
+        _ if crate::staged::delete_family(opcode) => Some(protocol_row::<H, { crate::bytecode::DELETE_ROW as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::DELETE as u16 }> as Handler),
+        _ if crate::staged::construction_family(opcode) => Some(protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>),
+        _ if crate::staged::forwarded_call_family(opcode) => Some(protocol_row::<H, { crate::bytecode::FORWARDED_CALL as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::FORWARD_CALL as u16 }>),
+        _ if crate::staged::return_family(opcode) => Some(return_row!(crate::bytecode::RETURN_ROW, returning_code(RETURN_KIND, NOT_LEAF))),
         _ if generator_yields::suspend_handler::<H>(opcode).is_some() => generator_yields::suspend_handler::<H>(opcode),
         _ => wasm_gc_handler::<H>(opcode),
     }
@@ -17219,11 +17219,11 @@ const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
 fn returning_handler<H: Host>(kind: u8) -> Handler {
     match kind {
         RETURNING_FIELD => row_returning_field_first::<H, NOT_LEAF>,
-        RETURNING_UNARY => returning_row_of!(crate::bytecode::Op::Unary, RETURNING_UNARY, NOT_LEAF) as Handler,
-        RETURNING_BINARY => returning_row_of!(crate::bytecode::Op::Binary, RETURNING_BINARY, NOT_LEAF) as Handler,
-        RETURNING_OBJECT => returning_row_of!(crate::bytecode::Op::MakeObject2, RETURNING_OBJECT, NOT_LEAF) as Handler,
-        RETURNING_OBJECT_LITERAL => returning_row_of!(crate::bytecode::Op::MakeObjectLiteral, RETURNING_OBJECT_LITERAL, NOT_LEAF) as Handler,
-        _ => returning_row_of!(crate::bytecode::Op::SuperConstArrayObject2, RETURNING_LITERAL, NOT_LEAF) as Handler,
+        RETURNING_UNARY => returning_row_of!(crate::bytecode::UNARY_ROW, RETURNING_UNARY, NOT_LEAF) as Handler,
+        RETURNING_BINARY => returning_row_of!(crate::bytecode::BINARY_ROW, RETURNING_BINARY, NOT_LEAF) as Handler,
+        RETURNING_OBJECT => returning_row_of!(crate::bytecode::OBJECT_PAIR, RETURNING_OBJECT, NOT_LEAF) as Handler,
+        RETURNING_OBJECT_LITERAL => returning_row_of!(crate::bytecode::OBJECT_LITERAL_ROW, RETURNING_OBJECT_LITERAL, NOT_LEAF) as Handler,
+        _ => returning_row_of!(crate::bytecode::SUPER_CONST_ARRAY_OBJECT, RETURNING_LITERAL, NOT_LEAF) as Handler,
     }
 }
 
@@ -17330,11 +17330,11 @@ fn derive_lane_view<'live, H: Host>(
                 tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
                     .and_then(|_| {
                         LaneHandler::producer(match acc {
-                            ACC_NONE => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_NONE, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_NONE as u16 }> as Handler,
-                            ACC_A => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_A, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_A as u16 }> as Handler,
-                            ACC_B => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_B, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_B as u16 }> as Handler,
-                            ACC_C => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_C, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_C as u16 }> as Handler,
-                            _ => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_PAIR, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_PAIR as u16 }> as Handler,
+                            ACC_NONE => protocol_row::<H, { crate::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_NONE, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_NONE as u16 }> as Handler,
+                            ACC_A => protocol_row::<H, { crate::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_A, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_A as u16 }> as Handler,
+                            ACC_B => protocol_row::<H, { crate::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_B, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_B as u16 }> as Handler,
+                            ACC_C => protocol_row::<H, { crate::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_C, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_C as u16 }> as Handler,
+                            _ => protocol_row::<H, { crate::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_PAIR, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_PAIR as u16 }> as Handler,
                         })
                     })
             } else if admits_row(op) && op.reads_arguments()
@@ -17361,10 +17361,10 @@ fn derive_lane_view<'live, H: Host>(
             } else if crate::staged::calls(op) && iteration_step_in_lane(&decoded, pc) {
                 Some(LaneHandler {
                     handler: match for_of_step_in_lane(&decoded, pc) {
-                        Some(ForOfTest::Emitted) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::READS_EMITTED as u16 }> as Handler,
-                        Some(ForOfTest::Threaded) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::READS_THREADED as u16 }> as Handler,
-                        None if binding_step_in_lane(&decoded, pc) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::BINDING as u16 }> as Handler,
-                        None => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::STEP as u16 }> as Handler,
+                        Some(ForOfTest::Emitted) => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::READS_EMITTED as u16 }> as Handler,
+                        Some(ForOfTest::Threaded) => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::READS_THREADED as u16 }> as Handler,
+                        None if binding_step_in_lane(&decoded, pc) => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::BINDING as u16 }> as Handler,
+                        None => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::STEP as u16 }> as Handler,
                     },
                     produces: false,
                 })
@@ -17852,7 +17852,7 @@ fn install_loop_sites<'live, H: Host>(
 /// its generated row or jump row gave it: operand kinds and operators are the rows' own decode
 /// (`Binary`, `JumpBinaryFalse`, `Unary`), not handler choices made here.
 fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction]) {
-    let returning_binary = returning_row_of!(crate::bytecode::Op::Binary, RETURNING_BINARY, NOT_LEAF) as *const ();
+    let returning_binary = returning_row_of!(crate::bytecode::BINARY_ROW, RETURNING_BINARY, NOT_LEAF) as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
         if records[pc].handler == returning_binary {
             specialize_returning_operator::<H>(instruction, constants, &mut records[pc]);
@@ -17865,10 +17865,10 @@ fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants
 /// fused record's general return continues there.
 fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
     let load = generated_row::<H, { crate::staged::LOAD_CONST_ROW }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
-    let ret = return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, NOT_LEAF)) as *const ();
+    let ret = return_row!(crate::bytecode::RETURN_ROW, returning_code(RETURN_KIND, NOT_LEAF)) as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == load && records[pc + 1].handler == ret && records[pc + 1].a == records[pc].a {
-            records[pc].handler = return_row!(crate::bytecode::Op::Return, returning_code(CONSTANT_KIND, NOT_LEAF)) as *const ();
+            records[pc].handler = return_row!(crate::bytecode::RETURN_ROW, returning_code(CONSTANT_KIND, NOT_LEAF)) as *const ();
         }
     }
 }

@@ -825,6 +825,48 @@ macro_rules! opcodes {
     (@traits $($trait:ident)*) => { Traits::NONE $(.union(Traits::$trait))* };
 }
 
+/// The catalog's representative opcode of `$class`: the first entry whose class is `$class`. Each
+/// class below names one row family, so tiers install and compare rows through these constants
+/// and never spell an opcode.
+macro_rules! representative {
+    ($($name:ident => $class:ident),+ $(,)?) => {$(
+        pub(crate) const $name: Op = {
+            let mut index = 0;
+            loop {
+                match Op::from_index(index) {
+                    Some(op) if matches!(op.class(), Class::$class) => break op,
+                    Some(_) => index += 1,
+                    None => panic!("the catalog names a row of this class"),
+                }
+            }
+        };
+    )+};
+}
+
+representative! {
+    FIELD_READ => GetField,
+    CALL_ROW => Call,
+    CONSTRUCT_ROW => Construct,
+    RETURN_ROW => Return,
+    UNARY_ROW => Unary,
+    BINARY_ROW => Binary,
+    WASM_F64_UNARY_ROW => WasmFloatUnary64,
+    PRIVATE_FIELD_DEFINE => DefinePrivateField,
+    PRIVATE_NAME_MARK => MarkPrivateName,
+    PRIVATE_CHECK => CheckPrivate,
+    PRIVATE_IN => PrivateIn,
+    PROPERTY_RECORD_DEFINE => DefinePropertyRecord,
+    FIELD_DEFINE => DefineField,
+    COPY_DATA_PROPERTIES => CopyDataProperties,
+    CALL_ARRAY => CallArray,
+    CALL_SPREAD => CallSpread,
+    DELETE_ROW => Delete,
+    FORWARDED_CALL => CallForwardingArguments,
+    OBJECT_PAIR => MakeObject2,
+    OBJECT_LITERAL_ROW => MakeObjectLiteral,
+    SUPER_CONST_ARRAY_OBJECT => SuperConstArrayObject2,
+}
+
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
 const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
 const CALL_EFFECT: Effect = READ_THROW.union(Effect::WRITES_HEAP);

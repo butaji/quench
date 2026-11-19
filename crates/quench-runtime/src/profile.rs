@@ -155,7 +155,7 @@ fn object_literal_site(
     let (op, site) = if encoded.is_wide() {
         let instruction = function.widened(encoded);
         match instruction.op() {
-            Op::SuperConstArrayObject2 => (instruction.op(), instruction.superinstruction_index()),
+            crate::bytecode::SUPER_CONST_ARRAY_OBJECT => (instruction.op(), instruction.superinstruction_index()),
             op if op.traits().has(crate::bytecode::Traits::OBJECT_LITERAL) => {
                 (op, instruction.object_site_index())
             }
@@ -163,12 +163,12 @@ fn object_literal_site(
         }
     } else {
         match encoded.op() {
-            Op::SuperConstArrayObject2 => (encoded.op(), encoded.superinstruction_index()),
+            crate::bytecode::SUPER_CONST_ARRAY_OBJECT => (encoded.op(), encoded.superinstruction_index()),
             op if op.traits().has(crate::bytecode::Traits::OBJECT_LITERAL) => (op, encoded.object_site_index()),
             _ => return None,
         }
     };
-    let object = (op == Op::SuperConstArrayObject2).then(|| program.superinstructions[site].code).map(|[.., object]| object);
+    let object = (op == crate::bytecode::SUPER_CONST_ARRAY_OBJECT).then(|| program.superinstructions[site].code).map(|[.., object]| object);
     let site_op = object.map_or(op, |instruction| instruction.op());
     let site = object.map_or(site, |instruction| instruction.object_site_index());
     Some((op, site_op, site))
