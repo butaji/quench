@@ -1352,10 +1352,7 @@ impl Heap {
             None => ArrayElements::from_parts(parts),
         };
         let object = ArrayObject::fresh(prototype, elements);
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Array { object });
-        }
-        self.alloc_array_of(object, prototype)
+        self.alloc_slotless_array_of(object, prototype)
     }
 
     /// The allocation ledger's charge for one cell owning `payload` bytes beyond its slot, of

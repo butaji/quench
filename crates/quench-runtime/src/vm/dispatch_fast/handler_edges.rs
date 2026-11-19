@@ -81,7 +81,7 @@ script_handler! {
     /// `throw` (the catalog's raising record, `Op::raises`): the exception of the thrown value,
     /// made as the general step makes it, raised at this record, where a handler of the running
     /// function or of a plain caller takes it in the lane (`catch_raised`). Any other raise
-    /// leaves as a body's does (`lane_raised_exit`): no frame of the activations is made before
+    /// leaves as a body's does (`raised_exit_in_lane`): no frame of the activations is made before
     /// the raise needs one.
     #[inline(never)]
     pub(super) fn throw_record<>(cx, r, ip, i, view) {
@@ -96,15 +96,15 @@ script_handler! {
 /// The raise in `Vm::lane_raised`, raised at the record `ip` of the running function: recorded
 /// there (`Vm::lane_raise_site`), then taken by a handler of the running function or of a plain
 /// caller in the lane (`catch_raised`), else left as a body's raise leaves
-/// (`lane_raised_exit`), from wherever unwinding stopped.
+/// (`raised_exit_in_lane`), from wherever unwinding stopped.
 pub(super) fn unwind_raised<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Ip {
     let vm = unsafe { vm(cx) };
     // SAFETY: the record lies in the running view.
     let pc = unsafe { ip.offset_from((*cx).base) } as u32;
-    vm.lane_raise_site = super::super::compiled::raise_site(lane_running_function(cx), pc);
+    vm.lane_raise_site = super::super::compiled::raise_site(running_function_in_lane(cx), pc);
     match catch_raised(cx, ip) {
         Unwound::Caught(target) => target,
-        Unwound::Uncaught(record) => lane_raised_exit(cx, record),
+        Unwound::Uncaught(record) => raised_exit_in_lane(cx, record),
     }
 }
 
@@ -194,7 +194,7 @@ pub(super) fn unwinds_in_lane(error: &JsError) -> bool {
 /// The handler of the running function covering `record`, entered for the thrown `value` as the
 /// general loop enters it (`Vm::exception_handler_target`): the `with` scopes past it unwound, its
 /// binding stored, the raise taken, and the accumulator its first record reads carried
-/// (`lane_carried_at`). `Declined`, before any effect, where the running function is no script
+/// (`carried_at_in_lane`). `Declined`, before any effect, where the running function is no script
 /// activation's, or its binding is a local the activation does not keep.
 fn enter_covering<H: Host>(cx: *mut LaneContext<H>, record: Ip, value: Value) -> Covered {
     let vm = unsafe { vm(cx) };
@@ -208,7 +208,7 @@ fn enter_covering<H: Host>(cx: *mut LaneContext<H>, record: Ip, value: Value) ->
         return Covered::Not;
     };
     let local = matches!(handler.slot, Some(ThrownValueSlot::Local(_)));
-    let Some(view) = vm.lane_view_any(unsafe { (*cx).program }, function).filter(|_| keeps_locals || !local) else {
+    let Some(view) = vm.view_any_in_lane(unsafe { (*cx).program }, function).filter(|_| keeps_locals || !local) else {
         return Covered::Declined;
     };
     vm.lane_completion.take_raised();
@@ -222,7 +222,7 @@ fn enter_covering<H: Host>(cx: *mut LaneContext<H>, record: Ip, value: Value) ->
     }
     // SAFETY: the running lane's context; a handler's target is a record of the running view.
     unsafe {
-        (*cx).resumed_acc = lane_carried_at(cx, view, (*cx).registers, handler.target).acc;
+        (*cx).resumed_acc = carried_at_in_lane(cx, view, (*cx).registers, handler.target).acc;
         Covered::By((*cx).base.add(handler.target as usize))
     }
 }
@@ -230,7 +230,7 @@ fn enter_covering<H: Host>(cx: *mut LaneContext<H>, record: Ip, value: Value) ->
 /// Pops the innermost activation for a raise no handler of its function covers, where its frame
 /// would unwind with nothing to finish (`Vm::unwind_general_loop`): a plain header with no side
 /// record, a plain completion (no trampoline's) and no loop iterator or `with` object of its own.
-/// Its caller is restored (`lane_restore_caller`), and its call record is where the raise goes on;
+/// Its caller is restored (`restore_caller_in_lane`), and its call record is where the raise goes on;
 /// `None` changes nothing.
 fn pop_unwound<H: Host>(cx: *mut LaneContext<H>) -> Option<Ip> {
     let vm = unsafe { vm(cx) };
@@ -247,6 +247,6 @@ fn pop_unwound<H: Host>(cx: *mut LaneContext<H>) -> Option<Ip> {
         return None;
     }
     let popped = vm.lane_stack.pop_activation()?;
-    lane_restore_caller(cx, &popped);
+    restore_caller_in_lane(cx, &popped);
     Some(popped.call())
 }

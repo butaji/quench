@@ -32,7 +32,7 @@ fn super_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &L
     let (calls, constructs) = unsafe { ((*cx).script_calls, (*cx).script_constructs) };
     if vm.lane_stack.has_frames()
         || !crate::staged::call_construct::concrete_admits_construct(calls, constructs, vm.construct_target.is_some())
-        || returns && !lane_returning_call_admitted(cx)
+        || returns && !returning_call_admitted(cx)
     {
         return exit(ip);
     }
@@ -131,7 +131,7 @@ fn enter_pushed_constructor<H: Host>(cx: *mut LaneContext<H>, call: PendingGener
     if let Some(return_pc) = vm.js_tier_frame_entry(code, callee_frame) {
         vm.frames[callee_frame].pc = return_pc;
     }
-    lane_enter_script_frame(cx, callee_frame).into_loop()
+    enter_script_frame_in_lane(cx, callee_frame).into_loop()
 }
 
 /// Make `program` the lane's and the general loop's executing one for a constructor of it the
@@ -145,7 +145,7 @@ fn enter_callee_program<H: Host>(cx: *mut LaneContext<H>, program: ProgramId) ->
         retained: std::mem::replace(&mut executing.retained, vm.programs.get(program)),
     };
     executing.id = program;
-    lane_enter_program(cx, program);
+    enter_program_in_lane(cx, program);
     saved
 }
 
@@ -155,7 +155,7 @@ fn leave_callee_program<H: Host>(cx: *mut LaneContext<H>, saved: super::super::d
     let executing = unsafe { &mut *(*cx).executing };
     executing.id = saved.id;
     executing.retained = saved.retained;
-    lane_enter_program(cx, saved.id);
+    enter_program_in_lane(cx, saved.id);
 }
 
 script_handler! {

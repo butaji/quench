@@ -40,7 +40,8 @@ fn strict_compared(instruction: &WideInstruction) -> Vec<Register> {
     match crate::vm::compiled::performed(instruction) {
         Some(Operation::CompareJump { comparison: Comparison::Equality { strict: true, .. }, left, right, .. }) =>
             [left, right].iter().filter_map(|operand| operand.register_index()).collect(),
-        Some(Operation::Equality { left, right, strict: true, .. }) => vec![left, right],
+        Some(Operation::Equality { left, right, strict: true, .. }) =>
+            [left, right].iter().filter_map(|operand| operand.register_index()).collect(),
         _ => Vec::new(),
     }
 }

@@ -231,7 +231,7 @@ pub(super) fn enter_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip
     }
     // An idle body counts its dispatches down to its plan: until then, no view or plan is touched.
     if matches!(*site.body.borrow(), LoopBody::Idle { .. }) && site.body_waits() { return None; }
-    lane_loop_body::<H>(cx, r, ip, site)
+    run_loop_body::<H>(cx, r, ip, site)
 }
 
 /// Runs the lane body planned to start at `site`'s header, on the activation's registers

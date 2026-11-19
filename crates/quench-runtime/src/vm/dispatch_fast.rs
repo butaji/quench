@@ -8801,7 +8801,7 @@ unsafe fn region_run_in_lane<H: Host>(
     if !region_admits_in_lane(cx, code) {
         // A run the lane lacks room for grows it and leaves at the loop's header, so the next entry admits.
         let grown = frame_holds_window_in_lane(cx, &code.calls) && room_prepare_in_lane(cx, code.calls.recovery_space());
-        return RegionRun::own(if grown { LaneExit::At(region.header as usize) } else { LaneExit::Entry });
+        return Ok(super::compiled::RegionRun::own(if grown { super::compiled::LaneExit::At(region.header as usize) } else { super::compiled::LaneExit::Entry }));
     }
     // SAFETY: the caller's contract.
     unsafe { code.run::<H>(r.0, entry, region, machine, program, function, (*cx).frame(), interrupt, (cx as usize, direct_calls_in_lane(cx)), from) }
@@ -8812,7 +8812,7 @@ unsafe fn region_run_in_lane<H: Host>(
 /// (`room_admits_in_lane`), and the activation keeps its locals apart from the window past its
 /// registers, which the registers of those callees occupy (`CompiledOsrRegion::run_lane`).
 #[inline(always)]
-fn region_admits_in_lane<H: Host>(cx: *mut LaneContext<H>, code: &super::compiled::CompiledOsrRegion) -> Result<(), RegionDecline> {
+fn region_admits_in_lane<H: Host>(cx: *mut LaneContext<H>, code: &super::compiled::CompiledOsrRegion) -> bool {
     let room = code.calls.recovery_space();
     room.activations == 0 || (room_admits_in_lane(cx, room, NO_PENDING_ACTIVATIONS) && frame_holds_window_in_lane(cx, &code.calls))
 }
@@ -17864,7 +17864,7 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         _ if opcode.binds_this() => Some(derived_frames::bind_this_in_frame::<H>),
         _ if crate::staged::field_read_family(opcode) => Some(row_get_field_first::<H>),
         // merge: theirs' `lane_set_object_field_own` / `lane_set_this_field_own` are undefined; HEAD's `field_store_row` serves both receivers.
-        _ if opcode.field_store().is_some() => opcode.field_store().map(|store| field_store_row::<H>(store)),
+        _ if opcode.field_store().is_some() => match opcode.field_store() { Some(store) => Some(field_store_row::<H>(store)), None => None },
         _ if crate::staged::property_record_family(opcode) => Some(protocol_row::<H, { crate::bytecode::PROPERTY_RECORD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PROPERTY_RECORD as u16 }> as Handler),
         _ if crate::staged::field_definition_family(opcode) => Some(protocol_row::<H, { crate::bytecode::FIELD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_FIELD as u16 }> as Handler),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
@@ -19818,9 +19818,6 @@ impl<H: Host> Vm<H> {
             script_calls: inline_calls
                 && code.kind != crate::bytecode::ProgramKind::Wasm
                 && *frame + 1 == self.frames.len(),
-            tiers_run: self.tier_may_run(crate::jit_mode::Tier::ANY),
-            // `script_calls` starts on only where `inline_calls` is.
-            returns_script_frame: false,
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {
@@ -20815,7 +20812,7 @@ mod call_site_history_tests;
 #[cfg(test)]
 mod update_fusion_tests;
 mod on_demand_metadata;
-use on_demand_metadata::{completes_return, record_late_call};
+use on_demand_metadata::{lane_completes_return, record_late_call};
 
 #[cfg(test)]
 mod numeric_pair_tests;

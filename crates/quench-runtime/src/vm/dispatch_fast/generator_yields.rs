@@ -176,20 +176,20 @@ fn suspend_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, (pc, destina
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let activation = *vm.lane_stack.activations().last().expect("a settling activation runs");
+    let top = vm.lane_stack.top_frame().expect("a settling activation runs");
+    let record = top.record();
     // The converted value may be a fresh promise, which the safepoints after the run collect.
     note_allocation(vm);
-    let frame = settling_frame(vm, code, &activation, (r, pc));
-    let root = vm.lane_stack.settling.pop().expect("each settling activation has its entry");
-    let promise = vm.settling_promise(root);
+    let frame = settling_frame(vm, code, &record, (r, pc));
+    let promise = vm.settling_promise(top.payload().settles());
     let continuation = vm.suspend_activation(frame, super::super::activation::Completion::Await(value), Some(destination), promise);
-    vm.lane_stack.pop_activation();
+    let activation = vm.lane_stack.pop_activation().expect("a settling activation runs");
     let (memory, _) = restore_caller_in_lane(cx, &activation);
     match vm.enqueue_async_resume(code, crate::heap::AwaitKind::function(continuation), promise, value) {
         Ok(()) => resume_after_call_in_lane(&activation, memory, promise),
         Err(error) => {
             vm.lane_completion.raise(error);
-            Resumed::Exit(exit(activation.call))
+            Resumed::Exit(exit(activation.call()))
         }
     }
 }
@@ -260,8 +260,8 @@ unsafe fn environment_passed<'a>(code: &ResidualProgram, activation: &'a Activat
 
 /// The environment activation (`activate_environment_in_lane`) of settling `target`, called at
 /// `ip` with registers `r`, passing `passed` with receiver `this`: its return settles the call's
-/// promise, whose root `LaneStack::settling` holds last (`Completion::SettlesPromise`); an
-/// activation refused releases it, before any effect.
+/// promise, whose root its side record keeps (`Completion::SettlesPromise`, `SidePayload::Settles`).
+/// An activation refused leaves the caller to release it, before any effect.
 pub(super) fn activate_settling_environment<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
@@ -272,13 +272,10 @@ pub(super) fn activate_settling_environment<H: Host>(
 ) -> Result<(Registers, Ip), Ip> {
     let entered = activate_environment_in_lane(cx, r, ip, target, passed, (this, false));
     let vm = unsafe { vm(cx) };
+    // The caller attaches the promise's root to the activation (`SidePayload::Settles`), and
+    // releases it where the activation is refused.
     if entered.is_ok() {
-        let activation = vm.lane_stack.activations_mut().last_mut().expect("the activation was pushed");
-        if let ActivationKind::Script(script) = &mut activation.kind {
-            script.completion = Completion::SettlesPromise;
-        }
-    } else if let Some(root) = vm.lane_stack.settling.pop().flatten() {
-        vm.heap.release_root(root);
+        vm.lane_stack.recomplete_top(Completion::SettlesPromise);
     }
     entered
 }
