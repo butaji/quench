@@ -10445,21 +10445,6 @@ fn lane_loop_run<H: Host>(
     if matches!(exit, LaneExit::Terminated) {
         return LoopContinuation::Safepoint;
     }
-    // A run that left at its header before any iteration missed an entry contract: the typed
-    // entry guards at the header, the entry bounds, the call budget or the fault guard. That is
-    // a leave at the header, fed back as one (`left_at`), so the next compile widens the facts
-    // there and drops the contract that failed; the miss pays for no iteration and runs none.
-    if !nested && entry.backedge_count() == 0 && matches!(exit, LaneExit::At(pc) if pc == region.header as usize) {
-        if site.diagnostics {
-            site.entry_guard_misses.set(site.entry_guard_misses.get().saturating_add(1));
-        }
-        {
-            let mut tier = site.tier.borrow_mut();
-            tier.left_at(site.tiers, region.header as usize, false);
-            tier.missed_entry(site.tiers);
-        }
-        return site.declined(RegionDecline::EntryContract);
-    }
     // A run pays for its entry with the iterations it completed, wherever it leaves.
     site.note_run(entry.backedge_count());
     if nested {
