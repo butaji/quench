@@ -24,7 +24,7 @@ pub(super) struct Add {
 }
 
 /// An object register's frame offset travels in `ADD_OBJECT_BITS` bits of hole 2.
-const _: () = assert!((Register::MAX as u64) * SLOT < 1 << numeric::library::ADD_OBJECT_BITS);
+const _: () = assert!((Register::MAX as u64) * SLOT < 1 << numeric::site_bits::ADD_OBJECT_BITS);
 
 impl Add {
     /// The heap row that runs it.
@@ -38,9 +38,9 @@ impl Add {
     }
 
     /// The row's holes: the before and after layouts, the value operand's frame offset, and the slot
-    /// with the prototype link and the object register's frame offset (`library::ADD_*`).
+    /// with the prototype link and the object register's frame offset (`numeric::site_bits::ADD_*`).
     pub(super) fn holes(self, object: u64, value: u64) -> [u64; HOLES] {
-        use numeric::library::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
+        use numeric::site_bits::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
         let transition = self.site.transition;
         let [before, after] = transition.layouts.map(u64::from);
         let layouts = before | after << ADD_AFTER_AT;
@@ -107,7 +107,7 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, slow: Option<Pla
 mod tests {
     use super::*;
     use crate::staged::add_plan::Transition;
-    use numeric::library::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
+    use numeric::site_bits::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
 
     fn add(link: Option<u32>) -> Add {
         Add { site: AddSite { transition: Transition { before: 5, after: 9, slot: 2, layouts: [5, 9] }, link }, form: Form::Arena, this: false }
@@ -118,8 +118,8 @@ mod tests {
     fn the_holes_pack_the_transition_the_row_unpacks() {
         let [shapes, value, site, ..] = add(Some(0xABC)).holes(24, 16);
         assert_eq!((shapes & u64::from(u32::MAX), shapes >> ADD_AFTER_AT, value), (5, 9, 16));
-        let slot_mask = (1 << numeric::library::ADD_SLOT_BITS) - 1;
-        let link_mask = (1 << numeric::library::ADD_LINK_BITS) - 1;
+        let slot_mask = (1 << numeric::site_bits::ADD_SLOT_BITS) - 1;
+        let link_mask = (1 << numeric::site_bits::ADD_LINK_BITS) - 1;
         assert_eq!((site & slot_mask, (site >> ADD_LINK_AT) & link_mask, site >> ADD_OBJECT_AT), (2, 0xABC, 24));
     }
 

@@ -44,11 +44,6 @@ pub const CONVERT_COUNT: u32 = 33;
 pub const CONVERT_NEEDS_CONSTANTS: [u32; 17] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 26];
 pub const FLOAT_BINARY_NEEDS_CONSTANTS: [u32; 1] = [6];
 
-/// The frame's header words before the registers: the result pointer, the memory base and its
-/// length (the call row reloads the pins from them).
-#[allow(dead_code)] // The stitcher reads it; `build.rs` includes this file too.
-pub const FRAME_HEADER_WORDS: u64 = 3;
-
 /// The value types of an access.
 pub const T_I32: u8 = 0;
 pub const T_I64: u8 = 1;

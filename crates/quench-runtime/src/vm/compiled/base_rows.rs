@@ -203,7 +203,7 @@ pub(super) enum Heap {
     Append,
     /// The property add of a `DefineField` or an adding `SetField` (`staged::add::site_add`): the value
     /// operand (hole 1) joins the object register (its frame offset in hole 2) or, with `this`, the
-    /// activation's receiver, by the transition holes 0 and 2 carry (`library::ADD_AFTER_AT`,
+    /// activation's receiver, by the transition holes 0 and 2 carry (`numeric::site_bits::ADD_AFTER_AT`,
     /// `ADD_OBJECT_AT`), where the receiver holds the before-shape in `form`'s storage and, for the
     /// row's `entry` variant, the prototype link hole 2 names. A hit continues at TAKEN; a miss leaves
     /// into the helper step after the row, or the leave a guarded row makes.
@@ -213,8 +213,8 @@ pub(super) enum Heap {
     /// leaves into the helper step after it, which takes any other step and the exhausted one's jump.
     ForIn,
     /// The fast arm of `SetFunctionName` (`staged::naming::site_name`): the function in the frame slot
-    /// whose offset hole 2 carries (`library::NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot
-    /// hole 2 names, moving between the shapes of hole 0 (`library::ADD_AFTER_AT`), where it holds the empty
+    /// whose offset hole 2 carries (`numeric::site_bits::NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot
+    /// hole 2 names, moving between the shapes of hole 0 (`numeric::site_bits::ADD_AFTER_AT`), where it holds the empty
     /// name in `form`'s storage. A hit continues at TAKEN; a miss leaves into the helper step after the row.
     Name { form: Form },
     /// A staged row of the `library::STAGED_FIRST..=STAGED_LAST` run (`staged_rows.rs`), by its code: a fast arm over the

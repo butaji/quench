@@ -41,7 +41,7 @@
 //! the interpreter runs.
 
 use crate::layout::call_record::{helper_outcome, CallRecord, DirectHole, HelperHole, LaneStatus, Outcome, CALLEE_EXIT, PLACED_ARGUMENTS, REGISTER_BYTES};
-use crate::codes::{LAST_DOUBLE_PIN, LAST_INT_PIN, MEM, PIN, PINF};
+use crate::codes::{DOUBLE_PINS, LAST_INT_PIN, MEM, PIN, PINF};
 use crate::heap_rows::{payload, set_context_word, word_at};
 use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, CONTEXT_BODY, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::places::Places;
@@ -59,6 +59,8 @@ unsafe extern "C" {
     static HOLE_EXIT1: u8;
 }
 
+/// The last double register (xmm7, d7) a value may name: the double pins follow `PINF`.
+const LAST_DOUBLE_PIN: u8 = PINF + DOUBLE_PINS - 1;
 /// Shift from a word count to bytes.
 const WORD_SHIFT: u32 = REGISTER_BYTES.trailing_zeros();
 

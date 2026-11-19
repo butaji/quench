@@ -1218,6 +1218,10 @@ pub(super) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
     let mut leaders = CompoundBitSet::with_capacity(instructions.len());
     if !instructions.is_empty() { leaders.insert(0); }
     for (pc, instruction) in instructions.iter().enumerate() {
+        if instruction.op().control_flow_layout() == ControlFlowLayout::BranchTable {
+            // Every entry of a branch table is a leader: its `Jump` rows start blocks.
+            for target in successors(pc, *instruction).into_iter().filter(|t| *t < instructions.len()) { leaders.insert(target); }
+        }
         if instruction.op().control_flow_layout().jumps() {
             if let Some(target) = usize::try_from(instruction.jump_target()).ok().filter(|t| *t < instructions.len()) {
                 leaders.insert(target);
@@ -1433,9 +1437,14 @@ struct LoopField {
     store_ranges: smallvec::SmallVec<[Option<IntRange>; INLINE_FIELD_BINDINGS]>,
 }
 
-fn successors(pc: usize, instruction: WideInstruction) -> [Option<usize>; 2] {
+/// The successors of `instruction` at `pc`: a branch table's entries, else its fall-through and jump target.
+fn successors(pc: usize, instruction: WideInstruction) -> smallvec::SmallVec<[usize; 2]> {
     let layout = instruction.op().control_flow_layout();
+    if layout == ControlFlowLayout::BranchTable {
+        return crate::bytecode::branch_table_entries(pc, instruction).collect();
+    }
     [layout.falls_through().then_some(pc + 1), layout.jumps().then(|| instruction.jump_target() as usize)]
+        .into_iter().flatten().collect()
 }
 
 /// Forward must-alias analysis through inline argument copies and branch joins.
@@ -1446,7 +1455,7 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
     let mut fields: Vec<LoopField> = Vec::new();
     for &(header, back) in loops {
         if loops.iter().any(|&(other, end)| (other, end) != (header, back) && other <= back && header <= end)
-            || (header..=back).any(|pc| successors(pc, unit.instructions[pc]).into_iter().flatten()
+            || (header..=back).any(|pc| successors(pc, unit.instructions[pc]).into_iter()
                 .any(|target| target <= pc && (pc, target) != (back, header)))
             || unit.markers.iter().zip(&unit.frames).any(|(marker, frame)|
                 (header..=back).contains(marker) && frame.alternative.is_some()) { continue; }
@@ -1492,8 +1501,7 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
             let copied = (matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. }))).then(|| aliases[usize::from(instruction.register_b())]).flatten();
             for register in writes(instruction) { aliases[usize::from(register)] = None; }
             if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) { aliases[usize::from(instruction.result_register())] = copied; }
-            let targets = successors(pc, instruction).map(|target| target.filter(|target| *target > pc && *target <= back));
-            let mut targets = targets.into_iter().flatten().peekable();
+            let mut targets = successors(pc, instruction).into_iter().filter(|target| *target > pc && *target <= back).peekable();
             while let Some(target) = targets.next() {
                 // Linear control transfers ownership of its flat state; only a
                 // branch needs a second copy for the second successor.
@@ -2816,6 +2824,8 @@ impl Lowering<'_, '_> {
             _ if plain && instruction.op().class().eq(Class::ArgumentGet) && self.own_arguments_read(pc, instruction) =>
                 self.arguments_get(state, pc32, instruction),
             _ if plain && self.is_jump(instruction) => return self.jump(state, pc, instruction),
+            _ if plain && instruction.op().control_flow_layout() == ControlFlowLayout::BranchTable => return self.branch_table(state, pc, instruction),
+            _ if plain && matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IntCase { .. }))) => self.int_case_index(state, pc, instruction),
             _ if plain && matches!(super::decoded(instruction), Some(crate::staged::Operation::JumpIf { .. })) => {
                 let target = instruction.jump_target() as usize;
                 let exit = self.guard_exit(state, pc32);

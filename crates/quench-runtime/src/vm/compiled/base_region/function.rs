@@ -19,7 +19,6 @@ use super::call_plan::{CallForm, CallShape, DirectFacts};
 use super::callees::{chains, Callees};
 use super::super::LaneHelpers;
 use crate::bytecode::Function;
-use crate::vm::dispatch_fast::operand_feedback::OperandClass;
 use crate::heap::GlobalFact;
 use quench_bjit::call_record::CallRecord;
 use quench_bjit::{padded_holes, HOLES};
@@ -306,12 +305,14 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
         uses_this: crate::bytecode::activation_reads_this(spec.known.program, function) })
 }
 
-/// Admits a packed helper row only where its site's operand feedback is Number-only (`OperandClass` below `Any`):
-/// the direct arm declines any other operand, so a site that met one would run the general step on every
-/// execution. An inlined row has no site of its own, and is not admitted.
+/// Admits a packed helper row only where its site's feedback admits its direct arm (`family_helpers::admits`):
+/// a binary site met Number operands only, an element site met a dense or typed element. Another site would
+/// run the general step on every execution. An inlined row has no site of its own, and is not admitted.
 fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>]) {
     for (row, site) in decoded.iter_mut().zip(kinds) {
-        if row.packed.is_some() && !site.is_some_and(|site| site.class() != OperandClass::Any) {
+        if let Some(words) = row.packed
+            && !crate::vm::dispatch_fast::family_helpers::admits(words, *site)
+        {
             row.packed = None;
         }
     }

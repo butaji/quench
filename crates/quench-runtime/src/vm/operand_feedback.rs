@@ -45,6 +45,15 @@ impl OperandKinds {
     pub(crate) const OTHER: Self = Self(1 << 4);
     /// Two int32 operands whose int32 step declined: the result left the int32 range.
     pub(crate) const WIDENED: Self = Self(1 << 5);
+
+    /// A element access (`GetIndex`, `SetIndex`) met a present dense element of an array.
+    pub(crate) const DENSE: Self = Self(1 << 6);
+
+    /// A element read met a number of a non-BigInt typed array.
+    pub(crate) const TYPED: Self = Self(1 << 7);
+
+    /// The element kinds: the bits of an element site (`DENSE`, `TYPED`), never of an arithmetic one.
+    const ELEMENTS: Self = Self(Self::DENSE.0 | Self::TYPED.0);
     /// The kinds past Numbers.
     const BEYOND_NUMBER: Self = Self(Self::STRING.0 | Self::BIGINT.0 | Self::OTHER.0);
     /// The kinds that make a Number site's int32 step fail.
@@ -80,6 +89,11 @@ impl OperandKinds {
 
     pub(crate) const fn has_string(self) -> bool {
         self.contains(Self::STRING)
+    }
+
+    /// Whether an element site met a dense or typed element, so its direct arm (`family_helpers`) pays off.
+    pub(crate) const fn element_admitted(self) -> bool {
+        self.intersects(Self::ELEMENTS)
     }
 
     /// The kind of one operand: int32 and double by their tags, a string or record by its handle's
@@ -123,7 +137,7 @@ impl OperandKinds {
 /// Whether an instruction's record has a feedback byte: the arithmetic and comparison
 /// instructions whose lane handlers quicken on int32 operands.
 pub(super) fn has_operand_feedback(op: Op) -> bool {
-    op.is_binary_arithmetic() || op.compares_and_jumps()
+    op.is_binary_arithmetic() || op.compares_and_jumps() || matches!(op, Op::GetIndex | Op::SetIndex)
 }
 
 /// The feedback byte of the record at `ip` of the view whose first record is `base`.
@@ -290,7 +304,34 @@ impl LaneView {
     }
 }
 
+impl LaneView {
+    /// Adds `kind` (`DENSE`, `TYPED`) to the feedback byte of the element record at `pc`, where the view holds
+    /// feedback bytes; a byte already holding the bit is not written.
+    pub(crate) fn note_element(&self, pc: usize, kind: OperandKinds) {
+        if !self.records.has_feedback() || pc >= self.records.len() {
+            return;
+        }
+        let base = self.records.base();
+        // SAFETY: `pc` names a record of this view, which holds feedback bytes.
+        let cell = unsafe { feedback_cell(base, base.add(pc)) };
+        if cell.get() & kind.0 == 0 {
+            cell.set(cell.get() | kind.0);
+        }
+    }
+}
+
 impl<H: Host> Vm<H> {
+    /// Notes an element access of frame `f` at `pc` (the record's own) met `kind`, in the lane view of the
+    /// frame's function, where `site_operand_kinds` reads it back for the planner.
+    pub(crate) fn note_element_kind(&self, f: usize, pc: usize, kind: OperandKinds) {
+        let function = self.frames[f].function as usize;
+        if let Some(view) = self.programs.lane_views(self.active_program).and_then(|views| views.get(function))
+            .and_then(super::super::program_store::derived_lane_view)
+        {
+            view.note_element(pc, kind);
+        }
+    }
+
     /// The kinds the instruction at `pc` of `function` met where its int32 handler declined,
     /// for the specializers that choose int32, double, string or generic variants: `NONE` for
     /// a function with no lane view (the kinds are recorded by it only), an instruction with

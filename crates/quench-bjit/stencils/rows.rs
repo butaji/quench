@@ -26,6 +26,7 @@ macro_rules! need {
 #[cfg(fixed_rows)]
 mod call_rows;
 pub mod codes;
+pub mod site_bits;
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod entry;
 #[cfg(all(fixed_rows, target_arch = "aarch64"))]

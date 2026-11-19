@@ -324,13 +324,13 @@ impl Lowering<'_, '_> {
     /// Whether a run enters loop `header..=end` only at its header, by edges that each make the
     /// proofs hoisted there: no start lies past its header (a start at it hoists on its entry
     /// edge), every edge from outside it is a forward edge to its header (`continue_at`, which
-    /// hoists), and no branch table hides an edge.
+    /// hoists), and every branch table's entry is one.
     pub(super) fn enters_only_at_header(&self, header: usize, end: usize) -> bool {
         let inside = header..=end;
+        // A branch table's entries are among its successors, so an edge it makes is seen here too.
         let entered_within = self.unit.instructions.iter().enumerate().any(|(pc, instruction)|
-            instruction.op().control_flow_layout() == ControlFlowLayout::BranchTable
-                || (!inside.contains(&pc) && successors(pc, *instruction).into_iter().flatten()
-                    .any(|target| (target > header && target <= end) || (target == header && pc > end))));
+            !inside.contains(&pc) && successors(pc, *instruction).into_iter()
+                .any(|target| (target > header && target <= end) || (target == header && pc > end)));
         !entered_within && !(header < self.stable.start && self.stable.start <= end)
     }
 

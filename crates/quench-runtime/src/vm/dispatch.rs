@@ -1,4 +1,5 @@
 use super::*;
+use super::dispatch_fast::operand_feedback::OperandKinds;
 
 mod increment;
 pub(super) use increment::{integer_increment, number_increment};
@@ -1118,7 +1119,7 @@ impl<H: Host> Vm<H> {
                     i.op().field_store().is_some_and(|store| store.strict),
                 )?;
             }
-            Op::SetIndex => self.step_index_set(p, f, i)?,
+            Op::SetIndex => self.step_index_set(p, f, i, *pc)?,
             Op::DefineArrayElement => {
                 let (array, value) = (self.read(f, i.register_b()), self.read(f, i.register_a()));
                 self.define_array_literal_element(p, array, i.array_index() as usize, value)?;
@@ -1573,8 +1574,11 @@ impl<H: Host> Vm<H> {
         {
             return result.map(Some);
         }
-        let v = match self.element_read_fast(base, key) {
-            Some(value) => value,
+        let v = match self.element_read_kind(base, key) {
+            Some((value, kind)) => {
+                self.note_element_kind(f, pc - 1, kind);
+                value
+            }
             None => self.get_index(p, base, key)?,
         };
         self.write(f, i.result_register(), v);
@@ -1583,13 +1587,14 @@ impl<H: Host> Vm<H> {
 
     /// `SetIndex` of the record `i` in frame `f`: a store to a present dense element (`store_present_element`),
     /// else the general index store (`set_index_mode`).
-    fn step_index_set(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<(), JsError> {
+    fn step_index_set(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> Result<(), JsError> {
         #[cfg(feature = "profile-aggregate")]
         self.profile.index_dispatch(true, false);
         let (object, key, value) = (self.read(f, i.register_b()), self.read(f, i.register_c()), self.read(f, i.register_a()));
         if let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok())
             && self.store_present_element(object, index, value)
         {
+            self.note_element_kind(f, pc - 1, OperandKinds::DENSE);
             return Ok(());
         }
         let strict = p.function(self.frames[f].function as usize).strict || i.boolean_flag().expect("validated boolean immediate");

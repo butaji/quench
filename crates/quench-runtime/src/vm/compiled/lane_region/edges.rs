@@ -23,7 +23,7 @@ fn forward_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, sta
     let mut edges: Vec<Option<usize>> = (0..instructions.len()).map(|pc| leaders.contains(pc).then_some(0)).collect();
     if let Some(slot) = edges.get_mut(start) { *slot = None; }
     for (pc, instruction) in instructions.iter().enumerate() {
-        for target in successors(pc, *instruction).into_iter().flatten() {
+        for target in successors(pc, *instruction).into_iter() {
             let Some(slot) = edges.get_mut(target) else { continue };
             *slot = if target > pc { slot.map(|count| count + 1) } else { None };
         }
@@ -37,7 +37,7 @@ fn forward_edges(instructions: &[WideInstruction], leaders: &CompoundBitSet, sta
 fn rotated_bodies(instructions: &[WideInstruction]) -> CompoundBitSet {
     let mut bodies = CompoundBitSet::with_capacity(instructions.len() + 1);
     for (pc, instruction) in instructions.iter().enumerate() {
-        let [_, target] = successors(pc, *instruction);
+        let target = instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize);
         if let Some(header) = target.filter(|target| *target <= pc)
             && instructions.get(header).is_some_and(|test| test.op().is_js_conditional_jump()) {
             bodies.insert(header + 1);
@@ -50,5 +50,5 @@ fn rotated_bodies(instructions: &[WideInstruction]) -> CompoundBitSet {
 /// the entry's registers, read from the lane frame, hold there.
 pub(super) fn entered_once(instructions: &[WideInstruction], start: usize, lowered: impl Fn(usize) -> bool) -> bool {
     instructions.iter().enumerate().filter(|(pc, _)| lowered(*pc))
-        .all(|(pc, instruction)| successors(pc, *instruction).into_iter().flatten().all(|target| target != start))
+        .all(|(pc, instruction)| successors(pc, *instruction).into_iter().all(|target| target != start))
 }

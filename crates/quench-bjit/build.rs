@@ -97,6 +97,7 @@ fn main() {
         println!("cargo::rerun-if-changed={}", source.display());
     }
     println!("cargo::rerun-if-changed=supernodes.txt");
+    println!("cargo::rustc-check-cfg=cfg(stencil_build)");
     println!("cargo::rerun-if-changed={RUSTC_FLAGS_FILE}");
     println!("cargo::rerun-if-changed=../quench-runtime/src/bytecode.rs");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());

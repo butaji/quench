@@ -111,7 +111,7 @@ pub(in super::super) fn entry_rows(layout: &Layout, entered: &[usize], at: usize
     }
     let prototype = HeapRow { heap: Heap::Prototype, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     for proto in &layout.prototypes {
-        let receiver = u64::from(proto.shape) | (u64::from(proto.link) << numeric::library::HELD_LINK_AT);
+        let receiver = u64::from(proto.shape) | (u64::from(proto.link) << numeric::site_bits::HELD_LINK_AT);
         rows.push(EntryRow { stencil: base_rows::stencil(prototype)?, holes: padded_holes([u64::from(proto.register) * SLOT, receiver, 0]), declared: true, number: None, int32: None, unbox: None });
     }
     for proto in &layout.shapes {

@@ -8,6 +8,8 @@
 
 use super::*;
 use super::super::compiled::LANE_CALL_COMPLETED;
+use super::operand_feedback::{OperandClass, OperandKinds};
+use crate::bytecode::Operand;
 use crate::staged::{DecodeContext, Operation};
 
 /// The staged operation the packed helper runs directly, decoded from `instruction`, where it has a direct arm.
@@ -18,6 +20,29 @@ pub(in crate::vm) fn direct_operation(instruction: WideInstruction) -> Option<Op
 /// Whether the packed helper runs `instruction` directly, so the planner packs its step (`steps::packed_words`).
 pub(in crate::vm) fn covers(instruction: WideInstruction) -> bool {
     direct_operation(instruction).is_some()
+}
+
+/// Whether the site's feedback `site` admits the direct run of the packed instruction `words` (`Step::Helper`
+/// rows carry them): a binary operator whose operands are not of an unseen kind (`class != Any`), and an
+/// element access whose site met a dense or typed element. Other rows decline the direct run.
+pub(in crate::vm) fn admits(words: [u64; 2], site: Option<OperandKinds>) -> bool {
+    let Ok(imm) = u32::try_from(words[1]) else {
+        return false;
+    };
+    let Some(instruction) = WideInstruction::from_words(words[0], imm) else {
+        return false;
+    };
+    let Some(operation) = direct_operation(instruction) else {
+        return false;
+    };
+    let Some(site) = site else {
+        return false;
+    };
+    match operation {
+        Operation::Binary { .. } => site.class() != OperandClass::Any,
+        Operation::ElementRead { .. } | Operation::ElementWrite { .. } => site.element_admitted(),
+        _ => false,
+    }
 }
 
 /// The direct run of the packed instruction `first` and `imm` (`WideInstruction::from_words`) in the running
@@ -39,6 +64,8 @@ pub(in crate::vm) unsafe fn direct<H: Host>(cx: *mut LaneContext<H>, first: u64,
     }
     let done = match operation {
         Operation::Binary { left, right, operator, .. } => binary(vm, frame, instruction, left, right, operator),
+        Operation::ElementRead { base, key } => element_read(vm, frame, instruction, base, key),
+        Operation::ElementWrite { value, base, key } => element_write(vm, frame, value, base, key),
         _ => false,
     };
     done.then_some(LANE_CALL_COMPLETED)
@@ -53,4 +80,28 @@ fn binary<H: Host>(vm: &mut Vm<H>, frame: usize, instruction: WideInstruction, l
     };
     vm.write_binary_result(frame, instruction, value);
     true
+}
+
+/// An element read of a present dense element or a typed array's number (`element_read_kind`), written to the
+/// result register as the interpreter's `step_index_get` writes it. A key that is not a register declines.
+fn element_read<H: Host>(vm: &mut Vm<H>, frame: usize, instruction: WideInstruction, base: Register, key: Operand) -> bool {
+    let Some(key) = key.register_index() else {
+        return false;
+    };
+    let (object, key) = (vm.read(frame, base), vm.read(frame, key));
+    let Some((value, _)) = vm.element_read_kind(object, key) else {
+        return false;
+    };
+    vm.write(frame, instruction.result_register(), value);
+    true
+}
+
+/// A store to a present dense element of a plain array (`store_present_element`), the interpreter's first
+/// `step_index_set` arm; any other store declines to the general path.
+fn element_write<H: Host>(vm: &mut Vm<H>, frame: usize, value: Register, base: Register, key: Register) -> bool {
+    let (object, key, value) = (vm.read(frame, base), vm.read(frame, key), vm.read(frame, value));
+    let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
+        return false;
+    };
+    vm.store_present_element(object, index, value)
 }

@@ -161,6 +161,8 @@ pub struct Row {
 
 #[path = "../stencils/library.rs"]
 pub mod library;
+#[path = "../stencils/site_bits.rs"]
+pub mod site_bits;
 #[path = "../stencils/supernodes.rs"]
 pub mod supernodes;
 
