@@ -37,19 +37,15 @@ impl Form {
     }
 }
 
-/// Whether packed values are read once, for a caller no store reaches, or at each read.
+/// How packed values are read: from the record at each read, since a store may reach them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PackedAccess {
-    #[allow(dead_code)]
-    Snapshot,
     Reload,
 }
 
-/// Packed narrow values: the payload word as read once, or the record that holds it.
+/// Packed narrow values: the record that holds them.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Packed<W> {
-    #[allow(dead_code)]
-    Snapshot(W),
     Record(W),
 }
 
@@ -411,7 +407,6 @@ fn layout_of<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, inline:
     let plain = stage.not(extras);
     stage.guard(plain, miss)?;
     let packed = match access {
-        PackedAccess::Snapshot => Packed::Snapshot(payload),
         PackedAccess::Reload => Packed::Record(record),
     };
     Some(Layout { slots: plain_slots(stage, payload, packed, inline, form, miss)?, storage_len })
@@ -584,7 +579,6 @@ fn packed_read_at<S: Stage>(stage: &mut S, packed: Packed<S::Word>, index: S::Wo
     const _: () = assert!(OBJECT.inline_property_count == 2, "a packed index selects one of two halves");
     debug_assert!(rep != Representation::Float64, "a packed slot holds a narrow value, never a raw double");
     let payload = match packed {
-        Packed::Snapshot(payload) => payload,
         Packed::Record(record) => stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32),
     };
     let upper = stage.shr_imm(payload, u64::from(u32::BITS));
@@ -634,7 +628,6 @@ fn flat_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16, rep: Representat
 fn packed_read<S: Stage>(stage: &mut S, packed: Packed<S::Word>, slot: u16, _rep: Representation) -> S::Word {
     debug_assert!(usize::from(slot) < OBJECT.inline_property_count);
     let payload = match packed {
-        Packed::Snapshot(payload) => payload,
         Packed::Record(record) => stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32),
     };
     let shift = stage.site(u64::from(slot) * u64::from(u32::BITS));
