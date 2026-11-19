@@ -242,6 +242,8 @@ pub(crate) enum RowStep {
     WasmMemory,
     /// The Wasm SIMD operators and byte shuffles on the lane's vector registers (`wasm_simd::step`).
     WasmVector,
+    /// The activation entries of a lane's synthetic prologue records (`prologue::step`).
+    Entry,
     /// A `Binary` or `Unary`: the Number operations, the generic comparisons and call-outs,
     /// `!` and the `typeof` forms (`step_arith`), not the whole of `step`.
     Arith,
@@ -264,6 +266,10 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::WasmState) => RowStep::WasmState,
         Some(Decoder::WasmMemory) => RowStep::WasmMemory,
         Some(Decoder::WasmVector) => RowStep::WasmVector,
+        Some(Decoder::Lane) => match op {
+            Op::TierPrologue | Op::BodyEntry => RowStep::Entry,
+            _ => RowStep::Full,
+        },
         Some(Decoder::Value) => match op {
             Op::LoadCapture | Op::StoreCapture => RowStep::Names,
             Op::IncDec | Op::ToNumeric => RowStep::Number,

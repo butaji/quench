@@ -90,6 +90,8 @@ pub(crate) mod protocol;
 pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
 pub(crate) use protocol::CallOperation;
 pub(crate) mod invoke;
+pub(crate) mod prologue;
+pub(crate) use prologue::{step_entry, PrologueFrame};
 pub(crate) mod plan;
 mod native_call;
 pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, Resolved};

@@ -244,6 +244,13 @@ pub(crate) enum Operation<W, P> {
     /// room and is writable (`Frame::array_append`); a value the frame does not append leaves at the miss edge.
     #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
     ArrayAppend { array: Register, value: Register },
+    /// The tier prologue of a frameless activation of `function` with `parameters` parameters
+    /// (`TierPrologue`, a lane's synthetic record): the JavaScript tier enters it, and the activation
+    /// continues where that completes it (`prologue::PrologueFrame::tier_prologue`).
+    Prologue { function: u32, parameters: u16 },
+    /// The prologue of a specialized body of `function` (`BodyEntry`, a lane's synthetic record): the body
+    /// runs on the activation's registers, binding `this` where `binds_this` (`prologue::PrologueFrame::body_entry`).
+    BodyEntry { function: u32, binds_this: bool },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
@@ -512,6 +519,8 @@ impl Operation<u64, ()> {
         Some(match instruction.op() {
             Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
                 source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
+            Op::TierPrologue => Self::Prologue { function: instruction.imm(), parameters: instruction.register_a() },
+            Op::BodyEntry => Self::BodyEntry { function: instruction.imm(), binds_this: instruction.register_b() != 0 },
             _ => return None,
         })
     }

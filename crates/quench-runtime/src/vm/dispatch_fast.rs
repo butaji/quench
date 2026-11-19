@@ -7626,10 +7626,10 @@ fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
         outcome
     };
     if now {
-        own.specialize_lane_body_now(body_entry_in_lane::<H>, specialize);
+        own.specialize_lane_body_now(body_entry_row::<H>(), specialize);
         own.body_view_in_lane().is_some()
     } else {
-        own.specialize_lane_body(body_entry_in_lane::<H>, specialize)
+        own.specialize_lane_body(body_entry_row::<H>(), specialize)
     }
 }
 
@@ -9188,7 +9188,7 @@ impl<H: Host> Vm<H> {
             && (!self.programs.js_jit_lane_methods_enabled() || unsafe { &*view }.tier_unclaimed_in_lane())
         {
             // SAFETY: the program store keeps a derived view alive with its program.
-            unsafe { &*view }.claim_for_tier(tier_prologue_in_lane::<H>, function, body.params, !body.is_arrow);
+            unsafe { &*view }.claim_for_tier(tier_prologue_row::<H>(), function, body.params, !body.is_arrow);
         }
         let capture = self.target_capture(code, program, env);
         let target = ScriptCallTarget {
@@ -12806,6 +12806,86 @@ fn admits_window_in_lane<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, argc: u
     crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) && activation_room_in_lane(vm, target)
 }
 
+/// Where the lane continues after a frameless activation's tier prologue (`tier_prologue_in_lane`): the
+/// JavaScript tier runs the function's compiled body where it can (`Vm::js_tier_activation_entry`), and the
+/// activation continues at the record the native result completes, with the result in its register; else at
+/// its first record. Shared by the prologue's staged row (`EntryHost`) and its hand body.
+#[inline(always)]
+fn tier_prologue_resumed<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried, function: u32, params: usize) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the activation just set the context to its own function's.
+    let base = unsafe { (*cx).base };
+    // SAFETY: the program's views outlive the lane run.
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
+    // SAFETY: the activation's registers hold its parameters from its first.
+    let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
+    let entered = own
+        .and_then(|own| tier_direct_in_lane(vm, own, parameters))
+        .or_else(|| tier_enter_in_lane(cx, function, own, parameters));
+    if let Some((pc, register, value)) = entered {
+        r.set(register, value);
+        // SAFETY: the tier returns a PC of the function, whose records are contiguous.
+        return Resumed::At(r, unsafe { base.add(pc) }, Carried::script_in(cx, view));
+    }
+    Resumed::At(r, base, Carried::script_in(cx, view))
+}
+
+/// Where the lane continues after a specialized body's prologue record (`body_entry_in_lane`) at `ip`: the body
+/// runs on the activation's registers and leaves where its run ends (`body_concluded_in_lane`), or the
+/// activation continues at its first record where the body is not entered. Shared by the prologue's staged row
+/// (`EntryHost`) and its hand body.
+#[inline(always)]
+fn body_entry_resumed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, view: Carried, function: u32, binds_this: bool) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the activation just set the context to its own function's.
+    let (program, base) = unsafe { ((*cx).program, (*cx).base) };
+    // SAFETY: the program's views outlive the lane run; this record is the view's.
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)
+        .expect("a lane body entry runs in its view");
+    // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
+    // The activation just pushed is this entry's: its caller runs this function's records
+    // where it is a recursive call.
+    let recursive = vm.lane_stack.activations().last().is_some_and(|activation| activation.caller_base() == base);
+    if own.audit_entry(true, recursive) {
+        return Resumed::At(r, base, Carried::script_in(cx, view));
+    }
+    // A body a lifecycle edge retired gives its prologue back and warms again.
+    let Some(method) = own.cell_body().or_else(|| own.body_view_in_lane()) else {
+        own.settle_retired_body();
+        return Resumed::At(r, base, Carried::script_in(cx, view));
+    };
+    // A body whose rows write past the frame's registers (its scratch, its inlined windows, past the
+    // environment window) runs where the frame's storage reaches them; a lane activation's room is the stack's.
+    let reaches = frame_reaches_in_lane(cx, method.caller_registers(), method.frame_reach());
+    if !reaches || !body_admits_in_lane(cx, &method, NO_PENDING_ACTIVATIONS) {
+        if reaches && body_prepare_recovery_in_lane(cx, &method) { return Resumed::Exit(exit(base)); }
+        drop(method);
+        body_refused_in_lane(vm, own);
+        return Resumed::At(r, base, Carried::script_in(cx, view));
+    }
+    let receiver = entry_receiver_in_lane(cx, binds_this);
+    // SAFETY: the activation just set the context to its own captures.
+    let captures = capture_reads(unsafe { (*cx).registers }.capture());
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let left = vm.run_lane_method(&method, direct_calls_in_lane(cx), program, code, r.0, receiver, captures, cx.cast());
+    let resumed = body_concluded_in_lane::<H>(cx, r, ip, own, &method, left, function);
+    drop(method);
+    resumed
+}
+
+/// The protocol row of a frameless activation's tier prologue record (`TierPrologue`): the staged prologue
+/// row (`PrologueFrame::tier_prologue`), with `tier_prologue_in_lane` as the body it completes where it leaves.
+const fn tier_prologue_row<H: Host>() -> Handler {
+    protocol_row::<H, { crate::bytecode::Op::TierPrologue as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::TIER_PROLOGUE as u16 }>
+}
+
+/// The protocol row of a specialized body's prologue record (`BodyEntry`): the staged prologue row
+/// (`PrologueFrame::body_entry`), with `body_entry_in_lane` as the body it completes where it leaves.
+const fn body_entry_row<H: Host>() -> Handler {
+    protocol_row::<H, { crate::bytecode::Op::BodyEntry as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::BODY_ENTRY as u16 }>
+}
+
 script_handler! {
     /// The tier prologue a frameless activation of a function the JavaScript tier may claim
     /// starts at (`LaneView::claim_for_tier`): the tier runs the body natively where it can
@@ -12816,23 +12896,9 @@ script_handler! {
     /// at the first record again.
     #[inline(never)]
     fn tier_prologue_in_lane<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let (function, params) = (i.imm(), usize::from(i.a));
-        // SAFETY: the activation just set the context to its own function's.
-        let base = unsafe { (*cx).base };
-        // SAFETY: the program's views outlive the lane run.
-        let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
-        // SAFETY: the activation's registers hold its parameters from its first.
-        let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
-        let entered = own
-            .and_then(|own| tier_direct_in_lane(vm, own, parameters))
-            .or_else(|| tier_enter_in_lane(cx, function, own, parameters));
-        if let Some((pc, register, value)) = entered {
-            r.set(register, value);
-            // SAFETY: the tier returns a PC of the function, whose records are contiguous.
-            next!(cx, r, unsafe { base.add(pc) }, Carried::script_in(cx, view))
-        }
-        next!(cx, r, base, Carried::script_in(cx, view))
+        // The staged row answers the same continuation (`EntryHost::tier`); this is its miss body.
+        let resumed = tier_prologue_resumed::<H>(cx, r, view, i.imm(), usize::from(i.a));
+        resume!(cx, resumed)
     }
 }
 
@@ -12845,42 +12911,8 @@ script_handler! {
     /// for the activation such a leave makes.
     #[inline(never)]
     fn body_entry_in_lane<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let function = i.imm();
-        // SAFETY: the activation just set the context to its own function's.
-        let (program, base) = unsafe { ((*cx).program, (*cx).base) };
-        // SAFETY: the program's views outlive the lane run; this record is the view's.
-        let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)
-            .expect("a lane body entry runs in its view");
-        // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
-        // The activation just pushed is this entry's: its caller runs this function's records
-        // where it is a recursive call.
-        let recursive = vm.lane_stack.activations().last().is_some_and(|activation| activation.caller_base() == base);
-        if own.audit_entry(true, recursive) {
-            next!(cx, r, base, Carried::script_in(cx, view))
-        }
-        // A body a lifecycle edge retired gives its prologue back and warms again.
-        let Some(method) = own.cell_body().or_else(|| own.body_view_in_lane()) else {
-            own.settle_retired_body();
-            next!(cx, r, base, Carried::script_in(cx, view))
-        };
-        // A body whose rows write past the frame's registers (its scratch, its inlined windows, past the
-        // environment window) runs where the frame's storage reaches them; a lane activation's room is the stack's.
-        let reaches = frame_reaches_in_lane(cx, method.caller_registers(), method.frame_reach());
-        if !reaches || !body_admits_in_lane(cx, &method, NO_PENDING_ACTIVATIONS) {
-            if reaches && body_prepare_recovery_in_lane(cx, &method) { return exit(base); }
-            drop(method);
-            body_refused_in_lane(vm, own);
-            next!(cx, r, base, Carried::script_in(cx, view))
-        }
-        let receiver = entry_receiver_in_lane(cx, i.b != 0);
-        // SAFETY: the activation just set the context to its own captures.
-        let captures = capture_reads(unsafe { (*cx).registers }.capture());
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let exit = vm.run_lane_method(&method, direct_calls_in_lane(cx), program, code, r.0, receiver, captures, cx.cast());
-        let resumed = body_concluded_in_lane::<H>(cx, r, ip, own, &method, exit, function);
-        drop(method);
+        // The staged row answers the same continuation (`EntryHost::body`); this is its miss body.
+        let resumed = body_entry_resumed::<H>(cx, ip, r, view, i.imm(), i.b != 0);
         resume!(cx, resumed)
     }
 }
@@ -16645,6 +16677,9 @@ const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
 /// branch tests, which read it.
 const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode {
+        // The lane's synthetic prologue records: their staged rows, which the lane's activations start at.
+        crate::bytecode::Op::TierPrologue => Some(tier_prologue_row::<H>()),
+        crate::bytecode::Op::BodyEntry => Some(body_entry_row::<H>()),
         _ if crate::staged::field_read_family(opcode) => Some(row_get_field_first::<H>),
         // merge: theirs' `lane_set_object_field_own` / `lane_set_this_field_own` are undefined; HEAD's `field_store_row` serves both receivers.
         _ if opcode.field_store().is_some() => opcode.field_store().map(|store| field_store_row::<H>(store)),

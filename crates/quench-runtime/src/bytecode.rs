@@ -1141,6 +1141,12 @@ opcodes!($;
     // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
     CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused; traits FIRST_CALL_STUB, @ Register, @ fields(ResultRegister, Register, Register),
     WasmSegmentDrop => Effect::WRITES_HEAP; layout Scalar; meaning WasmInstanceSlot; class WasmSegmentDrop, @ Register, @ fields(Unused, Unused, Unused),
+    // Synthetic records only: the lane view's prologue records, which no bytecode holds. A frameless activation
+    // of a function the JavaScript tier may claim starts at `TierPrologue` (`imm` the function, `a` its parameter
+    // count); a specialized body's prologue is `BodyEntry` (`imm` the function, `b` whether it binds `this`).
+    // Their staged rows are `Operation::Prologue` and `Operation::BodyEntry` (`staged::prologue`).
+    TierPrologue => CALL_EFFECT; layout Scalar; meaning Unused; staged Lane, @ Register, @ fields(Unused, Unused, Unused),
+    BodyEntry => CALL_EFFECT; layout Scalar; meaning Unused; staged Lane, @ Register, @ fields(Unused, Unused, Unused),
 );
 
 const _: () = {

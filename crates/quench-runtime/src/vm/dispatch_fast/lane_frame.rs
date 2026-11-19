@@ -400,6 +400,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     raw_result: bool,
     /// How the running activation suspends in place, for a staged suspension row.
     suspends: Option<LaneSuspends>,
+    /// The activation entries of the running lane context, for a staged prologue row (`PrologueFrame`);
+    /// none elsewhere.
+    entry: Option<EntryHost>,
 }
 
 /// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
@@ -772,7 +775,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None, entry: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -2126,6 +2129,17 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), kept, environment: Some(environment), global_store, names: Some((cx.cast(), names)),
             clones, cleanups: Some(cleanups), scope: scope_reads::<H, FLAG>(cx, ip, i), ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
     }
+    if const { matches!(LaneFields::<OP>::OPCODE, Op::TierPrologue | Op::BodyEntry) } {
+        // A prologue record enters the activation's function in the lane context `cx` (`tier_prologue_resumed`,
+        // `body_entry_resumed`), erased of its host so the frame names no `H`.
+        let entry = EntryHost {
+            cx: cx.cast(),
+            ip,
+            tier: |context, r, view, function, parameters| unsafe { tier_prologue_resumed::<H>(context.cast(), r, view, function, parameters) },
+            body: |context, ip, r, view, function, binds_this| unsafe { body_entry_resumed::<H>(context.cast(), ip, r, view, function, binds_this) },
+        };
+        return LaneFrame::<ACC> { entry: Some(entry), ..LaneFrame::<ACC>::new(r, view) };
+    }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Lane)) } {
         // A string-case index reads its operand from the register file (`LaneFrame::read` stands for field B),
         // and answers from the case table of the record's filter (`FLAG_CASE_FILTER`), else the VM's selector.
@@ -2396,6 +2410,7 @@ macro_rules! row_step {
         else if const { matches!(crate::staged::row_step($op), R::WasmState) } { crate::staged::step_wasm_state($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmMemory) } { crate::staged::step_wasm_access($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmVector) } { crate::staged::step_wasm_vector($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::Entry) } { crate::staged::step_entry($stage, $frame, $operation) }
         else { crate::staged::step($stage, $frame, $operation) }
     }};
 }
