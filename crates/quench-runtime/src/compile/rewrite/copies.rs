@@ -20,8 +20,22 @@ use super::*;
 use crate::bytecode::{FieldLayout, ImmediateLayout, InstructionField};
 use crate::compile::CompileScratch;
 
-/// Lets the readers of each `Move`'s destination read its source instead, where the move
-/// feeds only them (the module doc), and whether any did.
+#[cfg(test)]
+#[path = "copies_tests.rs"]
+mod tests;
+
+/// Lets the reads of a `Move`'s destination read the move's source instead, through the rest of
+/// the move's basic block: `d = Move s; …; x(d)` becomes `Nop; …; x(s)`. Control reaches each
+/// reader only through the move, by instructions that fall through without writing `s` or `d`
+/// (`scan_move`), so `s` still holds the value there. When no path reads `d` after the scan, the
+/// move is dead and becomes a `Nop` too. A parameter's register is never a destination (legacy
+/// `f.arguments` reflection reads it). Inside a handler region the move's reads are rewritten
+/// only when no covering handler reads `d` (`CodeLiveness::handler_live`): an abrupt completion
+/// in the span enters that handler with `s` and `d` as the span left them, so only `d` can
+/// differ. Only register, operand and field-base fields are rewritten; a read through a window
+/// or a register pair is never rewritten (`forward_read`). A read of a binding a statement
+/// copied before evaluating its other operands (`o.v = o.v + 1`) then reads the binding: each
+/// tier sees one value, not a copy.
 pub(super) fn forward_move_sources(
     function: &mut BcFunction,
     methods: &(impl liveness::MethodArguments + ?Sized),
@@ -55,8 +69,15 @@ pub(super) fn forward_move_sources(
             analysis.transfers[at] = (uses(rewritten), definitions(rewritten));
             changed.push(at);
         }
-        // The rewritten readers read the source up to the last of them, which the analysis
-        // predates: its live sets there gain the source, so no later move reads a stale set.
+        // Why the live sets this scan leaves stale are safe for the next scans. Each rewritten
+        // reader now reads the source where it read the destination, so the source is live from
+        // the move through the last reader: the loop adds it over that range, the only bit a
+        // rewrite could leave under-approximated. The destination is only over-approximated
+        // there, since no reader reads it any more and keeping it live is conservative. Nothing
+        // before the move changes: the move read the source and wrote the destination itself.
+        // Each later scan takes its masks from the code as it now stands (`liveness::uses` and
+        // `definitions` of each instruction), so a rewritten reader or a dropped move is seen at
+        // once, and `hand_on` re-derives the transfer masks of the changed positions.
         if let Some(&(last, _)) = readers.last() {
             for live in &mut analysis.live[pc + 1..=last] {
                 *live |= forwarding.source;
@@ -92,8 +113,7 @@ pub(super) fn forward_move_sources(
 /// What copy propagation may not cross or rewrite in a function.
 struct Scope {
     protected: crate::bitset::BitSet,
-    /// Promoted local storage, and the parameters' part of it.
-    storage: RegisterSet,
+    /// The parameters' promoted storage.
     parameters: RegisterSet,
 }
 
@@ -105,27 +125,30 @@ impl Scope {
         Self {
             protected: protected_positions(&function.code, &function.wide, &function.handlers,
                 function.parameter_end_pc, &function.binding_sites),
-            storage: mask(false),
-            parameters: mask(true),
+            parameters,
         }
     }
 
-    /// Whether the instruction is a plain `Move` of one register to another temporary.
+    /// Whether the instruction is a plain `Move` of one register to another that is no
+    /// parameter's storage. A promoted local's register may take it: the move's destination is
+    /// dead after its one reader, so the write is unobservable, as `remove_dead_moves` drops
+    /// such a write; this is the per-iteration copy of `for (let i ...)` that its body reads
+    /// (`a + i` then reads the loop's `i`). Only a parameter's register is reflected
+    /// (`f.arguments`).
     fn forwards(&self, mov: Instr) -> bool {
-        mov.op() == Op::Move && !mov.is_wide()
-            && register_bit(mov.result_register()) & self.storage == 0 && mov.register_b() != mov.result_register()
+        mov.op() == MOVE && !mov.is_wide()
+            && register_bit(mov.result_register()) & self.parameters == 0 && mov.register_b() != mov.result_register()
     }
 }
 
 impl CodeLiveness {
     /// The registers the handlers covering `pc` read on entry: their targets' live sets.
     ///
-    /// A rewrite may change which of two registers holds a value inside a span when no
-    /// handler can observe either: an abrupt completion inside the span enters these
-    /// handlers with every register as the span left it. Spans end before every protected
-    /// position, which includes each handler's start and end, so every instruction of a span
-    /// is covered by the handlers covering its first one, and this set answers for all.
-    /// Handler targets are protected too, so no rewrite leaves their live sets stale.
+    /// A rewrite may change which of two registers holds a value inside a span when no handler
+    /// can observe either: an abrupt completion inside the span enters these handlers with every
+    /// register as the span left it. A span never crosses a protected position, which includes
+    /// each handler's start, end and target, so every instruction of a span is covered by the
+    /// same handlers as its first one, and this set answers for all of them.
     pub(super) fn handler_live(&self, pc: usize) -> RegisterSet {
         self.successors
             .at(pc)
@@ -162,11 +185,14 @@ fn scan_move(
     readers: &mut Vec<(usize, Instr)>,
 ) -> Option<Forwarding> {
     let mov = function.code[pc];
-    if !scope.forwards(mov) || analysis.handler_live(pc) & register_bit(mov.result_register()) != 0 {
+    if !scope.forwards(mov) {
         return None;
     }
     let (source, destination) = (mov.register_b(), mov.result_register());
     let (source_bit, destination_bit) = (register_bit(source), register_bit(destination));
+    if analysis.handler_live(pc) & destination_bit != 0 {
+        return None;
+    }
     // Legacy `f.arguments` reflection may rewrite a parameter during the instructions between, so
     // a parameter's source forwards to its first live reader only.
     let parameter_source = source_bit & scope.parameters != 0;
@@ -176,7 +202,7 @@ fn scan_move(
     let mut live_seen = 0;
     let mut dead = false;
     for at in pc + 1..function.code.len() {
-        if scope.protected.contains(at) || scope.in_handler(at) {
+        if scope.protected.contains(at) {
             dead = dead_before(at);
             break;
         }
