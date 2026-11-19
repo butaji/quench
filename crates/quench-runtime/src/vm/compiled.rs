@@ -80,7 +80,6 @@ pub(in crate::vm) fn performed(instruction: impl std::borrow::Borrow<crate::byte
     decoded(plain)
 }
 /// What an instruction means to the compiled tiers, classified from the shared decode (`staged/meaning_compiled.rs`).
-#[allow(dead_code)] // each classification is asked by the tier that needs it
 #[path = "../staged/meaning_compiled.rs"]
 pub(in crate::vm) mod meaning_compiled;
 
