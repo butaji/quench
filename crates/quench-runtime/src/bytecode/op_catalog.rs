@@ -373,6 +373,82 @@ impl Traits {
     pub(crate) const CONST_ARRAY_OBJECT2_TAIL: Self = Self(1 << 49);
     /// The superinstruction that fuses `CONST_ARRAY_OBJECT2`. Tagged: `SuperConstArrayObject2`.
     pub(crate) const FUSED_CONST_ARRAY_OBJECT2: Self = Self(1 << 50);
+    /// The op that copies a whole activation environment for a per-iteration or block scope. Tagged: `CloneEnv`.
+    pub(crate) const ENVIRONMENT_CLONE: Self = Self(1 << 71);
+    /// The op that loads an environment-resident local slot into its result register. Tagged: `LoadEnvLocal`.
+    pub(crate) const ENV_LOCAL_LOAD: Self = Self(1 << 72);
+    /// The op that stores its register A into an environment-resident local slot. Tagged: `StoreEnvLocal`.
+    pub(crate) const ENV_LOCAL_STORE: Self = Self(1 << 73);
+    /// The op that loads a captured slot into its result register. Tagged: `LoadCapture`.
+    pub(crate) const CAPTURE_LOAD: Self = Self(1 << 74);
+    /// The op that stores its register A into a captured slot. Tagged: `StoreCapture`.
+    pub(crate) const CAPTURE_STORE: Self = Self(1 << 75);
+    /// The indexed element read of an operand register (`obj[key]`). Tagged: `GetIndex`.
+    pub(crate) const ELEMENT_LOAD: Self = Self(1 << 76);
+    /// A call that spreads the array of its one-value argument window. Tagged: `CallSpread`.
+    pub(crate) const SPREAD_CALL: Self = Self(1 << 77);
+    /// A call that spreads a rest parameter's kept values in place of its array. Tagged: `CallRest`.
+    pub(crate) const REST_SPREAD_CALL: Self = Self(1 << 78);
+    /// A read of one kept rest value by index. Tagged: `RestGet`.
+    pub(crate) const REST_INDEX_READ: Self = Self(1 << 79);
+    /// The read of a rest parameter's length from its kept values. Tagged: `RestLength`.
+    pub(crate) const REST_LENGTH_READ: Self = Self(1 << 80);
+    /// The call whose callee and arguments are both registers, without a spread or a method site. Tagged: `Call`.
+    pub(crate) const PLAIN_CALL: Self = Self(1 << 81);
+    /// The raw-register form of a Wasm i64 or f64 operation (`raw_webs`). Tagged: every `*Raw` row and `WasmReturn64`.
+    pub(crate) const RAW_FORM: Self = Self(1 << 82);
+    /// The family of the i64 binary operation, boxed or raw. Tagged: `WasmI64Binary`, `WasmI64BinaryRaw`.
+    pub(crate) const I64_BINARY_FAMILY: Self = Self(1 << 83);
+    /// The family of the i64 binary operation with an immediate operand. Tagged: `WasmI64BinaryImmediate`, `WasmI64BinaryImmediateRaw`.
+    pub(crate) const I64_BINARY_IMMEDIATE_FAMILY: Self = Self(1 << 84);
+    /// The family of the i64 unary operation. Tagged: `WasmI64Unary`, `WasmI64UnaryRaw`.
+    pub(crate) const I64_UNARY_FAMILY: Self = Self(1 << 85);
+    /// The family of the f64 binary operation. Tagged: `WasmF64Binary`, `WasmF64BinaryRaw`.
+    pub(crate) const F64_BINARY_FAMILY: Self = Self(1 << 86);
+    /// The family of the f64 unary operation. Tagged: `WasmF64Unary`, `WasmF64UnaryRaw`.
+    pub(crate) const F64_UNARY_FAMILY: Self = Self(1 << 87);
+    /// The family of a function's return, boxed or raw. Tagged: `Return`, `WasmReturn64`.
+    pub(crate) const RETURN_FAMILY: Self = Self(1 << 88);
+    /// The op that puts a frame local slot into its temporal-dead-zone state. Tagged: `InitializeTdz`.
+    pub(crate) const TDZ_INITIALIZE: Self = Self(1 << 91);
+    /// The op that checks a class's `extends` value before the class is built. Tagged: `ValidateClassHeritage`.
+    pub(crate) const CLASS_HERITAGE_CHECK: Self = Self(1 << 92);
+    /// The op that marks a private method or accessor name onto its home object. Tagged: `MarkPrivateName`.
+    pub(crate) const PRIVATE_NAME_MARK: Self = Self(1 << 93);
+    /// The op that converts a computed property key to its property key value. Tagged: `ToPropertyKey`.
+    pub(crate) const PROPERTY_KEY_CONVERT: Self = Self(1 << 94);
+    /// The op that sets a function's `name` from a computed key and a name prefix. Tagged: `SetFunctionNameKey`.
+    pub(crate) const FUNCTION_NAME_KEY_SET: Self = Self(1 << 95);
+    /// The op that calls a callee with a receiver and a contiguous argument window. Tagged: `Call`.
+    pub(crate) const CALL_INVOKE: Self = Self(1 << 96);
+    /// The op that stores a value at an element index of an object. Tagged: `SetIndex`.
+    pub(crate) const ELEMENT_STORE: Self = Self(1 << 97);
+    /// The op that stores a value into a named own field with sloppy-mode semantics. Tagged: `SetField`.
+    pub(crate) const OBJECT_FIELD_STORE: Self = Self(1 << 98);
+    /// The op that defines a private class field on an instance. Tagged: `DefinePrivateField`.
+    pub(crate) const PRIVATE_FIELD_DEFINE: Self = Self(1 << 99);
+    /// The op that defines a computed-key class field on an instance. Tagged: `DefineComputedField`.
+    pub(crate) const COMPUTED_FIELD_DEFINE: Self = Self(1 << 100);
+    /// The op that defines a named class field on an instance. Tagged: `DefineField`.
+    pub(crate) const FIELD_DEFINE: Self = Self(1 << 101);
+    /// The op that stores a value into a frame local slot as a binding initialization. Tagged: `StoreLocal`.
+    pub(crate) const LOCAL_BINDING_STORE: Self = Self(1 << 102);
+    /// The op that defines a method or accessor property from a property definition record. Tagged: `DefinePropertyRecord`.
+    pub(crate) const PROPERTY_RECORD_DEFINE: Self = Self(1 << 103);
+    /// The op that reads a template site's cached template object. Tagged: `LoadCachedTemplateObject`.
+    pub(crate) const TEMPLATE_CACHE_LOAD: Self = Self(1 << 104);
+    /// The op that stores a freshly built template object into its template site's cache. Tagged: `CacheTemplateObject`.
+    pub(crate) const TEMPLATE_CACHE_STORE: Self = Self(1 << 105);
+    /// The op that builds an array from a window of elements of a given length. Tagged: `MakeArray`.
+    pub(crate) const ARRAY_MAKE: Self = Self(1 << 106);
+    /// The op that allocates a plain object with no properties. Tagged: `MakeObject`.
+    pub(crate) const OBJECT_MAKE: Self = Self(1 << 107);
+    /// The op that loads a constant into its result register. Tagged: `LoadConst`.
+    pub(crate) const CONSTANT_LOAD: Self = Self(1 << 108);
+    /// The op that concatenates a window of string parts into one string. Tagged: `StringConcat`.
+    pub(crate) const STRING_CONCAT: Self = Self(1 << 109);
+    /// The op that runs a first-call stub's function body as its compiled chunk. Tagged: `CallFirstChunk`.
+    pub(crate) const FIRST_CALL_CHUNK: Self = Self(1 << 110);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }

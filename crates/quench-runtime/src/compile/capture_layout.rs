@@ -1,6 +1,10 @@
 use super::CompilerAtoms;
 
-use crate::bytecode::{Function, Op, WITH_ENTER_BINDING};
+use crate::bytecode::{Function, Op, Traits, WITH_ENTER_BINDING, the_op};
+
+const ENV_LOCAL_LOAD_OP: Op = the_op(Traits::ENV_LOCAL_LOAD);
+const ENV_LOCAL_STORE_OP: Op = the_op(Traits::ENV_LOCAL_STORE);
+const NOP_OP: Op = the_op(Traits::NO_OP);
 
 /// What the layout of a function's activation depends on beyond its own code: the slots of
 /// its locals that functions nested in it capture, and whether one of them resolves names
@@ -417,11 +421,20 @@ fn has_closure(function: &Function) -> bool {
     function
         .code
         .iter()
-        .any(|instruction| instruction.op() == Op::MakeClosure)
+        .any(|instruction| instruction.op().traits().has(Traits::MAKES_CLOSURE))
         || function
             .wide
             .iter()
-            .any(|instruction| instruction.op() == Op::MakeClosure)
+            .any(|instruction| instruction.op().traits().has(Traits::MAKES_CLOSURE))
+}
+
+/// The environment twin of a relocatable frame-local access, `LoadLocal` or `StoreLocal`.
+fn env_local_twin(access: Op) -> Op {
+    if access.traits().has(Traits::FRAME_LOCAL_LOAD) {
+        ENV_LOCAL_LOAD_OP
+    } else {
+        ENV_LOCAL_STORE_OP
+    }
 }
 
 fn rewrite_local_ownership(function: &mut Function, captured: &[u16]) {
@@ -433,11 +446,7 @@ fn rewrite_local_ownership(function: &mut Function, captured: &[u16]) {
             && u16::try_from(instruction.local_slot())
                 .is_ok_and(|slot| captured.binary_search(&slot).is_ok())
         {
-            instruction.set_op(if instruction.op() == Op::LoadLocal {
-                Op::LoadEnvLocal
-            } else {
-                Op::StoreEnvLocal
-            });
+            instruction.set_op(env_local_twin(instruction.op()));
         }
     }
 }
@@ -462,15 +471,15 @@ fn remove_unobservable_clones(function: &mut Function, captured: &[u16]) {
     let first_closure = function
         .code
         .iter()
-        .position(|instruction| instruction.op() == Op::MakeClosure)
+        .position(|instruction| instruction.op().traits().has(Traits::MAKES_CLOSURE))
         .unwrap_or(usize::MAX)
-        .min(if function.wide.iter().any(|instruction| instruction.op() == Op::MakeClosure) { 0 } else { usize::MAX });
+        .min(if function.wide.iter().any(|instruction| instruction.op().traits().has(Traits::MAKES_CLOSURE)) { 0 } else { usize::MAX });
     for (pc, instruction) in function.code.iter_mut().enumerate() {
-        if instruction.op() == Op::CloneEnv
+        if instruction.op().traits().has(Traits::ENVIRONMENT_CLONE)
             && (!observable(&function.environment_clones[instruction.environment_clone_index()])
                 || (!may_repeat(&backward, pc) && first_closure > pc))
         {
-            *instruction = crate::bytecode::Instr::new(Op::Nop, 0, 0, 0, 0);
+            *instruction = crate::bytecode::Instr::new(NOP_OP, 0, 0, 0, 0);
         }
     }
 }
@@ -507,30 +516,18 @@ fn rewrite_if_captured(instruction: &mut crate::bytecode::Instr, captured: &[u16
     {
         return;
     }
-    instruction.set_op(if instruction.op() == Op::LoadLocal {
-        Op::LoadEnvLocal
-    } else {
-        Op::StoreEnvLocal
-    });
+    instruction.set_op(env_local_twin(instruction.op()));
 }
 
 fn rewrite_all_locals_to_environment(function: &mut Function) {
     for instruction in &mut function.code {
         if instruction.op().is_relocatable_local_access() {
-            instruction.set_op(if instruction.op() == Op::LoadLocal {
-                Op::LoadEnvLocal
-            } else {
-                Op::StoreEnvLocal
-            });
+            instruction.set_op(env_local_twin(instruction.op()));
         }
     }
     for instruction in &mut function.wide {
         if instruction.op().is_relocatable_local_access() {
-            instruction.set_op(if instruction.op() == Op::LoadLocal {
-                Op::LoadEnvLocal
-            } else {
-                Op::StoreEnvLocal
-            });
+            instruction.set_op(env_local_twin(instruction.op()));
         }
     }
 }

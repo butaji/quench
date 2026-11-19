@@ -133,7 +133,7 @@ fn dead_call_results(function: &Function, live: &RegisterMasks) -> crate::heap::
         .instructions()
         .enumerate()
         .filter(|(pc, instruction)| {
-            instruction.op() == crate::bytecode::Op::Call
+            instruction.op().traits().has(crate::bytecode::Traits::PLAIN_CALL)
                 && instruction.result_flags() == 0
                 && live.get(pc + 1).is_some_and(|after| register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK)))
         })

@@ -1,4 +1,7 @@
 use super::*;
+use crate::bytecode::{Traits, the_op};
+
+const REGISTER_COPY_OP: Op = the_op(Traits::REGISTER_COPY);
 
 impl FunctionCompiler<'_, '_> {
     pub(super) fn coalesce(
@@ -8,12 +11,12 @@ impl FunctionCompiler<'_, '_> {
     ) -> Register {
         let left = self.expression_with_debug_name(&value.left, debug_name);
         let result = self.literal(Constant::Undefined);
-        self.emit(Op::Move, result, left, 0, 0);
+        self.emit(REGISTER_COPY_OP, result, left, 0, 0);
         let use_right_from_null = self.jump_strictly(left, Constant::Null, true);
         let use_left = self.jump_strictly(left, Constant::Undefined, false);
         self.patch(use_right_from_null);
         let right = self.expression_with_debug_name(&value.right, debug_name);
-        self.emit(Op::Move, result, right, 0, 0);
+        self.emit(REGISTER_COPY_OP, result, right, 0, 0);
         self.patch_instruction(use_left, self.code.len() as u32);
         result
     }

@@ -83,6 +83,7 @@ mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIEL
 mod rewrite; mod rest_alias;
 mod sequence;
 pub(crate) mod stack;
+mod checks;
 pub(crate) mod statement_stream;
 mod string;
 mod template;
@@ -1201,10 +1202,15 @@ impl Engine {
                 .map(|error| Diagnostic::parse_failure(name, &normalized, error))
                 .collect());
         }
-        stack::validate(&parsed.program).map_err(|crate::stack::StackExhausted| vec![Diagnostic::stack_exhausted(name)])?;
-        if source_type.is_typescript()
-            && let Some((span, message)) = typescript::unsupported_runtime_syntax(&parsed.program)
-        {
+        // One walk serves the checks below; each is read in the order the compiler reports them.
+        let findings = checks::walk(&parsed.program, checks::Passes {
+            depth: true,
+            decorators: source_type.is_typescript(),
+            eval_return: capture_script_completion && source_type.is_commonjs(),
+            targets: parsed.has_call_assignment_targets,
+        });
+        if findings.stack_exhausted { return Err(vec![Diagnostic::stack_exhausted(name)]); }
+        if let Some((span, message)) = findings.decorator {
             let mut diagnostic = Diagnostic::unsupported(name, message);
             diagnostic.span = span;
             return Err(vec![diagnostic]);
@@ -1220,10 +1226,7 @@ impl Engine {
                 },
             }]);
         }
-        if capture_script_completion
-            && source_type.is_commonjs()
-            && let Some(span) = early::eval_return_outside_function(&parsed.program)
-        {
+        if let Some(span) = findings.eval_return {
             return Err(vec![Diagnostic {
                 kind: DiagnosticKind::Syntax,
                 source: name.into(),
@@ -1236,7 +1239,7 @@ impl Engine {
             // eval still has Script semantics for declarations and scopes.
             parsed.program.source_type = SourceType::script().with_typescript(source_type.is_typescript());
         }
-        if let Some(span) = annex_b_targets::invalid_parsed_target(&parsed) {
+        if let Some(span) = findings.invalid_target {
             return Err(vec![Diagnostic {
                 kind: DiagnosticKind::Syntax,
                 source: name.into(),
@@ -1372,7 +1375,7 @@ impl Engine {
                 );
                 parsed.program.body = statements;
                 parsed.program.directives = directives;
-                if let Some(span) = early::eval_return_outside_function(&parsed.program) {
+                if let Some(span) = checks::walk(&parsed.program, checks::Passes { eval_return: true, ..Default::default() }).eval_return {
                     return Err(vec![Diagnostic {
                         kind: DiagnosticKind::Syntax,
                         source: name.into(),

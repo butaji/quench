@@ -104,5 +104,51 @@ macro_rules! row_ops {
     };
 }
 
+/// Roles emitted by more than one compile file. Each names the one op its trait selects.
+pub(crate) const REGISTER_MOVE: Op = the_op(Traits::REGISTER_COPY);
+pub(crate) const JUMP_IF_FALSE: Op = the_op(Traits::JUMPS_ON_FALSE);
+pub(crate) const CALL_INVOKE: Op = the_op(Traits::CALL_INVOKE);
+pub(crate) const ELEMENT_STORE: Op = the_op(Traits::ELEMENT_STORE);
+pub(crate) const OBJECT_FIELD_STORE: Op = the_op(Traits::OBJECT_FIELD_STORE);
+pub(crate) const RETURN_OP: Op = the_op(Traits::RETURN_VALUE);
+
 pub(crate) use op_table;
 pub(crate) use row_ops;
+
+#[cfg(test)]
+mod role_tests {
+    use super::*;
+
+    /// Each role names the op it replaced in the emitters, and no other row carries its trait.
+    #[test]
+    fn roles_select_the_ops_they_replaced() {
+        assert_eq!(the_op(Traits::TDZ_INITIALIZE), Op::InitializeTdz);
+        assert_eq!(the_op(Traits::CLASS_HERITAGE_CHECK), Op::ValidateClassHeritage);
+        assert_eq!(the_op(Traits::MAKES_CLOSURE), Op::MakeClosure);
+        assert_eq!(the_op(Traits::FIELD_LEAF), Op::GetField);
+        assert_eq!(the_op(Traits::PRIVATE_NAME_MARK), Op::MarkPrivateName);
+        assert_eq!(the_op(Traits::JUMPS_ON_FALSE), Op::JumpFalse);
+        assert_eq!(the_op(Traits::UNCONDITIONAL_JUMP), Op::Jump);
+        assert_eq!(the_op(Traits::REGISTER_COPY), Op::Move);
+        assert_eq!(the_op(Traits::PROPERTY_KEY_CONVERT), Op::ToPropertyKey);
+        assert_eq!(the_op(Traits::FUNCTION_NAME_KEY_SET), Op::SetFunctionNameKey);
+        assert_eq!(the_op(Traits::CALL_INVOKE), Op::Call);
+        assert_eq!(the_op(Traits::ELEMENT_STORE), Op::SetIndex);
+        assert_eq!(the_op(Traits::OBJECT_FIELD_STORE), Op::SetField);
+        assert_eq!(the_op(Traits::PRIVATE_FIELD_DEFINE), Op::DefinePrivateField);
+        assert_eq!(the_op(Traits::COMPUTED_FIELD_DEFINE), Op::DefineComputedField);
+        assert_eq!(the_op(Traits::FIELD_DEFINE), Op::DefineField);
+        assert_eq!(the_op(Traits::LOCAL_BINDING_STORE), Op::StoreLocal);
+        assert_eq!(the_op(Traits::PROPERTY_RECORD_DEFINE), Op::DefinePropertyRecord);
+        assert_eq!(the_op(Traits::THIS_LEAF), Op::LoadThis);
+        assert_eq!(the_op(Traits::TEMPLATE_CACHE_LOAD), Op::LoadCachedTemplateObject);
+        assert_eq!(the_op(Traits::TEMPLATE_CACHE_STORE), Op::CacheTemplateObject);
+        assert_eq!(the_op(Traits::ARRAY_MAKE), Op::MakeArray);
+        assert_eq!(the_op(Traits::OBJECT_MAKE), Op::MakeObject);
+        assert_eq!(the_op(Traits::RETURNING_UNARY), Op::Unary);
+        assert_eq!(the_op(Traits::CONSTANT_LOAD), Op::LoadConst);
+        assert_eq!(the_op(Traits::STRING_CONCAT), Op::StringConcat);
+        assert_eq!(the_op(Traits::RETURN_VALUE), Op::Return);
+        assert_eq!(the_op(Traits::FIRST_CALL_CHUNK), Op::CallFirstChunk);
+    }
+}

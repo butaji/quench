@@ -50,20 +50,6 @@ pub(super) fn class_eval_references_arguments(statements: &[Statement<'_>]) -> b
     arguments.0
 }
 
-pub(super) fn eval_return_outside_function(program: &Program<'_>) -> Option<oxc_span::Span> {
-    struct Returns(Option<oxc_span::Span>);
-    impl<'a> Visit<'a> for Returns {
-        fn visit_return_statement(&mut self, statement: &oxc_ast::ast::ReturnStatement<'a>) {
-            self.0.get_or_insert(statement.span);
-        }
-        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
-        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
-    }
-    let mut returns = Returns(None);
-    returns.visit_program(program);
-    returns.0
-}
-
 pub(super) fn normalize_dynamic_function_body(source: &str) -> Cow<'_, str> {
     if dynamic_body_is_strict(source) || !has_line_leading_html_close(source) {
         return Cow::Borrowed(source);
