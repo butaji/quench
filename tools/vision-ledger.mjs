@@ -102,6 +102,13 @@ function lineOf(starts, off) { let lo = 0, hi = starts.length - 1; while (lo < h
 function matchBrace(s, open) { let depth = 0; for (let i = open; i < s.length; i++) { if (s[i] === "{") depth++; else if (s[i] === "}") { depth--; if (!depth) return i; } } return s.length; }
 
 // Ranges of `#[cfg(test)]` items.
+// Frame types: JIT-side frames fold in F5 with the JIT threads (coordinator, 15:20 UTC 19 Nov);
+// LaneFrame is Derive's protocol_row frame; the rest are the Calls thread's one frame model.
+function frameOwner(rel, name) {
+  if (/^LaneFrame$/.test(name)) return "Derive";
+  if (/vm\/compiled(\/|\.rs$)/.test(rel) || /^(NativeActivation|JsNativeActivation)$/.test(name)) return "u-jit";
+  return "Calls and frames";
+}
 // The item an allow(dead_code) sits on, so the key survives line moves: dead:<name>.
 function deadName(s, at, line) {
   const m = /^\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?(?:(?:const\s+|unsafe\s+|extern\s+"C"\s+)*fn|struct|enum|const|static|mod|type|trait|union|impl(?:<[^>]*>)?)\s+([A-Za-z_][A-Za-z0-9_]*)|^\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[:(,{]/.exec(s.slice(at, at + 400));
@@ -319,7 +326,7 @@ function scan(tree, branch, wantOwners) {
       if (!inRanges(tests, m.index)) add("exclusion-table", rel, lineOf(starts, m.index), m[1], `${m[1]}: an exclusion table in tier code (principle 3: every op has a row, no exclusion tables)`);
     // P3: one frame model.
     if (inRuntime && !/staged\/frame\.rs$/.test(rel)) for (const m of s.matchAll(/\bstruct\s+([A-Za-z0-9_]*(?:Frame|Activation|Window)[A-Za-z0-9_]*)\b/g))
-      if (!inRanges(tests, m.index) && !/(Frames|Words|Plan|Kind|Stats|Builder|Ref|Id|Key|Info)$/.test(m[1])) add("frame-model", rel, lineOf(starts, m.index), m[1], `frame type ${m[1]} (principle 3: one frame model; staged/frame.rs is the layout source)`, { owner: "Calls and frames" });
+      if (!inRanges(tests, m.index) && !/(Frames|Words|Plan|Kind|Stats|Builder|Ref|Id|Key|Info)$/.test(m[1])) add("frame-model", rel, lineOf(starts, m.index), m[1], `frame type ${m[1]} (principle 3: one frame model; staged/frame.rs is the layout source)`, { owner: frameOwner(rel, m[1]) });
     // P2/P3: one entry mechanism (a fn-pointer transmute is a hand-made way into compiled code).
     if (inRuntime && /vm\//.test(rel)) for (const m of s.matchAll(/transmute::<[^>]*extern\s+"C"|transmute\s*\([^)]*\)\s*as\s*(?:unsafe\s+)?extern|as\s+(?:unsafe\s+)?extern\s+"C"\s+fn/g))
       if (!inRanges(tests, m.index)) add("entry-mechanism", rel, lineOf(starts, m.index), `entry@${lineOf(starts, m.index)}`, `a hand-made entry into compiled code (fn-pointer cast); principle 3: one trampoline, one EntryDescriptor`, { owner: /wasm/.test(rel) ? "Wasm" : "u-jit" });
