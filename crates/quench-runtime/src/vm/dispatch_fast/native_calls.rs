@@ -297,7 +297,10 @@ pub(super) fn in_place_row_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram
             let sliced = vm.plain_array_slice(receiver, args);
             vm.fast_declined(native, sliced)
         }
-        Native::ArrayConcat => vm.array_concat_dense(receiver, args),
+        Native::ArrayConcat => {
+            let joined = vm.array_concat_dense(receiver, args);
+            vm.fast_declined(native, joined)
+        }
         Native::ArrayIndexOf | Native::ArrayIncludes => {
             let found = vm.dense_search_call(native, receiver, args);
             vm.fast_declined(native, found)
