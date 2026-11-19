@@ -111,6 +111,9 @@ pub(super) fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&Operand
     if !reached {
         return Ok(skipped());
     }
+    if row.step == Some(Step::Switch) {
+        return super::switch::switch_run(layout, (reprs, kinds), pc, row, helpers);
+    }
     if leaves(layout, row) {
         return plan_step(&Decoded::step(Step::Leave, None), layout, pc, helpers);
     }

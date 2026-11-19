@@ -24,6 +24,12 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
         Some(Operation::LogicalNot { destination, source }) =>
             return Some(plain.then(|| Decoded::number(Kind::Not, Some(destination), Some(Source::Register(source)), None, None))),
         // `++`/`--`: the int32 update by one (the row's overflow leaves, as the staged one does).
+        // `IntCaseIndex`: the case slot of the operand among the labels from `minimum` (its immediate) to `maximum`, which
+        // the row takes as `Decoded::hole` (the stencil's hole 3).
+        Some(Operation::Number(NumberOperation::IntCase { destination, source, minimum, maximum, count: _ })) => return Some(plain.then(|| Decoded {
+            hole: u64::from(maximum as u32),
+            ..Decoded::number(Kind::IntCase, Some(destination), Some(Source::Register(source)), Some(Source::Constant(Value::integer(minimum).to_bits())), None)
+        })),
         Some(Operation::Number(NumberOperation::IncDec { destination, source, decrement, .. })) => return Some(plain.then(|| Decoded::number(
             if decrement { Kind::Sub } else { Kind::Add }, Some(destination), Some(Source::Register(source)),
             Some(Source::Constant(Value::integer(1).to_bits())), None))),

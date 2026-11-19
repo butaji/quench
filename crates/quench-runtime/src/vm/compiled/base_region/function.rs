@@ -19,6 +19,7 @@ use super::call_plan::{CallForm, CallShape, DirectFacts};
 use super::callees::{chains, Callees};
 use super::super::LaneHelpers;
 use crate::bytecode::Function;
+use crate::vm::dispatch_fast::operand_feedback::OperandClass;
 use crate::heap::GlobalFact;
 use quench_bjit::call_record::CallRecord;
 use quench_bjit::{padded_holes, HOLES};
@@ -26,6 +27,7 @@ use quench_bjit::{padded_holes, HOLES};
 mod calls;
 mod planning;
 mod rows;
+mod switch;
 
 use calls::*;
 use planning::*;
@@ -248,6 +250,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let seen = super::declared::seen(function, ending, spec.seen);
     let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), &seen);
+    feedback_admits(&mut decoded, &kinds);
     let shaped: Vec<Register> = prototypes.iter().map(|proto| proto.register).collect();
     // The entry seeds the direct objects it checks: the declared ones, and each shape-checked receiver (`Heap::Shape`).
     let objects: Vec<Register> = super::declared::exact_objects(function, &prototypes).into_iter().chain(shapes.iter().map(|proto| proto.register)).collect();
@@ -297,4 +300,15 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
         instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
         layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes, number_guards,
         uses_this: crate::bytecode::activation_reads_this(spec.known.program, function) })
+}
+
+/// Admits a packed helper row only where its site's operand feedback is Number-only (`OperandClass` below `Any`):
+/// the direct arm declines any other operand, so a site that met one would run the general step on every
+/// execution. An inlined row has no site of its own, and is not admitted.
+fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>]) {
+    for (row, site) in decoded.iter_mut().zip(kinds) {
+        if row.packed.is_some() && !site.is_some_and(|site| site.class() != OperandClass::Any) {
+            row.packed = None;
+        }
+    }
 }
