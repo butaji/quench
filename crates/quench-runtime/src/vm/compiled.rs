@@ -2680,6 +2680,12 @@ fn stitched_entry<H: Host>(
         };
         Some((first, second))
     };
+    // A call holds the reference registers its state names (`wasm_roots`), and an allocating step
+    // reads the operands its plan gives their kinds (`wasm_gc_allocate`).
+    let references = |pc: usize| -> Vec<u16> { full_plan.references.get(pc).cloned().unwrap_or_default() };
+    let gc_reads = |pc: usize| -> Vec<(u16, u64)> {
+        full_plan.gc_reads.get(pc).map_or_else(Vec::new, |reads| reads.iter().map(|(register, kind)| (*register, *kind as u64)).collect())
+    };
     let world = wasm_stitch::World {
         constant: &constant,
         memory_slot,
@@ -2691,6 +2697,9 @@ fn stitched_entry<H: Host>(
         indirect: &indirect,
         table_callout: wasm_table_ops_stage::table_op_callout::<H> as *const () as u64,
         gc_callout: wasm_gc_callout::wasm_gc_callout::<H> as *const () as u64,
+        allocate_callout: wasm_gc_allocate::allocate_frame::<H> as *const () as u64,
+        references: &references,
+        gc_reads: &gc_reads,
         table_bindings: &table_bindings,
         registers: function.registers,
         vector_constant: &vector_constant,

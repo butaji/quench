@@ -95,3 +95,35 @@ pub(crate) unsafe fn callout<const OP: u32>(mut s: S) -> Out {
     }
     Out::Next(s)
 }
+
+/// The allocating GC step's callout (`vm/compiled/wasm_gc_allocate.rs`, `allocate_frame`):
+/// (context, the packed instruction, the immediate and count word, the frame, the operand
+/// descriptor, the result word) -> status.
+type Allocate = unsafe extern "C" fn(usize, u64, u64, usize, usize, *mut u64) -> i64;
+
+/// The bit of the immediate-and-count word that says the step has a result, for the instruction's
+/// destination `a` (`wasm_stitch_gc.rs`, `allocating`).
+const RESULT_BIT: u32 = 40;
+
+/// The allocating GC step of a stitched frame: the callout reads the operands from the frame, the
+/// descriptor names each one's register and kind, and runs the interpreter's step. A step with a
+/// result writes it to the destination register (the instruction's `a`). The callout allocates
+/// but runs no interpreter code, so the frame holds nothing across it (`wasm_gc_allocate.rs`).
+#[inline(always)]
+pub(crate) unsafe fn gc_allocate(mut s: S) -> Out {
+    unsafe {
+        let (packed, meta, descriptor) = (hole64::<HOLE_A>(), hole64::<HOLE_B>(), hole64::<HOLE_FOURTH>());
+        let callout: Allocate = core::mem::transmute::<usize, Allocate>(hole64::<0>() as usize);
+        let mut word = 0u64;
+        let status = callout(s.ctx, packed, meta, s.frame, descriptor as usize, core::ptr::addr_of_mut!(word));
+        if status != 0 {
+            s.p[0] = status as usize;
+            return Out::Exit(s);
+        }
+        if (meta >> RESULT_BIT) & 1 != 0 {
+            let destination = s.frame + 8 * (crate::wasm_codes::FRAME_HEADER_WORDS as usize + ((packed >> 16) & 0xffff) as usize);
+            *(destination as *mut u64) = word;
+        }
+    }
+    Out::Next(s)
+}

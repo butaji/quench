@@ -71,6 +71,9 @@ pub fn wasm_library() -> Vec<WasmCode> {
     for operator in 0..=(CALLOUT_RESULT | CALLOUT_WRAP) {
         rows.push((CALLOUT, operator, W64, REGISTER));
     }
+    rows.push((ROOT_PUSH, 0, W64, REGISTER));
+    rows.push((ROOT_POP, 0, W64, REGISTER));
+    rows.push((GC_ALLOCATE, 0, W64, REGISTER));
     for (kind, operators) in [
         (SIMD_MORE_BINARY, SIMD_MORE_BINARY_OPS),
         (SIMD_MORE_COMPARE, SIMD_MORE_COMPARE_OPS),
@@ -93,6 +96,6 @@ pub fn wasm_library() -> Vec<WasmCode> {
 /// The name of a Wasm row's stencil symbol.
 pub fn wasm_name((kind, operator, width, shape): WasmCode) -> String {
     // A row that calls must be named so (`build/checks.rs`).
-    let call = if matches!(kind, CALL | CALL_INDIRECT | CALL_VM | MEMORY_GROW | CALLOUT) { "call_" } else { "" };
+    let call = if matches!(kind, CALL | CALL_INDIRECT | CALL_VM | MEMORY_GROW | CALLOUT | GC_ALLOCATE) { "call_" } else { "" };
     format!("{call}w_{kind}_{operator}_{width}_{shape}")
 }
