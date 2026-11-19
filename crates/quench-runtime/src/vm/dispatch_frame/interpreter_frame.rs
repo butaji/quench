@@ -537,10 +537,13 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
         let program_id = vm.frames[frame].program;
         let made: Result<Value, JsError> = match allocation {
             Allocation::Empty => Ok(vm.object()),
-            Allocation::Array { length, numbers: false } => Ok(vm.hole_array(length as usize)),
-            // A Number-element array and a regexp literal that may answer a shared argument
-            // object are made by the general step, which knows their element kind and callee.
-            Allocation::Array { numbers: true, .. } | Allocation::RegExp { callee: Some(_), .. } => return None,
+            Allocation::Array { length, numbers } => Ok(vm.make_array(length as usize, numbers)),
+            // A regexp literal that is a String method's first argument may answer the site's
+            // shared object while that callee is the realm's own (`Vm::regexp_literal_argument_of`).
+            Allocation::RegExp { site, callee: Some(callee) } => {
+                let callee = vm.read(frame, callee);
+                vm.regexp_literal_argument_of(program, program_id, frame, site as usize, callee)
+            }
             // An array literal's elements are defined after it (`DefineElement`), so `decode_literal` never makes it whole.
             Allocation::ArrayOf { .. } => return None,
             Allocation::RegExp { site, callee: None } => vm.regexp_literal(program, frame, site as usize),
