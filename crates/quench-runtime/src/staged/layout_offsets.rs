@@ -14,6 +14,14 @@
 #![allow(dead_code)]
 
 pub(crate) use crate::staged::frame::{ACTIVATION_BYTES, ACTIVATION_KIND_OFFSET, CONTEXT_WORDS as FRAME_CONTEXT_WORDS};
+use super::object_encoding::{
+    DICTIONARY_STORAGE, EXTRAS_FORM, EXTRAS_TAG, EXTRAS_TAG_MASK, HEADER_CAPACITY_MASK, INLINE_FORM,
+    INLINE_PROPERTY_COUNT, META_OFFSET, NARROW_FORM, NARROW_RUN_TAG, OBJECT_ARRAY, OBJECT_INLINE_STORAGE,
+    OCCUPANCY_WORD_BITS, PROTO_ARRAY_RECORD_BASE, PROTO_INDEX_BITS, PROTO_OBJECT_RECORD_BASE,
+    RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordBlock, START_MASK, VALUE_VEC_FROZEN,
+    VALUE_VEC_INTEGRITY_BITS,
+};
+use super::object_extras::ObjectExtrasWords;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeObjectLayout {
@@ -50,36 +58,36 @@ pub(crate) struct NativeObjectLayout {
 }
 
 pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: 16777216,
+    record_capacity: RECORD_SPACE_CAPACITY,
     record_size: size_of::<super::record_heads::ObjectHead>(),
     record_align: align_of::<super::record_heads::ObjectHead>(),
     layout_offset: core::mem::offset_of!(super::record_heads::ObjectHead, layout),
-    meta_offset: 4,
+    meta_offset: META_OFFSET,
     auxiliary_offset: 0,
     payload_offset: core::mem::offset_of!(super::record_heads::ObjectHead, payload),
-    extras_arena_start_offset: 24,
-    extras_inline_values_offset: 8,
-    inline_storage_mask: 536870912,
-    array_mask: 268435456,
-    storage_start_mask: 1073741823,
-    dictionary_mask: 2147483648,
-    inline_form: 536870912,
-    extras_form: 268435456,
-    narrow_form: 134217728,
-    narrow_run_tag: 4294967296,
-    integrity_mask: 3221225472,
-    inline_property_count: 2,
-    extras_tag: 9223090561878065152,
-    extras_tag_mask: 18446462598732840960,
-    proto_mask: 268435455,
-    proto_record_base: 134217728,
-    proto_record_end: 150994944,
-    mark_records_per_block: 1024,
-    mark_word_bits: 64,
-    mark_block_size: 512,
-    mark_offset: 128,
-    property_value_size: 8,
-    property_value_align: 8,
+    extras_arena_start_offset: core::mem::offset_of!(ObjectExtrasWords, arena_start),
+    extras_inline_values_offset: core::mem::offset_of!(ObjectExtrasWords, inline_properties),
+    inline_storage_mask: OBJECT_INLINE_STORAGE,
+    array_mask: OBJECT_ARRAY,
+    storage_start_mask: START_MASK,
+    dictionary_mask: DICTIONARY_STORAGE,
+    inline_form: INLINE_FORM,
+    extras_form: EXTRAS_FORM,
+    narrow_form: NARROW_FORM,
+    narrow_run_tag: NARROW_RUN_TAG,
+    integrity_mask: VALUE_VEC_INTEGRITY_BITS,
+    inline_property_count: INLINE_PROPERTY_COUNT,
+    extras_tag: EXTRAS_TAG,
+    extras_tag_mask: EXTRAS_TAG_MASK,
+    proto_mask: PROTO_INDEX_BITS,
+    proto_record_base: PROTO_OBJECT_RECORD_BASE,
+    proto_record_end: PROTO_ARRAY_RECORD_BASE,
+    mark_records_per_block: RECORDS_PER_BLOCK,
+    mark_word_bits: OCCUPANCY_WORD_BITS,
+    mark_block_size: size_of::<RecordBlock>(),
+    mark_offset: core::mem::offset_of!(RecordBlock, marked),
+    property_value_size: size_of::<u64>(),
+    property_value_align: align_of::<u64>(),
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,20 +125,20 @@ pub(crate) struct NativeArrayLayout {
 }
 
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
-    record_capacity: 16777216,
+    record_capacity: RECORD_SPACE_CAPACITY,
     record_size: size_of::<super::record_heads::ObjectHead>(),
     record_align: align_of::<super::record_heads::ObjectHead>(),
     elements_offset: core::mem::offset_of!(super::record_heads::ObjectHead, payload),
-    extras_elements_offset: 28,
+    extras_elements_offset: core::mem::offset_of!(ObjectExtrasWords, elements),
     elements_header_offset: 0,
     header_length_offset: core::mem::offset_of!(super::record_heads::ArrayHeaderHead, len),
     header_values_offset: size_of::<super::record_heads::ArrayHeaderHead>(),
     header_owners_offset: core::mem::offset_of!(super::record_heads::ArrayHeaderHead, owners),
     header_capacity_offset: core::mem::offset_of!(super::record_heads::ArrayHeaderHead, capacity),
-    capacity_mask: 1073741823,
+    capacity_mask: HEADER_CAPACITY_MASK,
     object_offset: 0,
-    frozen_mask: 2147483648,
-    integrity_mask: 3221225472,
+    frozen_mask: VALUE_VEC_FROZEN,
+    integrity_mask: VALUE_VEC_INTEGRITY_BITS,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,8 +156,8 @@ pub(crate) struct NativeTypedArrayLayout {
 
 pub(crate) const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTypedArrayLayout {
     entry_size: size_of::<usize>(),
-    page_shift: 12,
-    page_mask: 4095,
+    page_shift: TYPED_PAGE_SHIFT,
+    page_mask: (1 << TYPED_PAGE_SHIFT) - 1,
     kind_offset: core::mem::offset_of!(super::record_heads::NativeViewHead, kind),
     detached_offset: core::mem::offset_of!(super::record_heads::NativeViewHead, detached),
     unshared_offset: core::mem::offset_of!(super::record_heads::NativeViewHead, unshared),
@@ -158,38 +166,15 @@ pub(crate) const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTyped
     stamp_offset: core::mem::offset_of!(super::record_heads::NativeViewHead, stamp),
 };
 
+/// The typed-array view table's page shift: a slot's page is `slot >> TYPED_PAGE_SHIFT`, its entry the
+/// slot's low bits (`heap::typed_view`).
+pub(crate) const TYPED_PAGE_SHIFT: u32 = 12;
+
 /// Where a loop entry record keeps an array's element count, after the elements' address (`LoopEntry::push_array`).
 pub(crate) const LOOP_ENTRY_ARRAY_COUNT_AT: u64 = size_of::<u64>() as u64;
 
-/// The runtime's `TypedArrayKind`, in its order (`stencil_layout_matches` checks both).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TypedArrayKind {
-    Uint8,
-    Uint8Clamped,
-    Uint16,
-    Uint32,
-    Int8,
-    Int16,
-    Int32,
-    BigInt64,
-    BigUint64,
-    Float16,
-    Float32,
-    Float64,
-}
-impl TypedArrayKind {
-    /// Every kind, in discriminant order.
-    pub(crate) const ALL: [Self; 12] = [Self::Uint8, Self::Uint8Clamped, Self::Uint16, Self::Uint32, Self::Int8, Self::Int16, Self::Int32, Self::BigInt64, Self::BigUint64, Self::Float16, Self::Float32, Self::Float64];
-    /// The element width in bytes.
-    pub(crate) const fn width(self) -> usize {
-        match self {
-            Self::Uint8 | Self::Uint8Clamped | Self::Int8 => size_of::<u8>(),
-            Self::Uint16 | Self::Int16 | Self::Float16 => size_of::<u16>(),
-            Self::Uint32 | Self::Int32 | Self::Float32 => size_of::<u32>(),
-            Self::BigInt64 | Self::BigUint64 | Self::Float64 => size_of::<u64>(),
-        }
-    }
-}
+/// The runtime's `TypedArrayKind` (`heap/cell/typed_array_catalog.rs`, mounted once for both builds).
+pub(crate) use super::typed_array_catalog::TypedArrayKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeEnvironmentLayout {
@@ -203,7 +188,7 @@ pub(crate) const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvi
     header_pointer_offset: 0,
     sparse_mark: super::encodings::MARK_BIT as u64,
     slots_offset: size_of::<usize>() as u64,
-    slot_size: 8,
+    slot_size: size_of::<u64>() as u64,
 };
 
 #[derive(Debug)]
@@ -218,62 +203,42 @@ pub(crate) struct NativeFieldCacheLayout {
     pub(crate) own_holder: u32,
 }
 
+/// The field cache entry's layout, from its `repr(C)` words and their empty values (`field_cache_layout`).
 pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
-    entry_size: 12,
-    receiver_offset: 0,
-    holder_offset: 4,
-    slot_offset: 8,
-    receiver_complement: 4294967295,
-    holder_complement: 4294967295,
-    slot_complement: 0,
-    own_holder: 4294967295,
+    entry_size: size_of::<super::field_cache_layout::FieldCacheWords>(),
+    receiver_offset: core::mem::offset_of!(super::field_cache_layout::FieldCacheWords, receiver),
+    holder_offset: core::mem::offset_of!(super::field_cache_layout::FieldCacheWords, holder),
+    slot_offset: core::mem::offset_of!(super::field_cache_layout::FieldCacheWords, slot),
+    receiver_complement: super::field_cache_layout::EMPTY.receiver,
+    holder_complement: super::field_cache_layout::EMPTY.holder,
+    slot_complement: super::field_cache_layout::EMPTY.slot,
+    own_holder: super::field_cache_layout::NO_HOLDER,
 };
 
 pub(crate) use super::encodings::{DOUBLE_LEN, ENCODED_LEN, NARROW_LEN, OTHERS_UNKNOWN};
+/// The first id past the string records' own range: a small string's id is this base plus its bits.
+pub(crate) const STRING_RECORD_HOLE: u32 = 1 << 24;
 /// A string id whose bits under the mask are the base is small: it names no string record.
-pub(crate) const SMALL_STRING_ID_MASK: u32 = 4278190080;
-pub(crate) const SMALL_STRING_ID_BASE: u32 = 16777216;
+pub(crate) const SMALL_STRING_ID_MASK: u32 = !(STRING_RECORD_HOLE - 1);
+pub(crate) const SMALL_STRING_ID_BASE: u32 = STRING_RECORD_HOLE;
 /// The byte offsets from a backing's first value to its `len` and `others` words: the head
 /// `ArrayHeaderHead` is the backing's header, and its values follow it.
 pub(crate) const LENGTH_FROM_VALUES: i32 = core::mem::offset_of!(super::record_heads::ArrayHeaderHead, len) as i32 - size_of::<super::record_heads::ArrayHeaderHead>() as i32;
 pub(crate) const OTHERS_FROM_VALUES: i32 = core::mem::offset_of!(super::record_heads::ArrayHeaderHead, others) as i32 - size_of::<super::record_heads::ArrayHeaderHead>() as i32;
 pub(crate) const INLINE_PROPERTIES: usize = 2;
 
-/// `ValueLayout`, `Value` and `NarrowLayout` constants.
+/// The value encoding's constants under the stencil's names (`words::*`), each the runtime's own
+/// `staged::value_encoding` item. `ValueLayout` and `NarrowLayout` are that file's structs.
+pub(crate) use super::value_encoding::{NarrowLayout, ValueLayout};
 pub(crate) mod words {
-    pub(crate) const TAG_MASK: u64 = 0xffff000000000000;
-    pub(crate) const INT_TAG: u64 = 0x7ffd000000000000;
-    pub(crate) const INTERNAL_TAG: u64 = 0x7ffe000000000000;
-    pub(crate) const HEAP_TAG: u64 = 0x7ffc000000000000;
-    pub(crate) const DIRECT_ARRAY_TAG: u64 = 0x7ffc400000000000;
-    pub(crate) const DIRECT_OBJECT_TAG: u64 = 0x7ffc800000000000;
-    pub(crate) const DIRECT_FUNCTION_TAG: u64 = 0x7ffcc00000000000;
-    pub(crate) const DIRECT_PROMISE_TAG: u64 = 0x7ffc200000000000;
-    pub(crate) const DIRECT_ITERATOR_TAG: u64 = 0x7ffca00000000000;
-    pub(crate) const DIRECT_COLLECTION_TAG: u64 = 0x7ffcb00000000000;
-    pub(crate) const HEAP_FAMILY_MASK: u64 = 0xfffff00000000000;
-    pub(crate) const DIRECT_STRING_TAG: u64 = 0x7ffce00000000000;
-    pub(crate) const TAG_SHIFT: u32 = 48;
-    pub(crate) const FIRST_TAG_FIELD: u64 = 0x7ff9;
-    pub(crate) const TAG_FIELD_SPAN: u64 = 0x5;
-    pub(crate) const CANONICAL_NAN: u64 = 0x7ff8000000000000;
-    pub(crate) const NULL: u64 = 0x7ffa000000000000;
-    pub(crate) const UNDEFINED: u64 = 0x7ff9000000000000;
-    pub(crate) const DELETED: u64 = 0x7ffe000000000000;
-    pub(crate) const FALSE: u64 = 0x7ffb000000000000;
-    pub(crate) const TRUE: u64 = FALSE | 1;
-    pub(crate) const NARROW_INT_FLAG: u32 = 1;
-    pub(crate) const NARROW_INTEGER_BITS: u32 = 30;
-    pub(crate) const NARROW_CODE_SHIFT: u32 = 1;
-    pub(crate) const NARROW_CODE_MASK: u32 = 0xf;
-    pub(crate) const NARROW_INDEX_SHIFT: u32 = 5;
-    pub(crate) const NARROW_INDEX_BITS: u32 = 25;
-    pub(crate) const DIRECT_OBJECT_UPPER: u64 = 0x7ffc800000000000;
-    pub(crate) const DIRECT_OBJECT_NARROW_CODE: u32 = 4;
-    pub(crate) const LOWER_WORD: u64 = 0xffff_ffff;
-    pub(crate) const HEAP_FAMILY_BITS: u64 = 0x0000_e000_0000_0000;
-    pub(crate) const HEAP_FAMILY_SHIFT: u32 = 45;
-    pub(crate) const NARROW_HEAP_FAMILIES: usize = 8;
+    pub(crate) use super::super::value_encoding::{
+        CANONICAL_NAN, DIRECT_ARRAY_TAG, DIRECT_FUNCTION_TAG, DIRECT_ITERATOR_TAG, DIRECT_OBJECT_NARROW_CODE, DIRECT_OBJECT_TAG,
+        DIRECT_OBJECT_UPPER, DIRECT_PROMISE_TAG, DIRECT_STRING_TAG, FIRST_TAG_FIELD, HEAP_FAMILY_BITS, HEAP_FAMILY_MASK,
+        HEAP_FAMILY_SHIFT, LOWER_WORD, NARROW_CODE_MASK, NARROW_CODE_SHIFT, NARROW_HEAP_FAMILIES, NARROW_INDEX_BITS,
+        NARROW_INDEX_SHIFT, NARROW_INTEGER_BITS, TAG_FIELD_SPAN, TAG_SHIFT, TAG_TRUE as TRUE, TAG_MASK, TAG_BOOL as FALSE,
+        TAG_DELETED as DELETED, TAG_DELETED as INTERNAL_TAG, TAG_HEAP as HEAP_TAG, TAG_INT as INT_TAG, TAG_NULL as NULL,
+        TAG_UNDEFINED as UNDEFINED, NARROW_INTEGER_FLAG as NARROW_INT_FLAG,
+    };
 }
 
 /// Byte offsets of the fields of the compiled-code context (`CallContext`) and the dispatch
@@ -318,10 +283,11 @@ pub(crate) const JS_STEP_EMPTY_STRING: usize = core::mem::offset_of!(super::js_s
 /// The function record reservation's base (`JsStepDispatch::function_record_base`).
 pub(crate) const JS_STEP_FUNCTION_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, function_record_base);
 pub(crate) const JS_STEP_FIELD_ENTRIES: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, field_entries);
-pub(crate) const PROPERTY_BUFFER_BASE: usize = 0;
+/// The base pointer's offset within a property buffer: the head is the buffer's first field (`PropertyBuffer::head`).
+pub(crate) const PROPERTY_BUFFER_BASE: usize = core::mem::offset_of!(super::property_buffer::PropertyBufferHead<u8>, base);
 /// Bits of a body's capture word that hold the dense slots' address; the slot count sits above
 /// them (`entry_cell::CAPTURE_ADDRESS_BITS`), and the pad is what a shift pair clears them with.
-pub(crate) const CAPTURE_ADDRESS_PAD: u32 = 16;
+pub(crate) const CAPTURE_ADDRESS_PAD: u32 = u64::BITS - super::shared_words::CAPTURE_ADDRESS_BITS;
 /// The record a completed body names (`LANE_BODY_RETURNED`).
 pub(crate) const JS_STEP_RETURNED_PC: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, returned_pc);
 /// More `JsStepDispatch` fields the call rows read: the lane body's VM, residual and lane
@@ -338,7 +304,7 @@ pub(crate) const JS_STEP_LANE_ACTIVATIONS_TOP: usize = core::mem::offset_of!(sup
 pub(crate) const JS_STEP_LANE_FRAMES_END: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_frames_end);
 /// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`).
 pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
-pub(crate) const RAISED_RUN: u64 = 1 << 32;
+pub(crate) const RAISED_RUN: u64 = 1 << u32::BITS;
 
 /// The running activation's receiver and body-capture words live in its window's header
 /// (`staged::frame::CONTEXT_THIS`, `CONTEXT_BODY`); the stencils read them at `context_word(frame, ..)`.
@@ -357,23 +323,7 @@ pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;
 /// The flat string forms a string record is read in (`vm::wtf16::native_string`): the record's
 /// size (three words), where it keeps its form's tag, each form's tag, and where a short and a
 /// shared form keep their unit count. Checked against the runtime by `stencil_layout_matches`.
-pub(crate) mod string_form {
-    pub(crate) const RECORD_SIZE: usize = 3 * core::mem::size_of::<usize>();
-    /// A short record's length byte follows its tag byte.
-    pub(crate) const SHORT_LENGTH_OFFSET: i32 = 1;
-    /// A shared record's pointer follows its tag at the next word, then its length.
-    pub(crate) const SHARED_LENGTH_OFFSET: i32 = 2 * core::mem::size_of::<usize>() as i32;
-    /// The units of a short record follow its length byte.
-    pub(crate) const SHORT_UNITS_OFFSET: u64 = 2;
-    /// A shared record's pointer follows its tag at the next word.
-    pub(crate) const SHARED_POINTER_OFFSET: i32 = core::mem::size_of::<usize>() as i32;
-    /// The reference counts (strong and weak) an `Rc` allocation holds before its value.
-    const RC_COUNTS: u64 = 2;
-    /// How far into the shared allocation the units start: past the reference counts of an `Rc`.
-    pub(crate) const fn shared_units_offset() -> u64 {
-        RC_COUNTS * core::mem::size_of::<usize>() as u64
-    }
-}
+pub(crate) use super::string_form;
 /// What an inline-cache row reads of the dispatch payload (`stencils/ic_rows.rs`): the method-cache atom bits and their
 /// word count, which a store row consults, and whether stores are specialized.
 pub(crate) const JS_STEP_METHOD_CACHE_ATOMS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, method_cache_atoms);
@@ -382,35 +332,3 @@ pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = core::mem::offset_of!(super
 /// The object layout table's fixed address (`heap::layouts::table_base`) on x86-64 Linux, the
 /// stencils' target: a row reads an entry with the address as its displacement.
 pub(crate) const LAYOUT_TABLE_BASE: u64 = 0x7000_0000;
-
-/// The value layout's constants, as the rows name them (`ValueLayout`, `NarrowLayout`).
-pub(crate) struct ValueLayout;
-impl ValueLayout {
-    pub(crate) const TAG_MASK: u64 = words::TAG_MASK;
-    pub(crate) const INT_TAG: u64 = words::INT_TAG;
-    pub(crate) const INTERNAL_TAG: u64 = words::INTERNAL_TAG;
-    pub(crate) const HEAP_TAG: u64 = words::HEAP_TAG;
-    pub(crate) const DIRECT_ARRAY_TAG: u64 = words::DIRECT_ARRAY_TAG;
-    pub(crate) const DIRECT_OBJECT_TAG: u64 = words::DIRECT_OBJECT_TAG;
-    pub(crate) const DIRECT_FUNCTION_TAG: u64 = words::DIRECT_FUNCTION_TAG;
-    pub(crate) const DIRECT_PROMISE_TAG: u64 = words::DIRECT_PROMISE_TAG;
-    pub(crate) const DIRECT_ITERATOR_TAG: u64 = words::DIRECT_ITERATOR_TAG;
-    pub(crate) const DIRECT_COLLECTION_TAG: u64 = words::DIRECT_COLLECTION_TAG;
-    pub(crate) const HEAP_FAMILY_MASK: u64 = words::HEAP_FAMILY_MASK;
-    pub(crate) const DIRECT_STRING_TAG: u64 = words::DIRECT_STRING_TAG;
-    pub(crate) const TAG_SHIFT: u32 = words::TAG_SHIFT;
-    pub(crate) const FIRST_TAG_FIELD: u64 = words::FIRST_TAG_FIELD;
-    pub(crate) const TAG_FIELD_SPAN: u64 = words::TAG_FIELD_SPAN;
-    pub(crate) const CANONICAL_NAN: u64 = words::CANONICAL_NAN;
-}
-pub(crate) struct NarrowLayout;
-impl NarrowLayout {
-    pub(crate) const INTEGER_FLAG: u32 = words::NARROW_INT_FLAG;
-    pub(crate) const INTEGER_BITS: u32 = words::NARROW_INTEGER_BITS;
-    pub(crate) const CODE_SHIFT: u32 = words::NARROW_CODE_SHIFT;
-    pub(crate) const CODE_MASK: u32 = words::NARROW_CODE_MASK;
-    pub(crate) const INDEX_SHIFT: u32 = words::NARROW_INDEX_SHIFT;
-    pub(crate) const INDEX_BITS: u32 = words::NARROW_INDEX_BITS;
-    pub(crate) const DIRECT_OBJECT_UPPER: u64 = words::DIRECT_OBJECT_UPPER;
-    pub(crate) const DIRECT_OBJECT_CODE: u32 = words::DIRECT_OBJECT_NARROW_CODE;
-}

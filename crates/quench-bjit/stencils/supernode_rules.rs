@@ -35,6 +35,12 @@ pub use library::{Code, HeapCode};
 use library::*;
 use std::collections::BTreeSet;
 
+/// The runtime's Number operator tables (`vm/operations/number_rows.rs`): each relation, arithmetic and bitwise row names
+/// the operator symbols that denote it, which `operator_kinds` reads, so the symbols and the kinds have one definition.
+#[path = "../../quench-runtime/src/vm/operations/number_rows.rs"]
+mod number_rows;
+use number_rows::{number_arithmetic_rows, number_bitwise_rows, number_relation_rows, NumberArithmetic, NumberBitwise, NumberRelation};
+
 /// Rows a supernode fuses (a chain: each row feeds the next).
 pub const NODES: usize = 2;
 /// Most supernodes the library holds, and most stencils they instantiate together: what the
@@ -77,12 +83,67 @@ impl Family {
     }
 }
 
-/// JavaScript operator symbols and the kind that computes them.
-const OPERATOR_KINDS: [(&str, u8); 18] = [
-    ("+", ADD), ("-", SUB), ("*", MUL), ("/", DIV), ("&", AND), ("|", OR), ("^", XOR),
-    ("<<", SHL), (">>", SHR), (">>>", USHR), ("<", LT), ("<=", LE), (">", GT), (">=", GE),
-    ("==", EQ), ("===", EQ), ("!=", NE), ("!==", NE),
-];
+macro_rules! relation_operator_kinds {
+    ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {{
+        let mut kinds: Vec<(&'static str, u8)> = Vec::new();
+        $( kinds.extend([$($symbol),+].map(|symbol| (symbol, relation_kind(NumberRelation::$relation)))); )+
+        kinds
+    }};
+}
+
+macro_rules! arithmetic_operator_kinds {
+    ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
+        vec![$((stringify!($symbol), arithmetic_kind(NumberArithmetic::$operation))),+]
+    };
+}
+
+macro_rules! bitwise_operator_kinds {
+    ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
+        vec![$(($symbol, bitwise_kind(NumberBitwise::$operation))),+]
+    };
+}
+
+/// JavaScript operator symbols and the kind that computes them: each operation's kind, over the symbols its runtime row names.
+fn operator_kinds() -> Vec<(&'static str, u8)> {
+    let mut kinds = number_relation_rows!(relation_operator_kinds);
+    kinds.extend(number_arithmetic_rows!(arithmetic_operator_kinds));
+    kinds.extend(number_bitwise_rows!(bitwise_operator_kinds));
+    kinds
+}
+
+/// The kind a relation's Number row computes.
+fn relation_kind(relation: NumberRelation) -> u8 {
+    match relation {
+        NumberRelation::Equal => EQ,
+        NumberRelation::NotEqual => NE,
+        NumberRelation::LessThan => LT,
+        NumberRelation::LessEqual => LE,
+        NumberRelation::GreaterThan => GT,
+        NumberRelation::GreaterEqual => GE,
+    }
+}
+
+/// The kind an arithmetic row computes.
+fn arithmetic_kind(operation: NumberArithmetic) -> u8 {
+    match operation {
+        NumberArithmetic::Add => ADD,
+        NumberArithmetic::Subtract => SUB,
+        NumberArithmetic::Multiply => MUL,
+        NumberArithmetic::Divide => DIV,
+    }
+}
+
+/// The kind a bitwise row computes.
+fn bitwise_kind(operation: NumberBitwise) -> u8 {
+    match operation {
+        NumberBitwise::And => AND,
+        NumberBitwise::Or => OR,
+        NumberBitwise::Xor => XOR,
+        NumberBitwise::ShiftLeft => SHL,
+        NumberBitwise::ShiftRight => SHR,
+        NumberBitwise::ShiftRightUnsigned => USHR,
+    }
+}
 
 /// The kinds whose two operands may be exchanged without changing the result.
 pub const fn commutative(kind: u8) -> bool {
@@ -193,7 +254,7 @@ pub struct Shape {
 }
 
 fn kind_of(operator: &str) -> Option<u8> {
-    OPERATOR_KINDS.iter().find(|(symbol, _)| *symbol == operator).map(|&(_, kind)| kind)
+    operator_kinds().into_iter().find(|(symbol, _)| *symbol == operator).map(|(_, kind)| kind)
 }
 
 /// The opcode name of one rendered label: `Name` or `Name(operator)`.
@@ -305,16 +366,17 @@ pub fn name(nodes: &[Node; NODES]) -> String {
     format!("s__{}", nodes.iter().map(node_name).collect::<Vec<_>>().join("__"))
 }
 
-/// The arguments of `supernode_row!` (`rows.rs`): the first row's family, kind, entry, places
-/// and speculation, then the second row's.
-pub fn macro_args(nodes: &[Node; NODES]) -> String {
-    let first = match nodes[0] {
-        Node::Number((kind, dst, a, b, spec)) => format!("{FIRST_NUMBER}, {kind}, false, {dst}, {a}, {b}, {spec}"),
-        Node::Heap((heap, entry, dst, a, b)) => format!("{FIRST_HEAP}, {heap}, {entry}, {dst}, {a}, {b}, false"),
-    };
-    match nodes[1] {
-        Node::Number((kind, dst, a, b, spec)) => format!("{first}, {kind}, {dst}, {a}, {b}, {spec}"),
-        Node::Heap(_) => unreachable!("the second row of a supernode is a Number row"),
+/// The type of one constituent row of a supernode (`supernode_rows.rs`): its kind and places as const arguments.
+fn constituent(node: Node) -> String {
+    match node {
+        Node::Number((kind, dst, a, b, spec)) => format!("supernode_rows::NumberRow<{kind}, {dst}, {a}, {b}, {spec}>"),
+        Node::Heap((heap, entry, dst, a, b)) => format!("supernode_rows::HeapRow<{heap}, {entry}, {dst}, {a}, {b}>"),
     }
+}
+
+/// The arguments of `supernode_row!` (`rows.rs`): the types of the first row, then the second, which is a Number row.
+pub fn macro_args(nodes: &[Node; NODES]) -> String {
+    assert!(matches!(nodes[1], Node::Number(_)), "the second row of a supernode is a Number row");
+    format!("{}, {}", constituent(nodes[0]), constituent(nodes[1]))
 }
 

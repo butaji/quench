@@ -15,13 +15,16 @@ use super::*;
 /// defined the value (a copy's proof is its source's), the subset an access in the body proved (`established`,
 /// so `objects` minus `established` is the entry seed's alone), the copies still holding their source's value, and the
 /// class-typed receivers whose exact shape and prototype link hold here: the entry proved them, or a held read checked
-/// them, and no row since may change an object's shape (`may_reshape`).
+/// them, and no row since may change an object's shape (`may_reshape`). `stores`: the entry checked that the run stores
+/// specialized (`guard::stores`), and no row since has run code that could rewrite that word (`runs_code`): a store the
+/// proofs admit needs no test of its own.
 #[derive(Clone, Default, PartialEq)]
 struct Proved {
     objects: Vec<Register>,
     established: Vec<Register>,
     copies: Vec<(Register, Register)>,
     shapes: Vec<Register>,
+    stores: bool,
 }
 
 impl Proved {
@@ -76,6 +79,10 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
     if may_reshape(row) {
         proved.shapes.clear();
     }
+    // Code that may run in a nested run (a call, a helper, an `instanceof`, a checked conversion) may rewrite the run's stores word.
+    if row.makes_calls() || row.instanceof.is_some() || row.checked || row.declined.is_some() {
+        proved.stores = false;
+    }
     if let Some(register) = receiver(row) {
         let root = proved.root(register);
         if !proved.objects.contains(&root) {
@@ -106,6 +113,7 @@ fn meet(a: &Proved, b: &Proved) -> Proved {
         established: a.established.iter().filter(|held| b.established.contains(held)).copied().collect(),
         copies: a.copies.iter().filter(|copy| b.copies.contains(copy)).copied().collect(),
         shapes: a.shapes.iter().filter(|held| b.shapes.contains(held)).copied().collect(),
+        stores: a.stores && b.stores,
     }
 }
 
@@ -115,7 +123,8 @@ fn meet(a: &Proved, b: &Proved) -> Proved {
 /// (`declared::exact_objects`): they are proved at every row, from the entry on, and a resume stub
 /// re-establishes them with the declared entry rows. `shaped` holds the class-typed receivers the entry checked for
 /// exact shape and prototype link (`declared::class_prototypes`): a held read of one becomes a constant load on every
-/// path where no row since may change the shape (`may_reshape`).
+/// path where no row since may change the shape (`may_reshape`). Each proven store the run-level stores test admits, with no
+/// call since the entry, is marked `Decoded::admitted`.
 pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[Register], shaped: &[Register]) {
     let count = rows.len();
     // `None`: no path reaches the row yet (the top of the meet).
@@ -123,7 +132,8 @@ pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[
     if count == 0 {
         return;
     }
-    before[0] = Some(Proved { objects: entry.to_vec(), shapes: shaped.to_vec(), ..Proved::default() });
+    // The entry tests the run's stores (`Heap::Stores`) wherever a row is admitted, so the seed holds it.
+    before[0] = Some(Proved { objects: entry.to_vec(), shapes: shaped.to_vec(), stores: true, ..Proved::default() });
     let mut pending = vec![0];
     while let Some(k) = pending.pop() {
         let Some(held) = before[k].clone() else { continue };
@@ -150,6 +160,7 @@ pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[
         }
         row.relies = !held.established.is_empty();
         row.proven = receiver(row).is_some_and(|register| held.holds(register));
+        row.admitted = row.proven && held.stores && matches!(row.heap, Some(Heap::SiteStore));
         if row.class_read && let Some(register) = row.a.and_then(register_of) && held.shapes.contains(&register) {
             constant_read(row);
         }

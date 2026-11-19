@@ -45,7 +45,7 @@ pub(super) type V128RecordSpace = RecordSpace<[u8; crate::wasm::V128_BYTES]>;
 /// records of small strings (`super::small_strings`), which stay below the narrow index limit.
 pub(super) type StringRecordSpace = RecordSpace<JsString, STRING_RECORD_CAPACITY, STRING_RECORD_HOLE>;
 pub(super) const STRING_RECORD_CAPACITY: usize = super::MAX_HEAP_CELLS;
-pub(super) const STRING_RECORD_HOLE: usize = 1 << 24;
+pub(super) const STRING_RECORD_HOLE: usize = crate::staged::layout_offsets::STRING_RECORD_HOLE as usize;
 const _: () = assert!(STRING_RECORD_HOLE.is_multiple_of(RECORDS_PER_BLOCK) && 2 * STRING_RECORD_HOLE <= STRING_RECORD_CAPACITY);
 const _: () = assert!(STRING_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(STRING_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
@@ -135,10 +135,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T
     }
 }
 
-const RECORDS_PER_BLOCK: usize = 1_024;
-const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
-const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
-pub(super) const RECORD_SPACE_CAPACITY: usize = 1 << 24;
+pub(super) use crate::staged::object_encoding::{BLOCK_WORDS, OCCUPANCY_WORD_BITS, RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK};
 
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
 const _: () = assert!(OCCUPANCY_WORD_BITS.is_power_of_two());
@@ -259,18 +256,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     }
 }
 
-// Native JIT/AOT guards read `marked` using offsets exported from this layout.
-#[repr(C)]
-struct RecordBlock {
-    occupied: [u64; BLOCK_WORDS],
-    marked: [u64; BLOCK_WORDS],
-    /// Young records that survived one minor collection (`PromotionAge::Second`): unmarked,
-    /// swept by the next minor collection, which frees or promotes them.
-    aged: [u64; BLOCK_WORDS],
-    /// Freed ids no allocation takes until `RecordSpace::release_withheld`
-    /// (`RecordSpace::withhold`).
-    withheld: [u64; BLOCK_WORDS],
-}
+// Native JIT/AOT guards read `marked` using offsets exported from this layout (`staged::object_encoding`).
+use crate::staged::object_encoding::RecordBlock;
 
 /// A block's reference counts under `QUENCH_DEV=rc-gc` (`super::rc`), beside its
 /// `RecordBlock` (whose layout native code reads): two bits per record, a saturating count of

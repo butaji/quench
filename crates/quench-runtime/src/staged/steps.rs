@@ -22,7 +22,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. }
             | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } => super::names::step(stage, frame, operation),
         guard @ (Operation::GuardIdentity { .. } | Operation::GuardLive | Operation::GuardRealm { .. } | Operation::GuardDeclared { .. }
-            | Operation::GuardPrototype { .. } | Operation::BackEdge { .. }) => guard_step(stage, frame, guard),
+            | Operation::GuardPrototype { .. } | Operation::GuardShape { .. } | Operation::GuardStores { .. } | Operation::BackEdge { .. }) => guard_step(stage, frame, guard),
         value => value_step(stage, frame, value),
     }
 }
@@ -38,6 +38,8 @@ fn guard_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         Operation::GuardRealm { expected } => super::guard::realm(stage, frame, expected, miss),
         Operation::GuardDeclared { source, mask } => super::guard::declared(stage, source, mask, miss),
         Operation::GuardPrototype { source, records, shape, link } => super::guard::prototype(stage, records, source, (shape, link), miss),
+        Operation::GuardShape { source, records, shape } => super::guard::shape(stage, records, source, shape, miss),
+        Operation::GuardStores { specialized } => super::guard::stores(stage, specialized, miss),
         Operation::BackEdge { proof } => super::guard::back_edge(stage, frame, proof),
         _ => unreachable!("`guard_step` sends only guards and back edges"),
     };

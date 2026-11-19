@@ -2,11 +2,12 @@
 //! patched holes, tagged-word tests and the float to int conversions that need no constant pool.
 //! Value representation only: what a Number operation computes is `staged::numeric`'s.
 
-use crate::layout::words::{CANONICAL_NAN, FIRST_TAG_FIELD, INT_TAG, TAG_SHIFT};
+use crate::layout::words::{CANONICAL_NAN, FIRST_TAG_FIELD, INT_TAG, TAG_FIELD_SPAN, TAG_SHIFT};
 use crate::layout::CALL_CONTEXT_ADAPTER_PAYLOAD;
 
 pub(crate) const FIRST_TAG: u64 = FIRST_TAG_FIELD << TAG_SHIFT;
-pub(crate) const TAG_SPAN: u64 = 6 << TAG_SHIFT;
+/// The tag fields are `TAG_FIELD_SPAN + 1` values from the first tag's field on.
+pub(crate) const TAG_SPAN: u64 = (TAG_FIELD_SPAN + 1) << TAG_SHIFT;
 pub(crate) const HIGH_SHIFT: u32 = 32;
 pub(crate) const INT_HIGH: u64 = INT_TAG >> HIGH_SHIFT;
 /// Byte offset of the upper half of a tagged word.

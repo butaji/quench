@@ -243,7 +243,7 @@ fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hol
         (Heap::Site, false) => Heap::IcGet,
         (Heap::Site, true) => Heap::IcKnownGet,
         (_, false) => Heap::IcSet { int },
-        (_, true) => Heap::IcKnownSet { int },
+        (_, true) => Heap::IcKnownSet { int, admitted: decoded.admitted },
     };
     let row = HeapRow { heap: ic, dst, a, b: Place::Mem, entry: true };
     let holes = heap_holes(decoded, homes, ic, false, [dst_hole, a_hole, 0]);
@@ -277,7 +277,13 @@ fn chosen_row(kind: Kind, [dst, a, b]: [Place; 3], variant: Variant, general: bo
         let row = numeric::Row { kind, dst, a, b, speculate };
         numeric::stencil(row).map(|stencil| (row, stencil))
     };
-    row(speculates(variant, general)).or_else(|_| row(!general))
+    // A no-overflow row the library holds no places for (a double operand's register) is the checked row, which
+    // takes the same int32 operands and tests the overflow the proof did not need.
+    let checked = |speculate| {
+        let row = numeric::Row { kind: super::exact::checked(kind), dst, a, b, speculate };
+        numeric::stencil(row).map(|stencil| (row, stencil))
+    };
+    row(speculates(variant, general)).or_else(|_| row(!general)).or_else(|_| checked(speculates(variant, general)))
 }
 
 /// The row of `decoded` at `pc`, which takes general semantics where `general` and the speculation of

@@ -42,6 +42,15 @@ pub(crate) struct PlacesView<'a, const D: u8, const A: u8, const B: u8> {
     view: ElementView<u64>,
 }
 
+impl<'a, const D: u8, const A: u8, const B: u8> PlacesView<'a, D, A, B> {
+    /// The row's places with the loop entry's `view` of the array in register `array`: the frame a row's own
+    /// `ElementRead` or `ElementWrite` runs over (`step`), where the array is not read from its frame slot.
+    #[inline(always)]
+    pub(crate) fn new(places: &'a mut Places<D, A, B>, array: Register, view: ElementView<u64>) -> Self {
+        Self { places, array, view }
+    }
+}
+
 impl<'a, const D: u8, const A: u8, const B: u8> Frame<Concrete> for PlacesView<'a, D, A, B> {
     type Fact = Representation;
     type Control = ();

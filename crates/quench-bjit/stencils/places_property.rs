@@ -279,24 +279,26 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> PropertyFrame<Co
 #[inline(always)]
 pub(crate) fn run_planned<const D: u8, const A: u8, const B: u8, const N: usize>(stage: &mut Concrete,
     places: &mut Places<D, A, B>, ops: [IcOp<'static>; N], callout: Callout, operation: Operation<u64, ()>) -> Option<u64> {
-    let mut frame = PlannedPlaces { places, ops, callout, lexical: None, held: None };
-    match step_property(stage, &mut frame, operation) {
+    match planned_step(stage, places, ops, callout, operation) {
         Step::Value(word) => Some(word),
         _ => None,
     }
 }
 
-/// `GetField` of the receiver a held read names (`HeldRead`), its plan `PrototypeProof::Linked`: the
-/// held value, or `None` where the receiver is no exact-shape, exact-link direct object.
+/// `planned_step`'s frame for a row: `places` wrapped with the plan `ops` and the callout, the frame the rows that
+/// run the staged step themselves build (`site_rows`, `ic_rows`), so the row names the `Operation` it runs.
 #[inline(always)]
-pub(crate) fn run_held<const D: u8, const A: u8, const B: u8>(stage: &mut Concrete,
-    places: &mut Places<D, A, B>, held: HeldRead) -> Option<u64> {
-    let mut frame = PlannedPlaces { places, ops: [], callout: Callout::Plan, lexical: None, held: Some(held) };
-    let read = Operation::GetField { base: FieldBase::THIS, lookup: FieldLookup::Site(0) };
-    match step_property(stage, &mut frame, read) {
-        Step::Value(word) => Some(word),
-        _ => None,
-    }
+pub(crate) fn planned_frame<'a, const D: u8, const A: u8, const B: u8, const N: usize>(places: &'a mut Places<D, A, B>,
+    ops: [IcOp<'static>; N], callout: Callout) -> PlannedPlaces<'a, D, A, B, N> {
+    PlannedPlaces { places, ops, callout, lexical: None, held: None }
+}
+
+/// The staged property operation `operation` run over `places` through the planned frame: the step it made.
+#[inline(always)]
+pub(crate) fn planned_step<const D: u8, const A: u8, const B: u8, const N: usize>(stage: &mut Concrete,
+    places: &mut Places<D, A, B>, ops: [IcOp<'static>; N], callout: Callout, operation: Operation<u64, ()>) -> Step<u64, ()> {
+    let mut frame = planned_frame(places, ops, callout);
+    step_property(stage, &mut frame, operation)
 }
 
 /// The staged global-name operation `operation` (`LoadName` or `GlobalWrite`) run over `places` where

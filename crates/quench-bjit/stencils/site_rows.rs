@@ -2,7 +2,7 @@
 //! a code dependency's liveness and the realm proof, each the staged entry rows
 //! (`staged/entry.rs`) run on `StencilStage`.
 
-use crate::bytecode::Register;
+use crate::bytecode::{FieldBase, FieldLookup, Register};
 use crate::codes::{MEM, FIELD_ROW, SITE_ROW, SITE_STORE_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW};
 use crate::heap_rows::{context_word, word_at};
 use crate::layout::{CONTEXT_THIS, JS_STEP_PROPERTY_BUFFER, JS_STEP_VM, PROPERTY_BUFFER_BASE};
@@ -10,9 +10,9 @@ use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
 use crate::words::{hole, hole64, is_int, FIRST_TAG, HOLE_FOURTH};
 use crate::layout::words::TAG_SHIFT;
 use crate::places::{DEST, Places, settle, site_object, tagged_place};
-use crate::places_property::{Callout, HeldRead, receiver_read, run_held, run_planned};
+use crate::places_property::{Callout, HeldRead, PlannedPlaces, planned_frame, receiver_read, run_planned};
 use crate::stage::StencilStage;
-use crate::staged::{Constant, Operation, Step, step};
+use crate::staged::{Constant, Operation, Step, step, step_property};
 use crate::typed_ir::Type;
 
 /// A field read of the loop entry's record (`FIELD_ROW`): the entry record's word, its byte offset
@@ -21,7 +21,11 @@ use crate::typed_ir::Type;
 fn field_row<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::from_hole(HOLE_A);
     let mut places = Places::<D, MEM, MEM>::new(s);
-    let word = run_planned(&mut stage, &mut places, [], Callout::LoopEntry, receiver_read());
+    let step = step_property(&mut stage, &mut planned_frame(&mut places, [], Callout::LoopEntry), receiver_read());
+    let word = match step {
+        Step::Value(word) => Some(word),
+        _ => None,
+    };
     deliver::<D>(places.s, need!(places.s, word))
 }
 
@@ -62,7 +66,7 @@ fn site_store_row<const A: u8, const GATED: bool>(s: S, payload: usize, base: Op
 
 /// A prototype-held field folded to its value (hole 2): the object, the activation's receiver for an `ENTRY` row and else
 /// the register the site names, is read as the staged `GetField` of its exact shape and prototype link (hole 1's low and
-/// high halves), which leaves the row otherwise (`PrototypeProof::Linked`, `places_property::run_held`).
+/// high halves), which leaves the row otherwise (`PrototypeProof::Linked`, the planned frame of `PlannedPlaces::held`).
 #[inline(always)]
 fn held_row<const D: u8, const ENTRY: bool>(s: S, payload: usize) -> Out {
     let object = if ENTRY { context_word(s.frame, CONTEXT_THIS) } else { site_object(&s) };
@@ -71,7 +75,12 @@ fn held_row<const D: u8, const ENTRY: bool>(s: S, payload: usize) -> Out {
     let held = HeldRead { object, shape: receiver as u32, link, constant: [(link, hole64::<HOLE_B>())] };
     let mut stage = StencilStage::from_hole(HOLE_B);
     let mut places = Places::<D, MEM, MEM>::new(s);
-    let word = run_held(&mut stage, &mut places, held);
+    let mut frame = PlannedPlaces { places: &mut places, ops: [], callout: Callout::Plan, lexical: None, held: Some(held) };
+    let read = Operation::GetField { base: FieldBase::THIS, lookup: FieldLookup::Site(0) };
+    let word = match step_property(&mut stage, &mut frame, read) {
+        Step::Value(word) => Some(word),
+        _ => None,
+    };
     deliver::<D>(places.s, need!(places.s, word))
 }
 

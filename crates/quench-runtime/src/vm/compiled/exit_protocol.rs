@@ -11,9 +11,9 @@
 //! The b-jit leave stubs (`base_region::link`) emit `LaneExit::Entry.word()` and so share the
 //! encoding; their per-stub tables are not built from an `ExitTable` (documented adapter).
 
-use super::{lane_unit, LaneExit, LoopRegion, RETURN_STATUS_BASE, LANE_BODY_RETURNED, LANE_BODY_THREW, NATIVE_JS_STOPPED, TERMINATED_STATUS};
-use super::entry_cell::LANE_BODY_NOT_ENTERED;
+use super::{lane_unit, LaneExit, LoopRegion, RETURN_STATUS_BASE};
 use crate::value::Value;
+use quench_bjit::call_record::LaneStatus;
 
 /// What a leave is, which a leave word holds in its top two bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,15 +78,15 @@ impl LaneExit {
     /// How a native run that returned `status` and wrote `word` ended: the one reader of the
     /// result. `returned_pc` names the record that completes the activation, read only then.
     pub(super) fn read(status: u32, word: u64, returned_pc: impl FnOnce() -> usize) -> Self {
-        match status {
-            _ if i64::from(status) == TERMINATED_STATUS => Self::Terminated,
-            LANE_BODY_RETURNED => Self::Returned { pc: returned_pc(), value: Value::from_bits(word) },
-            LANE_BODY_THREW => Self::Threw { pc: returned_pc() },
-            NATIVE_JS_STOPPED => Self::decode(word),
-            LANE_BODY_NOT_ENTERED => Self::Stub,
-            _ if status >= RETURN_STATUS_BASE => Self::At((status - RETURN_STATUS_BASE) as usize),
+        match LaneStatus::of(status) {
+            Some(LaneStatus::Terminated) => Self::Terminated,
+            Some(LaneStatus::Returned) => Self::Returned { pc: returned_pc(), value: Value::from_bits(word) },
+            Some(LaneStatus::Threw) => Self::Threw { pc: returned_pc() },
+            Some(LaneStatus::NativeJsStopped) => Self::decode(word),
+            Some(LaneStatus::NotEntered) => Self::Stub,
+            None if status >= RETURN_STATUS_BASE => Self::At((status - RETURN_STATUS_BASE) as usize),
             // Dispatch reaches an invalid PC only before any instruction ran.
-            _ => Self::At(0),
+            None => Self::At(0),
         }
     }
 

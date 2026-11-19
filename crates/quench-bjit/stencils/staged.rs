@@ -69,6 +69,8 @@ pub(crate) use property::{NoPlans, PropertyFrame};
 #[path = "../../quench-runtime/src/staged/holder.rs"] pub(crate) mod holder;
 #[path = "../../quench-runtime/src/staged/forms.rs"] pub(crate) mod forms;
 pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
+// The runtime's root names its stencil layout numbers `layout_offsets`; the stencils' are `crate::layout`.
+pub(crate) use crate::layout as layout_offsets;
 #[path = "../../quench-runtime/src/staged/protocol.rs"] pub(crate) mod protocol;
 pub(crate) use protocol::CallOperation;
 #[path = "../../quench-runtime/src/staged/invoke.rs"] pub(crate) mod invoke;

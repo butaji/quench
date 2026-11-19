@@ -59,7 +59,7 @@ pub(crate) mod language {
 
 const FIRST_TAG: u64 = ValueLayout::FIRST_TAG_FIELD << ValueLayout::TAG_SHIFT;
 /// The span of the double tags, from `FIRST_TAG` (a word in it is a double).
-const TAG_SPAN: u64 = 6 << ValueLayout::TAG_SHIFT;
+const TAG_SPAN: u64 = (ValueLayout::TAG_FIELD_SPAN + 1) << ValueLayout::TAG_SHIFT;
 
 /// The language bits (`language`) a word's tag alone sets: a Number (an int32 or a double), a Boolean,
 /// `null`, `undefined`, a direct object family record (`OBJECT`, and `OBJECT_PLAIN` for a plain one), a

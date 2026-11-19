@@ -92,7 +92,7 @@ mod cell_layout_tests {
             NATIVE_ARRAY_ELEMENTS_OFFSET,
             std::mem::offset_of!(ArrayObject, object) + std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, payload)
         );
-        assert_eq!(NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET, std::mem::offset_of!(ObjectExtras, elements));
+        assert_eq!(NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET, std::mem::offset_of!(ObjectExtras, head) + std::mem::offset_of!(ObjectExtrasHead<DisplacedInline, super::ArrayElements>, elements));
         let layout = super::super::NATIVE_ARRAY_LAYOUT;
         assert_eq!(layout.extras_elements_offset, NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET);
         assert_eq!(layout.record_size, std::mem::size_of::<ArrayObject>());
@@ -1524,13 +1524,10 @@ impl std::ops::DerefMut for Object {
 /// Bits of `Object::meta` holding the prototype's heap reference. The field is partitioned
 /// by reference family: legacy slot indices, then one range per direct record space, then
 /// the null and undefined sentinels at the top.
-const PROTO_INDEX_BITS: u32 = (1 << 28) - 1;
 const PROTO_NULL: u32 = PROTO_INDEX_BITS;
 const PROTO_UNDEFINED: u32 = PROTO_INDEX_BITS - 1;
-/// Cells a heap may hold so that any of them can be a prototype.
-pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
-const PROTO_OBJECT_RECORD_BASE: u32 = MAX_HEAP_CELLS as u32;
-const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+/// Cells a heap may hold so that any of them can be a prototype (`staged::object_encoding`).
+pub(crate) use crate::staged::object_encoding::{MAX_HEAP_CELLS, PROTO_ARRAY_RECORD_BASE, PROTO_INDEX_BITS, PROTO_OBJECT_RECORD_BASE};
 const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
@@ -1604,8 +1601,7 @@ impl ProtoLink {
     }
 }
 
-const OBJECT_ARRAY: u32 = 1 << 28;
-const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
+use crate::staged::object_encoding::{EXTRAS_TAG, EXTRAS_TAG_MASK, NARROW_RUN_TAG, OBJECT_ARRAY, OBJECT_INLINE_STORAGE};
 const _: () = assert!(
     PROTO_INDEX_BITS & (OBJECT_ARRAY | OBJECT_INLINE_STORAGE | VALUE_VEC_INTEGRITY_BITS) == 0
         && (OBJECT_ARRAY | OBJECT_INLINE_STORAGE) & VALUE_VEC_INTEGRITY_BITS == 0
@@ -1623,13 +1619,6 @@ impl Default for DisplacedInline {
     }
 }
 
-const EXTRAS_TAG: u64 = 0x7fff_0000_0000_0000;
-/// The payload bit of a plain object whose values are a narrow run (`value_vec::NARROW_FORM`):
-/// the word is then the run's start beside it, so the readers that take a payload with a zero
-/// upper half as a plain arena start (`plain_storage_start`, `plain_arena_start`) refuse it,
-/// and it is no extras tag.
-const NARROW_RUN_TAG: u64 = 1 << u32::BITS;
-const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
 /// The storage position of an object without property values (`ValueVec::new`): the only
 /// one an array without extras has, as its payload word holds its element backing instead.
 const EMPTY_POSITION: u32 = ValueVec::new().into_parts().0 & VALUE_VEC_START_BITS;
@@ -1651,7 +1640,7 @@ pub(super) const NATIVE_OBJECT_RECORD_ALIGN: usize = std::mem::align_of::<Object
 /// (`heap::layouts::table_base`), `meta` at `NATIVE_OBJECT_META_OFFSET` and `auxiliary` at
 /// `NATIVE_OBJECT_AUXILIARY_OFFSET` within it.
 pub(super) const NATIVE_OBJECT_LAYOUT_OFFSET: usize = std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, layout);
-pub(super) const NATIVE_OBJECT_META_OFFSET: usize = std::mem::size_of::<u32>();
+pub(super) const NATIVE_OBJECT_META_OFFSET: usize = crate::staged::object_encoding::META_OFFSET;
 pub(super) const NATIVE_OBJECT_AUXILIARY_OFFSET: usize = 0;
 
 /// An object's two header words as its layout's entry holds them (`heap::layouts`): the
@@ -1661,10 +1650,12 @@ const fn header_word(meta: u32, auxiliary: u32) -> u64 {
     auxiliary as u64 | (meta as u64) << u32::BITS
 }
 pub(super) const NATIVE_OBJECT_PAYLOAD_OFFSET: usize = std::mem::offset_of!(Object, head) + std::mem::offset_of!(ObjectHead, payload);
-pub(super) const NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET: usize =
-    std::mem::offset_of!(ObjectExtras, arena_start);
-pub(super) const NATIVE_OBJECT_EXTRAS_INLINE_VALUES_OFFSET: usize =
-    std::mem::offset_of!(ObjectExtras, inline_properties) + std::mem::offset_of!(DisplacedInline, 0);
+/// Where the extras head's fields are: the head is the record's first field (`ObjectExtras::head`).
+pub(super) const NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET: usize = std::mem::offset_of!(ObjectExtras, head)
+    + std::mem::offset_of!(ObjectExtrasHead<DisplacedInline, super::ArrayElements>, arena_start);
+pub(super) const NATIVE_OBJECT_EXTRAS_INLINE_VALUES_OFFSET: usize = std::mem::offset_of!(ObjectExtras, head)
+    + std::mem::offset_of!(ObjectExtrasHead<DisplacedInline, super::ArrayElements>, inline_properties)
+    + std::mem::offset_of!(DisplacedInline, 0);
 pub(super) const NATIVE_OBJECT_INLINE_STORAGE_MASK: u32 = OBJECT_INLINE_STORAGE;
 pub(super) const NATIVE_OBJECT_INLINE_FORM: u32 = crate::value_vec::INLINE_FORM;
 pub(super) const NATIVE_OBJECT_NARROW_RUN_TAG: u64 = NARROW_RUN_TAG;
@@ -1733,7 +1724,8 @@ pub(super) const NATIVE_ARRAY_RECORD_ALIGN: usize = std::mem::align_of::<ArrayOb
 /// they hold it at `NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET`.
 pub(super) const NATIVE_ARRAY_ELEMENTS_OFFSET: usize =
     std::mem::offset_of!(ArrayObject, object) + NATIVE_OBJECT_PAYLOAD_OFFSET;
-pub(super) const NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET: usize = std::mem::offset_of!(ObjectExtras, elements);
+pub(super) const NATIVE_ARRAY_EXTRAS_ELEMENTS_OFFSET: usize = std::mem::offset_of!(ObjectExtras, head)
+    + std::mem::offset_of!(ObjectExtrasHead<DisplacedInline, super::ArrayElements>, elements);
 /// Where an array record's object part (`Object`: meta, auxiliary, payload) starts.
 pub(super) const NATIVE_ARRAY_OBJECT_OFFSET: usize = std::mem::offset_of!(ArrayObject, object);
 pub(super) const NATIVE_FUNCTION_RECORD_SIZE: usize = std::mem::size_of::<FunctionRecord>();
@@ -2058,18 +2050,13 @@ enum PrototypeLookupState {
     Ready,
 }
 
+/// An object's extras. The head native code reads comes first (`staged::object_extras`), and `Deref`
+/// forwards its fields, so `extras.arena_start` and the rest read as before.
 #[derive(Clone, Debug, Default)]
 #[repr(C)]
 struct ObjectExtras {
+    head: ObjectExtrasHead<DisplacedInline, super::ArrayElements>,
     prototype_lookup: PrototypeLookupState,
-    /// The object's inline property values, displaced from its payload by the extras pointer.
-    inline_properties: DisplacedInline,
-    /// An array's storage position, displaced from its first payload word.
-    arena_start: u32,
-    /// An array's element backing, displaced from its payload word (`ArrayObject`); empty for
-    /// any other object. Native code reads it at a fixed offset, so it follows the fields that
-    /// native code reads, which keep theirs.
-    elements: super::ArrayElements,
     /// What has been recorded about the object's properties beside its shape; bits are set
     /// once and never cleared (`ElementFacts`).
     element_facts: ElementFacts,
@@ -2081,6 +2068,23 @@ struct ObjectExtras {
     /// carry none of it, and the whole set inline made each such array's extras 368 bytes.
     rare: Option<Box<RareExtras>>,
 }
+
+impl std::ops::Deref for ObjectExtras {
+    type Target = ObjectExtrasHead<DisplacedInline, super::ArrayElements>;
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.head
+    }
+}
+
+impl std::ops::DerefMut for ObjectExtras {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.head
+    }
+}
+
+use crate::staged::object_extras::ObjectExtrasHead;
 
 /// The extras of exotic, branded, host and module objects (`ObjectExtras::rare`).
 #[derive(Clone, Debug, Default)]
@@ -2647,9 +2651,7 @@ impl Object {
                     super::ArrayElements::new()
                 };
                 self.payload = Self::tag_extras(Box::new(ObjectExtras {
-                    inline_properties: DisplacedInline(inline),
-                    arena_start,
-                    elements,
+                    head: ObjectExtrasHead { inline_properties: DisplacedInline(inline), arena_start, elements },
                     ..ObjectExtras::default()
                 }));
                 // Extras are never dropped while the object lives, so the bit only sets.

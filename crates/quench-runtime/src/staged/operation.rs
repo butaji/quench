@@ -63,6 +63,14 @@ pub(crate) enum Operation<W, P> {
     /// the object record table `records` (`guard::prototype`, `entry::shape_link_matches`).
     #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
     GuardPrototype { source: W, records: W, shape: u64, link: u64 },
+    /// Continue where `source` is a direct object of exact `shape`, its record found in the object record table
+    /// `records` (`guard::shape`): a region's entry test of a loop-invariant receiver, whose shape its accesses then keep.
+    #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
+    GuardShape { source: W, records: W, shape: u64 },
+    /// Continue where the run stores specialized, the dispatch word `specialized` (`guard::stores`): a region's entry test
+    /// of the stores it admits without a test of their own (`base_region::proofs`).
+    #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
+    GuardStores { specialized: W },
     /// A taken backward edge: poll under `proof`, then count it (`guard::back_edge`).
     #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
     BackEdge { proof: P },

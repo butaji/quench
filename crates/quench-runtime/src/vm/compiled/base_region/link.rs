@@ -161,6 +161,9 @@ pub(super) struct Layout<'a> {
     /// Per row, whether a proof the body established reaches it (`Decoded::relies`): no resume stub enters there.
     /// Proofs the entry seed alone reaches get a stub, whose entry rows re-run the declared guards (`guards`).
     pub(super) relies: &'a [bool],
+    /// Per row, whether its checked operand is a Number on every path into it, so its number guard is redundant
+    /// (`numbers::proven_operands`).
+    pub(super) number_held: &'a [bool],
     /// The entry tests of the declared parameters the function never writes (`declared::entry_guards`).
     pub(super) guards: Vec<EntryGuard>,
     /// The declared Number parameters the function never writes, which the entry's Number guards prove
@@ -168,6 +171,10 @@ pub(super) struct Layout<'a> {
     pub(super) numbers: Vec<Register>,
     /// The class-typed parameters the function never writes, with the prototype each entry checks (`declared::class_prototypes`).
     pub(super) prototypes: Vec<super::function::ClassProto>,
+    /// The loop-invariant receivers whose exact shape the entry checks, and the proofs seed (`Known::shapes`, `Heap::Shape`).
+    pub(super) shapes: Vec<super::function::ShapeProto>,
+    /// Whether a store is admitted on the run's stores word the entry checks (`Heap::Stores`, `proofs::prove`).
+    pub(super) stores: bool,
     /// The captured declarations the body calls by identity, each with the function its entry checks (`Callees::captured_identities`).
     pub(super) identities: Vec<(u16, u64)>,
 }

@@ -32,7 +32,7 @@ pub(crate) const LAYOUT_CAPACITY: usize = 1 << 22;
 /// and below 2 GiB, the reach of a sign-extended 32-bit displacement; a break that grows into
 /// it only sends `malloc` to `mmap`.
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-const FIXED_TABLE: usize = 0x7000_0000;
+const FIXED_TABLE: usize = crate::staged::layout_offsets::LAYOUT_TABLE_BASE as usize;
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 extern "C" fn map_fixed_table() {

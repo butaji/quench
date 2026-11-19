@@ -196,6 +196,21 @@ pub(crate) fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, do
     hop(finish(frame, done))
 }
 
+/// The outcome of a chained row's staged step over its frame `s`: a value continues through `hit` (the row's delivery),
+/// and a chained row's hit skips the site's other entries (TAKEN); a leave continues at the site's next entry where the
+/// row is chained (NEXT), else leaves through EXIT0 with nothing written.
+#[inline(always)]
+pub(crate) fn finish_chained<const CHAINED: bool>(s: S, step: Step<u64, ()>, hit: impl FnOnce(S, u64) -> Out) -> Out {
+    match step {
+        Step::Value(word) => match hit(s, word) {
+            Out::Next(s) if CHAINED => Out::Taken(s),
+            other => other,
+        },
+        _ if CHAINED => Out::Next(s),
+        _ => Out::Exit(s),
+    }
+}
+
 /// The object register a site row names: the word at its frame offset, which sits above the destination's in hole 0
 /// (`SITE_OBJECT_AT`).
 #[inline(always)]

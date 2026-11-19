@@ -6,46 +6,128 @@
 
 use crate::bytes::{ObjectReloc, ObjectRow, c_string, is_row_name, u32_at, u64_at};
 use crate::class::{ABS64, BRANCH26};
+use std::mem::{offset_of, size_of};
 
-const MACH_MAGIC_64: u32 = 0xfeed_facf;
-const CPU_TYPE_ARM64: u32 = 0x0100_000c;
-const CPU_TYPE_AT: usize = 4;
-const HEADER_SIZE: usize = 32;
-const COMMAND_COUNT_AT: usize = 16;
-const COMMAND_SIZE_AT: usize = 4;
-const LC_SEGMENT_64: u32 = 0x19;
-const LC_SYMTAB: u32 = 0x2;
-const SEGMENT_SECTION_COUNT_AT: usize = 64;
-const SEGMENT_HEADER_SIZE: usize = 72;
-const SECTION_SIZE: usize = 80;
-const SECTION_NAME_BYTES: usize = 16;
-const SECTION_ADDR: usize = 32;
-const SECTION_BYTES: usize = 40;
-const SECTION_OFFSET: usize = 48;
-const SECTION_RELOC_OFFSET: usize = 56;
-const SECTION_RELOC_COUNT: usize = 60;
+/// The Mach-O structures this reader walks, in the spec's field order (`mach_header_64`,
+/// `load_command`, `segment_command_64`, `section_64`, `symtab_command`, `nlist_64`,
+/// `relocation_info`); their offsets are taken with `offset_of!`, their sizes with `size_of`.
+#[allow(dead_code)]
+#[repr(C)]
+struct MachHeader64 {
+    magic: u32,
+    cputype: i32,
+    cpusubtype: i32,
+    filetype: u32,
+    ncmds: u32,
+    sizeofcmds: u32,
+    flags: u32,
+    reserved: u32,
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+struct LoadCommand {
+    cmd: u32,
+    cmdsize: u32,
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+struct SegmentCommand64 {
+    cmd: u32,
+    cmdsize: u32,
+    segname: [u8; 16],
+    vmaddr: u64,
+    vmsize: u64,
+    fileoff: u64,
+    filesize: u64,
+    maxprot: i32,
+    initprot: i32,
+    nsects: u32,
+    flags: u32,
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+struct Section64 {
+    sectname: [u8; 16],
+    segname: [u8; 16],
+    addr: u64,
+    size: u64,
+    offset: u32,
+    align: u32,
+    reloff: u32,
+    nreloc: u32,
+    flags: u32,
+    reserved1: u32,
+    reserved2: u32,
+    reserved3: u32,
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+struct SymtabCommand {
+    cmd: u32,
+    cmdsize: u32,
+    symoff: u32,
+    nsyms: u32,
+    stroff: u32,
+    strsize: u32,
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+struct Nlist64 {
+    n_strx: u32,
+    n_type: u8,
+    n_sect: u8,
+    n_desc: u16,
+    n_value: u64,
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+struct RelocationInfo {
+    r_address: i32,
+    r_info: u32,
+}
+
+const MACH_MAGIC_64: u32 = object::macho::MH_MAGIC_64 as u32;
+const CPU_TYPE_ARM64: u32 = object::macho::CPU_TYPE_ARM64 as u32;
+const CPU_TYPE_AT: usize = offset_of!(MachHeader64, cputype);
+const HEADER_SIZE: usize = size_of::<MachHeader64>();
+const COMMAND_COUNT_AT: usize = offset_of!(MachHeader64, ncmds);
+const COMMAND_SIZE_AT: usize = offset_of!(LoadCommand, cmdsize);
+const LC_SEGMENT_64: u32 = object::macho::LC_SEGMENT_64 as u32;
+const LC_SYMTAB: u32 = object::macho::LC_SYMTAB as u32;
+const SEGMENT_SECTION_COUNT_AT: usize = offset_of!(SegmentCommand64, nsects);
+const SEGMENT_HEADER_SIZE: usize = size_of::<SegmentCommand64>();
+const SECTION_SIZE: usize = size_of::<Section64>();
+/// The section name is the first field and fills its 16 bytes up to `segname`.
+const SECTION_NAME_BYTES: usize = offset_of!(Section64, segname);
 const TEXT_SECTION: &str = "__text";
-const SYMTAB_SYMBOL_OFFSET: usize = 8;
-const SYMTAB_SYMBOL_COUNT: usize = 12;
-const SYMTAB_STRING_OFFSET: usize = 16;
-const NLIST_SIZE: usize = 16;
-const NLIST_TYPE: usize = 4;
-const NLIST_SECTION: usize = 5;
-const NLIST_VALUE: usize = 8;
-const N_STAB: u8 = 0xe0;
-const N_TYPE: u8 = 0x0e;
-const N_SECT: u8 = 0x0e;
-const N_EXT: u8 = 0x01;
-const RELOC_SIZE: usize = 8;
-const RELOC_WORD: usize = 4;
+const SYMTAB_SYMBOL_OFFSET: usize = offset_of!(SymtabCommand, symoff);
+const SYMTAB_SYMBOL_COUNT: usize = offset_of!(SymtabCommand, nsyms);
+const SYMTAB_STRING_OFFSET: usize = offset_of!(SymtabCommand, stroff);
+const NLIST_SIZE: usize = size_of::<Nlist64>();
+const NLIST_TYPE: usize = offset_of!(Nlist64, n_type);
+const NLIST_SECTION: usize = offset_of!(Nlist64, n_sect);
+const NLIST_VALUE: usize = offset_of!(Nlist64, n_value);
+const N_STAB: u8 = object::macho::N_STAB as u8;
+const N_TYPE: u8 = object::macho::N_TYPE as u8;
+const N_SECT: u8 = object::macho::N_SECT as u8;
+const N_EXT: u8 = object::macho::N_EXT as u8;
+/// `relocation_info`'s `r_info` is a bitfield: symbol number, pc-relative, length, extern, type.
+const RELOC_SIZE: usize = size_of::<RelocationInfo>();
+const RELOC_WORD: usize = offset_of!(RelocationInfo, r_info);
 const RELOC_SYMBOL_MASK: u32 = 0x00ff_ffff;
 const RELOC_PCREL_SHIFT: u32 = 24;
 const RELOC_LENGTH_SHIFT: u32 = 25;
 const RELOC_LENGTH_MASK: u32 = 0x3;
 const RELOC_EXTERN_SHIFT: u32 = 27;
 const RELOC_TYPE_SHIFT: u32 = 28;
-const ARM64_RELOC_UNSIGNED: u32 = 0;
-const ARM64_RELOC_BRANCH26: u32 = 2;
+const ARM64_RELOC_UNSIGNED: u32 = object::macho::ARM64_RELOC_UNSIGNED as u32;
+const ARM64_RELOC_BRANCH26: u32 = object::macho::ARM64_RELOC_BRANCH26 as u32;
 /// `length` of an 8-byte field (log2 of its bytes).
 const LENGTH_8_BYTES: u32 = 3;
 const LEADING_UNDERSCORE: &str = "_";
@@ -81,7 +163,14 @@ fn commands(data: &[u8]) -> (Text, [usize; 3]) {
                 section_index += 1;
                 if c_string(&data[section..section + SECTION_NAME_BYTES], 0) == TEXT_SECTION {
                     let field = |f: usize| u32_at(data, section + f) as usize;
-                    text = Some(Text { index: section_index, addr: u64_at(data, section + SECTION_ADDR) as usize, size: u64_at(data, section + SECTION_BYTES) as usize, offset: field(SECTION_OFFSET), relocs: field(SECTION_RELOC_OFFSET), reloc_count: field(SECTION_RELOC_COUNT) });
+                    text = Some(Text {
+                        index: section_index,
+                        addr: u64_at(data, section + offset_of!(Section64, addr)) as usize,
+                        size: u64_at(data, section + offset_of!(Section64, size)) as usize,
+                        offset: field(offset_of!(Section64, offset)),
+                        relocs: field(offset_of!(Section64, reloff)),
+                        reloc_count: field(offset_of!(Section64, nreloc)),
+                    });
                 }
             }
         }

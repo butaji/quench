@@ -51,6 +51,23 @@ pub(crate) fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Wo
     super::entry::shape_link_matches(stage, record, (shape, link), miss)
 }
 
+/// `shape`: `source` is a direct object whose record, found in the object record table `records`, has exact shape
+/// `shape` (`entry::shape_link_matches` without the link). Any other word leaves.
+#[inline(always)]
+pub(crate) fn shape<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, shape: u64, miss: S::Miss) -> Option<()> {
+    let (_, record) = super::property::direct_record(stage, records, source, miss)?;
+    let exact = super::object::exact_shape(stage, record);
+    let same = stage.eq_imm(exact, shape);
+    stage.guard(same, miss)
+}
+
+/// `stores`: the run's dispatch word `specialized` says its stores specialize (`slot_store::store_admitted`). A region's entry
+/// checks it once; the stores it admits without a test of their own hold until a call (`base_region::proofs`).
+#[inline(always)]
+pub(crate) fn stores<S: Stage>(stage: &mut S, specialized: S::Word, miss: S::Miss) -> Option<()> {
+    super::slot_store::store_admitted(stage, specialized, miss)
+}
+
 /// `back_edge`: a taken backward edge polls for an interrupt or a due collection first (the
 /// frame's `safepoint`), then counts in the loop's counter (the frame's `count_edge`). A failed poll
 /// counts nothing.

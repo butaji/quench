@@ -168,7 +168,9 @@ pub(super) enum Heap {
     /// `IcGet` and `IcSet` of a receiver every path proved a direct object (`base_region::proofs`): one compare
     /// of its auxiliary word with the entry's shape proves the shape and flat plain values (holes as theirs).
     IcKnownGet,
-    IcKnownSet { int: bool },
+    /// `admitted`: the store's run-level test is the region's entry (`Heap::Stores`), which holds with no call since
+    /// (`base_region::proofs`), so the row tests nothing of its own.
+    IcKnownSet { int: bool, admitted: bool },
     /// Leaves through exit 0 unless the object register at hole 0 is a direct object: what an access's miss
     /// runs after its site row, so the receiver is proved one on every edge out of the access.
     IcProof,
@@ -213,6 +215,12 @@ pub(super) enum Heap {
     /// object whose exact shape and prototype link are the pair in hole 1 (`entry::shape_link_matches`), else the entry
     /// leaves with nothing written.
     Prototype,
+    /// The entry test of a loop-invariant receiver (`base_region::link::entry_rows`): the register at hole 0 holds a direct
+    /// object of the exact shape in hole 1 (`guard::shape`), else the entry leaves with nothing written.
+    Shape,
+    /// The entry test that the run stores specialized (`base_region::link::entry_rows`, `guard::stores`): else the entry
+    /// leaves with nothing written.
+    Stores,
     /// A prototype-held field folded to the value its holder held when the code was compiled (hole 2):
     /// the object register whose frame offset sits above the destination's in hole 0 is a direct object
     /// of the exact shape in hole 1's low half and the prototype link in its high half, else the row
@@ -362,8 +370,10 @@ impl Heap {
             Heap::IcSet { int: false } => library::IC_SET_ROW,
             Heap::IcSet { int: true } => library::IC_SET_INT_ROW,
             Heap::IcKnownGet => library::IC_KNOWN_GET_ROW,
-            Heap::IcKnownSet { int: false } => library::IC_KNOWN_SET_ROW,
-            Heap::IcKnownSet { int: true } => library::IC_KNOWN_SET_INT_ROW,
+            Heap::IcKnownSet { int: false, admitted: false } => library::IC_KNOWN_SET_ROW,
+            Heap::IcKnownSet { int: true, admitted: false } => library::IC_KNOWN_SET_INT_ROW,
+            Heap::IcKnownSet { int: false, admitted: true } => library::IC_KNOWN_SET_ADMITTED_ROW,
+            Heap::IcKnownSet { int: true, admitted: true } => library::IC_KNOWN_SET_INT_ADMITTED_ROW,
             Heap::IcProof => library::IC_PROOF_ROW,
             Heap::This => library::THIS_ROW,
             Heap::Held | Heap::ThisHeld => library::HELD_ROW,
@@ -378,6 +388,8 @@ impl Heap {
             Heap::Declared => library::DECLARED_ROW,
             Heap::CaptureIdentity => library::CAPTURE_IDENTITY_ROW,
             Heap::Prototype => library::PROTOTYPE_ROW,
+            Heap::Shape => library::SHAPE_ROW,
+            Heap::Stores => library::STORES_ROW,
             Heap::TypeofIndex => library::TYPEOF_INDEX_ROW,
             Heap::TypeofString => library::TYPEOF_STRING_ROW,
             Heap::Instanceof => library::INSTANCEOF_ROW,
@@ -427,7 +439,7 @@ impl Heap {
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(super) fn reads_frame_word(self) -> bool {
-        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::Shape | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value
@@ -462,6 +474,37 @@ pub(super) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
     let stencil: &'static Stencil = Box::leak(Box::new(found));
     table.insert(code, stencil);
     Ok(stencil)
+}
+
+/// The runtime's heap codes are the catalog's rows (`quench-bjit/stencils/row_catalog.rs`): a `Heap` variant
+/// whose code the catalog did not list would plan a row no stencil is built for. The samples name each
+/// variant once, so a new variant without one here leaves the new row unchecked.
+#[cfg(test)]
+mod catalog_tests {
+    use super::{Form, Heap, library};
+
+    #[test]
+    fn heap_codes_are_catalog_rows() {
+        let catalog = library::heap_row_codes();
+        let samples = [
+            Heap::Capture(0), Heap::Index, Heap::Store, Heap::TypedIndex(0), Heap::TypedStore(0), Heap::TypedLength,
+            Heap::Field, Heap::Site, Heap::SiteChain, Heap::ThisSite, Heap::ThisChain, Heap::Length, Heap::CharCodeAt,
+            Heap::ParseInt, Heap::SiteStore, Heap::ThisStore, Heap::IcGet, Heap::IcSet { int: false }, Heap::IcSet { int: true },
+            Heap::IcKnownGet, Heap::IcKnownSet { int: false }, Heap::IcKnownSet { int: true }, Heap::IcProof, Heap::CaptureSet(0),
+            Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0), Heap::EnvStore(0), Heap::EnvDefine(0), Heap::StoreLocal(0),
+            Heap::LoadChecked(0), Heap::StoreChecked(0), Heap::Identity, Heap::Declared, Heap::CaptureIdentity, Heap::Prototype,
+            Heap::Held, Heap::ThisHeld, Heap::Realm, Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString,
+            Heap::Instanceof, Heap::TypeofIs { index: 0, negated: false }, Heap::TypeofIs { index: 0, negated: true },
+            Heap::GlobalRead, Heap::GlobalStore, Heap::LexicalRead, Heap::LexicalWrite, Heap::Word, Heap::CalleeCapture,
+            Heap::Append, Heap::Add { form: Form::Packed, this: false }, Heap::Add { form: Form::Arena, this: true },
+            Heap::ForIn, Heap::Name { form: Form::Packed }, Heap::Name { form: Form::Arena },
+            Heap::Staged(library::STAGED_REMAINDER), Heap::Staged(library::STAGED_STRICT_NE),
+        ];
+        for heap in samples {
+            let code = heap.code();
+            assert!(catalog.contains(&code), "{heap:?} has code {code}, which the catalog does not list");
+        }
+    }
 }
 
 #[cfg(all(test, target_arch = "x86_64"))]

@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::vm::tier_events::Event;
+use quench_bjit::call_record::LaneStatus;
 
 /// The activations a run's window has no pending push for: its caller pushed the body's own.
 pub(in crate::vm) const NO_PENDING_ACTIVATIONS: usize = 0;
@@ -54,7 +55,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: as above; a completing body wrote the record before it returned.
         let exit = LaneExit::read(status, word, || unsafe { (*frame).dispatch.returned_pc });
         self.programs.tier_events().record(Event::ended(exit));
-        if status == LANE_BODY_RETURNED { self.programs.tier_events().record(Event::Returned); }
+        if LaneStatus::of(status) == Some(LaneStatus::Returned) { self.programs.tier_events().record(Event::Returned); }
         exit
     }
 

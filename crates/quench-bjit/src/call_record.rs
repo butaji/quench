@@ -3,7 +3,16 @@
 //! `stencils/call_rows.rs` (compiled by rustc, no_std) includes this file by path, and the
 //! runtime's planner (`quench-runtime/src/vm/compiled/base_region/call_plan.rs`) reads it as
 //! `quench_bjit::call_record`; the runtime's own constants for these words are checked equal
-//! there (`call_protocol_matches_the_runtime`).
+//! there (`call_protocol_matches_the_runtime`). The status numbers are defined in
+//! `quench-runtime/src/staged/lane_protocol.rs`, mounted here by path, and re-exported.
+
+#[path = "../../quench-runtime/src/staged/lane_protocol.rs"]
+mod lane_protocol;
+pub use lane_protocol::{
+    helper_outcome, LaneCall, LaneStatus, Outcome, CALLEE_EXIT, GENERAL_DISPATCH_BLOCKS, GENERAL_RETURN_STATUS_BASE,
+    LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_BODY_THREW, LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_HOLDS,
+    LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, LANE_CALL_TERMINATED, NATIVE_JS_STOPPED, TERMINATED_STATUS,
+};
 
 /// The most arguments a direct-call row passes (`call_direct_a0` .. `call_direct_a3`); a call
 /// with more takes the helper row.
@@ -13,42 +22,8 @@ pub const MAX_DIRECT_ARGC: usize = 3;
 /// window slot (`CallRecord::argument_places`); the rest are always read from the window.
 pub const PLACED_ARGUMENTS: usize = 2;
 
-/// Bytes of one register slot of the frame window (`size_of::<Value>()`).
-pub const REGISTER_BYTES: usize = 8;
-
-/// What a helper call returned (`vm::compiled::LANE_CALL_*`): completed with its result in the
-/// call's register, missed before any effect, left the lane inside the callee's activation,
-/// terminated the run, or completed a step that branched (`LANE_CALL_BRANCHED`: a conditional
-/// jump of the interpreter's own step, taken).
-pub const LANE_CALL_COMPLETED: u64 = 0;
-pub const LANE_CALL_MISSED: u64 = 1;
-pub const LANE_CALL_LEFT: u64 = 2;
-pub const LANE_CALL_TERMINATED: u64 = 3;
-/// A call-out that decides a comparison completed, and the comparison held; `LANE_CALL_COMPLETED`
-/// is that it did not.
-pub const LANE_CALL_HOLDS: u64 = 4;
-/// The callee's body ended by an exception (`LANE_BODY_THREW`): its activation is popped, the
-/// call's register is untouched and the exception waits in `Vm::lane_raised`.
-pub const LANE_CALL_RAISED: u64 = 5;
-pub const LANE_CALL_BRANCHED: u64 = 6;
-
-/// The general dispatch's return statuses count down from the top of `u32` by this many blocks
-/// (`vm::compiled::MAX_JS_GENERAL_DISPATCH_BLOCKS`).
-pub const GENERAL_DISPATCH_BLOCKS: u32 = 2048;
-pub const GENERAL_RETURN_STATUS_BASE: u32 = u32::MAX - GENERAL_DISPATCH_BLOCKS;
-/// A lane body whose activation completes (`LANE_BODY_RETURNED`); a callee entry cell that held
-/// the stub, so nothing ran (`LANE_BODY_NOT_ENTERED`).
-pub const LANE_BODY_RETURNED: u32 = GENERAL_RETURN_STATUS_BASE - 1;
-pub const LANE_BODY_NOT_ENTERED: u32 = GENERAL_RETURN_STATUS_BASE - 2;
-/// A lane body whose activation ends by an exception no handler of its function covers (`LANE_BODY_THREW`).
-pub const LANE_BODY_THREW: u32 = GENERAL_RETURN_STATUS_BASE - 3;
-/// The status of a body that stops with a result word naming where (`NATIVE_JS_STOPPED`), the
-/// result word of a stop inside a callee's activation (`LaneExit::Callee`), and the status of a
-/// terminated run (`TERMINATED_STATUS`).
-pub const NATIVE_JS_STOPPED: u32 = 1;
-pub const CALLEE_EXIT: u64 = 1 << 63;
-/// One past the runtime's raised status, which follows its Wasm trap codes (`vm::compiled::TRAPS`, asserted there).
-pub const TERMINATED_STATUS: u32 = 11;
+/// Bytes of one register slot of the frame window (`size_of::<Value>()`, a word).
+pub const REGISTER_BYTES: usize = core::mem::size_of::<u64>();
 
 /// The per-site record of a direct-call row, two cache lines, patched into the row as the one
 /// 64-bit value hole 0 (its address). Everything a site knows that does not fit the three value
@@ -75,5 +50,5 @@ pub struct CallRecord {
     pub argument_places: [u8; PLACED_ARGUMENTS],
 }
 
-const CALL_RECORD_BYTES: usize = 128;
-const _: () = assert!(core::mem::size_of::<CallRecord>() == CALL_RECORD_BYTES);
+/// Two cache lines: the record is aligned to one.
+const _: () = assert!(core::mem::size_of::<CallRecord>() == 2 * core::mem::align_of::<CallRecord>());

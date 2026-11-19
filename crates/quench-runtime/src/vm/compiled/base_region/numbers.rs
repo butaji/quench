@@ -1,0 +1,127 @@
+//! Which checked operands a row finds a Number in, on every path into it: the operand of a `ToNumeric`
+//! or unary `+` (`Decoded::checked`) whose number guard (`function::preludes`) is redundant.
+//!
+//! This runs the same kind of fact analysis as the u-jit's (`facts`), but its transfer is the b-jit's own:
+//! a row continues natively where the u-jit's leaves (a string `+` takes `Variant::Concat` and writes a
+//! string), so the u-jit's Number types are unsound for b-jit rows. Here a slot holds a Number only where the
+//! row's stencil leaves on any other word (a numeric arithmetic row, a Number constant), or where an entry
+//! guard checked the slot and no row wrote it since. Any other row writes an unknown value.
+//!
+//! The entry seeds are the entry guards (`link::entry::entry_rows`): a live web is a Number where its entry
+//! row checks it. A resume stub (`resume::resume_stubs`) enters at its row with its own guards, so the state
+//! there is the meet of the normal flow and the stub's guards. A stub the build later drops still meets,
+//! which only loses facts. The state is keyed by frame slot (the web's original register), which is what the
+//! guards check and what a write changes.
+
+use super::repr::{variant_of, Variant};
+use super::*;
+use cranelift_codegen::bitset::CompoundBitSet;
+
+/// The frame slots (original registers) that hold a Number on every path into a row.
+type Held = CompoundBitSet;
+
+/// The numeric kinds whose stencil leaves on any operand that is no Number. `Concat`, the one other variant
+/// of `Kind::Add`, is excluded where it is selected (`variant_of`).
+fn leaves_on_other(kind: Kind) -> bool {
+    matches!(kind, Kind::Add | Kind::Sub | Kind::Mul | Kind::Div | Kind::And | Kind::Or | Kind::Xor | Kind::Shl | Kind::Shr
+        | Kind::UShr | Kind::Neg | Kind::Rem | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round
+        | Kind::Min | Kind::Max | Kind::Imul | Kind::Clz32 | Kind::AddNoOverflow | Kind::SubNoOverflow)
+}
+
+/// Whether an entry (or a stub) checks the web `web` as a Number: the rule `entry_rows` applies to a live web.
+fn checked_web(homes: &Homes, numbers: &[Register], web: usize) -> bool {
+    match homes.place(web as Register) {
+        Place::Pin(_) | Place::PinF(_) | Place::MemInt => true,
+        Place::Mem => numbers.contains(&homes.orig[web]),
+        _ => false,
+    }
+}
+
+/// The state an entry at `row` holds: the slots of its live webs that its guards check.
+fn entry_state(span: &Span, homes: &Homes, webs: &Webs, row: usize) -> Held {
+    let mut held = Held::with_capacity(homes.orig.len().max(1));
+    for web in webs.live_at(span, row as u32) {
+        if checked_web(homes, span.number_registers(), web) {
+            held.insert(usize::from(homes.orig[web]));
+        }
+    }
+    held
+}
+
+/// Per row, whether the checked operand of a `checked` row is a Number on every path into it.
+///
+/// `reached` marks the rows control reaches, `kinds` is each row's site feedback (`variant_of`), and
+/// `entries` the first row of each caller PC a resume stub enters at (none for a body, which only its
+/// entry enters).
+pub(super) fn proven_operands(span: &Span, decoded: &[Decoded], reached: &Bits, homes: &Homes, webs: &Webs,
+    kinds: &[Option<OperandKinds>], ending: Ending, entries: &[(u32, u32)]) -> Vec<bool> {
+    let count = decoded.len();
+    let mut entry_rows = vec![span.header as usize];
+    if ending == Ending::Region {
+        entry_rows.extend(entries.iter().map(|(_, row)| *row as usize));
+    }
+    entry_rows.sort_unstable();
+    entry_rows.dedup();
+    let mut state: Vec<Option<Held>> = vec![None; count];
+    let mut pending = Vec::new();
+    for row in entry_rows.into_iter().filter(|row| *row < count) {
+        state[row] = Some(entry_state(span, homes, webs, row));
+        pending.push(row);
+    }
+    while let Some(k) = pending.pop() {
+        let Some(held) = state[k].clone() else { continue };
+        let out = transfer(homes, &decoded[k], kinds.get(k).and_then(Option::as_ref), &held);
+        for next in decoded[k].successors(k, count, span) {
+            let Next::Row(n) = next else { continue };
+            let changed = match &mut state[n] {
+                None => {
+                    state[n] = Some(out.clone());
+                    true
+                }
+                Some(known) => meet(known, &out),
+            };
+            if changed {
+                pending.push(n);
+            }
+        }
+    }
+    decoded.iter().enumerate().map(|(k, row)| {
+        let (true, Some(Source::Register(web))) = (reached.contains(k) && row.checked, row.a) else { return false };
+        state[k].as_ref().is_some_and(|held| held.contains(usize::from(homes.orig[usize::from(web)])))
+    }).collect()
+}
+
+/// The state after `row` from `held`. A copy keeps its source's Number-ness; a numeric row's result is a
+/// Number where the row leaves on any other operand; anything else writes an unknown value.
+fn transfer(homes: &Homes, row: &Decoded, kinds: Option<&OperandKinds>, held: &Held) -> Held {
+    let slot = |web: Register| usize::from(homes.orig[usize::from(web)]);
+    let source = |source: Option<Source>| match source {
+        Some(Source::Register(web)) => held.contains(slot(web)),
+        Some(Source::Constant(word) | Source::Value(word)) => Value::from_bits(word).as_number().is_some(),
+        None => false,
+    };
+    let value = if row.heap.is_some() || row.step.is_some() {
+        false
+    } else if matches!(row.kind, Kind::Move | Kind::Const) {
+        source(row.a)
+    } else {
+        leaves_on_other(row.kind) && variant_of(row.kind, kinds) != Variant::Concat
+    };
+    let mut out = held.clone();
+    for written in [row.dst, row.also].into_iter().flatten() {
+        out.remove(slot(written));
+    }
+    if let (true, Some(dst)) = (value, row.dst) {
+        out.insert(slot(dst));
+    }
+    out
+}
+
+/// Meets `other` into `known`, keeping only the slots both hold; whether `known` changed.
+fn meet(known: &mut Held, other: &Held) -> bool {
+    let lost: Vec<usize> = known.iter().filter(|slot| !other.contains(*slot)).collect();
+    for slot in &lost {
+        known.remove(*slot);
+    }
+    !lost.is_empty()
+}

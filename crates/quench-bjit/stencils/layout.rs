@@ -14,6 +14,34 @@ pub(crate) mod record_heads;
 #[path = "../../quench-runtime/src/staged/encodings.rs"]
 pub(crate) mod encodings;
 
+/// The value encoding: tags, handle bits and the narrow layout (`words`, `ValueLayout`, `NarrowLayout`).
+#[path = "../../quench-runtime/src/staged/value_encoding.rs"]
+pub(crate) mod value_encoding;
+
+/// The object, array and record words (storage forms, tags, prototype ranges, record blocks).
+#[path = "../../quench-runtime/src/staged/object_encoding.rs"]
+pub(crate) mod object_encoding;
+
+/// The head of an object's extras record, instantiated with words (`ObjectExtrasWords`).
+#[path = "../../quench-runtime/src/staged/object_extras.rs"]
+pub(crate) mod object_extras;
+
+/// The head of a property buffer, instantiated with a word base (`PropertyBufferHead`).
+#[path = "../../quench-runtime/src/staged/property_buffer.rs"]
+pub(crate) mod property_buffer;
+
+/// The flat string forms' heads and offsets (`string_form`), the runtime's `native_string` reads the same.
+#[path = "../../quench-runtime/src/staged/string_form.rs"]
+pub(crate) mod string_form;
+
+/// The field cache entry's stored words and their empty values.
+#[path = "../../quench-runtime/src/staged/field_cache_layout.rs"]
+pub(crate) mod field_cache_layout;
+
+/// The typed-array kinds, the runtime's own enum (`TypedArrayKind`).
+#[path = "../../quench-runtime/src/heap/cell/typed_array_catalog.rs"]
+pub(crate) mod typed_array_catalog;
+
 #[path = "../../quench-runtime/src/staged/layout_offsets.rs"]
 mod offsets;
 pub(crate) use offsets::*;

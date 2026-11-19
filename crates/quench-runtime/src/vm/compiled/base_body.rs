@@ -160,6 +160,7 @@ impl<H: Host> Vm<H> {
             presences: folds.then_some(presences.as_slice()),
             globals: globals.as_ref(),
             classes: if folds { classes.as_slice() } else { &[] },
+            shapes: &[],
         };
         let speculated = widened(generic);
         let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: &seen, kinds: &[] };

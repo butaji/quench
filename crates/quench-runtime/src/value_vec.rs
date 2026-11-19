@@ -55,29 +55,8 @@ fn read_type() -> SlotType {
     if switches::float_slots() { SlotType::Number } else { SlotType::Tagged }
 }
 
-pub(crate) const START_MASK: u32 = 0x3fff_ffff;
-const NON_EXTENSIBLE: u32 = 1 << 30;
-const FROZEN: u32 = 1 << 31;
-pub(crate) const DICTIONARY_STORAGE: u32 = 1 << 31;
-/// An object whose property access is not the ordinary one its shape describes (a module
-/// namespace, an arguments object): set once when it becomes so, and never cleared, it keeps
-/// the object's exact auxiliary (`exact_auxiliary`) from every shape a cache records, so a
-/// shape match proves the object ordinary with no further test.
-pub(crate) const EXOTIC_ACCESS: u32 = 1 << 30;
-/// An object record's storage form, kept in its auxiliary word beside the shape, so the word a
-/// field hit loads to prove the shape also tells where the values live, with no load of the
-/// header or test of the payload (`staged::object::storage_form`): its values are inline
-/// (`Object::meta`'s inline flag) ...
-pub(crate) const INLINE_FORM: u32 = 1 << 29;
-/// ... or behind extras (`Object::payload`'s extras tag). Every writer of either keeps these
-/// current (`Object::storage_form`); no shape a cache records carries them (`exact_auxiliary`
-/// and `auxiliary` mask them off).
-pub(crate) const EXTRAS_FORM: u32 = 1 << 28;
-/// ... or in a narrow run (`ValueArena`): an arena run of narrow values (`Value::to_narrow`),
-/// two to a word, slot `i` in the `i % 2` half (the lower first) of word `start + i / 2`,
-/// which a plain object's values take where all have a narrow form (`ValueArena::compact_vector`).
-/// Its payload word carries `NARROW_RUN_TAG` beside the start.
-pub(crate) const NARROW_FORM: u32 = 1 << 27;
+// The storage-form and integrity bits are the shared object encoding (`staged::object_encoding`).
+pub(crate) use crate::staged::object_encoding::{DICTIONARY_STORAGE, EXOTIC_ACCESS, EXTRAS_FORM, FROZEN, INLINE_FORM, NARROW_FORM, NON_EXTENSIBLE, START_MASK};
 pub(crate) const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM | NARROW_FORM;
 /// An object whose values code holds as constants (`Object::mark_constant`, an own-constant
 /// read): set by the read that takes a value as a constant, cleared by the first write to any
@@ -112,10 +91,10 @@ const _: () = assert!(STORAGE_FORM & (DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 &
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
-/// Properties an object keeps in its record. The Score lane (`v2-cloud-c`, a2deff57a) runs
-/// three for RayTrace's vectors at the cost of max RSS (Splay 162 -> 204 MB); the integration
-/// branch keeps memory-first defaults (the owner's direction, 2026-10-17 and 2026-10-18).
-pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
+/// Properties an object keeps in its record (`staged::object_encoding`). The Score lane runs three for
+/// RayTrace's vectors at the cost of max RSS (Splay 162 -> 204 MB); the integration branch keeps
+/// memory-first defaults (the owner's direction, 2026-10-17 and 2026-10-18).
+pub(crate) use crate::staged::object_encoding::INLINE_PROPERTY_COUNT;
 /// The smallest arena range. An object reaches the arena by outgrowing its inline slots, or
 /// by storing a value they cannot hold before that; a range for its first values would regrow
 /// as it grows past them.
@@ -238,10 +217,9 @@ pub(crate) struct ValueVec {
 /// `ValueVec::start` bits that hold the storage position: an arena offset, a dictionary id,
 /// or one of the empty and inline markers.
 pub(crate) const VALUE_VEC_START_BITS: u32 = START_MASK;
-/// `ValueVec::start` bits that hold the object's integrity level.
-pub(crate) const VALUE_VEC_INTEGRITY_BITS: u32 = NON_EXTENSIBLE | FROZEN;
-/// The integrity bit of a frozen object, whose elements no store replaces.
-pub(crate) const VALUE_VEC_FROZEN: u32 = FROZEN;
+/// `ValueVec::start` bits that hold the object's integrity level, and the integrity bit of a frozen
+/// object, whose elements no store replaces (`staged::object_encoding`).
+pub(crate) use crate::staged::object_encoding::{VALUE_VEC_FROZEN, VALUE_VEC_INTEGRITY_BITS};
 
 impl ValueVec {
     /// The two words, for an owner that stores them apart.

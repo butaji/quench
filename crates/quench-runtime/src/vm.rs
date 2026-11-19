@@ -767,7 +767,8 @@ impl FieldCache {
 const BOUND_TARGET_KEY: &str = "\0quench:bound-target";
 const BOUND_THIS_KEY: &str = "\0quench:bound-this";
 const BOUND_ARGS_KEY: &str = "\0quench:bound-args";
-const NO_FIELD_HOLDER: u32 = u32::MAX;
+const NO_FIELD_HOLDER: u32 = field_cache_layout::NO_HOLDER;
+use crate::staged::field_cache_layout::{self, FieldCacheWords};
 /// Where an accessor field cache's holder keeps its getter (`AccessorFieldCache::slot_accessor`):
 /// in the slot itself (`ShapeAttributes::slot_getter`), in the slot's pair cell
 /// (`slot_accessor_pair`), or where its attributes say (the shape's accessor table).
@@ -820,7 +821,7 @@ const _: () = assert!(INHERITED_FIELD_CACHE_WAYS > 1);
 /// leaves the lane at each miss and evicts an entry another shape needs next.
 const ACCESSOR_FIELD_CACHE_WAYS: usize = 16;
 use crate::heap::{INHERITED_FIELD_CACHE_MAX_DEPTH, InheritedFieldAnswer, InheritedFieldCache};
-const NO_FIELD_RECEIVER: u32 = u32::MAX;
+const NO_FIELD_RECEIVER: u32 = field_cache_layout::NO_RECEIVER;
 /// A cache site without an inherited entry (`Vm::inherited_field_indices`).
 const NO_INHERITED_FIELD: u32 = object::MRU_CHAIN_END;
 // A cached add proves every prototype up to this depth. Node's stream objects (an
@@ -838,56 +839,29 @@ const KEYED_ADD_ENTRIES: usize = 1 << KEYED_ADD_INDEX_BITS;
 /// Source shapes one add site remembers; the oldest is evicted beyond this. Objects whose
 /// optional fields are assigned in varying order reach one add site with several shapes.
 const FIELD_ADD_CACHE_WAYS: usize = 4;
+/// The empty entry (`field_cache_layout::EMPTY`), which a fresh cache site holds.
 const EMPTY_CACHE: FieldCache = FieldCache {
-    receiver: NO_FIELD_RECEIVER,
-    holder: NO_FIELD_HOLDER,
-    slot: 0,
+    receiver: field_cache_layout::EMPTY.receiver,
+    holder: field_cache_layout::EMPTY.holder,
+    slot: field_cache_layout::EMPTY.slot as u16,
 };
-/// Stored as `[receiver, holder, slot]` complemented against `EMPTY_CACHE`, which stores
-/// as zero words.
+/// Stored as its `FieldCacheWords`, which complement the entry against `EMPTY`, so the empty entry is zero words.
 impl site_table::SiteEntry for FieldCache {
-    type Stored = [u32; 3];
+    type Stored = FieldCacheWords;
     #[inline(always)]
-    fn store(self) -> [u32; 3] {
-        [
-            self.receiver ^ EMPTY_CACHE.receiver,
-            self.holder ^ EMPTY_CACHE.holder,
-            u32::from(self.slot ^ EMPTY_CACHE.slot),
-        ]
+    fn store(self) -> FieldCacheWords {
+        FieldCacheWords::encode(self.receiver, self.holder, u32::from(self.slot))
     }
     #[inline(always)]
-    fn load([receiver, holder, slot]: [u32; 3]) -> Self {
-        Self {
-            receiver: receiver ^ EMPTY_CACHE.receiver,
-            holder: holder ^ EMPTY_CACHE.holder,
-            slot: slot as u16 ^ EMPTY_CACHE.slot,
-        }
+    fn load(stored: FieldCacheWords) -> Self {
+        let (receiver, holder, slot) = stored.decode();
+        Self { receiver, holder, slot: slot as u16 }
     }
 }
-/// Layout facts for generated code that reads a field cache entry as `SiteEntry for
-/// FieldCache` stores it: three words, each complemented against `EMPTY_CACHE`.
-pub(crate) struct NativeFieldCacheLayout {
-    pub(crate) entry_size: usize,
-    pub(crate) receiver_offset: usize,
-    pub(crate) holder_offset: usize,
-    pub(crate) slot_offset: usize,
-    pub(crate) receiver_complement: u32,
-    pub(crate) holder_complement: u32,
-    pub(crate) slot_complement: u32,
-    /// The holder an own data field's entry names.
-    pub(crate) own_holder: u32,
-}
-
-pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
-    entry_size: std::mem::size_of::<<FieldCache as site_table::SiteEntry>::Stored>(),
-    receiver_offset: 0,
-    holder_offset: std::mem::size_of::<u32>(),
-    slot_offset: 2 * std::mem::size_of::<u32>(),
-    receiver_complement: EMPTY_CACHE.receiver,
-    holder_complement: EMPTY_CACHE.holder,
-    slot_complement: EMPTY_CACHE.slot as u32,
-    own_holder: NO_FIELD_HOLDER,
-};
+// SAFETY: three `u32` words, with no padding, and every bit pattern valid.
+unsafe impl site_table::StoredWords for FieldCacheWords {}
+/// The layout generated code reads a field cache entry by (`staged::layout_offsets`).
+pub(crate) use crate::staged::layout_offsets::NATIVE_FIELD_CACHE_LAYOUT;
 
 /// One cached property-add transition: an extensible ordinary object of `source_shape` whose
 /// prototype chain still has exactly `prototype_shapes[..prototype_depth]` gains `atom` at `slot`

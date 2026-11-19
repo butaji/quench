@@ -65,44 +65,12 @@ pub(crate) mod typed_ir {
 }
 
 pub(crate) mod value {
-    use crate::layout::words;
     pub(crate) use super::operations::WORD32_SHIFT_MASK;
-    pub(crate) const LOWER_WORD: u64 = words::LOWER_WORD;
-    pub(crate) const HEAP_FAMILY_BITS: u64 = words::HEAP_FAMILY_BITS;
-    pub(crate) const HEAP_FAMILY_SHIFT: u32 = words::HEAP_FAMILY_SHIFT;
-    pub(crate) const NARROW_HEAP_FAMILIES: usize = words::NARROW_HEAP_FAMILIES;
-    pub(crate) const TAG_UNDEFINED: u64 = words::UNDEFINED;
-    pub(crate) const TAG_NULL: u64 = words::NULL;
-    pub(crate) const TAG_BOOL: u64 = words::FALSE;
-    pub(crate) const TAG_DELETED: u64 = words::DELETED;
-    pub(crate) struct ValueLayout;
-    impl ValueLayout {
-        pub(crate) const TAG_MASK: u64 = words::TAG_MASK;
-        pub(crate) const INT_TAG: u64 = words::INT_TAG;
-        pub(crate) const INTERNAL_TAG: u64 = words::INTERNAL_TAG;
-        pub(crate) const HEAP_TAG: u64 = words::HEAP_TAG;
-        pub(crate) const DIRECT_ARRAY_TAG: u64 = words::DIRECT_ARRAY_TAG;
-        pub(crate) const DIRECT_OBJECT_TAG: u64 = words::DIRECT_OBJECT_TAG;
-        pub(crate) const DIRECT_FUNCTION_TAG: u64 = words::DIRECT_FUNCTION_TAG;
-        pub(crate) const DIRECT_PROMISE_TAG: u64 = words::DIRECT_PROMISE_TAG;
-        pub(crate) const DIRECT_ITERATOR_TAG: u64 = words::DIRECT_ITERATOR_TAG;
-        pub(crate) const HEAP_FAMILY_MASK: u64 = words::HEAP_FAMILY_MASK;
-        pub(crate) const DIRECT_STRING_TAG: u64 = words::DIRECT_STRING_TAG;
-        pub(crate) const TAG_SHIFT: u32 = words::TAG_SHIFT;
-        pub(crate) const FIRST_TAG_FIELD: u64 = words::FIRST_TAG_FIELD;
-        pub(crate) const TAG_FIELD_SPAN: u64 = words::TAG_FIELD_SPAN;
-        pub(crate) const CANONICAL_NAN: u64 = words::CANONICAL_NAN;
-    }
-    pub(crate) struct NarrowLayout;
+    pub(crate) use crate::layout::value_encoding::{
+        HEAP_FAMILY_BITS, HEAP_FAMILY_SHIFT, LOWER_WORD, NARROW_HEAP_FAMILIES, NarrowLayout, TAG_BOOL, TAG_DELETED, TAG_NULL,
+        TAG_UNDEFINED, ValueLayout,
+    };
     impl NarrowLayout {
-        pub(crate) const INTEGER_FLAG: u32 = words::NARROW_INT_FLAG;
-        pub(crate) const INTEGER_BITS: u32 = words::NARROW_INTEGER_BITS;
-        pub(crate) const CODE_SHIFT: u32 = words::NARROW_CODE_SHIFT;
-        pub(crate) const CODE_MASK: u32 = words::NARROW_CODE_MASK;
-        pub(crate) const INDEX_SHIFT: u32 = words::NARROW_INDEX_SHIFT;
-        pub(crate) const INDEX_BITS: u32 = words::NARROW_INDEX_BITS;
-        pub(crate) const DIRECT_OBJECT_UPPER: u64 = words::DIRECT_OBJECT_UPPER;
-        pub(crate) const DIRECT_OBJECT_CODE: u32 = words::DIRECT_OBJECT_NARROW_CODE;
         /// The process's upper-word table, which the one row that decodes a narrow value (the
         /// site field read, `heap_rows.rs`) is given as value hole 1.
         #[inline(always)]

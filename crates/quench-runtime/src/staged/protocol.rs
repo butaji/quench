@@ -16,6 +16,8 @@
 //! construction through an initializer is `construct`.
 
 use super::call::admit_room;
+use super::layout_offsets::{JS_STEP_LANE_ACTIVATIONS_TOP, JS_STEP_LANE_VALUES_TOP, JS_STEP_RETURNED_PC};
+use super::region::Region;
 use super::value::{is_direct_array, is_direct_function, is_direct_object};
 use super::{word_bytes, Invocation, Passed, Stage, Step};
 use crate::bytecode::Register;
@@ -161,6 +163,40 @@ pub(crate) fn complete_call<S: Stage>(stage: &mut S, status: S::Word, value: S::
     let done = stage.eq_imm(status, u64::from(returned));
     stage.guard_status(done, miss)?;
     Some(receiver.unwrap_or(value))
+}
+
+/// The addresses of the lane stack's two top words, which the dispatch payload holds
+/// (`JS_STEP_LANE_VALUES_TOP`, `JS_STEP_LANE_ACTIVATIONS_TOP`): read once where a call is admitted,
+/// and every move of the tops writes through them.
+#[derive(Clone, Copy)]
+pub(crate) struct LaneTops<W> {
+    pub(crate) values_at: W,
+    pub(crate) activations_at: W,
+}
+
+/// The lane's top-word addresses, from the dispatch payload.
+#[allow(dead_code)] // the b-jit stencils' call rows
+#[inline(always)]
+pub(crate) fn lane_tops<S: Stage>(stage: &mut S, payload: S::Word) -> LaneTops<S::Word> {
+    let values_at = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_LANE_VALUES_TOP as i32);
+    let activations_at = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_LANE_ACTIVATIONS_TOP as i32);
+    LaneTops { values_at, activations_at }
+}
+
+/// Moves the lane stack's two tops to `values` and `activations`, through the words `tops` addresses.
+#[allow(dead_code)] // the b-jit stencils' call rows
+#[inline(always)]
+pub(crate) fn set_tops<S: Stage>(stage: &mut S, tops: LaneTops<S::Word>, values: S::Word, activations: S::Word) {
+    stage.store_u64(Region::Frame.mutable(), tops.values_at, 0, values);
+    stage.store_u64(Region::Frame.mutable(), tops.activations_at, 0, activations);
+}
+
+/// Records `pc`, the record a raised exception unwinds from, in the dispatch payload
+/// (`JS_STEP_RETURNED_PC`) for the lane to read.
+#[allow(dead_code)] // the b-jit stencils' call rows
+#[inline(always)]
+pub(crate) fn record_raised_pc<S: Stage>(stage: &mut S, payload: S::Word, pc: S::Word) {
+    stage.store_u64(Region::Dispatch.mutable(), payload, JS_STEP_RETURNED_PC as i32, pc);
 }
 
 #[cfg(test)]
