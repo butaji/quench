@@ -6,8 +6,12 @@ use super::{LaneViewCell, ProgramId, ProgramStore, derived_lane_view};
 
 #[derive(Default)]
 pub(super) struct RootConstants {
-    /// The membership words of the written-once slots (`BitSet::words`), derived on first read.
-    written_once: std::cell::OnceCell<Box<[u64]>>,
+    /// The membership words of the written-once slots (`BitSet::words`), derived on first read,
+    /// and the functions that derivation judged by their captures, their records unbuilt
+    /// (`RootWrittenOnce::unbuilt`): a read of a slot outside them derives them again once one
+    /// of those records is built, as a lazily compiled program builds its functions' records
+    /// on their first calls, after another site's read derived the slots.
+    written_once: std::cell::RefCell<Option<(Box<[u64]>, Box<[u32]>)>>,
     /// The root closures made for the program (`Vm::note_root_run`), counted up to two: past
     /// one, no record keeps a root slot's value.
     root_runs: std::cell::Cell<u8>,
@@ -29,8 +33,15 @@ impl ProgramStore {
         {
             return false;
         }
-        let words = entry.root_constants.written_once.get_or_init(|| entry.residual.root_slots_written_once().words().into());
-        crate::bitset::words_contain(words, usize::from(slot))
+        let mut held = entry.root_constants.written_once.borrow_mut();
+        let stale = held.as_ref().is_none_or(|(words, unbuilt)| {
+            !crate::bitset::words_contain(words, usize::from(slot)) && entry.residual.any_record_built(unbuilt)
+        });
+        if stale {
+            let derived = entry.residual.root_slots_written_once();
+            *held = Some((derived.once.words().into(), derived.unbuilt));
+        }
+        held.as_ref().is_some_and(|(words, _)| crate::bitset::words_contain(words, usize::from(slot)))
     }
 
     /// Notes another run of program `id`'s root; whether it is its second, from which its

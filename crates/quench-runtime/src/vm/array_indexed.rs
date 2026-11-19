@@ -422,7 +422,8 @@ impl<H: Host> Vm<H> {
         match iteration.native {
             Native::ArrayForEach => None,
             Native::ArrayMap => {
-                self.store_fresh_array_element(iteration.result, index, mapped);
+                // `hole_array` made the result with every index below the length.
+                self.store_fresh_map_element(iteration.result, index, mapped);
                 None
             }
             Native::ArrayFilter => {

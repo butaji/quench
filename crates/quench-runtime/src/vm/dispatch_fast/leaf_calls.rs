@@ -275,18 +275,54 @@ pub(super) unsafe fn lane_enter_leaf<H: Host>(
 pub(super) fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
     // SAFETY: the running lane's context.
     let leaf = unsafe { std::ptr::addr_of_mut!((*cx).leaf) };
-    // The staged row (`call_leaf::complete_leaf`) on machine words: the caller, the call word
-    // cleared; `None` while no leaf runs.
-    let caller = crate::staged::call_leaf::complete_leaf(
-        &mut crate::staged::Concrete::new(std::ptr::null()), leaf.expose_provenance() as u64, (),
-    )?;
-    let call: Ip = std::ptr::with_exposed_provenance(caller.call as usize);
-    let registers = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));
-    let base: Ip = std::ptr::with_exposed_provenance(caller.base as usize);
+    let caller = lane_leave_leaf(leaf)?;
     if let Some(program) = unsafe { (*leaf).caller_program.take() } {
         std::hint::cold_path();
         lane_enter_program(cx, program);
     }
+    // SAFETY: `caller` is the leaf's, just completed.
+    Some(unsafe { lane_resume_leaf_caller(cx, leaf, caller, value, form) })
+}
+
+/// `lane_complete_leaf` of a running leaf of the caller's own program, the common leaf return
+/// as one op: it makes no call, so a returning handler keeps no frame. `None`, which changes
+/// nothing, where no leaf runs or the leaf crosses programs (`caller_program`), which
+/// `lane_complete_leaf` completes.
+#[inline(always)]
+pub(super) fn lane_return_leaf_header<H: Host>(cx: *mut LaneContext<H>, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
+    // SAFETY: the running lane's context.
+    let leaf = unsafe { std::ptr::addr_of_mut!((*cx).leaf) };
+    if unsafe { (*leaf).caller_program }.is_some() {
+        return None;
+    }
+    let caller = lane_leave_leaf(leaf)?;
+    // SAFETY: `caller` is the leaf's, just completed.
+    Some(unsafe { lane_resume_leaf_caller(cx, leaf, caller, value, form) })
+}
+
+/// The staged row (`call_leaf::complete_leaf`) on machine words: the running leaf's caller,
+/// its call word cleared; `None`, which changes nothing, while no leaf runs.
+#[inline(always)]
+fn lane_leave_leaf(leaf: *mut LeafCall) -> Option<crate::staged::call_leaf::LeafCaller<u64>> {
+    crate::staged::call_leaf::complete_leaf(&mut crate::staged::Concrete::new(std::ptr::null()), leaf.expose_provenance() as u64, ())
+}
+
+/// The caller of a completed leaf resumed: its registers and records the context's again and
+/// `value` in the call's result register; where it continues.
+///
+/// # Safety
+/// `caller` is what `lane_leave_leaf` returned for the context's `leaf` just now.
+#[inline(always)]
+unsafe fn lane_resume_leaf_caller<H: Host>(
+    cx: *mut LaneContext<H>,
+    leaf: *mut LeafCall,
+    caller: crate::staged::call_leaf::LeafCaller<u64>,
+    value: Value,
+    form: LeafForm,
+) -> (Registers, Ip) {
+    let call: Ip = std::ptr::with_exposed_provenance(caller.call as usize);
+    let registers = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));
+    let base: Ip = std::ptr::with_exposed_provenance(caller.base as usize);
     // SAFETY: the call record belongs to the caller's live view; the target stays cached.
     unsafe {
         debug_assert!((*leaf).form == form);
@@ -294,7 +330,7 @@ pub(super) fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value,
         (*cx).base = base;
         registers.set((*call).a & crate::bytecode::REGISTER_MASK, value);
     }
-    Some((registers, following(call)))
+    (registers, following(call))
 }
 
 /// `lane_materialize_leaf` of the running leaf, if one runs: where a leaf's records reach

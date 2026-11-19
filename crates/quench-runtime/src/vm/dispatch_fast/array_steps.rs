@@ -27,6 +27,15 @@ pub(super) struct LaneArrayStep {
     /// completion ends the nested run the body made (`lane_array_complete`) instead of
     /// continuing the lane at the next record.
     pub(super) to_body: bool,
+    /// Where the step's callback is a plain activation (`lane_push_array_step`): its header,
+    /// whose call record is the array steps' trampoline record (`CallbackTrampoline::step_call`)
+    /// and whose caller base word is this entry's index in `LaneStack::steps`, with the
+    /// callback's own call record and caller registers. `None` for a step whose callback is
+    /// its record (a keeping callback, a lane body's iteration). A spill makes the header the
+    /// record either way would push (`LaneStack::plain_record`).
+    pub(super) header: Option<CallbackHeader>,
+    /// The caller's records base, which the header's caller base word does not hold.
+    pub(super) caller_base: Ip,
 }
 
 impl LaneArrayStep {
@@ -66,9 +75,13 @@ fn lane_array_callback_activation<H: Host>(
     if let ActivationKind::Script(script) = shape.activation.kind_mut() {
         script.completion = completion;
     }
-    // Its activation is the record, whose completion is the step's, not a native's callback's
-    // trampoline header.
-    shape.header = None;
+    // A callback that keeps nothing may be pushed as a plain activation returning through the
+    // array steps' trampoline record (`array_step_returned`), not a native's callback's: its
+    // header is the shape's with that call record (`lane_push_array_step`). Its record, which
+    // a keeping callback and a lane body's iteration push, has the step's completion.
+    if let Some(header) = &mut shape.header {
+        header.plain.call = unsafe { vm(cx) }.lane_stack.callback_return.step_call();
+    }
     let entry = shape.entry(target, this);
     Some((shape, entry))
 }
@@ -158,14 +171,14 @@ pub(super) fn lane_begin_array_iteration<H: Host>(
         // SAFETY: `ip` is the call record of the running function's view.
         return Some(lane_native_complete(cx, ip, unsafe { &*ip }, Some(iteration.completion())));
     };
-    if let Some(element) = lane_dense_element(vm, receiver, index)
-        && let Some(window) = lane_admit_prepared(cx, &shape.activation, shape.room)
-    {
-        // SAFETY: the admission pushed the activation over the window.
-        let start = unsafe { lane_enter_array_step::<H, false>(cx, &entry, &iteration, element, index, window) };
-        vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry, to_body: false });
-        // SAFETY: the entry made the callback's registers the context's.
-        return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
+    if let Some(element) = lane_dense_element(vm, receiver, index) {
+        // SAFETY: the running lane's context.
+        let caller_base = unsafe { (*cx).base };
+        let step = LaneArrayStep { iteration, element, index, entry, to_body: false, header: shape.header, caller_base };
+        if let Some(start) = lane_push_array_step(cx, &shape, step) {
+            // SAFETY: the entry made the callback's registers the context's.
+            return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
+        }
     }
     iteration.visited -= 1;
     Some(lane_resume_array_iteration(cx, ip, iteration, false))
@@ -295,10 +308,12 @@ pub(super) fn lane_body_array_iteration<H: Host>(
     let vm = unsafe { vm(cx) };
     let index = iteration.advance()?;
     let element = lane_dense_element(vm, receiver, index)?;
+    // A body's iteration keeps its callback a record: the nested run's boundaries read it.
+    let caller_base = unsafe { (*cx).base };
     let window = lane_admit_prepared(cx, &shape.activation, shape.room)?;
     // SAFETY: the admission pushed the activation over the window.
     let start = unsafe { lane_enter_array_step::<H, false>(cx, &entry, &iteration, element, index, window) };
-    vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry, to_body: true });
+    vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry, to_body: true, header: None, caller_base });
     Some(body_calls::finish_array_iteration(cx, start))
 }
 
@@ -307,7 +322,7 @@ pub(super) fn lane_body_array_iteration<H: Host>(
 /// the rest of its loop (`lane_finish_array_step`).
 pub(super) fn lane_step_array_iteration<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, mapped: Value) -> Resumed {
     let applied = lane_apply_array_step(cx, mapped);
-    lane_finish_array_step(cx, activation, applied)
+    lane_finish_array_step(cx, activation.call(), applied)
 }
 
 /// The step of the innermost lane iteration whose callback returned `mapped`
@@ -374,22 +389,153 @@ fn lane_retire_array_step<H: Host>(cx: *mut LaneContext<H>, applied: Option<Valu
     let vm = unsafe { vm(cx) };
     let activation = vm.lane_stack.pop_activation().expect("an array step's activation runs");
     lane_restore_caller(cx, &activation);
-    lane_finish_array_step(cx, &activation, applied)
+    lane_finish_array_step(cx, activation.call(), applied)
 }
 
-/// The iteration of the call `activation` made, its caller restored, after a step that
-/// `applied`: the iteration retires, and the call completes with the method's value where
-/// the step ended it, else goes on as `lane_resume_array_iteration` does.
+/// The iteration of the call record `call` (its callback's activation's), its caller
+/// restored, after a step that `applied`: the iteration retires, and the call completes with
+/// the method's value where the step ended it, else goes on as `lane_resume_array_iteration`
+/// does.
 #[inline(always)]
-fn lane_finish_array_step<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, applied: Option<Value>) -> Resumed {
+fn lane_finish_array_step<H: Host>(cx: *mut LaneContext<H>, call: Ip, applied: Option<Value>) -> Resumed {
     let vm = unsafe { vm(cx) };
     let depth = vm.lane_stack.steps.len() - 1;
     let LaneArrayStep { iteration, to_body, .. } = vm.lane_stack.steps[depth];
     vm.lane_stack.steps.truncate(depth);
     match applied {
-        None => lane_resume_array_iteration(cx, activation.call(), iteration, to_body),
-        value => lane_array_complete(cx, activation.call(), to_body, value),
+        None => lane_resume_array_iteration(cx, call, iteration, to_body),
+        value => lane_array_complete(cx, call, to_body, value),
     }
+}
+
+/// `lane_begin_array_iteration`'s push of `step`'s first callback: its plain header where the
+/// shape has one (`LaneStack::push_step_header`), which returns through the array steps'
+/// trampoline (`array_step_returned`), else its record (`lane_admit_prepared`); then the
+/// callback entered for the step's element. The entry is pushed first, so a spill of the
+/// header finds its step (`LaneStack::plain_record`). `None`, which changes nothing, where the
+/// lane stack lacks room.
+#[inline(always)]
+fn lane_push_array_step<H: Host>(cx: *mut LaneContext<H>, shape: &PreparedShape, mut step: LaneArrayStep) -> Option<Ip> {
+    let vm = unsafe { vm(cx) };
+    let index = vm.lane_stack.steps.len();
+    if let Some(header) = &mut step.header {
+        header.plain.caller_base = index as u64;
+    }
+    vm.lane_stack.steps.push(step);
+    let admitted = match &step.header {
+        Some(header) => admit_step_header(cx, header, shape.room),
+        None => lane_admit_prepared(cx, &shape.activation, shape.room),
+    };
+    let Some(window) = admitted else {
+        vm.lane_stack.steps.pop();
+        return None;
+    };
+    // SAFETY: the admission pushed the activation over the window.
+    Some(unsafe { lane_enter_array_step::<H, false>(cx, &step.entry, &step.iteration, step.element, step.index, window) })
+}
+
+/// `lane_admit_prepared` of an array step's callback header (`LaneStack::push_step_header`):
+/// the callback family's admission row, then the header over a window at the values' top.
+#[inline(always)]
+fn admit_step_header<H: Host>(cx: *mut LaneContext<H>, header: &CallbackHeader, room: usize) -> Option<*mut Value> {
+    let stack = &mut unsafe { vm(cx) }.lane_stack;
+    if !admits_callback(stack, room) {
+        return None;
+    }
+    let at = stack.values.top();
+    // SAFETY: admitted above; the window starts at the values' top; the step's entry is pushed.
+    unsafe { stack.push_step_header(header, at) };
+    Some(at)
+}
+
+script_handler! {
+    /// `steps[1]` of the return trampoline (`CallbackTrampoline`): an in-lane array step's
+    /// callback, a plain activation, returned. Its plain return popped its header, released its
+    /// window and wrote its value to the trampoline's result register; the innermost step takes
+    /// it (`lane_array_step_returned`).
+    pub(super) fn array_step_returned<>(cx, r, ip, i, view) {
+        resume!(cx, lane_array_step_returned(cx, r.get(i.a)))
+    }
+}
+
+/// The innermost array step's plain callback returned `mapped` (`array_step_returned`): the
+/// step applies it (`Vm::fresh_array_step`: a map's element stored, a filter's kept, a reducer's
+/// accumulator, a find's answer; a `forEach` applies nothing), then the callback's header is
+/// pushed again for the next element without leaving the handler (`lane_step_header_again`),
+/// or the iteration finishes in the callback's caller (`lane_finish_step_header`). As
+/// `lane_step_array_iteration_in_place` steps a callback that is a record, the same steps.
+#[inline(always)]
+fn lane_array_step_returned<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    let step: *mut LaneArrayStep = vm.lane_stack.steps.last_mut().expect("each array step activation has its entry");
+    // SAFETY: the entry stays in place while the step, which pushes no entry, runs and the
+    // callback's window is filled again.
+    let step = unsafe { &mut *step };
+    let header = step.header.expect("an array step's plain callback has its header");
+    // The pop named the trampoline's result window as the innermost plain one; it is the
+    // callback's caller's where plain activations remain below it.
+    vm.lane_stack.plain.registers.set(header.caller_registers.0);
+    let applied = if step.iteration.native == Native::ArrayForEach {
+        None
+    } else {
+        let applied = vm.fresh_array_step(&mut step.iteration, step.index, step.element, mapped);
+        note_allocation(vm);
+        applied
+    };
+    if applied.is_none()
+        && let Some(start) = lane_step_header_again(cx, step, &header)
+    {
+        // SAFETY: the entry made the callback's registers the context's.
+        return Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx));
+    }
+    lane_finish_step_header(cx, &header, applied)
+}
+
+/// `lane_array_step_returned` going on to `step`'s next element: where the activation limit
+/// admits the callback again (the callback family's depth row, which a due collection refuses)
+/// and the next element is a present dense one, `header` is pushed again over the window the
+/// return released, at the values' top, which holds the room its first admission found (no
+/// window moves while activations exist), and the callback entered for the element. `None`
+/// leaves the step to finish with its iteration as it was.
+#[inline(always)]
+fn lane_step_header_again<H: Host>(cx: *mut LaneContext<H>, step: &mut LaneArrayStep, header: &CallbackHeader) -> Option<Ip> {
+    let vm = unsafe { vm(cx) };
+    let depth = vm.lane_stack.activation_count();
+    if !crate::staged::call_callback::concrete_below(depth as u64, vm.lane_stack.activation_limit.get() as u64) {
+        return None;
+    }
+    let index = step.iteration.advance()?;
+    let Some(element) = lane_dense_element(vm, step.iteration.receiver, index) else {
+        step.iteration.visited -= 1;
+        return None;
+    };
+    step.element = element;
+    step.index = index;
+    // The callback's completed loops close nothing more.
+    vm.lane_stack.drop_owned_from(depth);
+    let window = vm.lane_stack.values.top();
+    // SAFETY: admitted above, over the window the callback's return released; its entry stays.
+    unsafe { vm.lane_stack.push_step_header(header, window) };
+    // SAFETY: the header was pushed over the window.
+    Some(unsafe { lane_enter_array_step::<H, false>(cx, &step.entry, &step.iteration, element, index, window) })
+}
+
+/// `lane_array_step_returned` past the step's last callback, which `applied`: the callback's
+/// caller's registers and records the context's again (`header`'s call record and registers,
+/// its step's base), what the callback owned dropped, as a record's retirement
+/// (`lane_retire_array_step`) restores them, then the iteration finishes
+/// (`lane_finish_array_step`).
+#[inline(never)]
+fn lane_finish_step_header<H: Host>(cx: *mut LaneContext<H>, header: &CallbackHeader, applied: Option<Value>) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    let caller_base = vm.lane_stack.steps.last().expect("each array step activation has its entry").caller_base;
+    // SAFETY: the running lane's context, which nothing else accesses.
+    unsafe {
+        (*cx).registers = header.caller_registers;
+        (*cx).base = caller_base;
+    }
+    vm.lane_stack.drop_owned_from(vm.lane_stack.activation_count());
+    lane_finish_array_step(cx, header.call, applied)
 }
 
 /// The callback activation of `iteration`'s step passed `element` at `index`: entered

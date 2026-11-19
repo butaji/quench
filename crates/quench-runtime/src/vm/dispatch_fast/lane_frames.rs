@@ -36,7 +36,8 @@ impl FrameView {
     /// frame the lane has not linked (`Activation::caller_pc`).
     #[inline(always)] pub(in crate::vm) fn caller_pc(&self) -> Option<usize> { self.record.caller_pc() }
     /// What kind of activation it is (a plain header is a `Script` activation that completes
-    /// plainly or returns to a native through the callback trampoline).
+    /// plainly, returns to a native through the callback trampoline, or steps an array
+    /// iteration through the array steps' trampoline).
     #[inline(always)] pub(super) fn kind(&self) -> ActivationKind { *self.record.kind() }
     /// Its JavaScript frame state; `None` for Wasm and an unlinked native frame.
     #[inline(always)] pub(super) fn script(&self) -> Option<ScriptActivation> { self.record.script().copied() }
@@ -59,11 +60,21 @@ impl LaneStack {
     /// The record the plain activation whose window is `window` becomes when it spills, and its
     /// caller's window, the next plain activation's where one remains below it. A native's
     /// callback (`CallbackTrampoline`), always the outermost plain activation, becomes
-    /// `PreparedShape::of`'s record. The one definition `spill_plain` and the frame view share.
+    /// `PreparedShape::of`'s record. An in-lane array step's callback (`steps_return`), whose
+    /// caller base word is its step's index, becomes the `Completion::ArrayStep` record
+    /// `lane_begin_array_iteration` pushed before, with the call record, caller registers and
+    /// base its step holds. The one definition `spill_plain` and the frame view share.
     pub(super) fn plain_record(&self, window: Registers) -> (Activation, Registers) {
         let (call, caller_registers, caller_base) = window.plain_caller();
-        let (call, record_caller_registers, completion) = self.callback_return.returns(call)
-            .map_or((call, caller_registers, Completion::Plain), |(call, registers)| (call, registers, Completion::ReturnsToNative));
+        let (call, record_caller_registers, caller_base, completion) = if let Some((call, registers)) = self.callback_return.returns(call) {
+            (call, registers, caller_base, Completion::ReturnsToNative)
+        } else if self.callback_return.steps_return(call) {
+            let step = &self.steps[caller_base.addr()];
+            let header = step.header.expect("an array step's plain callback has its header");
+            (header.call, header.caller_registers, step.caller_base, Completion::ArrayStep)
+        } else {
+            (call, caller_registers, caller_base, Completion::Plain)
+        };
         let (function, argc, callee) = window.plain_callee();
         let mut activation = Activation::of_parts(
             crate::vm::compiled::ShadowFrame::EMPTY, function, call, caller_base, record_caller_registers, self.plain.program.get(),
@@ -127,8 +138,10 @@ impl LaneStack {
         let plain = self.plain.depth.get();
         if above >= plain { return None; }
         let mut window = Registers(self.plain.registers.get());
+        // Each caller's window as `plain_record` reads it: an array step's header names the
+        // trampoline's result window, its step the real one.
         for _ in 0..plain - 1 - above {
-            window = window.plain_caller().1;
+            window = self.plain_record(window).1;
         }
         Some(FrameView { record: self.plain_record(window).0, plain: true })
     }

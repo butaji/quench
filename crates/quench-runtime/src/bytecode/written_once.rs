@@ -50,18 +50,34 @@ fn reads_local_slot(op: Op) -> bool {
     matches!(op, Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::ArgumentsLength | Op::ArgumentGet)
 }
 
+/// `ResidualProgram::root_slots_written_once`'s answer: the slots, and the functions it judged
+/// by their captures because their records were not built (`unbuilt`). A capture table counts
+/// loads as stores, so once one of those records is built, a derivation again may find more
+/// slots written once: never fewer, as a built record's stores are among its captures.
+pub(crate) struct RootWrittenOnce {
+    pub(crate) once: BitSet,
+    pub(crate) unbuilt: Box<[u32]>,
+}
+
 impl ResidualProgram {
     /// The root binding slots this program writes once (module comment), among the root's
     /// named locals; empty where any function may reach a scope by name or is not described.
     /// Callers add the slot's rule (`RootSlotRule::Binding`) and that the root body runs once.
-    pub(crate) fn root_slots_written_once(&self) -> BitSet {
-        let Some(root) = self.function_get(0) else { return BitSet::new(0) };
+    pub(crate) fn root_slots_written_once(&self) -> RootWrittenOnce {
+        let Some(root) = self.function_get(0) else { return RootWrittenOnce { once: BitSet::new(0), unbuilt: Box::default() } };
         let locals = root.local_atoms.len();
         let mut once = self.root_written_once_slots(root, locals);
-        if !self.nested_functions_keep(&mut once) {
-            return BitSet::new(locals);
+        let mut unbuilt = Vec::new();
+        if !self.nested_functions_keep(&mut once, &mut unbuilt) {
+            return RootWrittenOnce { once: BitSet::new(locals), unbuilt: Box::default() };
         }
-        once
+        RootWrittenOnce { once, unbuilt: unbuilt.into() }
+    }
+
+    /// Whether the record of any of `functions` is built now: a derivation that judged them by
+    /// their captures (`RootWrittenOnce::unbuilt`) may find more slots written once.
+    pub(crate) fn any_record_built(&self, functions: &[u32]) -> bool {
+        functions.iter().any(|&function| self.functions.get(function as usize).is_some_and(|slot| slot.record().is_some()))
     }
 
     /// The root body's half of `root_slots_written_once`.
@@ -87,7 +103,8 @@ impl ResidualProgram {
 
     /// Removes from `once` every slot a function other than the root may store; `false` where
     /// one may reach a scope by name, or neither its record nor the capture table describes it.
-    fn nested_functions_keep(&self, once: &mut BitSet) -> bool {
+    /// Each function whose record is not built, judged by its captures, joins `unbuilt`.
+    fn nested_functions_keep(&self, once: &mut BitSet, unbuilt: &mut Vec<u32>) -> bool {
         let count = self.functions.len();
         let Some(parents) = (0..count).map(|index| self.function_parent(index)).collect::<Option<Vec<_>>>() else {
             return false;
@@ -107,7 +124,10 @@ impl ResidualProgram {
                     true
                 }
                 // A stub or an unbuilt record: every capture of the root it was laid out for.
-                _ => self.closure_reads.as_ref().and_then(|reads| reads.captures(index as u32)).is_some_and(|(captures, _)| {
+                record => self.closure_reads.as_ref().and_then(|reads| reads.captures(index as u32)).is_some_and(|(captures, _)| {
+                    if record.is_none() {
+                        unbuilt.push(index as u32);
+                    }
                     for &(distance, slot) in captures {
                         if distance >= level {
                             once.remove(usize::from(slot));

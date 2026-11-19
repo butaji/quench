@@ -784,6 +784,14 @@ impl ArrayElements {
         unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() }
     }
 
+    /// `make_mut` of a backing already this array's own and wide, which copies nothing;
+    /// `None`, which changes nothing, where `make_mut` would copy it.
+    #[inline(always)]
+    pub(crate) fn unique_mut(&mut self) -> Option<&mut UniqueElements> {
+        // SAFETY: `UniqueElements` is a transparent wrapper; the backing is this array's own.
+        self.is_unique().then(|| unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() })
+    }
+
     #[cold]
     #[inline(never)]
     fn detach(&mut self) {

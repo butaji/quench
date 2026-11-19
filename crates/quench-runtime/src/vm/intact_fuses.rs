@@ -145,12 +145,15 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let shape = array.shape();
+        // Only an array that ever held sparse elements may have them (`mark_sparse_elements`,
+        // which each sparse write makes and nothing clears): any other skips the table's probe.
+        let ever_sparse = array.has_sparse_elements();
         let elements = array.elements();
         let length = elements.len();
         // A narrow backing holds no hole; a wide one is scanned in place (`as_slice` would copy
         // a narrow one out).
         if elements.wide_values().is_some_and(|values| values.iter().any(|value| value.is_deleted()))
-            || self.heap.sparse_length(list).is_some()
+            || (ever_sparse && self.heap.sparse_length(list).is_some())
         {
             return None;
         }

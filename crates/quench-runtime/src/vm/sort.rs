@@ -151,7 +151,11 @@ impl<H: Host> Vm<H> {
         right: Value,
     ) -> Result<Ordering, JsError> {
         let result = self.call_prepared(p, comparator, &[left, right])?;
-        let number = self.with_call_roots([result], |vm| vm.to_number(p, result))?;
+        // A Number, the common comparator result, is its own ToNumber: no root, no call.
+        let number = match result.as_number() {
+            Some(number) => number,
+            None => self.with_call_roots([result], |vm| vm.to_number(p, result))?,
+        };
         Ok(if number < 0.0 {
             Ordering::Less
         } else if number > 0.0 {

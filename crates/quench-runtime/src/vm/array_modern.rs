@@ -82,6 +82,24 @@ impl<H: Host> Vm<H> {
         self.heap.charge_payload_growth(grown * size_of::<Value>());
     }
 
+    /// `store_fresh_array_element` of a map's result (`fresh_array_iteration`), which
+    /// `hole_array` made with the receiver's length, below that length: the value written into
+    /// the array record's own wide backing in place where the write barrier logs nothing
+    /// (`record_array_store_mut_unlogged`), with no barrier call, copy or growth. Any other
+    /// store (a slot array, a logging store, a backing a collection encoded) takes
+    /// `store_fresh_array_element`, which ends the same.
+    #[inline(always)]
+    pub(super) fn store_fresh_map_element(&mut self, array: Value, index: usize, value: Value) {
+        if let Some(object) = self.heap.record_array_store_mut_unlogged(array, value)
+            && let Some(elements) = object.elements_mut().unique_mut()
+            && index < elements.len()
+        {
+            elements.set(index, value);
+            return;
+        }
+        self.store_fresh_array_element(array, index, value);
+    }
+
     pub(super) fn new_array_with_prototype(
         &mut self,
         values: Vec<Value>,

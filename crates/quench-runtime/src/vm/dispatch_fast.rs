@@ -2079,7 +2079,9 @@ impl Admission {
     /// Every bit only the lane's admission carries.
     const CONDITIONS: u64 = Self::REFUSED | Self::NO_SCRIPT_CALLS;
     /// A bit a script call cache entry's admission carries until a plain call's link proves it
-    /// (`lane_script_call_prove`, link-proofs.md): its entry is `CallEntry::Activates` and its
+    /// (`lane_script_call_prove`, link-proofs.md), or a leaf call's link proves a leaf entry
+    /// (`lane_script_call_leaf_prove`, leaf-keeping-c.md): its entry activates as its
+    /// registers alone (`CallEntry::activates`), the leaf call form's entry checked too, and its
     /// cell body unpublished. Every entry is remembered with it (`ScriptTargets::remember`), and
     /// publishing a body sets it again on every entry of the view (`Vm::unprove_view_entries`).
     /// The lane's admission never carries it, so the proved call's one admission compare
@@ -2614,6 +2616,29 @@ impl LaneStack {
         crate::staged::protocol::push_plain_at(
             &mut crate::staged::Concrete::new(std::ptr::null()),
             self.plain_frames_word() as u64, window.expose_provenance() as u64, header.plain, header.program, 0,
+        );
+    }
+
+    /// Push an in-lane array step's callback of `header` over the window at `window` as a plain
+    /// activation (`array_steps::lane_push_array_step`): its header names the array steps'
+    /// trampoline record (`CallbackTrampoline::step_call`) and, as its caller base word, its
+    /// step's index; the step's entry holds its own call record, caller registers and base. A
+    /// step nests over plain activations, so unlike `push_callback_header` it may push at any
+    /// depth and writes no trampoline word.
+    ///
+    /// # Safety
+    /// The caller admitted the activation (`admits_callback`), whose window starts at
+    /// `window`, the values' top, and pushed its step's entry.
+    #[inline(always)]
+    unsafe fn push_step_header(&mut self, header: &CallbackHeader, window: *mut Value) {
+        let depth = self.plain.depth.get();
+        // A first plain activation over the records names their count to the proved calls
+        // above it (`plain_room`), as `push_callback_header` does; above one, the bound already
+        // counts this window, which starts at the values' top and takes at least `CONTEXT` words.
+        if depth == 0 { self.refresh_plain_bound(window.addr()); }
+        crate::staged::protocol::push_plain_at(
+            &mut crate::staged::Concrete::new(std::ptr::null()),
+            self.plain_frames_word() as u64, window.expose_provenance() as u64, header.plain, header.program, depth as u64,
         );
     }
 }
@@ -5240,6 +5265,14 @@ macro_rules! lane_return_value {
     };
     ($cx:expr, $ip:expr, $value:expr, $leaf:expr) => {{
         let (cx, ip, value): (*mut LaneContext<H>, Ip, Value) = ($cx, $ip, $value);
+        // The common return as one op, no call (`lane_return_one_op`): a running leaf of the
+        // caller's program, or a plain activation's header, whose window is the innermost
+        // plain one (as `lane_return_from` reads it).
+        let window = Registers(unsafe { vm(cx) }.lane_stack.plain.registers.get());
+        if let Some((registers, next)) = lane_return_one_op::<H, { $leaf }>(cx, window, value) {
+            let carried = Carried { memory: MemoryView::script(cx), integers: crate::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
+            next!(cx, registers, next, carried)
+        }
         if let Some(resumed) = lane_complete_plain_activation::<H, { $leaf }>(cx, value) {
             resume!(cx, resumed)
         }
@@ -16708,8 +16741,10 @@ fn lane_passed_linked_call<H: Host>(
     if !unsafe { (*cx).script_calls } || lane_constructing(vm, callee) {
         return None;
     }
-    // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything else runs.
-    let target = vm.linked_script_call_entry(callee, &i.call_link).map(|target| unsafe { *target })?;
+    // SAFETY: as `Vm::script_call_entry`: read in place, not copied (64 bytes a call), since
+    // nothing before the activation is made resolves a target or collects; the gathering
+    // activation copies it before it allocates the rest array (`lane_activate_gathering`).
+    let target = vm.linked_script_call_entry(callee, &i.call_link).map(|target| unsafe { &*target })?;
     if target.entry == CallEntry::Gathers && target.forms & TARGET_GATHERS_KEEPING == 0 {
         if !lane_admits_activation(&target) || valid < argc {
             return None;
@@ -17589,18 +17624,27 @@ fn lane_call_keeping_activation<H: Host>(
     }
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
-    // The site's linked entry, as `lane_script_call_environment` reads it, copied before the
-    // activation allocates; any other callee takes the general lookup.
+    // The site's linked entry, as `lane_script_call_environment` reads it, read in place: only
+    // an activation that allocates (a rest array) copies it first; any other callee takes the
+    // general lookup.
     let linked = if lane_constructing(vm, callee) {
         None
     } else {
-        // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything else runs.
+        // SAFETY: as `Vm::script_call_entry`; nothing before the activation resolves a target.
         vm.linked_script_call_entry(callee, &i.call_link)
-            .map(|target| unsafe { *target })
-            .filter(lane_admits_activation)
+            .map(|target| unsafe { &*target })
+            .filter(|target| lane_admits_activation(target))
     };
-    let Some(target) = linked.or_else(|| lane_script_target(cx, callee)) else {
-        return Err(None);
+    let resolved;
+    let target: &ScriptCallTarget = match linked {
+        Some(target) => target,
+        None => {
+            let Some(target) = lane_script_target(cx, callee) else {
+                return Err(None);
+            };
+            resolved = target;
+            &resolved
+        }
     };
     if !target.forwards() {
         return Err(None);
@@ -17621,7 +17665,8 @@ fn lane_call_keeping_activation<H: Host>(
         return lane_activate_keeping_window::<H, false>(cx, r, ip, &target, window, this).map_err(Some);
     }
     let arguments = ActivationArguments::Window(window);
-    lane_activate_keeping::<H, false>(cx, r, ip, &target, arguments, this, false, None).map_err(Some)
+    // This activation may allocate its rest array before it reads the target: a copy.
+    lane_activate_keeping::<H, false>(cx, r, ip, &{ *target }, arguments, this, false, None).map_err(Some)
 }
 
 /// The keeping activation of a target of the running program that keeps the values it was
@@ -17715,6 +17760,8 @@ fn lane_activate_gathering<H: Host>(
         }
         return Ok(lane_enter_window::<H, false, false>(cx, r, ip, target, callee_registers, argc, this, false, None, Some(target.registers)));
     }
+    // The entry, which callers read in place, is copied before the rest array allocates.
+    let target = &{ *target };
     let rest = vm.rest_parameter_array(unsafe {
         std::slice::from_raw_parts(passed.add(usize::from(fixed.min(argc))), usize::from(argc.saturating_sub(fixed)))
     });
@@ -20219,13 +20266,27 @@ return_handler! {
     /// first step of `lane_complete_plain_activation` for a record of no leaf). Every other
     /// return takes `lane_return_records`, so this handler makes no call.
     fn lane_return<LEAF: u8>(cx, r, ip, i, view) {
-        if LEAF == NOT_LEAF
-            && let Some((registers, next)) = lane_return_plain_header::<H, false>(cx, r, r.get(i.a))
-        {
+        // A leaf's return (`LEAF`) completes the running leaf the same way, one op.
+        if let Some((registers, next)) = lane_return_one_op::<H, LEAF>(cx, r, r.get(i.a)) {
             let carried = Carried { memory: MemoryView::script(cx), integers: crate::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
             next!(cx, registers, next, carried)
         }
         sibling!(lane_return_records::<H, LEAF>, r, ip, view)
+    }
+}
+
+/// The return of the record of form `LEAF` with `value` as one op, making no call: a running
+/// leaf of the caller's program completes (`lane_return_leaf_header`), a plain activation pops
+/// its header from `window`, the running one (`lane_return_plain_header`, the first step of
+/// `lane_return_from`). `None`,
+/// which changes nothing, for any other, which `lane_complete_plain_activation` and the
+/// general returns decide as before.
+#[inline(always)]
+fn lane_return_one_op<H: Host, const LEAF: u8>(cx: *mut LaneContext<H>, window: Registers, value: Value) -> Option<(Registers, Ip)> {
+    if LEAF == NOT_LEAF {
+        lane_return_plain_header::<H, false>(cx, window, value)
+    } else {
+        leaf_calls::lane_return_leaf_header(cx, value, LEAF)
     }
 }
 
@@ -26235,8 +26296,8 @@ struct PreparedShape {
     argc: usize,
     activation: Activation,
     /// The plain header a callback that keeps nothing pushes instead of `activation`
-    /// (`lane_push_prepared`); `None` for one that keeps its values, and for an array step's
-    /// activation, which `lane_admit_prepared` pushes as its record.
+    /// (`lane_push_prepared`); `None` for one that keeps its values. An array step's names the
+    /// array steps' trampoline record instead (`array_steps::lane_push_array_step`).
     header: Option<CallbackHeader>,
     registers: usize,
     passed: usize,
@@ -26319,6 +26380,12 @@ const CALLBACK_RESULT: u16 = 0;
 #[repr(C)]
 struct CallbackTrampoline {
     records: [LaneInstruction; 2],
+    /// The array steps' pair (`array_steps::array_step_returned`): an in-lane array step's
+    /// callback header names `steps[0]` as its call record and `result` as its caller's
+    /// registers, so its plain return resumes at `steps[1]`, which steps the innermost
+    /// iteration. Steps nest over plain activations, so their own call record, caller
+    /// registers and base live in their entries (`LaneArrayStep`), not here.
+    steps: [LaneInstruction; 2],
     result: std::cell::Cell<Value>,
     call: std::cell::Cell<Ip>,
     caller_registers: std::cell::Cell<Registers>,
@@ -26337,6 +26404,7 @@ impl CallbackTrampoline {
         };
         Self {
             records: [record(), record()],
+            steps: [record(), record()],
             result: std::cell::Cell::new(Value::UNDEFINED),
             call: std::cell::Cell::new(std::ptr::null()),
             caller_registers: std::cell::Cell::new(Registers(std::ptr::null_mut())),
@@ -26351,6 +26419,12 @@ impl CallbackTrampoline {
         for record in &mut self.records {
             record.handler = handler;
         }
+        // The array steps' pair, bound with it: a step's header is its shape's with the call
+        // record replaced (`step_call`).
+        let stepping = array_step_returned::<H> as Handler as *const ();
+        for record in &mut self.steps {
+            record.handler = stepping;
+        }
         (self.records.as_ptr().expose_provenance() as u64, self.result.as_ptr().expose_provenance() as u64)
     }
 
@@ -26359,6 +26433,20 @@ impl CallbackTrampoline {
     #[inline(always)]
     fn returns(&self, call: Ip) -> Option<(Ip, Registers)> {
         std::ptr::eq(call, self.records.as_ptr()).then(|| (self.call.get(), self.caller_registers.get()))
+    }
+
+    /// The call record word an array step's header names (`steps[0]`), whose `following` is the
+    /// stepping record. Bound once `bind` ran for a shape, which every step's shape did.
+    #[inline(always)]
+    fn step_call(&self) -> u64 {
+        self.steps.as_ptr().expose_provenance() as u64
+    }
+
+    /// Whether `call`, a plain header's, is the array steps' call record: the header is an
+    /// array step's callback, whose caller base word is its step's index (`LaneArrayStep`).
+    #[inline(always)]
+    fn steps_return(&self, call: Ip) -> bool {
+        std::ptr::eq(call, self.steps.as_ptr())
     }
 }
 
