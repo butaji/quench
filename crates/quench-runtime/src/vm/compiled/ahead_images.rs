@@ -196,6 +196,15 @@ impl AheadImages {
     }
 }
 
+/// Whether `direct`, a closure of function `callee`, is what a proven site's row was planned for: it
+/// binds `this` as the row does (`ThisForm`), and its cell holds the facts of a plain activation of
+/// its window (as `DirectFacts::describes` admits a JIT plan's).
+fn admits_proven(program: &ResidualProgram, callee: u32, direct: &DirectCallee) -> bool {
+    let Some(body) = program.function_get(callee as usize) else { return false };
+    let this = super::base_region::callees::ThisForm::of(body);
+    direct.sloppy.is_some() == this.sloppy && direct.lexical == this.lexical && plain_cell(direct, body.registers)
+}
+
 /// Whether `callee`'s entry cell holds the facts of a plain activation of `registers` registers, the
 /// facts an image's direct row is planned with (`callees::proven_facts`).
 fn plain_cell(callee: &DirectCallee, registers: u16) -> bool {
@@ -217,29 +226,42 @@ impl<H: Host> Vm<H> {
         // The heap values the code names are its roots, which its publication keeps alive.
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, ..Default::default() } };
-        let (keys, direct): (Vec<usize>, Vec<DirectCallee>) = self.ahead_callees(program, &images.image, function).into_iter().unzip();
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None }, fields: Vec::new(),
-            direct: direct.into_boxed_slice(), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
+            direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
         let method = plan.finish(&linked, None)?;
         let published = self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())?;
-        // The body owns the descriptors its sites' records name, and their binding retires with it (`live::bind_call`).
-        let owned = published.lease()?;
-        for (key, callee) in keys.into_iter().zip(owned.direct.iter()) { live::bind_call(linked_live, key, callee, &published)?; }
+        for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, &mut self.heap); }
         Some(published)
     }
 
     /// The callees of `function`'s proven call sites (`AotImage::calls`) that bind now, each by its
     /// record's key: the closure each site resolved of the function the closed world proves it calls
-    /// (`Vm::proven_callee`), where it binds `this` as the site's row was planned (`ThisForm`) and its
-    /// cell holds the facts of a plain activation of its window (as `DirectFacts::describes` admits a JIT
-    /// plan's). A site that binds nothing yet keeps refusing its calls to the helper.
+    /// (`Vm::proven_callee`), where the site's row admits it (`admits_proven`). A site that binds
+    /// nothing yet keeps refusing its calls to the VM's, whose call binds it (`rebind_ahead_call`).
     fn ahead_callees(&self, program: &ResidualProgram, image: &AotImage, function: u32) -> Vec<(usize, DirectCallee)> {
         image.calls.iter().enumerate().filter(|(_, site)| site.function == function).filter_map(|(key, site)| {
-            let body = program.function_get(site.callee as usize)?;
             let direct = self.proven_callee(program, (function, site.pc), site.callee)?;
-            let this = super::base_region::callees::ThisForm::of(body);
-            (direct.sloppy.is_some() == this.sloppy && direct.lexical == this.lexical && plain_cell(&direct, body.registers)).then_some((key, direct))
+            admits_proven(program, site.callee, &direct).then_some((key, direct))
         }).collect()
+    }
+
+    /// Binds the record of the proven call at `pc` of `function` to `target`,
+    /// the callee the VM's call of the site just resolved, where the record names another closure: the
+    /// record's guard missed because the program made a new closure of the proven function, and its
+    /// rows call this one by its entry from now on (`BoundCalls::bind`). Nothing where no loaded image
+    /// proves the call, or `target` is no closure of the proven function.
+    pub(in crate::vm) fn rebind_ahead_call(&mut self, program: &ResidualProgram, (function, pc): (u32, u32), (argc, target): (u16, super::super::dispatch_fast::ScriptCallTarget)) {
+        let Some(images) = self.programs.ahead_images(self.active_program, program) else { return };
+        let Some(live) = images.linked.as_ref() else { return };
+        let Some(key) = live.calls.key((function, pc)) else { return };
+        let facts = images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program));
+        if facts.function_facts(function).call_target(pc) != Some(target.function) { return; }
+        let Some(views) = self.programs.views_in_lane(self.active_program) else { return };
+        let Some(view) = views.get(function as usize).and_then(super::super::program_store::derived_lane_view) else { return };
+        let Some(mut direct) = super::super::dispatch_fast::direct_callee_in_lane(self, view, function, pc as usize, argc, target) else { return };
+        (direct.method, direct.body) = (None, None);
+        if live.calls.names(key, direct.callee) || !admits_proven(program, target.function, &direct) { return; }
+        live.calls.bind(key, direct, &mut self.heap);
     }
 
     /// Takes `images`, links them into this VM, and keeps them for the program they were

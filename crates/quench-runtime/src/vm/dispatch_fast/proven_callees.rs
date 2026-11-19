@@ -1,4 +1,4 @@
-//! The callee an AOT image's call site calls by its entry (`aot_image::live::bind_call`): the function
+//! The callee an AOT image's call site calls by its entry (`aot_image::bound::BoundCalls::bind`): the function
 //! the closed world proves the site calls (`AotFacts::call_target`) fixes which entry cell it is; the
 //! closure the site resolved of that function, which the program makes as it runs, fixes its identity,
 //! captures and descriptor, as a JIT caller's direct callee holds them (`direct_callee_in_lane`).
@@ -20,4 +20,16 @@ impl<H: Host> Vm<H> {
         super::compiled::lane_facts::bind_callees(std::slice::from_ref(&direct), view);
         Some(direct)
     }
+}
+
+/// Rebinds the image call record of the body call `cx` decoded last (`BodyCall::at`) to `target`,
+/// the script function the helper resolved there: the record's guard missed, so where the image
+/// proves the site calls `target`'s function, its rows call this closure by its entry from now on
+/// (`Vm::rebind_ahead_call`).
+pub(super) fn rebind_body_call<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, argc: u16, target: *const ScriptCallTarget) {
+    // SAFETY: `cx` is the running lane's context; its decoded site names the call being made.
+    let Some((code, function, pc, _)) = (unsafe { (*cx).body_site }) else { return };
+    let Ok(pc) = u32::try_from(pc) else { return };
+    // SAFETY: the context's program outlives the lane run; the target as `Vm::script_call_entry`.
+    vm.rebind_ahead_call(unsafe { &*code }, (function, pc), (argc, unsafe { *target }));
 }

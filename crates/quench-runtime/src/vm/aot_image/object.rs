@@ -4,7 +4,7 @@
 //! a code relocation names its target by declaration index, with a PC leave's offset as addend. The
 //! generic rows' operand records are one data record, named with the record's offset as addend, and
 //! the proven calls' records another, writable: each names no callee until the runtime binds it
-//! (`live::bind_call`), so its direct row takes the helper meanwhile.
+//! (`bound::BoundCalls::bind`), so its direct row takes the helper meanwhile.
 //! Symbols whose value is only known in a VM (atoms, shapes, heap values, cells) have no object
 //! form yet and are rejected here rather than linked to a wrong address.
 //!

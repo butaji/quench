@@ -25,6 +25,8 @@ pub(crate) mod base;
 pub(crate) mod join;
 #[path = "aot_image/object.rs"]
 pub(crate) mod object;
+#[path = "aot_image/bound.rs"]
+pub(crate) mod bound;
 #[path = "aot_image/live.rs"]
 pub(crate) mod live;
 #[path = "aot_image/file.rs"]
@@ -61,7 +63,7 @@ pub(crate) struct AotImage {
 /// run-time words (the callee's identity, cell, descriptor, captures and global) are a closure's,
 /// which the program makes as it runs: the image's record names no callee (`unbound_callee`), so the
 /// row refuses every call to the helper until the loader binds the site to the closure it resolved
-/// (`live::bind_call`).
+/// (`bound::BoundCalls::bind`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CallSite {
     pub(crate) function: u32,

@@ -3,8 +3,7 @@
 //! base PC leave resolves to its final address. Every other symbol resolves now: helpers,
 //! semantic entries, operand records (the image's table, kept with the code), atoms, the
 //! invalidation word, heap values and shapes (`symbols::resolve_recipe`), and the records of the
-//! calls the closed world proves (the image's templates, kept with the code), which name no callee
-//! until a publication binds each to the closure its site resolved (`bind_call`).
+//! calls the closed world proves (`BoundCalls`, kept with the code).
 //! A function's entry is its lane body where it has one, else its base body.
 //!
 //! Owner: one pipeline.
@@ -13,7 +12,8 @@ use super::{AotImage, base::NO_ENTRY, symbols::{self, Symbol, SymbolTable}};
 use crate::code_dependencies::Invalidation;
 use crate::folded_roots::FoldedRoots;
 use crate::vm::Vm;
-use crate::vm::compiled::{CodeMemory, DirectCallee, LaneHelper, PublishedLaneMethod};
+use super::bound::BoundCalls;
+use crate::vm::compiled::{CodeMemory, LaneHelper};
 use quench_bjit::call_record::CallRecord;
 use std::cell::UnsafeCell;
 use crate::vm::jit_backend::relocatable_code::RelocatableCode;
@@ -32,9 +32,9 @@ pub(crate) struct LiveImage {
     pub(crate) invalidation: Invalidation,
     /// The operand records the generic rows pass their semantic entries; they live as long as the code.
     operands: Box<[[u64; 2]]>,
-    /// The records the direct rows of proven calls read in place, by `Symbol::CallRecord` key; they
-    /// live as long as the code.
-    calls: Box<[UnsafeCell<CallRecord>]>,
+    /// The records the direct rows of proven calls read in place, and their bindings; they live as
+    /// long as the code.
+    pub(crate) calls: BoundCalls,
     /// Each function's entry: its lane body where it has one, else its base body.
     pub(crate) entries: Box<[usize]>,
     /// Each function's base body.
@@ -64,11 +64,11 @@ pub(crate) fn install<H: Host>(image: &AotImage, vm: &mut Vm<H>) -> Result<LiveI
     let layout = layout(image);
     let invalidation = Invalidation::default();
     let operands: Box<[[u64; 2]]> = image.operands.iter().map(|record| record.words).collect();
-    let calls: Box<[UnsafeCell<CallRecord>]> = image.calls.iter().map(|call| UnsafeCell::new(call.record)).collect();
+    let calls = BoundCalls::of(image);
     let mut linked = vec![false; image.functions.len()];
     let code = CodeMemory::assemble(layout.length, |pointer, out| {
         let bases: Box<[u64]> = layout.bases.iter().map(|at| (pointer.addr() + at) as u64).collect();
-        let places = Places { bases: &bases, invalidation: invalidation.address(), operands: &operands, calls: &calls };
+        let places = Places { bases: &bases, invalidation: invalidation.address(), operands: &operands, calls: calls.records() };
         place(image, vm, &layout, (pointer.addr(), &places), (out, linked.as_mut_slice()))
     })?;
     let start = code.pointer().addr();
@@ -87,7 +87,7 @@ pub(crate) fn install<H: Host>(image: &AotImage, vm: &mut Vm<H>) -> Result<LiveI
 pub(crate) fn link_lane<H: Host>(image: &AotImage, vm: &mut Vm<H>, live: &LiveImage, function: u32) -> Option<(Vec<u8>, FoldedRoots)> {
     let lane = image.functions.get(function as usize)?.lane.as_ref()?;
     let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
-    let places = Places { bases: &bases, invalidation: live.invalidation.address(), operands: &live.operands, calls: &live.calls };
+    let places = Places { bases: &bases, invalidation: live.invalidation.address(), operands: &live.operands, calls: live.calls.records() };
     let mut roots = FoldedRoots::default();
     let code = lane.code.link(0, |namespace, key| {
         let word = resolve(image, vm, &places, namespace, key)?;
@@ -168,25 +168,3 @@ fn base_pc(image: &AotImage, bases: &[u64], function: u32, pc: u32) -> Option<u6
     bases.get(function as usize).map(|base| base + u64::from(offset))
 }
 
-/// Binds the record of call site `key` to `direct`, the callee its site resolved, which `owner` owns:
-/// the record's run-time words become the callee's, as a JIT plan's record holds them
-/// (`DirectFacts::of`), its identity last, which admits the rows. The owner's retirement takes the
-/// identity back to `unbound_callee` (`PublishedCode::on_retire`), so no row calls through a
-/// descriptor the owner freed or a callee a collection may have freed with it.
-pub(crate) fn bind_call(live: &LiveImage, key: usize, direct: &DirectCallee, owner: &PublishedLaneMethod) -> Option<()> {
-    let record = live.calls.get(key)?.get();
-    let identity = direct.callee.to_bits();
-    let validity = (direct.cell + crate::staged::call::ENTRY_CELL.validity_offset as usize) as *const u64;
-    // SAFETY: the record is the image's, read in place by code on this thread, none of which runs
-    // during a publication; the cell is the callee's live entry cell (`DirectCallee::cell`), and the
-    // callee word is a whole word of the record, which `on_retire` writes back as a `Cell`.
-    unsafe {
-        *record = CallRecord { callee: super::unbound_callee(), cell: direct.cell as u64, expected: validity.read(),
-            descriptor: std::ptr::from_ref(direct).addr() as u64, captures: direct.capture_word(),
-            global_this: direct.sloppy.map_or(0, crate::Value::to_bits), ..*record };
-        (*record).callee = identity;
-        let word = &*std::ptr::addr_of!((*record).callee).cast::<std::cell::Cell<usize>>();
-        owner.on_retire(word, identity as usize, super::unbound_callee() as usize);
-    }
-    Some(())
-}
