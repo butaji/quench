@@ -38,9 +38,12 @@ pub(in super::super) struct Shape {
     /// The addition that forms the index, where the index is a sum.
     add: Option<usize>,
     counter: Register,
-    bound: Register,
+    /// The counter's bound, where the index is a counter below one (`None` for a ranged index).
+    bound: Option<Register>,
     /// The counter's least value.
     low: i64,
+    /// The highest index of a ranged index (`None` for a counter below a bound).
+    ceiling: Option<i64>,
     base: Option<Operand>,
     /// The scale and the PC of the product it multiplies the counter in.
     scale: Option<(Operand, usize)>,
@@ -83,8 +86,10 @@ impl Lowering<'_, '_> {
         let (array, index) = access_registers(instructions[pc])?;
         match proof {
             IndexProof::Proven => None,
-            IndexProof::Versioned { bound, .. } => Some(Shape { pc, array, add: None, counter: index, bound,
-                low: point.int_range(index)?.min, base: None, scale: None }),
+            IndexProof::Versioned { bound, .. } => Some(Shape { pc, array, add: None, counter: index, bound: Some(bound),
+                low: point.int_range(index)?.min, ceiling: None, base: None, scale: None }),
+            IndexProof::Ranged { max, .. } => Some(Shape { pc, array, add: None, counter: index, bound: None,
+                low: 0, ceiling: Some(max), base: None, scale: None }),
             IndexProof::Check => self.sum_shape(instructions, pc, point, (array, index)),
         }
     }
@@ -104,7 +109,8 @@ impl Lowering<'_, '_> {
         let sound = low >= 0 && counted.counter != index && counted.bound != array && Some(counted.bound) != base_register
             && [base_register, scale_register].into_iter().flatten().all(|register| register != counted.counter && register != counted.operand)
             && !instructions[from + 1..pc].iter().any(|between| between.written_registers().any(|written| written == counted.counter));
-        sound.then_some(Shape { pc, array, add: Some(add), counter: counted.counter, bound: counted.bound, low, base: Some(base), scale: counted.scale })
+        sound.then_some(Shape { pc, array, add: Some(add), counter: counted.counter, bound: Some(counted.bound), low, ceiling: None,
+            base: Some(base), scale: counted.scale })
     }
 
     /// The counter the sum's `operand` counts: the operand itself below a bound, or a product of one and a scale.
@@ -142,8 +148,12 @@ impl Lowering<'_, '_> {
         let header = self.checking_loop((nest, model, ranges), shape, array, [base, scale])?;
         let induction = shape.scale.zip(scale)
             .and_then(|((_, multiply), scale)| self.induction(nest, ranges, shape.counter, (multiply, scale)));
-        Some(Resolved { version: Version { pc: shape.pc, header, reach: Reach { bound: shape.bound, low: shape.low, base, scale } },
-            add: shape.add, induction })
+        let reach = match (shape.ceiling, shape.bound) {
+            (Some(ceiling), _) => Reach::Ranged { ceiling },
+            (None, Some(bound)) => Reach::Counted { bound, low: shape.low, base, scale },
+            (None, None) => return None,
+        };
+        Some(Resolved { version: Version { pc: shape.pc, header, reach }, add: shape.add, induction })
     }
 
     /// The term `operand` read at `at` is: a constant, the word of the hoisted operation that last wrote its
@@ -166,7 +176,7 @@ impl Lowering<'_, '_> {
     fn checking_loop(&self, (nest, model, ranges): (Nest<'_>, &Model<'_>, &IntRanges), shape: &Shape, array: LoopArray,
         terms: [Option<Term>; 2]) -> Option<usize> {
         let terms = terms.into_iter().flatten();
-        let registers: Vec<Register> = std::iter::once(shape.bound).chain(terms.clone().filter_map(Term::register)).collect();
+        let registers: Vec<Register> = shape.bound.into_iter().chain(terms.clone().filter_map(Term::register)).collect();
         let floor = terms.filter_map(Term::hoisted).filter_map(|pc| nest.hoists.iter().find(|hoist| hoist.pc == pc))
             .map(|hoist| hoist.header).fold(array.header, usize::max);
         nest.around(shape.pc).into_iter().find(|&span| span.0 >= floor && !self.generic.contains(&span.0)
