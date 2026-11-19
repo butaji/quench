@@ -381,7 +381,7 @@ impl<H: Host> Vm<H> {
     /// from in the running realm: none under a `with` scope, nor for a call-only closure
     /// (`Value::known_closure`), whose function has none.
     #[inline(always)]
-    pub(super) fn lane_closure_template(&self, id: u32) -> Option<ClosureTemplate> {
+    pub(super) fn closure_template_in_lane(&self, id: u32) -> Option<ClosureTemplate> {
         if self.with_scope_entered {
             return None;
         }

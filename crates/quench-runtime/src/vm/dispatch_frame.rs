@@ -526,7 +526,7 @@ impl<H: Host> Vm<H> {
     /// The lane view a call of function `id` of the active program `p` enters at its first
     /// instruction from a native (a promise job, a host callback), as a lane call of it would
     /// activate it (`Vm::resolve_script_call_target`): derived once its deferred runs complete
-    /// (`ProgramStore::lane_call_may_derive`); null where the general loop runs it.
+    /// (`ProgramStore::call_may_derive_in_lane`); null where the general loop runs it.
     pub(super) fn entered_lane_view(&self, p: &ResidualProgram, id: u32) -> *const super::dispatch_fast::LaneView {
         let program = self.active_program;
         let runs_in_lane = Self::FRAME_ENTRY_LANE_RUNS
@@ -536,7 +536,7 @@ impl<H: Host> Vm<H> {
         if !runs_in_lane
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || !self.admits_in_lane(p)
-            || !self.programs.lane_call_may_derive(program, id, false, false)
+            || !self.programs.call_may_derive_in_lane(program, id, false, false)
         {
             return std::ptr::null();
         }
@@ -1584,7 +1584,7 @@ impl<H: Host> Vm<H> {
                 && !self.lane_completion.is_raised()
                 && pc < body.code.len();
             if stops_here
-                && let Some(outcome) = self.lane_stop_outcome(p, frame, cursor.instruction(pc), pc, body.is_async)
+                && let Some(outcome) = self.stop_outcome_in_lane(p, frame, cursor.instruction(pc), pc, body.is_async)
             {
                 return Ok(outcome);
             }
@@ -1604,9 +1604,9 @@ impl<H: Host> Vm<H> {
     /// with no call pending, where the general loop's step there would end its run: the
     /// frame's return, or the completion a call it made returned from it (`Vm::lane_returned`),
     /// a generator's plain `yield`, or an async function's observation-free `await`
-    /// (`lane_stop_awaits`). `None` leaves the instruction to the general loop.
+    /// (`stop_awaits_in_lane`). `None` leaves the instruction to the general loop.
     #[inline(always)]
-    fn lane_stop_outcome(
+    fn stop_outcome_in_lane(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -1627,12 +1627,12 @@ impl<H: Host> Vm<H> {
             return Some(FrameOutcome::Complete(value));
         }
         if !crate::staged::Operation::<u64, ()>::is_yield(instruction) {
-            return asynchronous.then(|| self.lane_stop_awaits(p, frame, Some(instruction), pc)).flatten();
+            return asynchronous.then(|| self.stop_awaits_in_lane(p, frame, Some(instruction), pc)).flatten();
         }
         let value = self.read(frame, instruction.register_b());
         // An async generator's `yield` resolves a promise for the value, as the general step
         // does (`promise_for_value`), where that observes nothing.
-        let value = if asynchronous { self.lane_promise_resolve(p, self.intrinsic_promise_constructor(), value)? } else { value };
+        let value = if asynchronous { self.promise_resolve_in_lane(p, self.intrinsic_promise_constructor(), value)? } else { value };
         self.frames[frame].pc = pc + 1;
         self.frames[frame].pc_is_resume = true;
         Some(FrameOutcome::Yield {
@@ -1646,9 +1646,9 @@ impl<H: Host> Vm<H> {
     /// The suspension of an async frame `frame` whose lane run stopped at its `Await` record
     /// `instruction` at `pc`, made as the general loop's `Await` makes it, where the awaited
     /// value's conversion observes nothing: a non-object as it is, or an object
-    /// `lane_promise_resolve` converts without running guest code. `None` leaves any other
+    /// `promise_resolve_in_lane` converts without running guest code. `None` leaves any other
     /// stop, or a conversion that could throw into the frame's handlers, to the general loop.
-    pub(super) fn lane_stop_awaits(
+    pub(super) fn stop_awaits_in_lane(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -1656,18 +1656,18 @@ impl<H: Host> Vm<H> {
         pc: usize,
     ) -> Option<FrameOutcome> {
         let instruction = instruction.filter(|instruction| crate::staged::Operation::<u64, ()>::is_await(*instruction))?;
-        self.lane_await_value(p, frame, instruction.register_b(), instruction.result_register(), pc)
+        self.await_value_in_lane(p, frame, instruction.register_b(), instruction.result_register(), pc)
             .map(|value| FrameOutcome::Await { value, destination: instruction.result_register(), frame: None })
     }
 
-    /// `lane_stop_awaits` of the `Await` at `pc` that reads register `awaited` and resumes into
+    /// `stop_awaits_in_lane` of the `Await` at `pc` that reads register `awaited` and resumes into
     /// `destination`: the value the suspension awaits, with the frame set to resume after it.
     #[inline(always)]
-    pub(super) fn lane_await_value(&mut self, p: &ResidualProgram, frame: usize, awaited: u16, destination: u16, pc: usize) -> Option<Value> {
+    pub(super) fn await_value_in_lane(&mut self, p: &ResidualProgram, frame: usize, awaited: u16, destination: u16, pc: usize) -> Option<Value> {
         let _ = destination;
         let awaited = self.read(frame, awaited);
         let value = if self.is_object_like(awaited) {
-            self.lane_promise_resolve(p, self.intrinsic_promise_constructor(), awaited)?
+            self.promise_resolve_in_lane(p, self.intrinsic_promise_constructor(), awaited)?
         } else {
             awaited
         };
@@ -2063,10 +2063,10 @@ impl<H: Host> Vm<H> {
                 }
                 // A run that stopped at the `await` of the loop's own frame, whose `Await`
                 // step would end the loop with it, suspends it here where the awaited value's
-                // conversion observes nothing (`lane_stop_awaits`); not past a native step, whose next PC may end the function.
+                // conversion observes nothing (`stop_awaits_in_lane`); not past a native step, whose next PC may end the function.
                 if pending_calls.is_empty()
                     && let Some(outcome) =
-                        self.lane_stop_awaits(unsafe { &*executing_residual }, frame, native_step.is_none().then(|| cursor.instruction(pc)), pc)
+                        self.stop_awaits_in_lane(unsafe { &*executing_residual }, frame, native_step.is_none().then(|| cursor.instruction(pc)), pc)
                 {
                     return Ok(outcome);
                 }

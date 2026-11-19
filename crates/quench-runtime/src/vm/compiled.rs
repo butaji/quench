@@ -112,7 +112,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{lane_binary, lane_new_array, lane_new_closure, lane_new_concat, lane_new_const_array, lane_new_object, lane_new_object_literal, lane_new_object_pair, lane_new_regexp, lane_new_template};
+use lane_allocations::{binary_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, lane_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
@@ -122,7 +122,7 @@ mod site_posterior;
 pub(super) use numeric_image::NumericImage;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, BodyEntry, BodyReturn};
-pub(super) use lane_body_abi::lane_body_signature;
+pub(super) use lane_body_abi::body_signature_in_lane;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
 #[path = "compiled/tier_model.rs"] mod tier_model;
@@ -229,7 +229,7 @@ mod frameless;
 #[path = "compiled/constructions.rs"]
 mod constructions;
 mod function_binding;
-use function_binding::{lane_admitted_function_binding, lane_function_binding};
+use function_binding::{admitted_function_binding_in_lane, function_binding_in_lane};
 mod general_store;
 #[cfg(feature = "native-execution")]
 pub(super) use frameless::ChainFrame;
@@ -1006,60 +1006,60 @@ macro_rules! lane_helper_inventory {
     };
 }
 lane_helper_inventory! { H;
-    FunctionCapture => lane_function_capture_read::<H>,
-    /// A leave's boxing of an unboxed double (`lane_box_number`): out of line, as leaves are cold.
-    BoxNumber => lane_box_number,
-    FieldGet => lane_field_get::<H>,
+    FunctionCapture => function_capture_read_in_lane::<H>,
+    /// A leave's boxing of an unboxed double (`box_number_in_lane`): out of line, as leaves are cold.
+    BoxNumber => box_number_in_lane,
+    FieldGet => field_get_in_lane::<H>,
     /// The count of the entry function's `arguments` (`lane_body_arguments_length`).
     ArgumentsLength => super::dispatch_fast::lane_body_arguments_length::<H>,
     /// One kept `arguments` element (`lane_body_argument_get`).
     ArgumentGet => super::dispatch_fast::lane_body_argument_get::<H>,
-    FieldSet => lane_field_set::<H>,
+    FieldSet => field_set_in_lane::<H>,
     Call => super::dispatch_fast::lane_body_call::<H>,
     /// A loop region's call (`dispatch_fast::lane_region_call`).
     RegionCall => super::dispatch_fast::lane_region_call::<H>,
-    IndexSet => lane_index_set::<H>,
-    /// Room for a loop's append to a dense array (`lane_array_append_room`).
-    AppendRoom => lane_array_append_room::<H>,
-    FunctionBinding => lane_function_binding::<H>,
-    InterruptOwner => lane_interrupt_owner,
-    GlobalGet => lane_global_get::<H>,
-    FieldWriteAdmission => lane_field_write_admission::<H>,
-    CallBudget => lane_call_budget,
-    AdmittedFunctionBinding => lane_admitted_function_binding::<H>,
+    IndexSet => index_set_in_lane::<H>,
+    /// Room for a loop's append to a dense array (`array_append_room_in_lane`).
+    AppendRoom => array_append_room_in_lane::<H>,
+    FunctionBinding => function_binding_in_lane::<H>,
+    InterruptOwner => interrupt_owner_in_lane,
+    GlobalGet => global_get_in_lane::<H>,
+    FieldWriteAdmission => field_write_admission_in_lane::<H>,
+    CallBudget => call_budget_in_lane,
+    AdmittedFunctionBinding => admitted_function_binding_in_lane::<H>,
     /// An outer capture's read (`dispatch_fast::lane_body_capture`).
     CaptureGet => super::dispatch_fast::lane_body_capture::<H>,
     /// A capture's store (`dispatch_fast::lane_body_capture_store`).
     CaptureSet => super::dispatch_fast::lane_body_capture_store::<H>,
-    /// Strict equality of two distinct strings or BigInts (`lane_strict_equal_cells`).
-    StrictEqual => lane_strict_equal_cells::<H>,
-    /// `instanceof` by its steady case (`lane_instance_of`).
-    InstanceOf => lane_instance_of::<H>,
-    /// A fused `typeof` test of a heap value (`lane_typeof_is`).
-    TypeofIs => lane_typeof_is::<H>,
-    /// A planned construction (`lane_construct`).
-    Construct => constructions::lane_construct::<H>,
-    ConstructReceiver => constructions::lane_construct_receiver::<H>,
+    /// Strict equality of two distinct strings or BigInts (`strict_equal_cells_in_lane`).
+    StrictEqual => strict_equal_cells_in_lane::<H>,
+    /// `instanceof` by its steady case (`instance_of_in_lane`).
+    InstanceOf => instance_of_in_lane::<H>,
+    /// A fused `typeof` test of a heap value (`typeof_is_in_lane`).
+    TypeofIs => typeof_is_in_lane::<H>,
+    /// A planned construction (`construct_in_lane`).
+    Construct => constructions::construct_in_lane::<H>,
+    ConstructReceiver => constructions::construct_receiver_in_lane::<H>,
     /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
-    ConstructPlanHolds => constructions::lane_construct_plan_holds::<H>,
+    ConstructPlanHolds => constructions::construct_plan_holds_in_lane::<H>,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
     ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
     /// A body's uncaught `throw`, stashed for its native callers and the lane (`lane_raise`).
     Raise => lane_raise::<H>,
-    /// The exception a callee left in `Vm::lane_raised`, for a handler of the caller's own (`lane_take_raised`).
-    TakeRaised => lane_take_raised::<H>,
+    /// The exception a callee left in `Vm::lane_raised`, for a handler of the caller's own (`take_raised_in_lane`).
+    TakeRaised => take_raised_in_lane::<H>,
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
-    NewArray => lane_new_array::<H>,
-    /// An array literal of program constants (`lane_new_const_array`).
-    NewConstArray => lane_new_const_array::<H>,
-    /// A two-property object literal's allocation (`lane_new_object_pair`).
-    NewObjectPair => lane_new_object_pair::<H>,
-    Binary => lane_binary::<H>,
-    /// A store that may add its property (`lane_field_add`).
-    FieldAdd => lane_field_add::<H>,
-    /// The slow arm of a loop's hoisted typed array view proof (`lane_typed_array_view`).
-    TypedArrayView => lane_typed_array_view::<H>,
+    NewArray => new_array_in_lane::<H>,
+    /// An array literal of program constants (`new_const_array_in_lane`).
+    NewConstArray => new_const_array_in_lane::<H>,
+    /// A two-property object literal's allocation (`new_object_pair_in_lane`).
+    NewObjectPair => new_object_pair_in_lane::<H>,
+    Binary => binary_in_lane::<H>,
+    /// A store that may add its property (`field_add_in_lane`).
+    FieldAdd => field_add_in_lane::<H>,
+    /// The slow arm of a loop's hoisted typed array view proof (`typed_array_view_in_lane`).
+    TypedArrayView => typed_array_view_in_lane::<H>,
     /// `+` of strings (`dispatch_fast::body_string_concat`), named by the b-jit call planner
     /// (`base_region::call_plan`), which the whole-function planner will consume.
     #[allow(dead_code)]
@@ -1069,20 +1069,20 @@ lane_helper_inventory! { H;
     /// An instruction whose general step runs in place (`dispatch_fast::body_general_step`), which the b-jit's
     /// helper steps and stepped calls make (`base_region::steps`).
     Step => super::dispatch_fast::body_general_step::<H>,
-    /// ToBoolean of a value its cell decides (`lane_truthy`).
-    Truthy => lane_truthy::<H>,
-    /// The array storage proofs a shorter array falsifies (`lane_retire_array_proofs`).
-    RetireArrayProofs => lane_retire_array_proofs,
-    /// An object literal over a register window (`lane_new_object_literal`).
-    NewObjectLiteral => lane_new_object_literal::<H>,
-    /// A closure over the frame's environment (`lane_new_closure`).
-    NewClosure => lane_new_closure::<H>,
-    /// A literal template's value (`lane_new_template`).
-    NewTemplate => lane_new_template::<H>,
-    /// A string concatenation of pure parts (`lane_new_concat`).
-    NewConcat => lane_new_concat::<H>,
-    /// A regexp literal's fresh object of its site's template (`lane_new_regexp`).
-    NewRegExp => lane_new_regexp::<H>,
+    /// ToBoolean of a value its cell decides (`truthy_in_lane`).
+    Truthy => truthy_in_lane::<H>,
+    /// The array storage proofs a shorter array falsifies (`retire_array_proofs_in_lane`).
+    RetireArrayProofs => retire_array_proofs_in_lane,
+    /// An object literal over a register window (`new_object_literal_in_lane`).
+    NewObjectLiteral => new_object_literal_in_lane::<H>,
+    /// A closure over the frame's environment (`new_closure_in_lane`).
+    NewClosure => new_closure_in_lane::<H>,
+    /// A literal template's value (`new_template_in_lane`).
+    NewTemplate => new_template_in_lane::<H>,
+    /// A string concatenation of pure parts (`new_concat_in_lane`).
+    NewConcat => new_concat_in_lane::<H>,
+    /// A regexp literal's fresh object of its site's template (`new_regexp_in_lane`).
+    NewRegExp => new_regexp_in_lane::<H>,
     /// A decision of two words the call-out carries, which needs no VM record
     /// (`dispatch_fast::decide_comparison`).
     Decide => super::dispatch_fast::decide_comparison::<H>,
@@ -1138,7 +1138,7 @@ fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usiz
     })
 }
 
-unsafe extern "C" fn lane_interrupt_owner(context: u64) -> u64 {
+unsafe extern "C" fn interrupt_owner_in_lane(context: u64) -> u64 {
     // SAFETY: the running entry binds this owner for its whole native call.
     let context = unsafe { &*(context as *const CallContext) };
     u64::from(unsafe { context.interrupt_owner.as_ref() }.is_some_and(|owner| owner.exclusive_and_clear()))
@@ -3479,11 +3479,11 @@ fn dump_native_bytes(directory: &std::path::Path, site: DumpSite, bytes: &[u8], 
     }
 }
 
-/// Publishes compiled `code` of a region lowered with `lane_body_signature` to executable
+/// Publishes compiled `code` of a region lowered with `body_signature_in_lane` to executable
 /// memory, and its entry.
 fn publish_body(code: &[u8]) -> Option<(CodeMemory, BodyEntry)> {
     let memory = publish_code(code)?;
-    // SAFETY: callers lower the region with `lane_body_signature`.
+    // SAFETY: callers lower the region with `body_signature_in_lane`.
     let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
     Some((memory, entry))
 }
@@ -3689,7 +3689,7 @@ pub(super) struct LaneMethod {
     scratch_width: usize,
     /// Whether its inlined frames' registers live in the activation's register file past the
     /// caller's (a stitched body's) and not in the scratch window its code fills: a leave inside
-    /// one adopts them from the file (`Vm::lane_adopt_window`).
+    /// one adopts them from the file (`Vm::adopt_window_in_lane`).
     framed: bool,
     caller_registers: u16,
     /// The frame slots past `caller_registers` the code writes in the activation's own storage (a b-jit
@@ -3833,7 +3833,7 @@ impl LaneExit {
 
 /// A lane body's callout. Every unsupported instruction and failed guard leaves native
 /// code here, with nothing of that instruction done; the lane executes it next.
-unsafe extern "C" fn lane_method_exit(_context: u64, pc: u64, result: u64, _unused: u64) -> i64 {
+unsafe extern "C" fn method_exit_in_lane(_context: u64, pc: u64, result: u64, _unused: u64) -> i64 {
     // SAFETY: the body passes the entry's result word, which `run_lane_method` owns.
     unsafe { (result as *mut u64).write(pc) };
     i64::from(NATIVE_JS_STOPPED)
@@ -3842,7 +3842,7 @@ unsafe extern "C" fn lane_method_exit(_context: u64, pc: u64, result: u64, _unus
 /// A lane body's field read where its own-slot path does not apply: the VM's cache probe
 /// (`Vm::cached_field_hit`), which reads prototype holders too; `DELETED` on any miss, which
 /// leaves native code for the lane's full read.
-unsafe extern "C" fn lane_field_get<H: Host>(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
+unsafe extern "C" fn field_get_in_lane<H: Host>(vm: u64, residual: u64, receiver: u64, read: u64) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[0] += 1; counts.set(values); });
     // SAFETY: the payload holds the running VM and residual, live and unborrowed while the
     // body runs; the probe reads caches and never allocates.
@@ -3883,13 +3883,13 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
 
 /// ToBoolean of `bits`, a value whose cell decides it (`Vm::truthy`): a read, which neither
 /// allocates nor runs guest code.
-unsafe extern "C" fn lane_truthy<H: Host>(vm: u64, _residual: u64, bits: u64) -> u64 {
+unsafe extern "C" fn truthy_in_lane<H: Host>(vm: u64, _residual: u64, bits: u64) -> u64 {
     // SAFETY: the payload holds the running VM, live and unborrowed while the body runs.
     u64::from(unsafe { &*(vm as *const Vm<H>) }.truthy(Value::from_bits(bits)))
 }
 
 /// Admit a bound slot's write domain before any guest effect or raw store.
-unsafe extern "C" fn lane_field_write_admission<H: Host>(vm: u64, _residual: u64, shape: u64, slot: u64, domain: u64) -> u64 {
+unsafe extern "C" fn field_write_admission_in_lane<H: Host>(vm: u64, _residual: u64, shape: u64, slot: u64, domain: u64) -> u64 {
     #[cfg(test)] FIELD_WRITE_ADMISSIONS.with(|count| count.set(count.get() + 1));
     let raw_double = domain & RAW_DOUBLE_WRITES != 0;
     let Some(domain) = crate::typed_ir::SlotType::ALL.get((domain & !RAW_DOUBLE_WRITES) as usize) else { return 0; };
@@ -3898,16 +3898,16 @@ unsafe extern "C" fn lane_field_write_admission<H: Host>(vm: u64, _residual: u64
     u64::from(vm.heap.admit_slot_writes_as(shape as u32, slot as usize, domain.ty(), raw_double))
 }
 
-/// The bit of a write admission's domain word (`lane_field_write_admission`) that says the
+/// The bit of a write admission's domain word (`field_write_admission_in_lane`) that says the
 /// writer stores a slot of raw doubles as raw doubles (`StoreArm::raw_double`).
 pub(super) const RAW_DOUBLE_WRITES: u64 = 1 << 16;
 
 /// A logged own-field store that preserves every native storage projection.
 /// Migration or observed type widening declines before writing, leaving the full
 /// store to the lane at its original PC after retiring dependent native entries.
-unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u64, atom: u64, site: u64, value: u64) -> u64 {
+unsafe extern "C" fn field_set_in_lane<H: Host>(vm: u64, residual: u64, receiver: u64, atom: u64, site: u64, value: u64) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
-    // SAFETY: as `lane_field_get`; a hit stores into an existing slot and allocates nothing.
+    // SAFETY: as `field_get_in_lane`; a hit stores into an existing slot and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
     #[cfg(feature = "profile-native-ops")]
     let storage = {
@@ -3937,7 +3937,7 @@ unsafe extern "C" fn lane_field_set<H: Host>(vm: u64, residual: u64, receiver: u
 
 /// Available guest activations, stable until guest reentry. Closed native regions
 /// bind this at entry; regions with calls read it at each binding edge.
-unsafe extern "C" fn lane_call_budget(_vm: u64, _residual: u64) -> u64 {
+unsafe extern "C" fn call_budget_in_lane(_vm: u64, _residual: u64) -> u64 {
     #[cfg(test)] CALL_BUDGET_READS.with(|count| count.set(count.get() + 1));
     crate::stack::GuestCallGuard::remaining() as u64
 }
@@ -3957,7 +3957,7 @@ pub(super) fn raise_site_parts(site: u64) -> (u32, u32) {
 /// The interpreter's `Throw` makes the same error; its source location is captured only if it
 /// escapes native code (`dispatch_fast::lane_raised_exit`).
 unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, site: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; the message of a value reads no guest code.
+    // SAFETY: as `field_get_in_lane`; the message of a value reads no guest code.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     let value = Value::from_bits(value);
     let message = vm.detail_string(value);
@@ -3968,24 +3968,24 @@ unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, si
 
 /// The exception a callee's body raised (`lane_raise`), taken from `Vm::lane_raised` for the
 /// handler of the caller that catches it.
-unsafe extern "C" fn lane_take_raised<H: Host>(vm: u64, _residual: u64) -> u64 {
-    // SAFETY: as `lane_field_get`.
+unsafe extern "C" fn take_raised_in_lane<H: Host>(vm: u64, _residual: u64) -> u64 {
+    // SAFETY: as `field_get_in_lane`.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     let error = vm.lane_completion.take_raised().expect("a raised call left its exception");
     error.thrown_value().expect("a body raises a thrown value").to_bits()
 }
 
-/// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED` for one the lane's own read would not take.
-unsafe extern "C" fn lane_global_get<H: Host>(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; the read runs no guest code and allocates nothing.
+/// A lane body's global name read (`Vm::global_read_in_lane`): its value, or `Value::DELETED` for one the lane's own read would not take.
+unsafe extern "C" fn global_get_in_lane<H: Host>(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
+    // SAFETY: as `field_get_in_lane`; the read runs no guest code and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram)) };
-    vm.lane_global_read(residual, atom as Atom, site as u16).unwrap_or(Value::DELETED).to_bits()
+    vm.global_read_in_lane(residual, atom as Atom, site as u16).unwrap_or(Value::DELETED).to_bits()
 }
 
 /// A lane body's strict equality of two distinct heap values of one content-compared family
 /// (`Vm::heap_values_strictly_equal`): 1 for equal strings or BigInts, else 0.
-unsafe extern "C" fn lane_strict_equal_cells<H: Host>(vm: u64, _residual: u64, left: u64, right: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; the comparison reads the heap and allocates nothing.
+unsafe extern "C" fn strict_equal_cells_in_lane<H: Host>(vm: u64, _residual: u64, left: u64, right: u64) -> u64 {
+    // SAFETY: as `field_get_in_lane`; the comparison reads the heap and allocates nothing.
     let vm = unsafe { &*(vm as *const Vm<H>) };
     u64::from(vm.heap_values_strictly_equal(Value::from_bits(left), Value::from_bits(right)))
 }
@@ -3994,8 +3994,8 @@ unsafe extern "C" fn lane_strict_equal_cells<H: Host>(vm: u64, _residual: u64, l
 /// decides it (`lane_instanceof_value`): the constructor's proof (`Vm::record_instanceof`),
 /// else the ordinary walk (`Vm::ordinary_instanceof`), which calls nothing. 1 or 0, or
 /// `Value::DELETED` where only the full algorithm decides, which leaves the body at the test.
-unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u64, constructor: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; both reads walk the heap, call nothing and allocate nothing
+unsafe extern "C" fn instance_of_in_lane<H: Host>(vm: u64, _residual: u64, value: u64, constructor: u64) -> u64 {
+    // SAFETY: as `field_get_in_lane`; both reads walk the heap, call nothing and allocate nothing
     // (the walk only fills the constructor-layout memo).
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     let (value, constructor) = (Value::from_bits(value), Value::from_bits(constructor));
@@ -4009,12 +4009,12 @@ unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u
 /// The tagged Number of the double `bits` (`Value::number`): a leave's boxing of an unboxed
 /// register, called from its cold block instead of the inline encoding's two blocks and
 /// fifteen instructions per register.
-unsafe extern "C" fn lane_box_number(_vm: u64, _residual: u64, bits: u64) -> u64 {
+unsafe extern "C" fn box_number_in_lane(_vm: u64, _residual: u64, bits: u64) -> u64 {
     Value::number(f64::from_bits(bits)).to_bits()
 }
 
-unsafe extern "C" fn lane_typeof_is<H: Host>(vm: u64, _residual: u64, value: u64, index: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; the test reads the value's cell and allocates nothing.
+unsafe extern "C" fn typeof_is_in_lane<H: Host>(vm: u64, _residual: u64, value: u64, index: u64) -> u64 {
+    // SAFETY: as `field_get_in_lane`; the test reads the value's cell and allocates nothing.
     let vm = unsafe { &*(vm as *const Vm<H>) };
     u64::from(vm.typeof_test_value(Value::from_bits(value), index as usize, false) == Value::TRUE)
 }
@@ -4026,7 +4026,7 @@ unsafe extern "C" fn lane_typeof_is<H: Host>(vm: u64, _residual: u64, value: u64
 /// (`Vm::primary_field_add_hit`), which may change the object's shape and move the
 /// property arena, whose base and length the dispatch reads again. Zero where neither hits,
 /// or a collection is due, which the body leaves for.
-unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u64, receiver: u64, write: u64, value: u64) -> u64 {
+unsafe extern "C" fn field_add_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, receiver: u64, write: u64, value: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running one.
     let (vm, residual, dispatch) = unsafe {
         (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
@@ -4054,8 +4054,8 @@ unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u6
 /// the typed array's elements in its record, which the proof then reads; zero where the loop
 /// cannot address them in place, which leaves at the loop's header. The count is below 2^31
 /// (`staged::typed_elements::TypedView`): a longer array leaves too.
-unsafe extern "C" fn lane_typed_array_view<H: Host>(vm: u64, _residual: u64, object: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; the publication reads cells and allocates nothing.
+unsafe extern "C" fn typed_array_view_in_lane<H: Host>(vm: u64, _residual: u64, object: u64) -> u64 {
+    // SAFETY: as `field_get_in_lane`; the publication reads cells and allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     u64::from(vm.publish_typed_view(Value::from_bits(object)))
 }
@@ -4063,8 +4063,8 @@ unsafe extern "C" fn lane_typed_array_view<H: Host>(vm: u64, _residual: u64, obj
 /// A lane body's element store: the lane's own in-place replacement of a record array's
 /// element (`Vm::try_replace_record_element`) or fill of a hole it may take
 /// (`Vm::try_add_record_element`), whose miss changes nothing and leaves the body at the store.
-unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u64, key: u64, value: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; a replacement allocates nothing.
+unsafe extern "C" fn index_set_in_lane<H: Host>(vm: u64, _residual: u64, object: u64, key: u64, value: u64) -> u64 {
+    // SAFETY: as `field_get_in_lane`; a replacement allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     // Collection debt leaves before the store, as the verified lowering's Grow exit does:
     // the lane performs the store and the VM collects at its rooted safepoint.
@@ -4077,15 +4077,15 @@ unsafe extern "C" fn lane_index_set<H: Host>(vm: u64, _residual: u64, object: u6
 
 /// Retires the running lane's array storage proofs (`retire_array_storage_proofs`), which a
 /// native `pop` calls once it has shortened an array, as a heap change does.
-unsafe extern "C" fn lane_retire_array_proofs(_vm: u64, _residual: u64) -> u64 {
+unsafe extern "C" fn retire_array_proofs_in_lane(_vm: u64, _residual: u64) -> u64 {
     crate::heap::retire_array_storage_proofs();
     0
 }
 
 /// A lane loop's room for appending to the dense array `object` (`Vm::reserve_native_array_append`):
-/// the room its backing holds, or zero, which leaves the append to `lane_index_set`.
-unsafe extern "C" fn lane_array_append_room<H: Host>(vm: u64, _residual: u64, object: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; a growth moves only this array's backing.
+/// the room its backing holds, or zero, which leaves the append to `index_set_in_lane`.
+unsafe extern "C" fn array_append_room_in_lane<H: Host>(vm: u64, _residual: u64, object: u64) -> u64 {
+    // SAFETY: as `field_get_in_lane`; a growth moves only this array's backing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     vm.reserve_native_array_append(Value::from_bits(object)).map_or(0, |room| room as u64)
 }
@@ -4124,7 +4124,7 @@ impl<H: Host> Vm<H> {
 /// Admit a depth-zero closure capture without walking, allocating or invoking
 /// guest code. Owned slots and plain root projections use the lane's shared reads;
 /// accessors, uninitialized bindings and other projections decline at the read.
-unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, slot: u64) -> u64 {
+unsafe extern "C" fn function_capture_read_in_lane<H: Host>(vm: u64, callee: u64, slot: u64) -> u64 {
     // SAFETY: the lane owns this VM while generated code runs; no collection or
     // reentry occurs while it holds the closure's environment slots.
     let vm = unsafe { &*(vm as *const Vm<H>) };
@@ -4142,7 +4142,7 @@ impl<H: Host> Vm<H> {
     /// The value a global read of `atom` through cache `site` takes as the lane's own read
     /// does (`dispatch_fast::global_name_refresh_miss`): its global lexical binding's, else
     /// the global object's own data property or cached field; none for a binding in its TDZ or a miss.
-    pub(super) fn lane_global_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
+    pub(super) fn global_read_in_lane(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
         match self.global_name_read(code, atom, site) {
             super::field_cache::GlobalNameRead::Value(value, _) => Some(value),
             super::field_cache::GlobalNameRead::Uninitialized | super::field_cache::GlobalNameRead::Miss => None,
@@ -4175,7 +4175,7 @@ impl<H: Host> Vm<H> {
     /// hints (`LaneView::own_field_hint`); each own read's hint becomes its loads' `formed` layout
     /// id, which a load names only where it is the load's shape (`lane_region::field_plans`). An
     /// inlined instruction's record belongs to another body's view, so it takes no hint.
-    fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize],
+    fn unit_fields_in_lane(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize],
         view: Option<&super::dispatch_fast::LaneView>) -> Vec<Option<Vec<NativeFieldLoad>>> {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
             .map(|(site, _)| site).collect(), self.heap.function_shapes());
@@ -4245,7 +4245,7 @@ impl<H: Host> Vm<H> {
         captures: *const usize,
         lane_context: *mut (),
     ) -> LaneExit {
-        let frame = lane_frame();
+        let frame = frame_in_lane();
         // SAFETY: as `run_lane_method`; the caller's entry made the frame.
         let saved = unsafe { LaneEntry::of(&(*frame).dispatch) };
         let moved_from = self.cache_epochs.field_entries;
@@ -4280,9 +4280,9 @@ impl<H: Host> Vm<H> {
 
     /// Copies the registers that follow the first `from` of the activation at `registers`, where a
     /// stitched body kept its inlined callees' (`LaneMethod::framed`), into the scratch window a
-    /// leave inside one reads (`lane_scratch`), before the activations it makes overwrite them.
-    pub(super) fn lane_adopt_window(registers: *const Value, from: usize, width: usize) {
-        let frame = lane_frame();
+    /// leave inside one reads (`scratch_in_lane`), before the activations it makes overwrite them.
+    pub(super) fn adopt_window_in_lane(registers: *const Value, from: usize, width: usize) {
+        let frame = frame_in_lane();
         // SAFETY: as `stack_words_in_lane`; the body's admission proved the room past the
         // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
         unsafe {
@@ -4297,7 +4297,7 @@ impl<H: Host> Vm<H> {
     /// have moved the record tables or the barrier's mark blocks. Every call, construct and step
     /// helper ends with it, so a row after one reads current bases and checks none.
     pub(super) fn refresh_body_bases(&mut self) {
-        let lane = lane_frame();
+        let lane = frame_in_lane();
         // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
         unsafe { (*lane).dispatch.refresh_object_bases(self) };
     }
@@ -4305,7 +4305,7 @@ impl<H: Host> Vm<H> {
     /// Publishes `receiver`, a `this` the running body's frame has just bound (`InitializeThis`), as the
     /// payload's receiver the body's rows read: the frame's own and the payload's are written by the one step.
     pub(super) fn publish_body_receiver(&self, receiver: Value) {
-        let frame = lane_frame();
+        let frame = frame_in_lane();
         // SAFETY: as `refresh_body_bases`.
         unsafe { (*frame).dispatch.receiver = receiver.to_bits() }
     }
@@ -4324,7 +4324,7 @@ impl<H: Host> Vm<H> {
 
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
     /// inside held, as the body wrote them to the scratch window (`BodyRunContext::scratch`).
-    pub(super) fn lane_scratch(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
+    pub(super) fn scratch_in_lane(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
         LANE_FRAME.with(|frame| {
             // SAFETY: as in `run_lane_method`; no lane body runs while the lane reads it.
             let Some(frame) = (unsafe { &*frame.get() }).as_ref() else { return };
@@ -4459,7 +4459,7 @@ impl BodyRunContext {
 
     fn new() -> Self {
         let mut context = CallContext::native_adapter(std::ptr::null_mut(), std::ptr::null(), None);
-        context.callout = lane_method_exit as unsafe extern "C" fn(u64, u64, u64, u64) -> i64 as usize;
+        context.callout = method_exit_in_lane as unsafe extern "C" fn(u64, u64, u64, u64) -> i64 as usize;
         Self {
             context,
             dispatch: JsStepDispatch::idle(),
@@ -4477,11 +4477,11 @@ thread_local! {
 /// recorded none (`VmFacts::diagnostics`).
 pub(super) fn take_lane_exit_line() -> u64 {
     // SAFETY: as `lane_frame`.
-    unsafe { std::mem::take(&mut (*lane_frame()).dispatch.exit_line) }
+    unsafe { std::mem::take(&mut (*frame_in_lane()).dispatch.exit_line) }
 }
 
 #[inline]
-fn lane_frame() -> *mut BodyRunContext {
+fn frame_in_lane() -> *mut BodyRunContext {
     let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
     // SAFETY: the frame is reached only through this pointer, on its thread, and no
     // reference into it outlives the statement that makes it.
@@ -4624,7 +4624,7 @@ impl JsStepDispatch {
         let offset = std::mem::offset_of!(Vm<H>, heap) + crate::heap::Heap::PROPERTY_BUFFER_OFFSET;
         self.property_buffer = vm.cast::<u8>().wrapping_add(offset) as usize;
         self.frameless = frameless::general_frameless_admit::<H> as *const () as usize;
-        // SAFETY: the VM outlives this entry; the eval flags hold through it (`lane_function_matches`).
+        // SAFETY: the VM outlives this entry; the eval flags hold through it (`function_matches_in_lane`).
         let vm_ref = unsafe { &*vm };
         self.bind_run_storage(vm_ref);
         self.element_get = general_elements::general_element_get::<H> as *const () as usize;
@@ -4913,7 +4913,7 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
 #[cfg(feature = "aot")]
 pub(super) fn native_js_start_pc(builder: &mut FunctionBuilder<'_>, context: ir::Value) -> ir::Value {
     use crate::staged::machine::Lane;
-    let pointer = emit_machine::lane_of(builder.func.signature.params[0].value_type);
+    let pointer = emit_machine::of_in_lane(builder.func.signature.params[0].value_type);
     let mut stage = object_slots::emit(builder);
     let payload = stage.raw_load(pointer, MemFlagsData::trusted(), context,
         std::mem::offset_of!(CallContext, adapter_payload) as i32);
@@ -5387,7 +5387,7 @@ impl CompiledJsFunction {
         let code = CodeMemory::new(&artifact.code)?;
         Some(Self {
             mapped_bytes: code.length(),
-            // SAFETY: a numeric region emits the lane body ABI (`lane_body_signature`).
+            // SAFETY: a numeric region emits the lane body ABI (`body_signature_in_lane`).
             entry: unsafe { std::mem::transmute::<*mut u8, BodyEntry>(code.pointer()) },
             _code: code,
             result: artifact.result,
@@ -6436,7 +6436,7 @@ impl<'b> Body<'b> {
     fn write(&mut self, register: u16, ty: crate::WasmType, value: ir::Value) {
         use crate::staged::machine::Unary;
         let other = counterpart(ty);
-        let converted = self.raw_unary(Unary::Bitcast(emit_machine::lane_of(scalar_ir(other))), value);
+        let converted = self.raw_unary(Unary::Bitcast(emit_machine::of_in_lane(scalar_ir(other))), value);
         let stored = self.view_value(ty, value);
         let converted = self.view_value(other, converted);
         let variables = self.views(register);
@@ -7838,7 +7838,7 @@ impl<H: Host> Vm<H> {
 
     /// Whether the process enrolled the lane-body tier (a mode selection, not realm state).
     #[cfg(test)]
-    pub(crate) fn lane_methods_enrolled(&self) -> bool { self.programs.js_jit_lane_methods_enabled() }
+    pub(crate) fn methods_enrolled_in_lane(&self) -> bool { self.programs.js_jit_lane_methods_enabled() }
 
     /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`).
     pub(crate) fn compile_wasm_eagerly(&mut self) {
@@ -7895,7 +7895,7 @@ impl<H: Host> Vm<H> {
         // costs a short call-free one its leaf calls. A function the numeric tier cannot take
         // is still theirs to claim.
         let lane_claims = self.programs.js_jit_lane_methods_enabled()
-            && program.function_get(function as usize).is_some_and(|body| lane_body_may_amortize(self.programs.tiers(), body));
+            && program.function_get(function as usize).is_some_and(|body| body_may_amortize_in_lane(self.programs.tiers(), body));
         if super::tier_machine::js_tier_state(state.as_ref()) == super::tier_machine::TierState::Declined {
             return lane_claims;
         }
@@ -9395,8 +9395,8 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
-pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
-    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
+pub(super) fn body_may_amortize_in_lane(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
+    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
         || body.code.iter().any(|packed| crate::staged::Operation::<u64, ()>::is_plain_call(super::dispatch_fast::decoded_instruction(body, *packed)))
 }
 
@@ -10549,9 +10549,9 @@ mod tests {
             // region; rejection must precede the guest store or raw pointer escape.
             let admitted = unsafe {
                 match edge {
-                    Edge::Domain => lane_field_write_admission::<crate::test_host::TestHost>(machine, residual,
+                    Edge::Domain => field_write_admission_in_lane::<crate::test_host::TestHost>(machine, residual,
                         shape as u64, slot as u64, crate::typed_ir::SlotType::from_type(crate::typed_ir::Type::NUMBER) as u64),
-                    Edge::Store => lane_field_set::<crate::test_host::TestHost>(machine, residual, receiver.to_bits(),
+                    Edge::Store => field_set_in_lane::<crate::test_host::TestHost>(machine, residual, receiver.to_bits(),
                         store.atom_index() as u64, store.cache_site_index() as u64, Value::number(0.5).to_bits()),
                     Edge::Pointer => u64::from(vm.cached_field_store_pointer(&program, receiver,
                         store.atom_index(), store.cache_site_index(), crate::typed_ir::Type::NUMBER).is_some()),
@@ -10591,7 +10591,7 @@ mod tests {
         let callee = vm.execute_native_program(&native, true).unwrap_err().thrown_value().unwrap();
         let (program, function, _) = vm.same_realm_user_target(callee).unwrap();
         let admitted = |vm: &Vm<crate::test_host::TestHost>, depth| unsafe {
-            lane_function_binding::<crate::test_host::TestHost>(vm as *const _ as u64, 0,
+            function_binding_in_lane::<crate::test_host::TestHost>(vm as *const _ as u64, 0,
                 u64::from(program.raw()), callee.to_bits(), u64::from(function), depth)
         };
         assert_eq!(admitted(&vm, 1), 1);
@@ -10810,7 +10810,7 @@ mod tests {
         let method = vm.compile_lane_method(&program, 1, &|_, _| Vec::new(),
             &|_| (0, 0), Vec::new(), &[]).expect("polling lane body");
         assert!(method.fault_poll);
-        let frame = lane_frame();
+        let frame = frame_in_lane();
         // The real outer landing must survive an inner trampoline overwriting it.
         // This sentinel is never entered: the inner entry installs its own landing.
         let outer_landing = (&program as *const ResidualProgram).addr();

@@ -329,9 +329,9 @@ impl<H: Host> Vm<H> {
     /// A lane loop's view of the typed array `object`'s elements: its first element's address,
     /// element count and kind, which native code reads (and, `writable`, replaces) in place
     /// until the loop calls out. Only an attached buffer of Number elements this heap holds
-    /// qualifies, and to write, one the buffer owns alone (`BufferBytes::lane_mut`), so no
+    /// qualifies, and to write, one the buffer owns alone (`BufferBytes::mut_in_lane`), so no
     /// store copies or moves it; anything else stays on the general path.
-    pub(super) fn lane_typed_array_elements(&mut self, object: Value, writable: bool) -> Option<(*mut u8, usize, TypedArrayKind)> {
+    pub(super) fn typed_array_elements_in_lane(&mut self, object: Value, writable: bool) -> Option<(*mut u8, usize, TypedArrayKind)> {
         let view = self.typed_array_view(object)?;
         if view.kind.is_bigint() || view.kind == TypedArrayKind::Float16 {
             return None;
@@ -340,7 +340,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let (base, byte_length) = if writable {
-            let store = bytes.lane_mut()?;
+            let store = bytes.mut_in_lane()?;
             (store.as_mut_ptr(), store.len())
         } else {
             match bytes.read() {
@@ -373,8 +373,8 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(object), Some(Cell::TypedArray { object, .. }) if object.native.is_retracted()) {
             return false;
         }
-        let unshared = self.lane_typed_array_elements(object, true);
-        let published = unshared.or_else(|| self.lane_typed_array_elements(object, false))
+        let unshared = self.typed_array_elements_in_lane(object, true);
+        let published = unshared.or_else(|| self.typed_array_elements_in_lane(object, false))
             .and_then(|(data, length, _)| Some((data, u32::try_from(i32::try_from(length).ok()?).ok()?)));
         let Some(Cell::TypedArray { object: record, .. }) = self.heap.get_mut(object) else { return false };
         match published {
@@ -606,7 +606,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `typed_array_set_number` of an integer into an integer typed array whose buffer the
-    /// view owns alone (`BufferBytes::lane_mut`): an integer's ToInt8 through ToUint32 is its low
+    /// view owns alone (`BufferBytes::mut_in_lane`): an integer's ToInt8 through ToUint32 is its low
     /// bytes, and Uint8Clamped clamps it. False leaves the store to the general write.
     #[inline]
     fn typed_array_set_integer(&mut self, object: Value, index: usize, integer: i32) -> bool {
@@ -620,7 +620,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes: store, detached: false, resizable, .. }) = self.heap.buffer_bytes_mut(view.buffer) else {
             return false;
         };
-        let Some(store) = store.lane_mut() else { return false };
+        let Some(store) = store.mut_in_lane() else { return false };
         // A fixed view of a fixed buffer is in bounds by its length; past it nothing is written.
         let start = match view.length.get() {
             Some(length) if !*resizable => (index < length).then(|| view.offset + index * width),
@@ -657,9 +657,9 @@ impl<H: Host> Vm<H> {
         let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.buffer_bytes_mut(view.buffer) else {
             return;
         };
-        // An owned store no other cell shares is written in place (`BufferBytes::lane_mut`);
+        // An owned store no other cell shares is written in place (`BufferBytes::mut_in_lane`);
         // any other is unshared or locked first.
-        if let Some(store) = bytes.lane_mut() {
+        if let Some(store) = bytes.mut_in_lane() {
             if let Some(start) = view.element(index, store.len()) {
                 store_element(store, start, view.kind.width(), &encoded);
             }
@@ -671,7 +671,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether `value` is a typed array, whose elements a loop region reads in place
-    /// (`lane_typed_array_elements`) and a function body has no row for.
+    /// (`typed_array_elements_in_lane`) and a function body has no row for.
     pub(super) fn is_typed_array(&self, value: Value) -> bool {
         self.typed_array_view(value).is_some()
     }
@@ -1172,7 +1172,7 @@ impl<H: Host> Vm<H> {
         };
         let immutable = *immutable;
         let width = kind.width();
-        let (elements, writable) = match bytes.lane_mut() {
+        let (elements, writable) = match bytes.mut_in_lane() {
             Some(store) if offset.saturating_add(length.saturating_mul(width)) <= store.len() => {
                 // SAFETY: the view lies inside the store (checked just above).
                 (unsafe { store.as_mut_ptr().add(offset) }, !immutable)
@@ -1229,7 +1229,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let immutable = *immutable;
-        let (store, writable) = match bytes.lane_mut().filter(|_| !immutable) {
+        let (store, writable) = match bytes.mut_in_lane().filter(|_| !immutable) {
             Some(store) => (store.as_mut_ptr(), store.len()),
             None => (bytes.owned()?.as_ptr().cast_mut(), usize::MAX),
         };

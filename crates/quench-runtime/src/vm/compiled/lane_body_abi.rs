@@ -14,7 +14,7 @@ pub(in crate::vm) type BodyEntry = unsafe extern "C" fn(*mut CallContext, u64, u
 
 /// The lane body ABI: the shared native-entry ABI without the result pointer, whose word the
 /// body returns beside its status (`BodyReturn`).
-pub(in crate::vm) fn lane_body_signature(
+pub(in crate::vm) fn body_signature_in_lane(
     pointer: ir::Type,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {

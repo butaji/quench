@@ -80,12 +80,12 @@ script_handler! {
 
 impl<H: Host> Vm<H> {
     /// What `await` of `awaited` waits on, as `PromiseResolve(%Promise%, awaited)` converts it
-    /// where that observes nothing: a non-object as it is, an object by `lane_promise_resolve`.
+    /// where that observes nothing: a non-object as it is, an object by `promise_resolve_in_lane`.
     /// `None` leaves a conversion that could run guest code, or throw into the frame's
     /// handlers, to the general path.
     fn await_source_in_lane(&mut self, code: &ResidualProgram, awaited: Value) -> Option<Value> {
         if self.is_object_like(awaited) {
-            return self.lane_promise_resolve(code, self.intrinsic_promise_constructor(), awaited);
+            return self.promise_resolve_in_lane(code, self.intrinsic_promise_constructor(), awaited);
         }
         Some(awaited)
     }

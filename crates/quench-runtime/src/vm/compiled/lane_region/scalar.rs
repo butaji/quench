@@ -96,7 +96,7 @@ impl Completion {
     pub(super) fn signature(self, pointer: ir::Type, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
         match self {
             Self::Scalar(abi) => abi.signature(pointer, call_conv),
-            _ => lane_body_signature(pointer, call_conv),
+            _ => body_signature_in_lane(pointer, call_conv),
         }
     }
 

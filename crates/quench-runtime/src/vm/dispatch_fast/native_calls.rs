@@ -175,7 +175,7 @@ script_handler! {
             // SAFETY: the call's window is registers of the running function; the context's
             // program outlives the lane run.
             let (args, code) = unsafe { (lane_call_window(r, i), &*(*cx).code) };
-            let result_used = ImmediateLayout::lane_call_result_used(i.imm());
+            let result_used = ImmediateLayout::call_result_used_in_lane(i.imm());
             match args.first().and_then(|&subject| vm.steady_regexp_call(code, native, r.get(i.c), subject, result_used)) {
                 Some(Ok(value)) => Some(value),
                 Some(Err(error)) => {

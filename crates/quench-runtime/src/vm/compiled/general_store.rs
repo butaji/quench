@@ -3,7 +3,7 @@
 //! helper store proved its slot representation already holds (`record_store_class`). Slot
 //! representations only widen (`ValueArena::note_slot_value`), and rewriting or invalidating
 //! the entry clears the class, so the proof holds until then. Any other store takes the
-//! helper (`lane_field_set`), which records the proof.
+//! helper (`field_set_in_lane`), which records the proof.
 use super::{emit_js_payload_word, Host, JsStepDispatch, Vm};
 use super::super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 use crate::bytecode::Atom;

@@ -221,7 +221,7 @@ pub(crate) trait MachineTail: MachineAccess + MachineFlow {
 /// vector is a `Word` of the machine, loaded and stored as the `Lane::V128`.
 pub(crate) trait MachineVector: MachineAccess {
     /// The row's operation on `left` (and `right`, a vector or a scalar shift count).
-    fn lane_operation(&mut self, native: Native, left: Self::Word, right: Option<Self::Word>) -> Self::Word;
+    fn operation_in_lane(&mut self, native: Native, left: Self::Word, right: Option<Self::Word>) -> Self::Word;
     /// `value`, a vector, with the lane shape `shape`: the same bits.
     fn vector_view(&mut self, shape: Lanes, value: Self::Word) -> Self::Word;
     /// The vector whose bits are `bits`.

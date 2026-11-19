@@ -32,7 +32,7 @@ fn an_allocating_loop_runs_natively_with_fused_array_literals() {
     vm.execute(&program).unwrap();
     let expected: u64 = (0..40u64).map(|i| 2 * i + 511 + 3).sum();
     assert_eq!(output.borrow().as_slice(), [expected.to_string()]);
-    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
     let view = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("loop lane view");
     let osr = view.osr_diagnostics();
     assert!(osr.native_region_runs > 0, "the allocating loop runs natively: {:?}", osr.sites);
@@ -65,7 +65,7 @@ fn a_loop_reads_a_megamorphic_layout_family_natively() {
     vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), [format!("{} {}", 64 * (0..64).sum::<u32>(), (0..64).sum::<u32>() - 5 + 1000)]);
-    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
     let view = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("loop lane view");
     assert!(view.osr_diagnostics().native_region_runs > 0, "the family read runs natively");
 }
@@ -128,7 +128,7 @@ fn a_loop_inlines_a_method_of_a_receiver_held_outside_it() {
     vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), [(0..2).map(|s| 50000 * (2 * s + 1)).sum::<i64>().to_string()]);
-    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
     let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("run's lane view").osr_diagnostics();
     assert!(osr.native_region_runs > 0, "the call loop runs natively: {:?}", osr.sites);
 }
@@ -154,7 +154,7 @@ fn a_loop_inlines_an_inherited_method_of_a_captured_receiver() {
     vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["200001"]);
-    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
     let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("run's lane view").osr_diagnostics();
     assert!(osr.native_region_runs > 0, "the call loop runs natively: {:?}", osr.sites);
 }
@@ -292,7 +292,7 @@ fn a_hot_loop_that_leaves_at_calls_specializes_its_function_before_the_entry_war
     vm.programs.enable_js_lane_methods();
     vm.execute(&program).unwrap();
     assert_eq!(output.take(), interpreted);
-    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
     let view = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("the driver's lane view");
     assert!(!matches!(view.lane_body_state(), "unspecialized" | "compiling"), "eight entries settle the driver's body");
 }

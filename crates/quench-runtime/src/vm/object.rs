@@ -1471,7 +1471,7 @@ impl<H: Host> Vm<H> {
         crate::staged::string_length::concrete_length_of(arrays, strings, object)
     }
 
-    /// `cached_field_hit` for compiled code's probe (`compiled::lane_field_get`), which also
+    /// `cached_field_hit` for compiled code's probe (`compiled::field_get_in_lane`), which also
     /// answers from a polymorphic site's prototype-held entries, keyed by both exact shapes.
     /// The interpreter's reads leave that tier to their miss path, which also records the
     /// site's entries: answering them here left postcss's `cloneNode` reading a stale

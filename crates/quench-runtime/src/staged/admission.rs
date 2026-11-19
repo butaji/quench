@@ -38,8 +38,8 @@ impl<W, P> Operation<W, P> {
 
 impl Op {
     /// An allocation the lane makes in place, running no guest code: a literal (`lane_new_object`,
-    /// `lane_new_object_pair`, `lane_new_array`) or a construction by its callee's plan
-    /// (`lane_construct`). A due collection leaves before it, so native code never collects.
+    /// `new_object_pair_in_lane`, `new_array_in_lane`) or a construction by its callee's plan
+    /// (`construct_in_lane`). A due collection leaves before it, so native code never collects.
     pub(crate) const fn allocates(self) -> bool {
         matches!(self, Op::MakeObject | Op::MakeObject2 | Op::MakeObjectLiteral | Op::MakeArray | Op::Construct)
     }

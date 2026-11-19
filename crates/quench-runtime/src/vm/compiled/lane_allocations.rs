@@ -19,7 +19,7 @@ pub(super) unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64
 
 /// A two-property object literal of literal `site`'s shape holding `first` and `second`, as
 /// the lane makes it (`dispatch_fast::lane_object_pair`); `DELETED` where a collection is due.
-pub(super) unsafe extern "C" fn lane_new_object_pair<H: Host>(vm: u64, residual: u64, payload: u64, site: u64,
+pub(super) unsafe extern "C" fn new_object_pair_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, site: u64,
     first: u64, second: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program.
     let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
@@ -33,7 +33,7 @@ pub(super) unsafe extern "C" fn lane_new_object_pair<H: Host>(vm: u64, residual:
 /// A binary operator one operand of which is a string or BigInt, by the interpreter's own
 /// definition (`Vm::binary`); `DELETED` where an operand is an object (its coercion may run
 /// guest code), the operator throws, or a collection is due: the interpreter runs it then.
-pub(super) unsafe extern "C" fn lane_binary<H: Host>(vm: u64, residual: u64, payload: u64, operator: u64, left: u64, right: u64) -> u64 {
+pub(super) unsafe extern "C" fn binary_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, operator: u64, left: u64, right: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program.
     let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     let (left, right) = (Value::from_bits(left), Value::from_bits(right));
@@ -46,7 +46,7 @@ pub(super) unsafe extern "C" fn lane_binary<H: Host>(vm: u64, residual: u64, pay
 /// A lane body's array literal of the `count` program constants from `constant`, as the lane's
 /// own (the `MakeConstArray` row, `Allocation::ConstArray`); `DELETED` where a collection is due or the
 /// range is outside the constants.
-pub(super) unsafe extern "C" fn lane_new_const_array<H: Host>(vm: u64, _residual: u64, payload: u64, constant: u64, count: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_const_array_in_lane<H: Host>(vm: u64, _residual: u64, payload: u64, constant: u64, count: u64) -> u64 {
     // SAFETY: as `lane_new_object`.
     let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
@@ -59,7 +59,7 @@ pub(super) unsafe extern "C" fn lane_new_const_array<H: Host>(vm: u64, _residual
 /// A lane body's array literal of `length` holes, or of the `elements` its definitions
 /// write, as the lane's own (the `MakeArray` row and its `DefineElement` rows);
 /// `DELETED` where a collection is due, as `lane_new_object`.
-pub(super) unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_array_in_lane<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
     // SAFETY: as `lane_new_object`; nonzero `elements` addresses `length` values the code wrote.
     let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
@@ -72,7 +72,7 @@ pub(super) unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64,
 /// A lane body's regexp literal at `site`, as the lane makes it (`dispatch_fast::lane_regexp_literal_value`):
 /// a fresh object of the site's compiled template; `DELETED` where a collection is due or the pattern
 /// fails to compile, which the interpreter raises at the instruction.
-pub(super) unsafe extern "C" fn lane_new_regexp<H: Host>(vm: u64, residual: u64, payload: u64, site: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_regexp_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, site: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program.
     let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
@@ -85,7 +85,7 @@ pub(super) unsafe extern "C" fn lane_new_regexp<H: Host>(vm: u64, residual: u64,
 /// A lane body's object literal of literal `site`'s shape over the `count` values at `parts`,
 /// as the lane makes it (the `MakeObjectLiteral` row, `Allocation::ObjectLiteral`); `DELETED` where a
 /// collection is due.
-pub(super) unsafe extern "C" fn lane_new_object_literal<H: Host>(vm: u64, residual: u64, payload: u64, site: u64, parts: u64, count: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_object_literal_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, site: u64, parts: u64, count: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program, and `parts` addresses
     // `count` values the code wrote.
     let (vm, residual, dispatch, properties) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
@@ -104,7 +104,7 @@ pub(super) unsafe extern "C" fn lane_new_object_literal<H: Host>(vm: u64, residu
 /// inside a frameless or lane activation, or with a collection due, which the exact step makes.
 /// Promotion moves the frame's captured locals into its environment, so the dispatch takes its
 /// views again.
-pub(super) unsafe extern "C" fn lane_new_closure<H: Host>(vm: u64, residual: u64, payload: u64, id: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_closure_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, id: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program.
     let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
         &mut *(payload as *mut JsStepDispatch)) };
@@ -130,7 +130,7 @@ pub(super) unsafe extern "C" fn lane_new_closure<H: Host>(vm: u64, residual: u64
 /// A lane body's literal template `template` in its frame, as the interpreter builds it
 /// (`Vm::literal_template`); `DELETED` inside a frameless or lane activation, whose frame is
 /// not the payload's, where the template fails, or where a collection is due.
-pub(super) unsafe extern "C" fn lane_new_template<H: Host>(vm: u64, residual: u64, payload: u64, template: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_template_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, template: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program.
     let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() || vm.frameless.inside(dispatch) || dispatch.lane_context != 0 { return Value::DELETED.to_bits(); }
@@ -143,7 +143,7 @@ pub(super) unsafe extern "C" fn lane_new_template<H: Host>(vm: u64, residual: u6
 /// A lane body's string concatenation of the `count` parts at `parts`, where each converts to a
 /// string without guest code (`Vm::pure_string_concat`, the lane's `StringConcat` row);
 /// `DELETED` for any other part, a result past the string limit, or a due collection.
-pub(super) unsafe extern "C" fn lane_new_concat<H: Host>(vm: u64, residual: u64, payload: u64, parts: u64, count: u64) -> u64 {
+pub(super) unsafe extern "C" fn new_concat_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, parts: u64, count: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program, and `parts` addresses
     // `count` values the code wrote.
     let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };

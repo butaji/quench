@@ -4871,7 +4871,7 @@ impl<H: Host> Vm<H> {
     /// `promise_then`'s intrinsic arm makes them. `None` leaves any other receiver, an
     /// impure species read, or a lifecycle-observing host, whose hooks run guest code, to
     /// the general call.
-    pub(super) fn lane_promise_then(
+    pub(super) fn promise_then_in_lane(
         &mut self,
         p: &ResidualProgram,
         promise: Value,
@@ -4885,7 +4885,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         // Nothing below runs guest code or collects, so the receiver and handlers stay
-        // live in the caller's registers, as `lane_new_array`'s arguments do.
+        // live in the caller's registers, as `new_array_in_lane`'s arguments do.
         let next = self.promise_object_with_parent(None).ok()?;
         self.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
         Some(next)
@@ -4898,7 +4898,7 @@ impl<H: Host> Vm<H> {
     /// that `then` is not callable, else through the thenable job the general path would
     /// enqueue. `None` leaves an impure read or a lifecycle-observing host to the general
     /// call.
-    pub(super) fn lane_promise_resolve(
+    pub(super) fn promise_resolve_in_lane(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,

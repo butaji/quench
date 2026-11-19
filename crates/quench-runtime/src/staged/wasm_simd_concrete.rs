@@ -40,7 +40,7 @@ fn signed(width: u32, value: u64, operation: impl Fn(i64) -> i64) -> u64 {
 }
 
 /// A lane-wise `native` on its lanes; its shift count is the low bits of `right`.
-fn lane_wise(native: Native, left: u128, right: u128) -> u128 {
+fn apply_per_lane(native: Native, left: u128, right: u128) -> u128 {
     let width = native.lanes.width();
     let count = (right as u32) % width;
     let other = |index: u8| lane(right, width, index);
@@ -73,7 +73,7 @@ impl WasmSimd for ConcreteSimd {
                     replace(result, wide, index, product)
                 })
             }
-            _ => lane_wise(native, left, right),
+            _ => apply_per_lane(native, left, right),
         }
     }
 

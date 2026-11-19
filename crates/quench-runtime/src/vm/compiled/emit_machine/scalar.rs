@@ -3,7 +3,7 @@
 //! written over the operators (traps, their order, NaN canonicalization) is the interpreter's
 //! (`staged::wasm`, `staged::wasm_float`); this file only says what one operator is on the machine.
 
-use super::{Builds, lane_of, machine_type};
+use super::{Builds, of_in_lane, machine_type};
 use super::super::{Emitter, Host, scalar_ir};
 use crate::staged::machine::{Binary, Lane, MachineScalar, MachineStage, Relation, Unary};
 use crate::staged::wasm::Width;
@@ -284,7 +284,7 @@ fn float_unary(builder: &mut FunctionBuilder<'_>, operation: Unary, a: ir::Value
 
 impl<'b, B: Builds<'b>> MachineScalar for B {
     fn raw_lane(&mut self, value: ir::Value) -> Lane {
-        lane_of(self.function_builder().func.dfg.value_type(value))
+        of_in_lane(self.function_builder().func.dfg.value_type(value))
     }
     fn raw_const(&mut self, lane: Lane, bits: i64) -> ir::Value { constant(self.function_builder(), lane, bits) }
     fn raw_binary(&mut self, operation: Binary, a: ir::Value, b: ir::Value) -> ir::Value {
@@ -453,7 +453,7 @@ impl<H: Host> MachineStage for Emitter<'_, '_, H> {
     }
 
     fn convert(&mut self, operator: Conversion, value: ir::Value) -> ir::Value {
-        let result = lane_of(scalar_ir(operator.result_type()));
+        let result = of_in_lane(scalar_ir(operator.result_type()));
         self.raw_unary(conversion_row(operator, result), value)
     }
 

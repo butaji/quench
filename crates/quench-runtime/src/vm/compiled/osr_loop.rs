@@ -2171,7 +2171,7 @@ fn admit(
             let value = instruction.register_a();
             admit_stored(admission, value, tagged, defined_registers)?;
         }
-        // A global binding's read (`Vm::lane_global_reads`), a Number where arithmetic reads it.
+        // A global binding's read (`Vm::global_reads_in_lane`), a Number where arithmetic reads it.
         opcode if crate::staged::reads_name(opcode) => {
             (instruction.result_flags() == 0).then_some(())?;
             admit_loaded(admission, instruction, tagged)?;

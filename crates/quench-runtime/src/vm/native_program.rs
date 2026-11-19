@@ -38,7 +38,7 @@ pub struct NativeJsPublicationCounts {
     /// Functions in the program.
     pub functions: usize,
     /// Functions whose entry runs a lane body, leaving to per-PC semantic entries.
-    pub lane_bodies: usize,
+    pub bodies_in_lane: usize,
     /// Functions left on the call-threaded body (per-PC semantic entries).
     pub call_threaded: usize,
     /// Instruction sites whose continuation is a folded static transfer.

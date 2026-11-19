@@ -230,7 +230,7 @@ impl<H: Host> Vm<H> {
     /// sampled.
     pub(crate) fn site_operand_kinds(&self, program: ProgramId, function: u32, pc: usize) -> OperandKinds {
         self.programs
-            .lane_views(program)
+            .views_in_lane(program)
             .and_then(|views| views.get(function as usize))
             .and_then(super::super::program_store::derived_lane_view)
             .map_or(OperandKinds::NONE, |view| view.operand_kinds(pc))

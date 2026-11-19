@@ -275,7 +275,7 @@ impl<H: Host> Vm<H> {
             let Some(Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. }) = self.heap.buffer_bytes_mut(buffer) else {
                 return None;
             };
-            let bytes = bytes.lane_mut().filter(|bytes| view_end <= bytes.len())?;
+            let bytes = bytes.mut_in_lane().filter(|bytes| view_end <= bytes.len())?;
             store_field(&mut bytes[field..field + width], bits, little_endian);
             return Some(Value::UNDEFINED);
         }

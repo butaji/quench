@@ -53,7 +53,7 @@ fn indexed_composition<const DEPENDENT: bool, const STEPS: usize>(b: &mut Benche
         let function = (0..program.function_count()).find(|&index| {
             program.function_get(index).unwrap().name.is_some_and(|name| &program.atoms[name as usize] == "indexed")
         }).unwrap();
-        let views = vm.programs.lane_views(ProgramId::MAIN).unwrap();
+        let views = vm.programs.views_in_lane(ProgramId::MAIN).unwrap();
         let view = super::super::program_store::derived_lane_view(&views[function]).unwrap();
         let proved = super::super::dispatch_fast::updated_read_add_handler::<TestHost>();
         let sites = view.records.iter().filter(|record| {
@@ -246,7 +246,7 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
         let function = (0..program.function_count()).find(|&index| {
             program.function_get(index).unwrap().name.is_some_and(|name| &program.atoms[name as usize] == "stencil")
         }).unwrap();
-        let views = vm.programs.lane_views(ProgramId::MAIN).unwrap();
+        let views = vm.programs.views_in_lane(ProgramId::MAIN).unwrap();
         let view = super::super::program_store::derived_lane_view(&views[function]).unwrap();
         let fused_read = super::super::dispatch_fast::updated_read_add_handler::<TestHost>();
         let kinds = [

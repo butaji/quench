@@ -115,7 +115,7 @@ fn body_runs(source: &str, names: &[&str]) -> Vec<BodyRuns> {
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.execute(&program).unwrap();
-    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
     names.iter().map(|name| {
         let id = program.functions.iter()
             .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == *name))

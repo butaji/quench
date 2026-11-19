@@ -27,13 +27,13 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Whether a lane call may derive `function`'s view now (`ProgramStore::lane_call_may_derive`),
+    /// Whether a lane call may derive `function`'s view now (`ProgramStore::call_may_derive_in_lane`),
     /// lowering it first where its unlowered runs are done, or from its unlowered record where
     /// a live frame of it kept blocking that (`ResidualProgram::tier0_blocked`).
     /// Beside a window activation (`Vm::runs_windows_in_lane`) a call that waits boxes the window's
     /// record as a frame, which costs more than its view: the callee lowers where nothing keeps
     /// it unlowered and derives at once, its deferred runs skipped.
-    pub(super) fn lane_call_may_derive(&self, program: ProgramId, function: u32) -> bool {
+    pub(super) fn call_may_derive_in_lane(&self, program: ProgramId, function: u32) -> bool {
         let now = self.runs_windows_in_lane();
         let blocked = self.programs.residual(program).is_some_and(|code| {
             if now {
@@ -43,7 +43,7 @@ impl<H: Host> Vm<H> {
             }
             code.runs_tier0(function as usize) && code.tier0_blocked(function as usize, super::compiled::tier_policy::TIER0_BLOCKED_RUNS)
         });
-        self.programs.lane_call_may_derive(program, function, blocked, now)
+        self.programs.call_may_derive_in_lane(program, function, blocked, now)
     }
 
     /// `promote_tier0_if_due` with no unlowered runs left to wait for: lowers function `id` of

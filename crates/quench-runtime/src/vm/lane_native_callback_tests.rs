@@ -98,7 +98,7 @@ fn assert_body_stays(source: &str) {
     let (interpreted, _) = run_source(crate::ExecutionMode::Interpreted, source);
     let (compiled, vm) = run_source(crate::ExecutionMode::Compiled, source);
     assert_eq!(interpreted, compiled);
-    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
     let reports: Vec<String> = views.iter()
         .filter_map(super::program_store::derived_lane_view)
         .filter_map(|view| view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None))

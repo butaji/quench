@@ -194,7 +194,7 @@ impl<H: Host> Vm<H> {
             base,
             pending,
             executing,
-            views: self.programs.lane_views(program).map_or(&[][..], |views| views) as *const _,
+            views: self.programs.views_in_lane(program).map_or(&[][..], |views| views) as *const _,
             constants: self.programs.constants(program) as *const _,
             inline_calls: inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm,
             script_calls,

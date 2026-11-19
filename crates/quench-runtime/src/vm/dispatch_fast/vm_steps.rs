@@ -108,7 +108,7 @@ pub(super) fn comparison_decision<H: Host>(vm: &mut Vm<H>, operator: u32, left: 
 /// needs no record of the VM's: `Value::TRUE` or `Value::FALSE`, or `Value::DELETED` where only
 /// the full algorithm decides, which leaves the body at the test (`comparison_decision`).
 pub(in crate::vm) unsafe extern "C" fn decide_comparison<H: Host>(vm: u64, _residual: u64, left: u64, right: u64, operator: u64) -> u64 {
-    // SAFETY: as `lane_field_set`; the decision reads the heap, runs no guest code and allocates nothing.
+    // SAFETY: as `field_set_in_lane`; the decision reads the heap, runs no guest code and allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     comparison_decision(vm, operator as u32, Value::from_bits(left), Value::from_bits(right))
         .map_or_else(|| Value::DELETED.to_bits(), |holds| Value::boolean(holds).to_bits())

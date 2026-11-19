@@ -58,7 +58,7 @@ pub(in crate::vm) fn names_dead_callee(inlined: &[InlinedCall], direct: &[Direct
 }
 
 /// The registers past the caller's `caller_registers` that `inlined` occupy: the scratch window a
-/// leave inside one reads (`Vm::lane_scratch`), and the room the frames past the caller's registers
+/// leave inside one reads (`Vm::scratch_in_lane`), and the room the frames past the caller's registers
 /// need.
 pub(in crate::vm) fn window_width(inlined: &[InlinedCall], caller_registers: u16) -> usize {
     inlined.iter().map(|frame| usize::from(frame.base - caller_registers) + usize::from(frame.registers)).max().unwrap_or(0)

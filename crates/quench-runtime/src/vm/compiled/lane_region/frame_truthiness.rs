@@ -38,7 +38,7 @@ pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: 
 }
 
 /// ToBoolean of tagged `bits` whatever they hold: its word's answer, else its cell's by the
-/// VM (`lane_truthy`), so a string or a function a condition tests keeps the body running.
+/// VM (`truthy_in_lane`), so a string or a function a condition tests keeps the body running.
 fn cell_truthiness(builder: &mut FunctionBuilder<'_>, payload: ir::Value, helpers: LaneHelpers, bits: ir::Value) -> ir::Value {
     let mut stage = super::super::super::object_slots::emit(builder);
     let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut stage, bits);

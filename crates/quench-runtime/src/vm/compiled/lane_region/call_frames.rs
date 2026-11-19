@@ -210,7 +210,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let callee = call.callee?;
         self.push_native(stage, callee, this, room);
         let entry = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, entry)));
-        let signature = lane_body_signature(types::I64, stage.builder.func.signature.call_conv);
+        let signature = body_signature_in_lane(types::I64, stage.builder.func.signature.call_conv);
         let signature = crate::vm::jit_backend::signature_ref(stage.builder.func, signature);
         let captures = address(self.helpers, stage.builder, RelocKind::CaptureWords, callee.target.function,
             callee.capture_word());

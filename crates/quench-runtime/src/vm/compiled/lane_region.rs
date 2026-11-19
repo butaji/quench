@@ -496,7 +496,7 @@ struct Lowering<'a, 'f> {
     number_entries: &'a [Register],
     /// The capture slots observed to hold int32s (`RegionSpecializer::int_captures`).
     int_captures: &'a [u16],
-    /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
+    /// The by-name loads that read the global scope (`Vm::global_reads_in_lane`).
     global_reads: &'a crate::vm::global_facts::GlobalReads,
     /// The VM's facts: its `length` name, whose read of a direct array is its record's
     /// (`array_length`), and whether an IsHTMLDDA object can exist (`emit_nullish_branch`).
@@ -687,7 +687,7 @@ impl Coverage {
     }
 }
 
-/// How a run ends. Every kind runs the lane body ABI (`lane_body_signature`): it takes its
+/// How a run ends. Every kind runs the lane body ABI (`body_signature_in_lane`): it takes its
 /// inputs in the register window and returns its status and result word in registers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Completion {
@@ -707,7 +707,7 @@ impl Completion {
 }
 
 /// Which arrays a region's loops index in place (`LoopArray`): dense arrays' elements, or
-/// typed arrays' (`Vm::lane_typed_array_elements`). A region assumes one, proved on each
+/// typed arrays' (`Vm::typed_array_elements_in_lane`). A region assumes one, proved on each
 /// loop's entering edge, so no access chooses between them; a static image publishes a
 /// typed variant beside the dense one, which its dispatcher tries next at the header, and a
 /// loop site compiles the one its entry found (`LoopTier::views`). A typed view carries the
@@ -2953,7 +2953,7 @@ impl Lowering<'_, '_> {
 
     /// A fused `typeof value === name` (`bytecode::typeof_test`): an immediate value's tag
     /// decides it, as `Vm::typeof_test_value` would, and a heap value's cell the VM reads
-    /// (`lane_typeof_is`). A returning test completes the activation with its Boolean.
+    /// (`typeof_is_in_lane`). A returning test completes the activation with its Boolean.
     fn typeof_test(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
         use crate::value::ValueLayout;
         let (index, negated) = crate::bytecode::typeof_test(instruction.unary_operator())?;
@@ -3135,7 +3135,7 @@ impl Lowering<'_, '_> {
 
     /// `Vm::strict_equal` (`strict`) or `==` of two tagged operands. Identical bits are equal
     /// unless NaN, and two Numbers compare as Numbers. Strictly, a pair of strings or of
-    /// legacy cells (BigInts) of one family compares by contents (`lane_strict_equal_cells`)
+    /// legacy cells (BigInts) of one family compares by contents (`strict_equal_cells_in_lane`)
     /// and every other pair is unequal. Loosely, without conversions only: `null` and
     /// `undefined` equal each other and no object record, and two distinct object records are
     /// unequal; any other pair (a string, a Boolean, a function, which may be the IsHTMLDDA
@@ -4313,7 +4313,7 @@ impl Lowering<'_, '_> {
         let operation = crate::staged::Operation::SetField { value: source, base: register,
             atom: instruction.atom_index(), site: instruction.cache_site_index(),
             strict: matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { strict: true, .. })) };
-        // A store a previous body left at may add its property (`compiled::lane_field_add`),
+        // A store a previous body left at may add its property (`compiled::field_add_in_lane`),
         // which changes the object's shape and may move the property arena: every proof of
         // an object retires, as another register may name it, and `this`'s facts are read
         // again.

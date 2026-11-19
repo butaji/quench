@@ -112,7 +112,7 @@ impl<H: Host> Vm<H> {
         let lands = self.name_lands_on_global_object(p, VarOwner::Frame(self.frames.len() - 1), atom);
         if let Some(view) = self
             .programs
-            .lane_views(probe.program)
+            .views_in_lane(probe.program)
             .and_then(|views| views.get(probe.function as usize))
             .and_then(super::program_store::derived_lane_view)
         {

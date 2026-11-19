@@ -1928,7 +1928,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     fn number_fact(&self) -> Boxing { Boxing::Double }
 }
 
-#[path = "lane_frame/staged_ops.rs"]
+#[path = "frame_in_lane/staged_ops.rs"]
 mod staged_ops;
 pub(super) use staged_ops::*;
 
@@ -3526,7 +3526,7 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
         CallOut::Protocol { step: Protocol::ForInStart, .. } => {
             let source = second?;
             let keys = vm.listed_for_in_keys(source)?;
-            let state = vm.lane_for_in_state(source, keys);
+            let state = vm.for_in_state_in_lane(source, keys);
             // A state may be allocated; a due collection runs at the lane's next safepoint.
             note_allocation(vm);
             Some(state)
@@ -3621,6 +3621,6 @@ pub(super) fn staged_delete<H: Host>(cx: *mut LaneContext<H>, r: Registers, [des
 }
 
 // The fusion handlers and their install passes (`fuse_rows`, `fuse_chains`), in their own module.
-#[path = "lane_frame/fused.rs"]
+#[path = "frame_in_lane/fused.rs"]
 mod fused;
 pub(in crate::vm::dispatch_fast) use fused::{chain_row, fused_row, fused_rows, fuse_chains, fuse_rows, is_window_row};

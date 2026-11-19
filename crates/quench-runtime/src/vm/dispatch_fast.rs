@@ -729,12 +729,12 @@ mod lane_leaves;
 #[path = "operand_feedback.rs"]
 pub(super) mod operand_feedback;
 use operand_feedback::{has_operand_feedback, note_operands, seed_declared_feedback, Records};
-#[path = "lane_body_tier.rs"]
-mod lane_body_tier;
+#[path = "body_tier_in_lane.rs"]
+mod body_tier_in_lane;
 #[path = "loop_tier.rs"]
 mod loop_tier;
-use loop_tier::{lane_loop_compile, LoopTier};
-use lane_body_tier::LaneBodyHistory;
+use loop_tier::{loop_compile_in_lane, LoopTier};
+use body_tier_in_lane::LaneBodyHistory;
 pub(super) use lane_body_stats::{miss_report as lane_miss_report, unlowered_report as lane_unlowered_report};
 use lane_leaves::LaneLeaves;
 pub(super) use lane_body_stats::LaneBodyStats;
@@ -934,7 +934,7 @@ enum LaneBody {
     /// `stuck`, at those few leaves only.
     Unspecialized { entries: u32, recompiles: u8, stuck: LaneLeaves },
     /// Its body's code compiling on the code generator's thread; the function runs in the
-    /// lane meanwhile, and looks for the code (`Vm::lane_body_work`) at entries spaced twice
+    /// lane meanwhile, and looks for the code (`Vm::body_work_in_lane`) at entries spaced twice
     /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
     /// a function entered seldom (a hot loop's) finds its code at its next entries, and a hot
     /// one pays few looks. `wait` counts the entries left before the next.
@@ -965,7 +965,7 @@ pub(super) struct LaneTier {
     /// The frameless body the prologue runs once the JavaScript tier declined the
     /// function (`Vm::compile_lane_method`).
     tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// The warming tick (`lane_body_tier::warm_ticks`) of the entry its body began warming at, which a function
+    /// The warming tick (`body_tier_in_lane::warm_ticks`) of the entry its body began warming at, which a function
     /// entered rarely but for long (`LaneView::recurrent`) specializes by.
     warm_since: std::cell::Cell<u32>,
     /// Every body it published, kept until the view drops: a native frame running a body that
@@ -974,7 +974,7 @@ pub(super) struct LaneTier {
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     history: std::cell::Cell<LaneBodyHistory>,
     /// The epochs of its body's audit (`lane_body_audit`).
-    audit_epochs: std::cell::Cell<lane_body_tier::Epochs>,
+    audit_epochs: std::cell::Cell<body_tier_in_lane::Epochs>,
     /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
     pub(super) body_stats: LaneBodyStats,
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
@@ -3725,7 +3725,7 @@ fn window_closure_value_in_lane<H: Host>(
         let bindings = activation.take_record_bindings();
         window_environment(vm, code, r.0.add(usize::from(registers)), owner, parent, (*cx).program, r.this(), Some(bindings))
     };
-    let value = match vm.lane_closure_template(function) {
+    let value = match vm.closure_template_in_lane(function) {
         // A recorded closure is made from its template once: over another environment where
         // it reads nothing of this activation's (`Vm::maker_free_environment`), so the
         // activation needs none of its own for it, else over the activation's.
@@ -7328,7 +7328,7 @@ script_handler! {
             // The calls do not run inlined: the loop leaves at them, as at any other call.
             None => match inlining_region_in_lane(cx, r, site).or_else(|| {
                 let _ = site.inline_region.set(None);
-                loop_tier::lane_method_call_region(cx, site)
+                loop_tier::method_call_region_in_lane(cx, site)
             }) {
                 Some(region) => site.region.get_or_init(|| region),
                 // A call no region runs (a native's, a callee the inliner cannot take) is a
@@ -7571,12 +7571,12 @@ fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
             return vm.base_body_work(code, function, generic, parameters, own, &direct);
         }
         if matches!(work, super::compiled::LaneBodyWork::Start { .. })
-            && let Some(outcome) = lane_body_tier::start_gate(vm, own, code.function_get(function as usize))
+            && let Some(outcome) = body_tier_in_lane::start_gate(vm, own, code.function_get(function as usize))
         {
             return outcome;
         }
         let started: Option<Vec<super::compiled::LaneExit>> = match &work { super::compiled::LaneBodyWork::Start { generic, .. } => Some(generic.to_vec()), _ => None };
-        let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|function, header| lane_unit_trips(cx, function, header), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
+        let outcome = vm.body_work_in_lane(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|function, header| lane_unit_trips(cx, function, header), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
         // The tier model picked b-jit for good (`tier_model::Pick::Base`): u-jit stays ahead of
         // b-jit, so a function it would not beat takes the stencil body, stitched at once.
         if let (super::compiled::LaneBodyOutcome::Base, Some(generic)) = (&outcome, &started) {
@@ -7713,7 +7713,7 @@ fn loop_run_in_lane<H: Host>(
         let int_entries = loop_tier::int_entries(r, region);
         let typed_captures = loop_tier::typed_capture_slots(cx);
         let int_captures = loop_tier::int_capture_slots(cx);
-        lane_loop_compile(cx, r, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
+        loop_compile_in_lane(cx, r, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
         if !tier.is_published() {
             return LoopContinuation::Compiling;
         }
@@ -7947,7 +7947,7 @@ fn inlined_continuation_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
 }
 
 /// The entry record of `site`'s native code from the running activation, and the element
-/// views of its arrays (`loop_tier::lane_loop_arrays`), when its arrays and captures pass the
+/// views of its arrays (`loop_tier::loop_arrays_in_lane`), when its arrays and captures pass the
 /// region's guards: each capture an initialized binding resolved without guest code by the
 /// same lookup as LoadCapture (`capture_read_value`).
 #[inline(never)]
@@ -8021,7 +8021,7 @@ fn loop_entry_in_lane<H: Host>(
             })?;
         entry.push_field(value, field.tagged)?;
     }
-    let views = loop_tier::lane_loop_arrays(vm, r, region, entry)?;
+    let views = loop_tier::loop_arrays_in_lane(vm, r, region, entry)?;
     loop_field_stores(cx, r, region, entry)?;
     if region.reads_heap_natively() {
         let object_base = vm.heap.object_record_base().unwrap_or(std::ptr::null());
@@ -8130,7 +8130,7 @@ fn inlining_region_in_lane<H: Host>(
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let program = unsafe { (*cx).program };
-    let (function_index, function, decoded, constants) = loop_tier::lane_loop_function(cx, code)?;
+    let (function_index, function, decoded, constants) = loop_tier::loop_function_in_lane(cx, code)?;
     let live = code.register_root_masks(function_index)?;
     // The callee is the last of the fields its read reads through, each read from the
     // registers and the fields before it as they are now.
@@ -8365,14 +8365,14 @@ fn frame_state_in_lane<H: Host>(
     // The context's table holds the frame's program's views: a derived one is read there.
     // SAFETY: the table lives as long as its program entry.
     let derived = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
-    let lane_view = match derived {
+    let view_in_lane = match derived {
         Some(view) => view,
         None => {
             if !H::RUNS_LANE {
                 unreachable!("a host that runs no lane has no lane frame");
             }
             let (diagnostics, tiers) = (vm.programs.reports_on_drop(), vm.programs.tiers());
-            let Some(lane_view) = vm.programs.lane_view(program, function, |code, constants, kind, live, sites| {
+            let Some(view_in_lane) = vm.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
                 derive_lane_view::<H>(
                     function,
                     code,
@@ -8389,12 +8389,12 @@ fn frame_state_in_lane<H: Host>(
                 unreachable!("an inline Wasm frame runs a function of its program");
             };
             // SAFETY: views live as long as their program entry.
-            unsafe { &*lane_view }
+            unsafe { &*view_in_lane }
         }
     };
-    let base = lane_view.records();
+    let base = view_in_lane.records();
     let r = Registers(vm.frames[frame].registers.as_mut_ptr());
-    let view = frame_memory_view(cx, lane_view, r);
+    let view = frame_memory_view(cx, view_in_lane, r);
     // SAFETY: the view has one record per instruction of the function, and
     // `pc` is the frame's validated resume point.
     let ip = unsafe { base.add(pc) };
@@ -9030,7 +9030,7 @@ impl<H: Host> Vm<H> {
             }
             return Some(target);
         }
-        if !self.lane_call_may_derive(program, function) { return None; }
+        if !self.call_may_derive_in_lane(program, function) { return None; }
         let body = code.function_get(function as usize)?;
         let plan = body.call_plan(code);
         // An arrow binds the `this` of its environment, found once here: one still
@@ -9302,7 +9302,7 @@ impl<H: Host> Vm<H> {
         if !H::RUNS_LANE || !self.execution_mode.allows_dynamic_execution() { return None; }
         let diagnostics = self.programs.reports_on_drop();
         let tiers = self.programs.tiers();
-        self.programs.lane_view(program, function, |code, constants, kind, live, sites| {
+        self.programs.view_in_lane(program, function, |code, constants, kind, live, sites| {
             derive_lane_view::<H>(
                 function,
                 code,
@@ -9867,7 +9867,7 @@ script_handler! {
         profile_script_call_target(cx, ip, callee, &target);
         // Without lifecycle hooks the promise's allocation runs no guest code and collects
         // nothing (`note_allocation` makes a collection due at the next frame boundary).
-        let root = if ImmediateLayout::lane_call_result_awaited(i.imm()) {
+        let root = if ImmediateLayout::call_result_awaited_in_lane(i.imm()) {
             None
         } else {
             let Ok(promise) = vm.promise_object() else {
@@ -11404,7 +11404,7 @@ fn lane_regexp_call<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let result_used = ImmediateLayout::lane_call_result_used(i.imm());
+    let result_used = ImmediateLayout::call_result_used_in_lane(i.imm());
     let steady = match (native, args) {
         (Native::StringReplace, _) => vm.steady_string_replace(code, native, receiver, args, result_used),
         (Native::StringMatch, [search, ..]) => vm.steady_string_match(code, receiver, *search, result_used),
@@ -11451,8 +11451,8 @@ fn lane_string_or_native_call<H: Host>(
 
 /// A lane call of a promise native whose steps provably observe nothing, answered in place
 /// so the lane's activations need not become frames (`lane_call_native`): `then` and
-/// `catch` of a receiver with intrinsic species (`Vm::lane_promise_then`) and the intrinsic
-/// `Promise.resolve` (`Vm::lane_promise_resolve`). A resolving function (one with an
+/// `catch` of a receiver with intrinsic species (`Vm::promise_then_in_lane`) and the intrinsic
+/// `Promise.resolve` (`Vm::promise_resolve_in_lane`). A resolving function (one with an
 /// environment), any other shape, or a lifecycle-observing host takes the general call.
 #[inline(never)]
 fn lane_promise_native<H: Host>(
@@ -11469,7 +11469,7 @@ fn lane_promise_native<H: Host>(
         return None;
     }
     match native {
-        Native::PromiseThen => vm.lane_promise_then(
+        Native::PromiseThen => vm.promise_then_in_lane(
             code,
             receiver,
             args.first().copied().unwrap_or(Value::UNDEFINED),
@@ -11486,14 +11486,14 @@ fn lane_promise_native<H: Host>(
             ) {
                 return None;
             }
-            vm.lane_promise_then(
+            vm.promise_then_in_lane(
                 code,
                 receiver,
                 Value::UNDEFINED,
                 args.first().copied().unwrap_or(Value::UNDEFINED),
             )
         }
-        Native::PromiseResolve => vm.lane_promise_resolve(
+        Native::PromiseResolve => vm.promise_resolve_in_lane(
             code,
             receiver,
             args.first().copied().unwrap_or(Value::UNDEFINED),
@@ -12643,7 +12643,7 @@ fn lane_instance_env<H: Host>(cx: *mut LaneContext<H>) -> Value {
 #[inline(always)]
 fn lane_enter_program<H: Host>(cx: *mut LaneContext<H>, program: ProgramId) {
     let vm = unsafe { vm(cx) };
-    let context = vm.lane_program_context(program);
+    let context = vm.program_context_in_lane(program);
     vm.activate_context(program, context);
     // SAFETY: the context outlives the lane run; the store keeps the program's residual,
     // views and constants for it, and its context names them.
@@ -13034,7 +13034,7 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body
             callees.extend(lane_construct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm())));
             return callees;
         }
-        callees.extend(lane_body_tier::site_targets(vm, view, pc).filter(|_| direct)
+        callees.extend(body_tier_in_lane::site_targets(vm, view, pc).filter(|_| direct)
             .filter_map(|target| lane_direct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm()), target)));
         callees
     }).collect()
@@ -13180,7 +13180,7 @@ impl<'a> InlinedRun<'a> {
 /// The activation native code that left inside inlined `frame` of `run`, at its callee's
 /// PC `pc`, continues in: the activations the calls of the frame and the frames around it
 /// make (`push_activation_in_lane`), outermost first, each holding the registers native code
-/// held for it (`Vm::lane_scratch`); the innermost's record at `pc`. Each frame's call
+/// held for it (`Vm::scratch_in_lane`); the innermost's record at `pc`. Each frame's call
 /// guard proved its callee the inlined one, whose resolution is a function of it; a cache
 /// that dropped its entry resolves it again.
 fn lane_body_inlined_activation<H: Host>(
@@ -13194,7 +13194,7 @@ fn lane_body_inlined_activation<H: Host>(
     let frames = run.frames;
     if run.framed {
         // Only the frames' own reach: the scratch window may be wider (another code's), past this storage.
-        Vm::<H>::lane_adopt_window(r.0.cast_const(), usize::from(run.caller_registers), super::compiled::window_width(frames, run.caller_registers));
+        Vm::<H>::adopt_window_in_lane(r.0.cast_const(), usize::from(run.caller_registers), super::compiled::window_width(frames, run.caller_registers));
     }
     let mut chain = vec![frame];
     while let Some(parent) = frames[*chain.last().expect("a chain has a frame")].parent {
@@ -13230,7 +13230,7 @@ fn lane_body_inlined_activation<H: Host>(
         let at = match depth.checked_sub(1) { Some(inner) => frames[chain[inner]].call, None => pc };
         let live = code.register_root_masks(call.target.function);
         let scratch = usize::from(call.base - run.caller_registers);
-        Vm::<H>::lane_scratch(scratch, usize::from(call.registers), |register, value| {
+        Vm::<H>::scratch_in_lane(scratch, usize::from(call.registers), |register, value| {
             if live.is_none_or(|live| live.is_live(at as usize, register)) {
                 callee.set(register, value);
             }
@@ -15800,7 +15800,7 @@ fn start_async_call_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: 
         return None;
     }
     let (program, function, env) = vm.in_loop_settling_target(code, callee)?;
-    if program != unsafe { (*cx).program } || !vm.lane_call_may_derive(program, function) {
+    if program != unsafe { (*cx).program } || !vm.call_may_derive_in_lane(program, function) {
         return None;
     }
     let window = usize::from(ImmediateLayout::call_window_base(i.imm()));
@@ -15913,9 +15913,9 @@ fn push_frame_call_in_lane<H: Host>(
         return Resumed::Exit(exit(ip));
     }
     // A callee that has not made its deferred runs takes the general path, as a lane call's
-    // does (`ProgramStore::lane_call_may_derive`): entering its frame here derived its view at
+    // does (`ProgramStore::call_may_derive_in_lane`): entering its frame here derived its view at
     // its first call, a callee run once included (jiti npm scenario: -2.1% instructions).
-    if !vm.lane_call_may_derive(target.0, target.1) {
+    if !vm.call_may_derive_in_lane(target.0, target.1) {
         return Resumed::Exit(exit(ip));
     }
     #[cfg(feature = "profile-lane-exits")]
@@ -16040,7 +16040,7 @@ fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
     let args = unsafe { lane_call_window(r, i) };
     let (program, function, env, encoded, result) = vm.wasm_export_frame_call(r.get(i.b), args)?;
     let callee_code = vm.programs.get(program)?;
-    if !vm.admits_in_lane(&callee_code) || !vm.lane_call_may_derive(program, function) {
+    if !vm.admits_in_lane(&callee_code) || !vm.call_may_derive_in_lane(program, function) {
         return None;
     }
     if let Some(resumed) = lane_activate_wasm_export(cx, r, ip, program, function, env, &encoded, result) {
@@ -16115,13 +16115,13 @@ fn lane_activate_wasm_export<H: Host>(
     result: Option<crate::WasmType>,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let lane_view = vm
+    let view_in_lane = vm
         .programs
-        .lane_views(program)?
+        .views_in_lane(program)?
         .get(function as usize)
         .and_then(super::program_store::derived_lane_view)?;
-    let shape = lane_view.activation?;
-    let base = lane_view.records();
+    let shape = view_in_lane.activation?;
+    let base = view_in_lane.records();
     let stack: &mut LaneStack = &mut vm.lane_stack;
     let count = usize::from(shape.registers);
     let frame_storage_bytes = count.saturating_mul(std::mem::size_of::<Value>());
@@ -16827,7 +16827,7 @@ fn call_awaited_marked_in_lane<'live>(
 
 /// A `Call` record's operand, flagged when liveness (`live`, the registers live before each
 /// pc) shows its result register dead after the call: nothing reads the value the callee
-/// returns (`ImmediateLayout::lane_call_result_used`).
+/// returns (`ImmediateLayout::call_result_used_in_lane`).
 fn call_result_marked_in_lane(
     operand: LaneOperand,
     instruction: WideInstruction,
@@ -18251,7 +18251,7 @@ fn may_loop(function: &Function) -> bool {
 /// does, and any other record at the next PC. Each pass extends every count by one step, so
 /// `cap` passes reach the fixed point the capped counts allow; without jumps one pass does.
 /// An `Await` counts as `cap`: a resumed async frame's lane run that stops there suspends
-/// without the general loop (`Vm::lane_stop_awaits`), so a short run to it repays its entry.
+/// without the general loop (`Vm::stop_awaits_in_lane`), so a short run to it repays its entry.
 fn runs_ahead_in_lane(decoded: &[WideInstruction], exits: &[bool], cap: usize, follows_jumps: bool) -> Vec<usize> {
     let next = |pc: usize| match decoded[pc].op() {
         _ if follows_jumps && crate::staged::jump_family(decoded[pc].op()) => decoded[pc].imm() as usize,

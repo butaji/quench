@@ -33,7 +33,7 @@ pub(crate) struct NativeView {
     kind: u8,
     detached: u8,
     /// Whether the buffer's bytes belonged to this view's buffer alone when published
-    /// (`BufferBytes::lane_mut`), so a store through `data` writes no other buffer.
+    /// (`BufferBytes::mut_in_lane`), so a store through `data` writes no other buffer.
     unshared: u8,
     /// The table entry that holds this record's address, null while it has none.
     home: *mut usize,

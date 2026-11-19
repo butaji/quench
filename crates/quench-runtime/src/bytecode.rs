@@ -614,7 +614,7 @@ impl ImmediateLayout {
     /// direct-eval bit; a callee whose result is unobservable may skip building it.
     pub(crate) const LANE_CALL_RESULT_UNUSED_FLAG: u32 = Self::DIRECT_EVAL_FLAG;
 
-    pub(crate) const fn lane_call_result_used(imm: u32) -> bool {
+    pub(crate) const fn call_result_used_in_lane(imm: u32) -> bool {
         imm & Self::LANE_CALL_RESULT_UNUSED_FLAG == 0
     }
 
@@ -623,7 +623,7 @@ impl ImmediateLayout {
     /// parameter-eval bit; a settling callee there needs no promise for a primitive result.
     pub(crate) const LANE_CALL_RESULT_AWAITED_FLAG: u32 = Self::PARAMETER_EVAL_FLAG;
 
-    pub(crate) const fn lane_call_result_awaited(imm: u32) -> bool {
+    pub(crate) const fn call_result_awaited_in_lane(imm: u32) -> bool {
         imm & Self::LANE_CALL_RESULT_AWAITED_FLAG != 0
     }
 

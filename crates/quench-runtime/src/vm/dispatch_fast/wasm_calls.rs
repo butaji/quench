@@ -52,8 +52,8 @@ macro_rules! enter_wasm_function {
         // SAFETY: the program's views outlive the lane run.
         let views = unsafe { &*(*cx).views };
         let stack: &mut LaneStack = &mut vm.lane_stack;
-        if let Some(lane_view) = views.get(usize::from($function)).and_then(super::program_store::derived_lane_view)
-            && let Some(shape) = lane_view.activation
+        if let Some(view_in_lane) = views.get(usize::from($function)).and_then(super::program_store::derived_lane_view)
+            && let Some(shape) = view_in_lane.activation
             && usize::from(shape.registers)
                 .saturating_mul(std::mem::size_of::<Value>())
                 <= crate::stack::GuestCallGuard::remaining_storage_bytes()
@@ -102,7 +102,7 @@ macro_rules! enter_wasm_function {
             }
             // A fresh activation's memory register holds no memory until
             // the function's instance binding loads it.
-            let base = lane_view.records();
+            let base = view_in_lane.records();
             unsafe {
                 (*cx).registers = callee_registers;
                 (*cx).base = base;

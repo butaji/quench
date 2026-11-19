@@ -183,7 +183,7 @@ pub(in crate::vm) enum Event {
     Left,
     /// A run did not start code: the site is waiting for code, or the entry declined it.
     Declined,
-    /// A compilation of a loop region started (`lane_loop_compile`).
+    /// A compilation of a loop region started (`loop_compile_in_lane`).
     Compiled,
     /// A lane body compile started (a Cranelift function tier; none under `--b-jit`).
     BodyCompile,

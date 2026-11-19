@@ -29,7 +29,7 @@ pub(super) fn bind_stacks<H: Host>(vm: &mut Vm<H>, payload: &mut JsStepDispatch,
 /// `reclaim` follows the run.
 pub(super) unsafe fn lend<H: Host>(vm: &mut Vm<H>, payload: &mut JsStepDispatch, direct_calls: bool) -> *mut JsStepDispatch {
     bind_stacks(vm, payload, direct_calls);
-    let lane = unsafe { &raw mut (*lane_frame()).dispatch };
+    let lane = unsafe { &raw mut (*frame_in_lane()).dispatch };
     // A callee's leave inside a frame it inlined writes that frame's registers to the lane frame's
     // scratch window (`reserve_lane_scratch`), which the lane reads: a lending region inlines
     // nothing, so its payload names the lane's window.
@@ -48,5 +48,5 @@ pub(super) unsafe fn lend<H: Host>(vm: &mut Vm<H>, payload: &mut JsStepDispatch,
 /// `payload` is the one `lend` was given, after the run it lent for.
 pub(super) unsafe fn reclaim(payload: &mut JsStepDispatch) {
     // SAFETY: as `lend`.
-    unsafe { std::ptr::swap(payload, &raw mut (*lane_frame()).dispatch) };
+    unsafe { std::ptr::swap(payload, &raw mut (*frame_in_lane()).dispatch) };
 }
