@@ -36,13 +36,11 @@ impl Constant {
 }
 
 impl Function {
-    /// The function with its counted parts copied: its root masks (as derived so far) a fresh
-    /// allocation, its name bindings empty.
+    /// The function with its counted parts copied: its name bindings empty. Its register roots
+    /// hold no shared allocation (an entry bound only), so the clone copies them.
     fn detached(&self) -> Self {
         let mut function = self.clone();
         function.name_bindings = NameBindings::default();
-        let masks = self.register_roots.masks.get().map(|masks| std::rc::Rc::new((**masks).clone()));
-        function.register_roots.masks = masks.map_or_else(std::cell::OnceCell::new, std::cell::OnceCell::from);
         function
     }
 }
