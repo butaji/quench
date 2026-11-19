@@ -133,12 +133,26 @@ impl Object {
         self.set_meta((self.meta() & !PROTO_INDEX_BITS) | Self::encode_proto(proto));
     }
 
-    /// A change to what this object offers its inheritors, if it has any.
+    /// A change to what this object offers its inheritors, if it has any, made before it takes
+    /// effect: the watches and code on its values retire (`prototype_values::note_layout_change`),
+    /// and so do the proofs and the code whose chain holds it, through its subject (`ChainCell`,
+    /// `Dependencies::hold_layouts`). A prototype with no subject (a restored heap's, or a copy's)
+    /// is named by no cell, so the global epoch advances for the proofs still keyed by it, and
+    /// all code holding a prototype's value retires.
     #[inline(always)]
     pub(super) fn note_prototype_layout_change(&self) {
         if self.was_used_as_prototype() {
-            advance_prototype_layout_epoch();
+            self.note_watched_layout_change();
+        }
+    }
+
+    #[inline(never)]
+    fn note_watched_layout_change(&self) {
+        prototype_values::note_layout_change(self.exact_shape());
+        if self.watched_subject().is_some() {
             self.retire_watch();
+        } else {
+            advance_prototype_layout_epoch();
         }
     }
 

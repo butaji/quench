@@ -490,64 +490,6 @@ fn names(known: Known, row: Decoded) -> Decoded {
     }
 }
 
-/// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it
-/// is one a row cannot take.
-pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Option<Option<Decoded>> {
-    use crate::staged::{NumberOperation, Operation};
-    let copy = || Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Register(instruction.register_b())), None, None);
-    let plain = instruction.result_flags() == 0;
-    let number = |index: usize| numbers(index).map(|number| Constant::untyped(Value::number(number)));
-    let context = DecodeContext { constant_at: Some(&number), ..DecodeContext::EMPTY };
-    match Operation::<(), ()>::decode(instruction, context) {
-        Some(Operation::Move { .. }) => return Some(plain.then(copy)),
-        // A Number operand is its own numeric value: the loop's entry guards and its own rows prove
-        // it, and a function's row proves it itself (`checked`).
-        Some(Operation::Number(NumberOperation::ToNumeric { .. })) => return Some(plain.then(|| Decoded { checked: true, ..copy() })),
-        Some(Operation::Jump) => return Some(Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target())))),
-        Some(Operation::JumpIf { register, taken }) => return Some(Some(truthiness_jump(instruction, register, taken))),
-        // A comparison jump (`JumpBinaryFalse`): a Number relation, or `==`/`===` (`!=`/`!==`)
-        // of Numbers, which the loop's entry guards and its rows prove its operands are.
-        Some(Operation::CompareJump { comparison, left, right, negate: true }) => return Some(relation_jump(numbers, instruction, comparison, (left, right)).ok()),
-        // `!x`: the boolean of its truthiness.
-        Some(Operation::LogicalNot { destination, source }) =>
-            return Some(plain.then(|| Decoded::number(Kind::Not, Some(destination), Some(Source::Register(source)), None, None))),
-        // `++`/`--`: the int32 update by one (the row's overflow leaves, as the staged one does).
-        Some(Operation::Number(NumberOperation::IncDec { destination, source, decrement, .. })) => return Some(plain.then(|| Decoded::number(
-            if decrement { Kind::Sub } else { Kind::Add }, Some(destination), Some(Source::Register(source)),
-            Some(Source::Constant(Value::integer(1).to_bits())), None))),
-        _ => {}
-    }
-    // `-x` and `+x`: the Number unary the interpreter's operations name (`NumberUnary`).
-    if let Some(operation) = crate::vm::operations::NumberUnary::from_js_instruction(instruction.op(), instruction.unary_operator()) {
-        return Some(unary_row(instruction, operation).filter(|_| plain));
-    }
-    if let Some((destination, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
-        return Some(load_const(numbers, destination, index).ok().filter(|_| plain));
-    }
-    if !super::super::meaning_compiled::is_binary_arithmetic(instruction) {
-        return None;
-    }
-    Some(binary(numbers, instruction).ok().filter(|_| plain))
-}
-
-/// A jump on a register's truthiness: taken where it is truthy (`JumpTrue`) or falsy.
-fn truthiness_jump(instruction: WideInstruction) -> Decoded {
-    let kind = if matches!(staged_of(instruction), Some(Operation::JumpIf { taken: true, .. })) { Kind::JumpTrue } else { Kind::JumpFalse };
-    Decoded::number(kind, None, Some(Source::Register(instruction.register_a())), None, Some(instruction.jump_target()))
-}
-
-/// The row of a Number unary over a register: `-` the negation of a Number, `+` a Number as it
-/// is (proved, as `ToNumeric` is).
-fn unary_row(instruction: WideInstruction, operation: crate::vm::operations::NumberUnary) -> Option<Decoded> {
-    use crate::vm::operations::NumberUnary;
-    let (result, operand) = (instruction.result_register(), Some(Source::Register(instruction.register_b())));
-    let row = |kind| Decoded::number(kind, Some(result), operand, None, None);
-    Some(match operation {
-        NumberUnary::Negate => row(Kind::Neg),
-        NumberUnary::Plus => Decoded { checked: true, ..row(Kind::Move) },
-    })
-}
-
 /// Bits in a word's high half.
 pub(super) const HALF: u32 = 32;
 /// The high 32 bits of an int word.
