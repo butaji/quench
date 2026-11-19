@@ -1,6 +1,10 @@
 use super::*;
 use super::array_view::{Match, Search};
-use crate::staged::array_iteration::{self as step_rules, Effect, Kind};
+use crate::staged::array_iteration::{self as step_rules, Answer, Effect, Kind};
+
+/// The index a search answers when no element matches: `indexOf`, `lastIndexOf`, and a
+/// `findIndex` or `findLastIndex` whose callback passes none.
+const NOT_FOUND: f64 = -1.0;
 
 impl<H: Host> Vm<H> {
     pub(super) fn array_indexed_native(
@@ -81,7 +85,7 @@ impl<H: Host> Vm<H> {
         length: usize,
     ) -> Result<Value, JsError> {
         if length == 0 {
-            return Ok(Value::number(-1.0));
+            return Ok(Value::number(NOT_FOUND));
         }
         let from = match args.get(1) {
             None => length as isize - 1,
@@ -97,7 +101,7 @@ impl<H: Host> Vm<H> {
             }
         };
         if from < 0 {
-            return Ok(Value::number(-1.0));
+            return Ok(Value::number(NOT_FOUND));
         }
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
         self.strict_search(p, object, 0..from as usize + 1, true, search)
@@ -116,7 +120,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let first = match self.search_dense(object, range.clone(), reverse, search, Match::Strict) {
             Search::Found(index) => return Ok(Value::number(index as f64)),
-            Search::Missing => return Ok(Value::number(-1.0)),
+            Search::Missing => return Ok(Value::number(NOT_FOUND)),
             Search::Resume(index) => index,
         };
         let remaining = if reverse { first + 1 - range.start } else { range.end - first };
@@ -130,7 +134,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        Ok(Value::number(-1.0))
+        Ok(Value::number(NOT_FOUND))
     }
 
     /// Array.prototype.indexOf: the dense search (`dense_search_call`) first, which decides a
@@ -150,14 +154,14 @@ impl<H: Host> Vm<H> {
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {
-            return Ok(Value::number(-1.0));
+            return Ok(Value::number(NOT_FOUND));
         }
         let start = match args.get(1) {
             None => 0,
             Some(value) => {
                 let number = self.to_number(p, *value)?;
                 if number == f64::INFINITY {
-                    return Ok(Value::number(-1.0));
+                    return Ok(Value::number(NOT_FOUND));
                 }
                 crate::units::relative_index(number, length)
             }
@@ -417,7 +421,7 @@ impl<H: Host> Vm<H> {
     /// The effect of a callback's `mapped` result for `value` at `index` of `iteration`'s step
     /// (`staged::array_iteration::apply`), which advances a filter's kept count.
     #[inline(always)]
-    fn iteration_effect(&self, iteration: &mut ArrayIteration, index: usize, value: Value, mapped: Value) -> Effect {
+    pub(super) fn iteration_effect(&self, iteration: &mut ArrayIteration, index: usize, value: Value, mapped: Value) -> Effect {
         step_rules::apply(Kind::of(iteration.native), index, value, mapped, &mut iteration.kept, || self.truthy(mapped))
     }
 
@@ -425,7 +429,7 @@ impl<H: Host> Vm<H> {
     /// (`fresh_array_iteration`): its store and every answer run no guest code and raise
     /// nothing. The answer is the method's value where the step ends it.
     #[inline(always)]
-    fn apply_fresh_effect(&mut self, iteration: &mut ArrayIteration, effect: Effect) -> Option<Value> {
+    pub(super) fn apply_fresh_effect(&mut self, iteration: &mut ArrayIteration, effect: Effect) -> Option<Value> {
         match effect {
             Effect::Nothing => None,
             Effect::Store { slot, value } => {
@@ -437,6 +441,7 @@ impl<H: Host> Vm<H> {
                 None
             }
             Effect::End(value) => Some(value),
+            Effect::EndIndex(index) => Some(Value::number(index as f64)),
         }
     }
 
@@ -519,7 +524,10 @@ impl ArrayIteration {
     /// (`staged::array_iteration::completion`).
     #[inline(always)]
     pub(super) fn completion(&self) -> Value {
-        step_rules::completion(Kind::of(self.native), self.result)
+        match step_rules::completion(Kind::of(self.native), self.result) {
+            Answer::Value(value) => value,
+            Answer::NotFoundIndex => Value::number(NOT_FOUND),
+        }
     }
 }
 

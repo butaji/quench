@@ -7,10 +7,6 @@
 
 use crate::Value;
 
-/// The completion value of `Array.prototype.findIndex` and `findLastIndex` when no element
-/// passes.
-const NOT_FOUND: f64 = -1.0;
-
 /// The array callback method an iteration runs, as plain data.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
@@ -50,6 +46,18 @@ pub(crate) enum Effect {
     Accumulate(Value),
     /// The step ends the method with `value`.
     End(Value),
+    /// The step ends the method with the number of `index`, a findIndex's answer.
+    EndIndex(usize),
+}
+
+/// The method's answer once every element was visited without a step ending it.
+#[derive(Clone, Copy)]
+pub(crate) enum Answer {
+    /// The method's value.
+    Value(Value),
+    /// `findIndex` and `findLastIndex` found no element: the answer is -1, which the vm builds as
+    /// a number.
+    NotFoundIndex,
 }
 
 /// Whether the kind visits its elements from the end: `findLast`, `findLastIndex` and
@@ -132,7 +140,7 @@ pub(crate) fn apply(
         Kind::Every => if truthy() { Effect::Nothing } else { Effect::End(Value::FALSE) },
         Kind::Find | Kind::FindLast => if truthy() { Effect::End(element) } else { Effect::Nothing },
         Kind::FindIndex | Kind::FindLastIndex => {
-            if truthy() { Effect::End(Value::number(index as f64)) } else { Effect::Nothing }
+            if truthy() { Effect::EndIndex(index) } else { Effect::Nothing }
         }
     }
 }
@@ -140,12 +148,12 @@ pub(crate) fn apply(
 /// The method's value once every element was visited without a step ending it: the result for
 /// the methods that make one, else the answer the method gives when no element ended it.
 #[inline(always)]
-pub(crate) fn completion(kind: Kind, result: Value) -> Value {
+pub(crate) fn completion(kind: Kind, result: Value) -> Answer {
     match kind {
-        Kind::Map | Kind::Filter | Kind::Reduce | Kind::ReduceRight => result,
-        Kind::Some => Value::FALSE,
-        Kind::Every => Value::TRUE,
-        Kind::FindIndex | Kind::FindLastIndex => Value::number(NOT_FOUND),
-        Kind::ForEach | Kind::Find | Kind::FindLast => Value::UNDEFINED,
+        Kind::Map | Kind::Filter | Kind::Reduce | Kind::ReduceRight => Answer::Value(result),
+        Kind::Some => Answer::Value(Value::FALSE),
+        Kind::Every => Answer::Value(Value::TRUE),
+        Kind::FindIndex | Kind::FindLastIndex => Answer::NotFoundIndex,
+        Kind::ForEach | Kind::Find | Kind::FindLast => Answer::Value(Value::UNDEFINED),
     }
 }

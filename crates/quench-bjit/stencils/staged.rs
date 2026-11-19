@@ -38,6 +38,7 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/ic.rs"] pub(crate) mod ic;
 #[path = "../../quench-runtime/src/staged/slot_store.rs"] pub(crate) mod slot_store;
 #[path = "../../quench-runtime/src/staged/iteration.rs"] pub(crate) mod iteration;
+#[path = "../../quench-runtime/src/staged/array_iteration.rs"] pub(crate) mod array_iteration;
 #[path = "../../quench-runtime/src/staged/add.rs"] pub(crate) mod add;
 #[path = "../../quench-runtime/src/staged/naming.rs"] pub(crate) mod naming;
 // The Wasm rows' machine layer: the staged Wasm rules and the concrete machine they run on, so a
