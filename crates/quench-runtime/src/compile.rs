@@ -4342,7 +4342,7 @@ impl<'a> Compiler<'a> {
             registers: function.max_reg,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            caches: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
             lazy_flags: Default::default(),
             call_plan: Default::default(),
             handlers: function.handlers.into(),

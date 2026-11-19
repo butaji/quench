@@ -1224,18 +1224,55 @@ const HOT_DECODE_ENTRIES: u32 = 64;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HotDecoding {
-    /// Entries counted so far, saturating at `HOT_DECODE_ENTRIES`. The expansion lives in
-    /// `FunctionCaches::hot_code`; `Function::on_entry` reads both.
     entries: std::cell::Cell<u32>,
+    // A thin pointer: every `Function` pays for this field, almost all stay cold.
+    #[allow(clippy::box_collection)]
+    code: std::cell::OnceCell<Box<Vec<WideInstruction>>>,
 }
 
 impl HotDecoding {
+    /// Counts one entry and returns the expanded code once the function is hot.
+    #[inline(always)] pub(crate) fn on_entry(
+        &self,
+        code: &[Instr],
+        wide: &[WideInstruction],
+    ) -> Option<&[WideInstruction]> {
+        if let Some(decoded) = self.code.get() {
+            return Some(decoded);
+        }
+        let entries = self.entries.get() + 1;
+        self.entries.set(entries);
+        if entries >= HOT_DECODE_ENTRIES {
+            return Some(self.expand(code, wide));
+        }
+        None
+    }
+
     /// Makes a function whose code loops expand on its first entry. Priming at installation
     /// leaves the entry path itself unchanged.
     pub(crate) fn prime_loop(&self, code: &[Instr], wide: &[WideInstruction]) {
         if self.entries.get() == 0 && back_edges_of(code.iter().map(|&packed| widen(packed, wide))).next().is_some() {
             self.entries.set(HOT_DECODE_ENTRIES - 1);
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn expand(&self, code: &[Instr], wide: &[WideInstruction]) -> &[WideInstruction] {
+        self.code
+            .get_or_init(|| {
+                code.iter()
+                    .map(|packed| {
+                        if packed.is_wide() {
+                            wide[packed.wide_index()]
+                        } else {
+                            packed.as_wide()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .into()
+            })
+            .as_slice()
     }
 }
 
@@ -1396,6 +1433,9 @@ pub struct Function {
     pub(crate) dispatch: DispatchClass,
     /// Fixed-width view of `code`, derived once the function proves hot.
     pub(crate) decoded: HotDecoding,
+    /// Lazily derived `plain_local_slots`; never serialized. Read on every interpreter local operand,
+    /// so it stays inline rather than behind `caches`.
+    pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<u64>>,
     /// The lazily derived booleans (`LazyFlag`), each a known bit and a value bit; never serialized.
     pub(crate) lazy_flags: std::cell::Cell<u16>,
     /// The caches a call or a collection fills, boxed by the first fill (`caches`); never serialized.
@@ -3186,7 +3226,7 @@ impl Function {
     /// The memoized `plain_local_slots` projection for this residual's atoms.
     #[inline(always)] pub(crate) fn plain_local(&self, tables: &impl FactTables, slot: usize) -> bool {
         let words =
-            self.caches().plain_locals.get_or_init(|| self.plain_local_slots(tables.superinstructions()).words().to_vec().into());
+            self.plain_locals.get_or_init(|| self.plain_local_slots(tables.superinstructions()).words().to_vec().into());
         crate::bitset::words_contain(words, slot)
     }
 

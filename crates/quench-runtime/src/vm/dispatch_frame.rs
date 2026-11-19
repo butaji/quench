@@ -183,7 +183,7 @@ impl<H: Host> Vm<H> {
         // loop reads its packed code there, without a second, expanded copy.
         let lane_runs_wasm = !view.is_null() && program.kind == crate::bytecode::ProgramKind::Wasm;
         let decoded = if interprets && !lane_runs_wasm {
-            function_code.on_entry()
+            function_code.decoded.on_entry(&function_code.code, &function_code.wide)
         } else {
             None
         };
@@ -514,7 +514,7 @@ impl<H: Host> Vm<H> {
             decoded: if !view.is_null() && p.kind == crate::bytecode::ProgramKind::Wasm {
                 std::ptr::null()
             } else {
-                body.on_entry().map_or(std::ptr::null(), <[WideInstruction]>::as_ptr)
+                body.decoded.on_entry(&body.code, &body.wide).map_or(std::ptr::null(), <[WideInstruction]>::as_ptr)
             },
             lane: view,
             back_edges: None,

@@ -1192,7 +1192,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
             return;
         }
         let computed;
-        let plain: &[u64] = match function.cached_plain_locals() {
+        let plain: &[u64] = match function.plain_locals.get() {
             Some(words) => &words[..],
             None => {
                 computed = function.plain_local_slots(superinstructions);
@@ -1487,7 +1487,8 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             registers,
             dispatch,
             decoded: Default::default(),
-            caches: if packed { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(Box::new(super::FunctionCaches { plain_locals: std::cell::OnceCell::from(plain_locals), ..Default::default() })) },
+            plain_locals: if packed { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(plain_locals) },
+            caches: Default::default(),
             lazy_flags: Default::default(),
             call_plan: Default::default(),
             handlers: handlers.into(),

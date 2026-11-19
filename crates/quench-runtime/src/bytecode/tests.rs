@@ -205,7 +205,7 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             registers: 1,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            caches: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
             lazy_flags: Default::default(),
             call_plan: Default::default(),
             handlers: vec![].into(),
@@ -324,7 +324,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             registers: 1,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            caches: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
             lazy_flags: Default::default(),
             call_plan: Default::default(),
             handlers: vec![].into(),
@@ -881,11 +881,11 @@ fn load_encoded_records_decode_as_records_compiled_again() {
 }
 
 /// The function record's budget. Estimated from 368 bytes: the eight lazy booleans share one
-/// `u16` (-14), plain locals, declared atom sets, initializer and register masks move behind
-/// `Function::caches` (-32, one pointer +8 added), the hot expansion's pointer moves behind it
-/// too (`HotDecoding` 16 -> 4, -12), and `SourcePositions` boxes its bytes (48 -> 40, -8).
-/// Net -58, so 310.
-const FUNCTION_RECORD_BUDGET: usize = 310;
+/// `u16` (-14), declared atom sets, initializer and register masks move behind `Function::caches`
+/// (-24 net of its +8 pointer), and `SourcePositions` boxes its bytes (48 -> 40, -8). Plain
+/// locals and the hot expansion's pointer stay inline, where their hot-path reads need them.
+/// Net -38, so 330.
+const FUNCTION_RECORD_BUDGET: usize = 330;
 
 #[test]
 fn function_record_stays_within_its_size_budget() {

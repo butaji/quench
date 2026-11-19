@@ -55,7 +55,7 @@ fn function_of(code: Vec<Instr>, registers: u16, handlers: Vec<crate::bytecode::
         lexical_atoms: vec![].into(), name_bindings: Default::default(),
         binding_sites: vec![].into(), source_positions: Default::default(), environment_clones: vec![].into(), code,
         wide: vec![], registers, dispatch: crate::bytecode::DispatchClass::General, decoded: Default::default(),
-        caches: Default::default(),
+        plain_locals: Default::default(), caches: Default::default(),
         lazy_flags: Default::default(), call_plan: Default::default(),
         handlers: handlers.into(), register_roots: Default::default(), undefined_register: None,
         parameter_registers: None, initial_register: Default::default(),
