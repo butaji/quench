@@ -450,7 +450,6 @@ int main(int argc, char **argv) {
   snprintf(path, sizeof path, "%s/web-ssr/dist/bundle.min.js", root);
   size_t bn;
   char *bundle = js_read_file(path, &bn);
-  build_wines();
   JsContext ctx;
   js_context_init(&ctx);
   double total = 0;
@@ -464,6 +463,7 @@ int main(int argc, char **argv) {
     size_t tokens = 0;
     js_parse(&ctx, src, n, 0, &tokens);                  /* compile the iteration's bundle */
     free(src);
+    build_wines();                                       /* WINE_DATA is built on each module load */
     OutBuf ob = {0};
     bool prev = false;
     RNode *list = c_wine_list();
