@@ -337,7 +337,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             ));
         }
 
-        let lazy_params = (!r#async && self.options.lazy_body_skim.is_some() && self.lazy_start(start)).then(|| self.checkpoint());
+        let lazy_params = (!r#async && self.options.lazy_body_skim.is_some() && self.options.lazy_skim_arrows && self.lazy_start(start)).then(|| self.checkpoint());
         let (this_param, params) = self.parse_formal_parameters(
             FunctionKind::Expression,
             FormalParameterKind::ArrowFormalParameters,

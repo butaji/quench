@@ -72,15 +72,19 @@ impl ParsedProgramShape<'_> {
     /// A script's arrows stay eager: stubbed too, babel-wtb's load fell from 421 to 361 Ir per
     /// source byte, but its module arrows mostly run, and their chunks' second parse made the
     /// whole run cost more (first 5.66 -> 5.90 G Ir, steady 1.79 -> 1.91 G, Nov 18).
+    ///
+    /// Their bodies are skimmed where the skim takes them (`Stubbing::skim`): a direct eval's and a
+    /// script's, whose bodies the skim declines parse whole and are checked (a script) or left
+    /// unchecked (a direct eval, whose chunks check their own text).
     pub(super) fn stubbing(self, replayable: bool, source_bytes: usize, module: bool) -> Stubbing {
         if matches!(self, Self::FirstCallChunk(_)) {
-            return Stubbing { functions: true, arrows: true };
+            return Stubbing { functions: true, arrows: true, skim: true };
         }
         let eval = matches!(self, Self::Eval(..));
         let direct = eval && !replayable && (source_bytes >= DIRECT_EVAL_STUB_BYTES || crate::trace::Dev::DirectEvalStubs.on());
         let script = matches!(self, Self::FirstCallScript) && !module && source_bytes >= FIRST_CALL_SCRIPT_BYTES;
         let dynamic = matches!(self, Self::DynamicFunction { .. }) && source_bytes >= FIRST_CALL_SCRIPT_BYTES;
-        Stubbing { functions: (eval || script) && replayable || direct || dynamic, arrows: direct }
+        Stubbing { functions: (eval || script) && replayable || direct || dynamic, arrows: direct, skim: direct || script }
     }
 
     /// Where in the source lazily parsed bodies begin (`lazy_bodies::parse`): past a chunk's
@@ -125,6 +129,11 @@ const FIRST_CALL_SCRIPT_BYTES: usize = 5 << 20;
 #[derive(Clone, Copy)]
 pub(super) struct Stubbing {
     pub(super) functions: bool,
-    /// Arrow functions too, and the parser leaves the bodies it does not skim whole.
+    /// Arrow functions may compile on first call too (a direct eval's, and its chunks'), so the
+    /// skim may take their bodies (`BodyFacts::skim`); otherwise they parse whole.
     pub(super) arrows: bool,
+    /// The lazily parsed bodies are skimmed where the skim takes them (`BodyFacts::skim`), a
+    /// body it declines parsing whole. Independent of `arrows`: a script skims its functions
+    /// but keeps its arrows eager, and checks what the skim declines.
+    pub(super) skim: bool,
 }

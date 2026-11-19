@@ -21,6 +21,12 @@ pub(in crate::compile) struct BodyFacts {
     pub(in crate::compile) call_only_deferred: bool,
     /// Arrow functions' bodies may be taken (`first_call::Stubs::arrows`).
     arrows: bool,
+    /// The bodies the skim takes where it decides them (`parse_collecting`), a body it declines
+    /// parsing whole and checked, unless `arrows` (a direct eval's, unchecked).
+    skim: bool,
+    /// The skimmed bodies a script may stream (`statement_stream`), which only a check finds: a
+    /// body of `STREAM_MIN_BODY` bytes or more is declined by the skim.
+    streams: bool,
     /// The functions whose call-only facts are found, by source range.
     pub(in crate::compile) call_only_found: Vec<(u32, u32)>,
     next_private_id: u32,
@@ -44,9 +50,13 @@ pub(in crate::compile) struct BodyFacts {
 }
 
 impl BodyFacts {
-    /// No facts yet, the call-only ones `deferred` or not, arrow functions' bodies taken or not.
-    pub(in crate::compile) fn deferring(call_only_deferred: bool, arrows: bool) -> Self {
-        Self { call_only_deferred, arrows, ..Self::default() }
+    /// No facts yet, for a source compiled as `stubbing` says: its call-only facts deferred where
+    /// its functions compile on first call, its arrow functions' bodies taken, its bodies skimmed.
+    pub(in crate::compile) fn deferring(stubbing: crate::compile::program_shape::Stubbing) -> Self {
+        // A direct eval's streamed roots are none (its source is not replayable), so only a
+        // script's large bodies are declined.
+        let streams = stubbing.skim && !stubbing.arrows;
+        Self { call_only_deferred: stubbing.functions, arrows: stubbing.arrows, skim: stubbing.skim, streams, ..Self::default() }
     }
 
     /// Checks one function the parser hands over before releasing its body
@@ -108,17 +118,25 @@ impl BodyFacts {
         true
     }
 
-    /// Takes a function whose body the parser skimmed (`ParseOptions::lazy_body_skim`, given only
-    /// where a direct eval's functions and arrows compile on first call, `parse_collecting`):
-    /// valid, with its free names. A function about to be called where it is made, or whose
-    /// names it cannot bound inside a function, is declined and its body parses whole.
+    /// Takes a function whose body the parser skimmed (`ParseOptions::lazy_body_skim`, given where
+    /// the functions compile on first call, `parse_collecting`): valid, with its free names. A
+    /// function about to be called where it is made, or whose names it cannot bound inside a
+    /// function, is declined and its body parses whole. A script's large body is declined too
+    /// (`streams`): it may stream, which only its check finds. A skimmed body has no facts of
+    /// its own: it is not checked (its first-call chunk checks its text), and its call-only facts
+    /// and streams are found where it compiles.
     pub(in crate::compile) fn skim(&mut self, body: oxc_parser::SkimmedBody<'_>, text: &str) -> bool {
         #[cfg(feature = "aot")]
         if self.native_source_requests.is_some() {
             return false;
         }
         let names = crate::compile::first_call::skimmed_free_names(&body);
-        if self.failed || body.arrow && !self.arrows || body.in_function && names.is_none() || crate::compile::call_only::invoked_where_made(text, body.end) {
+        if self.failed
+            || body.arrow && !self.arrows
+            || body.in_function && names.is_none()
+            || self.streams && body.end.wrapping_sub(body.start) >= crate::compile::statement_stream::STREAM_MIN_BODY
+            || crate::compile::call_only::invoked_where_made(text, body.end)
+        {
             return false;
         }
         if let Some(names) = names {
@@ -283,9 +301,11 @@ impl<'a> oxc_ast_visit::Visit<'a> for ReleasedInside<'_> {
 }
 
 /// `source` parsed as a compilation parses it, the bodies of its functions starting at or
-/// after `lazy` released when set. Where a direct eval's functions and arrows compile on first call (`arrows`), each
-/// body is skimmed into `facts` and one the skim declines parses whole; otherwise each is
-/// checked, recognized without its tree where it can be (`recognize`).
+/// after `lazy` released when set. Where the functions compile on first call (`skim`), each
+/// body is skimmed into `facts` where the skim takes it. A body the skim declines parses whole,
+/// and is checked and recognized without its tree where it can be (`recognize`), unless the
+/// arrows compile on first call too (`arrows`: a direct eval's, whose declined bodies stay
+/// unchecked, as its chunks check them).
 pub(in crate::compile) fn parse_collecting<'a>(
     allocator: &'a Allocator,
     source: &'a str,
@@ -297,10 +317,13 @@ pub(in crate::compile) fn parse_collecting<'a>(
     recognize: crate::compile::annex_b_targets::Recognize,
     #[cfg(feature = "aot")] global_script_calls: &[(String, String)],
 ) -> oxc_parser::ParserReturn<'a> {
-    let direct = lazy.is_some() && facts.borrow().arrows;
+    let (direct, skimming) = {
+        let facts = facts.borrow();
+        (lazy.is_some() && facts.arrows, lazy.is_some() && facts.skim)
+    };
     let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.borrow_mut().check(body, #[cfg(feature = "aot")] global_script_calls);
     let mut skim = |body: oxc_parser::SkimmedBody<'_>| facts.borrow_mut().skim(body, source);
     // SAFETY: `check` and `skim` live through the parse, which alone calls them.
-    let (check, skim) = unsafe { ((lazy.is_some() && !direct).then(|| oxc_parser::LazyBodyCheck::new(&mut check)), direct.then(|| oxc_parser::LazyBodySkim::new(&mut skim))) };
+    let (check, skim) = unsafe { ((lazy.is_some() && !direct).then(|| oxc_parser::LazyBodyCheck::new(&mut check)), skimming.then(|| oxc_parser::LazyBodySkim::new(&mut skim))) };
     super::parse(allocator, source, source_type, lazy, check, skim, inherited_strict, true, recognize, None, Some(declared))
 }
