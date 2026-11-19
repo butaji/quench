@@ -131,7 +131,7 @@ const fn str_eq(left: &str, right: &str) -> bool {
 // the runtime's families expand the same lists, and `wasm_codes_check.rs` asserts each count equals
 // its family's.
 macro_rules! i64_binary_counts {
-    ($aliases:tt, $arguments:tt; $($name:ident, $i32:ident, $i64:ident => $body:expr;)+ @i64 $($wide:ident, $wide_wasm:ident => $wide_body:expr;)+) => {
+    ($aliases:tt, $arguments:tt; $($name:ident, $i32:ident, $i64:ident [$($machine:tt)+] => $body:expr;)+ @i64 $($wide:ident, $wide_wasm:ident [$($wide_machine:tt)+] => $wide_body:expr;)+) => {
         /// The i32 operators' count: the shared operators, which the i64 family starts with.
         pub const SHARED_BINARY: u32 = [$(stringify!($name)),+].len() as u32;
         pub const BINARY_COUNT: u32 = [$(stringify!($name),)+ $(stringify!($wide),)+].len() as u32;
