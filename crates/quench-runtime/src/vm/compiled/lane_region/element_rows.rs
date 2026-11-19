@@ -194,3 +194,8 @@ impl Lowering<'_, '_> {
         true
     }
 }
+
+/// Whether the element write `instruction` is strict code's, whose refused store raises (`Operation::ElementWrite::strict`).
+fn element_write_strict(instruction: WideInstruction) -> bool {
+    matches!(crate::vm::compiled::decoded(instruction), Some(Operation::ElementWrite { strict: true, .. }))
+}
