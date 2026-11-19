@@ -112,6 +112,8 @@ mod wasm_gc_stage;
 mod wasm_gc_allocate;
 use self::wasm_gc_allocate::allocating_reads;
 mod wasm_exception_stage;
+mod wasm_catch;
+mod plan_report;
 mod wasm_gc_callout;
 mod wasm_instance_switch;
 mod wasm_roots;
@@ -5240,10 +5242,10 @@ struct Plan {
     /// Per instruction, the operand registers of an allocating GC step (`allocating_reads`) with
     /// their kinds, which the allocation callout converts; empty elsewhere.
     gc_reads: Vec<Vec<(u16, Kind)>>,
-    /// The frame's registers: its locals are the registers after them (`staged::wasm_instance::local_register`).
+    /// The frame's registers: a local is the register past them (`local_register`).
     registers: u16,
-    /// Per instruction, the catch a raise there enters: the handler covering it (`catch_sites`).
-    catches: Vec<Option<wasm_exception_stage::Catch>>,
+    /// Per instruction, the catch a raise there enters (`wasm_catch::catch_frame`).
+    catches: Vec<Option<wasm_catch::Catch>>,
 }
 
 impl Plan {
@@ -5269,20 +5271,6 @@ impl Plan {
     /// The selected operand fact of reachable instruction `pc`.
     fn operand(&self, pc: usize) -> Slot {
         self.operands[pc].expect("reachable")
-    }
-}
-
-/// Joins `incoming` into the state at `target`, queueing `target` where its state changed.
-fn join_state(states: &mut [Option<AnalysisState>], work: &mut Vec<usize>, target: usize, incoming: AnalysisState) {
-    let changed = match &mut states[target] {
-        Some(existing) => existing.join_from(&incoming),
-        slot @ None => {
-            *slot = Some(incoming);
-            true
-        }
-    };
-    if changed {
-        work.push(target);
     }
 }
 
@@ -5530,11 +5518,7 @@ impl<H: Host> Analysis<'_, H> {
         let mut states: Vec<Option<AnalysisState>> = vec![None; instructions.len()];
         states[0] = Some(entry);
         let mut work = vec![0usize];
-        let Some(catches) = wasm_exception_stage::catch_sites(function) else {
-            self.reject(index, || "unsupported-handler".into());
-            return None;
-        };
-        let bound = function.registers.checked_add(function.locals)?;
+        let (catches, bound) = wasm_catch::catch_frame(function)?;
         while let Some(pc) = work.pop() {
             let instruction = instructions[pc];
             let mut state = states[pc]
@@ -5548,7 +5532,7 @@ impl<H: Host> Analysis<'_, H> {
                 self.reject(index, || format!("uncompiled-callee:{callee}@{pc}"));
                 return None;
             }
-            let before = catches[pc].map(|_| state.clone());
+            wasm_catch::raise_edge(&mut states, &mut work, catches[pc], &state, bound)?;
             if self
                 .transfer(
                     function,
@@ -5563,9 +5547,6 @@ impl<H: Host> Analysis<'_, H> {
                 let op = instruction.op();
                 self.reject(index, || format!("unsupported-instruction:{op:?}@{pc}"));
                 return None;
-            }
-            if let (Some(catch), Some(before)) = (catches[pc], before) {
-                join_state(&mut states, &mut work, catch.target, catch.entry(before, bound)?);
             }
             for successor in successors(function, pc, instruction) {
                 if successor >= instructions.len() {
@@ -5636,30 +5617,7 @@ impl<H: Host> Analysis<'_, H> {
             })
             .collect();
         if let Some(started) = plan_started {
-            let reachable = states.iter().flatten().count();
-            let stored_slots: usize = states.iter().flatten().map(|state| state.slots.len()).sum();
-            let slot_capacity: usize = states
-                .iter()
-                .flatten()
-                .map(|state| state.slots.capacity())
-                .sum();
-            let dense_state_bytes = reachable
-                .saturating_mul(registers)
-                .saturating_mul(std::mem::size_of::<Slot>());
-            let sparse_state_bytes = states
-                .len()
-                .saturating_mul(std::mem::size_of::<Option<AnalysisState>>())
-                .saturating_add(slot_capacity.saturating_mul(std::mem::size_of::<(u16, Slot)>()));
-            let memory_after = jit_memory_snapshot();
-            eprintln!(
-                "QUENCH_WASM_JIT_PLAN_MEMORY function={index} bytecodes={} registers={registers} reachable={reachable} stored_slots={stored_slots} dense_state_bytes={dense_state_bytes} sparse_state_bytes={sparse_state_bytes} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
-                instructions.len(),
-                started.elapsed().as_micros(),
-                memory_before.map(|memory| memory.0),
-                memory_after.map(|memory| memory.0),
-                memory_before.map(|memory| memory.1),
-                memory_after.map(|memory| memory.1),
-            );
+            plan_report::report(index, started, memory_before, instructions.len(), registers, &states);
         }
         Some(Plan {
             params,
@@ -6580,15 +6538,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.body.core.builder.seal_block(next);
     }
 
-    /// Leaves the activation with the raised `status` and a zero result.
-    fn leave_raised(&mut self, status: ir::Value) {
-        let mut values = vec![status];
-        if let Some(ty) = self.plan.result {
-            values.push(self.raw_const(Kind::of(ty).expect("planned").lane(), 0));
-        }
-        self.leave(&values);
-    }
-
     /// An imported call: arguments go to the VM in a stack array, through
     /// the context's callout.
     fn callout(&mut self, pc: usize, instruction: WideInstruction) {
@@ -7219,9 +7168,7 @@ impl<'a, H: Host> Analysis<'a, H> {
                     emitter.block(target);
                 }
             }
-            if let Some(catch) = plan.catches[pc] {
-                emitter.block(catch.target);
-            }
+            if let Some(catch) = plan.catches[pc] { emitter.block(catch.target); }
         }
         let mut open = false;
         for (pc, instruction) in instructions.iter().copied().enumerate() {

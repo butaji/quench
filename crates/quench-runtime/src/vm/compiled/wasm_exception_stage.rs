@@ -6,24 +6,21 @@
 //! at the callout's boundary (`operand_value`), and the status is 0 when the operation ran, else the
 //! status a raised error leaves with (`finish_callout`), which `propagate` carries out.
 //!
-//! A try region is compiled natively: a raised status at a pc a handler covers (`catch_sites`) takes
-//! the handler's edge, not the activation's exit (`catch_raised`). The thrown value is the error the
-//! call left raised, made by the catch callout (`catches`); a trap or a termination is never caught,
-//! and a `throw_ref` raises through the same edge. The handler's entry state binds that value to
-//! its frame local (`Catch::entry`). What is not lowered: a `payload` read. Its result's kind is the
-//! caught tag's parameter type, which the bytecode does not name, so the analysis rejects it.
+//! A raised status at a pc a handler covers takes the handler's edge (`wasm_catch`), not the
+//! activation's exit: a throw, and a call whose callee raised. What is not lowered: a `payload` read.
+//! Its result's kind is the caught tag's parameter type, which the bytecode does not name, so the
+//! analysis rejects it.
 //!
 //! No frame roots anything across the construction: an allocation only makes a collection due, and
 //! a collection runs at an interpreter safepoint, which the callout does not reach.
 
 use super::wasm_gc_allocate::operand_value;
 use super::wasm_instance_stage::value_kind;
-use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, RAISED_STATUS, Raised, Slot, Value, Vm, finish_callout};
-use crate::bytecode::{Function, Handler, ThrownValueSlot, WideInstruction};
-use crate::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _, MachineStage as _};
+use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, Slot, Value, Vm, finish_callout};
+use crate::bytecode::{Function, WideInstruction};
+use crate::staged::machine::{MachineAccess as _, MachineStage as _};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_exception::Exception;
-use crate::staged::wasm_instance::local_register;
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::tag::ExceptionInput;
 use cranelift_codegen::ir::{self, MemFlagsData};
@@ -136,73 +133,6 @@ unsafe extern "C" fn exception_match_callout<H: Host>(
     }
 }
 
-/// The catch a handler makes: the pc its thrown value goes to, and the register that holds it (the
-/// frame local the handler binds, `Function::handler_at`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Catch {
-    pub(super) target: usize,
-    pub(super) local: u16,
-}
-
-impl Catch {
-    /// The state a handler is entered in from `state`, which holds the thrown value as a reference
-    /// in its local (`bound` is the frame's registers and locals).
-    pub(super) fn entry(self, mut state: AnalysisState, bound: u16) -> Option<AnalysisState> {
-        state.set(self.local, bound, Slot::Value(Kind::Reference))?;
-        Some(state)
-    }
-}
-
-/// The catch of each pc of `function`, or `None` where a handler is not one a Wasm function lowers:
-/// a binding that is not a frame local, a `finally` return, or a target past the code.
-pub(super) fn catch_sites(function: &Function) -> Option<Vec<Option<Catch>>> {
-    (0..function.code.len())
-        .map(|pc| match function.handler_at(u32::try_from(pc).ok()?) {
-            None => Some(None),
-            Some(handler) => catch_of(function, handler).map(Some),
-        })
-        .collect()
-}
-
-/// The catch of a handler of a Wasm function.
-fn catch_of(function: &Function, handler: Handler) -> Option<Catch> {
-    let Some(ThrownValueSlot::Local(slot)) = handler.slot else {
-        return None;
-    };
-    let target = usize::try_from(handler.target).ok().filter(|target| *target < function.code.len())?;
-    (handler.return_target.is_none() && handler.with_depth == 0).then_some(())?;
-    Some(Catch { target, local: local_register(function.registers, u32::from(slot)) })
-}
-
-/// Whether a handler catches `error`: a Wasm exception, or a JavaScript exception, which `catch_all`
-/// and `WebAssembly.JSTag` catch. A trap, a link failure and a termination are never caught.
-fn catches(error: &JsError) -> bool {
-    !error.is_execution_terminated() && (error.wasm_exception().is_some() || error.is_javascript_exception())
-}
-
-/// The catch of a raised `status` (`exception_catch_callout`'s contract, see `Emitter::catch_raised`):
-/// the error a handler catches leaves the context and its thrown value goes to `out`, and the
-/// status is 0. Otherwise `status` returns unchanged and the error stays raised.
-unsafe extern "C" fn exception_catch_callout<H: Host>(context: *mut CallContext, status: i64, out: *mut u64) -> i64 {
-    // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let context = unsafe { &mut *context };
-    let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
-    let caught = status == RAISED_STATUS && matches!(&context.raised, Some(Raised::Error(error)) if catches(error));
-    if !caught {
-        return status;
-    }
-    let Some(program) = vm.programs.get(context.program) else {
-        return status;
-    };
-    let Some(Raised::Error(error)) = context.raised.take() else {
-        return status;
-    };
-    let value = vm.thrown_value_for(&program, error);
-    // SAFETY: the emitted code gives `out` a word of its own for this call.
-    unsafe { *out = value.to_bits() };
-    0
-}
-
 /// `throw_ref` of `exception`: the error it raises is left in the context, and the status is the
 /// raised one. It always returns that status.
 unsafe extern "C" fn exception_throw_callout<H: Host>(context: *mut CallContext, exception: u64) -> i64 {
@@ -302,31 +232,5 @@ impl<H: Host> Emitter<'_, '_, H> {
         let status = self.call_leaf(target, &[context, exception]);
         self.propagate(status);
         self.leave_raised(status);
-    }
-
-    /// The catch of a raised `status` by `catch`: where the handler catches the error the call left
-    /// raised, the error leaves the context and its thrown value binds to the handler's local, which
-    /// control enters. Otherwise the status leaves the activation (`leave_raised`).
-    pub(super) fn catch_raised(&mut self, status: ir::Value, catch: Catch) {
-        let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot,
-            WORD as u32,
-            WORD.trailing_zeros() as u8,
-        ));
-        let context = self.body.core.context;
-        let out = self.slot_address(slot, 0);
-        let target = exception_catch_callout::<H> as *const () as usize;
-        let caught = self.call_leaf(target, &[context, status, out]);
-        let uncaught = self.body.core.builder.create_block();
-        let handled = self.body.core.builder.create_block();
-        self.branch_if(caught, (uncaught, &[]), (handled, &[]));
-        self.body.core.builder.switch_to_block(uncaught);
-        self.body.core.builder.seal_block(uncaught);
-        self.leave_raised(caught);
-        self.body.core.builder.switch_to_block(handled);
-        self.body.core.builder.seal_block(handled);
-        let bits = self.load_word(Width::I64, MemFlagsData::trusted(), out, 0);
-        self.write(catch.local, Kind::Reference, bits);
-        self.jump(catch.target, false);
     }
 }

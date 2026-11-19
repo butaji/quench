@@ -223,6 +223,8 @@ pub(crate) enum FieldLayout {
     BinaryOperator,
     /// A 16-bit two's-complement operand carried in the instruction.
     SignedConstant,
+    /// The payload type a Wasm exception field read carries (`staged::wasm_exception::PayloadType`).
+    WasmPayloadType,
 }
 
 #[cfg(feature = "aot")]
@@ -281,7 +283,8 @@ impl FieldLayout {
             | Self::WideIndexChunk
             | Self::BooleanFlag
             | Self::BinaryOperator
-            | Self::SignedConstant => BindingTime::Static,
+            | Self::SignedConstant
+            | Self::WasmPayloadType => BindingTime::Static,
         }
     }
 }
@@ -1103,7 +1106,7 @@ opcodes!($;
 
     WasmExceptionNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmExceptionMatch => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmExceptionPayload => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmExceptionFieldIndex, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmExceptionPayload => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmExceptionFieldIndex, @ Register, @ fields(ResultRegister, Register, WasmPayloadType),
     WasmThrowRef => Effect::READS_HEAP.union(Effect::THROWS).union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
     WasmStructNewDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmStructNewDefaultDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
