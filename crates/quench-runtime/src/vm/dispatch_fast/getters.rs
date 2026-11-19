@@ -8,7 +8,7 @@ script_handler! {
     /// hint (`AccessorCall::hold_getter_hint`). A getter the answer declines takes `lane_get_field_getter`.
     #[inline(never)]
     pub(super) fn row_get_field_getter_refresh<>(cx, r, ip, i, view) {
-        let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) };
+        let base = unsafe { field_base_in_lane(cx, r, crate::bytecode::FieldBase(i.b)) };
         let Some(value) = base.and_then(|base| unsafe { AccessorCall::of(cx).hold_getter_hint(ip, i, base) }) else {
             requicken::<H>(ip, lane_get_field_getter::<H>);
             sibling!(lane_get_field_getter::<H>, r, ip, Carried::script(cx))

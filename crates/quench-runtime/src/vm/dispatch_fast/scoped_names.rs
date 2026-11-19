@@ -126,7 +126,7 @@ fn scoped_store<H: Host>(vm: &mut Vm<H>, scope: &WindowScope, atom: Atom, value:
 /// frame's promotion would make, carrying the activation's dynamic bindings
 /// (`window_environment`) and, at a binding site, the site's scope
 /// (`Vm::site_environment`), and capturing the `with` objects it entered
-/// (`Vm::closure_over_scope`). Out of line, as `lane_window_closure_value`.
+/// (`Vm::closure_over_scope`). Out of line, as `window_closure_value_in_lane`.
 #[inline(never)]
 fn scoped_closure_value<H: Host>(
     cx: *mut LaneContext<H>,

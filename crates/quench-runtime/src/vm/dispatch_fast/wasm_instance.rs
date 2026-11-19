@@ -15,7 +15,7 @@ lane_handler! {
         let (known, storage) = unsafe { (*cx).instance_slots };
         let slot = i.imm();
         // SAFETY: `storage` is the dense storage of `known`, found this run, which no
-        // collection has run since (`lane_after_nested_collection` drops it).
+        // collection has run since (`after_nested_collection_in_lane` drops it).
         let cached = if known == env && slot <= u32::from(u16::MAX) {
             unsafe { crate::heap::EnvironmentSlots::read_storage(storage, slot as u16) }
         } else {
@@ -65,7 +65,7 @@ pub(super) unsafe fn wasm_instance_slot<H: Host>(context: *mut (), slot: u32) ->
     let env = lane_instance_env(cx);
     let (known, storage) = unsafe { (*cx).instance_slots };
     // SAFETY: `storage` is the dense storage of `known`, found this run, which no collection has run
-    // since (`lane_after_nested_collection` drops it).
+    // since (`after_nested_collection_in_lane` drops it).
     let cached = if known == env && slot <= u32::from(u16::MAX) {
         unsafe { crate::heap::EnvironmentSlots::read_storage(storage, slot as u16) }
     } else {

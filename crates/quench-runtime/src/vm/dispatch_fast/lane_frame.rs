@@ -323,7 +323,7 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The heap whose records a row reads in place (`Frame::heap_records`), where the row is one
     /// that does (`Decoder::Names`).
     heap: Option<*const crate::heap::Heap>,
-    /// The running frame's `this` where the lane's context word does not hold it (`lane_this`),
+    /// The running frame's `this` where the lane's context word does not hold it (`this_in_lane`),
     /// read only by a row that asks for `this`.
     frame_this: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)>,
     /// The running function's `arguments` count in a local slot (`arguments_count`), read only
@@ -454,7 +454,7 @@ impl ElementSteps {
 }
 
 /// The VM's geometry and length reads of the running lane, erased of its host so the frame names
-/// no `H`: the intrinsic geometry getter of a name on a receiver (`lane_geometry_read`), and the
+/// no `H`: the intrinsic geometry getter of a name on a receiver (`geometry_read_in_lane`), and the
 /// `length` of a receiver that is no array or string (`length_read`). Neither runs guest code; a
 /// refusal leaves to the row's miss.
 #[derive(Clone, Copy)]
@@ -469,7 +469,7 @@ impl GeometrySteps {
     #[inline(always)]
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { context: cx.cast(),
-            geometry: |context, base, atom| lane_geometry_read(unsafe { vm(context.cast::<LaneContext<H>>()) }, base, atom),
+            geometry: |context, base, atom| geometry_read_in_lane(unsafe { vm(context.cast::<LaneContext<H>>()) }, base, atom),
             length: |context, base| length_read(unsafe { vm(context.cast::<LaneContext<H>>()) }, base) }
     }
 }
@@ -945,7 +945,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn private_slot<H: Host>(cx: *mut LaneContext<H>, site: usize,
         code: &ResidualProgram, object: Value, atom: crate::bytecode::Atom) -> Option<usize> {
-        let scope = lane_private_site(cx)?;
+        let scope = private_site_in_lane(cx)?;
         (unsafe { vm(cx) }).site_private_field_slot(code, site, scope, object, atom)
     }
 
@@ -1531,7 +1531,7 @@ unsafe fn environment_of<H: Host>(cx: *mut LaneContext<H>, store: Option<u16>)
     if !unsafe { (*cx).registers }.env().is_deleted() {
         return None;
     }
-    let storage = super::lane_frame_storage(cx)?;
+    let storage = super::frame_storage_in_lane(cx)?;
     let vm = unsafe { vm(cx) };
     let frame = &vm.frames[unsafe { (*cx).frame() }];
     let function = unsafe { &*(*cx).code }.function(frame.function as usize);
@@ -1686,7 +1686,7 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
         (steps.read)(steps.context, steps.site, Value::from_bits(base), Value::from_bits(key)).map(Value::to_bits)
     }
 
-    /// The intrinsic geometry getter of `atom` on the receiver `object` (`lane_geometry_read`).
+    /// The intrinsic geometry getter of `atom` on the receiver `object` (`geometry_read_in_lane`).
     #[inline(always)]
     fn geometry_read(&mut self, _stage: &mut Concrete, object: u64, atom: u32, _miss: ()) -> Option<u64> {
         let steps = self.geometry?;
@@ -2221,10 +2221,10 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         return LaneFrame::<ACC>::hosted::<H>(r, view, cx);
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
-        // A value row may read `this`: the context word, else the frame's (`lane_this`), read lazily.
+        // A value row may read `this`: the context word, else the frame's (`this_in_lane`), read lazily.
         let read: unsafe fn(*mut ()) -> Option<Value> = |context| {
             let cx = context.cast::<LaneContext<H>>();
-            unsafe { super::lane_this(cx, (*cx).registers) }
+            unsafe { super::this_in_lane(cx, (*cx).registers) }
         };
         // A capture row reads the running function's dense slots (its miss walks: `row_miss`) and
         // stores through the lane's own store.
@@ -2927,11 +2927,11 @@ lane_handler! {
             // A method cache that may name the atom must see the store (`store_admitted`); an add
             // leaves that to the VM's adds, which admit it themselves.
             if const { FLAG != super::ADD_SITE } && unsafe { vm(script) }.method_caches_may_name(i.imm()) { store_miss!() }
-            // `this` as the VM's own-field hit resolves it (`lane_fixed_this`), so a fixed one stores;
+            // `this` as the VM's own-field hit resolves it (`fixed_this_in_lane`), so a fixed one stores;
             // a plain own-field store row keeps the record's `this` and no call on its path.
             if this_store {
                 frame.this = if const { FLAG == FLAG_UNREAD } { r.this() }
-                    else { unsafe { super::lane_fixed_this(cx, r) }.unwrap_or(Value::DELETED) };
+                    else { unsafe { super::fixed_this_in_lane(cx, r) }.unwrap_or(Value::DELETED) };
             }
             // The VM's stores complete what a row's plan refuses (`PropertyFrame::field_store_host` and
             // its siblings), at every store row.
@@ -3152,7 +3152,7 @@ lane_handler! {
                 if let Some(resumed) = by_leaf!(super::returning_leaf(FLAG), |L| super::lane_complete_plain_activation::<H, L>(script, value)) {
                     resume!(script, resumed)
                 }
-                resume!(script, super::lane_return_value_general(script, ip, value));
+                resume!(script, super::return_value_general_in_lane(script, ip, value));
             }
             Step::Value(value) if property => {
                 // The read's value, a slot word decoded where the form may hold a raw double.
@@ -3253,12 +3253,12 @@ unsafe fn allocation_in_lane<H: Host>(cx: *mut (), r: Registers, allocation: All
     let cx = cx.cast::<LaneContext<H>>();
     match allocation {
         Allocation::Empty => Some(lane_new_object(unsafe { vm(cx) })),
-        Allocation::Array { length } => Some(lane_new_hole_array(unsafe { vm(cx) }, length as usize)),
-        Allocation::ArrayOf { elements } => Some(lane_literal_array_value(unsafe { vm(cx) }, r, elements)),
+        Allocation::Array { length } => Some(new_hole_array_in_lane(unsafe { vm(cx) }, length as usize)),
+        Allocation::ArrayOf { elements } => Some(literal_array_value_in_lane(unsafe { vm(cx) }, r, elements)),
         Allocation::RegExp { site } => lane_regexp_literal_value(cx, site),
         Allocation::ConstArray { constant, count } => const_array_value_in_lane(cx, constant, count),
         Allocation::ObjectPair { site, first, second } => Some(lane_object_pair(cx, r, site, [first, second])),
-        Allocation::ObjectLiteral { site, window } => Some(lane_object_literal_value(cx, r, site, window)),
+        Allocation::ObjectLiteral { site, window } => Some(object_literal_value_in_lane(cx, r, site, window)),
         Allocation::Closure { function } => lane_closure_value_of(cx, function),
         Allocation::Template { template } => template_value_in_lane(cx, template),
         Allocation::Concat { window } => concat_value_in_lane(cx, r, window),

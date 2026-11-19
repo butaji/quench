@@ -82,7 +82,7 @@ pub(super) fn lane_return_to_body<H: Host>(cx: *mut LaneContext<H>, value: Value
 
 /// `lane_complete_plain_activation` of an activation of another program than its caller's
 /// (`Completion::Cross`), which enters the caller's program first, for the returns past the
-/// common one (`lane_return_general`, `lane_return_value_general`), so the common return
+/// common one (`lane_return_general`, `return_value_general_in_lane`), so the common return
 /// carries none of the program switch.
 #[inline(always)]
 pub(super) fn lane_complete_cross_activation<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
@@ -201,7 +201,7 @@ fn returning_chain_outermost(activations: &[Activation]) -> Option<(usize, bool)
 }
 
 /// `lane_complete_plain_chain` out of line, for the returns past the common one
-/// (`lane_return_general`, `lane_return_value_general`), whose frames stay small.
+/// (`lane_return_general`, `return_value_general_in_lane`), whose frames stay small.
 #[inline(never)]
 pub(super) fn lane_complete_returning_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     lane_complete_plain_chain(cx, value)

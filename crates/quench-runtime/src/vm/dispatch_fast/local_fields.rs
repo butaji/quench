@@ -4,7 +4,7 @@
 use super::*;
 
 /// The handler a `GetField` of a local slot takes once its site's entries name a tier a single
-/// entry answers (`lane_field_site_tier`): its generated row of the local-field site. `None` for any
+/// entry answers (`field_site_tier_in_lane`): its generated row of the local-field site. `None` for any
 /// other record, tier or receiver, which the general read keeps: a name read through function
 /// information, a private name, a primitive or a receiver outside the object records.
 pub(super) fn local_field_handler<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Option<Handler> {
@@ -15,7 +15,7 @@ pub(super) fn local_field_handler<H: Host>(cx: *mut LaneContext<H>, i: &LaneInst
         return None;
     }
     plain_local_operand(cx, slot)?.direct_object_index()?;
-    match lane_field_site_tier(vm, code, i) {
+    match field_site_tier_in_lane(vm, code, i) {
         FieldSiteTier::Own => Some(generated_row::<H, { crate::staged::GET_FIELD_ROW }, ACC_NONE, LOCAL_FIELD_SITE> as Handler),
         // The local row plans only the own read; a held or inherited read is its miss arm's cached
         // read, entered directly rather than through a row that always misses.
@@ -32,7 +32,7 @@ script_handler! {
     pub(super) fn local_field_miss<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let tier = lane_field_site_tier(unsafe { vm(cx) }, code, i);
+        let tier = field_site_tier_in_lane(unsafe { vm(cx) }, code, i);
         let object = crate::bytecode::FieldBase(i.b).local_index().and_then(|slot| plain_local_operand(cx, slot));
         let value = object.and_then(|object| match tier {
             FieldSiteTier::Own => returning_field_hit::<H, RETURNING_FIELD_OWN>(unsafe { vm(cx) }, code, object, i.c),
