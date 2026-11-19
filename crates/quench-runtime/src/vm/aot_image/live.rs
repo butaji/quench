@@ -59,7 +59,7 @@ pub(crate) fn install<H: Host>(image: &AotImage, vm: &mut Vm<H>) -> Result<LiveI
     let code = CodeMemory::assemble(layout.length, |pointer, out| {
         let bases: Box<[u64]> = layout.bases.iter().map(|at| (pointer.addr() + at) as u64).collect();
         let places = Places { bases: &bases, invalidation: invalidation.address(), operands: &operands };
-        place(image, vm, &layout, (pointer.addr(), &places), (out, &mut linked))
+        place(image, vm, &layout, (pointer.addr(), &places), (out, linked.as_mut_slice()))
     })?;
     let start = code.pointer().addr();
     let bases: Box<[usize]> = layout.bases.iter().map(|at| start + at).collect();
