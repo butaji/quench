@@ -1,16 +1,18 @@
-//! Step: the produced image's own ahead bodies, measured per iteration.
+//! Step: the produced image's own ahead code, measured per iteration.
 //!
-//! `c-parity` measures what a tier's compiled loop spends; this step measures what an *image*
-//! spends, from the image's own machine code: each kernel of the corpus is built
-//! (`quench-node build … --dynamic-source --keep-symbols`), the `_quench_unit_*_body` symbols
-//! are located with `nm`, each body's bytes are sliced out of `__TEXT` and disassembled by the
-//! host's disassembler (`cparity::asm`), and the executed path of the body's largest innermost
-//! loop is counted (`cparity::flow::iteration`). That count is the AOT tier's instructions per
-//! iteration, compared with the C twin's scalar loop from `cparity-c-aarch64.txt`.
+//! `c-parity` measures the loop a run-time tier compiles; this step measures the loop an
+//! *image* runs. Each corpus kernel is built (`quench-node build … --dynamic-source`) with
+//! `QUENCH_TRACE=ahead-dump=<dir>`, which makes the build write every ahead-lowered loop's
+//! relocatable code as `loop-<function>-<header>-<backedge>.bin` (`AheadImages::compile`).
+//! Each dump is disassembled by the host's disassembler (`cparity::asm`), and the executed
+//! path of its hot loop is counted (`cparity::flow`), as `c-parity` counts a region's.
 //!
-//! A body that does not lower the kernel's loop reports none: the ahead code hands the loop
-//! back, and the number is exactly that fact. The table is a shrink-only ratchet
-//! (`aot-instructions-aarch64.txt`).
+//! The representative loop is the one C measures: the largest loop that holds no other, in
+//! the function that has one. `loops` is how many ahead loops the program ships, so a kernel
+//! whose loop is not lowered ahead reads `0` and `-`.
+//!
+//! The table (`aot-instructions-aarch64.txt`) is the shrink-only ratchet, beside the C twin's
+//! scalar loop from `cparity-c-aarch64.txt`.
 //!
 //! Alone: `quench-gate --only aot-instructions`.
 
@@ -23,36 +25,39 @@ use crate::cparity::{asm, flow};
 const KERNELS: &str = "crates/quench-tier-corpus/cparity/js";
 const C_TABLE: &str = "crates/quench-tier-corpus/cparity-c-aarch64.txt";
 const TABLE: &str = "crates/quench-tier-corpus/aot-instructions-aarch64.txt";
-const BODY_PREFIX: (&str, &str) = ("_quench_unit_", "_body");
-const TEXT_SEGMENT: &str = "__TEXT";
+const LOOP_PREFIX: &str = "loop-";
+/// The table's metric, named in its header: a table written for another one is re-recorded.
+const METRIC: &str = "ahead-loop";
 
-/// One kernel's ahead code: its hottest loop's executed path, or none when the body lowers none.
-#[derive(Clone, Copy)]
+/// One kernel's ahead code: its loops, their spans (header..backedge, per function) and the
+/// instructions the representative loop spends per iteration.
+#[derive(Default)]
 struct Ahead {
-    /// How many functions the image lowers ahead: its `_quench_unit_*_body` symbols. One means
-    /// only the entry program's top level, with every called function compiled at run time.
-    bodies: u32,
+    spans: Vec<(u32, u32, u32)>,
     instructions: Option<u32>,
 }
 
 pub fn run(config: &Config) -> Verdict {
     let host = config.binary(NODE)?;
     let directory = config.target.join("aot-instructions");
-    fs::create_dir_all(&directory).map_err(|error| format!("{}: {error}", directory.display()))?;
+    reset(&directory)?;
     let sources = kernels(&config.root.join(KERNELS))?;
     let c_costs = c_costs(&config.root.join(C_TABLE))?;
     let recorded = read_table(&config.root.join(TABLE));
     let mut rows = Vec::with_capacity(sources.len());
     for (name, source) in &sources {
         let image = directory.join(name);
+        let loops = directory.join(format!("{name}-loops"));
+        fs::create_dir_all(&loops).map_err(|error| format!("{}: {error}", loops.display()))?;
         let output = Command::new(&host).arg("build").arg(source).arg("-o").arg(&image)
-            .arg("--dynamic-source").arg("--keep-symbols").output().map_err(|error| error.to_string())?;
+            .arg("--dynamic-source")
+            .env("QUENCH_TRACE", format!("ahead-dump={}", loops.display()))
+            .output().map_err(|error| error.to_string())?;
         if !output.status.success() {
             return Err(format!("{name}: build failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
         }
-        rows.push((name.clone(), measure(&image)));
+        rows.push((name.clone(), measure(&loops)?));
     }
-    // The ratchet: a count may fall, never rise.
     let mut failures = Vec::new();
     for (name, ahead) in &rows {
         if let (Some(limit), Some(count)) = (recorded.get(name).copied().flatten(), ahead.instructions)
@@ -69,67 +74,55 @@ pub fn run(config: &Config) -> Verdict {
         return Err(failures.join("\n"));
     }
     let lowered = rows.iter().filter(|(_, ahead)| ahead.instructions.is_some()).count();
-    Ok(format!("{lowered} of {} kernels run their loop in ahead code; table {TABLE}", rows.len()))
+    Ok(format!("{lowered} of {} kernels ship their work loop ahead; table {TABLE}", rows.len()))
 }
 
-/// The instructions per iteration of the hottest loop in `image`'s ahead bodies, if one lowers it.
-fn measure(image: &Path) -> Ahead {
-    let bytes = match fs::read(image) { Ok(bytes) => bytes, Err(_) => return Ahead { bodies: 0, instructions: None } };
-    let Some(text_base) = text_base(image) else { return Ahead { bodies: 0, instructions: None } };
-    let Some(symbols) = symbols(image) else { return Ahead { bodies: 0, instructions: None } };
-    let bodies = u32::try_from(symbols.iter().filter(|(_, name)|
-        name.starts_with(BODY_PREFIX.0) && name.ends_with(BODY_PREFIX.1)).count()).unwrap_or(u32::MAX);
-    let mut best: Option<u32> = None;
-    for (index, (address, name)) in symbols.iter().enumerate() {
-        if !(name.starts_with(BODY_PREFIX.0) && name.ends_with(BODY_PREFIX.1)) { continue; }
-        let end = symbols.get(index + 1).map_or(*address + 0x4000, |(next, _)| *next);
-        let (start_offset, length) = match (address.checked_sub(text_base), end.checked_sub(*address)) {
-            (Some(start), Some(length)) if length > 0 => (start as usize, length as usize),
-            _ => continue,
-        };
-        let Some(slice) = bytes.get(start_offset..start_offset + length) else { continue };
-        let scratch = std::env::temp_dir().join(format!("quench-aot-body-{}", std::process::id()));
-        if fs::write(&scratch, slice).is_err() { continue; }
-        let code = asm::disassemble(&scratch).unwrap_or_default();
-        let _ = fs::remove_file(&scratch);
-        let Some(body) = flow::hottest(&code).or_else(|| flow::largest_innermost(&code)) else { continue };
+/// A fresh dump directory: what a previous run wrote is not this run's measurement.
+fn reset(directory: &Path) -> Result<(), String> {
+    match fs::remove_dir_all(directory) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(format!("{}: {error}", directory.display())),
+        _ => {}
+    }
+    fs::create_dir_all(directory).map_err(|error| format!("{}: {error}", directory.display()))
+}
+
+/// The ahead loops `directory` holds, measured: every dump's hot loop is counted, and the
+/// representative one is the largest loop that holds no other in its function.
+fn measure(directory: &Path) -> Result<Ahead, String> {
+    let mut measured: Vec<(u32, u32, u32, u32)> = Vec::new();
+    for entry in fs::read_dir(directory).map_err(|error| format!("{}: {error}", directory.display()))? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        let Some((function, header, backedge)) = loop_of(&path) else { continue };
+        let code = asm::disassemble(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+        let Some(body) = flow::hottest(&code) else { continue };
         let count = u32::try_from(body.iter().filter(|instruction| !instruction.is_nop()).count()).unwrap_or(u32::MAX);
-        if body.len() > 1 { best = Some(best.map_or(count, |best| best.max(count))); }
+        measured.push((function, header, backedge, count));
     }
-    Ahead { bodies, instructions: best }
+    let ahead = Ahead {
+        spans: measured.iter().map(|(function, header, backedge, _)| (*function, *header, *backedge)).collect(),
+        instructions: innermost(&measured),
+    };
+    Ok(ahead)
 }
 
-/// The `__TEXT` segment's vmaddr: the produced image maps its first section at file offset zero.
-fn text_base(image: &Path) -> Option<u64> {
-    let output = Command::new("otool").arg("-l").arg(image).output().ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut in_text = false;
-    for line in text.lines() {
-        let line = line.trim();
-        if let Some(name) = line.strip_prefix("segname ") {
-            in_text = name.trim() == TEXT_SEGMENT;
-            continue;
-        }
-        if in_text && let Some(value) = line.strip_prefix("vmaddr ") {
-            return u64::from_str_radix(value.trim().trim_start_matches("0x"), 16).ok();
-        }
-    }
-    None
+/// The representative loop of `measured`: the largest loop that holds no other, in its
+/// function — the specialized version a region runs once its entry checks pass.
+fn innermost(measured: &[(u32, u32, u32, u32)]) -> Option<u32> {
+    let holds = |outer: &(u32, u32, u32, u32), inner: &(u32, u32, u32, u32)| {
+        outer != inner && outer.0 == inner.0 && outer.1 <= inner.1 && inner.2 <= outer.2
+    };
+    measured
+        .iter()
+        .filter(|loop_| !measured.iter().any(|other| holds(loop_, other)))
+        .max_by_key(|(_, header, backedge, _)| backedge - header)
+        .map(|(_, _, _, count)| *count)
 }
 
-/// `nm -n`'s defined symbols of `image`, ascending.
-fn symbols(image: &Path) -> Option<Vec<(u64, String)>> {
-    let output = Command::new("nm").arg("-n").arg(image).output().ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut symbols = Vec::new();
-    for line in text.lines() {
-        let mut fields = line.splitn(3, ' ');
-        let (Some(address), Some(_kind), Some(name)) = (fields.next(), fields.next(), fields.next()) else { continue };
-        let Ok(address) = u64::from_str_radix(address, 16) else { continue };
-        symbols.push((address, name.trim().to_owned()));
-    }
-    symbols.sort();
-    Some(symbols)
+/// `loop-<function>-<header>-<backedge>.bin`'s numbers.
+fn loop_of(path: &Path) -> Option<(u32, u32, u32)> {
+    let name = path.file_name()?.to_str()?.strip_prefix(LOOP_PREFIX)?.strip_suffix(".bin")?;
+    let mut fields = name.split('-').map(str::parse::<u32>);
+    Some((fields.next()?.ok()?, fields.next()?.ok()?, fields.next()?.ok()?))
 }
 
 fn kernels(directory: &Path) -> Result<Vec<(String, PathBuf)>, String> {
@@ -157,33 +150,34 @@ fn c_costs(path: &Path) -> Result<BTreeMap<String, u32>, String> {
 }
 
 fn read_table(path: &Path) -> BTreeMap<String, Option<u32>> {
-    fs::read_to_string(path).unwrap_or_default().lines()
+    let text = fs::read_to_string(path).unwrap_or_default();
+    // A table measured another way says nothing about this one.
+    if !text.lines().next().unwrap_or_default().contains(METRIC) {
+        return BTreeMap::new();
+    }
+    text.lines()
         .filter(|line| !line.starts_with('#'))
         .filter_map(|line| {
             let mut fields = line.split_whitespace();
-            Some((fields.next()?.to_owned(), fields.next().and_then(|field| field.parse().ok())))
+            Some((fields.next()?.to_owned(), fields.nth(1).and_then(|field| field.parse().ok())))
         })
         .collect()
 }
 
 fn render(rows: &[(String, Ahead)], c_costs: &BTreeMap<String, u32>) -> String {
-    let mut text = String::from(
-        "# The produced image's ahead code (`_quench_unit_*_body`), instructions per iteration of\n\
-         # its hottest loop, against the C twin's scalar loop (`cparity-c-aarch64.txt`); `-` is a\n\
-         # body that lowers no loop, i.e. the image hands that loop back. Measured by building each\n\
-         # kernel with `quench-node build --dynamic-source --keep-symbols` and disassembling the\n\
-         # body (`quench-gate --only aot-instructions`). Counts only shrink.\n\
-         # `bodies` counts the functions the image lowers ahead; `aot` is the hottest loop of
-\
-         # those bodies. A kernel whose own function has no body shows its top level's loop, so
-\
-         # its `aot` is not the kernel loop: the image compiles that at run time.\n\
-         # kernel bodies aot c-aot\n");
+    let mut text = format!(
+        "# {METRIC}: the work loop of the ahead code a produced image ships, instructions per\n\
+         # iteration, against the C twin's scalar loop (`cparity-c-aarch64.txt`); `loops` is how\n\
+         # many ahead loops the program ships, and `-` that its work loop is not among them.\n\
+         # Measured by building each kernel with `QUENCH_TRACE=ahead-dump=<dir>` and\n\
+         # disassembling every `loop-*` dump (`quench-gate --only aot-instructions`).\n\
+         # Counts only shrink.\n\
+         # kernel loops aot c-aot\n");
     for (name, ahead) in rows {
+        let loops = ahead.spans.len();
         let instructions = ahead.instructions.map_or_else(|| "-".to_owned(), |count| count.to_string());
-        let bodies = ahead.bodies.to_string();
         let c = c_costs.get(name).map_or_else(|| "-".to_owned(), |count| count.to_string());
-        text.push_str(&format!("{name} {bodies} {instructions} {c}\n"));
+        text.push_str(&format!("{name} {loops} {instructions} {c}\n"));
     }
     text
 }

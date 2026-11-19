@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 
 /// The names a setting was given, as bits indexed by its enum, with their arguments.
 struct Named {
-    on: u32,
+    on: u64,
     values: Vec<Option<String>>,
 }
 
@@ -28,7 +28,7 @@ fn parse(variable: &str, names: &[&str]) -> Named {
             .map_or((entry, None), |(name, value)| (name, Some(value)));
         match names.iter().position(|known| *known == name) {
             Some(index) => {
-                named.on |= 1 << index;
+                named.on |= 1u64 << index;
                 named.values[index] = value.map(str::to_owned);
             }
             None => eprintln!("Quench: unknown {variable} name `{name}`; known: {}", names.join(",")),
@@ -49,14 +49,14 @@ macro_rules! setting {
             const NAMES: &[&str] = &[$($name,)*];
 
             fn named() -> &'static Named {
-                const _: () = assert!($setting::NAMES.len() <= u32::BITS as usize);
+                const _: () = assert!($setting::NAMES.len() <= u64::BITS as usize);
                 static NAMED: OnceLock<Named> = OnceLock::new();
                 NAMED.get_or_init(|| parse($variable, Self::NAMES))
             }
 
             /// Whether the setting names this.
             pub fn on(self) -> bool {
-                Self::named().on & (1 << self as u32) != 0
+                Self::named().on & (1u64 << self as u32) != 0
             }
 
             /// The argument written after `=` for this name, if any.
@@ -89,6 +89,10 @@ setting! {
         OsrReject = "osr-reject",
         JitPeak = "jit-peak",
         JitDump = "jit-dump",
+        /// The directory each ahead-lowered loop writes its relocatable code into, named by its
+        /// function and the loop's span: what a produced image's loops will run, measured at
+        /// build time (`quench-gate --only aot-instructions`).
+        AheadDump = "ahead-dump",
         /// Per-loop residual counts of each compiled hot loop (`quench-bench --residuals`).
         Residuals = "residuals",
         PerfMap = "perf-map",

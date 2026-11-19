@@ -73,6 +73,13 @@ fn compile_relocatable(function: ir::Function, isa: &dyn cranelift_codegen::isa:
     }).ok()
 }
 
+/// The directory `ahead-dump` names: each ahead loop this build lowers writes its code there,
+/// named `loop-<function>-<header>-<backedge>.bin`, for measuring what an image's loops run.
+#[cfg(feature = "aot")]
+fn ahead_dump_directory() -> Option<&'static std::path::Path> {
+    crate::trace::Channel::AheadDump.value().map(std::path::Path::new)
+}
+
 /// The image of `function`, or `None` where it lowers to nothing a lane body may run.
 fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
     let body = program.function_get(function as usize)?;
@@ -91,6 +98,9 @@ fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
     let loops = super::ahead_loops(program, function, &*isa).into_iter().filter_map(|(header, backedge, region)| {
         if !region.stable.is_empty() || region.number_result.is_some() { return None; }
         let code = compile_relocatable(region.function, &*isa)?;
+        if let Some(directory) = ahead_dump_directory() {
+            let _ = std::fs::write(directory.join(format!("loop-{function}-{header}-{backedge}.bin")), &*code.code);
+        }
         let atoms = code_atoms(&code, program);
         Some(Loop { header, backedge, fault_poll: region.fault_poll, code, atoms })
     }).collect();
