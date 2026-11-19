@@ -292,6 +292,7 @@ impl Continuation {
     /// continuation's record: the frame's address, which its box keeps until the run ends,
     /// and the register that takes the value the run resumes with. Every register is live
     /// while it runs: the caller settles them (`FrameRecord::settle_registers`).
+    #[inline(always)]
     pub(crate) fn begin_window(&mut self) -> (*mut FrameRecord, Option<u16>) {
         (&raw mut *self.frame, self.resume_register)
     }

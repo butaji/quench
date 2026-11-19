@@ -149,6 +149,25 @@ impl GeneratorRecord {
         Some(window)
     }
 
+    /// The frame of a suspended generator, not busy, which a lane resumes over its register file
+    /// (`resume_suspended_window`), and the register that takes the value the resume sends.
+    /// The frame's address, which its box keeps while the record parks it.
+    #[inline(always)]
+    pub(crate) fn suspended_frame(&mut self) -> Option<(*mut FrameRecord, Option<u16>)> {
+        if self.life != GeneratorLife::Suspended {
+            return None;
+        }
+        self.parked.as_mut().map(Continuation::begin_window)
+    }
+
+    /// The suspended generator whose frame `suspended_frame` found resumes as a lane activation
+    /// over its register file: the continuation stays in the record, which runs `Windowed`.
+    #[inline(always)]
+    pub(crate) fn resume_suspended_window(&mut self) {
+        debug_assert!(self.life == GeneratorLife::Suspended && self.parked.is_some());
+        self.life = GeneratorLife::Windowed;
+    }
+
     /// The frame of a windowed run, in place.
     #[inline(always)]
     pub(crate) fn windowed_frame_mut(&mut self) -> Option<&mut FrameRecord> {
