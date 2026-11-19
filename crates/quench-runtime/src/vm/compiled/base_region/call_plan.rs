@@ -306,7 +306,7 @@ pub(super) struct CallPlan<'a> {
     /// passes on to the callee's proven-arguments entry where its guards are covered (`CallRecord::proven_args`).
     pub(super) proven_args: u64,
     /// The site read a `Method` call's direct rows follow (`plan::method_read`): its stencil and holes. Planned only
-    /// where a direct row is, after the spills, so a miss leaves with the spills run.
+    /// where a direct row is, after the spills; its miss goes to the helper row behind the direct rows.
     pub(super) read: Option<(&'static Stencil, [u64; HOLES])>,
 }
 
@@ -438,7 +438,9 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
         if directs.is_empty() || read.is_some() || !refusal_only(plan, register) { parts.push(spill) } else { refusal.push(spill) }
     }
     if let Some((stencil, holes)) = read {
-        parts.push(CallPart { stencil, holes, taken: None, exits: vec![Exit::At(plan.shape.call_pc)] });
+        // A miss takes the helper row behind the direct rows, as a refused direct call does: the spills ran, so the frame is canonical.
+        let helper = 1 + directs.len() + refusal.len();
+        parts.push(CallPart { stencil, holes, taken: None, exits: vec![Exit::Ahead(helper)] });
     }
     // Past every direct row, the refusal spills and the helper row that follows them: the first reload, or the next instruction.
     let past = parts.len() + directs.len() + refusal.len() + 1;

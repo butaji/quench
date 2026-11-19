@@ -160,7 +160,7 @@ fn a_direct_record_carries_the_proven_arguments() {
 }
 
 /// A method call's chain is the spills, its site read (the callee into the scratch register), the checked direct row
-/// that compares that callee and takes the receiver as `this`, then the helper row; the read leaves at the call.
+/// that compares that callee and takes the receiver as `this`, then the helper row; a read miss goes to the helper row.
 #[test]
 fn a_method_site_reads_its_callee_before_the_direct_row() {
     let shape = CallShape { callee: 7, form: CallForm::Method, method: Some(Method { cache: 3, scratch: 7 }), ..SHAPE };
@@ -174,7 +174,7 @@ fn a_method_site_reads_its_callee_before_the_direct_row() {
     assert_eq!(chain.choice, Choice::Direct);
     assert_eq!(chain.parts.len(), 4, "spill, read, direct row, helper row");
     assert!(std::ptr::eq(chain.parts[1].stencil, read), "the read follows the spills");
-    assert_eq!(chain.parts[1].exits, vec![super::super::Exit::At(9)], "a miss leaves at the call");
+    assert_eq!(chain.parts[1].exits, vec![super::super::Exit::Ahead(2)], "a miss takes the helper row behind the direct row");
     assert_eq!(chain.parts[2].taken, Some(4), "the direct row completes past the helper row");
     assert_eq!(chain.records.first().map(|record| record.callee_register), Some(7), "the direct row checks the scratch register");
 }
