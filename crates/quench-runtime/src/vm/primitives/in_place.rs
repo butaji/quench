@@ -26,17 +26,13 @@ impl<H: Host> Vm<H> {
         let text = self.heap.flat_text(receiver)?;
         let needle = self.heap.flat_text(*search)?;
         let (text, needle) = (text.units(), needle.units());
-        // The forward searches start at zero by default, the backward ones at the end.
-        let position = match native {
-            Native::StringEndsWith | Native::StringLastIndexOf => search_position(rest.first(), text.len(), text.len())?,
-            _ => search_position(rest.first(), 0, text.len())?,
-        };
-        Some(search_result(native, text, needle, position))
+        let number = search_argument(native, rest.first(), text.len())?;
+        Some(search_result(native, text, needle, clamped_position(native, number, text.len())))
     }
 
-    /// `slice` or `substring` of a flat string receiver with integer or left-out bounds:
-    /// every conversion is then the value itself, so the result is cut from the units in
-    /// place rather than from a copy of the receiver. `None` leaves any other call to
+    /// `slice`, `substring` or `substr` of a flat string receiver with integer or left-out
+    /// bounds: every conversion is then the value itself, so the result is cut from the units
+    /// in place rather than from a copy of the receiver. `None` leaves any other call to
     /// `call_primitive_native`.
     pub(super) fn substring_in_place(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         if !matches!(native, Native::StringSlice | Native::StringSubstring | Native::StringSubstr) {
@@ -44,21 +40,7 @@ impl<H: Host> Vm<H> {
         }
         let flat = self.heap.string(receiver)?.existing_flat()?;
         let length = flat.view().len() as i64;
-        let bound = |index: usize, default: i64| match args.get(index) {
-            None => Some(default),
-            Some(value) if value.is_undefined() => Some(default),
-            Some(value) => value.as_int().map(i64::from),
-        };
-        let range = if native == Native::StringSubstr {
-            // `substr(start, length)`: a start below zero counts from the end; the count
-            // defaults to the rest.
-            let start = bound(0, 0)?;
-            let start = if start < 0 { (length + start).max(0) } else { start.min(length) };
-            let end = start.saturating_add(bound(1, length - start)?.max(0)).min(length);
-            start as usize..end as usize
-        } else {
-            substring_range(native, length, bound(0, 0)?, bound(1, length)?)
-        };
+        let range = in_place_range(native, length, args)?;
         let text = flat.substring(range);
         Some(self.heap.alloc_string(text))
     }
@@ -306,25 +288,71 @@ pub(super) fn substring_range(native: Native, length: i64, start: i64, end: i64)
     start as usize..end.max(start) as usize
 }
 
-/// A search's position argument as the integer ToIntegerOrInfinity gives it, clamped to
-/// `0..=length`; `default` when it is left out or undefined. `None` for a value that is not an
-/// integer, which the general path converts.
-fn search_position(argument: Option<&Value>, default: usize, length: usize) -> Option<usize> {
-    match argument {
-        Some(value) if !value.is_undefined() => Some(usize::try_from(value.as_int()?).unwrap_or(0).min(length)),
+/// The count `substr` takes when it is left out: every unit from the start. `i64::MAX` reaches
+/// the end from any start, so `substr_range` needs no length for it.
+pub(super) const SUBSTR_REST: i64 = i64::MAX;
+
+/// The units range `substr(start, count)` takes from a string of `length` units, given its
+/// integer arguments: a start below zero counts from the end, and the count is clamped to the
+/// units from the start to the end.
+pub(super) fn substr_range(length: i64, start: i64, count: i64) -> std::ops::Range<usize> {
+    let start = if start < 0 { (length + start).max(0) } else { start.min(length) };
+    let end = start.saturating_add(count.max(0)).min(length);
+    start as usize..end as usize
+}
+
+/// The units range a `slice`, `substring` or `substr` cuts from a flat string of `length`
+/// units for its integer arguments, where a left-out or undefined argument takes the method's
+/// default. `None` for any other argument, which the general path converts.
+fn in_place_range(native: Native, length: i64, args: &[Value]) -> Option<std::ops::Range<usize>> {
+    let bound = |index: usize, default: i64| match args.get(index) {
+        Some(value) if !value.is_undefined() => value.as_int().map(i64::from),
         _ => Some(default),
+    };
+    if native == Native::StringSubstr {
+        return Some(substr_range(length, bound(0, 0)?, bound(1, SUBSTR_REST)?));
+    }
+    Some(substring_range(native, length, bound(0, 0)?, bound(1, length)?))
+}
+
+/// The position a search method takes from a left-out or undefined argument, as a number: the
+/// end of the text for `endsWith` and `lastIndexOf`, the start for the others.
+pub(super) fn search_default(native: Native, length: usize) -> f64 {
+    if matches!(native, Native::StringEndsWith | Native::StringLastIndexOf) {
+        length as f64
+    } else {
+        0.0
     }
 }
 
-/// The result of a string search method at `position` (already clamped) of `needle` in `text`:
-/// the index it finds, or the boolean it answers.
-fn search_result(native: Native, text: Units<'_>, needle: Units<'_>, position: usize) -> Value {
-    let length = text.len();
+/// A search's position argument as the number the in-place body searches from: an integer
+/// argument as its value, a left-out or undefined one as `search_default`. `None` for any other
+/// value, which the general path converts.
+fn search_argument(native: Native, argument: Option<&Value>, length: usize) -> Option<f64> {
+    match argument {
+        Some(value) if !value.is_undefined() => value.as_int().map(f64::from),
+        _ => Some(search_default(native, length)),
+    }
+}
+
+/// The position a search method searches from, given its position argument as a number and the
+/// text's `length`: ToIntegerOrInfinity clamped to `0..=length`. NaN is the start, except for
+/// `lastIndexOf`, where it is the end, as +Infinity is.
+pub(super) fn clamped_position(native: Native, number: f64, length: usize) -> usize {
+    if number.is_nan() {
+        return if native == Native::StringLastIndexOf { length } else { 0 };
+    }
+    number.trunc().max(0.0).min(length as f64) as usize
+}
+
+/// The result of a string search method at `position` (already clamped by `clamped_position`)
+/// of `needle` in `text`: the index it finds, or the boolean it answers.
+pub(super) fn search_result(native: Native, text: Units<'_>, needle: Units<'_>, position: usize) -> Value {
     match native {
         Native::StringIndexOf => index_value(text.find(needle, position)),
         Native::StringLastIndexOf => index_value(text.rfind(needle, position)),
         Native::StringIncludes => Value::boolean(text.find(needle, position).is_some()),
-        Native::StringStartsWith => Value::boolean(text.slice(position..length).starts_with(needle)),
+        Native::StringStartsWith => Value::boolean(text.slice(position..text.len()).starts_with(needle)),
         _ => Value::boolean(
             position
                 .checked_sub(needle.len())

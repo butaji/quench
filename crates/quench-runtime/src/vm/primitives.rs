@@ -251,87 +251,13 @@ impl<H: Host> Vm<H> {
             }
             Native::StringSubstr => {
                 let text = self.string_receiver_text(this)?;
-                let units = text.units();
-                let length = units.len() as i64;
-                let raw_start = self.argument_integer(p, args, 0, 0)?;
-                let start = if raw_start < 0 {
-                    (length + raw_start).max(0)
-                } else {
-                    raw_start.min(length)
-                };
-                let count = self.argument_integer(p, args, 1, length - start)?.max(0);
-                let end = start.saturating_add(count).min(length);
-                self.string_substring(&text, start as usize..end as usize)
+                let length = text.units().len() as i64;
+                let start = self.argument_integer(p, args, 0, 0)?;
+                let count = self.argument_integer(p, args, 1, in_place::SUBSTR_REST)?;
+                self.string_substring(&text, in_place::substr_range(length, start, count))
             }
-            Native::StringIncludes | Native::StringStartsWith | Native::StringEndsWith => {
-                let Some(receiver) = self.heap.string(this).cloned() else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if self.regexp_is_regexp(p, search_value)? {
-                    return Err(self.type_error(p, "search string cannot be a RegExp".into()));
-                }
-                let search = self.coerce_js_string(p, search_value)?;
-                let length = receiver.units().len();
-                let position_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let position = if native == Native::StringEndsWith && position_value.is_undefined()
-                {
-                    length
-                } else {
-                    let number = self.to_number(p, position_value)?;
-                    if number.is_nan() || number <= 0.0 {
-                        0
-                    } else if number.is_infinite() || number >= length as f64 {
-                        length
-                    } else {
-                        number.trunc() as usize
-                    }
-                };
-                let matched = match native {
-                    Native::StringIncludes => {
-                        receiver.find_units(search.units(), position).is_some()
-                    }
-                    Native::StringStartsWith => receiver
-                        .units()
-                        .slice(position..receiver.units().len())
-                        .starts_with(search.units()),
-                    Native::StringEndsWith => {
-                        let start = position.saturating_sub(search.units().len());
-                        receiver.units().slice(start..position) == search.units()
-                    }
-                    _ => unreachable!(),
-                };
-                Ok(if matched { Value::TRUE } else { Value::FALSE })
-            }
-            Native::StringIndexOf | Native::StringLastIndexOf => {
-                let Some(receiver) = self.heap.string(this).cloned() else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let search =
-                    self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let text = receiver.units();
-                let result = if native == Native::StringIndexOf {
-                    let start = self
-                        .to_number(p, args.get(1).copied().unwrap_or_else(|| Value::number(0.0)))?
-                        .max(0.0)
-                        .trunc() as usize;
-                    receiver.find_units(search.units(), start)
-                } else {
-                    let position = self.to_number(
-                        p,
-                        args.get(1)
-                            .copied()
-                            .unwrap_or_else(|| Value::number(text.len() as f64)),
-                    )?;
-                    let position = if position.is_nan() {
-                        text.len()
-                    } else {
-                        position.max(0.0).min(text.len() as f64).trunc() as usize
-                    };
-                    super::string::rfind_utf16(text, search.units(), position)
-                };
-                Ok(Value::number(result.map_or(-1.0, |index| index as f64)))
-            }
+            Native::StringIndexOf | Native::StringLastIndexOf | Native::StringIncludes | Native::StringStartsWith
+            | Native::StringEndsWith => self.string_search_general(p, native, this, args),
             Native::StringReplace => match self.replace_string_pattern(p, native, this, args) {
                 Some(result) => result,
                 None => self.string_replace_native(p, this, args, false),
@@ -649,6 +575,30 @@ impl<H: Host> Vm<H> {
         range: std::ops::Range<usize>,
     ) -> Result<Value, JsError> {
         Ok(self.heap.alloc_string(text.substring(range)))
+    }
+
+    /// The general body of `indexOf`, `lastIndexOf`, `includes`, `startsWith` and `endsWith`: the
+    /// receiver's text, the RegExp check of `includes`, `startsWith` and `endsWith`, the search's
+    /// ToString and the position's ToNumber run in that order, each possibly running guest code.
+    /// The search itself is `in_place::search_result` from the clamped position, as the in-place
+    /// body makes it.
+    fn string_search_general(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+        let Some(receiver) = self.heap.string(this).cloned() else {
+            return Err(JsError("string method receiver is not a string".into()));
+        };
+        let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let is_regexp_checked = matches!(native, Native::StringIncludes | Native::StringStartsWith | Native::StringEndsWith);
+        if is_regexp_checked && self.regexp_is_regexp(p, search_value)? {
+            return Err(self.type_error(p, "search string cannot be a RegExp".into()));
+        }
+        let search = self.coerce_js_string(p, search_value)?;
+        let length = receiver.units().len();
+        let number = match args.get(1).copied() {
+            Some(value) if !value.is_undefined() => self.to_number(p, value)?,
+            _ => in_place::search_default(native, length),
+        };
+        let position = in_place::clamped_position(native, number, length);
+        Ok(in_place::search_result(native, receiver.units(), search.units(), position))
     }
 
     /// `String.fromCharCode` of Numbers, whose ToNumber runs no guest code; `None` when any

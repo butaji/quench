@@ -179,22 +179,6 @@ fn string_html_method(native: Native) -> Option<&'static StringHtmlMethod> {
         .find(|method| method.native == native)
 }
 
-pub(super) fn rfind_utf16(
-    text: super::wtf16::Units<'_>,
-    search: super::wtf16::Units<'_>,
-    position: usize,
-) -> Option<usize> {
-    if search.is_empty() {
-        return Some(position.min(text.len()));
-    }
-    (search.len() <= text.len())
-        .then_some(position.min(text.len() - search.len()))
-        .into_iter()
-        .flat_map(|end| 0..=end)
-        .rev()
-        .find(|index| text.slice(*index..*index + search.len()) == search)
-}
-
 impl<H: Host> Vm<H> {
     pub(super) fn string_build_result(
         &mut self,
