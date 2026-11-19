@@ -123,7 +123,8 @@ pub(super) fn call_for_each_once_in_lane<H: Host>(
     args: &[Value],
 ) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
-    if !unsafe { (*cx).script_calls } || vm.with_scope_entered || vm.own_array_length(receiver) != Some(1) {
+    // The callback's target is found through the admission word (`lane_callback_target`).
+    if vm.with_scope_entered || vm.own_array_length(receiver) != Some(1) {
         return None;
     }
     let element = dense_element_in_lane(vm, receiver, 0)?;
@@ -350,7 +351,7 @@ pub(super) fn step_array_iteration_in_place_in_lane<H: Host>(cx: *mut LaneContex
     };
     let depth = vm.lane_stack.activation_count() - 1;
     if applied.is_none()
-        && depth < vm.lane_stack.activation_limit.get()
+        && vm.lane_stack.admits_activations(0)
         && let Some(index) = step.iteration.advance()
     {
         let receiver = step.iteration.receiver;

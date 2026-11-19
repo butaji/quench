@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
             native_program_resolver: None,
             execution_interrupt,
             active_call_roots: vec![],
-            active_roots: vec![],
+            prepared_roots: vec![],
             with_stack: vec![],
             with_scope_entered: false, scope_names: Default::default(),
             test262_agent: Default::default(),

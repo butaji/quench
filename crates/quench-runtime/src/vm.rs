@@ -1919,10 +1919,10 @@ pub(crate) struct Vm<H> {
     native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,
     active_call_roots: Vec<Value>,
-    /// The frame index of each root activation this Vm's entry points are running (`call_root`),
-    /// innermost last. Global var paths walk them rather than every frame. A script's lexical
-    /// bindings live in the realm, not in its root's frame.
-    active_roots: Vec<usize>,
+    /// The roots of prepared callbacks' proofs (`CallbackProof::Lane`): each proof's callee,
+    /// receiver and argument slots, innermost proof last. Apart from `active_call_roots`, so a
+    /// native's own nested call roots (`with_call_roots`) neither drop nor displace them.
+    prepared_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
     startup_intrinsics: startup_intrinsics::StartupIntrinsics,
@@ -3590,7 +3590,7 @@ impl<H: Host> Vm<H> {
         let result = body(self, &mut prepared);
         if let CallbackProof::Lane { roots, lane } = prepared.proof {
             self.finish_lane_callback(lane);
-            self.active_call_roots.truncate(roots);
+            self.prepared_roots.truncate(roots);
         }
         result
     }
@@ -3608,10 +3608,12 @@ impl<H: Host> Vm<H> {
         match &mut prepared.proof {
             CallbackProof::Lane { roots, lane } => {
                 let arguments = *roots + CALL_ROOTS_BESIDE_ARGUMENTS;
+                // The proof's slots root the arguments while it is the innermost proof, whatever
+                // call roots the native pushed since (`prepared_roots`).
                 if args.len() <= PREPARED_ARGUMENT_ROOTS
-                    && self.active_call_roots.len() == arguments + PREPARED_ARGUMENT_ROOTS
+                    && self.prepared_roots.len() == arguments + PREPARED_ARGUMENT_ROOTS
                 {
-                    let slots = &mut self.active_call_roots[arguments..arguments + PREPARED_ARGUMENT_ROOTS];
+                    let slots = &mut self.prepared_roots[arguments..arguments + PREPARED_ARGUMENT_ROOTS];
                     for (index, slot) in slots.iter_mut().enumerate() {
                         *slot = args.get(index).copied().unwrap_or(Value::UNDEFINED);
                     }
@@ -3622,11 +3624,17 @@ impl<H: Host> Vm<H> {
             }
             CallbackProof::First => prepared.proof = CallbackProof::Second,
             CallbackProof::Second => {
-                prepared.proof = match self.prepare_lane_callback(prepared.callee, prepared.this) {
+                // Preparing can resolve the callee's target, which can allocate: the arguments
+                // stay rooted across it, as `call_value` roots them.
+                let start = self.active_call_roots.len();
+                self.active_call_roots.extend_from_slice(args);
+                let lane = self.prepare_lane_callback(prepared.callee, prepared.this);
+                self.active_call_roots.truncate(start);
+                prepared.proof = match lane {
                     Some(lane) => {
-                        let roots = self.active_call_roots.len();
-                        self.active_call_roots.extend_from_slice(&[prepared.callee, prepared.this]);
-                        self.active_call_roots.extend_from_slice(&[Value::UNDEFINED; PREPARED_ARGUMENT_ROOTS]);
+                        let roots = self.prepared_roots.len();
+                        self.prepared_roots.extend_from_slice(&[prepared.callee, prepared.this]);
+                        self.prepared_roots.extend_from_slice(&[Value::UNDEFINED; PREPARED_ARGUMENT_ROOTS]);
                         CallbackProof::Lane { roots, lane }
                     }
                     None => CallbackProof::General,
