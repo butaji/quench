@@ -11,6 +11,7 @@
 
 use super::{AotImage, base::NO_ENTRY, symbols::{self, Symbol, SymbolTable}};
 use crate::code_dependencies::Invalidation;
+use crate::folded_roots::FoldedRoots;
 use crate::vm::Vm;
 use crate::vm::compiled::{CodeMemory, DirectCallee, LaneHelper, PublishedLaneMethod};
 use quench_bjit::call_record::CallRecord;
@@ -79,12 +80,21 @@ pub(crate) fn install<H: Host>(image: &AotImage, vm: &mut Vm<H>) -> Result<LiveI
 }
 
 /// The lane body of `function` linked against `live`, at address 0 for a copy into a new body
-/// (`LanePlan::finish`); `None` where the function has no lane body or a symbol does not link.
-pub(crate) fn link_lane<H: Host>(image: &AotImage, vm: &mut Vm<H>, live: &LiveImage, function: u32) -> Option<Vec<u8>> {
+/// (`LanePlan::finish`), with the heap values it names (`HeapValueRecipe::Global`, `PrototypeOf`),
+/// which its publication keeps alive (`PublishedCode::hold_roots`): a collected object's id is
+/// reused, and the code would take the next object for it. `None` where the function has no lane
+/// body or a symbol does not link.
+pub(crate) fn link_lane<H: Host>(image: &AotImage, vm: &mut Vm<H>, live: &LiveImage, function: u32) -> Option<(Vec<u8>, FoldedRoots)> {
     let lane = image.functions.get(function as usize)?.lane.as_ref()?;
     let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
     let places = Places { bases: &bases, invalidation: live.invalidation.address(), operands: &live.operands, calls: &live.calls };
-    lane.code.link(0, |namespace, key| resolve(image, vm, &places, namespace, key)).ok()
+    let mut roots = FoldedRoots::default();
+    let code = lane.code.link(0, |namespace, key| {
+        let word = resolve(image, vm, &places, namespace, key)?;
+        if let Some(Symbol::HeapValue(_)) = SymbolTable::decode(image, namespace, key) { roots.embed_heap_identity(crate::Value::from_bits(word)); }
+        Some(word)
+    }).ok()?;
+    Some((code, roots.settled()))
 }
 
 /// The offsets of every body, each aligned, and the block's length.

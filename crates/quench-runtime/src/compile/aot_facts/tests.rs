@@ -65,6 +65,15 @@ fn a_constructors_prologue_fields_are_its_shape() {
 }
 
 #[test]
+fn a_new_of_a_global_constructor_is_its_construct_target() {
+    let program = program("function P(x) { this.x = x; } function make() { return new P(2); } make();");
+    let facts = analyze(&program);
+    let (p, make) = (function_named(&program, "P") as u32, function_named(&program, "make") as u32);
+    assert!(facts.construct_targets.iter().any(|(&(function, _), &target)| function == make && target == p));
+    assert!(!facts.call_targets.values().any(|&target| target == p), "a construction is no plain call target");
+}
+
+#[test]
 fn an_int32_register_is_proven_int32() {
     let program = program("function n(a) { var i = 0; i = i | 3; return i; }");
     let facts = analyze(&program);

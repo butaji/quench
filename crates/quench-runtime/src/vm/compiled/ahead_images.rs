@@ -213,9 +213,10 @@ impl<H: Host> Vm<H> {
         let linked_live: &LiveImage = images.linked.as_ref()?;
         let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll.is_some();
         let unit = unit_of(program, function, images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program)))?;
-        let linked = live::link_lane(&images.image, self, linked_live, function)?;
+        let (linked, roots) = live::link_lane(&images.image, self, linked_live, function)?;
+        // The heap values the code names are its roots, which its publication keeps alive.
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
-            fault_poll, hoists_arrays: false, stable: Default::default() };
+            fault_poll, hoists_arrays: false, stable: lane_region::StableFacts { roots, ..Default::default() } };
         let (keys, direct): (Vec<usize>, Vec<DirectCallee>) = self.ahead_callees(program, &images.image, function).into_iter().unzip();
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None }, fields: Vec::new(),
             direct: direct.into_boxed_slice(), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
