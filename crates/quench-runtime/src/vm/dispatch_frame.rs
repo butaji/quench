@@ -1651,7 +1651,7 @@ impl<H: Host> Vm<H> {
     /// The suspension of an async frame `frame` whose lane run stopped at its `Await` record
     /// `instruction` at `pc`, made as the general loop's `Await` makes it, where the awaited
     /// value's conversion observes nothing: a non-object as it is, or an object
-    /// `lane_promise_resolve` converts without running guest code. `None` leaves any other
+    /// `intrinsic_promise_resolve` converts without running guest code. `None` leaves any other
     /// stop, or a conversion that could throw into the frame's handlers, to the general loop.
     pub(super) fn lane_stop_awaits(
         &mut self,
