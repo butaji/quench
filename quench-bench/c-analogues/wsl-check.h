@@ -144,6 +144,7 @@ static int is_type_statement(const Ast *st);
 static void check_func_cb(void *cx, Ast *f);
 static void check_enum_owners(Program *p);
 static void check_program(Program *p);
+static void post_check_passes(Program *p);
 
 
 static int name_in(const char **v, int n, const char *s) {
@@ -1203,6 +1204,77 @@ static void check_enum_owners(Program *p) {
 }
 
 /* Check.js: check(program) */
+/* ---- LiteralTypeChecker.js: every null and literal type must have its type (an invariant, so Error) ---- */
+static void littype_visit(Ast *n);
+static void littype_child(void *cx, Ast *c) { (void)cx; littype_visit(c); }
+static void littype_visit(Ast *n) {
+  switch (n->tag) {
+  case A_NULLTYPE:
+    if (!n->type) chk_error(cat(4, "Null at ", origin_string(n), " does not have type", ""));
+    return;
+  case A_INTLITERALTYPE: case A_UINTLITERALTYPE: case A_FLOATLITERALTYPE: case A_DOUBLELITERALTYPE:
+    if (!n->type) chk_error(cat(4, js_tostr(n), " at ", origin_string(n), " does not have type"));
+    return;
+  default:
+    visit_children(n, littype_child, NULL);
+  }
+}
+
+/* ---- LoopChecker.js: break, continue and nested functions inside loops ---- */
+typedef struct { int loopDepth, switchDepth; } LoopChk;
+static void loopchk_visit(LoopChk *s, Ast *n);
+static void loopchk_child(void *cx, Ast *c) { loopchk_visit((LoopChk *)cx, c); }
+static void loopchk_body(LoopChk *s, Ast *n, Ast *body) {
+  s->loopDepth++;
+  loopchk_visit(s, body);
+  if (s->loopDepth == 0) wtype_error(origin_string(n), "The number of nested loops is negative!");
+  s->loopDepth--;
+}
+static void loopchk_visit(LoopChk *s, Ast *n) {
+  switch (n->tag) {
+  case A_FUNCDEF:
+    if (s->loopDepth != 0) wtype_error(origin_string(n), "LoopChecker does not understand nested functions.");
+    visit_children(n, loopchk_child, s);
+    return;
+  case A_WHILE:
+    loopchk_visit(s, n->u.loop.conditional);
+    loopchk_body(s, n, n->u.loop.body);
+    return;
+  case A_DOWHILE:
+    loopchk_body(s, n, n->u.loop.body);
+    loopchk_visit(s, n->u.loop.conditional);
+    return;
+  case A_FOR:
+    if (n->u.forLoop.initialization) loopchk_visit(s, n->u.forLoop.initialization);
+    if (n->u.forLoop.condition) loopchk_visit(s, n->u.forLoop.condition);
+    if (n->u.forLoop.increment) loopchk_visit(s, n->u.forLoop.increment);
+    loopchk_body(s, n, n->u.forLoop.body);
+    return;
+  case A_SWITCHSTATEMENT:
+    loopchk_visit(s, n->u.switchStmt.value);
+    s->switchDepth++;
+    for (int i = 0; i < n->u.switchStmt.cases.n; i++) loopchk_visit(s, n->u.switchStmt.cases.v[i]);
+    s->switchDepth--;
+    return;
+  case A_BREAK:
+    if (s->loopDepth == 0 && s->switchDepth == 0)
+      wtype_error(origin_string(n), "Break statement without enclosing loop or switch!");
+    return;
+  case A_CONTINUE:
+    if (s->loopDepth == 0) wtype_error(origin_string(n), "Continue statement without enclosing loop!");
+    return;
+  default:
+    visit_children(n, loopchk_child, s);
+  }
+}
+
+/* The post-check passes ported so far, in Prepare.js order (checkLiteralTypes, then checkLoops). */
+static void post_check_passes(Program *p) {
+  for (int i = 0; i < p->statements.n; i++) littype_visit(p->statements.v[i]);
+  LoopChk lc = {0, 0};
+  for (int i = 0; i < p->statements.n; i++) loopchk_visit(&lc, p->statements.v[i]);
+}
+
 static void check_program(Program *p) {
   Checker c;
   memset(&c, 0, sizeof c);

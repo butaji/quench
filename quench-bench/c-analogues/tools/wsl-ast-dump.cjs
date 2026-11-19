@@ -405,7 +405,14 @@ function parseInput(input) {
 // --check: the checker (Check.js) on the stage-6 state. Every Expression the checker visits is traced in
 // visit order with the type its visit returned ("E class origin type"); a call also traces its chosen
 // overload and result ("C name overload -> type"). A type error stops the input: its status carries the message.
-const checkMode = process.argv.includes("--check");
+const postMode = process.argv.includes("--post");   // --post: the checker and the post-check passes, status only
+const checkMode = process.argv.includes("--check") || postMode;
+if (postMode) run(`function __postHarness(p) {
+    check(p);
+    checkLiteralTypes(p);
+    checkLoops(p);
+    return "";
+}`);
 if (checkMode) run(`function __checkHarness(p) {
     const NL = String.fromCharCode(10);
     const lines = [];
@@ -429,7 +436,7 @@ const rows = inputs.map((input, i) => {
     let nodes = 0;
     try {
         if (checkMode) {
-            if (input.kind !== "doLex") { anonRoles.clear(); resolveInput(input, 6); dump = run("__checkHarness(__p)"); }
+            if (input.kind !== "doLex") { anonRoles.clear(); resolveInput(input, 6); dump = run(postMode ? "__postHarness(__p)" : "__checkHarness(__p)"); }
         } else if (unifyMode) {
             if (input.kind === "doLex") { dump = ""; }
             else { anonRoles.clear(); resolveInput(input, stage); dump = run(resolveMode ? "__resolveHarness(__p)" : literalMode ? "__literalHarness(__p)" : intrinsicsMode ? "__intrinsicsHarness(__p)" : reasonsMode ? "__reasonsHarness(__p)" : "__unifyHarness(__p)"); }
@@ -459,7 +466,7 @@ if (checkMode) {
     for (const r of rows) {
         if (r.kind === "doLex") continue;
         out.push("input " + r.i + " " + r.kind + " " + r.status);
-        if (r.dump) out.push(r.dump);
+        if (r.dump && !postMode) out.push(r.dump);
     }
     console.log(out.join("\n"));
     process.exit(0);

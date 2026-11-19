@@ -122,6 +122,7 @@ static void bench_parse(int iterations) {
  * then folds constexprs. The standard library is parsed once and kept below the arena mark. */
 static int STAGE = 0;
 static int UNIFY_MODE = 0;   /* --unify (1): the pairwise unification harness; --resolve (2): the overload harness */
+static int POST_MODE = 0;    /* --post: check, then the post-check passes; status lines only */
 static int CHECK_MODE = 0;   /* --check: the checker on the stage-6 state, with its expression trace */
 static Program STD_PROG, PREP_IN, PREP_OUT;
 static size_t STD_MARK;
@@ -195,6 +196,7 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
   }
   if (CHECK_MODE) {
     check_program(&PREP_OUT);
+    if (POST_MODE) post_check_passes(&PREP_OUT);
     WSL_NH = 0;
     return 0;
   }
@@ -228,6 +230,7 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[i], "--reasons") == 0) UNIFY_MODE = 5;
     else if (strcmp(argv[i], "--clone") == 0) CLONE_FLAG = 1;
     else if (strcmp(argv[i], "--check") == 0) CHECK_MODE = 1;
+    else if (strcmp(argv[i], "--post") == 0) { CHECK_MODE = 1; POST_MODE = 1; }
     else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
     else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc) benchIterations = atoi(argv[++i]);
     else root = argv[i];
@@ -254,7 +257,7 @@ int main(int argc, char **argv) {
     CHK_TRACE.n = 0;
     prepare_one(i, in, &b, status, sizeof status);
     printf("input %d %s %s\n", i, i == 0 ? "stdlib" : "doPrep", status);
-    if (CHK_TRACE.n && strcmp(status, "ok") == 0) {
+    if (!POST_MODE && CHK_TRACE.n && strcmp(status, "ok") == 0) {
       CHK_TRACE.s[CHK_TRACE.n - 1] = 0;   /* the trace's last newline: console.log supplies it */
       printf("%s\n", CHK_TRACE.s);
     }
