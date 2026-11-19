@@ -22201,7 +22201,10 @@ fn lane_activate_wasm_export<H: Host>(
 /// in-loop construction makes it (`Vm::inline_construct_target`): lane activations become
 /// frames, the receiver is allocated, and the constructor's frame is pushed with the pending
 /// construction that substitutes the receiver for a non-object result
-/// (`lane_return_script_frame`). Any other construction takes the general path.
+/// (`lane_return_script_frame`). A derived class constructor is pushed the same way without a
+/// receiver (`Vm::inline_derived_construct_target`): its frame binds `this` at `super(...)`, and
+/// its pending call applies the derived return rules (`CallCompletion::DerivedConstructor`).
+/// Any other construction takes the general path.
 #[inline(never)]
 fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Ip {
     let vm = unsafe { vm(cx) };
@@ -22212,17 +22215,21 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     // The checks `inline_construct_target` makes of the callee alone, before activations
     // become frames for it. A constructor of another program is pushed in its own, where the
     // lane admits it.
+    // A derived class constructor is pushed too (`Vm::inline_derived_construct_target`): its
+    // frame binds `this` at `super(...)`, and its pending call applies the derived return
+    // rules (`CallCompletion::DerivedConstructor`), where it left the lane before.
+    let admits = |body: &crate::bytecode::Function| Vm::<H>::inline_constructible(body) || Vm::<H>::inline_derived_constructible(body);
     let pushable = match vm.heap.function(callee) {
         Some(FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) => {
             *realm == vm.realm.globals
                 && if *program == unsafe { (*cx).program } {
-                    code.function_get(*id as usize).is_some_and(Vm::<H>::inline_constructible)
+                    code.function_get(*id as usize).is_some_and(admits)
                 } else {
                     vm.programs.residual(*program).is_some_and(|callee_code| {
                         vm.lane_admits(callee_code)
                             && callee_code
                                 .function_get(*id as usize)
-                                .is_some_and(Vm::<H>::inline_constructible)
+                                .is_some_and(admits)
                     })
                 }
         }
@@ -22237,7 +22244,13 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     vm.materialize_lane_activations(cx);
     // The caller is now the innermost frame, its registers the frame's.
     let (frame, r) = unsafe { ((*cx).frame(), (*cx).registers) };
-    let Some((program, id, env, this)) = vm.inline_construct_target(code, frame, callee) else {
+    let target = match vm.inline_construct_target(code, frame, callee) {
+        Some((program, id, env, this)) => Some((program, id, env, this, CallCompletion::Constructor(this))),
+        None => vm
+            .inline_derived_construct_target(code, frame, callee)
+            .map(|(program, id, env)| (program, id, env, Value::UNDEFINED, CallCompletion::DerivedConstructor)),
+    };
+    let Some((program, id, env, this, completion)) = target else {
         return exit(ip);
     };
     #[cfg(feature = "profile-lane-exits")]
@@ -22280,7 +22293,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
                 caller_cursor: None,
                 call_pc: call_pc as u32,
                 destination: i.a & crate::bytecode::REGISTER_MASK,
-                completion: CallCompletion::Constructor(this),
+                completion,
                 returns,
                 call_guard: Some(call_guard),
                 caller_program,
@@ -22347,7 +22360,13 @@ fn lane_return_script_frame<H: Host>(
     loop {
         // An async callee's promise settles on the general path (`PendingGeneralCall::completion`);
         // a generator whose activation became a frame finishes here as there (`PendingGeneralCall::completion`).
-        let returns_here = pending.last().is_some_and(|call| lane_completes_return(cx, call, frame, retired));
+        // A derived constructor's construction completes here only where it throws nothing
+        // (`Vm::derived_construct_completes`); its errors are raised at the call on the general path.
+        let returns_here = pending.last().is_some_and(|call| {
+            lane_completes_return(cx, call, frame, retired)
+                && (!matches!(call.completion, CallCompletion::DerivedConstructor)
+                    || vm.derived_construct_completes(value, vm.frames[frame].this))
+        });
         if !returns_here {
             // A record that has not run yet runs again on the general path; one that ran (a
             // call made, `retired`) completes the loop's own frame with the value there.
@@ -22358,6 +22377,10 @@ fn lane_return_script_frame<H: Host>(
         }
         let mut call = pending.pop().expect("a pending call names the returning frame");
         let completed = vm.frames.pop().expect("the returning frame is the innermost");
+        // Checked above: the returned object, else the `this` binding `super(...)` made.
+        if matches!(call.completion, CallCompletion::DerivedConstructor) && !vm.is_object_like(value) {
+            value = completed.this;
+        }
         match call.completion.take_generator() {
             Some(resume) => {
                 let stop = super::generator::MaterializedStop::Returned;

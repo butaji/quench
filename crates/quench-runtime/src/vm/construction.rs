@@ -1,6 +1,9 @@
 use super::*;
 #[path = "array_construction.rs"]
 mod array_construction;
+#[cfg(test)]
+#[path = "derived_construct_tests.rs"]
+mod derived_construct_tests;
 mod closure_scope;
 mod shortcut;
 
@@ -897,7 +900,8 @@ impl<H: Host> Vm<H> {
     /// function that binds its receiver itself. A base class constructor's [[Construct]] is
     /// an ordinary one (OrdinaryCreateFromConstructor, then the body, whose instance fields
     /// are its own code); a derived constructor binds `this` through `super()` and runs its
-    /// instance initializer there, so it keeps the native path.
+    /// instance initializer there, so it is pushed with its own completion
+    /// (`inline_derived_constructible`).
     pub(super) fn inline_constructible(function: &crate::bytecode::Function) -> bool {
         function.dispatch == DispatchClass::General
             && function.constructible
