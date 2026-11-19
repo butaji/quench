@@ -1383,7 +1383,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         loop {
             let request = match self.generator_record_mut(generator) {
-                Some(record) if !record.is_executing() => record.requests.pop_front(),
+                Some(record) if !record.is_executing() => record.next_request(),
                 _ => None,
             };
             let Some(request) = request else {

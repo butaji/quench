@@ -60,11 +60,14 @@ fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parame
     // SAFETY: the record is the activation's own, which nothing else accesses during the call;
     // its held bindings pass to the environment, as a closure's creation passes them.
     unsafe {
-        let held = std::mem::take(&mut (*record).dynamic_bindings);
+        let held = (*record).take_dynamic_bindings();
         window_environment(vm, code, entries, scope.function, env, scope.program, this, Some(held));
         (*record).pull_window(entries, usize::from(body.locals));
-        (*record).binding_site_pc = scope.site;
-        (*record).with_objects = scope.chain.into_vec();
+        (*record).replace_binding_site_pc(scope.site);
+        let chain = scope.chain.into_vec();
+        if !chain.is_empty() || !(*record).with_objects().is_empty() {
+            *(*record).with_objects_mut() = chain;
+        }
     }
     Some(EvalWindow { record, entries })
 }
@@ -80,8 +83,7 @@ unsafe fn settle_eval_record(record: *mut FrameRecord, previous_this: Option<Val
         if let Some(this) = previous_this {
             (*record).replace_this(this);
         }
-        (*record).binding_site_pc = None;
-        (*record).with_objects.clear();
+        (*record).end_eval_scope();
         (*record).push_window_locals(entries);
     }
 }

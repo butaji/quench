@@ -1,8 +1,10 @@
 use super::program_store::ProgramId;
 use crate::Value;
 
+mod frame_cold;
 mod frame_record;
 mod generator_record;
+mod suspension_live;
 pub(crate) use frame_record::FrameRecord;
 pub(in crate::vm) use frame_record::extend_this_env_roots;
 #[cfg(test)]

@@ -4,8 +4,8 @@
 //! with no VM frame beneath it; its `await` suspends it back into the record (`await_in_lane`), its
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
-use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan, WindowPlan};
-use super::super::activation::{extend_this_env_roots, FrameRecord, JobResume, JobRoot};
+use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan};
+use super::super::activation::{FrameRecord, JobResume, JobRoot};
 use super::super::dispatch_frame::{ExecutingProgram, LaneExit};
 
 /// The frame index of no frame: reads that look a frame up find none, and any other is a state
@@ -345,20 +345,45 @@ impl<H: Host> Vm<H> {
             return Err(resume);
         };
         let mut pending = self.pending_call_stacks.pop().unwrap_or_default();
+        let end = self.drive_job_window(code, job, window, resume, &mut pending);
+        self.pending_call_stacks.push(pending);
+        Ok(end)
+    }
+
+    /// `run_lane_job` of a job a chain of await jobs resumes (`Vm::run_job_chain`), over the
+    /// pending general calls `pending`, which the chain keeps for all its jobs instead of taking
+    /// a stack from `pending_call_stacks` and giving it back for each one. `pending` is empty
+    /// when the run starts and when it ends.
+    pub(in crate::vm) fn run_chained_lane_job(
+        &mut self,
+        code: &ResidualProgram,
+        (job, frame): (JobRoot, *const FrameRecord),
+        resume: JobResume,
+        pending: &mut Vec<PendingGeneralCall>,
+    ) -> Result<JobEnd, JobResume> {
+        let Some(window) = self.admit_job(code, job, frame, resume.sent()) else {
+            return Err(resume);
+        };
+        Ok(self.drive_job_window(code, job, window, resume, pending))
+    }
+
+    /// The lane run of `job`'s activation over `window`, which `admit_job` admitted, entered
+    /// with `resume`, its general calls pending on `pending`, which it leaves empty. How the
+    /// run ended (`job_end`).
+    fn drive_job_window(&mut self, code: &ResidualProgram, job: JobRoot, window: JobWindow, resume: JobResume, pending: &mut Vec<PendingGeneralCall>) -> JobEnd {
         let mut executing = ExecutingProgram { id: window.entry.program, retained: None };
         let caller_registers = self.active_registers;
         let entered = self.enter_lane_floor(code, window.entry.program);
-        let start = job_start(code, job, &window, (&raw mut pending, &raw mut executing), entered.cell);
-        let mut context = self.context_for_start(start);
+        let start = job_start(code, job, &window, (std::ptr::from_mut(pending), &raw mut executing), entered.cell);
+        let mut context = self.lane_context(start);
         let ip = self.drive_lane(&mut context, entered, |cx| match resume {
             JobResume::Sends(_) => window.enter(cx),
             JobResume::Throws(error) => window.enter_raising(cx, error),
         });
-        let end = self.job_end(code, job, &context, ip, &mut pending, executing);
+        let end = self.job_end(code, job, &context, ip, pending, executing);
         pending.clear();
-        self.pending_call_stacks.push(pending);
         self.active_registers = caller_registers;
-        Ok(end)
+        end
     }
 
     /// The window `job`'s activation runs over, once the lane admits the run, and the frame's
@@ -374,7 +399,7 @@ impl<H: Host> Vm<H> {
         let frame = unsafe { &*frame };
         let (program, function, this, pc) = (frame.program, frame.function, frame.this(), frame.pc);
         let cached = cached_window_plan(self, code, frame)?;
-        let WindowPlan { view, parent, locals, capture, environment, .. } = cached.0;
+        let (view, parent, locals, capture, environment) = (cached.0.view, cached.0.parent, cached.0.locals(), cached.0.capture, cached.0.environment);
         let this = self.window_this(code.function(function as usize), this, parent)?;
         let stack = crate::stack::StackGuard::enter().ok()?;
         self.check_execution_interrupt().ok()?;
@@ -458,7 +483,7 @@ impl JobWindow {
             let stack = &mut vm(cx).lane_stack;
             stack.push_generator_activation(self.activation);
             stack.restore_iterators(0, &mut (*self.frame).active_iterators);
-            stack.restore_with_objects(0, &mut (*self.frame).with_objects);
+            stack.restore_with_objects(0, &mut *self.frame);
             vm(cx).record_window_owner(&*(*cx).code, 0);
             enter_suspended_in_lane(cx, &self.entry, self.registers, self.pc)
         }

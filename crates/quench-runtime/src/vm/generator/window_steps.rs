@@ -159,10 +159,10 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(in crate::vm) fn park_frame(&mut self, frame: &mut FrameRecord, pc: usize, depth: usize) {
         frame.close_environment_window();
-        if !matches!(frame.suspension_live, Some((at, _)) if at == pc) {
+        if !frame.suspended_live_at(pc) {
             self.note_suspension_registers(frame, pc);
         }
-        self.lane_stack.take_with_objects(depth, &mut frame.with_objects);
+        self.lane_stack.take_with_objects(depth, frame);
         self.lane_stack.take_iterators(depth, &mut frame.active_iterators);
         frame.suspend_at(pc, self.heap.collection_epoch());
     }
@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn note_suspension_registers(&self, frame: &mut FrameRecord, pc: usize) {
         let (live, _) = self.suspension_registers(frame.program, frame.function, pc);
-        frame.suspension_live = Some((pc, live));
+        frame.note_suspension_live(pc, live);
     }
 
     /// Ends the windowed run of `generator` at its return: it completes, dropping its frame.
@@ -210,8 +210,8 @@ impl<H: Host> Vm<H> {
         with_objects: impl Iterator<Item = Value>,
     ) {
         frame.close_environment_window();
-        frame.with_objects.extend(with_objects);
         let mut frame = frame.into_frame(self.with_stack.len());
+        frame.with_objects.extend(with_objects);
         frame.active_iterators.extend(iterators);
         self.activate_frame(&mut frame);
         self.frames.push(frame);
