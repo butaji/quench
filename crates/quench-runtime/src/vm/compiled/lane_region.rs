@@ -2994,7 +2994,6 @@ impl Lowering<'_, '_> {
     /// decides it, as `Vm::typeof_test_value` would, and a heap value's cell the VM reads
     /// (`typeof_is_in_lane`). A returning test completes the activation with its Boolean.
     fn typeof_test(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        use crate::value::ValueLayout;
         let (index, negated) = crate::bytecode::typeof_test(instruction.unary_operator())?;
         let completes = match (instruction.returns_from_frame(), self.unit.origins.get(pc).copied()) {
             (false, _) if instruction.result_flags() == 0 => None,
@@ -3006,9 +3005,7 @@ impl Lowering<'_, '_> {
         let named = |sample: Value| super::super::coercion::immediate_typeof_index(sample) == Some(index);
         let mut immediate = self.raw_const(Lane::I8, 0);
         if named(Value::number(0.0)) {
-            let field = self.raw_binary_imm(Binary::ShiftRightUnsigned, value, i64::from(ValueLayout::TAG_SHIFT));
-            let offset = self.raw_binary_imm(Binary::Add, field, -(ValueLayout::FIRST_TAG_FIELD as i64));
-            let double = self.raw_compare_imm(Relation::UnsignedGreater, offset, ValueLayout::TAG_FIELD_SPAN as i64);
+            let double = crate::staged::value::is_double(&mut emit(&mut self.builder), value);
             let int = is_int_tagged(&mut self.builder, value);
             let number = self.raw_binary(Binary::Or, double, int);
             immediate = self.raw_binary(Binary::Or, immediate, number);
@@ -3020,12 +3017,10 @@ impl Lowering<'_, '_> {
             }
         }
         if named(Value::TRUE) {
-            let tag = self.raw_binary_imm(Binary::And, value, ValueLayout::TAG_MASK as i64);
-            let boolean = self.raw_compare_imm(Relation::Equal, tag, (Value::TRUE.to_bits() & ValueLayout::TAG_MASK) as i64);
+            let boolean = crate::staged::value::is_boolean(&mut emit(&mut self.builder), value);
             immediate = self.raw_binary(Binary::Or, immediate, boolean);
         }
-        let tag = self.raw_binary_imm(Binary::And, value, ValueLayout::TAG_MASK as i64);
-        let heap = self.raw_compare_imm(Relation::Equal, tag, ValueLayout::HEAP_TAG as i64);
+        let heap = crate::staged::value::is_heap(&mut emit(&mut self.builder), value);
         let (cell, join) = (self.builder.create_block(), self.builder.create_block());
         let holds = self.builder.append_block_param(join, types::I8);
         self.branch_if(heap, (cell, &[]), (join, &[immediate]));
@@ -3151,15 +3146,12 @@ impl Lowering<'_, '_> {
     /// `number === other` where `number` is a Number: equal only where `other` is a Number too
     /// and the two compare equal as Numbers; nothing leaves.
     fn number_strict_equality(&mut self, state: &mut State, pc: u32, number: Operand, other: Operand) -> Option<ir::Value> {
-        use crate::value::ValueLayout;
         let exit = self.guard_exit(state, pc);
         let number = self.operand_number(state, number, exit)?;
         let bits = self.operand_tagged(state, other)?;
         let [decode, join] = std::array::from_fn(|_| self.builder.create_block());
         let equal = self.builder.append_block_param(join, types::I8);
-        let field = self.raw_binary_imm(Binary::ShiftRightUnsigned, bits, i64::from(ValueLayout::TAG_SHIFT));
-        let offset = self.raw_binary_imm(Binary::Add, field, -(ValueLayout::FIRST_TAG_FIELD as i64));
-        let double = self.raw_compare_imm(Relation::UnsignedGreater, offset, ValueLayout::TAG_FIELD_SPAN as i64);
+        let double = crate::staged::value::is_double(&mut emit(&mut self.builder), bits);
         let int = is_int_tagged(&mut self.builder, bits);
         let is_number = self.raw_binary(Binary::Or, double, int);
         let unequal = self.raw_const(Lane::I8, 0);
@@ -3200,9 +3192,7 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(decoded);
         self.builder.set_cold_block(numbers);
         let is_number = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
-            let field = emit(builder).raw_binary_imm(Binary::ShiftRightUnsigned, bits, i64::from(ValueLayout::TAG_SHIFT));
-            let offset = emit(builder).raw_binary_imm(Binary::Add, field, -(ValueLayout::FIRST_TAG_FIELD as i64));
-            let double = emit(builder).raw_compare_imm(Relation::UnsignedGreater, offset, ValueLayout::TAG_FIELD_SPAN as i64);
+            let double = crate::staged::value::is_double(&mut emit(builder), bits);
             let int = is_int_tagged(builder, bits);
             emit(builder).raw_binary(Binary::Or, double, int)
         };
@@ -3241,7 +3231,7 @@ impl Lowering<'_, '_> {
         let family = self.raw_binary_imm(Binary::And, left, ValueLayout::HEAP_FAMILY_MASK as i64);
         let right_family = self.raw_binary_imm(Binary::And, right, ValueLayout::HEAP_FAMILY_MASK as i64);
         let one_family = self.raw_compare(Relation::Equal, family, right_family);
-        let string = self.raw_compare_imm(Relation::Equal, family, ValueLayout::DIRECT_STRING_TAG as i64);
+        let string = crate::staged::value::is_direct_string(&mut emit(&mut self.builder), left);
         let legacy = self.raw_compare_imm(Relation::Equal, family, ValueLayout::HEAP_TAG as i64);
         let contents = self.raw_binary(Binary::Or, string, legacy);
         let compared = self.raw_binary(Binary::And, one_family, contents);
