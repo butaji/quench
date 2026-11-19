@@ -151,8 +151,8 @@ impl Unit {
     /// query instead (`Lowering::is_live`).
     pub(crate) fn register_masks<'a>(
         &self, program: &'a crate::ResidualProgram, caller: u32,
-    ) -> Option<std::borrow::Cow<'a, crate::compile::liveness::RegisterMasks>> {
-        use crate::compile::liveness::{ROOT_MAP_REGISTERS, RegisterMasks, RegisterSet, register_bit};
+    ) -> Option<std::borrow::Cow<'a, crate::liveness::RegisterMasks>> {
+        use crate::liveness::{ROOT_MAP_REGISTERS, RegisterMasks, RegisterSet, register_bit};
         let caller_masks = program.register_root_masks(caller).filter(|masks| !masks.is_windowed())?;
         if self.frames.is_empty() && self.origins.iter().enumerate().all(|(pc, origin)|
             *origin == Origin::Caller(pc as u32)) {
@@ -179,7 +179,7 @@ impl Unit {
         }).collect::<Option<Vec<_>>>()?;
         masks.push(caller_masks.get(self.end as usize)?);
         let mut transfers: Vec<_> = self.instructions.iter().map(|instruction|
-            crate::compile::liveness::transfer(*instruction, program,
+            crate::liveness::transfer(*instruction, program,
                 &program.field_sites, &program.superinstructions)).collect();
         // A marker defines its callee's registers: call admission binds every one.
         for (frame, pc) in self.frames.iter().zip(&self.markers) {
@@ -214,7 +214,7 @@ impl Unit {
             }
         }
         starts.push(successors.len());
-        let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, &[], |pc| masks[pc]);
+        let live = crate::liveness::analyze_graph(&transfers, &starts, &successors, &[], |pc| masks[pc]);
         Some(std::borrow::Cow::Owned(RegisterMasks::new(live)))
     }
 }

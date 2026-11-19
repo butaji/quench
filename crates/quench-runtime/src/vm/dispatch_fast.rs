@@ -15926,7 +15926,7 @@ impl<H: Host> Vm<H> {
 }
 
 /// Whether liveness proves the result register of the running function's call record `i`
-/// at `ip` dead once the call completes (`liveness::register_dead` before the next PC), so
+/// at `ip` dead once the call completes (`crate::liveness::register_dead` before the next PC), so
 /// its value is never read: what the call writes there is unobservable.
 #[cold]
 fn lane_call_result_dead<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction) -> bool {
@@ -15938,7 +15938,7 @@ fn lane_call_result_dead<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstr
     let pc = unsafe { ip.offset_from((*cx).base) } as usize;
     code.register_root_masks(function)
         .and_then(|masks| masks.get(pc + 1))
-        .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(i.a & crate::bytecode::REGISTER_MASK)))
+        .is_some_and(|after| crate::liveness::register_dead(after, usize::from(i.a & crate::bytecode::REGISTER_MASK)))
 }
 
 script_handler! {
@@ -21494,7 +21494,7 @@ fn lane_call_awaited_marked<'live>(
     operand: LaneOperand,
     decoded: &[WideInstruction],
     pc: usize,
-    live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::liveness::RegisterMasks>>,
 ) -> LaneOperand {
     let call = decoded[pc];
     let Some(&awaited) = decoded.get(pc + 1) else {
@@ -21508,7 +21508,7 @@ fn lane_call_awaited_marked<'live>(
         && (awaited.result_register() == result
             || live()
                 .and_then(|masks| masks.get(pc + 2))
-                .is_some_and(|live| crate::compile::liveness::register_dead(live, usize::from(result))));
+                .is_some_and(|live| crate::liveness::register_dead(live, usize::from(result))));
     if !feeds {
         return operand;
     }
@@ -21747,7 +21747,7 @@ fn derive_lane_view<'live, H: Host>(
     constants: &[Value],
     heap: &crate::heap::Heap,
     kind: crate::bytecode::ProgramKind,
-    live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::liveness::RegisterMasks>>,
     sites: &[crate::bytecode::FieldSite],
     loop_tier: bool,
     diagnostics: bool,
@@ -22911,7 +22911,7 @@ fn install_loop_sites<'live, H: Host>(
     decoded: &[WideInstruction],
     constants: &[Value],
     sites: &[crate::bytecode::FieldSite],
-    live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::liveness::RegisterMasks>>,
     (diagnostics, tiers): (bool, &'static Tiers),
     records: &mut [LaneInstruction],
 ) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
@@ -23445,7 +23445,7 @@ fn specialize_updated_index_operators<H: Host>(records: &mut [LaneInstruction]) 
 ///
 /// Liveness (`live`) selects the variant that leaves a first result dead after the pair
 /// unstored on the fast path (`lane_operator_pair`'s `FIRST_DEAD`).
-fn specialize_operator_pairs<H: Host>(decoded: &[WideInstruction], handlers: &[crate::bytecode::Handler], records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
+fn specialize_operator_pairs<H: Host>(decoded: &[WideInstruction], handlers: &[crate::bytecode::Handler], records: &mut [LaneInstruction], live: Option<&crate::liveness::RegisterMasks>) {
     let mut pc = 0;
     while pc + 1 < records.len() {
         let covered = fused_width::<H>(records[pc].handler);
@@ -23466,7 +23466,7 @@ fn specialize_operator_pairs<H: Host>(decoded: &[WideInstruction], handlers: &[c
             continue;
         }
         let after = live.and_then(|masks| masks.get(pc + 2));
-        let first_dead = second.a == first.a || after.is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)));
+        let first_dead = second.a == first.a || after.is_some_and(|after| crate::liveness::register_dead(after, usize::from(first.a)));
         let raw = first_dead && constant.is_none() && raw_results::raw_result_allowed(decoded, handlers, live, pc + 1);
         macro_rules! seconds {
             ($first:ident; $($second:ident),*) => {
@@ -23498,7 +23498,7 @@ fn specialize_operator_pairs<H: Host>(decoded: &[WideInstruction], handlers: &[c
 /// liveness says so) the record that writes the truncated wrapping sum
 /// (`lane_operator_int32`). The truncation keeps its record for jumps that reach it and for
 /// operands the fused record declines.
-fn specialize_int32_truncations<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
+fn specialize_int32_truncations<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::liveness::RegisterMasks>) {
     use super::operations::{ADDITION, BITWISE_OR, SUBTRACTION};
     let truncation = lane_operator_integer_constant::<H, BITWISE_OR> as Handler as *const ();
     let fusions: [(Handler, Handler); 4] = [
@@ -23516,7 +23516,7 @@ fn specialize_int32_truncations<H: Host>(records: &mut [LaneInstruction], live: 
         let dead = second.a == first.a
             || live
                 .and_then(|masks| masks.get(pc + 2))
-                .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)));
+                .is_some_and(|after| crate::liveness::register_dead(after, usize::from(first.a)));
         if truncates && dead {
             records[pc].handler = fused as *const ();
         }
@@ -23527,7 +23527,7 @@ fn specialize_int32_truncations<H: Host>(records: &mut [LaneInstruction], live: 
 /// may stay raw (`raw_results::raw_result_allowed`) its raw form (`lane_operator_raw`,
 /// `lane_operator_numbers_raw`): as `a*b + c*d + e*f`'s first product, which waits for the
 /// next product's pair. A record a fused record before it covers runs inside that record.
-fn specialize_raw_operators<H: Host>(decoded: &[WideInstruction], handlers: &[crate::bytecode::Handler], records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
+fn specialize_raw_operators<H: Host>(decoded: &[WideInstruction], handlers: &[crate::bytecode::Handler], records: &mut [LaneInstruction], live: Option<&crate::liveness::RegisterMasks>) {
     if !handlers.is_empty() || live.is_none() {
         return;
     }

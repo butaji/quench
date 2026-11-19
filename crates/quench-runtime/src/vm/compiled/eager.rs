@@ -104,7 +104,7 @@ impl<'p, H: Host> super::specialize::CallThreadedExtension for EagerCraneliftExt
         // A body whose precise windows exceed the map budget keeps the conservative
         // all-live roots instead, which `NativeJsProgram` reports.
         self.counts.wide_frame_functions += usize::from(self.program.function_get(function_id as usize)
-            .is_some_and(|function| crate::compile::liveness::windows::is_conservative(function, function.instructions().count())));
+            .is_some_and(|function| crate::liveness::windows::is_conservative(function, function.instructions().count())));
         self.counts.semantic_entry_sites += sites.iter().filter(|site| site.calls_semantic_entry()).count();
         self.counts.static_transfers += sites.iter().filter(|site| !site.calls_semantic_entry()).count();
         let code = self.lower_function(function_id, &sites, isa)?;

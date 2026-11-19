@@ -880,9 +880,9 @@ impl Engine {
                 // A lazily lowered module keeps its first record: an environment's root
                 // function is read without a call.
                 let mut function = function;
-                let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
+                let no_method_sites: &[crate::liveness::MethodSite] = &[];
                 function.register_roots =
-                    crate::compile::liveness::register_roots(&function, no_method_sites, &[], &[]);
+                    crate::liveness::register_roots(&function, no_method_sites, &[], &[]);
                 slots.push(crate::bytecode::FunctionSlot::compiled(function));
             } else {
                 // Kept by its first call; this lowering settled what it interns.
@@ -892,8 +892,8 @@ impl Engine {
             }
         }
         let facts = plan.facts();
-        let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
-        crate::compile::liveness::mark_register_roots(&mut functions, no_method_sites, &[], &[]);
+        let no_method_sites: &[crate::liveness::MethodSite] = &[];
+        crate::liveness::mark_register_roots(&mut functions, no_method_sites, &[], &[]);
         let signatures = Rc::new(signature_pool);
         let globals: Rc<[WasmGlobal]> = globals.into();
         let memories: Rc<[WasmMemory]> = memories.into();
@@ -1490,9 +1490,9 @@ impl WasmLazy {
             "Wasm function {index} of {} interned a constant its compile did not",
             self.name
         );
-        let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
+        let no_method_sites: &[crate::liveness::MethodSite] = &[];
         function.register_roots =
-            crate::compile::liveness::register_roots(&function, no_method_sites, &[], &[]);
+            crate::liveness::register_roots(&function, no_method_sites, &[], &[]);
         function
     }
 }

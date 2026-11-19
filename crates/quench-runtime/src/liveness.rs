@@ -43,12 +43,6 @@ impl MethodArguments for [MethodSite] {
     }
 }
 
-impl MethodArguments for super::SiteTable<'_, MethodSite> {
-    fn arguments(&self, site: usize) -> RegisterSet {
-        self.as_slice().arguments(site)
-    }
-}
-
 impl MethodArguments for crate::bytecode::ResidualProgram {
     fn arguments(&self, site: usize) -> RegisterSet {
         let site = &self.method_sites[site];

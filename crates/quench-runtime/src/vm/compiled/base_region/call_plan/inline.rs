@@ -26,7 +26,7 @@
 
 use super::{choose, CallShape, Choice, DirectFacts};
 use crate::bytecode::{Class, Register, WideInstruction, REGISTER_MASK};
-use crate::compile::liveness::RegisterMasks;
+use crate::liveness::RegisterMasks;
 use crate::heap::GlobalFact;
 use crate::value::Value;
 use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, Frame};
@@ -45,7 +45,7 @@ pub(in super::super) struct Callee<'f> {
     pub(in super::super) homes: &'f [(u16, Register)],
     /// The callee's constant table's Numbers.
     pub(in super::super) numbers: Numbers<'f>,
-    /// The callee's live registers before each instruction (`compile::liveness`).
+    /// The callee's live registers before each instruction (`crate::liveness`).
     pub(in super::super) live: &'f RegisterMasks,
     /// The Stable fact the callee register's by-name read took: the global cell holding `identity`.
     pub(in super::super) stable: Option<GlobalFact>,

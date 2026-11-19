@@ -1,4 +1,4 @@
-use super::liveness::{RegisterSet, register_dead};
+use crate::liveness::{RegisterSet, register_dead};
 use crate::bytecode::{
     Function, Instr, NumericLocalStoreTarget, Op, Operand, REGISTER_MASK, specialized_numeric_op,
 };
@@ -273,7 +273,7 @@ mod tests {
         let mut dead = make_function();
         compact_binary_stores(
             &mut dead,
-            &[crate::compile::liveness::RegisterSet::default(); 4],
+            &[crate::liveness::RegisterSet::default(); 4],
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
@@ -283,7 +283,7 @@ mod tests {
         let mut live = make_function();
         compact_binary_stores(
             &mut live,
-            &[crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::register_bit(2), crate::compile::liveness::RegisterSet::default()],
+            &[crate::liveness::RegisterSet::default(), crate::liveness::RegisterSet::default(), crate::liveness::register_bit(2), crate::liveness::RegisterSet::default()],
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
@@ -359,7 +359,7 @@ mod tests {
         let mut dead = make_function();
         compact_binary_stores(
             &mut dead,
-            &[crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::register_bit(2), crate::compile::liveness::RegisterSet::default()],
+            &[crate::liveness::RegisterSet::default(), crate::liveness::RegisterSet::default(), crate::liveness::RegisterSet::default(), crate::liveness::register_bit(2), crate::liveness::RegisterSet::default()],
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
@@ -370,7 +370,7 @@ mod tests {
         let mut live = make_function();
         compact_binary_stores(
             &mut live,
-            &[crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::RegisterSet::default(), crate::compile::liveness::register_bit(0) | crate::compile::liveness::register_bit(2), crate::compile::liveness::RegisterSet::default()],
+            &[crate::liveness::RegisterSet::default(), crate::liveness::RegisterSet::default(), crate::liveness::RegisterSet::default(), crate::liveness::register_bit(0) | crate::liveness::register_bit(2), crate::liveness::RegisterSet::default()],
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );

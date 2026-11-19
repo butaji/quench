@@ -14,7 +14,7 @@ use super::call_plan::inline::{Callee, Context, InlineSite};
 use super::call_plan::{CallForm, CallShape, DirectFacts};
 use super::super::{DirectCallee, DirectCandidates};
 use crate::bytecode::Function;
-use crate::compile::liveness::RegisterMasks;
+use crate::liveness::RegisterMasks;
 use crate::heap::GlobalFact;
 use std::rc::Rc;
 

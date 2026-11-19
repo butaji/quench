@@ -1827,7 +1827,7 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 
 /// Whether register liveness covers a function's register forms, so a frame may leave its
 /// dead registers stale; the pcs of its `Call`s whose result register is dead after the
-/// call, which the compiler derives once from the same liveness (`liveness::mark_register_roots`);
+/// call, which the compiler derives once from the same liveness (`crate::liveness::mark_register_roots`);
 /// and the per-pc live register masks the collector scans, derived when a collection first
 /// finds the function on the stack. Most of a program's functions never run during a
 /// collection, so their masks are never built. The loop tier's regions share them
@@ -1839,7 +1839,7 @@ pub(crate) struct RegisterRoots {
     /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound.
     entry_live: u16,
     dead_call_results: crate::heap::ThinBoxSlice<u32>,
-    pub(crate) masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    pub(crate) masks: std::cell::OnceCell<std::rc::Rc<crate::liveness::RegisterMasks>>,
 }
 
 /// Uncovered, which bounds no register live at entry.
@@ -4081,7 +4081,7 @@ impl ResidualProgram {
             |atom| self.atoms.get(atom),
         );
         function.register_roots =
-            crate::compile::liveness::register_roots(&function, self, &self.field_sites, &self.superinstructions);
+            crate::liveness::register_roots(&function, self, &self.field_sites, &self.superinstructions);
         function.shrink_to_fit();
         function
     }
@@ -4110,13 +4110,13 @@ impl ResidualProgram {
 
     /// The registers live at `pc` in `function`, when liveness covers it.
     #[allow(dead_code)]
-    pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
+    pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::liveness::RegisterSet> {
         self.register_root_masks(function)?.get(pc)
     }
 
     /// `function`'s live register masks by pc, one past its last instruction included, when
     /// liveness covers it.
-    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&crate::compile::liveness::RegisterMasks> {
+    pub(crate) fn register_root_masks(&self, function: u32) -> Option<&crate::liveness::RegisterMasks> {
         self.shared_register_root_masks(function).map(|masks| &**masks)
     }
 
@@ -4124,7 +4124,7 @@ impl ResidualProgram {
     pub(crate) fn shared_register_root_masks(
         &self,
         function: u32,
-    ) -> Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>> {
+    ) -> Option<&std::rc::Rc<crate::liveness::RegisterMasks>> {
         let function = self.function_get(function as usize)?;
         if !function.register_roots.covered {
             return None;
@@ -4133,7 +4133,7 @@ impl ResidualProgram {
             .register_roots
             .masks
             .get_or_init(|| {
-                crate::compile::liveness::RegisterMasks::of(function, self, &self.field_sites, &self.superinstructions)
+                crate::liveness::RegisterMasks::of(function, self, &self.field_sites, &self.superinstructions)
                     .map(std::rc::Rc::new)
                     .expect("a covered function's liveness is derivable")
             });

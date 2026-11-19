@@ -32,7 +32,7 @@ use crate::bytecode::{
     FieldBase, FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
     OperandKind, Register, WideInstruction,
 };
-use crate::compile::liveness::RegisterSet;
+use crate::liveness::RegisterSet;
 use crate::value::Value;
 use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 
@@ -122,10 +122,10 @@ pub(crate) struct LoopRegion {
     instructions: Vec<WideInstruction>,
     /// The Number constants the region reads, by constant index.
     constants: std::collections::BTreeMap<usize, f64>,
-    /// The function's live registers before each instruction (`compile::liveness`), when
+    /// The function's live registers before each instruction (`crate::liveness`), when
     /// liveness covers it; for an inlining region, by its own PCs (`Inlining`). A plain
     /// region shares its function's masks (`ResidualProgram::shared_register_root_masks`).
-    live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    live: Option<std::rc::Rc<crate::liveness::RegisterMasks>>,
     /// Where an inlining region's instructions come from, when the region inlines calls.
     pub(crate) inlining: Option<Box<Inlining>>,
 }
@@ -356,7 +356,7 @@ fn held_registers(
         .filter_map(object_reads)
         .chain(objects.iter().copied())
         .filter(|register| {
-            !crate::compile::liveness::register_in(header_live, usize::from(*register))
+            !crate::liveness::register_in(header_live, usize::from(*register))
                 && definitions(*register).next().is_some()
                 && definitions(*register).all(|instruction| instruction.op().is_get_field())
         })
@@ -755,7 +755,7 @@ pub(crate) struct InlineCallee<'a> {
     pub(crate) params: u16,
     pub(crate) registers: u16,
     pub(crate) instructions: Vec<WideInstruction>,
-    pub(crate) live: &'a crate::compile::liveness::RegisterMasks,
+    pub(crate) live: &'a crate::liveness::RegisterMasks,
 }
 
 /// A field read whose value the bytecode's rewrite also stores into a `this` field (the
@@ -923,7 +923,7 @@ fn setup_resumes(run: &[WideInstruction], (resume, pc): (u32, u32), at_resume: R
         && run.iter().all(|instruction| {
             instruction
                 .defined_register()
-                .is_none_or(|register| !crate::compile::liveness::register_in(at_resume, usize::from(register)))
+                .is_none_or(|register| !crate::liveness::register_in(at_resume, usize::from(register)))
         })
 }
 
@@ -952,7 +952,7 @@ pub(super) fn inline_region<'a>(
     decoded: &[WideInstruction],
     constants: &[Value],
     sites: &[FieldSite],
-    live: &crate::compile::liveness::RegisterMasks,
+    live: &crate::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
     resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
@@ -1024,7 +1024,7 @@ pub(super) fn inline_region<'a>(
                 && callee_path.root == FieldReceiver::Register(receiver)
                 && callee_path.steps.len() == 1
                 && caller[read_offset + 1..offset].iter().all(|instruction| !mentions(*instruction, receiver, sites))
-                && !crate::compile::liveness::register_in(mask(pc + 1)?, usize::from(receiver)))
+                && !crate::liveness::register_in(mask(pc + 1)?, usize::from(receiver)))
             .then_some(())?;
             let fresh = Register::try_from(total).ok()?;
             total += 1;
@@ -1100,7 +1100,7 @@ pub(super) fn inline_region<'a>(
         total as usize,
         constants,
         sites,
-        Some(std::rc::Rc::new(crate::compile::liveness::RegisterMasks::new(masks))),
+        Some(std::rc::Rc::new(crate::liveness::RegisterMasks::new(masks))),
         header_live,
         header,
         &receivers, MethodCalls::Inliner,
@@ -1476,7 +1476,7 @@ pub(super) fn region(
     decoded: &[WideInstruction],
     constants: &[Value],
     sites: &[FieldSite],
-    live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    live: Option<&std::rc::Rc<crate::liveness::RegisterMasks>>,
     header: u32,
     backedge: u32,
     method_calls: MethodCalls,
@@ -1518,7 +1518,7 @@ fn admit_region(
     registers: usize,
     constants: &[Value],
     sites: &[FieldSite],
-    live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    live: Option<std::rc::Rc<crate::liveness::RegisterMasks>>,
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,
@@ -1564,7 +1564,7 @@ fn admit_lifetime_roles(
     instructions: Vec<WideInstruction>,
     registers: usize,
     constants: &[Value],
-    live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    live: Option<std::rc::Rc<crate::liveness::RegisterMasks>>,
     header: u32,
 ) -> Option<LoopRegion> {
     use std::collections::{BTreeMap, BTreeSet};
@@ -1788,7 +1788,7 @@ fn admit_register_roles(
     registers: usize,
     constants: &[Value],
     sites: &[FieldSite],
-    live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    live: Option<std::rc::Rc<crate::liveness::RegisterMasks>>,
     header_live: Option<RegisterSet>,
     header: u32,
     objects: &std::collections::BTreeSet<Register>,

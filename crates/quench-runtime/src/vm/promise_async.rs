@@ -42,11 +42,11 @@ impl<H: Host> Vm<H> {
         function: u32,
         pc: usize,
         registers: &mut [Value],
-    ) -> Option<crate::compile::liveness::RegisterSet> {
+    ) -> Option<crate::liveness::RegisterSet> {
         let masks = self.programs.residual(program).and_then(|program| program.register_root_masks(function))?;
         if masks.is_windowed() { return None; } let mask = masks.get(pc)?;
         // The mask covers the first `RegisterSet::BITS` registers; every later one is dead.
-        type RegisterSet = crate::compile::liveness::RegisterSet;
+        type RegisterSet = crate::liveness::RegisterSet;
         let covered = registers.len().min(RegisterSet::BITS as usize);
         let (low, high) = registers.split_at_mut(covered);
         high.fill(Value::UNDEFINED);

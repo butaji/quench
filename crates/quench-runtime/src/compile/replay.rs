@@ -160,6 +160,14 @@ impl<T: Clone> IndexMut<usize> for SiteTable<'_, T> {
     }
 }
 
+/// The argument registers of each method site, by site index (`crate::liveness`): the compiler's
+/// site table answers the liveness analysis as a finished program's table does.
+impl crate::liveness::MethodArguments for SiteTable<'_, crate::liveness::MethodSite> {
+    fn arguments(&self, site: usize) -> crate::liveness::RegisterSet {
+        self.as_slice().arguments(site)
+    }
+}
+
 impl<T> From<Vec<T>> for SiteTable<'_, T> {
     fn from(entries: Vec<T>) -> Self {
         Self::Owned(entries)
@@ -716,7 +724,7 @@ pub(crate) fn recompile(
     program: &crate::bytecode::ResidualProgram,
     id: u32,
 ) -> Result<Recompiled, String> {
-    use super::{Compiler, Constant, SpecializationMode, capture_layout, liveness};
+    use super::{Compiler, Constant, SpecializationMode, capture_layout};
     let replay = program.replay.as_deref().ok_or("the program keeps no replay")?;
     let function_replay = replay
         .functions
@@ -861,7 +869,7 @@ pub(crate) fn recompile(
     compiler.rewrite_replayed(program, id, function_replay.rewrite, &mut function);
     let undefined_constant = compiler.constant(Constant::Undefined);
     compiler.lower_function(&mut function, undefined_constant);
-    liveness::mark_register_roots(
+    crate::liveness::mark_register_roots(
         std::iter::once(&mut function),
         compiler.method_arguments(),
         compiler.field_sites.as_slice(),

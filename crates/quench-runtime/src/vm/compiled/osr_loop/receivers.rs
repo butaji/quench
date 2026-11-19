@@ -39,7 +39,7 @@ pub(super) fn captured(instructions: &[WideInstruction], header_live: RegisterSe
         slots.entry(register).and_modify(|held| if *held != slot { *held = None }).or_insert(slot);
     }
     slots.into_iter()
-        .filter(|(register, _)| !crate::compile::liveness::register_in(header_live, usize::from(*register)))
+        .filter(|(register, _)| !crate::liveness::register_in(header_live, usize::from(*register)))
         .filter_map(|(register, slot)| Some((register, FieldPath { root: FieldReceiver::Capture(slot?), steps: Vec::new() })))
         .collect()
 }

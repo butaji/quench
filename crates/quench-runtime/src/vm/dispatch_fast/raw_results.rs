@@ -14,7 +14,7 @@
 
 use super::*;
 use crate::bytecode::{Class, REGISTER_MASK};
-use crate::compile::liveness::{RegisterMasks, register_dead};
+use crate::liveness::{RegisterMasks, register_dead};
 
 /// The offset from a fused update, read and operation's first record to its operation.
 const OPERATION: usize = 2;

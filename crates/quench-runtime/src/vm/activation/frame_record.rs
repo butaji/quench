@@ -6,7 +6,7 @@
 
 use super::CallContext;
 use crate::bytecode::Atom;
-use crate::compile::liveness::RegisterSet;
+use crate::liveness::RegisterSet;
 use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
 use crate::heap::EnvironmentSlots;
 use crate::vm::compiled::ShadowFrame;

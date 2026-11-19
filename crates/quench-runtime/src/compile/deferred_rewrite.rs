@@ -87,7 +87,7 @@ impl<'a> Compiler<'a> {
         } else if cfg!(feature = "verify-replay") || self.load_encoding.is_some() {
             let undefined_constant = self.constant(Constant::Undefined);
             self.lower_function(function, undefined_constant);
-            liveness::mark_register_roots(std::iter::once(function), self.method_arguments(), self.field_sites.as_slice(), self.superinstructions.as_slice());
+            crate::liveness::mark_register_roots(std::iter::once(function), self.method_arguments(), self.field_sites.as_slice(), self.superinstructions.as_slice());
         } else {
             self.settle_dispatch(function);
         }

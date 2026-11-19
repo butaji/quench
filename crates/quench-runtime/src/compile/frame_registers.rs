@@ -4,7 +4,7 @@
 //! zone is never read, and its frame storage is reached only through them, so the register
 //! holds exactly what the slot would; opening its dead zone writes nothing anyone reads.
 
-use super::liveness::ROOT_MAP_REGISTERS;
+use crate::liveness::ROOT_MAP_REGISTERS;
 use super::rewrite::{fixed_width, relocate};
 /// The binding legacy argument reflection looks for.
 const ARGUMENTS_NAME: &str = "arguments";

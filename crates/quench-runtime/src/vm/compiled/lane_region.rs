@@ -586,10 +586,10 @@ struct Lowering<'a, 'f> {
 }
 
 enum Liveness<'a> {
-    Unit(Option<std::borrow::Cow<'a, crate::compile::liveness::RegisterMasks>>),
+    Unit(Option<std::borrow::Cow<'a, crate::liveness::RegisterMasks>>),
     Frames {
-        caller: Option<&'a crate::compile::liveness::RegisterMasks>,
-        frames: Vec<Option<&'a crate::compile::liveness::RegisterMasks>>,
+        caller: Option<&'a crate::liveness::RegisterMasks>,
+        frames: Vec<Option<&'a crate::liveness::RegisterMasks>>,
     },
 }
 
@@ -1565,7 +1565,7 @@ pub(super) fn lower(
         LaneHelpers::Bound(emit(&mut builder).call_function(target, &[])[0], narrow_table)
     } else { helpers };
     let count = usize::from(unit.registers);
-    let live = if unit.registers > crate::compile::liveness::ROOT_MAP_REGISTERS {
+    let live = if unit.registers > crate::liveness::ROOT_MAP_REGISTERS {
         Liveness::Frames {
             caller: program.register_root_masks(function_id),
             frames: unit.frames.iter().map(|frame| program.register_root_masks(frame.target.function)).collect(),

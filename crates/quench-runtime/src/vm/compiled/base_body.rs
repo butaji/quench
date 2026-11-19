@@ -14,7 +14,7 @@ use crate::code_dependencies::{InstanceofFact, Invalidation};
 use crate::vm::global_facts::GlobalTable;
 use crate::bytecode::{Class, Register, WideInstruction};
 use super::lane_region::StableFacts;
-use crate::compile::liveness::RegisterMasks;
+use crate::liveness::RegisterMasks;
 
 /// The registers an entry's parameters hold as int32s, and as other Numbers: the types the body's
 /// entry rows assume (a parameter that is neither is a tagged word the rows test where they read it).

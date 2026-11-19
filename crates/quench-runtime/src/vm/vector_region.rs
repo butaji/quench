@@ -14,7 +14,7 @@
 //! `I32BinaryOperator`, the vector load and store bounds), on bits instead of cells.
 
 use super::*;
-use crate::compile::liveness::{RegisterMasks, RegisterSet, register_in};
+use crate::liveness::{RegisterMasks, RegisterSet, register_in};
 use crate::wasm::simd::{BitKernel, BitShift, ShuffleForm, SimdKernel};
 
 /// The registers a bank names: liveness' width, which every region register lies within.

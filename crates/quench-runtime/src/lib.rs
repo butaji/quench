@@ -50,6 +50,9 @@ mod bitset;
 mod dense_map;
 mod bytecode;
 mod compile;
+/// Register liveness and the root masks a collection reads: bytecode facts the tiers and the
+/// runtime share, so they do not live in the compiler (`compile`), which a static image omits.
+mod liveness;
 mod code_dependencies;
 mod folded_roots;
 mod float_layout;

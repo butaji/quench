@@ -2616,7 +2616,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+            &dyn Fn() -> Option<&'s std::rc::Rc<crate::liveness::RegisterMasks>>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
@@ -2657,7 +2657,7 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+            &dyn Fn() -> Option<&'s std::rc::Rc<crate::liveness::RegisterMasks>>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
@@ -2990,7 +2990,7 @@ fn derive_lane_view<'s>(
         &crate::bytecode::Function,
         &[Value],
         crate::bytecode::ProgramKind,
-        &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+        &dyn Fn() -> Option<&'s std::rc::Rc<crate::liveness::RegisterMasks>>,
         &[crate::bytecode::FieldSite],
     ) -> super::dispatch_fast::LaneView,
 ) -> *const super::dispatch_fast::LaneView {

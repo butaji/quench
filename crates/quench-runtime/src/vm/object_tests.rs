@@ -104,7 +104,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         .iter()
         .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path))
         .collect::<Vec<_>>();
-    crate::compile::liveness::mark_register_roots(
+    crate::liveness::mark_register_roots(
         program.functions.iter_mut().map(|function| &mut **function),
         methods.as_slice(),
         &program.field_sites,
@@ -390,7 +390,7 @@ fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
         .unwrap();
     for pc in head..=back_edge {
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
-        assert_ne!(root_map & crate::compile::liveness::register_bit(register), 0, "pc {pc} drops register {register}");
+        assert_ne!(root_map & crate::liveness::register_bit(register), 0, "pc {pc} drops register {register}");
     }
 }
 
@@ -419,7 +419,7 @@ fn call_spread_sources_stay_rooted_through_the_loop() {
         .expect("the call window's copy of the source");
     let source_register = copy.register_b();
     let call_roots = program.register_root_mask(function_id as u32, call_pc).unwrap();
-    assert!(crate::compile::liveness::register_in(call_roots, window as usize), "the call drops its window register {window}");
+    assert!(crate::liveness::register_in(call_roots, window as usize), "the call drops its window register {window}");
     let (back_edge, head) = function
         .code
         .iter()
@@ -431,7 +431,7 @@ fn call_spread_sources_stay_rooted_through_the_loop() {
         .unwrap();
     for pc in head..=back_edge {
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
-        assert!(crate::compile::liveness::register_in(root_map, source_register as usize), "pc {pc} drops register {source_register}");
+        assert!(crate::liveness::register_in(root_map, source_register as usize), "pc {pc} drops register {source_register}");
     }
 }
 
@@ -476,7 +476,7 @@ fn static_three_field_object_literals_share_the_shape_site() {
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
         for register in window.base..window.base + window.count {
             assert_ne!(
-                root_map & crate::compile::liveness::register_bit(register),
+                root_map & crate::liveness::register_bit(register),
                 0,
                 "{mode}: register {register}"
             );

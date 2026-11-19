@@ -832,7 +832,7 @@ impl<H: Host> Vm<H> {
             roots.extend(frame.original_arguments.iter().copied());
             roots.extend(frame.locals.iter().copied());
             roots.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
-            match self.programs.residual(frame.program).and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
+            match self.programs.residual(frame.program).and_then(|program| crate::liveness::RegisterMasks::for_collection(program, frame.function)) {
                 Some(masks) => masks.extend_live(frame.pc as usize, &frame.registers, &mut roots),
                 None => roots.extend(frame.registers.iter().copied()),
             }

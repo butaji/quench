@@ -780,7 +780,7 @@ fn derived_function_facts_round_trip_and_match_their_derivation() {
                 instruction.op() == Op::Call
                     && instruction.result_flags() == 0
                     && masks.get(pc + 1).is_some_and(|after| {
-                        crate::compile::liveness::register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
+                        crate::liveness::register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
                     })
             })
             .map(|(pc, _)| pc as u32)

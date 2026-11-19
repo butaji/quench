@@ -2,7 +2,7 @@
 //!
 //! The residual program itself owns the promoted fields, so interpreter recovery
 //! and native execution see the same registers and need no virtual-object cache.
-use super::liveness::{self, MethodArguments, RegisterSet, register_bit};
+use crate::liveness::{MethodArguments, RegisterSet, register_bit};
 use crate::bytecode::{FieldLookup, FieldSite, Function, Instr, ObjectSite, Op, Superinstruction};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -55,12 +55,12 @@ fn replacement(
 ) -> Option<Vec<Option<smallvec::SmallVec<[Instr; 2]>>>> {
     // Reuse the authoritative register-transfer domain. Exhausting its mask
     // representation leaves the original allocation intact.
-    if function.registers.checked_add(2)? > liveness::ROOT_MAP_REGISTERS { return None; }
+    if function.registers.checked_add(2)? > crate::liveness::ROOT_MAP_REGISTERS { return None; }
     let make = function.code[allocation];
     if make.result_flags() != 0 { return None; }
     let atoms = &objects.get(make.object_site_index())?.atoms;
     if atoms.len() != 2 || atoms[0] == atoms[1] { return None; }
-    let transfers = liveness::transfers(function, methods, fields, supers)?;
+    let transfers = crate::liveness::transfers(function, methods, fields, supers)?;
     let instructions: Vec<_> = function.instructions().collect();
     let successors = crate::bytecode::Successors::of(function, &instructions);
     let repeated_allocation = (allocation..instructions.len())

@@ -66,7 +66,6 @@ pub(crate) use lazy_bodies::{expire_warm_arena, release_warm_arena};
 mod free_names;
 mod syntax_message;
 pub(crate) mod source_syntax;
-pub(crate) mod liveness;
 mod locals;
 mod numeric;
 pub(crate) mod first_call;
@@ -2224,7 +2223,7 @@ fn partition_point_from<T>(slice: &[T], last: &std::cell::Cell<usize>, holds: im
 /// have added their sites: at load the compiler's, after it the finished program's.
 pub(crate) struct LoweringTables<'t> {
     pub(crate) object_sites: &'t [ObjectSite],
-    pub(crate) methods: &'t dyn liveness::MethodArguments,
+    pub(crate) methods: &'t dyn crate::liveness::MethodArguments,
     pub(crate) field_sites: &'t [FieldSite],
     pub(crate) superinstructions: &'t [crate::bytecode::Superinstruction],
     pub(crate) specialized: bool,
@@ -2253,7 +2252,7 @@ pub(crate) fn lower_settled<'a>(
 ) {
     let LoweringTables { methods, field_sites, superinstructions, specialized, undefined_constant, object_sites } = *tables;
     if function.dispatch == DispatchClass::Numeric {
-        let live = liveness::analyze(function, methods, field_sites, superinstructions);
+        let live = crate::liveness::analyze(function, methods, field_sites, superinstructions);
         numeric::apply(function, live.as_deref());
     }
     // Renaming a plain slot's operations keeps it plain (validation re-derives the same
@@ -2272,7 +2271,7 @@ pub(crate) fn lower_settled<'a>(
         .iter()
         .any(|instruction| instruction.op() == Op::StoreLocalPlain)
     {
-        let live = liveness::analyze(function, methods, field_sites, superinstructions);
+        let live = crate::liveness::analyze(function, methods, field_sites, superinstructions);
         numeric::apply_plain_local_stores(function, live.as_deref());
     }
 }
@@ -3468,7 +3467,7 @@ impl<'a> Compiler<'a> {
             let Some(function) = function else { continue };
             if lowered_here(id) {
                 self.lower_function(function, undefined_constant);
-                function.register_roots = liveness::register_roots(
+                function.register_roots = crate::liveness::register_roots(
                     function,
                     self.method_sites.as_slice(),
                     self.field_sites.as_slice(),
@@ -4417,7 +4416,7 @@ impl<'a> Compiler<'a> {
 
     /// The argument registers of each method site: at load the compiler's own sites; in a
     /// replay, which adds none, the finished program's.
-    fn method_arguments(&self) -> &dyn liveness::MethodArguments {
+    fn method_arguments(&self) -> &dyn crate::liveness::MethodArguments {
         match self.replay_program {
             Some(program) => program,
             None => &self.method_sites,
@@ -4428,7 +4427,7 @@ impl<'a> Compiler<'a> {
     /// The specializing rewrites of one function, the only finishing pass that adds sites.
     fn rewrite_function(&mut self, function: &mut BcFunction) {
         if self.mode == SpecializationMode::Enabled {
-            let methods: &dyn liveness::MethodArguments = match self.replay_program {
+            let methods: &dyn crate::liveness::MethodArguments = match self.replay_program {
                 Some(program) => program,
                 None => &self.method_sites,
             };

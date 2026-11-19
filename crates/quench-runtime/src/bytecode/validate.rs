@@ -552,13 +552,13 @@ impl ResidualProgram {
                 return Err(format!("function {index} carries facts its code does not derive"));
             }
             // A lane lets the callee of a dead result skip building it, so each claim is the
-            // compiler's own derivation (`liveness::register_roots`).
+            // compiler's own derivation (`crate::liveness::register_roots`).
             // An activation fills only the registers below the live entry bound, so that bound
             // is the compiler's own derivation too.
             if !function.register_roots.dead_call_results().is_empty()
                 || function.register_roots.entry_fill(function.registers) < function.registers
             {
-                let derived = crate::compile::liveness::register_roots(function, self, &self.field_sites, &self.superinstructions);
+                let derived = crate::liveness::register_roots(function, self, &self.field_sites, &self.superinstructions);
                 if derived.dead_call_results() != function.register_roots.dead_call_results() {
                     return Err(format!("function {index} claims dead call results its liveness does not prove"));
                 }

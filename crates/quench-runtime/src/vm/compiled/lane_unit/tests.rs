@@ -215,7 +215,7 @@ fn remapped_liveness_covers_synthesized_reads_without_loading_callee_registers_a
             && instruction.result_register() < unit.caller_registers).expect("synthesized result move");
     assert!(masks.is_live(pc, instruction.register_b()), "return projection must retain its produced result");
     drop(masks);
-    unit.registers = crate::compile::liveness::ROOT_MAP_REGISTERS + 1;
+    unit.registers = crate::liveness::ROOT_MAP_REGISTERS + 1;
     assert!(unit.register_masks(&program, caller).is_none(), "uncovered widths retain conservative recovery");
 }
 

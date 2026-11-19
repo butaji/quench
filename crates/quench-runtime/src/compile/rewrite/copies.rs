@@ -12,7 +12,7 @@ use super::*;
 /// operands (`o.v = o.v + 1`) then reads the binding: each tier sees one value, not a copy.
 pub(super) fn forward_move_sources(
     function: &mut BcFunction,
-    methods: &(impl liveness::MethodArguments + ?Sized),
+    methods: &(impl crate::liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
@@ -30,8 +30,8 @@ pub(super) fn forward_move_sources(
         if rewritten_readers.contains(pc) {
             continue;
         }
-        let uses = |instruction: Instr| liveness::uses(instruction.as_wide(), methods, field_sites, superinstructions);
-        let definitions = |instruction: Instr| liveness::definitions(instruction.as_wide(), superinstructions);
+        let uses = |instruction: Instr| crate::liveness::uses(instruction.as_wide(), methods, field_sites, superinstructions);
+        let definitions = |instruction: Instr| crate::liveness::definitions(instruction.as_wide(), superinstructions);
         if let Some((at, rewritten)) = forwarded(function, &analysis, &scope, pc, (&uses, &definitions)) {
             function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
             function.code[at] = rewritten;
@@ -103,7 +103,7 @@ fn forwarded(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: 
     let consumer = function.code[at];
     let crossed = at > pc + 1 && register_bit(source) & scope.parameters != 0;
     if crossed || consumer.is_wide()
-        || liveness::live_out(&analysis.successors, &analysis.live, at) & register_bit(destination) != 0
+        || crate::liveness::live_out(&analysis.successors, &analysis.live, at) & register_bit(destination) != 0
     {
         return None;
     }

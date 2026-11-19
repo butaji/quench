@@ -2,7 +2,7 @@ use super::*;
 use crate::bytecode::{
     FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction,
 };
-use super::liveness::{RegisterSet, register_bit};
+use crate::liveness::{RegisterSet, register_bit};
 mod copies;
 use copies::forward_move_sources;
 
@@ -139,7 +139,7 @@ fusion_recipes! {
 
 pub(super) fn apply(
     function: &mut BcFunction,
-    methods: &(impl liveness::MethodArguments + ?Sized),
+    methods: &(impl crate::liveness::MethodArguments + ?Sized),
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &mut SiteTable<'_, Superinstruction>,
 ) {
@@ -176,7 +176,7 @@ pub(super) fn apply(
 /// `apply` makes its own: later rounds' code saved less run time than their compile cost.
 pub(super) fn coalesce_promoted_moves(
     function: &mut BcFunction,
-    methods: &(impl liveness::MethodArguments + ?Sized),
+    methods: &(impl crate::liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) {
@@ -196,7 +196,7 @@ pub(super) fn coalesce_promoted_moves(
 /// parameter's register is kept, as legacy `f.arguments` reflection reads it.
 fn remove_dead_moves(
     function: &mut BcFunction,
-    methods: &(impl liveness::MethodArguments + ?Sized),
+    methods: &(impl crate::liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
@@ -223,7 +223,7 @@ fn remove_dead_moves(
         }
         let destination = register_bit(mov.result_register());
         if destination & parameter_storage != 0
-            || liveness::live_out(&analysis.successors, &analysis.live, pc) & destination != 0
+            || crate::liveness::live_out(&analysis.successors, &analysis.live, pc) & destination != 0
         {
             continue;
         }
@@ -239,7 +239,7 @@ fn hand_on(
     analysis: CodeLiveness,
     changed: &[usize],
     function: &BcFunction,
-    methods: &(impl liveness::MethodArguments + ?Sized),
+    methods: &(impl crate::liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
@@ -297,9 +297,9 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
     *liveness = match (transfers, live) {
         (Some(mut transfers), Some(mut live)) => {
             transfers.truncate(function.code.len());
-            liveness::add_suspended_exception_roots(function, &mut live);
+            crate::liveness::add_suspended_exception_roots(function, &mut live);
             let successors = successors.expect("live facts carry their successors").relocated(&map);
-            debug_assert!(liveness::analyze_transfers(function, &transfers) == live && successors == crate::bytecode::Successors::of_code(function), "facts handed past dropped Nops match the code");
+            debug_assert!(crate::liveness::analyze_transfers(function, &transfers) == live && successors == crate::bytecode::Successors::of_code(function), "facts handed past dropped Nops match the code");
             Some(CodeFacts::Live(CodeLiveness { successors, transfers, live }))
         }
         (Some(mut transfers), None) => {
@@ -333,7 +333,7 @@ impl CodeLiveness {
     fn of(
         current: &mut Option<CodeFacts>,
         function: &BcFunction,
-        methods: &(impl liveness::MethodArguments + ?Sized),
+        methods: &(impl crate::liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
     ) -> Option<Self> {
@@ -341,16 +341,16 @@ impl CodeLiveness {
             Some(CodeFacts::Live(analysis)) => return Some(analysis),
             Some(CodeFacts::Transfers(transfers)) => {
                 debug_assert!(
-                    liveness::transfers(function, methods, field_sites, superinstructions)
+                    crate::liveness::transfers(function, methods, field_sites, superinstructions)
                         .is_some_and(|derived| derived == transfers),
                     "handed-on transfer masks match the code"
                 );
                 transfers
             }
-            None => liveness::transfers(function, methods, field_sites, superinstructions)?,
+            None => crate::liveness::transfers(function, methods, field_sites, superinstructions)?,
         };
         let successors = crate::bytecode::Successors::of_code(function);
-        let live = liveness::analyze_wide(function, &transfers, &successors);
+        let live = crate::liveness::analyze_wide(function, &transfers, &successors);
         Some(Self { transfers, live, successors })
     }
 
@@ -363,7 +363,7 @@ impl CodeLiveness {
         &mut self,
         span: &CoalescedSpan,
         function: &BcFunction,
-        methods: &(impl liveness::MethodArguments + ?Sized),
+        methods: &(impl crate::liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
     ) {
@@ -385,7 +385,7 @@ impl CodeLiveness {
         self,
         changed: &[usize],
         function: &BcFunction,
-        methods: &(impl liveness::MethodArguments + ?Sized),
+        methods: &(impl crate::liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
     ) -> CodeFacts {
@@ -400,13 +400,13 @@ fn update_transfers(
     transfers: &mut [(RegisterSet, RegisterSet)],
     changed: &[usize],
     function: &BcFunction,
-    methods: &(impl liveness::MethodArguments + ?Sized),
+    methods: &(impl crate::liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) {
     for &pc in changed {
         let instruction = fixed_width(function.code[pc], &function.wide);
-        transfers[pc] = liveness::transfer(instruction, methods, field_sites, superinstructions);
+        transfers[pc] = crate::liveness::transfer(instruction, methods, field_sites, superinstructions);
     }
 }
 
@@ -485,7 +485,7 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
 /// nest and chain within one pass.
 fn coalesce_distant_producer_moves(
     function: &mut BcFunction,
-    methods: &(impl liveness::MethodArguments + ?Sized),
+    methods: &(impl crate::liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
@@ -533,7 +533,7 @@ fn coalesce_distant_producer_moves(
         if !live_exact
             || pair.count_ones() != 2
             || pair & storage != 0
-            || liveness::live_out(&analysis.successors, &analysis.live, target) & register_bit(source)
+            || crate::liveness::live_out(&analysis.successors, &analysis.live, target) & register_bit(source)
                 != 0
         {
             continue;
@@ -568,7 +568,7 @@ fn coalesce_distant_producer_moves(
     }
     if live_exact {
         debug_assert!(
-            liveness::analyze_transfers(function, &analysis.transfers) == analysis.live,
+            crate::liveness::analyze_transfers(function, &analysis.transfers) == analysis.live,
             "coalesced liveness matches the code"
         );
         *current = Some(CodeFacts::Live(analysis));
@@ -885,7 +885,7 @@ fn region_boundaries(
 
 fn rewrite_once(
     function: &mut BcFunction,
-    methods: &(impl liveness::MethodArguments + ?Sized),
+    methods: &(impl crate::liveness::MethodArguments + ?Sized),
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
@@ -943,13 +943,13 @@ fn rewrite_once(
                 // removed register write. An unavailable map keeps the pair.
                 let (live, successors) = live.as_ref()?;
                 let original_definitions =
-                    liveness::definitions(first.as_wide(), superinstructions)
-                        | liveness::definitions(second.as_wide(), superinstructions);
-                let live_out = liveness::live_out(successors, live, index + 1);
+                    crate::liveness::definitions(first.as_wide(), superinstructions)
+                        | crate::liveness::definitions(second.as_wide(), superinstructions);
+                let live_out = crate::liveness::live_out(successors, live, index + 1);
                 rules.find_map(|rule| {
                     let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
                     let removed_definitions = original_definitions
-                        & !liveness::definitions(replacement.as_wide(), superinstructions);
+                        & !crate::liveness::definitions(replacement.as_wide(), superinstructions);
                     (live_out & removed_definitions == 0).then_some(replacement)
                 })
             });
@@ -989,7 +989,7 @@ fn rewrite_once(
         transfers.truncate(function.code.len());
         for pc in replaced {
             let replacement = fixed_width(function.code[pc], &function.wide);
-            transfers[pc] = liveness::transfer(replacement, methods, field_sites.as_slice(), superinstructions);
+            transfers[pc] = crate::liveness::transfer(replacement, methods, field_sites.as_slice(), superinstructions);
         }
         CodeFacts::Transfers(transfers)
     });
@@ -1527,7 +1527,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         assert_eq!(fused[0].op(), Op::JumpBinaryFalse);
         assert_eq!(fused[0].jump_target(), 2);
         assert_eq!(fused.len(), dead_branch.len() - 1);
-        assert_rewrite_preserves_code(dead_branch, super::super::liveness::ROOT_MAP_REGISTERS + 1);
+        assert_rewrite_preserves_code(dead_branch, crate::liveness::ROOT_MAP_REGISTERS + 1);
     }
 
     #[test]

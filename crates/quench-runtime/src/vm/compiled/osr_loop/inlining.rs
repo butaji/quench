@@ -12,7 +12,7 @@ use super::{
 mod pc_map;
 pub(super) use pc_map::PcMap;
 use crate::bitset::BitSet;
-use crate::compile::liveness::{register_in, RegisterMasks};
+use crate::liveness::{register_in, RegisterMasks};
 
 /// One inlined call: its frame, its callee and where leaving in its setup resumes.
 pub(super) struct Site<'b> {

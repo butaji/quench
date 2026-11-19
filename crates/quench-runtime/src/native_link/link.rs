@@ -526,7 +526,7 @@ mod tests {
             assert!(is_compiler_symbol(symbol), "{symbol}");
         }
         for symbol in [
-            "quench_runtime::compile::liveness::register_roots",
+            "quench_runtime::crate::liveness::register_roots",
             "quench_runtime::compile::regexp::validate_pattern_text",
             "quench_runtime::compile::program_profile::ProgramFootprint",
             "quench_node::specialize_host_script",

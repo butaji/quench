@@ -194,12 +194,12 @@ fn a_frozen_image_materializes_heap_string_constants_and_deopts_on_retirement() 
 #[cfg(feature = "aot")]
 #[test]
 fn functions_past_the_set_width_keep_a_windowed_map() {
-    let locals = crate::compile::liveness::ROOT_MAP_REGISTERS as usize + 1;
+    let locals = crate::liveness::ROOT_MAP_REGISTERS as usize + 1;
     let parameters = (0..locals).map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
     let source = format!("function wide({parameters}) {{ return p0; }}\nwide(1);\n");
     let program = Engine::specialize(&source, "wide-frame.js").unwrap();
     let wide = (0..program.function_count()).find(|index| program.function_get(*index)
-        .is_some_and(|function| function.registers > crate::compile::liveness::ROOT_MAP_REGISTERS))
+        .is_some_and(|function| function.registers > crate::liveness::ROOT_MAP_REGISTERS))
         .expect("the wide body");
     let masks = program.register_root_masks(wide as u32).expect("a body past the set width keeps a map");
     assert!(masks.is_windowed(), "the mask holds one set per register window");

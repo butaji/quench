@@ -40,8 +40,8 @@ fn has_backward_jump(function: &Function) -> bool {
 mod tests {
     use super::{admits, STRAIGHT_LINE_LIMIT};
     use crate::bytecode::{Instr, Op};
-    use crate::compile::liveness::RegisterMasks;
-    use crate::compile::MethodSiteSpec;
+    use crate::liveness::RegisterMasks;
+    use crate::liveness::MethodSite;
     use crate::test_host::TestHost;
     use crate::vm::Vm;
     use crate::{Engine, ResidualProgram};
@@ -77,8 +77,8 @@ mod tests {
     fn over_budget_root_maps_are_conservative_and_transfers_decline() {
         let program = program_of(STRAIGHT_LINE_LIMIT + 1, None);
         let function = &program.functions[0];
-        assert!(super::super::transfers(function, &[] as &[MethodSiteSpec], &[], &[]).is_none());
-        let masks = RegisterMasks::of(function, &[] as &[MethodSiteSpec], &[], &[]).unwrap();
+        assert!(super::super::transfers(function, &[] as &[MethodSite], &[], &[]).is_none());
+        let masks = RegisterMasks::of(function, &[] as &[MethodSite], &[], &[]).unwrap();
         assert!(masks.get(0).is_none() && masks.live_at(0, 0).is_none());
     }
 

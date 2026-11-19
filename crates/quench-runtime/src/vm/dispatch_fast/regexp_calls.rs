@@ -83,5 +83,5 @@ pub(super) fn length_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInst
         || code
             .register_root_masks(function)
             .and_then(|masks| masks.get(pc + AFTER_CALL_READ))
-            .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(result)))
+            .is_some_and(|after| crate::liveness::register_dead(after, usize::from(result)))
 }

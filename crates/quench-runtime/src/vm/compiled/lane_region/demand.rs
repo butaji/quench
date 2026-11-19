@@ -10,7 +10,7 @@
 //! (`frame::register_tagged`), which costs a box and never reads garbage.
 
 use super::*;
-use crate::compile::liveness::transfer;
+use crate::liveness::transfer;
 use std::num::NonZeroUsize;
 
 /// The views the next uses of a register read; empty when none does before a redefinition.

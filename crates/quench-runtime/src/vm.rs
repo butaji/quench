@@ -2238,7 +2238,7 @@ impl<H: Host> Vm<H> {
         let all: u64 = rows.iter().map(|row| row.0).sum();
         let wide: u64 = rows
             .iter()
-            .filter(|row| row.1 > crate::compile::liveness::ROOT_MAP_REGISTERS)
+            .filter(|row| row.1 > crate::liveness::ROOT_MAP_REGISTERS)
             .map(|row| row.0)
             .sum();
         rows.sort_unstable_by_key(|row| std::cmp::Reverse(row.0));

@@ -9,7 +9,7 @@ impl LoopRegion {
     pub(in crate::vm) fn of_function(
         instructions: Vec<WideInstruction>,
         constants: &[Value],
-        live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+        live: Option<&std::rc::Rc<crate::liveness::RegisterMasks>>,
     ) -> Option<Self> {
         Self::span(instructions, constants, live, 0)
     }
@@ -20,7 +20,7 @@ impl LoopRegion {
     pub(in crate::vm) fn span(
         instructions: Vec<WideInstruction>,
         constants: &[Value],
-        live: Option<&std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+        live: Option<&std::rc::Rc<crate::liveness::RegisterMasks>>,
         header: u32,
     ) -> Option<Self> {
         let backedge = header.checked_add(u32::try_from(instructions.len().checked_sub(1)?).ok()?)?;
