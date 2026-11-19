@@ -99,6 +99,7 @@ pub(crate) mod wasm;
 pub(crate) mod wasm_float;
 pub(crate) mod wasm_concrete;
 pub(crate) mod wasm_gc;
+pub(crate) mod wasm_exception;
 pub(crate) mod wasm_call;
 pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;

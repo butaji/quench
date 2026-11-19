@@ -2,6 +2,7 @@
 //! analysis, the emitter, the loop and threading passes). No tier names a Wasm opcode.
 
 use super::wasm_call::Call;
+use super::wasm_exception::Exception;
 use super::wasm_flow::Flow;
 use super::wasm_gc::GcOp;
 use super::wasm_instance::Instance;
@@ -29,6 +30,8 @@ pub(crate) enum Step {
     Simd(Simd),
     /// Struct and array accesses, reference tests and casts, and the GC allocations.
     Gc(GcOp),
+    /// Exception construction, the catch's tag test and payload read, and `throw_ref`.
+    Exception(Exception),
 }
 
 impl Step {
@@ -43,6 +46,7 @@ impl Step {
             .or_else(|| TableOp::of(op).map(Self::Table))
             .or_else(|| Simd::of(op, tag).map(Self::Simd))
             .or_else(|| GcOp::of(op).map(Self::Gc))
+            .or_else(|| Exception::of(op).map(Self::Exception))
     }
 
     /// The register whose slot the plan records for the step: its first operand, or a vector

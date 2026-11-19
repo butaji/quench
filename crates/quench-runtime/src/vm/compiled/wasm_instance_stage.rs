@@ -52,6 +52,10 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.write_vector(a, value);
             return;
         }
+        // A binding moves as the binding (`Slot::Binding`): nothing is loaded, the reader reads its environment slot.
+        if step == Instance::Move && matches!(self.plan.operand(pc), Slot::Binding(_)) {
+            return;
+        }
         match step {
             Instance::Move => {
                 let kind = self.operand_kind(pc);
@@ -134,7 +138,7 @@ impl<H: Host> Analysis<'_, H> {
         match step {
             Instance::Move => {
                 let slot = match state.get(b, registers)? {
-                    slot @ (Slot::Vector | Slot::Memory32Address) => slot,
+                    slot @ (Slot::Vector | Slot::Memory32Address | Slot::Binding(_)) => slot,
                     slot => Slot::Value(value_kind(slot)?),
                 };
                 state.set(a, registers, slot)

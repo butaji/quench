@@ -73,7 +73,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// Returns the function's result, read from `register`, with the success status.
-    fn return_register(&mut self, register: u16) {
+    pub(super) fn return_register(&mut self, register: u16) {
         let status = self.constant(Width::I64, 0);
         let mut values = vec![status];
         if let Some(ty) = self.plan.result {

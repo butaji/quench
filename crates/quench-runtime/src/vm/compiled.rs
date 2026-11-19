@@ -110,6 +110,7 @@ mod wasm_table_ops_stage;
 mod wasm_gc_stage;
 mod wasm_gc_allocate;
 use self::wasm_gc_allocate::allocating_reads;
+mod wasm_exception_stage;
 mod wasm_gc_callout;
 mod wasm_instance_switch;
 mod wasm_roots;
@@ -5584,7 +5585,7 @@ impl<H: Host> Analysis<'_, H> {
             .iter()
             .zip(&instructions)
             .map(|(state, instruction)| {
-                let (Some(state), Some(reads)) = (state.as_ref(), allocating_reads(*instruction)) else {
+                let (Some(state), Some(reads)) = (state.as_ref(), allocating_reads(*instruction).or_else(|| wasm_exception_stage::reads(*instruction))) else {
                     return Vec::new();
                 };
                 // Every operand is checked as a value at analysis, so none is dropped here.
@@ -5666,6 +5667,7 @@ impl<H: Host> Analysis<'_, H> {
                 self.transfer_table(function, instruction, state, op, (memory_register, *memory_slot))
             }
             Step::Gc(op) => self.transfer_gc(function, instruction, state, op),
+            Step::Exception(op) => self.transfer_exception(function, instruction, state, op),
             Step::Flow(flow) => self.transfer_flow(function, instruction, state, flow, result),
             Step::Call(call) => self.transfer_call(function, instruction, state, call, callable),
             Step::Simd(step) => {
@@ -5756,6 +5758,14 @@ impl MemoryArguments {
         usize::from(self.base) + usize::from(self.length)
     }
 }
+
+/// The calling convention of compiled Wasm bodies and of the calls between them. `Tail` makes a
+/// flagged call a true tail call (`return_call` / `return_call_indirect`, which Cranelift allows
+/// only between functions of one convention that supports tail calls). The entry trampoline
+/// (`build_entry`) keeps the default convention and calls its body with this one; the callouts
+/// into the VM keep the default, as they call Rust. With `unwind_info` on (the u-jit's setting),
+/// `Tail` saves the SystemV callee-saved registers, so a SystemV caller of a body is unaffected.
+const BODY_CALL_CONV: cranelift_codegen::isa::CallConv = cranelift_codegen::isa::CallConv::Tail;
 
 /// The internal signature of a compiled function: the context, the memory
 /// arguments, then the Wasm parameters.
@@ -5889,6 +5899,7 @@ fn unrollable_loops(instructions: &[WideInstruction], plan: &Plan) -> Vec<Option
             let body = instructions[pc];
             plan.reachable(pc)
                 && unrollable_op(body.op())
+                && !wasm_call_stage::is_tail_call(body)
                 && match body.op().control_flow_layout() {
                     ControlFlowLayout::Fallthrough => true,
                     ControlFlowLayout::ConditionalJump => body.jump_target() as usize > latch,
@@ -5987,7 +5998,8 @@ fn thread_path(
             return None;
         }
         let instruction = *instructions.get(pc)?;
-        if writes_register(instruction, selector) {
+        // A tail call ends its function: a copy cannot continue past it.
+        if writes_register(instruction, selector) || wasm_call_stage::is_tail_call(instruction) {
             return None;
         }
         path.push(pc);
@@ -6061,6 +6073,10 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
             return None;
         }
         let instruction = *instructions.get(pc)?;
+        // A tail call ends its function: a copy cannot continue past it.
+        if wasm_call_stage::is_tail_call(instruction) {
+            return None;
+        }
         path.push(pc);
         pc = match instruction.op().control_flow_layout() {
             ControlFlowLayout::Fallthrough => pc + 1,
@@ -6829,10 +6845,12 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.gc(pc, instruction, op);
                 true
             }
+            Step::Exception(op) => self.exception_op(pc, instruction, op),
             Step::Flow(flow) => self.flow(function, pc, instruction, flow),
             Step::Call(call) => {
                 self.call(pc, instruction, call);
-                true
+                // A tail call returns from the function with its result: nothing follows it.
+                !wasm_call_stage::is_tail_call(instruction)
             }
             Step::Simd(step) => {
                 self.simd(pc, instruction, step);
@@ -7013,7 +7031,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         let memory = MemoryArguments::of(fixed_base, guarded);
         let mut func = ir::Function::with_name_signature(
             UserFuncName::User(function_name(index)),
-            internal_signature(memory, &plan.params, plan.result, call_conv),
+            internal_signature(memory, &plan.params, plan.result, BODY_CALL_CONV),
         );
         use crate::staged::machine::{Lane, Relation};
         let mut builder_context = FunctionBuilderContext::new();
@@ -7227,7 +7245,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             memory,
             &plan.params,
             plan.result,
-            call_conv,
+            BODY_CALL_CONV,
         ));
         let wide_context = builder.func.dfg.value_type(context) == types::I64;
         let mut stage = object_slots::emit(&mut builder);

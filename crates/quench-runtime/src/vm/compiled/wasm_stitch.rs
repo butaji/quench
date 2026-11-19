@@ -300,6 +300,8 @@ fn plan(
         Step::Simd(simd) => wasm_stitch_simd::simd(instruction, simd, world).or_else(|| wasm_stitch_simd_more::simd_more(pc, instruction, world)),
         Step::Table(op) => wasm_stitch_table::table(pc, instruction, op, world),
         Step::Gc(op) => wasm_stitch_gc::gc(pc, instruction, op, world),
+        // The b-jit has no rows for exception operations yet: such a function stays interpreted.
+        Step::Exception(_) => None,
         Step::Flow(Flow::Return) => Some(vec![if returns {
             Planned { stencil: "leave_wasm_word", holes: padded_holes([slot(a)]), taken: None }
         } else {
