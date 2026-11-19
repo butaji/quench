@@ -173,6 +173,20 @@ pub(crate) fn deliver<const D: u8>(mut s: S, word: u64) -> Out {
     if put_tagged::<D>(&mut s, word) { Out::Next(s) } else { Out::Exit(s) }
 }
 
+/// `deliver` of a `word` the fact store proved a Number (an int word or a double, `ic_rows::known_get`): a
+/// pinned double takes it with no tag test and no exit, an int word converted; any other place as `deliver`.
+#[inline(always)]
+pub(crate) fn deliver_number<const D: u8>(mut s: S, word: u64) -> Out {
+    match D {
+        PINF.. => {
+            let bits = if is_double(word) { word } else { widen(word) };
+            s.f[(D - PINF) as usize] = f64::from_bits(bits);
+            Out::Next(s)
+        }
+        _ => deliver::<D>(s, word),
+    }
+}
+
 /// Writes `value`, held in `rep`, to the destination; false where the place cannot hold it.
 #[inline(always)]
 fn put<const D: u8>(s: &mut S, value: u64, rep: Representation) -> bool {

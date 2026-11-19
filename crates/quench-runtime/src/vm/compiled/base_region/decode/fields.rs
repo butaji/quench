@@ -52,12 +52,16 @@ fn cached_read(known: Known, (object, first, second): (Option<Register>, u16, Op
     let row = Decoded::heap(heap, Some(dst), object.map(Source::Register), None);
     match folded {
         Some((folded, value)) => Decoded { hole: value, folded: Some(folded), ..row },
-        None => Decoded {
-            hole,
-            slot: second.is_none().then(|| own_slot_type(known, first)).flatten(),
-            ic: (heap == Heap::Site).then(|| own_flat_load(known, first).map(ic_hole)).flatten(),
-            ..row
-        },
+        None => {
+            let load = (heap == Heap::Site).then(|| own_flat_load(known, first)).flatten();
+            Decoded {
+                hole,
+                slot: second.is_none().then(|| own_slot_type(known, first)).flatten(),
+                ic: load.map(ic_hole),
+                typed: load.and_then(number_slot),
+                ..row
+            }
+        }
     }
 }
 
@@ -119,6 +123,15 @@ fn own_flat_load(known: Known, site: u16) -> Option<crate::vm::compiled::object_
     let [load] = loads[..] else { return None };
     // The row reads and writes either storage form, as the record's inline flag says.
     (load.holder.is_none() && load.valid() && load.inherited.is_none() && !load.function_shape).then_some(load)
+}
+
+/// The dependency that proves the one own flat entry's slot holds Numbers: its observed type is a Number
+/// type the code may hold (`NativeFieldLoad::slot_dependency`), and its words are tagged, so each is an
+/// int word or a double whatever the receiver's storage form. A raw-double slot (`raw_double`) is left
+/// to the tested read: its words are binary64 bits, which a non-canonical NaN may leave outside the
+/// double tag range.
+fn number_slot(load: crate::vm::compiled::object_slots::NativeFieldLoad) -> Option<crate::code_dependencies::SlotDependency> {
+    (!load.raw_double && load.ty.is_subtype(crate::typed_ir::Type::NUMBER)).then(|| load.slot_dependency()).flatten()
 }
 
 /// An inline-cache row's entry operands in one word: the exact shape below 32 bits, the slot's byte

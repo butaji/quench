@@ -36,7 +36,7 @@
 use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, SITE_OBJECT_AT};
 use crate::heap_rows::{payload, word_at};
 use crate::layout::{JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED};
-use crate::numeric::{HOLE_A, Out, S, deliver, is_int, number_word};
+use crate::numeric::{HOLE_A, Out, S, deliver, deliver_number, is_int, number_word};
 use crate::stage::StencilStage;
 use crate::staged::ic::{self, IcOp, Reached};
 use crate::staged::object::{Form, direct_object_record, object_record_at};
@@ -156,13 +156,18 @@ fn known_record<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) ->
 }
 
 /// The own slot of the receiver known to be a direct object (`ic::own_field`: hole 2 the shape, hole 3 the
-/// slot's flat byte offset), with no family test.
+/// slot's flat byte offset), with no family test. Where `NUMBER`, the slot's type is proved a Number by the
+/// fact store: the code holds the slot's observed type as a dependency (`SlotDependency`, which a widening
+/// retires it over), and the shape compare proves the slot is that one, so every word the read meets is a
+/// Number (an int word or a double; a narrow form holds int words only) and the destination takes it with
+/// no tag test and no exit (`deliver_number`).
 #[inline(always)]
-fn known_get<const D: u8>(s: S, payload: usize) -> Out {
+fn known_get<const D: u8, const NUMBER: bool>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
     let record = known_record::<GET_RECEIVER>(&s, &mut stage, payload);
     let word = ic::own_field(&mut stage, record, 0, 0, ());
     match word {
+        Some(word) if NUMBER => hit::<true>(deliver_number::<D>(s, word)),
         Some(word) => hit::<true>(deliver::<D>(s, word)),
         None => miss::<true>(s),
     }
@@ -207,7 +212,10 @@ pub(crate) fn run<const KIND: u8, const CHAINED: bool, const D: u8, const A: u8>
         IC_GET_HOLDER_ROW => get_row::<true, CHAINED, D>(s, payload),
         IC_SET_INT_ROW => set_row::<true, CHAINED, A>(s, payload),
         IC_PROOF_ROW => proof(s, payload),
-        IC_KNOWN_GET_ROW => known_get::<D>(s, payload),
+        // A known get is always followed by its site row, so its entry flag says instead whether the
+        // fact store proved the slot a Number (`false`: proved; `base_region::plan::ic_plan`).
+        IC_KNOWN_GET_ROW if CHAINED => known_get::<D, false>(s, payload),
+        IC_KNOWN_GET_ROW => known_get::<D, true>(s, payload),
         IC_KNOWN_SET_ROW => known_set::<false, A>(s, payload),
         IC_KNOWN_SET_INT_ROW => known_set::<true, A>(s, payload),
         _ => set_row::<false, CHAINED, A>(s, payload),

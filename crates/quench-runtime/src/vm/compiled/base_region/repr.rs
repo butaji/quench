@@ -165,6 +165,28 @@ pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds)
     reprs
 }
 
+/// Keeps each site read's slot-type proof (`Decoded::typed`) only where a row drops a check on it: an
+/// inline-cache read of a receiver every path proved (`Heap::IcKnownGet`) into a pinned double, in code that
+/// makes no call or helper step.
+///
+/// INVARIANT (one fact store): a check the b-jit drops is backed by a fact-store proof and the dependency
+/// that keeps it true. Here the proof is the slot's observed type, a Number type (`NativeFieldLoad::ty`, the
+/// type `Heap::slot_type` maintains on every store), and the dependency is the same one the u-jit's code holds
+/// for it (`SlotDependency`, subscribed through `Body::slot_types` as `StableFacts::slots`): a store that widens
+/// the slot retires the code before its next entry. Inside one run nothing the rows do widens it (an in-place
+/// store writes only what the slot's type holds, or leaves through the store gate); only a call or a helper
+/// step could, so code that makes one keeps the tested read.
+pub(super) fn keep_typed_reads(homes: &Homes, decoded: &mut [Decoded]) {
+    let calls = decoded.iter().any(Decoded::makes_calls);
+    for row in decoded.iter_mut() {
+        let double = row.dst.is_some_and(|dst| matches!(homes.place(dst), Place::PinF(_)));
+        let known = row.heap == Some(Heap::Site) && row.ic.is_some() && row.proven;
+        if calls || !known || !double {
+            row.typed = None;
+        }
+    }
+}
+
 /// Whether the row takes general (tagged word) semantics: its result or an operand of a
 /// relation is no int32.
 pub(super) fn is_general(row: &Decoded, reprs: &[Option<Representation>]) -> bool {
@@ -221,6 +243,23 @@ mod tests {
         assert_eq!(variant(Kind::Sub, OperandKinds::STRING), Variant::Generic);
         assert_eq!(variant(Kind::Add, OperandKinds::OTHER), Variant::Generic);
         assert_eq!(variant(Kind::Lt, OperandKinds::BIGINT), Variant::Generic);
+    }
+
+    /// A proven site read into a pinned double keeps its slot-type proof (the dependency the code holds and
+    /// the row that drops the tag test); a read into a frame slot, an unproven receiver, or code that makes a
+    /// helper step does not.
+    #[test]
+    fn a_typed_read_keeps_its_proof_only_where_a_check_drops() {
+        let dependency = crate::code_dependencies::SlotDependency { shape: 7, slot: 2, ty: Type::NUMBER };
+        let read = |dst: Register, proven: bool| Decoded { ic: Some(7), proven, typed: Some(dependency), ..Decoded::heap(Heap::Site, Some(dst), Some(Source::Register(2)), None) };
+        // Web 0 holds a pinned double, web 1 a frame slot; web 2 is the receiver.
+        let homes = Homes::of(&[], &[0], vec![0, 1, 2], &[Vec::new(), Vec::new(), Vec::new()]);
+        let mut rows = [read(0, true), read(1, true), read(0, false)];
+        keep_typed_reads(&homes, &mut rows);
+        assert_eq!(rows.iter().map(|row| row.typed.is_some()).collect::<Vec<_>>(), [true, false, false]);
+        let mut calling = [read(0, true), Decoded::step(Step::Helper, None)];
+        keep_typed_reads(&homes, &mut calling);
+        assert!(calling[0].typed.is_none(), "a helper step may widen the slot");
     }
 
     #[test]
