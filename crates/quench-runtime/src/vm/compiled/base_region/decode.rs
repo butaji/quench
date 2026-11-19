@@ -6,8 +6,7 @@ mod fields;
 use fields::{field_row, field_store_row};
 pub(super) use fields::{site_read_row, stores_field};
 mod numeric;
-use numeric::numeric_row;
-pub(super) use numeric::{staged_binary, staged_unary};
+pub(super) use numeric::{numeric_row, staged_binary, staged_unary};
 
 /// The row kind of a `Binary`'s operator class (`staged::BinaryClass`, the one classification of the operators):
 /// an arithmetic, bitwise or remainder operator's row. A relation as a value, or any other operator, has no Number row.
@@ -146,11 +145,14 @@ pub(super) struct Decoded {
     /// A proven store a call cleared the run-level stores test for, which re-reads the run's stores word
     /// before it (`Heap::Stores`, a mid-body guard), so the stores after it are admitted (`proofs::prove`).
     pub(super) recheck: bool,
+    /// A generic `Binary` (its operator is data, so its step helper runs any operands): a numeric row whose site is a
+    /// string `+` (`Variant::Concat`) keeps the region running through that helper as its miss (`plan::concat_run`).
+    pub(super) generic: bool,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, proven: false, flat: false, relies: false, admitted: false, recheck: false }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {

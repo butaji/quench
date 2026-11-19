@@ -150,7 +150,14 @@ pub(super) fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers
     let mut calls: Vec<Option<Vec<What>>> = region.instructions().iter().map(|_| None).collect();
     for (k, instruction) in planned {
         calls[k] = Some(match folds.iter().position(|pair| pair.call == at(k)) {
-            Some(index) => folds.swap_remove(index).whats(),
+            Some(index) => {
+                let mut pair = folds.swap_remove(index);
+                // The Number rows between the read and the call leave at the read, as the call's row does.
+                for (j, row) in std::mem::take(&mut pair.arithmetic) {
+                    calls[j] = Some(vec![What::Resume(row, pair.read)]);
+                }
+                pair.whats()
+            }
             None => call(region, at(k), sites, instruction),
         });
     }

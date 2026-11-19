@@ -16,6 +16,8 @@ pub(super) struct Fold {
     pub(super) call: u32,
     row: Decoded,
     completion: Option<Decoded>,
+    /// The Number rows between the read and the call (local index, row), each leaving at the read where its operands are no Numbers.
+    pub(super) arithmetic: Vec<(usize, Decoded)>,
 }
 
 impl Fold {
@@ -53,7 +55,7 @@ fn fold_at(region: &LoopRegion, known: Known<'_>, plans: &impl Fn(WideInstructio
     let Some(FieldLookup::Atom { base, .. }) = read.field_lookup() else { return None };
     let receiver = base.register_index()?;
     (callee != receiver).then_some(())?;
-    let (j, reads, writes) = between(code, lands, k, plans)?;
+    let Between { call: j, reads, writes, arithmetic } = between(region, lands, k, plans)?;
     let at = region.header + j as u32;
     let (plain, returning) = code[j].split_return();
     let shape = CallShape { returning, ..CallShape::of(at, plain, CallForm::Plain) };
@@ -62,29 +64,51 @@ fn fold_at(region: &LoopRegion, known: Known<'_>, plans: &impl Fn(WideInstructio
     (reads.iter().all(|register| !writes.contains(register)) && !writes.contains(&receiver) && !writes.contains(&callee) && !reads.contains(&callee)).then_some(())?;
     let row = Decoded { holder: Some(holder), ..row_of(native, &shape)? };
     let completion = shape.returning.then(|| Decoded { a: Some(Source::Register(shape.result)), ..Decoded::step(Step::Return, None) });
-    Some(Fold { read: pc, call: region.header + j as u32, row, completion })
+    Some(Fold { read: pc, call: region.header + j as u32, row, completion, arithmetic })
 }
 
-/// The instructions between the read at `k` and the call they lead to, at the index `j` of `code`, with the registers the moves
-/// among them read and write: only moves and constants, none a jump lands on, and the call a planned plain call.
-fn between(code: &[WideInstruction], lands: &Bits, k: usize, plans: &impl Fn(WideInstruction) -> bool) -> Option<(usize, Vec<Register>, Vec<Register>)> {
-    let (mut reads, mut writes) = (Vec::new(), Vec::new());
+/// The instructions between the read at `k` and the call they lead to: the call's index `call`, the registers the moves and
+/// Number rows among them read and write, and those rows (`arithmetic`). Only moves, constants and leaving Number rows
+/// (`leaving_number`); none a jump lands on; the call a planned plain call.
+struct Between {
+    call: usize,
+    reads: Vec<Register>,
+    writes: Vec<Register>,
+    arithmetic: Vec<(usize, Decoded)>,
+}
+
+fn between(region: &LoopRegion, lands: &Bits, k: usize, plans: &impl Fn(WideInstruction) -> bool) -> Option<Between> {
+    let code = region.instructions();
+    let mut between = Between { call: 0, reads: Vec::new(), writes: Vec::new(), arithmetic: Vec::new() };
     for j in k + 1..code.len() {
         if lands.contains(j) {
             return None;
         }
         let next = code[j];
         if CallForm::of(next.split_return().0) == Some(CallForm::Plain) {
-            return plans(next).then_some((j, reads, writes));
+            return plans(next).then(|| Between { call: j, ..between });
         }
         match next.op().class() {
-            Class::Move if next.result_flags() == 0 => reads.push(next.register_b()),
+            Class::Move if next.result_flags() == 0 => between.reads.push(next.register_b()),
             Class::LoadConst if next.result_flags() == 0 => {}
-            _ => return None,
+            _ => {
+                let row = leaving_number(region, next)?;
+                between.reads.extend(row.registers().filter(|register| Some(*register) != row.dst));
+                between.writes.extend(row.dst);
+                between.arithmetic.push((j, row));
+                continue;
+            }
         }
-        writes.extend(next.written_registers());
+        between.writes.extend(next.written_registers());
     }
     None
+}
+
+/// The Number row of `instruction` that leaves on any operand which is no Number (`numbers::self_checking`), so it runs no user
+/// code: a leave re-runs the folded read from its PC, which is side-effect free. `Add` is excluded, its string variant concatenates.
+fn leaving_number(region: &LoopRegion, instruction: WideInstruction) -> Option<Decoded> {
+    let row = super::decode::numeric_row(&|index| region.number_constant(index), instruction)??;
+    (row.kind != Kind::Add && instruction.result_flags() == 0 && super::numbers::self_checking(&row, None)).then_some(row)
 }
 
 /// The Number operation a native Math method computes (`math_call`'s row), if it is one.

@@ -149,7 +149,7 @@ impl EntryReads {
 /// Whether the row checks each operand it reads, so it reads no fact an entry guard provides: a bare numeric
 /// row (`Decoded::number`, nothing else set) whose stencil leaves on any other operand (`leaves_on_other`), and
 /// which is no `Concat` variant.
-fn self_checking(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
+pub(super) fn self_checking(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
     let bare = row.heap.is_none() && row.step.is_none() && row.global.is_none() && row.base.is_none() && row.also.is_none()
         && row.atom.is_none() && row.folded.is_none() && row.instanceof.is_none() && row.lexical.is_none() && row.add.is_none()
         && row.name.is_none() && row.ic.is_none() && row.declined.is_none() && row.holder.is_none() && !row.class_read

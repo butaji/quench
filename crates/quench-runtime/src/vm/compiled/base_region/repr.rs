@@ -169,7 +169,8 @@ pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds)
             }
             let Some(dst) = row.dst else { continue };
             let numbers = span.number_registers().contains(&webs.orig[usize::from(dst)]) || row.global.is_some_and(Access::numeric);
-            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some(), kinds.get(k).and_then(Option::as_ref)), numbers);
+            let site = kinds.get(k).and_then(Option::as_ref);
+            let result = if concat_site(row, site) { Some(Representation::Tagged) } else { result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some(), site), numbers) };
             if reprs[usize::from(dst)] < result {
                 reprs[usize::from(dst)] = result;
                 changed = true;
@@ -177,6 +178,12 @@ pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds)
         }
     }
     reprs
+}
+
+/// Whether `row` is a generic `+` whose site met a string (`Variant::Concat`): its result is a tagged word, a string
+/// or a Number the step helper writes where the fast arm misses (`plan::concat_run`).
+fn concat_site(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
+    row.generic && row.kind == Kind::Add && row.heap.is_none() && row.step.is_none() && variant_of(Kind::Add, kinds) == Variant::Concat
 }
 
 /// Whether the row takes general (tagged word) semantics: its result or an operand of a

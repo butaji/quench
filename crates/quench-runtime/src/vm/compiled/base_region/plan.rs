@@ -1,6 +1,7 @@
 use super::*;
 use quench_bjit::numeric::supernodes::Node;
 use quench_bjit::{padded_holes, HOLES};
+use super::super::LaneHelper;
 
 /// Where the registers of the region live: pinned (int32 or double), int slots, or tagged
 /// frame slots.
@@ -328,7 +329,7 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, varian
         let planned = heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)])?;
         return Ok(if decoded.recheck { planned.after(vec![stores_guard(pc)?]) } else { planned });
     }
-    number_plan(decoded, layout, pc, (general, variant), [(dst, dst_hole), (a, a_hole), (b, b_hole)])
+    number_plan(decoded, layout, pc, (general, variant, helpers), [(dst, dst_hole), (a, a_hole), (b, b_hole)])
 }
 
 /// The run's stores test before a store the proofs re-admit (`Decoded::recheck`), a mid-body guard: a miss leaves at the
@@ -339,7 +340,7 @@ fn stores_guard(pc: u32) -> Result<Planned, String> {
 }
 
 /// The plan of a number row: a jump that polls the interrupt on a backward edge, or the chosen arithmetic row.
-fn number_plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
+fn number_plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant, helpers): (bool, Variant, LaneHelpers), [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
     let polls = decoded.target.is_some_and(|target| target <= pc) && decoded.kind == Kind::Jump;
     let kind = if polls { layout.ending.poll() } else { decoded.kind };
     let ((kind, [dst, a, b]), holes_in) = folded(kind, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
@@ -354,7 +355,22 @@ fn number_plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): 
     // A case slot's maximum rides in hole 3 (`Decoded::hole`); no other numeric row names a fourth hole.
     let bound = if decoded.kind == Kind::IntCase { decoded.hole } else { 0 };
     let holes = padded_holes(if polls { [interrupt, counter[0], counter[1], attention] } else { [dst_hole, a_hole, b_hole, bound] });
-    Ok(Planned { node: Some(Node::Number(numeric::library::canonical(row.code()))), ..Planned::single(stencil, holes, decoded.target, exits.then_some(pc)) })
+    let planned = Planned { node: Some(Node::Number(numeric::library::canonical(row.code()))), ..Planned::single(stencil, holes, decoded.target, exits.then_some(pc)) };
+    if decoded.generic && variant == Variant::Concat && decoded.kind == Kind::Add {
+        return concat_run(decoded, layout, pc, planned, helpers);
+    }
+    Ok(planned)
+}
+
+/// The run of a string `+` site (`Variant::Concat`) at `pc`: the numeric row `fast` is the fast arm, which takes Number
+/// operands and writes nothing otherwise, and its miss enters the generic step helper laid out behind it, which the
+/// interpreter's `+` makes (the concatenation included). The region keeps running where a leave would end it each
+/// iteration; the helper is off the loop's steady path (`steps::behind`).
+fn concat_run(decoded: &Decoded, layout: &Layout, pc: u32, fast: Planned, helpers: LaneHelpers) -> Result<Planned, String> {
+    let slow = steps::plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?;
+    let behind_parts = 1 + slow.pre.len() + slow.post.len();
+    let run = Planned { node: None, exits: vec![Exit::Ahead(1)], branch: decoded.completes.then_some(Branch::Part(1 + behind_parts)), ..fast };
+    Ok(steps::behind(run, slow))
 }
 
 /// A number row partially evaluated on its immediate operand, the way the C compiler treats the same

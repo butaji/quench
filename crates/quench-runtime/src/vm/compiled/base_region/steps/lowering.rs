@@ -139,7 +139,8 @@ fn allocates_object(instruction: WideInstruction) -> bool {
 /// made in place are helper steps (behind their fast arm, where they have one); an add (`adds`) is a
 /// fast arm of its own, whose miss is the helper step where the instruction has one and the leave where
 /// it has none (`Step::Guard`); a name store or `typeof` is a call-out where the table has the VM step
-/// helper's address; every other instruction, and every one without the address, leaves.
+/// helper's address; a fixed-shape object is the allocation step (`allocates_object`); every other instruction, and
+/// every one without the address, leaves.
 pub(in crate::vm::compiled::base_region) fn lowering(instruction: WideInstruction, known: Known, helpers: LaneHelpers) -> Step {
     let addressed = |helper| call_plan::helper_address(helpers, helper).is_some();
     if addressed(LaneHelper::AllocateStep) && allocates_object(instruction) {

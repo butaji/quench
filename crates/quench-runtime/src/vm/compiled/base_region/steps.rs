@@ -233,7 +233,7 @@ fn reloads(layout: &Layout, decoded: &Decoded, pc: u32) -> Vec<(Place, Register)
 
 /// The chain of a step at `pc` that `helper` makes, which also branches to the target of its instruction where
 /// it jumps.
-fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
+pub(super) fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
     let row = helper_chain(layout, pc, &reloads(layout, decoded, pc), helper, decoded.packed)?;
     match decoded.target {
         Some(target) => branching(row, layout, (pc, target)),

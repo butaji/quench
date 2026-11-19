@@ -43,7 +43,8 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
         return Some(load_const(numbers, destination, index).ok().filter(|_| plain));
     }
     Some(match instruction.op().class() {
-        Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
+        Class::Binary => binary(numbers, instruction).ok().map(|row| Decoded { generic: true, ..row }).filter(|_| plain),
+        Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
         _ => return None,
     })
 }
