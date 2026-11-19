@@ -128,17 +128,19 @@ pub(crate) fn exception_match(condition: Register, exception: Register, tag: Reg
     Emission::new(Op::WasmExceptionMatch, condition, exception, tag, 0)
 }
 
-/// `destination = payload[offset]` of `exception`.
+/// `destination = payload[offset]` of `exception`, whose value has type `ty` (field c), so a
+/// tier can type the register without the tag.
 pub(crate) fn exception_payload(
     destination: Register,
     exception: Register,
     offset: u16,
+    ty: crate::staged::wasm_exception::PayloadType,
 ) -> Emission {
     Emission::new(
         Op::WasmExceptionPayload,
         destination,
         exception,
-        0,
+        ty.code(),
         u32::from(offset),
     )
 }

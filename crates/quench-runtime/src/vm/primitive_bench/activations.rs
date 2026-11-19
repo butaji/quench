@@ -23,7 +23,7 @@ fn activation(kinds: Kinds, index: usize) -> Activation {
         caller_registers: Registers(std::ptr::null_mut()),
         caller_program: ProgramId::MAIN,
         kind: if wasm {
-            ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: WASM_STORAGE_BYTES }
+            ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: WASM_STORAGE_BYTES, program: ProgramId::MAIN, pc: 0 }
         } else {
             ActivationKind::Script(ScriptActivation {
                 callee: Value::UNDEFINED,

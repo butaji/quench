@@ -203,7 +203,10 @@ impl<H: Host> Vm<H> {
             script_constructs,
             instance: Value::DELETED,
             instance_slots: (Value::DELETED, std::ptr::null()),
-            backedges_left: self.credits_backedges_in_lane(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
+            indirect: IndirectSlot::NONE,
+            instance_address: (Value::DELETED.to_bits(), ProgramId::default(), 0),
+            signatures: (ProgramId::default(), None),
+            backedges_left: self.lane_credits_backedges(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
             floor,
             // SAFETY: the VM holds its interrupt state for the whole run.
             fuel: if unsafe { &*floor }.load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR { 0 } else { LANE_FUEL_BATCH },

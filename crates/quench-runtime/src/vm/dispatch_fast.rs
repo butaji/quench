@@ -526,6 +526,22 @@ impl LoopSite {
 
 type Ip = *const LaneInstruction;
 
+/// The row of the last indirect target the lane made: the record after the target, the register
+/// and reference it wrote, and the row's entry and instance (`TableTarget`). A reference call
+/// that is that record, reading that register and reference, takes its callee from the row.
+#[derive(Clone, Copy)]
+struct IndirectSlot {
+    next: Ip,
+    register: u16,
+    reference: u64,
+    entry: u32,
+    instance: u64,
+}
+
+impl IndirectSlot {
+    const NONE: Self = Self { next: std::ptr::null(), register: 0, reference: 0, entry: 0, instance: 0 };
+}
+
 /// A function's lane view: one record per instruction, and the one register
 /// its direct memory accesses go through. Accesses through any other
 /// register, and lane instructions other than the binding load that would
@@ -1033,14 +1049,17 @@ unsafe fn fill_admitted_window(registers: *mut Value, fill: usize, count: usize)
     }
 }
 
-/// A function's register window as a lane activation starts it: every
-/// register its initial value, then the parameters at their base.
+/// A function's register window as a lane activation starts it: its initial value in the first
+/// `fill` registers, then the parameters at their base.
 #[derive(Clone, Copy)]
 struct ActivationShape {
     registers: u16,
     parameters: u16,
     params: u16,
     initial: Value,
+    /// The registers initialized: the prefix an entry may read before writing
+    /// (`RegisterRoots::entry_fill`), or all of them where a collection scans the window whole.
+    fill: u16,
 }
 
 impl ActivationShape {
@@ -1051,7 +1070,19 @@ impl ActivationShape {
             parameters,
             params: function.params,
             initial: function.initial_register.value(),
+            fill: entry_fill(function),
         })
+    }
+}
+
+/// The registers of an activation of `function` that start initialized: those below its entry
+/// liveness bound. A body whose frames a collection scans whole (`RegisterMasks::too_large_to_keep`)
+/// keeps every register initialized, as its masks are not kept.
+pub(in crate::vm) fn entry_fill(function: &Function) -> u16 {
+    if crate::compile::liveness::RegisterMasks::too_large_to_keep(function) {
+        function.registers
+    } else {
+        function.register_roots.entry_fill(function.registers)
     }
 }
 
@@ -1767,14 +1798,17 @@ enum ActivationKind {
     Native = KIND_NATIVE,
     Script(ScriptActivation) = KIND_SCRIPT,
     /// A Wasm activation keeps its caller's memory for the return and its requested
-    /// register payload for guest-stack accounting, excluding admission padding.
-    Wasm { memory: MemoryView, frame_storage_bytes: usize } = KIND_WASM,
+    /// register payload for guest-stack accounting, excluding admission padding. `program` is
+    /// the function's own program, and `pc` the record its lane last left it at for a callout
+    /// that may collect (`LaneStack::note_wasm_pc`): the collector reads its live registers
+    /// there while no activation sits above it.
+    Wasm { memory: MemoryView, frame_storage_bytes: usize, program: ProgramId, pc: u32 } = KIND_WASM,
     /// A Wasm activation a JavaScript call of an exported function made
     /// (`lane_wasm_export_frame`): it runs over `instance`, the export's instance environment
     /// (`LaneContext::instance`), and its return gives its caller, JavaScript, the result's
     /// JavaScript form (`CallCompletion::WasmExport`). The caller's receiver and environments
     /// stay in the context while it runs: no Wasm record reads or writes them.
-    WasmEntry { instance: Value, result: Option<crate::WasmType>, frame_storage_bytes: usize },
+    WasmEntry { instance: Value, result: Option<crate::WasmType>, frame_storage_bytes: usize, program: ProgramId, pc: u32 },
 }
 
 const _: () = {
@@ -1796,6 +1830,15 @@ impl Activation {
     fn caller_pc(&self) -> Option<usize> {
         // SAFETY: a linked activation's call record lies in its caller's body.
         (!matches!(self.kind, ActivationKind::Native)).then(|| unsafe { self.call.offset_from(self.caller_base) } as usize)
+    }
+
+    /// The program and noted record of a Wasm activation (`LaneStack::note_wasm_pc`); `None`
+    /// for any other kind.
+    pub(in crate::vm) fn wasm_site(&self) -> Option<(ProgramId, usize)> {
+        match self.kind {
+            ActivationKind::Wasm { program, pc, .. } | ActivationKind::WasmEntry { program, pc, .. } => Some((program, pc as usize)),
+            ActivationKind::Native | ActivationKind::Script(_) => None,
+        }
     }
 
     /// The memory view its caller runs with: a JavaScript activation's caller is JavaScript,
@@ -3266,6 +3309,15 @@ struct LaneContext<H: Host> {
     /// The instance environment the run's Wasm bindings last read and its dense slot storage
     /// (`wasm_instance_slot`), found this run as `frame_storage` is.
     instance_slots: (Value, *const usize),
+    /// The row of the last indirect target the lane made (`IndirectSlot`), which the reference
+    /// call right after it reads its callee from.
+    indirect: IndirectSlot,
+    /// The running instance's record address, cached for the environment (its bits) and program
+    /// it was found for (`lane_instance_address`); 0 where the environment has no record.
+    instance_address: (u64, ProgramId, usize),
+    /// The running program's Wasm signature pool, shared with the program, for the program it is
+    /// held for (`lane_signatures`): an indirect target reads its expected canonical from it.
+    signatures: (ProgramId, Option<std::rc::Rc<crate::wasm::WasmSignatures>>),
     /// Backward jumps left before the running Wasm function is credited with an
     /// interpreter entry's worth of loop work (`TIERS.wasm.backedges_per_entry`), or `None`
     /// when this run's code earns none (`Vm::credits_backedges_in_lane`). A crediting run keeps
@@ -4284,7 +4336,9 @@ fn in_place_in_lane<H: Host, T>(
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
     // running function's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
-    let beside = !vm.lane_stack.activations().is_empty();
+    // A Wasm activation the operation runs beside is at `pc` while it runs (`extend_wasm_roots`).
+    vm.lane_stack.note_wasm_pc(pc);
+    let beside = !vm.lane_stack.activations.is_empty();
     if beside {
         vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc, frames: vm.frames.len() });
     } else {
@@ -18640,7 +18694,7 @@ fn lane_activate_wasm_export<H: Host>(
     // and no activation's window moves.
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        fill_window(registers, count, shape.initial);
+        fill_window(registers, usize::from(shape.fill), shape.initial);
         for (offset, &value) in encoded[..passed].iter().enumerate() {
             registers.add(usize::from(shape.parameters) + offset).write(value);
         }
@@ -18655,10 +18709,15 @@ fn lane_activate_wasm_export<H: Host>(
     // SAFETY: capacity holds the activation.
     unsafe {
         let at = stack.values.as_mut_ptr().wrapping_add(window);
-        stack.push_activation(Activation::of_parts(
-            super::compiled::ShadowFrame::EMPTY, function, ip, caller_base, r, caller_program,
-            ActivationKind::WasmEntry { instance, result, frame_storage_bytes },
-        ), at);
+        stack.push_activation(Activation {
+            native: super::compiled::ShadowFrame::EMPTY,
+            function,
+            call: ip,
+            caller_base,
+            caller_registers: r,
+            caller_program,
+            kind: ActivationKind::WasmEntry { instance, result, frame_storage_bytes, program, pc: 0 },
+        }, at);
     }
     enter_program_in_lane(cx, program);
     // A fresh activation's memory register holds no memory until the function's instance

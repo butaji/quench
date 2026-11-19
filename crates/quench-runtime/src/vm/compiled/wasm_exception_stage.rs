@@ -7,9 +7,8 @@
 //! status a raised error leaves with (`finish_callout`), which `propagate` carries out.
 //!
 //! A raised status at a pc a handler covers takes the handler's edge (`wasm_catch`), not the
-//! activation's exit: a throw, and a call whose callee raised. What is not lowered: a `payload` read.
-//! Its result's kind is the caught tag's parameter type, which the bytecode does not name, so the
-//! analysis rejects it.
+//! activation's exit: a throw, and a call whose callee raised. A payload read carries its payload's
+//! type in its instruction (`PayloadType`), so its result's kind is known to the analysis.
 //!
 //! No frame roots anything across the construction: an allocation only makes a collection due, and
 //! a collection runs at an interpreter safepoint, which the callout does not reach.
@@ -20,7 +19,7 @@ use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, 
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineAccess as _, MachineStage as _};
 use crate::staged::wasm::Width;
-use crate::staged::wasm_exception::Exception;
+use crate::staged::wasm_exception::{Exception, PayloadType};
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::tag::ExceptionInput;
 use cranelift_codegen::ir::{self, MemFlagsData};
@@ -71,7 +70,11 @@ impl<H: Host> Analysis<'_, H> {
                 holds_reference(state, registers, instruction.c())?;
                 state.set(instruction.a(), registers, Slot::Value(Kind::I32))
             }
-            Exception::Payload => None,
+            Exception::Payload => {
+                holds_reference(state, registers, instruction.b())?;
+                let ty = PayloadType::of_code(instruction.c())?;
+                state.set(instruction.a(), registers, Slot::Value(payload_kind(ty)))
+            }
             Exception::ThrowRef => holds_reference(state, registers, instruction.a()),
         }
     }
@@ -133,6 +136,52 @@ unsafe extern "C" fn exception_match_callout<H: Host>(
     }
 }
 
+/// The kind a payload of type `ty` holds in a register: a 32-bit or a 64-bit word, or a reference.
+fn payload_kind(ty: PayloadType) -> Kind {
+    match ty {
+        PayloadType::I32 | PayloadType::F32 => Kind::I32,
+        PayloadType::I64 | PayloadType::F64 => Kind::I64,
+        PayloadType::Reference => Kind::Reference,
+    }
+}
+
+/// The word of payload `index` of `exception` for a payload of type `code`: a numeric payload's
+/// Wasm bits (decoded from its Value), a reference's Value bits.
+fn payload_word<H: Host>(vm: &mut Vm<H>, exception: u64, index: u64, code: u64) -> Result<u64, JsError> {
+    let ty = u16::try_from(code).ok().and_then(PayloadType::of_code).ok_or_else(|| JsError::validation("invalid Wasm payload type".into()))?;
+    let value = vm.wasm_exception_payload(Value::from_bits(exception), index as u32)?;
+    let Some(numeric) = ty.numeric() else {
+        return Ok(value.to_bits());
+    };
+    Ok(match vm.decode_wasm_value(value, numeric)?.bits() {
+        Some(crate::wasm::ScalarBits::Bits32(bits)) => u64::from(bits),
+        Some(crate::wasm::ScalarBits::Bits64(bits)) => bits,
+        _ => return Err(JsError::validation("non-scalar Wasm payload".into())),
+    })
+}
+
+/// The payload read of `exception` at `index` for a payload of type `code`: its word in `out`, or
+/// the status a raised error leaves with (`finish_callout`).
+unsafe extern "C" fn exception_payload_callout<H: Host>(
+    context: *mut CallContext,
+    exception: u64,
+    index: u64,
+    code: u64,
+    out: *mut u64,
+) -> i64 {
+    // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
+    let vm = unsafe { &mut *(*context).vm.cast::<Vm<H>>() };
+    match payload_word(vm, exception, index, code) {
+        Ok(word) => {
+            // SAFETY: the emitted code gives `out` a word of its own for this call.
+            unsafe { *out = word };
+            0
+        }
+        // SAFETY: compiled code passes the context of its call.
+        Err(error) => finish_callout(unsafe { &mut *context }, Ok(Err(error))),
+    }
+}
+
 /// `throw_ref` of `exception`: the error it raises is left in the context, and the status is the
 /// raised one. It always returns that status.
 unsafe extern "C" fn exception_throw_callout<H: Host>(context: *mut CallContext, exception: u64) -> i64 {
@@ -155,7 +204,10 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.exception_match(instruction);
                 true
             }
-            Exception::Payload => unreachable!("the analysis rejects a payload read"),
+            Exception::Payload => {
+                self.exception_payload(instruction);
+                true
+            }
             Exception::ThrowRef => {
                 self.exception_throw(instruction);
                 false
@@ -221,6 +273,31 @@ impl<H: Host> Emitter<'_, '_, H> {
         let bits = self.load_word(Width::I64, MemFlagsData::trusted(), out, 0);
         let flag = self.convert(Conversion::WrapI64, bits);
         self.write(instruction.a(), Kind::I32, flag);
+    }
+
+    /// The payload read as `exception_payload_callout`: the word the payload holds, written with the
+    /// kind of its type, through the raised path like any call.
+    fn exception_payload(&mut self, instruction: WideInstruction) {
+        let exception = self.read(instruction.b(), Kind::Reference);
+        let index = self.constant(Width::I64, i64::from(instruction.imm()));
+        let code = self.constant(Width::I64, i64::from(instruction.c()));
+        let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot,
+            WORD as u32,
+            WORD.trailing_zeros() as u8,
+        ));
+        let context = self.body.core.context;
+        let out = self.slot_address(slot, 0);
+        let target = exception_payload_callout::<H> as *const () as usize;
+        let status = self.call_leaf(target, &[context, exception, index, code, out]);
+        self.propagate(status);
+        let kind = payload_kind(PayloadType::of_code(instruction.c()).expect("planned"));
+        let bits = self.load_word(Width::I64, MemFlagsData::trusted(), out, 0);
+        let value = match kind {
+            Kind::I32 => self.convert(Conversion::WrapI64, bits),
+            Kind::I64 | Kind::Reference => bits,
+        };
+        self.write(instruction.a(), kind, value);
     }
 
     /// `throw_ref`: the callout always raises, so its status takes the raised path: a covering

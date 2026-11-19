@@ -27,6 +27,28 @@ struct LaneCall<'a, H: Host> {
     memory: MemoryView,
 }
 
+impl<H: Host> LaneCall<'_, H> {
+    /// The callee's function index from the row of the indirect target the lane made just before
+    /// this call (`IndirectSlot`), where this call is that target's next record and reads its
+    /// register and reference unchanged, and the row names a function of the running instance (one
+    /// instance record per environment and program, so its address decides). Otherwise `None`, and
+    /// the reference is resolved from the heap. The slot is consumed either way.
+    #[inline(always)]
+    fn indirect_callee(&mut self) -> Option<u32> {
+        // SAFETY: the context outlives the lane run.
+        let slot = unsafe { (*self.cx).indirect };
+        unsafe { (*self.cx).indirect.next = std::ptr::null() };
+        if slot.next != self.ip || slot.register != self.i.b || slot.reference != self.r.get(self.i.b).to_bits() {
+            return None;
+        }
+        let running = lane_instance_address(self.cx);
+        if running == 0 || slot.instance != running as u64 {
+            return None;
+        }
+        u16::try_from(slot.entry).ok().map(u32::from)
+    }
+}
+
 impl<H: Host> Machine for LaneCall<'_, H> {
     type Word = u64;
 }
@@ -49,6 +71,9 @@ impl<H: Host> WasmActivation for LaneCall<'_, H> {
 
     #[inline(always)]
     fn reference(&mut self) -> CallTarget {
+        if let Some(function) = self.indirect_callee() {
+            return CallTarget::Function(function);
+        }
         let vm = unsafe { vm(self.cx) };
         let running = (unsafe { (*self.cx).program }, Some(lane_instance_env(self.cx)));
         match vm.heap.function(self.r.get(self.i.b)) {
@@ -175,6 +200,8 @@ impl<H: Host> WasmActivation for LaneCall<'_, H> {
         let vm = unsafe { vm(self.cx) };
         let window = vm.lane_stack.values.len();
         let frame_storage_bytes = usize::from(shape.registers).saturating_mul(std::mem::size_of::<Value>());
+        // A call of this program's own functions (`lane_call_known`, `lane_call_wasm_reference`).
+        let function_program = unsafe { (*self.cx).program };
         let callee = fill_callee_window(vm, self.r, self.i, shape);
         // SAFETY: capacity holds the activation; the window's start has not moved.
         unsafe {
@@ -188,7 +215,7 @@ impl<H: Host> WasmActivation for LaneCall<'_, H> {
                     caller_base: (*self.cx).base,
                     caller_registers: self.r,
                     caller_program: (*self.cx).program,
-                    kind: ActivationKind::Wasm { memory: self.memory, frame_storage_bytes },
+                    kind: ActivationKind::Wasm { memory: self.memory, frame_storage_bytes, program: function_program, pc: 0 },
                 },
                 at,
             );
@@ -360,6 +387,23 @@ lane_handler! {
     }
 }
 
+/// The address of the running instance's record (`Vm::wasm_instance_address`), cached on the lane
+/// for the environment (its bits) and program it was found for. A record is one per environment
+/// and program, so the address names the running instance.
+#[inline(always)]
+fn lane_instance_address<H: Host>(cx: *mut LaneContext<H>) -> usize {
+    let env = lane_instance_env(cx);
+    // SAFETY: the context outlives the lane run.
+    let program = unsafe { (*cx).program };
+    let (bits, cached, address) = unsafe { (*cx).instance_address };
+    if bits == env.to_bits() && cached == program {
+        return address;
+    }
+    let address = unsafe { vm(cx) }.wasm_instance_address(env, program).unwrap_or(0);
+    unsafe { (*cx).instance_address = (env.to_bits(), program, address) };
+    address
+}
+
 /// The callee's frame at the top of the value stack: its registers filled with the shape's
 /// initial value, its parameters from the call's arguments, and its `this`, environment and
 /// capture from the caller's. Returns the frame's registers.
@@ -374,7 +418,7 @@ fn fill_callee_window<H: Host>(vm: &mut Vm<H>, r: Registers, i: &LaneInstruction
     // no activation's window moves.
     unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        fill_window(registers, count, shape.initial);
+        fill_window(registers, usize::from(shape.fill), shape.initial);
         let mut offset = 0;
         while offset < passed {
             registers

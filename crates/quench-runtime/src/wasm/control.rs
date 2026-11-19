@@ -238,6 +238,25 @@ impl Lowering<'_> {
             .map_err(|_| self.control_error("too many Wasm exception values"))
     }
 
+    /// The payload type of each of tag `index`'s params, in order; a vector param is unsupported.
+    fn tag_payload_types(
+        &self,
+        index: u32,
+    ) -> Result<Vec<crate::staged::wasm_exception::PayloadType>, Diagnostic> {
+        let tag = &self.tags[index as usize];
+        let ty = self.signatures.declarations.function(self.name, tag.ty as usize)?;
+        ty.params()
+            .iter()
+            .map(|param| {
+                self.signatures
+                    .declarations
+                    .callable_value_type(*param)
+                    .and_then(crate::staged::wasm_exception::PayloadType::of)
+                    .ok_or_else(|| self.control_error("unsupported Wasm exception value type"))
+            })
+            .collect()
+    }
+
     fn tag_binding(&mut self, index: u32) -> Result<Register, Diagnostic> {
         self.tag_params(index)?;
         self.instance_binding(
@@ -526,8 +545,9 @@ impl Lowering<'_> {
         } else {
             None
         };
-        for offset in 0..params {
-            self.emit_emission(wasm_emit::exception_payload(base + offset, exception, offset))?;
+        let types = tag.map(|tag| self.tag_payload_types(tag)).transpose()?.unwrap_or_default();
+        for (offset, ty) in (0..params).zip(types) {
+            self.emit_emission(wasm_emit::exception_payload(base + offset, exception, offset, ty))?;
         }
         if reference {
             self.emit_emission(wasm_emit::move_register(base + params, exception))?;
