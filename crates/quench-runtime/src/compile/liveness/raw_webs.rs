@@ -55,7 +55,25 @@ const RAW_FAMILIES: u128 = Traits::I64_BINARY_FAMILY
 
 /// The raw form of `op`: the opcode that runs the same operation over raw i64 registers, the
 /// raw row of `op`'s family. A raw op has none.
-pub(crate) const fn raw_form(op: Op) -> Option<Op> {
+pub(crate) fn raw_form(op: Op) -> Option<Op> {
+    RAW_FORMS[op as usize]
+}
+
+/// `raw_form_scan` of every op, tabled once at compile time.
+const RAW_FORMS: [Option<Op>; Op::COUNT] = {
+    let mut table = [None; Op::COUNT];
+    let mut index = 0;
+    while index < Op::COUNT {
+        if let Some(op) = Op::from_index(index) {
+            table[index] = raw_form_scan(op);
+        }
+        index += 1;
+    }
+    table
+};
+
+/// The raw row of `op`'s family, found by scanning the catalog.
+const fn raw_form_scan(op: Op) -> Option<Op> {
     if is_raw(op) {
         return None;
     }

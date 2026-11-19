@@ -4,6 +4,7 @@ use crate::bytecode::{Function, Op, Traits, WITH_ENTER_BINDING, the_op};
 
 const ENV_LOCAL_LOAD_OP: Op = the_op(Traits::ENV_LOCAL_LOAD);
 const ENV_LOCAL_STORE_OP: Op = the_op(Traits::ENV_LOCAL_STORE);
+const NOP_OP: Op = the_op(Traits::NO_OP);
 
 /// What the layout of a function's activation depends on beyond its own code: the slots of
 /// its locals that functions nested in it capture, and whether one of them resolves names
@@ -416,7 +417,7 @@ fn remove_unobservable_clones(function: &mut Function, captured: &[u16]) {
             && (!observable(&function.environment_clones[instruction.environment_clone_index()])
                 || (!may_repeat(&backward, pc) && first_closure > pc))
         {
-            *instruction = crate::bytecode::Instr::new(the_op(Traits::NO_OP), 0, 0, 0, 0);
+            *instruction = crate::bytecode::Instr::new(NOP_OP, 0, 0, 0, 0);
         }
     }
 }
