@@ -156,10 +156,11 @@ pub use vm::{
 };
 #[cfg(feature = "aot")]
 pub use vm::{
-    native_graph::{NativeJsModule, NativeJsBackend, NativeJsCodegenOptions, lower_native_js_module, lower_native_js_module_with_options},
+    IsaBaseline, NativeTarget,
+    native_graph::{NativeJsModule, NativeJsBackend, NativeJsCodegenOptions, lower_native_js_module, lower_native_js_module_for, lower_native_js_module_with_options},
     native_object::{
         NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeData, NativeFunction, NativeFunctionAddress,
-        emit_native_module, emit_native_object,
+        emit_native_module, emit_native_module_for, emit_native_object,
     },
 };
 

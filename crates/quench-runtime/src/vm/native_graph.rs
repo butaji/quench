@@ -106,14 +106,20 @@ pub fn lower_native_js_module_with_options(
     namespace: &str,
     options: NativeJsCodegenOptions,
 ) -> Result<NativeJsModule, String> {
+    lower_native_js_module_for(program, namespace, options, &super::jit_backend::NativeTarget::default())
+}
+
+/// Lowers `program` for `target`: the CPU baseline and triple its object is built for.
+pub fn lower_native_js_module_for(
+    program: &ResidualProgram,
+    namespace: &str,
+    options: NativeJsCodegenOptions,
+    target: &super::jit_backend::NativeTarget,
+) -> Result<NativeJsModule, String> {
     if program.kind == ProgramKind::Wasm {
         return Err("JavaScript native graph requires a JS or TS program".into());
     }
-    let isa = super::jit_backend::target_isa_for(
-        "speed",
-        super::jit_backend::CodePublication::RelocatableObject,
-    )
-    .ok_or("native target unavailable")?;
+    let isa = super::jit_backend::relocatable_isa(target)?;
     CallThreaded::new(ObjectExtension { isa, namespace, options, program, functions: Vec::new() }).specialize(program)
 }
 

@@ -17,7 +17,7 @@ use crate::compile::aot_facts::AotFacts;
 pub(crate) fn lower_lane(
     program: &ResidualProgram,
     facts: &AotFacts,
-    target: ImageTarget,
+    target: &ImageTarget,
     id: u32,
     base: &BaseImage,
     symbols: &mut SymbolTable,

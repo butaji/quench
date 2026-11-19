@@ -19,6 +19,8 @@ pub(super) mod relocatable_code;
 #[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) mod symbol_words;
 mod worker;
+mod isa;
+pub use isa::{IsaBaseline, NativeTarget};
 pub(super) mod builder;
 pub(super) use worker::{OffThread, run_in_background};
 
@@ -193,20 +195,41 @@ fn target_isa_with(
         return Some(Arc::clone(isa));
     }
 
-    let mut flags = settings::builder();
-    flags.set("opt_level", opt_level).ok()?;
-    for (name, value) in publication.settings().iter().chain(level.settings()) {
-        flags.set(name, value).ok()?;
-    }
-    for check in ["enable_verifier", "regalloc_checker"] {
-        flags.set(check, if verify_ir() { "true" } else { "false" }).ok()?;
-    }
-    let isa = cranelift_native::builder()
-        .ok()?
-        .finish(settings::Flags::new(flags))
-        .ok()?;
+    let target = match publication {
+        #[cfg(feature = "aot")]
+        CodePublication::RelocatableObject => NativeTarget::default(),
+        _ => NativeTarget::host(),
+    };
+    let isa = build_isa(opt_level, publication, level, &target).ok()?;
     entries.insert(key, Arc::clone(&isa));
     Some(isa)
+}
+
+/// The relocatable ISA of AOT code on `target`: its CPU baseline and triple, never the host's CPU.
+#[cfg(feature = "aot")]
+pub(super) fn relocatable_isa(target: &NativeTarget) -> Result<Arc<TargetIsa>, String> {
+    build_isa("speed", CodePublication::RelocatableObject, CompileLevel::Optimized, target)
+}
+
+/// The ISA of `publication` at `opt_level` and `level` on `target`, with the flags every
+/// publication and level fixes.
+#[cfg(any(feature = "jit", feature = "aot"))]
+fn build_isa(
+    opt_level: &str,
+    publication: CodePublication,
+    level: CompileLevel,
+    target: &NativeTarget,
+) -> Result<Arc<TargetIsa>, String> {
+    let mut flags = settings::builder();
+    flags.set("opt_level", opt_level).map_err(|error| error.to_string())?;
+    for (name, value) in publication.settings().iter().chain(level.settings()) {
+        flags.set(name, value).map_err(|error| error.to_string())?;
+    }
+    for check in ["enable_verifier", "regalloc_checker"] {
+        let value = if verify_ir() { "true" } else { "false" };
+        flags.set(check, value).map_err(|error| error.to_string())?;
+    }
+    target.isa(settings::Flags::new(flags))
 }
 
 /// Compilation failures shared by the native publishers. Relocation admission

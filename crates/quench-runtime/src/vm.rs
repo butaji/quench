@@ -26,6 +26,8 @@ pub use compiled::NativeFaultHandler;
 mod native_op_profile;
 mod js_compiled;
 mod jit_backend;
+#[cfg(feature = "aot")]
+pub use jit_backend::{IsaBaseline, NativeTarget};
 mod tier_machine; pub mod tier_events;
 mod shape_stability;
 pub(crate) mod switches;

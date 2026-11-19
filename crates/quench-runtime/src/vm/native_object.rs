@@ -59,11 +59,18 @@ pub fn emit_native_module(
     functions: Vec<NativeFunction>,
     data: Vec<NativeData>,
 ) -> Result<Vec<u8>, String> {
-    let isa = super::jit_backend::target_isa_for(
-        "speed",
-        super::jit_backend::CodePublication::RelocatableObject,
-    )
-    .ok_or_else(|| "native target unavailable".to_owned())?;
+    emit_native_module_for(module_name, functions, data, &super::jit_backend::NativeTarget::default())
+}
+
+/// Publish a module as an object for `target`. The triple picks the object format (ELF,
+/// Mach-O, COFF); the baseline picks the instructions.
+pub fn emit_native_module_for(
+    module_name: &str,
+    functions: Vec<NativeFunction>,
+    data: Vec<NativeData>,
+    target: &super::jit_backend::NativeTarget,
+) -> Result<Vec<u8>, String> {
+    let isa = super::jit_backend::relocatable_isa(target)?;
     let builder = ObjectBuilder::new(
         isa.clone(),
         module_name,

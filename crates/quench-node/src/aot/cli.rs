@@ -1,5 +1,5 @@
 use super::{variant, NativeSupport, SourceManifest};
-use quench_runtime::NativeImageSupport;
+use quench_runtime::{NativeImageSupport, NativeTarget};
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -14,7 +14,7 @@ const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
-const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile release|iteration] [--sdk-report FILE] [--support-dir DIR] [--strict-aot] [--dynamic-source|--static-source]";
+const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile release|iteration] [--sdk-report FILE] [--support-dir DIR] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
 const RETAINED_SUPPORT: &[&str] = &[
     "unpruned Wasm frontend dependencies",
     "unpruned Node host support",
@@ -32,6 +32,7 @@ struct Options {
     profile: String,
     strict: bool,
     support: SourceSupport,
+    target: NativeTarget,
 }
 
 impl Options {
@@ -45,9 +46,11 @@ impl Options {
         let mut profile = None;
         let mut strict = false;
         let mut support = None;
+        let mut target_cpu = None;
+        let mut target_triple = None;
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
-                "-o" | "--output" | "--report" | "--profile" | "--sdk-report" | "--support-dir" => {
+                "-o" | "--output" | "--report" | "--profile" | "--sdk-report" | "--support-dir" | "--target-cpu" | "--target" => {
                     let value = arguments
                         .next()
                         .ok_or_else(|| format!("missing value for {argument}"))?;
@@ -75,6 +78,16 @@ impl Options {
                         "--profile" => {
                             if profile.replace(value).is_some() {
                                 return Err("profile specified twice".into());
+                            }
+                        }
+                        "--target-cpu" => {
+                            if target_cpu.replace(value).is_some() {
+                                return Err("target CPU specified twice".into());
+                            }
+                        }
+                        "--target" => {
+                            if target_triple.replace(value).is_some() {
+                                return Err("target specified twice".into());
                             }
                         }
                         _ => unreachable!(),
@@ -111,6 +124,7 @@ impl Options {
             profile,
             strict,
             support: support.unwrap_or(SourceSupport::Automatic),
+            target: NativeTarget::from_names(target_cpu.as_deref(), target_triple.as_deref())?,
         })
     }
 }
@@ -238,7 +252,7 @@ fn compile(options: Options) -> Result<(), String> {
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
-    let inputs = compiled.emit(&images)?;
+    let inputs = compiled.emit(&images, &options.target)?;
     let bootstrap = work.0.join("bootstrap.bin");
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", BOOTSTRAP_WORKER_OPTION])
@@ -446,6 +460,7 @@ mod tests {
             profile: "iteration".into(),
             strict: false,
             support: SourceSupport::Static,
+            target: NativeTarget::default(),
         });
         assert!(result.is_err());
         assert!(!effect.exists());
@@ -476,6 +491,7 @@ mod tests {
                 profile: "iteration".into(),
                 strict: false,
                 support: SourceSupport::Static,
+                target: NativeTarget::default(),
             })
             .is_err());
         }

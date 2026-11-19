@@ -68,15 +68,12 @@ pub(crate) struct LaneImage {
     pub(crate) fault_poll: Option<u32>,
 }
 
-/// What a lowering of the image is for: the ISA baseline and code-size policy.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ImageTarget {
-    /// The fixed CPU baseline (never the build host's CPU), `jit_backend::IsaBaseline`.
-    pub(crate) isa: super::jit_backend::IsaBaseline,
-}
+/// What a lowering of the image is for: its CPU baseline and target triple
+/// (`jit_backend::NativeTarget`, never the build host's CPU unless asked for by name).
+pub(crate) use super::jit_backend::NativeTarget as ImageTarget;
 
 /// Lowers every function of `program` under `facts` for `target`.
-pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: ImageTarget) -> Result<AotImage, String> {
+pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageTarget) -> Result<AotImage, String> {
     let mut symbols = symbols::SymbolTable::new(program);
     let functions = (0..program.function_count() as u32)
         .map(|id| lower_function(program, facts, target, id, &mut symbols))
@@ -98,7 +95,7 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: ImageTa
 fn lower_function(
     program: &ResidualProgram,
     facts: &AotFacts,
-    target: ImageTarget,
+    target: &ImageTarget,
     id: u32,
     symbols: &mut symbols::SymbolTable,
 ) -> Result<AotFunction, String> {
