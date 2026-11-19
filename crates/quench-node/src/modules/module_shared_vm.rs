@@ -76,7 +76,9 @@ pub(crate) const BUILTIN_MODULES: &[&str] = &[
     "worker_threads",
     "zlib",
     "node:sea",
+    "node:sqlite",
     "node:test",
+    "node:test/reporters",
 ];
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {

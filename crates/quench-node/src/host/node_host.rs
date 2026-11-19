@@ -109,6 +109,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
     pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
+    pub(crate) sqlite: crate::modules::sqlite_shared_vm::State,
     #[cfg(quench_icu)]
     pub(crate) icu_converters: crate::modules::icu_binding_shared_vm::State,
     pub(crate) fs_classes: crate::modules::fs_shared_vm::classes::State,
@@ -351,6 +352,7 @@ impl SharedNodeState {
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
             tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
+            sqlite: crate::modules::sqlite_shared_vm::State::default(),
             #[cfg(quench_icu)]
             icu_converters: crate::modules::icu_binding_shared_vm::State::default(),
             fs_classes: crate::modules::fs_shared_vm::classes::State::default(),
