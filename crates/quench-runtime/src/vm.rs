@@ -2026,6 +2026,8 @@ pub(crate) struct Vm<H> {
     /// The `then` a resolution read from promises of one layout (`Vm::memoized_resolution_then`).
     promise_then_memo: std::cell::Cell<Option<promise::PromiseThenMemo>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
+    /// Each shape's own enumerable string keys as atoms, by shape id (`Vm::own_enumerable_keys_cached`).
+    enumerable_key_lists: Vec<Option<std::rc::Rc<[Atom]>>>,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
     /// Every atom, hashed by its text (`atom_keys::text_hash`); equal hashes are told apart
@@ -3085,7 +3087,7 @@ impl<H: Host> Vm<H> {
         self.promise_species_proof.take();
         self.promise_then_memo.take();
         self.heap.dependencies_mut().retire_all();
-        self.enumerable_keys.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();
+        self.enumerable_keys.clear(); self.enumerable_key_lists.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();

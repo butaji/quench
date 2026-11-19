@@ -71,6 +71,29 @@ impl<H: Host> Vm<H> {
         self.shape_enumerable_key_walk(object).map(EnumerableKeys::from_vec)
     }
 
+    /// The own enumerable string keys of `object` as atoms, in OrdinaryOwnPropertyKeys order,
+    /// memoized per shape (`enumerable_key_lists`). Shapes never change, so an entry holds for
+    /// the shape's life; compaction and `invalidate_field_caches` clear the list. `None` for
+    /// every object `shape_enumerable_slots` declines (Proxy, array, typed array, String
+    /// wrapper, module namespace, side descriptors, dictionary shapes), which keep the general path.
+    pub(crate) fn own_enumerable_keys_cached(&mut self, object: Value) -> Option<std::rc::Rc<[Atom]>> {
+        let data = self.object_data(object)?;
+        let shape = data.shape();
+        if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
+            return None;
+        }
+        if let Some(Some(keys)) = self.enumerable_key_lists.get(shape as usize) {
+            return Some(keys.clone());
+        }
+        let keys: std::rc::Rc<[Atom]> = self.shape_enumerable_slots(object)?.iter().map(|&(atom, _)| atom).collect();
+        let index = shape as usize;
+        if self.enumerable_key_lists.len() <= index {
+            self.enumerable_key_lists.resize(index + 1, None);
+        }
+        self.enumerable_key_lists[index] = Some(keys.clone());
+        Some(keys)
+    }
+
     /// `shape_enumerable_keys` with each key's slot, for an object whose shape alone decides
     /// them (`enumerable_key_memo`): a non-dictionary shape without side-table descriptors.
     pub(super) fn shape_enumerable_slots(

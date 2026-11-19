@@ -995,6 +995,7 @@ impl<H: Host> Vm<H> {
         self.promise_then_memo.take();
         self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear();
+        self.enumerable_key_lists.clear();
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
         self.megamorphic_fields.clear();
