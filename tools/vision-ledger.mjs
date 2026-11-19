@@ -40,6 +40,15 @@ const OWNERS = [
   [/^crates\/quench-node\//, "Node host"],
   [/^crates\/quench-runtime\//, "Derive"],
 ];
+// Symbol-level overrides (file, symbol) -> owner, from the owners' own triage.
+const SYMBOL_OWNERS = [
+  [/vm\/dispatch_fast\/completions\.rs$/, /^lane_(complete_|return_|restore_caller|resume_after_call|resume_at|settle_promise|settled_then)/, "Calls and frames"],
+  [/vm\/dispatch_fast\/generator_windows\.rs$/, /./, "Derive"],
+];
+export function ownerOfSymbol(rel, sym) {
+  for (const [f, n, o] of SYMBOL_OWNERS) if (f.test(rel) && n.test(sym || "")) return o;
+  return ownerOf(rel);
+}
 export function ownerOf(rel) {
   for (const [re, o] of OWNERS) if (re.test(rel)) return o;
   return "unowned";
@@ -143,9 +152,9 @@ const CATALOG = [ // files allowed to name opcodes: the definition, its binary f
 ];
 const SEMANTIC_NAME = /(box|unbox|tag|truthy|truthiness|int32|to_int|uint32|compare|arith|number|double|f64_op|operation|to_bool|negate|bitwise|shift)/;
 const RECHECK = /\.generation\b|generation\s*!=|\.entry\s*!=|script_calls|activation_limit|activation_count\(|tier_hook|record_js_jit_lane_entry|entry_published|note_site_callee|tier_may_run/;
-const DECLARED = /\bdeclared_types?\b|\bDeclaredTypes?\b|\bdeclared::|\bDeclaredKind\b|\bdeclared_fact/;
+const DECLARED = /\bdeclared_(parameters|field|fields|layout)\b|\bdeclared_types?\b|\bDeclaredTypes?\b|\bdeclared::|\bDeclaredKind\b|\bdeclared_fact/;
 const TIERS = {
-  interpreter: /^crates\/quench-runtime\/src\/vm\/(dispatch_fast|dispatch\.rs|dispatch_frame)/,
+  interpreter: /^crates\/quench-runtime\/src\/vm\/(?!compiled)/,
   "b-jit": /^crates\/quench-bjit\/|^crates\/quench-runtime\/src\/vm\/compiled\/(base_region|base_body|stencil|bjit|wasm_stitch)/,
   "u-jit": /^crates\/quench-runtime\/src\/vm\/compiled\/(lane_region|osr_loop|lane_unit|lane_compile|object_slots|scalar)/,
 };
@@ -153,9 +162,11 @@ const TIERS = {
 function scan(tree, branch, wantOwners) {
   const files = walk(path.join(tree, "crates"), tree, []).filter(f => /^crates\/quench-(runtime|bjit|node)\//.test(f));
   const items = [];
-  const keep = rel => !wantOwners.length || wantOwners.includes(ownerOf(rel));
-  const add = (cat, rel, line, symbol, detail, extra = {}) =>
-    items.push({ cat, owner: extra.owner || ownerOf(rel), file: rel, line, symbol, detail, branch, key: `${cat}|${rel}|${symbol}` });
+  const wants = o => !wantOwners.length || wantOwners.includes(o);
+  const add = (cat, rel, line, symbol, detail, extra = {}) => {
+    const owner = extra.owner || ownerOfSymbol(rel, symbol);
+    if (wants(owner)) items.push({ cat, owner, file: rel, line, symbol, detail, branch, key: `${cat}|${rel}|${symbol}` });
+  };
 
   // Opcode predicates: `fn is_x(&self)` on the instruction types.
   const preds = new Set();
@@ -163,7 +174,7 @@ function scan(tree, branch, wantOwners) {
     const s = fs.readFileSync(path.join(tree, rel), "utf8");
     for (const m of s.matchAll(/\bfn\s+(is_[a-z0-9_]+)\s*\(\s*&?self\s*\)/g)) preds.add(m[1]);
   }
-  for (const p of ["is_empty", "is_some", "is_none", "is_ok", "is_err", "is_null", "is_nan", "is_finite", "is_ascii", "is_zero", "is_negative", "is_positive"]) preds.delete(p);
+  for (const p of ["is_wide", "is_module", "is_operand_field", "is_empty", "is_some", "is_none", "is_ok", "is_err", "is_null", "is_nan", "is_finite", "is_ascii", "is_zero", "is_negative", "is_positive"]) preds.delete(p);
 
   // Builtin keys from the Native enum.
   let nativeKeys = [];
@@ -177,7 +188,7 @@ function scan(tree, branch, wantOwners) {
       const m = /enum Native\s*\{([\s\S]*?)\n\}/.exec(src);
       if (m) {
         nativeKeys = [...strip(m[1]).matchAll(/\b([A-Z][A-Za-z0-9]+)\b/g)].map(x => x[1]);
-        if (keep(rel)) add("hand-table", rel, lineOf(lineStarts(src), m.index), "enum Native", `Native enum hand-lists ${nativeKeys.length} builtins; other registries should derive from one table`, { owner: "Builtins" });
+        add("hand-table", rel, lineOf(lineStarts(src), m.index), "enum Native", `Native enum hand-lists ${nativeKeys.length} builtins; other registries should derive from one table`, { owner: "Builtins" });
       }
     }
     if (testFile) continue;
@@ -188,13 +199,21 @@ function scan(tree, branch, wantOwners) {
     for (const t of Object.keys(TIERS)) if (TIERS[t].test(rel)) declaredByTier[t] += (s.match(new RegExp(DECLARED.source, "g")) || []).length;
     const ownerHere = ownerOf(rel);
     for (const f of fns) if (!/^(fmt|new|default|drop|clone|from|eq|hash)$/.test(f.name)) fnIndex.push({ rel, name: f.name, line: lineOf(starts, f.at), lines: lineOf(starts, f.end) - lineOf(starts, f.at), body: f.body });
-    if (!keep(rel)) continue;
 
     // A. Opcodes named outside the catalog: one item per file.
-    if (!CATALOG.some(re => re.test(rel))) {
+    // Only files that see the runtime's own opcode types: an import of bytecode / op_catalog
+    // (or quench_runtime's from another crate), or a glob import inside the runtime with no
+    // local Op/Class enum. quench-node's own Class/Op enums and oxc's is_module don't count.
+    const localEnum = /\benum\s+(Op|Class)\b/.test(s);
+    const seesOpcodes = !localEnum && (rel.startsWith("crates/quench-node/")
+      ? /quench_runtime::(bytecode|op_catalog)/.test(src)
+      : /\b(bytecode|op_catalog|opc)\b/.test(src) || (/^crates\/quench-runtime\//.test(rel) && /use\s+(super|crate::[a-z_:]+)::\*\s*;/.test(src)));
+    if (seesOpcodes && !CATALOG.some(re => re.test(rel))) {
       const hits = [];
-      for (const m of s.matchAll(/\b(?:Op|Class|opc)::([A-Z][A-Za-z0-9]*)/g)) if (!inRanges(tests, m.index)) hits.push([m.index, m[0]]);
-      for (const m of s.matchAll(/\.(is_[a-z0-9_]+)\(\)/g)) if (preds.has(m[1]) && !inRanges(tests, m.index)) hits.push([m.index, m[1] + "()"]);
+      const tables = fns.filter(f => /_handler$|handler_table|^handlers?$/.test(f.name)).map(f => [f.at, f.end]);
+      for (const m of s.matchAll(/\b(?:Op|Class|opc)::([A-Z][A-Za-z0-9]*)/g))
+        if (!inRanges(tests, m.index) && !inRanges(tables, m.index) && !/^[A-Z0-9_]+$/.test(m[1])) hits.push([m.index, m[0]]);
+      for (const m of s.matchAll(/\.(is_[a-z0-9_]+)\(\)/g)) if (preds.has(m[1]) && !inRanges(tests, m.index) && !inRanges(tables, m.index)) hits.push([m.index, m[1] + "()"]);
       if (hits.length) {
         const names = {};
         for (const [, n] of hits) names[n] = (names[n] || 0) + 1;
@@ -213,7 +232,7 @@ function scan(tree, branch, wantOwners) {
     }
     const callsStaged = new Map();
     const stagedRes = [...stagedNames].map(n => new RegExp(/^[a-z]/.test(n) ? `\\b${n}\\s*(::|\\(|!)` : `\\b${n}\\s*(::|\\{|\\(|<)`));
-    const direct = f => /\bstaged::|\brow_step!?\b|\blane_row\b|\bstep_row(_of)?\b/.test(f.body) || stagedRes.some(re => re.test(f.body));
+    const direct = f => /\bstaged::|\brow_step!?\b|\blane_row\b|\bstep_row(_of)?\b|\blane_suspension\b|\bsuspension_step\b|\bstaged_suspend\b/.test(f.body) || stagedRes.some(re => re.test(f.body));
     for (const f of fns) callsStaged.set(f.name, direct(f));
     for (let changed = true; changed;) { // same-file helpers that reach staged
       changed = false;
@@ -227,6 +246,7 @@ function scan(tree, branch, wantOwners) {
     for (const f of fns) {
       if (callsStaged.get(f.name)) continue;
       const line = lineOf(starts, f.at), len = lineOf(starts, f.end) - line;
+      if (/_handler$|handler_table/.test(f.name)) continue; // dispatch tables
       if (isLaneFile && f.name.startsWith("lane_")) add("handler-not-row", rel, line, f.name, `interpreter fn ${f.name} (${len} lines) runs no staged row`);
       else if (isLaneFile && SEMANTIC_NAME.test(f.name) && len > 3) add("value-semantics-copy", rel, line, f.name, `interpreter helper ${f.name} (${len} lines) computes values without a staged row`);
       else if (isStencilRows && len > 1) add("stencil-not-row", rel, line, f.name, `b-jit stencil fn ${f.name} (${len} lines) calls no staged row`);
@@ -277,16 +297,17 @@ function scan(tree, branch, wantOwners) {
     if (bodies.length >= 2 && filesSet.size >= 2 && bodies.length <= 12 && !seen.has(tail)) {
       seen.add(tail);
       const first = bodies[0];
-      if (!wantOwners.length || wantOwners.includes("Builtins"))
+      if (wants("Builtins"))
         items.push({ cat: "builtin-bodies", owner: "Builtins", file: first.rel, line: first.line, symbol: k, branch,
           key: `builtin-bodies|${k}`, detail: `${k}: ${bodies.length} bodies — ${bodies.map(b => `${b.rel.replace(RUNTIME, "")}:${b.line} ${b.name}`).join("; ")}` });
     }
   }
 
   // G. Declared TS types per tier.
-  if (!wantOwners.length || wantOwners.includes("Fact store"))
-    for (const [t, n] of Object.entries(declaredByTier))
-      if (n === 0) items.push({ cat: "ts-types-unused", owner: "Fact store", file: `(tier ${t})`, line: 0, symbol: t, branch, key: `ts-types-unused|${t}`,
+  // Each tier's TS item is read from the branch that holds that tier's code.
+  const TS_SOURCE = { interpreter: "Fact store", "b-jit": "b-jit", "u-jit": "u-jit" };
+  for (const [t, n] of Object.entries(declaredByTier))
+      if (n === 0 && wants(TS_SOURCE[t])) items.push({ cat: "ts-types-unused", owner: "Fact store", file: `(tier ${t})`, line: 0, symbol: t, branch, key: `ts-types-unused|${t}`,
         detail: `${t} reads no declared TS type (no reference to DeclaredTypes/declared facts in its files)` });
   return items;
 }
