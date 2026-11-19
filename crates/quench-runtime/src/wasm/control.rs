@@ -236,11 +236,9 @@ impl Lowering<'_> {
         Ok(true)
     }
 
+    /// Tag indices are validated by the decode-time validator.
     fn tag_params(&self, index: u32) -> Result<u16, Diagnostic> {
-        let tag = self
-            .tags
-            .get(index as usize)
-            .ok_or_else(|| self.control_error("Wasm tag index out of bounds"))?;
+        let tag = &self.tags[index as usize];
         let ty = self
             .signatures
             .declarations
@@ -261,29 +259,18 @@ impl Lowering<'_> {
         )
     }
 
+    /// Catch labels and their arities are validated by the decode-time validator; only the
+    /// representable exception value counts are checked here.
     fn begin_try(&mut self, table: &TryTable) -> Result<(), Diagnostic> {
         for &catch in &table.catches {
-            let (tag, label, reference) = catch_parts(catch);
+            let (tag, _, reference) = catch_parts(catch);
             let params = tag
                 .map(|tag| self.tag_params(tag))
                 .transpose()?
                 .unwrap_or(0);
-            let arity = params
+            params
                 .checked_add(u16::from(reference))
                 .ok_or_else(|| self.control_error("too many Wasm catch values"))?;
-            let target = self
-                .controls
-                .len()
-                .checked_sub(label as usize + 1)
-                .and_then(|index| self.controls.get(index))
-                .ok_or_else(|| self.control_error("Wasm catch label out of bounds"))?;
-            let expected = match target.kind {
-                Kind::Loop { .. } => target.params,
-                _ => target.results,
-            };
-            if expected != arity {
-                return Err(self.control_error("Wasm catch label arity mismatch"));
-            }
         }
         if table.catches.is_empty() || self.path == Reachability::Dead {
             return self.begin(Kind::Block, table.ty);
@@ -312,22 +299,17 @@ impl Lowering<'_> {
         Ok(slot)
     }
 
+    /// The decode-time validator rejects a `catch` outside a legacy try body or catch arm.
     fn legacy_catch(&mut self, tag: Option<u32>) -> Result<(), Diagnostic> {
-        let control = self
-            .controls
-            .last()
-            .ok_or_else(|| self.control_error("catch outside Wasm try"))?;
+        let control = self.controls.last().expect("validated: catch inside a try");
         let Kind::LegacyTry(region) = &control.kind else {
-            return Err(self.control_error("catch outside Wasm try"));
+            unreachable!("validated: catch inside a legacy try")
         };
-        self.check_result(control)?;
         let (base, slot, entered) = (control.base, region.slot, control.entered);
         let (body, next) = match region.arm {
             LegacyArm::Body { start } => (Some(start), None),
             LegacyArm::Catch { next: Some(next) } => (None, Some(next)),
-            LegacyArm::Catch { next: None } => {
-                return Err(self.control_error("Wasm catch after catch_all"));
-            }
+            LegacyArm::Catch { next: None } => unreachable!("validated: no catch after catch_all"),
         };
         self.finish_delegation(self.controls.len() - 1)?;
         let end = self.code.len();
@@ -351,19 +333,19 @@ impl Lowering<'_> {
         Ok(())
     }
 
+    /// The decode-time validator checks that the rethrow label names a catch.
     fn legacy_rethrow(&mut self, depth: u32) -> Result<(), Diagnostic> {
-        let control = self
+        let index = self
             .controls
             .len()
             .checked_sub(depth as usize + 1)
-            .and_then(|index| self.controls.get(index))
-            .ok_or_else(|| self.control_error("Wasm rethrow label out of bounds"))?;
+            .expect("validated: rethrow label");
         let Kind::LegacyTry(LegacyTry {
             slot,
             arm: LegacyArm::Catch { .. },
-        }) = control.kind
+        }) = self.controls[index].kind
         else {
-            return Err(self.control_error("Wasm rethrow label is not a catch"));
+            unreachable!("validated: rethrow label is a catch")
         };
         if self.path == Reachability::Live {
             let exception = self.push()?;
@@ -374,23 +356,19 @@ impl Lowering<'_> {
         Ok(())
     }
 
+    /// The decode-time validator checks that `delegate` closes a try body and its label.
     fn legacy_delegate(&mut self, depth: u32) -> Result<(), Diagnostic> {
-        let current = self
-            .controls
-            .len()
-            .checked_sub(1)
-            .ok_or_else(|| self.control_error("delegate outside Wasm try"))?;
+        let current = self.controls.len().checked_sub(1).expect("validated: delegate in a try");
         let destination = current
             .checked_sub(depth as usize + 1)
-            .ok_or_else(|| self.control_error("Wasm delegate label out of bounds"))?;
+            .expect("validated: delegate label");
         let Kind::LegacyTry(LegacyTry {
             arm: LegacyArm::Body { start },
             ..
         }) = self.controls[current].kind
         else {
-            return Err(self.control_error("delegate outside Wasm try body"));
+            unreachable!("validated: delegate closes a try body")
         };
-        self.check_result(&self.controls[current])?;
         // Delegations targeting this try must remain inside its outgoing region.
         self.finish_delegation(current)?;
         let end = self.code.len();
@@ -682,14 +660,11 @@ impl Lowering<'_> {
     }
 
     fn else_arm(&mut self) -> Result<(), Diagnostic> {
-        let control = self
-            .controls
-            .last()
-            .ok_or_else(|| self.control_error("else outside Wasm if"))?;
+        // The wasmparser reader checks that `else` closes an `if` arm.
+        let control = self.controls.last().expect("validated: else inside an if");
         let Kind::If(IfArm::Then { false_jump }) = control.kind else {
-            return Err(self.control_error("else outside Wasm if"));
+            unreachable!("validated: else closes an if arm")
         };
-        self.check_result(control)?;
         if self.path == Reachability::Live {
             let end = self.jump(Op::Jump, 0)?;
             self.controls.last_mut().unwrap().exits.push(end);
@@ -716,20 +691,12 @@ impl Lowering<'_> {
         Ok(())
     }
 
-    fn check_result(&self, control: &Control) -> Result<(), Diagnostic> {
-        if self.path == Reachability::Live && self.depth != control.base + control.results {
-            return Err(self.control_error("invalid Wasm result stack"));
-        }
-        Ok(())
-    }
-
     fn end(&mut self) -> Result<(), Diagnostic> {
         let current = self
             .controls
             .len()
             .checked_sub(1)
             .ok_or_else(|| self.control_error("extra Wasm end"))?;
-        self.check_result(&self.controls[current])?;
         self.finish_delegation(current)?;
         let control = self
             .controls
@@ -737,9 +704,6 @@ impl Lowering<'_> {
             .ok_or_else(|| self.control_error("extra Wasm end"))?;
         let mut live = self.path == Reachability::Live || !control.exits.is_empty();
         if let Kind::If(IfArm::Then { false_jump }) = control.kind {
-            if control.params != control.results {
-                return Err(self.control_error("Wasm if without else requires matching arities"));
-            }
             if let Some(false_jump) = false_jump {
                 self.patch_jump(false_jump, self.code.len())?;
                 live = true;
@@ -971,15 +935,13 @@ impl Lowering<'_> {
     }
 
     fn branch_target(&self, relative_depth: u32) -> Result<BranchTarget, Diagnostic> {
-        let distance = usize::try_from(relative_depth)
-            .ok()
-            .and_then(|depth| depth.checked_add(1))
-            .ok_or_else(|| self.control_error("Wasm branch label out of bounds"))?;
+        // The decode-time validator checks that the label exists.
+        let distance = usize::try_from(relative_depth).expect("validated: branch label") + 1;
         let index = self
             .controls
             .len()
             .checked_sub(distance)
-            .ok_or_else(|| self.control_error("Wasm branch label out of bounds"))?;
+            .expect("validated: branch label");
         let control = &self.controls[index];
         let (base, arity, head) = match control.kind {
             Kind::Loop { head } => (control.base, control.params, Some(head)),

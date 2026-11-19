@@ -107,8 +107,9 @@ impl WasmConstantExpression {
             let value = match *operator {
                 ConstantOperator::Value(value) => value,
                 ConstantOperator::Null(heap) => {
+                    // The validator checks the null heap type.
                     let reference = wasmparser::RefType::new(true, heap)
-                        .ok_or_else(|| error("invalid Wasm null type"))?;
+                        .expect("validated: null heap type");
                     let ty = wasmparser::ValType::Ref(reference);
                     let ty = match declarations {
                         Some(owner) => owner.callable_value_type(ty),
@@ -131,19 +132,17 @@ impl WasmConstantExpression {
                             base = stack
                                 .len()
                                 .checked_sub(count as usize)
-                                .ok_or_else(|| error("Wasm array initializer operand underflow"))?;
+                                .expect("validated: array initializer operands");
                             WasmArrayInitializer::Fixed(&stack[base..])
                         }
                         ArrayConstructor::Default | ArrayConstructor::Repeated => {
                             let Some(WasmValue::I32(count)) = stack.pop() else {
-                                return Err(error("Wasm array initializer length type mismatch"));
+                                unreachable!("validated: array initializer length is i32")
                             };
                             let initialization = if mode == ArrayConstructor::Default {
                                 WasmArrayInitializer::Default(count as u32)
                             } else {
-                                let value = stack.pop().ok_or_else(|| {
-                                    error("Wasm array initializer operand underflow")
-                                })?;
+                                let value = stack.pop().expect("validated: repeated array value");
                                 WasmArrayInitializer::Repeated {
                                     count: count as u32,
                                     value,
@@ -168,16 +167,14 @@ impl WasmConstantExpression {
                         .struct_fields(index)
                         .ok_or_else(|| error("invalid Wasm struct initializer declaration"))?;
                     let descriptor = if mode.described() {
-                        Some(stack.pop().ok_or_else(|| {
-                            error("Wasm descriptor initializer operand underflow")
-                        })?)
+                        Some(stack.pop().expect("validated: descriptor initializer operand"))
                     } else {
                         None
                     };
                     let base = stack
                         .len()
                         .checked_sub(if mode.defaulted() { 0 } else { fields.len() })
-                        .ok_or_else(|| error("Wasm struct initializer operand underflow"))?;
+                        .expect("validated: struct initializer operands");
                     let result = dependency(WasmInitializerEffect::Struct {
                         index,
                         fields: if mode.defaulted() {
@@ -197,26 +194,18 @@ impl WasmConstantExpression {
                     dependency(WasmInitializerEffect::Function(index))?
                 }
                 ConstantOperator::ExternalConversion(conversion) => {
-                    let value = stack
-                        .pop()
-                        .ok_or_else(|| error("Wasm conversion initializer operand underflow"))?;
+                    let value = stack.pop().expect("validated: conversion initializer operand");
                     dependency(WasmInitializerEffect::ExternalConversion { conversion, value })?
                 }
                 ConstantOperator::I31 => {
-                    let value = stack
-                        .pop()
-                        .ok_or_else(|| error("Wasm constant operand underflow"))?;
+                    let value = stack.pop().expect("validated: i31 operand");
                     super::i31::I31Operator::New
                         .apply(value)
                         .map_err(|_| error("invalid Wasm i31 initializer"))?
                 }
                 ConstantOperator::I32(_) | ConstantOperator::I64(_) => {
-                    let right = stack
-                        .pop()
-                        .ok_or_else(|| error("Wasm constant operand underflow"))?;
-                    let left = stack
-                        .pop()
-                        .ok_or_else(|| error("Wasm constant operand underflow"))?;
+                    let right = stack.pop().expect("validated: binary constant operands");
+                    let left = stack.pop().expect("validated: binary constant operands");
                     let value = match (operator, left, right) {
                         (
                             ConstantOperator::I32(op),
@@ -228,19 +217,16 @@ impl WasmConstantExpression {
                             WasmValue::I64(left),
                             WasmValue::I64(right),
                         ) => op.evaluate(left, right),
-                        _ => return Err(error("Wasm constant operand type mismatch")),
+                        _ => unreachable!("validated: constant operands match the operator"),
                     };
                     value.map_err(|trap| Diagnostic::unsupported(name, trap.to_string()))?
                 }
             };
             stack.push(value);
         }
-        let value = stack
-            .pop()
-            .ok_or_else(|| error("empty Wasm constant expression"))?;
-        if !stack.is_empty() || !value.fits_type(*expected) {
-            return Err(error("invalid Wasm constant expression result"));
-        }
+        // The validator checks that the expression leaves one value of the declared type.
+        let value = stack.pop().expect("validated: constant expression result");
+        debug_assert!(stack.is_empty() && value.fits_type(*expected));
         Ok(value)
     }
 }
