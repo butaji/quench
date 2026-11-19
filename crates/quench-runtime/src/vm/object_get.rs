@@ -608,8 +608,10 @@ impl<H: Host> Vm<H> {
                     // is held under the prototypes passed.
                     if let Ok(slot) = u32::try_from(slot) {
                         let getter = SymbolLoadAnswer::Getter { hops: depth, slot };
-                        self.prove_symbol_chain(layout, key, prototype, depth, getter, current);
-                        self.refine_getter_fact(layout, key, depth, slot, current);
+                        // Only an entry the chain's subjects hold is refined.
+                        if self.prove_symbol_chain(layout, key, prototype, depth, getter, current) {
+                            self.refine_getter_fact(layout, key, depth, slot, current);
+                        }
                     }
                     return Some(ProvedLoad::Getter(attributes.getter));
                 }
@@ -637,6 +639,8 @@ impl<H: Host> Vm<H> {
             depth = deeper;
             current = next;
         };
+        // The walk's answer stands whether or not it is recorded; an unrecorded one is walked
+        // again at its next miss.
         self.prove_symbol_chain(layout, key, prototype, depth, answer, current);
         Some(match answer {
             SymbolLoadAnswer::Absent => ProvedLoad::Absent,
@@ -645,7 +649,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// Records `answer` for `key` on receivers of `layout`, held under the subjects of the
-    /// `depth` prototypes from `prototype` the walk passed (`Vm::prove_fact_chain`).
+    /// `depth` prototypes from `prototype` the walk passed (`Vm::prove_fact_chain`): whether
+    /// it recorded the answer.
     fn prove_symbol_chain(
         &mut self,
         layout: u32,
@@ -654,13 +659,29 @@ impl<H: Host> Vm<H> {
         depth: u8,
         answer: super::symbol_load_proof::SymbolLoadAnswer,
         holder: Value,
-    ) {
-        let Some(subjects) = self.fact_chain_subjects(prototype, depth) else { return };
+    ) -> bool {
+        // A chain met for the first time is only noted: the receiver's own shape lacks the key
+        // (`record_absent_own`, which no read answers by). Its second walk proves it. A
+        // receiver whose layout is met once, as an object made per call and used as a
+        // prototype at once (`Object.create(this)`), then marks no prototype and holds no
+        // fact under their subjects for a proof no later read would use.
+        if depth > 0
+            && let Some(key32) = key.key32()
+            && self.symbol_load_proofs.word(layout, key32).is_none()
+        {
+            self.symbol_load_proofs.record_absent_own(layout, key32);
+            return false;
+        }
+        let Some(subjects) = self.fact_chain_subjects(prototype, depth) else { return false };
         // A holder up the chain that is an object record: its id, plus one; any other holder
         // (an array's, a builtin's) is found by its hops (`Vm::proof_holder`).
         let holder = if depth > 0 { holder.direct_object_index().map_or(0, |id| id + 1) } else { 0 };
-        if let Some(entry) = self.symbol_load_proofs.record_with_holder(layout, key, answer, holder) {
-            self.hold_fact(entry, &subjects);
+        match self.symbol_load_proofs.record_with_holder(layout, key, answer, holder) {
+            Some(entry) => {
+                self.hold_fact(entry, &subjects);
+                true
+            }
+            None => false,
         }
     }
 
