@@ -280,6 +280,8 @@ fn transfer(
         return Flow::Next;
     }
     let operation = Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY);
+    // A compare-and-jump: its nullish test and its operands' relation below.
+    let compares = matches!(operation, Some(Operation::CompareJump { .. }));
     match operation {
         Some(Operation::LoadConst { .. }) => {
             let ty = constants.get(instruction.constant_index()).map_or(Type::ANY, constant_type);

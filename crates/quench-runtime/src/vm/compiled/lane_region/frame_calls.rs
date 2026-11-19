@@ -10,7 +10,7 @@ use crate::staged::{Allocation, InlineEmpty};
 use cranelift_codegen::ir;
 use crate::Value;
 use cranelift_codegen::ir::types;
-use crate::staged::machine::{Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
+use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 use super::super::object_slots::emit;
 use crate::vm::compiled::regions;
 
@@ -123,8 +123,9 @@ pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>
         None => {}
     }
     let (helper, arguments) = match allocation {
-        Allocation::Empty | Allocation::Array { length: 0 } => unreachable!("an empty allocation is inline"),
-        Allocation::Array { length } =>
+        Allocation::Empty | Allocation::Array { length: 0, .. } => unreachable!("an empty allocation is inline"),
+        // `numbers` only sizes the backing a Number-only literal starts with; a plain hole array is as exact (`Allocation::Array`).
+        Allocation::Array { length, .. } =>
             (LaneHelper::NewArray, vec![stage.raw_const(Lane::I64, i64::from(length)), stage.raw_const(Lane::I64, 0)]),
         Allocation::ArrayOf { elements } => {
             let registers = elements.registers();
@@ -175,9 +176,9 @@ struct Template {
 /// An empty ordinary object (`Allocation::Empty`), from the object space's cursor and template.
 const EMPTY_OBJECT: Template = Template {
     cursor: std::mem::offset_of!(JsStepDispatch, object_cursor),
-    records: std::mem::offset_of!(JsStepDispatch, object_record_base),
+    records: std::mem::offset_of!(JsStepDispatch, head.object_record_base),
     record_size: crate::heap::NATIVE_OBJECT_LAYOUT.record_size,
-    tag: Value::DIRECT_OBJECT_TAG,
+    tag: crate::value::ValueLayout::DIRECT_OBJECT_TAG,
     layout: std::mem::offset_of!(JsStepDispatch, empty_object_layout),
     words: std::mem::offset_of!(JsStepDispatch, empty_object_payload),
 };
@@ -186,9 +187,9 @@ const EMPTY_OBJECT: Template = Template {
 /// elements are the static empty header, so its record is its two words alone (`ArrayObject::fresh`).
 const EMPTY_ARRAY: Template = Template {
     cursor: std::mem::offset_of!(JsStepDispatch, array_cursor),
-    records: std::mem::offset_of!(JsStepDispatch, array_record_base),
+    records: std::mem::offset_of!(JsStepDispatch, head.array_record_base),
     record_size: crate::heap::NATIVE_ARRAY_LAYOUT.record_size,
-    tag: Value::DIRECT_ARRAY_TAG,
+    tag: crate::value::ValueLayout::DIRECT_ARRAY_TAG,
     layout: std::mem::offset_of!(JsStepDispatch, empty_array_layout),
     words: std::mem::offset_of!(JsStepDispatch, empty_array_payload),
 };
@@ -213,7 +214,7 @@ fn allocate_template(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destin
     let words = emit_js_payload_word(stage.builder, payload, template.words);
     let room = stage.ult(next, limit);
     let templated = stage.ne_imm(layout, 0u64);
-    let inline = stage.and(room, templated);
+    let inline = stage.raw_binary(Binary::And, room, templated);
     let fast = stage.builder.create_block();
     let slow = stage.builder.create_block();
     let joined = stage.builder.create_block();

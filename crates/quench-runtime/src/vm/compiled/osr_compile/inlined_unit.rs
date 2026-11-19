@@ -3,6 +3,7 @@
 //! (`localized_jumps`, `inlined_entry_fields`), and the unit they make up (`inlining_unit`).
 
 use super::*;
+use crate::bytecode::Op;
 
 /// The lane unit's frames for an inlining region's inlined callees.
 pub(super) fn unit_frames(region: &LoopRegion, inlining: &osr_loop::Inlining) -> Vec<lane_unit::Frame> {
