@@ -59,10 +59,10 @@ fn number_word<S: NumericStage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> 
     let double = is_double(stage, bits);
     let number = stage.any(int, double);
     stage.guard(number, miss)?;
-    Some(stage.choose(int, |stage| {
+    Some(stage.choose(int, #[inline(always)] |stage| {
         let payload = stage.narrow(bits);
         stage.i32_to_f64(payload)
-    }, |stage| stage.f64_from_bits(bits)))
+    }, #[inline(always)] |stage| stage.f64_from_bits(bits)))
 }
 
 /// The value word of the int32 word `payload` (`Value::integer`).
@@ -130,14 +130,14 @@ fn absolute<S: NumericStage>(stage: &mut S, only: S::Word, miss: S::Miss) -> Opt
     let int = is_int(stage, only);
     let not_minimum = stage.ne_imm(only, Value::integer(i32::MIN).to_bits());
     let negatable = stage.all(int, not_minimum);
-    stage.choose_leaving(negatable, |stage| {
+    stage.choose_leaving(negatable, #[inline(always)] |stage| {
         let payload = stage.narrow(only);
         let negative = stage.i32_is_negative(payload);
         let zero = stage.i32_constant(0);
         let (negated, _) = stage.int_arithmetic(NumberArithmetic::Subtract, zero, payload);
         let magnitude = stage.select(negative, negated, payload);
         Some(int_value(stage, magnitude))
-    }, |stage| {
+    }, #[inline(always)] |stage| {
         let number = number_word(stage, only, miss)?;
         let result = stage.float_unary(FloatUnary::Abs, number);
         Some(stage.box_number(result))
@@ -167,12 +167,12 @@ fn extreme_pair<S: NumericStage>(stage: &mut S, maximum: bool, (left, right): (S
     -> Option<S::Word> {
     let (left_int, right_int) = (is_int(stage, left), is_int(stage, right));
     let ints = stage.all(left_int, right_int);
-    stage.choose_leaving(ints, |stage| {
+    stage.choose_leaving(ints, #[inline(always)] |stage| {
         let (x, y) = (stage.narrow(left), stage.narrow(right));
         let greater = stage.relation(NumberRelation::GreaterThan, Domain::Int32, x, y);
         let chosen = if maximum { stage.select(greater, x, y) } else { stage.select(greater, y, x) };
         Some(int_value(stage, chosen))
-    }, |stage| {
+    }, #[inline(always)] |stage| {
         let x = number_word(stage, left, miss)?;
         let y = number_word(stage, right, miss)?;
         let result = stage.float_extreme(maximum, x, y);
@@ -186,11 +186,11 @@ fn extreme_pair<S: NumericStage>(stage: &mut S, maximum: bool, (left, right): (S
 fn imul_pair<S: NumericStage>(stage: &mut S, (left, right): (S::Word, S::Word), miss: S::Miss) -> Option<S::Word> {
     let (left_int, right_int) = (is_int(stage, left), is_int(stage, right));
     let ints = stage.all(left_int, right_int);
-    stage.choose_leaving(ints, |stage| {
+    stage.choose_leaving(ints, #[inline(always)] |stage| {
         let (x, y) = (stage.narrow(left), stage.narrow(right));
         let product = stage.int_multiply(x, y);
         Some(int_value(stage, product))
-    }, |stage| {
+    }, #[inline(always)] |stage| {
         let x = number_word(stage, left, miss)?;
         let y = number_word(stage, right, miss)?;
         let x = stage.to_int32(x, miss)?;

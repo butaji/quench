@@ -260,12 +260,12 @@ fn backing_element<S: Stage>(stage: &mut S, backing: Backing<S::Word>, index: S:
     stage.choose_leaving(double, #[inline(always)] |stage| double_element(stage, backing.values, index, miss), #[inline(always)] |stage| {
         let flag = stage.and_imm(backing.length, u64::from(NARROW_LEN));
         let narrow = stage.ne_imm(flag, 0u32);
-        let value = stage.choose(narrow, |stage| {
+        let value = stage.choose(narrow, #[inline(always)] |stage| {
             let offset = stage.mul_imm(index, std::mem::size_of::<u32>() as u64);
             let address = stage.add(backing.values, offset);
             let narrow = stage.load_u32(Region::Elements.mutable(), address, 0);
             super::object::decode_narrow_through(stage, narrow, upper_words)
-        }, |stage| loaded_element(stage, backing.values, index).1);
+        }, #[inline(always)] |stage| loaded_element(stage, backing.values, index).1);
         let present = stage.ne_imm(value, crate::Value::DELETED.to_bits());
         stage.guard(present, miss)?;
         Some(value)
@@ -313,7 +313,7 @@ pub(crate) fn array_header<S: Stage>(stage: &mut S, record: S::Word) -> S::Word 
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let word = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
     let extras = super::object::has_extras(stage, word);
-    stage.choose(extras, |stage| {
+    stage.choose(extras, #[inline(always)] |stage| {
         let extras = super::object::extras_pointer(stage, word);
         stage.load_u64(Region::Payload.mutable(), extras, (ARRAY.extras_elements_offset + ARRAY.elements_header_offset) as i32)
     }, |_| word)

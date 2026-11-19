@@ -99,6 +99,11 @@ impl AtomClass {
     pub(super) const SELF_BINDING: u8 = 1 << 6;
     /// Engine-internal names, which begin with NUL and never name a source binding.
     pub(super) const INTERNAL: u8 = 1 << 7;
+    /// The names whose answer a holder's exotic kind or array and typed-array index rules
+    /// decide, beyond its shape: `shape_property_lookup` excludes them per receiver family, so
+    /// a field cache hit reads its holder through the lookup for them (`non_record_hit_holder`).
+    pub(super) const FAMILY_SENSITIVE: u8 =
+        Self::PRIVATE | Self::ARRAY_INDEX | Self::TYPED_ARRAY_INDEX | Self::RESTRICTED_FUNCTION_PROPERTY | Self::VIRTUAL_FIELD;
 
     #[inline(always)]
     pub(super) fn contains(self, bits: u8) -> bool {
@@ -3191,7 +3196,7 @@ impl<H: Host> Vm<H> {
         // shape slots, so no entry names them.
         let holder = match self.heap.record_prototype(receiver) {
             Some(holder) => holder,
-            None => self.shape_property_lookup(receiver.proto(), atom)?,
+            None => self.non_record_hit_holder(receiver.proto(), atom)?,
         };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { self.field_caches.get_unchecked(site) };
@@ -3213,6 +3218,26 @@ impl<H: Host> Vm<H> {
             tier,
             depth: 1,
         })
+    }
+
+    /// The holder of a field cache hit whose prototype `proto` is not a record. For an atom
+    /// outside `AtomClass::FAMILY_SENSITIVE` (and not `length`), an object without exotic
+    /// access answers exactly as `shape_property_lookup` does: its shape then decides the
+    /// rest. The atom is fixed per site and the exotic bit is the holder's own header word,
+    /// so the lookup's per-family rules are not re-run here. A dictionary holder needs no test
+    /// of its own: it carries a dictionary shape id, which no recorded holder shape equals (the
+    /// same argument as `cached_holder_matches`). Every other case is decided by the lookup,
+    /// which is also what a cache hit compares against.
+    #[inline(always)]
+    fn non_record_hit_holder(&self, proto: Value, atom: Atom) -> Option<&Object> {
+        if let Some(holder) = self.heap.object(proto)
+            && !holder.has_exotic_access()
+            && atom != self.length_atom
+            && !self.atom_class(atom).intersects(AtomClass::FAMILY_SENSITIVE)
+        {
+            return Some(holder);
+        }
+        self.shape_property_lookup(proto, atom)
     }
 
     #[cold]

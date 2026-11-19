@@ -116,7 +116,7 @@ mod number_conversion;
 
 pub(crate) mod value {
     pub(crate) use super::operations::WORD32_SHIFT_MASK;
-    pub(crate) use super::number_conversion::number_to_u32;
+    pub(crate) use super::number_conversion::{exact_uint32, number_to_u32};
     pub(crate) use crate::layout::value_encoding::{
         HEAP_FAMILY_BITS, HEAP_FAMILY_SHIFT, LOWER_WORD, NARROW_HEAP_FAMILIES, NarrowLayout, TAG_BOOL, TAG_DELETED, TAG_NULL,
         TAG_UNDEFINED, ValueLayout,

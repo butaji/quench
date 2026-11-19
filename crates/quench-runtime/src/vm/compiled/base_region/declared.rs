@@ -11,6 +11,7 @@
 //! function never writes, which hold the fact at every row.
 
 use super::*;
+use super::super::declared_checks::{ARRAY, OBJECT_PLAIN};
 use super::super::lane_region::scalar::parameter_register;
 use crate::bytecode::{Function, Operand};
 use crate::staged::{DecodeContext, Operation};
@@ -36,16 +37,11 @@ const _: () = {
     assert!(tier::ARRAY == bits::ARRAY && tier::OBJECT_PLAIN == bits::OBJECT_PLAIN);
 };
 
-/// The exact plain-object and array bits: each is a direct object family word too, so its `OBJECT`
-/// bit is set by `tag_languages` as well, and a set naming `object` admits both.
-const ARRAY: u16 = crate::staged::value::language::ARRAY;
-const OBJECT_PLAIN: u16 = crate::staged::value::language::OBJECT_PLAIN;
-
-/// The language types a value's tag word alone decides, with no heap read: the immediates (a
-/// Number, a Boolean, `null`, `undefined`) and the direct object and direct function families. A
-/// String, a Symbol or a BigInt needs a heap read, so a set naming one gets no entry check.
-const TAG_DECIDED: u16 = language(ValueType::Number) | language(ValueType::Boolean) | language(ValueType::Null)
-    | language(ValueType::Undefined) | language(ValueType::Object) | language(ValueType::Function) | ARRAY | OBJECT_PLAIN;
+/// The language types a value's tag word alone decides, with no heap read: the members of the
+/// shared declared set (`declared_checks::DECLARED_CHECKED`) the b-jit's tag test decides
+/// (`declared_checks::BASE_TESTED`). A String, a Symbol or a BigInt needs a heap read or a family
+/// test this tier has no row for, so a set naming one gets no entry check.
+const TAG_DECIDED: u16 = super::super::declared_checks::DECLARED_CHECKED & super::super::declared_checks::BASE_TESTED;
 
 /// What a declared parameter type gives the b-jit's entry: exactly a Number, proved through the
 /// register's representation, or a set of tag-decided language types (`language` bits), tested at once.

@@ -58,7 +58,7 @@ mod tests {
 
     fn run(class: FieldClass, passed: Value) -> Option<Value> {
         let mut stage = Concrete::new(std::ptr::null());
-        field_value(&mut stage, class, Value::number(2.5).to_bits(), 0, |stage| stage.constant(passed.to_bits()), ()).map(Value::from_bits)
+        field_value(&mut stage, class, Value::number(2.5).to_bits(), 0, #[inline(always)] |stage| stage.constant(passed.to_bits()), ()).map(Value::from_bits)
     }
 
     #[test]

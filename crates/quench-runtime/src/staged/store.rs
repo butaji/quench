@@ -144,15 +144,15 @@ fn own_store_with<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, S:
     (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
     let inline = inline_storage(stage, record);
     // A packed slot needs the value's narrow form; a flat one takes any value.
-    let narrow = stage.choose(inline, |stage| narrow_form(stage, value, fact), |stage| stage.constant(0));
+    let narrow = stage.choose(inline, #[inline(always)] |stage| narrow_form(stage, value, fact), #[inline(always)] |stage| stage.constant(0));
     let storable = stage.ne_imm(narrow, NOT_NARROW);
     stage.guard(storable, miss)?;
-    stage.choose(inline, |stage| {
+    stage.choose(inline, #[inline(always)] |stage| {
         let half = stage.site(OBJECT.payload_offset as u64 + u64::from(slot) * HALF_BYTES);
         let address = stage.add_imm(record, half);
         stage.store_u32(Region::Payload.mutable(), address, 0, narrow);
         stage.constant(0)
-    }, |stage| {
+    }, #[inline(always)] |stage| {
         store_flat(stage, payload, slot, (value, Representation::Tagged));
         stage.constant(0)
     });

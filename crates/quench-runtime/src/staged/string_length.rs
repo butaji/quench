@@ -96,7 +96,7 @@ pub(crate) fn flat_truth<S: Stage>(stage: &mut S, record_base: S::Word, value: S
     let has_record = stage.ne_imm(small_bits, u64::from(crate::heap::SMALL_STRING_ID_BASE));
     let string = stage.all(is_string, present);
     let candidate = stage.all(string, has_record);
-    stage.choose(candidate, |stage| {
+    stage.choose(candidate, #[inline(always)] |stage| {
         let offset = stage.mul_imm(index, form::RECORD_SIZE as u64);
         let record = stage.add(record_base, offset);
         let tag = stage.load_u8(Region::HeapMeta.mutable(), record, form::TAG_OFFSET);
@@ -105,15 +105,15 @@ pub(crate) fn flat_truth<S: Stage>(stage: &mut S, record_base: S::Word, value: S
         let wide = stage.eq_imm(tag, u64::from(form::TAG_WIDE));
         let shared = stage.any(ascii, wide);
         let flat = stage.any(short, shared);
-        stage.choose(flat, |stage| {
+        stage.choose(flat, #[inline(always)] |stage| {
             let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
             let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
             let length = stage.select(short, short_length, shared_length);
             let nonempty = stage.ne_imm(length, 0u32);
             let (one, zero) = (stage.constant(1), stage.constant(0));
             stage.select(nonempty, one, zero)
-        }, |stage| stage.constant(2))
-    }, |stage| stage.constant(2))
+        }, #[inline(always)] |stage| stage.constant(2))
+    }, #[inline(always)] |stage| stage.constant(2))
 }
 
 /// The `length` of `value`, a direct array (among the array records at `arrays`) or a direct
@@ -122,7 +122,7 @@ pub(crate) fn flat_truth<S: Stage>(stage: &mut S, record_base: S::Word, value: S
 #[inline(always)]
 pub(crate) fn length_of<S: Stage>(stage: &mut S, (arrays, strings): (S::Word, S::Word), value: S::Word, miss: S::Miss) -> Option<S::Word> {
     let array = super::value::is_direct_array(stage, value);
-    stage.choose_leaving(array, |stage| super::elements::array_length(stage, arrays, value, miss), |stage| string_length(stage, strings, value, miss))
+    stage.choose_leaving(array, #[inline(always)] |stage| super::elements::array_length(stage, arrays, value, miss), #[inline(always)] |stage| string_length(stage, strings, value, miss))
 }
 
 /// The interpreter's `string_length` of the string `value` among the records at `record_base`:

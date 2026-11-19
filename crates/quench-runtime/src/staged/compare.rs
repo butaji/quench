@@ -223,12 +223,12 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [
     let value = match [left.register_index(), right.register_index()] {
         [Some(left), Some(right)] => {
             let call = CallOut::Decide { left, right, operator: equality_binary_operator(strict, negated) };
-            stage.choose_leaving(decided, |_| Some(decision), |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
+            stage.choose_leaving(decided, |_| Some(decision), #[inline(always)] |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
         }
         // A constant operand the words do not decide: the VM's equality, which takes constants (`CallOut::Equality`).
         _ if frame.general_operators() => {
             let call = CallOut::Equality { left, right, strict, negated };
-            stage.choose_leaving(decided, |_| Some(decision), |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
+            stage.choose_leaving(decided, |_| Some(decision), #[inline(always)] |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
         }
         _ => {
             let miss = frame.miss();
@@ -299,7 +299,7 @@ fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     let undecided = stage.eq_imm(answer, Value::DELETED.to_bits());
     let decided = stage.not(undecided);
     let decision = stage.choose_leaving(decided, |_| Some(answer),
-        |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?;
+        #[inline(always)] |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?;
     Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
 }
 
@@ -310,14 +310,14 @@ fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 #[inline(always)]
 fn walked_instanceof<S: NumericStage>(stage: &mut S, (records, value): (S::Word, S::Word), target: S::Word) -> S::Word {
     let direct = is_direct_object(stage, value);
-    stage.choose(direct, |stage| {
+    stage.choose(direct, #[inline(always)] |stage| {
         let id = stage.and_imm(value, u64::from(u32::MAX));
         let record = object_record_at(stage, records, id);
         let (decided, holds) = stage.walk_prototypes(records, record, target, PROTOTYPE_WALK_LINKS);
         let [yes, no, unknown] = [Value::TRUE, Value::FALSE, Value::DELETED].map(|each| stage.constant(each.to_bits()));
         let answer = stage.select(holds, yes, no);
         stage.select(decided, answer, unknown)
-    }, |stage| {
+    }, #[inline(always)] |stage| {
         let heap = super::value::is_heap(stage, value);
         let immediate = stage.not(heap);
         let string = is_direct_string(stage, value);

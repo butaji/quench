@@ -99,7 +99,7 @@ pub(crate) fn construct_value<S: Stage>(stage: &mut S, value: S::Word, receiver:
 /// window only on that path.
 #[inline(always)]
 pub(crate) fn complete_construct<S: Stage>(stage: &mut S, window: S::Word, value: S::Word, object: S::Cond) -> S::Word {
-    stage.choose(object, |_| value, |stage| stage.load_u64(Region::Frame.mutable(), window, context_at(frame::CONTEXT_THIS)))
+    stage.choose(object, |_| value, #[inline(always)] |stage| stage.load_u64(Region::Frame.mutable(), window, context_at(frame::CONTEXT_THIS)))
 }
 
 /// `construct_value` on machine words.

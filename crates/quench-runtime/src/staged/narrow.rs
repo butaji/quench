@@ -48,7 +48,7 @@ fn narrow_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
         stage.select(is_int, integer, reference)
     }
     #[cfg(not(stencil_build))]
-    stage.choose(is_int, |stage| integer_form(stage, value), |stage| reference_form(stage, value, upper))
+    stage.choose(is_int, #[inline(always)] |stage| integer_form(stage, value), #[inline(always)] |stage| reference_form(stage, value, upper))
 }
 
 /// The word a store of `value` writes into a slot of a record whose values are packed
@@ -65,7 +65,7 @@ pub(crate) fn packed_form<S: Stage>(stage: &mut S, inline: S::Cond, value: S::Wo
         stage.select(inline, packed, flat)
     };
     #[cfg(not(stencil_build))]
-    let narrow = stage.choose(inline, |stage| narrow_form(stage, value), |stage| stage.constant(0));
+    let narrow = stage.choose(inline, #[inline(always)] |stage| narrow_form(stage, value), #[inline(always)] |stage| stage.constant(0));
     let storable = stage.ne_imm(narrow, NOT_NARROW);
     stage.guard(storable, miss)?;
     Some(narrow)
