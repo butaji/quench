@@ -74,6 +74,11 @@ impl<'a> ChunkWindow<'a> {
         self.start
     }
 
+    /// The program's saved top-level type names, which the chunk's annotations resolve against.
+    pub(super) fn saved_names(&self) -> Option<std::rc::Rc<[crate::bytecode::SavedTypeName]>> {
+        self.program_declared.and_then(|declared| declared.type_names.clone())
+    }
+
     /// The declarations of the chunk's function and of what lies in it, at their places in the
     /// program's text (`DeclaredTypes::within`): a chunk compiles them as the program's load did.
     pub(super) fn declared(&self) -> crate::bytecode::DeclaredTypes {

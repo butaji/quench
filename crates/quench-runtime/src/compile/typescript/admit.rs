@@ -29,9 +29,12 @@ mod decorators;
 pub(in crate::compile) fn admit<'a>(allocator: &'a Allocator, program: &mut Program<'a>, declarations: &mut DeclaredTypes) {
     // Before the class bodies change: signature-only members and parameter modifiers are still in place.
     {
-        let names = super::TypeNames::of(program);
+        // The saved top-level names of the program, or of the program a body belongs to, shadowed by
+        // what this tree declares; saved again for the bodies compiled from it (`TypeNames::resolved`).
+        let names = super::TypeNames::of(program, declarations.type_names.clone());
         super::fields::collect(program, &names, declarations);
         super::signatures::collect(program, &names, declarations);
+        declarations.type_names = Some(names.resolved());
     }
     let bindings = if program.source_text.contains("enum") { binding_counts(program) } else { FxHashMap::default() };
     let folded = enum_folding::foldable(program, &bindings);

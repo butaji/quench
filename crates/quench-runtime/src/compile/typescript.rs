@@ -56,16 +56,6 @@ pub(super) fn needs_admission(program: &Program<'_>) -> bool {
     finder.0
 }
 
-/// The declared environment of a lazily parsed TypeScript body, collected alone before the body is
-/// released (`BodyFacts::check`), with the source positions it has in the program. Its names are not
-/// the program's (they are in view only at the top level), so every type name reads as unknown
-/// (`TypeNames::opaque`): a name's annotation is then `DECLARED_ANY`, which never claims a type the
-/// program may shadow.
-pub(super) fn collect_released(program: &Program<'_>, declarations: &mut DeclaredTypes) {
-    let names = TypeNames::opaque();
-    fields::collect(program, &names, declarations);
-    signatures::collect(program, &names, declarations);
-}
 
 /// The language types (`crate::typed_ir::Type::language` bits) each formal parameter of
 /// `formals` declares, by argument index; empty where none declares one. An undeclared or
@@ -74,19 +64,18 @@ pub(super) fn collect_released(program: &Program<'_>, declarations: &mut Declare
 /// enter as `undefined`. A checker's answer for the same parameters (`checked`) narrows each
 /// set further: both are seeds of the same fact, so a value must fit both.
 ///
-/// `opaque` reads the names of the annotations as unknown (`collect_released`): the parameters of a
-/// lazily parsed body, whose program's type names are not in view where it compiles.
-pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Option<&CheckedParameters>, opaque: bool) -> Vec<u16> {
+/// `names` are the type names the annotations resolve against: the program's own (a body compiled
+/// later has its program's, with its own declarations), or none, which reads the name-free way.
+pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Option<&CheckedParameters>, names: Option<&TypeNames<'_>>) -> Vec<u16> {
     let checked = checked.and_then(|checked| checked.get(formals.span.start))
         .filter(|languages| languages.len() == formals.items.len());
     if checked.is_none() && formals.items.iter().all(|item| item.type_annotation.is_none()) {
         return Vec::new();
     }
     let parameters: Vec<u16> = formals.items.iter().enumerate().map(|(index, item)| {
-        let declared = item.type_annotation.as_ref().map_or(DECLARED_ANY, |annotation| if opaque {
-            declared_language_in(&annotation.type_annotation, &TypeNames::opaque())
-        } else {
-            declared_language(&annotation.type_annotation)
+        let declared = item.type_annotation.as_ref().map_or(DECLARED_ANY, |annotation| match names {
+            Some(names) => declared_language_in(&annotation.type_annotation, names),
+            None => declared_language(&annotation.type_annotation),
         });
         let checked = checked.map_or(DECLARED_ANY, |languages| languages[index]);
         // A checker answers the family bit (`OBJECT`) only; it admits an exact plain object or array.
@@ -223,6 +212,7 @@ fn reference_languages(reference: &TSTypeReference<'_>, names: &TypeNames<'_>, d
         Some(Named::Interface) => language_bit(V::Object) | language_bit(V::Function),
         Some(Named::Class(_)) => language_bit(V::Object),
         Some(Named::Enum(bits)) => bits,
+        Some(Named::Resolved { languages, alias, .. }) => if alias && reference.type_arguments.is_some() { DECLARED_ANY } else { languages },
         Some(Named::Unknown) => DECLARED_ANY,
         None => builtin_languages(identifier.name.as_str(), reference.type_arguments.as_deref(), names, depth),
     }
@@ -589,14 +579,23 @@ mod tests {
 
     #[test]
     fn declared_parameters_of_a_lazily_parsed_function_are_kept() {
-        let source = "function outer() { function inner(a: number, b: string) { return a; } return inner; }\nouter();";
-        let program = Engine::specialize_typescript(source, "lazy-declared.cts").unwrap();
-        let declared = (0..program.functions.len()).filter_map(|index| program.function_get(index))
+        // `inner` is in a released body: its formals resolve against the program's top-level interface,
+        // alias and `Map`, as the eager compile (forced by an enum in a body) resolves them.
+        let body = "interface Shape { x: number }\ntype N = number;\nfunction outer() {\n  function inner(a: number, s: Shape, n: N, m: Map<string, number>) { return a; }\n  return inner;\n}\nouter();";
+        let eager_source = format!("{body}\nfunction eager() {{ enum E {{ A }} return E.A; }}");
+        let declared_of = |program: &crate::ResidualProgram| (0..program.functions.len()).filter_map(|index| program.function_get(index))
             .find(|function| function.name.is_some_and(|atom| program.atoms.get(atom as usize) == Some("inner")))
             .map(|function| function.declared_parameters().to_vec());
+        let before = crate::compile::REPARSED_BODIES.with(std::cell::Cell::get);
+        let lazy = Engine::specialize_typescript(body, "lazy-declared.cts").unwrap();
+        let reparsed = crate::compile::REPARSED_BODIES.with(std::cell::Cell::get) - before;
+        assert!(reparsed >= 2, "the program's bodies compile from their text parsed again");
+        let eager = Engine::specialize_typescript(&eager_source, "eager-declared.cts").unwrap();
         use crate::ValueType as V;
         let bit = |kind: V| crate::typed_ir::Languages::of(kind).bits();
-        assert_eq!(declared.unwrap(), vec![bit(V::Number), bit(V::String)]);
+        let expected = vec![bit(V::Number), bit(V::Object) | bit(V::Function), bit(V::Number), bit(V::Object)];
+        assert_eq!(declared_of(&lazy).unwrap(), expected);
+        assert_eq!(declared_of(&eager).unwrap(), expected);
     }
 
     #[test]

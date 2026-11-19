@@ -5,7 +5,7 @@ mod module_records;
 mod declared_types;
 pub(crate) use declared_types::{
     Declared, DeclaredKind, DeclaredLocal, DeclaredLocalMember, DeclaredMember, DeclaredParameter, DeclaredParameterClass, DeclaredSignature,
-    DeclaredTypes, EnumConstant,
+    DeclaredTypes, EnumConstant, SavedTypeName,
 };
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
 pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind};

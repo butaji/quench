@@ -172,6 +172,23 @@ pub(crate) struct DeclaredParameter {
     pub(crate) languages: u16,
 }
 
+/// A type-level name the program declares at its top level, resolved when the program loads, owned
+/// so a body compiled later resolves its annotations against it (`TypeNames::resolved`). Entries are
+/// sorted by name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SavedTypeName {
+    pub(crate) name: Box<str>,
+    /// The language bits the name denotes; `DECLARED_ANY` where it names no closed set.
+    pub(crate) languages: u16,
+    /// An alias: with type arguments, its expansion is open.
+    pub(crate) alias: bool,
+    /// The class's source span start, for a class.
+    pub(crate) class: Option<u32>,
+}
+
+/// The `DeclaredLocal::function` of top-level code.
+const TOP_LEVEL: u32 = u32::MAX;
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct DeclaredTypes {
     pub(crate) declared: Vec<Declared>,
@@ -193,6 +210,9 @@ pub(crate) struct DeclaredTypes {
     pub(crate) parameters: Vec<DeclaredParameter>,
     /// The receiver layouts of base classes (`DeclaredLayout`), in source order.
     pub(crate) layouts: Vec<DeclaredLayout>,
+    /// The program's top-level type names (sorted), which a lazily parsed body's annotations resolve
+    /// against; `None` where the program declares none saved (a JavaScript program, or a chunk's own).
+    pub(crate) type_names: Option<std::rc::Rc<[SavedTypeName]>>,
 }
 
 impl DeclaredTypes {
@@ -252,6 +272,7 @@ impl DeclaredTypes {
     pub(crate) fn within(&self, start: u32, end: u32) -> DeclaredTypes {
         let inside = |position: u32| (start..end).contains(&position);
         DeclaredTypes {
+            type_names: None,
             declared: self.declared.iter().filter(|entry| inside(entry.start)).cloned().collect(),
             enum_constants: Vec::new(),
             fields: self.fields.iter().filter(|field| inside(field.class_start)).cloned().collect(),
@@ -264,10 +285,51 @@ impl DeclaredTypes {
         }
     }
 
+    /// Whether any declaration is recorded (the saved names aside).
+    pub(crate) fn has_declarations(&self) -> bool {
+        !self.declared.is_empty() || !self.enum_constants.is_empty() || !self.fields.is_empty()
+            || !self.signatures.is_empty() || !self.locals.is_empty() || !self.members.is_empty() || !self.local_members.is_empty()
+            || !self.parameter_classes.is_empty() || !self.parameters.is_empty() || !self.layouts.is_empty()
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
-        self.declared.is_empty() && self.enum_constants.is_empty() && self.fields.is_empty()
-            && self.signatures.is_empty() && self.locals.is_empty() && self.members.is_empty() && self.local_members.is_empty()
-            && self.parameter_classes.is_empty() && self.parameters.is_empty() && self.layouts.is_empty()
+        !self.has_declarations() && self.type_names.is_none()
+    }
+
+    /// Moves every position of these declarations by `delta`: a body parsed alone, whose positions
+    /// are its text's, takes the program's (`ShiftSpans`). The saved names have none.
+    pub(crate) fn shift(&mut self, delta: u32) {
+        let at = |position: &mut u32| *position = position.wrapping_add(delta);
+        let at_function = |function: &mut u32| if *function != TOP_LEVEL { *function = function.wrapping_add(delta) };
+        for entry in &mut self.declared {
+            at(&mut entry.start);
+            at(&mut entry.end);
+        }
+        for signature in &mut self.signatures {
+            at(&mut signature.start);
+        }
+        for field in &mut self.fields {
+            at(&mut field.class_start);
+        }
+        for layout in &mut self.layouts {
+            at(&mut layout.class_start);
+        }
+        for local in &mut self.locals {
+            at_function(&mut local.function);
+        }
+        for member in &mut self.members {
+            at(&mut member.function);
+        }
+        for entry in &mut self.parameter_classes {
+            at(&mut entry.function);
+            at(&mut entry.class);
+        }
+        for entry in &mut self.parameters {
+            at(&mut entry.function);
+        }
+        for member in &mut self.local_members {
+            at_function(&mut member.function);
+        }
     }
 
     /// Narrows the declared parameter sets of the functions in `functions` with the named-resolved

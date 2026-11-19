@@ -40,10 +40,6 @@ pub(in crate::compile) struct BodyFacts {
     /// start. A first-call chunk of one takes that verdict instead of checking its text again
     /// (`ProgramReplay::checked_bodies`).
     pub(in crate::compile) checked: Vec<u32>,
-    /// The declarations of the released TypeScript bodies, collected as each was checked, at the
-    /// positions they have in the program (`typescript::collect_released`): the program's declared
-    /// environment takes them, as admission would have collected them from the whole tree.
-    pub(in crate::compile) declared: crate::bytecode::DeclaredTypes,
     /// The functions whose bodies compile as a stream of statement runs (`statement_stream`).
     pub(in crate::compile) streamed: FxHashSet<u32>,
     /// The functions checked without their tree whose bodies may stream, which their
@@ -72,8 +68,9 @@ impl BodyFacts {
     /// A TypeScript body is checked as its source is, before admission (which runs where it compiles,
     /// `lazy_bodies::parse`): where admission would rewrite or reject a construct in it, the body
     /// fails the check (`needs_admission`), and the program compiles eagerly, which reports the errors
-    /// at load. Its declarations are collected here, with the program's positions
-    /// (`typescript::collect_released`); a stub has no tree to collect from, so it is parsed whole.
+    /// at load. Its declarations are collected where it compiles, with the program's type names
+    /// (`reparse`), since the program's names are not known until its whole tree is parsed; a stub has
+    /// no tree to check, so it is parsed whole.
     pub(in crate::compile) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function, early, stub, functions_inside }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) -> bool {
         if self.failed {
             return true;
@@ -87,7 +84,6 @@ impl BodyFacts {
                 self.failed = true;
                 return true;
             }
-            crate::compile::typescript::collect_released(program, &mut self.declared);
         } else {
             self.streamed.extend(crate::compile::statement_stream::streamable_start(program));
         }
@@ -199,7 +195,11 @@ impl BodyFacts {
         if !functions_inside {
             // No function inside: no call-only facts to find, at load or where it compiles.
             self.call_only_found.push((program.span.start, program.span.end));
-            self.stream_candidates.extend(crate::compile::statement_stream::streaming_function(program).map(|function| function.span.start));
+            // A typed body does not stream: its compilation parses it again with the program's names
+            // (`reparse`), which the stream's own compilation does not.
+            if !program.source_type.is_typescript() {
+                self.stream_candidates.extend(crate::compile::statement_stream::streaming_function(program).map(|function| function.span.start));
+            }
         }
         match free_names {
             Some((start, names)) => {

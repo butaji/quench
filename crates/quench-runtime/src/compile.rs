@@ -268,6 +268,13 @@ const SYNTAX_ERROR_PREFIX: &str = "SyntaxError: ";
 
 /// V8's report for a `return` at the top level of an eval.
 const RETURN_OUTSIDE_FUNCTION_IN_EVAL: &str = "SyntaxError: return outside function in eval";
+
+#[cfg(test)]
+thread_local! {
+    /// The lazily parsed bodies compiled from their text parsed again (`compile_parsed_again`), counted
+    /// by the tests that check a program was compiled lazily.
+    pub(crate) static REPARSED_BODIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 /// The rejection for a lazily parsed function body that fails when compiled alone.
 const LAZY_FUNCTION_BODY_NOT_ALONE: &str = "SyntaxError: a lazily parsed function body does not compile alone";
 
@@ -1135,8 +1142,8 @@ impl Engine {
         // A TypeScript body is checked alone as it is released, and admitted again where it
         // compiles (`lazy_bodies::parse`): a construct admission must reject is found by that
         // check, which fails the lazy compilation so the eager one reports it at load
-        // (`BodyFacts::check`). Declarations inside released bodies are collected at load
-        // into the program's declared environment (`BodyFacts::declared`).
+        // (`BodyFacts::check`). Its declarations are collected where it compiles, against the
+        // program's type names (`compile_parsed_again`).
         // A streamed body's first run parses the body lazily, to compile one run of it.
         let first_run = matches!(expected_shape, ParsedProgramShape::FirstCallChunk(window) if window.first_run());
         if (expected_shape.lazy_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len()) || first_run)
@@ -1184,23 +1191,27 @@ impl Engine {
         let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing));
         #[cfg(feature = "aot")]
         { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
-        let mut declared_types = crate::bytecode::DeclaredTypes::default();
+        // A first-call chunk's annotations resolve against its program's top-level names.
+        let saved_names = match expected_shape {
+            ParsedProgramShape::FirstCallChunk(window) => window.saved_names(),
+            _ => None,
+        };
+        let mut declared_types = crate::bytecode::DeclaredTypes { type_names: saved_names, ..Default::default() };
         let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, &mut declared_types, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
         lazy_bodies::release_parsed_free_pages(&allocator);
         let mut facts = facts.into_inner();
-        // The declarations of the bodies released at load join the program's, at its positions. A
-        // first-call chunk's are the program's own for its function (`ChunkWindow::declared`): what
-        // its parse admitted is in the chunk's positions, and is dropped.
-        let opaque = match expected_shape {
-            ParsedProgramShape::FirstCallChunk(window) => {
-                declared_types = window.declared();
-                true
-            }
-            _ => {
-                declared_types.append(std::mem::take(&mut facts.declared));
-                false
-            }
-        };
+        // A first-call chunk's declarations are its program's, for its function (`ChunkWindow::declared`),
+        // with the chunk's own admitted ones, in the chunk's positions, moved to the program's
+        // (`shift`). Its annotations resolve against the names its admission saved.
+        let chunk = matches!(expected_shape, ParsedProgramShape::FirstCallChunk(_));
+        let chunk_names = declared_types.type_names.clone();
+        if let ParsedProgramShape::FirstCallChunk(window) = expected_shape {
+            let mut admitted = std::mem::take(&mut declared_types);
+            admitted.shift(window.start());
+            let mut declared = window.declared();
+            declared.append(admitted);
+            declared_types = declared;
+        }
         let data_literal = match &located {
             Some(literal) if parsed.diagnostics.is_empty()
                 && data_literal::is_top_level_value(&parsed.program, literal.start) => Some(literal.start),
@@ -1431,7 +1442,7 @@ impl Engine {
         compiler.data_literal = data_literal;
         compiler.provided_text = provided_text;
         compiler.declared_types = declared_types;
-        compiler.opaque_type_names = opaque;
+        compiler.type_names = if chunk { chunk_names } else { None };
         compiler.prototype_unobservable = prototype_unobservable;
         #[cfg(feature = "verify-replay")]
         {
@@ -1925,9 +1936,11 @@ struct Compiler<'a> {
     source_comments: Vec<Span>,
     /// The TypeScript declared environment its parse admitted (`typescript::admit`).
     declared_types: crate::bytecode::DeclaredTypes,
-    /// The code being compiled is a lazily parsed body or a first-call chunk, whose program's type
-    /// names are not in view: its annotations read their names as unknown (`with_opaque_type_names`).
-    opaque_type_names: bool,
+    /// The type names the annotations of the code being compiled resolve against, where that code is a
+    /// lazily parsed body or a first-call chunk: its program's saved names, shadowed by its own
+    /// declarations (`with_type_names`). `None` reads the names the way the program's own code does,
+    /// with its declared parameter facts applied at the end (`apply_parameters`).
+    type_names: Option<std::rc::Rc<[crate::bytecode::SavedTypeName]>>,
     /// A TypeScript checker's parameter types for this text (`typescript::checked`).
     checked_parameters: Option<std::sync::Arc<typescript::CheckedParameters>>,
     mode: SpecializationMode,
@@ -2476,7 +2489,7 @@ impl<'a> Compiler<'a> {
             text,
             source_comments: Vec::new(),
             declared_types: crate::bytecode::DeclaredTypes::default(),
-            opaque_type_names: false,
+            type_names: None,
             checked_parameters: typescript::checked_parameters(text),
             mode,
             root_strict: false,
@@ -2791,7 +2804,7 @@ impl<'a> Compiler<'a> {
     ) -> u32 {
         if self.replay_target.is_none()
             && (self.streamed.contains(&function.span.start) || self.stream_candidates.contains(&function.span.start) && self.body_streams(function, &context))
-            && let Some(id) = self.with_opaque_type_names(|this| this.compile_streamed_function(function, &context))
+            && let Some(id) = self.compile_streamed_function(function, &context)
         {
             return id;
         }
@@ -2851,6 +2864,7 @@ impl<'a> Compiler<'a> {
             function.span.start.wrapping_sub(offset),
             self.source_type,
             lazy_bodies::Nesting::Recorded(&FxHashSet::default()),
+            self.body_type_names(),
         )
         .ok()?;
         let again = reparsed.function_mut().filter(|again| again.span.start == function.span.start)?;
@@ -2887,6 +2901,7 @@ impl<'a> Compiler<'a> {
             function.span.start.wrapping_sub(offset),
             self.source_type,
             nesting,
+            self.body_type_names(),
         );
         let reparsed = match reparsed {
             Ok(reparsed) => Some(reparsed),
@@ -2896,22 +2911,39 @@ impl<'a> Compiler<'a> {
             }
             Err(lazy_bodies::ReparseFailure::Diagnostics) => None,
         };
-        let Some(reparsed) = reparsed.filter(|reparsed| reparsed.function().is_some_and(|again| again.span == function.span)) else {
+        let Some(mut reparsed) = reparsed.filter(|reparsed| reparsed.function().is_some_and(|again| again.span == function.span)) else {
             self.reject(function.span, LAZY_FUNCTION_BODY_NOT_ALONE);
             return self.compile_plain_function(function, context);
         };
+        // The body's declarations, admitted with the program's names, join the program's declared
+        // environment at its positions; its annotations resolve against the names they were admitted with.
+        let names = reparsed.declared.type_names.clone();
+        self.declared_types.append(std::mem::take(&mut reparsed.declared));
+        #[cfg(test)]
+        REPARSED_BODIES.with(|count| count.set(count.get() + 1));
         let again = reparsed.function().expect("checked above");
-        self.with_opaque_type_names(|this| this.compile_plain_function(again, context))
+        self.with_type_names(names, |this| this.compile_plain_function(again, context))
     }
 
-    /// Runs `compile` with the names of type annotations read as unknown (`opaque_type_names`), where
-    /// the code it compiles is a lazily parsed body's or a first-call chunk's: the program's own type
-    /// names are not in view there (`typescript::collect_released`).
-    pub(super) fn with_opaque_type_names<T>(&mut self, compile: impl FnOnce(&mut Self) -> T) -> T {
-        let outer = std::mem::replace(&mut self.opaque_type_names, true);
+    /// Runs `compile` with `names` as the type names its annotations resolve against (`type_names`):
+    /// a lazily parsed body's or a first-call chunk's, whose program's names are in view only through
+    /// the names saved with it.
+    pub(super) fn with_type_names<T>(&mut self, names: Option<std::rc::Rc<[crate::bytecode::SavedTypeName]>>, compile: impl FnOnce(&mut Self) -> T) -> T {
+        let outer = std::mem::replace(&mut self.type_names, names);
         let result = compile(self);
-        self.opaque_type_names = outer;
+        self.type_names = outer;
         result
+    }
+
+    /// The type names a body parsed again here resolves against: the names in effect where it lies, else
+    /// the program's saved ones.
+    pub(super) fn body_type_names(&self) -> Option<std::rc::Rc<[crate::bytecode::SavedTypeName]>> {
+        self.type_names.clone().or_else(|| self.declared_types.type_names.clone())
+    }
+
+    /// The names a function's formal annotations resolve against (`typescript::declared_parameters`).
+    pub(super) fn formal_type_names(&self) -> Option<typescript::TypeNames<'static>> {
+        self.type_names.as_ref().map(|saved| typescript::TypeNames::from_saved(Some(saved.clone())))
     }
 
     /// Checks, under `QUENCH_TRACE=lazy-facts`, that the free names of function `id` (starting
@@ -4228,9 +4260,9 @@ impl<'a> Compiler<'a> {
         );
         let binds_dynamically = direct_eval.binds_dynamically();
         self.dynamic_binding_scopes += u32::from(binds_dynamically);
-        let opaque = self.opaque_type_names;
+        let names = self.formal_type_names();
         let declared_parameters = options.defaults
-            .map_or_else(Vec::new, |formals| typescript::declared_parameters(formals, self.checked_parameters.as_deref(), opaque));
+            .map_or_else(Vec::new, |formals| typescript::declared_parameters(formals, self.checked_parameters.as_deref(), names.as_ref()));
         let mut function = FunctionCompiler::new(
             self,
             locals,

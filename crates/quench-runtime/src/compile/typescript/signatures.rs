@@ -149,7 +149,7 @@ impl<'a> Collect<'a, '_> {
             self.parameter_languages(function, index, parameter, annotation);
             if let TSType::TSTypeReference(reference) = &annotation.type_annotation
                 && let TSTypeName::IdentifierReference(name) = &reference.type_name
-                && let Some(Named::Class(class)) = self.names.get(name.name.as_str())
+                && let Some(Named::Class(class) | Named::Resolved { class: Some(class), .. }) = self.names.get(name.name.as_str())
             {
                 self.declarations.declare_parameter_class(function, index, class);
             }

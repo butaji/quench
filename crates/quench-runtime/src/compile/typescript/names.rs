@@ -3,12 +3,15 @@
 //! twice, or bound anywhere else at a type level (an import, a nested declaration, a type
 //! parameter), denotes nothing this pass knows, so its annotation stays open (`DECLARED_ANY`).
 
+use std::rc::Rc;
+
 use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_syntax::operator::{BinaryOperator, UnaryOperator};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ValueType as V;
+use crate::bytecode::SavedTypeName;
 use crate::typed_ir::language_bit;
 use super::{DECLARED_ANY, declared_language_in};
 
@@ -32,31 +35,33 @@ pub(in crate::compile) enum Named<'a> {
     Class(u32),
     /// An enum, by the language types its members hold.
     Enum(u16),
+    /// A top-level name of the program resolved when it loaded (`TypeNames::resolved`), by its language
+    /// bits, whether it is an alias (open with type arguments), and the class's span start.
+    Resolved { languages: u16, alias: bool, class: Option<u32> },
     /// Denotes nothing this pass knows.
     Unknown,
 }
 
-/// The type-level names of one program, by name.
+/// The type-level names of one program, by name: those its own code declares here, and the program's
+/// saved top-level names (`saved`, sorted), which a declaration here shadows.
 #[derive(Default)]
 pub(in crate::compile) struct TypeNames<'a> {
     names: FxHashMap<String, Named<'a>>,
     /// The top-level declarations of each interface name, in source order: two blocks of one name merge.
     interfaces: FxHashMap<String, Vec<&'a TSInterfaceDeclaration<'a>>>,
-    /// Every name denotes nothing this pass knows (`opaque`).
-    opaque: bool,
+    saved: Option<Rc<[SavedTypeName]>>,
 }
 
 impl<'a> TypeNames<'a> {
-    /// The names of a program whose own names are not in view: every name denotes nothing this pass
-    /// knows, so every annotation that names a type reads as open.
-    pub(in crate::compile) fn opaque() -> Self {
-        Self { names: FxHashMap::default(), opaque: true }
+    /// The saved names alone: what a body compiled later resolves against (`resolved`).
+    pub(in crate::compile) fn from_saved(saved: Option<Rc<[SavedTypeName]>>) -> Self {
+        Self { names: FxHashMap::default(), interfaces: FxHashMap::default(), saved }
     }
 
-    /// The names `program` declares at its top level, then every other type-level binding made
-    /// unknown: a nested declaration or a type parameter shadows the top-level name it repeats.
-    pub(in crate::compile) fn of(program: &'a Program<'a>) -> Self {
-        let mut names = Self::default();
+    /// The names `program` declares at its top level, over `saved`, then every other type-level binding
+    /// made unknown: a nested declaration or a type parameter shadows the name it repeats.
+    pub(in crate::compile) fn of(program: &'a Program<'a>, saved: Option<Rc<[SavedTypeName]>>) -> Self {
+        let mut names = Self::from_saved(saved);
         let mut top = FxHashSet::default();
         for statement in &program.body {
             names.top_level(statement, &mut top);
@@ -68,8 +73,40 @@ impl<'a> TypeNames<'a> {
 
     /// What `name` denotes in this program, if the program declares it.
     pub(in crate::compile) fn get(&self, name: &str) -> Option<Named<'a>> {
-        if self.opaque { return Some(Named::Unknown); }
-        self.names.get(name).copied()
+        if let Some(named) = self.names.get(name) {
+            return Some(*named);
+        }
+        let saved = self.saved.as_deref()?;
+        let at = saved.binary_search_by(|entry| (*entry.name).cmp(name)).ok()?;
+        let entry = &saved[at];
+        Some(Named::Resolved { languages: entry.languages, alias: entry.alias, class: entry.class })
+    }
+
+    /// These names, as the program saves them: each name it denotes here, resolved to its language
+    /// bits with these names (an alias's expansion included), over the saved names it does not
+    /// redeclare. Sorted by name.
+    pub(in crate::compile) fn resolved(&self) -> Rc<[SavedTypeName]> {
+        let mut entries: Vec<SavedTypeName> = self.names.iter().map(|(name, named)| SavedTypeName {
+            name: Box::from(name.as_str()),
+            languages: match *named {
+                Named::Alias { annotation, open } => if open { super::DECLARED_ANY } else { super::languages(annotation, self, 0) },
+                Named::Interface => language_bit(V::Object) | language_bit(V::Function),
+                Named::Class(_) => language_bit(V::Object),
+                Named::Enum(bits) | Named::Resolved { languages: bits, .. } => bits,
+                Named::Unknown => super::DECLARED_ANY,
+            },
+            alias: matches!(named, Named::Alias { .. } | Named::Resolved { alias: true, .. }),
+            class: match *named {
+                Named::Class(class) | Named::Resolved { class: Some(class), .. } => Some(class),
+                _ => None,
+            },
+        }).collect();
+        if let Some(saved) = &self.saved {
+            entries.extend(saved.iter().filter(|entry| !self.names.contains_key(&*entry.name)).cloned());
+        }
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries.dedup_by(|a, b| a.name == b.name);
+        entries.into()
     }
 
     /// The property members an object-shaped annotation declares: a type literal, a name of an interface

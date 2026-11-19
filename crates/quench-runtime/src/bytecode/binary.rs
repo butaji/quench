@@ -2014,6 +2014,20 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
         out.string(&member.member);
         out.u16(member.languages);
     }
+    match &declared.type_names {
+        None => out.u8(0),
+        Some(names) => {
+            out.u8(1);
+            out.u32(names.len() as u32);
+            for name in names.iter() {
+                out.string(&name.name);
+                out.u16(name.languages);
+                out.bool(name.alias);
+                out.bool(name.class.is_some());
+                out.u32(name.class.unwrap_or(0));
+            }
+        }
+    }
 }
 
 fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super::DeclaredTypes>>, String> {
@@ -2089,8 +2103,23 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
             languages: input.u16()?,
         })
     })?;
+    let type_names = match input.u8()? {
+        0 => None,
+        1 => {
+            let names = input.list(|input| {
+                let name = input.string()?.into_boxed_str();
+                let languages = input.u16()?;
+                let alias = input.bool()?;
+                let has_class = input.bool()?;
+                let class = input.u32()?;
+                Ok(super::SavedTypeName { name, languages, alias, class: has_class.then_some(class) })
+            })?;
+            Some(names.into())
+        }
+        _ => return Err("invalid saved type names tag".to_string()),
+    };
     Ok(Some(Box::new(super::DeclaredTypes {
-        declared, enum_constants, fields, signatures, locals, members, local_members, parameter_classes, parameters, layouts,
+        declared, enum_constants, fields, signatures, locals, members, local_members, parameter_classes, parameters, layouts, type_names,
     })))
 }
 
