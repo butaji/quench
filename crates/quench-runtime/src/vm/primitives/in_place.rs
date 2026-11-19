@@ -158,31 +158,19 @@ impl<H: Host> Vm<H> {
     }
 
     /// `replace` or `replaceAll` of a flat ASCII receiver at a flat ASCII pattern, with a flat
-    /// ASCII replacement that holds no `$`: the matches are found in place, which gives the
-    /// result's length, and the result is then written once from the operands read in place.
-    /// The receiver itself when nothing matches. `None` leaves the call to the general path.
+    /// ASCII replacement that holds no `$`. The three operands are read in place once: the
+    /// matches are found and the result is written from the same borrow, then allocated after
+    /// the borrow ends. The receiver itself when nothing matches. `None` leaves the call to the
+    /// general path.
     fn ascii_replace(&mut self, receiver: Value, search: Value, replacement: Value, replace_all: bool) -> Option<Value> {
-        let (offsets, length) = {
-            let text = self.heap.flat_text(receiver)?;
-            let needle = self.heap.flat_text(search)?;
-            let with = self.heap.flat_text(replacement)?;
-            let (Units::Ascii(text), Units::Ascii(needle), Units::Ascii(with)) = (text.units(), needle.units(), with.units())
-            else {
-                return None;
-            };
-            if needle.is_empty() || with.contains(&b'$') {
-                return None;
-            }
-            let offsets = ascii_match_offsets(text, needle, replace_all);
-            if offsets.is_empty() {
-                return Some(receiver);
-            }
-            let length = replaced_len(text.len(), needle.len(), with.len(), offsets.len())?;
-            (offsets, length)
-        };
-        self.heap.alloc_ascii_derived([receiver, search, replacement], length, |out, [text, needle, with]| {
-            write_replaced(out, text, needle.len(), with, &offsets);
-        })
+        let plan = self
+            .heap
+            .with_ascii_sources([receiver, search, replacement], |[text, needle, with]| replace_plan(text, needle, with, replace_all))
+            .flatten()?;
+        match plan {
+            ReplacePlan::Unchanged => Some(receiver),
+            ReplacePlan::Derived(string) => Some(self.heap.alloc_string(string)),
+        }
     }
 
     /// A string value's flat units, read in place: a rope is left to the general path, which
@@ -283,23 +271,58 @@ fn replaced_len(text_len: usize, needle_len: usize, with_len: usize, count: usiz
     (length <= crate::vm::wtf16::MAX_STRING_UNITS).then_some(length)
 }
 
+/// What a flat ASCII replace comes to: the receiver as it is, or the string it makes.
+enum ReplacePlan {
+    /// No match: the receiver itself is the result.
+    Unchanged,
+    /// The replaced string, written in full once.
+    Derived(JsString),
+}
+
+/// The plan of a replace over the flat ASCII `text`, `needle` and `with`, all read in place.
+/// `None` when the replace needs the general path: an empty needle, a `$` in the replacement, or
+/// a length past the longest string.
+fn replace_plan(text: &[u8], needle: &[u8], with: &[u8], replace_all: bool) -> Option<ReplacePlan> {
+    if needle.is_empty() || with.contains(&b'$') {
+        return None;
+    }
+    let offsets = ascii_match_offsets(text, needle, replace_all);
+    if offsets.is_empty() {
+        return Some(ReplacePlan::Unchanged);
+    }
+    let length = replaced_len(text.len(), needle.len(), with.len(), offsets.len())?;
+    let string = JsString::from_ascii_filled(length, |out| write_replaced(out, text, needle.len(), with, &offsets));
+    Some(ReplacePlan::Derived(string))
+}
+
 /// Writes `text` into `out` with each match at `offsets` (of `needle_len` bytes) replaced by
-/// `with`; `out` is exactly the length `replaced_len` gives.
-fn write_replaced(out: &mut [u8], text: &[u8], needle_len: usize, with: &[u8], offsets: &[usize]) {
+/// `with`. `out` is exactly the length `replaced_len` gives, and every byte of it is written
+/// (checked below), so no byte of the uninitialized storage is left unset.
+fn write_replaced(out: &mut [std::mem::MaybeUninit<u8>], text: &[u8], needle_len: usize, with: &[u8], offsets: &[usize]) {
     let mut at = 0;
     let mut cursor = 0;
     for &index in offsets {
-        put(out, &mut at, &text[cursor..index]);
-        put(out, &mut at, with);
+        at = put(out, at, &text[cursor..index]);
+        at = put(out, at, with);
         cursor = index + needle_len;
     }
-    put(out, &mut at, &text[cursor..]);
+    at = put(out, at, &text[cursor..]);
+    assert_eq!(at, out.len(), "the matches fill the length `replaced_len` counted");
 }
 
-/// Writes `bytes` into `out` at `*at`, then advances `*at` past them.
-fn put(out: &mut [u8], at: &mut usize, bytes: &[u8]) {
-    out[*at..*at + bytes.len()].copy_from_slice(bytes);
-    *at += bytes.len();
+/// Copies `bytes` into `out` at `at`, returning the offset past them; a single byte is one store.
+#[inline(always)]
+fn put(out: &mut [std::mem::MaybeUninit<u8>], at: usize, bytes: &[u8]) -> usize {
+    if let [byte] = bytes {
+        out[at].write(*byte);
+        return at + 1;
+    }
+    let target = &mut out[at..at + bytes.len()];
+    // SAFETY: `target` has exactly `bytes.len()` slots, which `bytes` cannot overlap (it is a
+    // borrow of the heap or of the pattern text, never of `out`); `u8` and `MaybeUninit<u8>`
+    // share a layout, so the copy initializes the slots.
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), target.as_mut_ptr().cast::<u8>(), bytes.len()) };
+    at + bytes.len()
 }
 
 /// The units range `slice` (negative bounds count from the end) or `substring` (bounds in
