@@ -1190,108 +1190,101 @@ impl<H: Host> Vm<H> {
         Ok(StepResult::Continue)
     }
 
-    /// An opcode with no arm of its own in `step`, run by its catalog attributes (`Traits`, `Op::staged`,
-    /// `Op::owned_step`): a no-op, a register or jump row, a suspension, a row that decides it alone, an
-    /// owner's own step, a literal's allocation or element definition, a call-out the interpreter's stage
-    /// answers in place. Any other is a Wasm step.
+    /// An opcode with no arm of its own in `step`, run as its catalog runner (`RUNNERS`): one table
+    /// load, then one match.
     #[inline(never)]
     fn step_unlisted(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
-        // A no-op does nothing. The wide marker is a prefix of the instruction it extends, which dispatch never runs.
-        if i.op().traits().has(crate::bytecode::Traits::NO_STEP) {
-            if i.op().is_wide_marker() {
-                unreachable!("validated dispatch cannot contain nested wide instruction");
+        match RUNNERS[i.op() as usize] {
+            Runner::Nop => Ok(StepResult::Continue),
+            Runner::WideMarker => unreachable!("validated dispatch cannot contain nested wide instruction"),
+            Runner::RegisterRow => self.register_row_step(p, f, i, pc, allow_inline_calls),
+            // A suspension runs its suspension row on the frame (`staged_suspend`).
+            Runner::Suspend => {
+                let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
+                self.staged_suspend(p, site, i, pc)
             }
-            return Ok(StepResult::Continue);
-        }
-        // The register moves, local slot accesses and jumps no arm names run as their staged rows
-        // on the running frame (`InterpreterFrame`). A jump on a heap value's truthiness is the
-        // VM's, which runs no guest code; any other row that leaves is unreachable on validated bytecode.
-        if let Some(operation @ (crate::staged::Operation::Move { .. } | crate::staged::Operation::LoadLocalPlain { .. }
-            | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. })) =
-            crate::staged::Operation::<u64, ()>::of(i)
-        {
-            match self.run_row(p, f, i, pc, allow_inline_calls, operation) {
-                RowRun::Done(_) => return Ok(StepResult::Continue),
-                RowRun::Stop(stop) => return stop,
-                RowRun::Declined => {}
-            }
-            let crate::staged::Operation::JumpIf { register, taken } = operation else {
-                unreachable!("validated bytecode bounds the registers and slots of a register row");
-            };
-            if self.truthy(self.read(f, register)) == taken {
-                *pc = i.jump_target() as usize;
-            }
-            return Ok(StepResult::Continue);
-        }
-        // A suspension (`Await`, `Yield`, `YieldStar`) runs its suspension row on the frame (`staged_suspend`).
-        if i.op().traits().has(crate::bytecode::Traits::SUSPENDS) {
-            let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
-            return self.staged_suspend(p, site, i, pc);
-        }
-        // A row that decides its opcode alone runs as its staged row on the frame, which never declines.
-        if i.op().traits().has(crate::bytecode::Traits::ROW_ONLY) {
-            return match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
+            // A row that decides its opcode alone runs as its staged row on the frame, which never declines.
+            Runner::RowOnly => match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                 RowRun::Done(_) => Ok(StepResult::Continue),
                 RowRun::Stop(stop) => stop,
                 RowRun::Declined => unreachable!("a row-only opcode's staged row decides it"),
-            };
-        }
-        // An environment local's or a by-name store's owner step, with no row first.
-        if i.op().traits().has(crate::bytecode::Traits::OWNER_ONLY) {
-            self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
-            return Ok(StepResult::Continue);
-        }
-        // An owner's step (`Op::owned_step`): its staged row first where the catalog marks one (`ROW_HANDLER`
-        // or a `staged` decoder), then the owner's own step on a miss.
-        if i.op().owned_step().is_some() {
-            if i.op().staged().is_some() || i.op().traits().has(crate::bytecode::Traits::ROW_HANDLER) {
+            },
+            // An environment local's or a by-name store's owner step, with no row first.
+            Runner::Owner => {
+                self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
+                Ok(StepResult::Continue)
+            }
+            // An owner's step: its staged row first, then the owner's own step on a miss.
+            Runner::OwnedRow => {
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => return Ok(StepResult::Continue),
                     RowRun::Declined => {}
                     RowRun::Stop(stop) => return stop,
                 }
+                self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
+                Ok(StepResult::Continue)
             }
-            self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
-            return Ok(StepResult::Continue);
-        }
-        // A literal's allocation or element definition: its staged row (`decode_literal`), run completed, which the
-        // frame's allocator and definer answer. Its return flags complete the frame as the record asks.
-        if i.op().staged() == Some(crate::bytecode::Decoder::Literal) {
-            let (operation, completes) = crate::staged::Operation::<u64, ()>::decode_literal_completed(i, ())
-                .expect("a literal row decodes");
-            return match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
-                RowRun::Done(_) => Ok(StepResult::Continue),
-                RowRun::Stop(stop) => stop,
-                RowRun::Declined => unreachable!("the interpreter frame answers every literal row"),
-            };
-        }
-        // A call-out row the interpreter's stage answers in place (`staged_value_step`): the lane's result
-        // calls (`GenericStep::LaneResult`), and the names, iteration and value rows the words do not decide.
-        if matches!(i.op().staged(), Some(crate::bytecode::Decoder::Names | crate::bytecode::Decoder::Generic
-            | crate::bytecode::Decoder::Property | crate::bytecode::Decoder::Value)) {
-            let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
-            self.staged_value_step(p, site, i)?;
-            return Ok(StepResult::Continue);
-        }
-        // A flow row that reads the program's constants (`LoadConst`) decodes over the active program's constants
-        // (`DecodeContext::constant_at`), then runs as its row on the frame, which answers every constant load. Only
-        // that row needs a constant; a flow row that decodes to another row is a Wasm step, below.
-        if i.op().staged() == Some(crate::bytecode::Decoder::Flow) {
-            let constant_at = |index: usize| self.active_constant(index).map(crate::staged::Constant::untyped);
-            let context = crate::staged::DecodeContext { constant_at: Some(&constant_at), ..crate::staged::DecodeContext::EMPTY };
-            match crate::staged::Operation::<u64, ()>::decode(i, context) {
-                Some(operation @ crate::staged::Operation::LoadConst { .. }) => {
-                    return match self.run_row(p, f, i, pc, allow_inline_calls, operation) {
-                        RowRun::Done(_) => Ok(StepResult::Continue),
-                        RowRun::Stop(stop) => stop,
-                        RowRun::Declined => unreachable!("the interpreter frame answers every constant load"),
-                    };
+            // A literal's allocation or element definition: its staged row (`decode_literal`), run completed. Its
+            // return flags complete the frame as the record asks.
+            Runner::Literal => {
+                let (operation, completes) = crate::staged::Operation::<u64, ()>::decode_literal_completed(i, ())
+                    .expect("a literal row decodes");
+                match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
+                    RowRun::Done(_) => Ok(StepResult::Continue),
+                    RowRun::Stop(stop) => stop,
+                    RowRun::Declined => unreachable!("the interpreter frame answers every literal row"),
                 }
-                Some(_) => {}
-                None => return Err(JsError::validation("constant index is outside program".into())),
             }
+            // A call-out row the interpreter's stage answers in place (`staged_value_step`).
+            Runner::Value => {
+                let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
+                self.staged_value_step(p, site, i)?;
+                Ok(StepResult::Continue)
+            }
+            // A flow row that reads the program's constants (`LoadConst`) decodes over the active program's constants
+            // (`DecodeContext::constant_at`), then runs as its row on the frame, which answers every constant load.
+            Runner::Flow => {
+                let constant_at = |index: usize| self.active_constant(index).map(crate::staged::Constant::untyped);
+                let context = crate::staged::DecodeContext { constant_at: Some(&constant_at), ..crate::staged::DecodeContext::EMPTY };
+                match crate::staged::Operation::<u64, ()>::decode(i, context) {
+                    Some(operation @ crate::staged::Operation::LoadConst { .. }) => {
+                        match self.run_row(p, f, i, pc, allow_inline_calls, operation) {
+                            RowRun::Done(_) => Ok(StepResult::Continue),
+                            RowRun::Stop(stop) => stop,
+                            RowRun::Declined => unreachable!("the interpreter frame answers every constant load"),
+                        }
+                    }
+                    Some(_) => self.step_wasm(p, f, i, pc),
+                    None => Err(JsError::validation("constant index is outside program".into())),
+                }
+            }
+            Runner::Wasm => self.step_wasm(p, f, i, pc),
         }
-        self.step_wasm(p, f, i, pc)
+    }
+
+    /// A register move, a local slot access or a jump, run as its staged row on the running frame (`run_row`).
+    /// The record is decoded once, and that operation is the row run. A jump on a heap value's truthiness is the
+    /// VM's, which runs no guest code. A local slot the decode declines (`Operation::of` is `None`) is a Wasm step,
+    /// as the general step always took it.
+    fn register_row_step(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
+        let Some(operation @ (crate::staged::Operation::Move { .. } | crate::staged::Operation::LoadLocalPlain { .. }
+            | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. }))
+            = crate::staged::Operation::<u64, ()>::of(i)
+        else {
+            return self.step_wasm(p, f, i, pc);
+        };
+        match self.run_row(p, f, i, pc, allow_inline_calls, operation) {
+            RowRun::Done(_) => return Ok(StepResult::Continue),
+            RowRun::Stop(stop) => return stop,
+            RowRun::Declined => {}
+        }
+        let crate::staged::Operation::JumpIf { register, taken } = operation else {
+            unreachable!("validated bytecode bounds the registers and slots of a register row");
+        };
+        if self.truthy(self.read(f, register)) == taken {
+            *pc = i.jump_target() as usize;
+        }
+        Ok(StepResult::Continue)
     }
 
     #[inline(always)]
@@ -1365,6 +1358,95 @@ impl<H: Host> Vm<H> {
         }
     }
 }
+
+/// What `step_unlisted` runs an opcode as. `runner_of` decides it once per opcode, in the priority order the
+/// catalog tests used to run in, and `RUNNERS` holds the result, so a step reads one table entry and matches it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Runner {
+    /// `NO_STEP` (`Nop`): nothing to do.
+    Nop,
+    /// `NO_STEP` on the wide marker, which validated dispatch never runs.
+    WideMarker,
+    /// A register move, a local slot access or a jump: its staged row on the running frame (`register_row_step`).
+    RegisterRow,
+    /// A suspension (`Await`, `Yield`, `YieldStar`): its suspension row (`staged_suspend`).
+    Suspend,
+    /// A row that decides its opcode alone (`ROW_ONLY`): its staged row on the frame, which never declines.
+    RowOnly,
+    /// An owner's own step with no row first (`OWNER_ONLY`, or an owned step whose catalog marks no row): `owner_step`.
+    Owner,
+    /// An owned step whose staged row runs first, then the owner's own step on a miss.
+    OwnedRow,
+    /// A literal's allocation or element definition (`Decoder::Literal`): its row, run completed.
+    Literal,
+    /// A call-out row the interpreter's stage answers in place (`Decoder::Names`, `Generic`, `Property`, `Value`).
+    Value,
+    /// A flow row that reads the program's constants (`LoadConst`): decoded over the active program's constants,
+    /// then run as its row on the frame. A flow row that decodes to another row is a Wasm step.
+    Flow,
+    /// Any other opcode: a Wasm step (`step_wasm`).
+    Wasm,
+}
+
+/// The runner of `op`: the catalog attributes `step_unlisted` used to test one by one, in that order.
+const fn runner_of(op: Op) -> Runner {
+    let traits = op.traits();
+    if traits.has(crate::bytecode::Traits::NO_STEP) {
+        return if op.is_wide_marker() {
+            Runner::WideMarker
+        } else {
+            Runner::Nop
+        };
+    }
+    // Only these opcodes decode to a register row (`Operation::decode_flow`, `decode_local`).
+    if matches!(
+        op,
+        Op::Move | Op::LoadLocalPlain | Op::StoreLocalPlain | Op::Jump | Op::JumpFalse | Op::JumpTrue
+    ) {
+        return Runner::RegisterRow;
+    }
+    if traits.has(crate::bytecode::Traits::SUSPENDS) {
+        return Runner::Suspend;
+    }
+    if traits.has(crate::bytecode::Traits::ROW_ONLY) {
+        return Runner::RowOnly;
+    }
+    if traits.has(crate::bytecode::Traits::OWNER_ONLY) {
+        return Runner::Owner;
+    }
+    if op.owned_step().is_some() {
+        return if op.staged().is_some() || traits.has(crate::bytecode::Traits::ROW_HANDLER) {
+            Runner::OwnedRow
+        } else {
+            Runner::Owner
+        };
+    }
+    match op.staged() {
+        Some(crate::bytecode::Decoder::Literal) => Runner::Literal,
+        Some(
+            crate::bytecode::Decoder::Names
+            | crate::bytecode::Decoder::Generic
+            | crate::bytecode::Decoder::Property
+            | crate::bytecode::Decoder::Value,
+        ) => Runner::Value,
+        Some(crate::bytecode::Decoder::Flow) => Runner::Flow,
+        _ => Runner::Wasm,
+    }
+}
+
+/// `runner_of` for every opcode, indexed by the opcode's catalog index.
+const RUNNERS: [Runner; Op::COUNT] = {
+    let mut table = [Runner::Wasm; Op::COUNT];
+    let mut index = 0;
+    while index < Op::COUNT {
+        table[index] = match Op::from_index(index) {
+            Some(op) => runner_of(op),
+            None => panic!("catalog index is below the opcode count"),
+        };
+        index += 1;
+    }
+    table
+};
 
 impl<H: Host> Vm<H> {
     /// The frame call-like instruction `i` of frame `caller` pushes, as its step pushes it:
