@@ -118,8 +118,11 @@ pub(crate) struct Finished {
 }
 
 impl SymbolTable {
-    pub(crate) fn new(_program: &ResidualProgram) -> Self {
-        Self { shapes: Interned::default(), heap_values: Interned::default(), atoms: Vec::new(), labels: Interned::default(), operands: Interned::default() }
+    /// The table of `program`'s image: its atom texts by program atom number, the key `Symbol::Atom`
+    /// and a recipe's field name carry (atom numbers are per VM, texts are not).
+    pub(crate) fn new(program: &ResidualProgram) -> Self {
+        let atoms = program.atoms.iter().map(Box::<str>::from).collect();
+        Self { shapes: Interned::default(), heap_values: Interned::default(), atoms, labels: Interned::default(), operands: Interned::default() }
     }
 
     /// The `(namespace, key)` pair code emits for `symbol`; a base PC's key is its interned label,

@@ -269,6 +269,7 @@ use direct_call::direct_call;
 mod guard_aarch64;
 mod eager;
 mod frozen;
+#[cfg(feature = "native-execution")]
 mod semantic_stop;
 pub(super) use frozen::{frozen_fields, frozen_global_reads, frozen_globals};
 pub(super) use eager::compile_eager_native;
