@@ -193,29 +193,33 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn logical(&mut self, value: &LogicalExpression<'_>, debug_name: Option<Atom>) -> Register {
-        if value.operator.is_coalesce() {
-            return self.coalesce(value, debug_name);
-        }
-        let left = self.expression_with_debug_name(&value.left, debug_name);
         let dst = self.reg();
-        self.emit(Op::Move, dst, left, 0, 0);
-        let jump = self.emit(Op::JumpFalse, left, 0, 0, 0);
+        self.logical_into(value, debug_name, dst);
+        dst
+    }
+
+    /// A logical expression whose value ends in `dst`, allocated by the caller: the left operand
+    /// is computed into `dst` and tested there, and the right operand, when it runs, is computed
+    /// into `dst` in place of the left.
+    fn logical_into(&mut self, value: &LogicalExpression<'_>, debug_name: Option<Atom>, dst: Register) {
+        if value.operator.is_coalesce() {
+            return self.coalesce_into(value, debug_name, dst);
+        }
+        self.expression_into_named(&value.left, debug_name, dst);
+        let jump = self.emit(Op::JumpFalse, dst, 0, 0, 0);
         // Past the jump only `dst` and registers allocated before the expression are live,
         // so the right operand reuses the left's temporaries.
         let after_result = self.next_reg;
         if value.operator.is_or() {
             let skip = self.emit(Op::Jump, 0, 0, 0, 0);
             self.patch(jump);
-            let right = self.reuse_temporaries_from(dst, |this| this.expression_with_debug_name(&value.right, debug_name));
-            self.emit(Op::Move, dst, right, 0, 0);
+            self.reuse_temporaries_from(dst, |this| this.expression_into_named(&value.right, debug_name, dst));
             self.patch(skip);
         } else {
-            let right = self.reuse_temporaries_from(dst, |this| this.expression_with_debug_name(&value.right, debug_name));
-            self.emit(Op::Move, dst, right, 0, 0);
+            self.reuse_temporaries_from(dst, |this| this.expression_into_named(&value.right, debug_name, dst));
             self.patch(jump);
         }
         self.next_reg = after_result;
-        dst
     }
 
     pub(super) fn conditional(&mut self, value: &ConditionalExpression<'_>, debug_name: Option<Atom>) -> Register {
@@ -224,13 +228,12 @@ impl FunctionCompiler<'_, '_> {
         let test = self.expression(&value.test);
         let other = self.emit(Op::JumpFalse, test, 0, 0, 0);
         // Past the test's jump only `dst` and registers allocated before the expression are
-        // live, and the two arms never both run: each reuses the test's temporaries.
-        let yes = self.reuse_temporaries_from(dst, |this| this.expression_with_debug_name(&value.consequent, debug_name));
-        self.emit(Op::Move, dst, yes, 0, 0);
+        // live, and the two arms never both run: each reuses the test's temporaries and computes
+        // its value straight into `dst`.
+        self.reuse_temporaries_from(dst, |this| this.expression_into_named(&value.consequent, debug_name, dst));
         let end = self.emit(Op::Jump, 0, 0, 0, 0);
         self.patch(other);
-        let no = self.reuse_temporaries_from(dst, |this| this.expression_with_debug_name(&value.alternate, debug_name));
-        self.emit(Op::Move, dst, no, 0, 0);
+        self.reuse_temporaries_from(dst, |this| this.expression_into_named(&value.alternate, debug_name, dst));
         self.patch(end);
         self.next_reg = after_result;
         dst
@@ -655,17 +658,11 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn arguments(&mut self, values: &[Argument<'_>]) -> (Register, u16) {
-        self.arguments_with_regexp_callee(values, None)
-    }
-
-    /// `arguments`, where `regexp_callee` names the callee register of a call whose first
-    /// argument is a regexp literal that may share its object (`regexp_argument_call`).
-    fn arguments_with_regexp_callee(&mut self, values: &[Argument<'_>], regexp_callee: Option<Register>) -> (Register, u16) {
-        // Evaluate first, then reserve the contiguous ABI argument window.
-        // Reserving targets before expression lowering lets expression
-        // temporaries occupy later argument registers. A primitive literal has no
-        // evaluation effect, so it loads straight into its window slot instead.
-        let arguments = values
+        // Reserve the contiguous ABI argument window first, then compute each argument straight
+        // into its slot. The expressions' temporaries are allocated past the window, so they
+        // never occupy a slot of it. A primitive literal has no evaluation effect and loads
+        // into its slot as a constant.
+        let expressions = values
             .iter()
             .enumerate()
             .filter_map(|(index, argument)| {
@@ -674,31 +671,23 @@ impl FunctionCompiler<'_, '_> {
                         .reject(argument.span(), "spread arguments unsupported");
                     return None;
                 };
-                if index == 0
-                    && let (Expression::RegExpLiteral(literal), Some(callee)) = (expression, regexp_callee)
-                {
-                    return Some(Ok(self.regexp_argument_literal(literal, callee)));
-                }
-                Some(match Self::primitive_literal(expression) {
-                    Some(constant) => Err(constant),
-                    None => Ok(self.expression(expression)),
-                })
+                Some(expression)
             })
             .collect::<Vec<_>>();
         let base = self.next_reg;
-        let targets: Vec<_> = (0..arguments.len()).map(|_| self.reg()).collect();
+        let targets: Vec<_> = (0..expressions.len()).map(|_| self.reg()).collect();
         let count = targets.len() as u16;
-        for (argument, target) in arguments.into_iter().zip(targets) {
-            match argument {
-                Ok(value) => {
-                    self.emit(Op::Move, target, value, 0, 0);
-                }
-                Err(constant) => {
+        for (expression, target) in expressions.into_iter().zip(targets) {
+            match Self::primitive_literal(expression) {
+                Some(constant) => {
                     let id = self.owner.constant(constant);
                     self.emit(Op::LoadConst, target, 0, 0, id);
                 }
+                None => self.expression_into(expression, target),
             }
         }
+        // The arguments' temporaries are dead once their values sit in the window.
+        self.next_reg = base + count;
         (base, count)
     }
 

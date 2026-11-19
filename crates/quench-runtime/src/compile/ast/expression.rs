@@ -32,6 +32,76 @@ impl FunctionCompiler<'_, '_> {
         result
     }
 
+    /// Compiles `expression` so that its value ends in `dst`, which the caller reads in place of
+    /// the register it would otherwise get. `dst` is a register the caller allocated before the
+    /// call, so the expression's temporaries sit above it.
+    pub(in crate::compile) fn expression_into(&mut self, expression: &Expression<'_>, dst: Register) {
+        self.expression_into_named(expression, None, dst);
+    }
+
+    /// `expression_into` for an expression that may name a function (`debug_name`).
+    pub(in crate::compile) fn expression_into_named(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>, dst: Register) {
+        let first_pc = self.code.len();
+        let start = self.next_reg;
+        let value = self.expression_with_debug_name(expression, debug_name);
+        if value == dst {
+            return;
+        }
+        if value >= start && self.retarget_final_result(first_pc, value, dst) {
+            return;
+        }
+        self.emit(Op::Move, dst, value, 0, 0);
+    }
+
+    /// Makes the last instruction emitted since `first_pc` write `dst` instead of `value`, when
+    /// that instruction is the expression's own producer of `value`: a plain producer whose
+    /// result is `value` and not read by it (`plain_producer`). Nothing in between may jump, since
+    /// a jump that passes the producer would leave `value` unwritten on its path, and a jump
+    /// emitted but not yet patched is not visible here, so any jump keeps the copy. Returns
+    /// whether it retargeted.
+    fn retarget_final_result(&mut self, first_pc: usize, value: Register, dst: Register) -> bool {
+        let Some(last) = self.code.len().checked_sub(1).filter(|&pc| pc >= first_pc) else {
+            return false;
+        };
+        let jumps = |op: Op| {
+            matches!(
+                op.control_flow_layout(),
+                crate::bytecode::ControlFlowLayout::Jump
+                    | crate::bytecode::ControlFlowLayout::ConditionalJump
+                    | crate::bytecode::ControlFlowLayout::BranchTable
+            )
+        };
+        if self.code[first_pc..last].iter().any(|&instruction| {
+            let op = if instruction.is_wide() { self.wide[instruction.wide_index()].op() } else { instruction.op() };
+            jumps(op)
+        }) {
+            return false;
+        }
+        let instruction = self.code[last];
+        if dst > crate::bytecode::REGISTER_MASK {
+            return false;
+        }
+        if instruction.is_wide() {
+            let index = instruction.wide_index();
+            let wide = self.wide[index];
+            if !crate::compile::rewrite::plain_producer(wide.op()) || wide.a() != value {
+                return false;
+            }
+            self.wide[index].set_a(dst);
+        } else {
+            if !crate::compile::rewrite::plain_producer(instruction.op())
+                || instruction.result_register() != value
+                || instruction.result_flags() != 0
+            {
+                return false;
+            }
+            let mut retargeted = instruction;
+            retargeted.set_result_register(dst);
+            self.code[last] = retargeted;
+        }
+        true
+    }
+
     fn expression_at_current_position(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
         // Only a direct read or update of a local consumes the last-operand mark; every
         // nested operand starts unmarked.
@@ -418,6 +488,25 @@ impl FunctionCompiler<'_, '_> {
 
     pub(crate) fn initialize_atom(&mut self, atom: Atom, value: Register) {
         self.store_atom_with_initialization(atom, value, true);
+    }
+
+    /// The promoted register that `store_atom` writes an assignment to `atom` into with a plain
+    /// `Move`, after the value is computed: no check or environment lookup comes before it that
+    /// could throw. The value may then be computed straight into the register (`expression_into`).
+    /// `None` for any other binding, which keeps the value in its own register.
+    pub(super) fn plain_store_register(&self, atom: Atom) -> Option<Register> {
+        let source_atom = self.parameter_binding_atom(atom);
+        if self.dynamic_eval
+            || self.with_depth != self.inherited_with_depth
+            || self.active_lexical_binding(source_atom).is_some()
+            || self.is_compiler_binding(source_atom)
+            || self.lexical_binding_kind(source_atom) != LexicalBindingKind::Mutable
+            || !self.frame_var(source_atom)
+            || !self.local_slots.contains_key(&source_atom)
+        {
+            return None;
+        }
+        self.local_register(source_atom)
     }
 
     pub(super) fn store_atom_with_initialization(

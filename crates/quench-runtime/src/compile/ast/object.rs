@@ -57,8 +57,7 @@ impl FunctionCompiler<'_, '_> {
             let temporaries = self.next_reg;
             for ((property, _), destination) in properties.into_iter().zip(value_registers.iter()) {
                 self.next_reg = temporaries;
-                let value = self.expression(&property.value);
-                self.emit(Op::Move, *destination, value, 0, 0);
+                self.expression_into(&property.value, *destination);
             }
             self.next_reg = temporaries;
             self.emit(Op::MakeObjectLiteral, dst, value_registers[0], count, site);
