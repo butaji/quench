@@ -152,7 +152,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
     let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
     // The loop's arrays are the activation's registers live at its header now: sampled, as an
     // OSR loop samples its own. A dead register may hold any value a window held before
-    // (`RegisterRoots::entry_fill`), so it reads as `undefined`.
+    // (`ResidualProgram::entry_fill`), so it reads as `undefined`.
     let live = code.register_root_masks(function);
     let arrays = super::loop_tier::sampled_arrays(vm, (0..code.function_get(function as usize).map_or(0, |body| body.registers)).map(|register| {
         if live.is_none_or(|live| live.is_live(site.header as usize, register)) { r.get(register) } else { Value::UNDEFINED }

@@ -776,31 +776,28 @@ fn compact_encoding_names_every_atom_by_its_text() {
 fn derived_function_facts_round_trip_and_match_their_derivation() {
     let source = "function g() { return 1; }\nfunction f(x) { g(); const kept = g(); x(); return kept + x(); }\nf(() => 2);";
     let program = crate::Engine::specialize(source, "dead-call-results.js").unwrap();
-    let mut claimed = 0;
-    for (index, function) in program.functions.iter().enumerate() {
+    let dead_calls = |program: &ResidualProgram, function: &Function, index: usize| -> Vec<u32> {
         let Some(masks) = program.register_root_masks(index as u32) else {
-            assert!(function.register_roots.dead_call_results().is_empty());
-            continue;
+            return Vec::new();
         };
-        let derived: Vec<u32> = function
+        function
             .instructions()
             .enumerate()
             .filter(|(pc, instruction)| {
-                instruction.op() == Op::Call
-                    && instruction.result_flags() == 0
-                    && masks.get(pc + 1).is_some_and(|after| {
-                        crate::compile::liveness::register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
-                    })
+                instruction.op() == Op::Call && crate::compile::liveness::call_result_dead(*instruction, *pc, masks)
             })
             .map(|(pc, _)| pc as u32)
-            .collect();
-        assert_eq!(function.register_roots.dead_call_results(), derived.as_slice(), "function {index}");
-        claimed += derived.len();
+            .collect()
+    };
+    let mut claimed = 0;
+    for (index, function) in program.functions.iter().enumerate() {
+        claimed += dead_calls(&program, function, index).len();
     }
     assert!(claimed > 0, "the unused `g()` and `x()` results are dead");
     let decoded = residual_round_trip(&program, "dead-call-results").unwrap();
-    for (original, decoded_function) in program.functions.iter().zip(&decoded.functions) {
-        assert_eq!(original.register_roots.dead_call_results(), decoded_function.register_roots.dead_call_results());
+    for (index, (original, decoded_function)) in program.functions.iter().zip(&decoded.functions).enumerate() {
+        assert_eq!(dead_calls(&program, original, index), dead_calls(&decoded, decoded_function, index));
+        assert_eq!(program.entry_fill(original), decoded.entry_fill(decoded_function));
         // The decoder seeds the facts the encoder derived (`Function::derived_facts`).
         assert_eq!(
             original.derived_facts(&program, original.names_resolve_statically(&program)),

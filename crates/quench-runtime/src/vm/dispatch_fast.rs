@@ -830,7 +830,7 @@ pub(crate) unsafe fn fill_window(registers: *mut Value, count: usize, initial: V
 /// # Safety
 /// `registers` has writable storage for `fill_room::<SCRIPT_FILL_BLOCK>(count)` values, none
 /// of them live, and `fill` covers every register the activation's function reads before
-/// writing (`RegisterRoots::entry_fill`).
+/// writing (`ResidualProgram::entry_fill`).
 #[inline(always)]
 unsafe fn fill_admitted_window(registers: *mut Value, fill: usize, count: usize) {
     const _: () = assert!(WINDOW_FILL_BLOCK <= SCRIPT_FILL_BLOCK);
@@ -1990,7 +1990,7 @@ pub(super) struct ScriptCallTarget {
     /// `TARGET_INITIALIZES` where `new` may run its body as the stores alone
     /// (`Function::only_initializes_this_fields`).
     forms: u8,
-    /// The registers its plain activation starts `undefined` (`RegisterRoots::entry_fill`),
+    /// The registers its plain activation starts `undefined` (`ResidualProgram::entry_fill`),
     /// at most `u8::MAX`: past one `WINDOW_FILL_BLOCK` it starts every register so.
     fill: u8,
     /// How a plain call enters it.
@@ -14752,7 +14752,7 @@ impl<H: Host> Vm<H> {
                 | u8::from(body.rest_view()) * TARGET_REST_VIEW
                 | u8::from(lexical_this.is_some() && body.arrow_reads_implicit_bindings(code, function)) * TARGET_READS_IMPLICIT
                 | u8::from(settles_in_environment) * TARGET_SETTLES_IN_ENVIRONMENT,
-            fill: u8::try_from(body.register_roots.entry_fill(body.registers)).unwrap_or(u8::MAX),
+            fill: u8::try_from(code.entry_fill(body)).unwrap_or(u8::MAX),
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
             entry: target_entry(body, &plan, &shape, (settles, environment, cross)),
@@ -19542,7 +19542,7 @@ fn lane_fill_window<H: Host>(vm: &mut Vm<H>, target: &ScriptCallTarget, passed: 
     // SAFETY: capacity holds the window's admitted room (`ScriptCallTarget::room`); the
     // registers live at entry are written before the length covers them, and no activation's
     // window moves. A register past `fill` is written before any instruction reads it, and
-    // a collection reads it only where liveness proves it live (`RegisterRoots::entry_fill`).
+    // a collection reads it only where liveness proves it live (`ResidualProgram::entry_fill`).
     // Parameter `k` lives in register `k` of a plain activation (`Vm::place_plain_parameters`).
     unsafe {
         let registers = stack.values.top();
@@ -22697,13 +22697,19 @@ fn lane_call_awaited_marked<'live>(
 /// A `Call` record's operand, flagged when liveness (`live`, the registers live before each
 /// pc) shows its result register dead after the call: nothing reads the value the callee
 /// returns (`ImmediateLayout::lane_call_result_used`).
-fn lane_call_result_marked(
+fn lane_call_result_marked<'live>(
     operand: LaneOperand,
     instruction: WideInstruction,
-    function: &Function,
     pc: usize,
+    live: &dyn Fn() -> Option<&'live std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
 ) -> LaneOperand {
-    if !instruction.op().is_call() || !function.register_roots.call_result_dead(pc) {
+    if !instruction.op().is_call() {
+        return operand;
+    }
+    let Some(masks) = live() else {
+        return operand;
+    };
+    if !crate::compile::liveness::call_result_dead(instruction, pc, masks) {
         return operand;
     }
     // SAFETY: a `Call`'s operand is its immediate (`lane_operand`).
@@ -22975,7 +22981,7 @@ fn derive_lane_view<'live, H: Host>(
                 .filter(|_| {
                     keeps_view && lane_fields_fit(instruction, function) && lane_call_fits(instruction)
                 })
-                .map(|operand| lane_call_result_marked(operand, instruction, function, pc))
+                .map(|operand| lane_call_result_marked(operand, instruction, pc, live))
                 .map(|operand| lane_call_awaited_marked(operand, &decoded, pc, live));
             // Control reaches this record only from the previous one when nothing enters it
             // (`entered_records`); the general loop never enters at a record that reads the

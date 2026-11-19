@@ -1865,19 +1865,19 @@ pub(crate) struct SourcePosition {
 pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 
 /// Whether register liveness covers a function's register forms, so a frame may leave its
-/// dead registers stale; the pcs of its `Call`s whose result register is dead after the
-/// call, which the compiler derives once from the same liveness (`liveness::mark_register_roots`);
-/// and the per-pc live register masks the collector scans, derived when a collection first
-/// finds the function on the stack. Most of a program's functions never run during a
-/// collection, so their masks are never built. The loop tier's regions share them
+/// dead registers stale; the bound on the registers live at entry (`entry_fill`), derived on
+/// first activation; and the per-pc live register masks the collector scans, derived when a
+/// collection first finds the function on the stack. Most of a program's functions never run
+/// during a collection, so their masks are never built. The loop tier's regions share them
 /// (`osr_loop::LoopRegion::live`) rather than copying a function's masks for each loop.
+/// Nothing here is serialized: a decoded program derives each on its first use.
 #[derive(Clone, Debug)]
 pub(crate) struct RegisterRoots {
     covered: bool,
     /// The registers below which every register live at entry lies (`entry_fill`), or
-    /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound.
-    entry_live: u16,
-    dead_call_results: crate::heap::ThinBoxSlice<u32>,
+    /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound. Filled where the lowering had the live
+    /// sets, else on the first `ResidualProgram::entry_fill`.
+    entry_live: std::cell::OnceCell<u16>,
     pub(crate) masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
 }
 
@@ -1889,48 +1889,28 @@ impl Default for RegisterRoots {
 }
 
 impl RegisterRoots {
+    /// A function of uncovered registers bounds none live at entry; a covered one's bound is
+    /// derived on its first ask.
     pub(crate) fn new(covered: bool) -> Self {
-        Self::with_dead_call_results(covered, Default::default())
+        let entry_live = if covered { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(Self::ALL_LIVE_AT_ENTRY) };
+        Self { covered, entry_live, masks: std::cell::OnceCell::new() }
     }
 
-    /// `dead_call_results` in increasing pc order, with no bound on the live entry registers.
-    pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
-        Self::with_entry_live(covered, Self::ALL_LIVE_AT_ENTRY, dead_call_results)
-    }
-
-    /// `with_dead_call_results`, every register live at entry below `entry_live`.
-    pub(crate) fn with_entry_live(covered: bool, entry_live: u16, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
-        Self { covered, entry_live, dead_call_results, masks: std::cell::OnceCell::new() }
+    /// Covered, every register live at entry below `entry_live`.
+    pub(crate) fn with_entry_live(covered: bool, entry_live: u16) -> Self {
+        Self { covered, entry_live: std::cell::OnceCell::from(entry_live), masks: std::cell::OnceCell::new() }
     }
 
     /// An `entry_live` that bounds nothing.
     pub(crate) const ALL_LIVE_AT_ENTRY: u16 = u16::MAX;
 
-    /// The registers an activation of a function of `registers` registers starts with its
-    /// initial value: those below every register live at its entry. No instruction reads
-    /// another before writing it, and a collection reads a covered function's registers only
-    /// where its masks prove them live, so the rest may hold any value a window held before.
-    #[inline(always)]
-    pub(crate) fn entry_fill(&self, registers: u16) -> u16 {
-        self.entry_live.min(registers)
-    }
-
-    /// The `entry_live` bound as recorded.
-    pub(crate) fn entry_live(&self) -> u16 {
-        self.entry_live
+    /// `entry_live`, derived by `derive` on its first ask.
+    pub(crate) fn entry_live_with(&self, derive: impl FnOnce() -> u16) -> u16 {
+        *self.entry_live.get_or_init(derive)
     }
 
     pub(crate) fn covered(&self) -> bool {
         self.covered
-    }
-
-    pub(crate) fn dead_call_results(&self) -> &[u32] {
-        &self.dead_call_results
-    }
-
-    /// Whether the `Call` at `pc` leaves its result register dead.
-    pub(crate) fn call_result_dead(&self, pc: usize) -> bool {
-        u32::try_from(pc).is_ok_and(|pc| self.dead_call_results.binary_search(&pc).is_ok())
     }
 
     /// The masks a collection derived so far; none until one finds the function running.
@@ -4292,6 +4272,16 @@ impl ResidualProgram {
     #[allow(dead_code)]
     pub(crate) fn register_root_mask(&self, function: u32, pc: usize) -> Option<crate::compile::liveness::RegisterSet> {
         self.register_root_masks(function)?.get(pc)
+    }
+
+    /// The registers an activation of `function` starts with its initial value (`entry_fill`):
+    /// those below every register live at its entry, derived from this program's tables on the
+    /// first ask.
+    pub(crate) fn entry_fill(&self, function: &Function) -> u16 {
+        function
+            .register_roots
+            .entry_live_with(|| crate::compile::liveness::derive_entry_live(function, self, &self.field_sites, &self.superinstructions))
+            .min(function.registers)
     }
 
     /// `function`'s live register masks by pc, one past its last instruction included, when

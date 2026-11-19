@@ -1157,12 +1157,6 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.u16(function.registers);
         out.u8(function.dispatch as u8);
         out.u8(u8::from(function.register_roots.covered()));
-        out.u16(function.register_roots.entry_live());
-        let dead_call_results = function.register_roots.dead_call_results();
-        out.u32(dead_call_results.len() as u32);
-        for &pc in dead_call_results {
-            out.u32(pc);
-        }
         out.u16(function.undefined_register.unwrap_or(NO_UNDEFINED_REGISTER));
         out.u16(
             function
@@ -1369,15 +1363,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         let registers = input.u16()?;
         let dispatch = input.dispatch_class()?;
         let covered = input.flag("register root coverage")?;
-        let entry_live = input.u16()?;
-        let dead_call_results = input.list(BinaryReader::u32)?;
-        if !dead_call_results.is_sorted_by(|before, after| before < after) || !covered && !dead_call_results.is_empty() {
-            return Err("invalid residual dead call results".into());
-        }
-        if !covered && entry_live != super::RegisterRoots::ALL_LIVE_AT_ENTRY {
-            return Err("invalid residual entry liveness".into());
-        }
-        let register_roots = super::RegisterRoots::with_entry_live(covered, entry_live, dead_call_results.into());
+        let register_roots = super::RegisterRoots::new(covered);
         let undefined_register =
             Some(input.u16()?).filter(|register| *register != NO_UNDEFINED_REGISTER);
         let parameter_registers = Some(input.u16()?).filter(|base| *base != NO_PARAMETER_REGISTERS);
