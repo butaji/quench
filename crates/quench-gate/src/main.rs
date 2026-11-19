@@ -24,6 +24,7 @@ mod passed;
 mod process;
 mod ratchet;
 mod runtime_tests;
+mod startup;
 mod step;
 mod tiers;
 
@@ -35,7 +36,7 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 10] = [
+const STEPS: [Step; 11] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "known-lists", quick: true, blocking: false, run: known_lists::run },
@@ -46,6 +47,7 @@ const STEPS: [Step; 10] = [
     Step { name: "no-jit-ir", quick: false, blocking: false, run: no_jit_ir::run },
     Step { name: "ir-budget", quick: true, blocking: false, run: ir_budget::run },
     Step { name: "conformance", quick: false, blocking: false, run: conformance::run },
+    Step { name: "startup", quick: false, blocking: false, run: startup::run },
 ];
 
 /// Runs the selected steps in order, stopping after a blocking step fails.
