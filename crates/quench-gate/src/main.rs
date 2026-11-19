@@ -25,6 +25,7 @@ mod passed;
 mod process;
 mod ratchet;
 mod runtime_tests;
+mod startup;
 mod step;
 mod tiers;
 
@@ -48,6 +49,7 @@ const STEPS: [Step; 11] = [
     Step { name: "ir-budget", quick: true, blocking: false, run: ir_budget::run },
     Step { name: "js3-budgets", quick: false, blocking: false, run: js3_budgets::run },
     Step { name: "conformance", quick: false, blocking: false, run: conformance::run },
+    Step { name: "startup", quick: false, blocking: false, run: startup::run },
 ];
 
 /// Runs the selected steps in order, stopping after a blocking step fails.
