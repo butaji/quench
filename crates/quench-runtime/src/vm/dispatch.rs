@@ -786,6 +786,16 @@ impl<H: Host> Vm<H> {
             Runner::RowOnly => match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::of(p)) {
                 RowRun::Done(_) => Ok(StepResult::Continue),
                 RowRun::Stop(stop) => stop,
+                // A unary's row leaves where its words decide nothing the frame proves (an immediate no tag class
+                // names, a Number row's miss); the VM's general unary (`Vm::unary`) answers every operand.
+                RowRun::Declined if i.op() == crate::bytecode::Op::Unary => {
+                    let value = self.unary(p, i.unary_operator(), self.read(f, i.operand_b()))?;
+                    self.write(f, i.result_register(), value);
+                    if i.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
+                        return Ok(StepResult::Return(value));
+                    }
+                    Ok(StepResult::Continue)
+                }
                 RowRun::Declined => unreachable!("a row-only opcode's staged row decides it: {:?}", i.op()),
             },
             // An arithmetic binary: its staged row first, then the record's general `Binary` on a miss. The Number
