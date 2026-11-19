@@ -910,9 +910,7 @@ impl ProgramStore {
     pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
         let entry = self.entry(id)?;
         let body = entry.residual.function_get(function as usize)?;
-        let cells = entry.js_entry_facts.0.get_or_init(|| {
-            (0..entry.residual.functions.capacity()).map(|_| std::cell::OnceCell::new()).collect()
-        });
+        let cells = entry.js_entry_facts.0.get_or_init(|| zeroed_entry_facts(entry.residual.functions.capacity()));
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
             let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body, !(self.tiers.stress || cfg!(test))); // tests pin tiny fixtures
             #[cfg(test)]
@@ -3217,6 +3215,23 @@ mod jit_code_cache_tests {
 pub(super) struct JsEntryFactsTable(
     std::cell::OnceCell<Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]>>,
 );
+
+// An empty cell is zero bits, which the zeroed table relies on.
+const _: () = assert!(
+    // SAFETY: a cell is one pointer-sized `Option<Rc<_>>`, whose `None` this reads.
+    unsafe { std::mem::transmute::<std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>, usize>(std::cell::OnceCell::new()) } == 0
+);
+
+/// `len` empty entry-fact cells on zero pages: a program's table takes a cell for each function
+/// it may append, and a filled table would touch every page of them at the first JavaScript
+/// tier entry of any function. Only the pages of functions that enter the tier become resident.
+fn zeroed_entry_facts(len: usize) -> Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]> {
+    let zeros: Box<[usize]> = vec![0; len].into_boxed_slice();
+    let cells = Box::into_raw(zeros) as *mut [std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>];
+    // SAFETY: the allocation is `len` words, the layout of `len` cells of one pointer each
+    // (asserted above), zeroed, so every cell is empty; the box alone owns it.
+    unsafe { Box::from_raw(cells) }
+}
 
 /// Counts a comparison in the guard census: strict (in)equality in its third column, an
 /// order (`<`, `<=`, `>`, `>=`) in its fourth.
