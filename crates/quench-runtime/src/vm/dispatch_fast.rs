@@ -2734,7 +2734,6 @@ pub(in crate::vm) struct LaneStackWords {
     /// The plain activations' words (`PlainFrames`): depth at `PLAIN_DEPTH_OFFSET`, the
     /// innermost window at `PLAIN_REGISTERS_OFFSET`. Emitted calls that write plain headers
     /// bump the depth and set the window; the lane spills them before entering emitted code.
-    #[expect(dead_code, reason = "the b-jit and u-jit payload slots that read it land with their plain-header rows")]
     pub(in crate::vm) plain_frames: usize,
 }
 
@@ -15802,7 +15801,8 @@ pub(in crate::vm) fn direct_callee_in_lane<H: Host>(vm: &Vm<H>, view: &LaneView,
     let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     Some(super::compiled::DirectCallee {
-        target, method, body, call: view.records().wrapping_add(pc).addr(), cell: view_of.entry_cell(),
+        target, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), function: target.function,
+        cell: view_of.entry_cell(),
         callee: target.callee, registers: target.registers, sloppy, lexical, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
     })
 }

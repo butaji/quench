@@ -102,6 +102,9 @@ impl<H: Host> Vm<H> {
             (*dispatch).lane_values_top = words.values_top;
             (*dispatch).lane_values_end = words.values_end;
             (*dispatch).lane_activations_top = words.activations_top;
+            // The plain depth's address; the body table and its bound are not wired yet, so a call admits
+            // nothing (`plain_depth_limit` 0) and takes the helper row.
+            (*dispatch).head.plain_depth = words.plain_frames;
             &raw mut (*frame).context
         }
     }

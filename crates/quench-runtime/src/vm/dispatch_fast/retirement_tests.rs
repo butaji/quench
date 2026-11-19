@@ -94,7 +94,8 @@ fn direct_callers_subscribe_to_callee_slot_dependencies() {
         .unwrap_or((std::ptr::null(), 0));
     direct[pc].push(super::compiled::DirectCallee {
         target, method: Some(leaf_publication.clone()), body: Some(leaf_body.clone()),
-        call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), cell: unsafe { &*target.view }.entry_cell(),
+        call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), caller_base: unsafe { &*root_target.view }.records().addr(),
+        function: target.function, cell: unsafe { &*target.view }.entry_cell(),
         callee: leaf, registers: target.registers,
         sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals), lexical: false,
         capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
