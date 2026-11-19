@@ -487,7 +487,8 @@ pub(crate) const fn chain_base(mode: u8) -> u8 { mode & ((1 << CHAIN_RAW_SHIFT) 
 /// The raw mask of a chain `MODE`: bit `k` for link `k`.
 pub(crate) const fn chain_raw(mode: u8) -> u8 { mode >> CHAIN_RAW_SHIFT }
 /// The raw-mask bit of a chain's last link: its double result stays raw into the record after the chain,
-/// where a Number binary row reads it (`fuse_chains`, `number_binary_row`). No in-chain link names it
+/// or past the plain records between that name neither its register (`raw_out_link`), where a Number binary
+/// row reads it (`fuse_chains`, `number_binary_row`). No in-chain link names it
 /// (`chain_raw_links` names only links with a next link in the chain), so it is free at either length.
 pub(crate) const CHAIN_RAW_OUT: u8 = 3;
 /// The `MODE` bit that keeps a fused record's last link's double result raw into the next record (the
