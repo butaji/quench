@@ -198,6 +198,10 @@ pub(super) struct Layout<'a> {
     pub(super) prototypes: Vec<super::function::ClassProto>,
     /// The loop-invariant receivers whose exact shape the entry checks, and the proofs seed (`Known::shapes`, `Heap::Shape`).
     pub(super) shapes: Vec<super::function::ShapeProto>,
+    /// The VM's reads of a cache site (`Known::reads`), which a method call's chain reads (`plan::chain_reads`).
+    pub(super) reads: Option<&'a dyn Fn(u16) -> Vec<crate::vm::compiled::NativeFieldLoad>>,
+    /// The holders the planned chains read through, which the body subscribes to with its own (`function::assemble`).
+    pub(super) holders: &'a std::cell::RefCell<Vec<u32>>,
     /// Whether a store is admitted on the run's stores word the entry checks (`Heap::Stores`, `proofs::prove`).
     pub(super) stores: bool,
     /// The captured declarations the body calls by identity, each with the function its entry checks (`Callees::captured_identities`).

@@ -37,8 +37,9 @@
 //! validity sends the call to the helper row, which resolves the target anew.
 
 pub(super) mod inline;
-pub(super) mod builtin;
-use builtin::BuiltinCall;
+mod chain;
+pub(super) use chain::ChainRead;
+use chain::chained_reads;
 use super::{Exit, SLOT};
 use super::super::direct_callee::DirectCallee;
 use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
@@ -315,7 +316,12 @@ pub(super) struct CallPlan<'a> {
     /// The site read a `Method` call's direct rows follow (`plan::method_read`): its stencil and holes. Planned only
     /// where a direct row is, after the spills; its miss goes to the helper row behind the direct rows.
     pub(super) read: Option<(&'static Stencil, [u64; HOLES])>,
+    /// The prototype-held entries of a method site (`plan::chain_reads`), each a read of the method at a receiver shape
+    /// with the value its holder held when planned. Where one pairs with a callee the site reached, the chain is its reads
+    /// and direct rows (`chained_reads`), and `read` is not planned.
+    pub(super) chain: Vec<ChainRead>,
 }
+
 
 /// The address of `helper` in a process helper table; none for a linked or symbolic one.
 pub(super) fn helper_address(helpers: LaneHelpers, helper: LaneHelper) -> Option<usize> {
@@ -442,6 +448,9 @@ pub(super) fn plan_step(pc: u32, helper: usize, packed: Option<[u64; 2]>, spills
 /// (NEXT), the last to the helper row, so a site alternating between known callees calls each by its
 /// entry, as the interpreter's own link does, and only an unknown one takes the helper.
 pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
+    if let Some(chain) = chained_reads(plan)? {
+        return Ok(chain);
+    }
     let choices: Vec<(Choice, &DirectFacts)> = plan.direct.iter().map(|facts| (choose(&plan.shape, Some(facts)), facts)).collect();
     let choice = choices.iter().map(|(choice, _)| *choice).find(|choice| *choice == Choice::Direct)
         .unwrap_or_else(|| choices.first().map_or_else(|| choose(&plan.shape, None), |(choice, _)| *choice));
@@ -479,6 +488,7 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     }
     Ok(CallChain { parts, records, choice })
 }
+
 
 #[cfg(test)]
 mod tests;
