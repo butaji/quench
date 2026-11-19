@@ -72,7 +72,8 @@ struct CallEntry {
 /// while one is live, since every exit from native code makes their frames first.
 pub(crate) struct Frameless {
     /// The windows, shadow records and call cache, made when native code first binds them
-    /// (`bind`): a VM that runs no native body keeps none of their 0.6 MiB resident.
+    /// (`bind`): a VM that runs no native body keeps none of them, and one that does commits
+    /// only the pages its activations reach (`zeroed_boxed_slice`), not their 0.6 MiB.
     stacks: std::sync::OnceLock<FramelessStacks>,
     /// Each function's last admission, by function index, with its program and closure
     /// environment: a fresh closure of it shares all but its callee and captures (`admit`).
@@ -101,13 +102,36 @@ struct FramelessStacks {
 
 impl FramelessStacks {
     fn new() -> Self {
-        let empty = ShadowRecord { call_pc: 0, this: Value::UNDEFINED, callee: Value::UNDEFINED };
-        Self {
-            windows: vec![Value::UNDEFINED; WINDOW_VALUES].into_boxed_slice(),
-            shadow: vec![empty; SHADOW_RECORDS].into_boxed_slice(),
-            cache: vec![CallEntry::default(); CACHE_ENTRIES].into_boxed_slice(),
+        // SAFETY: each element type is a struct of `u64` words (`Value` wraps one), for which
+        // all-zero bytes are a valid value. A window is written before it is read
+        // (`fill_window`), a shadow record is read only below the top a push advanced past it,
+        // and an empty call entry is `CallEntry::default()`.
+        unsafe {
+            Self {
+                windows: zeroed_boxed_slice(WINDOW_VALUES),
+                shadow: zeroed_boxed_slice(SHADOW_RECORDS),
+                cache: zeroed_boxed_slice(CACHE_ENTRIES),
+            }
         }
     }
+}
+
+/// A boxed slice of `len` zeroed elements. The allocation is zeroed by the allocator, which
+/// backs a large one with fresh pages it commits by first touch: the stack pays resident
+/// memory only for the entries a run reaches, not for all of them at binding.
+///
+/// # Safety
+/// All-zero bytes are a valid `T`.
+unsafe fn zeroed_boxed_slice<T>(len: usize) -> Box<[T]> {
+    let layout = std::alloc::Layout::array::<T>(len).expect("frameless stack layout");
+    // SAFETY: the layout is nonzero-sized, as every stack holds entries.
+    let base = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<T>();
+    if base.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+    // SAFETY: `len` zeroed elements the box owns, freed by `Box`'s deallocation with the same
+    // layout; zeroed bytes are valid per the caller's contract.
+    unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(base, len)) }
 }
 
 impl Frameless {
