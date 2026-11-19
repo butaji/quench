@@ -59,6 +59,10 @@ pub(crate) enum Operation<W, P> {
     /// Continue where the language bits the tag of `source` decides meet `mask` (`guard::declared`).
     #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
     GuardDeclared { source: W, mask: u64 },
+    /// Continue where `source` is a direct object of exact `shape` whose prototype link is `link`, its record found in
+    /// the object record table `records` (`guard::prototype`, `entry::shape_link_matches`).
+    #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
+    GuardPrototype { source: W, records: W, shape: u64, link: u64 },
     /// A taken backward edge: poll under `proof`, then count it (`guard::back_edge`).
     #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
     BackEdge { proof: P },

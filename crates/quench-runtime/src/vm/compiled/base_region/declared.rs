@@ -16,6 +16,7 @@ use crate::bytecode::{Function, Operand};
 use crate::staged::{DecodeContext, Operation};
 use crate::typed_ir::Type;
 use crate::ValueType;
+use super::function::ClassProto;
 
 const fn language(kind: ValueType) -> u16 {
     1 << kind as u16
@@ -143,13 +144,25 @@ pub(super) fn exact_objects(function: &Function) -> Vec<Register> {
     entry_guards(function).into_iter().filter(|guard| guard.languages == OBJECT_PLAIN).map(|guard| guard.register).collect()
 }
 
-/// The hook for a class-typed parameter's prototype check. A parameter typed by a top-level class would
-/// enter with its class's prototype holder here, and the entry would test the record's prototype word,
-/// which the exact plain-object fact does not check. Pending the class facts of the fact store
-/// (`DeclaredTypes::declared_parameter_class`, not yet landed): `None` for every parameter until then.
-#[allow(dead_code, reason = "the class-typed parameter check lands with the fact store's declared_parameter_class")]
-pub(super) fn class_prototype(_function: &Function, _register: Register) -> Option<u32> {
-    None
+/// The prototypes the entry checks for a class-typed parameter (`DeclaredTypes::declared_parameter_class`): each
+/// of `resolved` (`VM::class_prototypes`, observed where the body was compiled) whose parameter the function
+/// never writes, so the receiver it entered with still holds the fact at every row (`entry_rows`).
+pub(super) fn class_prototypes(function: &Function, resolved: &[ClassProto]) -> Vec<ClassProto> {
+    let written = written(function);
+    resolved.iter().filter(|proto| !written.contains(usize::from(proto.register))).cloned().collect()
+}
+
+/// The folded named read `atom` of a class-typed parameter the function never writes (`Known::classes`), where the
+/// prototype holds the name as a data value: the receiver's exact shape and prototype link prove the read
+/// (`PrototypeProof::Linked`, `Heap::Held`), and the value is the prototype's, which its shape's changes retire
+/// (`Folded::holder`). `None` for any other base or name.
+pub(super) fn class_member_read(known: Known, object: Option<Register>, atom: crate::bytecode::Atom, dst: Register) -> Option<Decoded> {
+    let register = object?;
+    let proto = known.classes.iter().find(|proto| proto.register == register)?;
+    let (_, value) = proto.members.iter().find(|(member, _)| *member == atom)?;
+    let folded = Folded { shape: proto.shape, link: proto.link, holder: proto.holder };
+    let row = Decoded::heap(Heap::Held, Some(dst), Some(Source::Register(register)), None);
+    Some(Decoded { hole: *value, folded: Some(folded), ..row })
 }
 
 /// A `typeof` test of a register the entry proves exactly a direct function (`Languages(FUNCTION)`) or

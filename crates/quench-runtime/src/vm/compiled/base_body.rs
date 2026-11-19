@@ -7,12 +7,12 @@
 
 use super::*;
 use super::base_region::callees::{Callees, InlineBody};
-use super::base_region::function::{build_body, Body, BodySpec};
+use super::base_region::function::{build_body, Body, BodySpec, ClassProto};
 use super::base_region::{Known, RealmProof};
 use super::lane_facts::bind_callees;
 use crate::code_dependencies::{InstanceofFact, Invalidation};
 use crate::vm::global_facts::GlobalTable;
-use crate::bytecode::{Class, Register, WideInstruction};
+use crate::bytecode::{Atom, Class, FieldLookup, Register, WideInstruction};
 use super::lane_region::StableFacts;
 use crate::compile::liveness::RegisterMasks;
 use crate::typed_ir::Type;
@@ -143,6 +143,7 @@ impl<H: Host> Vm<H> {
         // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
         let folds = self.specialized && program.specialized;
         let SiteFacts { constructors, presences, globals } = self.site_facts(folds, program, function, (&code, parameters), body);
+        let classes = self.class_prototypes(program, function, &code, parameters);
         let reads = |site: u16| self.native_field_read_descriptors(site);
         let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
@@ -158,12 +159,61 @@ impl<H: Host> Vm<H> {
             instanceofs: folds.then_some(&instanceofs as &dyn Fn(usize) -> Option<(Value, InstanceofFact)>),
             presences: folds.then_some(presences.as_slice()),
             globals: globals.as_ref(),
+            classes: if folds { classes.as_slice() } else { &[] },
         };
         let speculated = widened(generic);
+        let classes = self.class_prototypes(program, function, parameters);
         let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: &seen, kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers::<H>()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (&code, invalidation), caller)
+    }
+
+    /// The prototypes `function`'s class-typed parameters enter with (`DeclaredTypes::parameter_classes`), each resolved
+    /// from the value the entry observed in its register (`class_prototype_of`), with the named reads `code` makes of it.
+    fn class_prototypes(&self, program: &ResidualProgram, function: u32, code: &[WideInstruction], parameters: &[Value]) -> Vec<ClassProto> {
+        let (Some(declared), Some(body)) = (program.declared_types.as_deref(), program.function_get(function as usize)) else { return Vec::new() };
+        let Some(start) = body.source_span.map(|span| span.start) else { return Vec::new() };
+        declared.parameter_classes.iter().filter(|entry| entry.function == start)
+            .filter_map(|entry| {
+                let register = super::lane_region::scalar::parameter_register(body, usize::from(entry.parameter))?;
+                let value = *parameters.get(usize::from(register))?;
+                self.class_prototype_of(program, code, (register, value), entry.class)
+            }).collect()
+    }
+
+    /// The class prototype the instance `value` in `register` enters with, where it is a direct object whose prototype's
+    /// `constructor` is the class constructor (`is_class_constructor`) whose source span starts at `class`. Its members are
+    /// the prototype's own data values of the names `code` reads of the register that the instance does not own (its exact
+    /// shape holds no such name, else the prototype's value would not be the read's). Which prototype is a choice of what to
+    /// fold: the entry checks the receiver's exact shape and link.
+    fn class_prototype_of(&self, program: &ResidualProgram, code: &[WideInstruction], (register, instance): (Register, Value), class: u32) -> Option<ClassProto> {
+        instance.direct_object_index()?;
+        let receiver = self.object_data(instance)?;
+        let shape = receiver.exact_shape();
+        let link = receiver.proto_link();
+        let prototype = Value::direct_object(link.object_record_id()?);
+        let data = self.object_data(prototype)?;
+        let slot = self.shape_slot(data.shape(), self.lookup_atom("constructor")?)?;
+        let constructor = self.heap.property_get(data, slot)?;
+        let Some(crate::heap::FunctionRecord { kind: crate::heap::FunctionKind::User(_, index), .. }) = self.heap.function(constructor) else { return None };
+        let body = program.function_get(*index as usize)?;
+        if !body.is_class_constructor || body.source_span.map(|span| span.start) != Some(class) { return None; }
+        let members = code.iter().filter_map(|instruction| match instruction.field_lookup()? {
+            FieldLookup::Atom { atom, base, .. } if base.register_index() == Some(register) => Some(atom),
+            _ => None,
+        }).filter(|atom| self.shape_slot(shape, *atom).is_none())
+            .filter_map(|atom| Some((atom, self.own_data_bits(prototype, atom)?))).collect();
+        Some(ClassProto { register, shape, link: link.bits(), holder: data.exact_shape(), members })
+    }
+
+    /// The bits of `object`'s own data property `atom`: `None` for an absent name, or where the shape may hold accessors
+    /// (`shape_may_have_accessors`), whose slot is no data value.
+    fn own_data_bits(&self, object: Value, atom: Atom) -> Option<u64> {
+        let data = self.object_data(object)?;
+        if self.shape_may_have_accessors(data.shape()) { return None; }
+        let slot = self.shape_slot(data.shape(), atom)?;
+        self.heap.property_get(data, slot).map(|value| value.to_bits())
     }
 }
 

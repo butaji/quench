@@ -42,6 +42,15 @@ pub(crate) fn declared<S: Stage>(stage: &mut S, source: S::Word, mask: u64, miss
     stage.guard(held, miss)
 }
 
+/// `prototype`: `source` is a direct object whose record, found in the object record table `records`, has
+/// exact shape and prototype link `(shape, link)` (`entry::shape_link_matches`, the prototype-held read's
+/// receiver check). Any other word leaves.
+#[inline(always)]
+pub(crate) fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (shape, link): (u64, u64), miss: S::Miss) -> Option<()> {
+    let (_, record) = super::property::direct_record(stage, records, source, miss)?;
+    super::entry::shape_link_matches(stage, record, (shape, link), miss)
+}
+
 /// `back_edge`: a taken backward edge polls for an interrupt or a due collection first (the
 /// frame's `safepoint`), then counts in the loop's counter (the frame's `count_edge`). A failed poll
 /// counts nothing.

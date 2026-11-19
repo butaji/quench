@@ -33,6 +33,10 @@ fn site_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
         }
     };
     let object = if base == FieldBase::THIS { None } else { Some(base.register_index()?) };
+    if let Some(FieldLookup::Atom { atom, .. }) = instruction.field_lookup()
+        && let Some(row) = super::super::declared::class_member_read(known, object, atom, instruction.result_register()) {
+        return Some(row);
+    }
     Some(cached_read(known, (object, first, second), instruction.result_register()))
 }
 

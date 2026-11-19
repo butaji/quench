@@ -32,14 +32,14 @@
 //! instruction.
 
 use crate::bytecode::Operand;
-use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
+use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
 use crate::ic_rows;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of};
 use crate::words::{hole, hole64, int_word};
 use crate::places::{DEST, LEFT, RIGHT, Places};
 use crate::stage::StencilStage;
 use crate::staged::{Operation, Stage, Step, step, step_local, step_value, string_length};
-use crate::codes::{ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
+use crate::codes::{ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, HELD_LINK_AT, PROTOTYPE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
 use crate::staged::{code_units, parse_int};
 use crate::places_view::{self, ELEMENT_SITES, entry_dense, entry_typed};
 use crate::{environment_rows, key_rows, name_rows, site_rows, staged_rows};
@@ -164,6 +164,21 @@ fn identity_row(s: S) -> Out {
 #[inline(always)]
 fn declared_row(s: S) -> Out {
     let guard = Operation::GuardDeclared { source: word_at(s.frame, hole::<0>()), mask: hole64::<HOLE_A>() };
+    guard_row(s, guard)
+}
+
+/// `GuardPrototype`: continues where the object at the frame offset in hole 0 is a direct object of the exact shape in
+/// hole 1's low half whose prototype link is its high half (`HELD_LINK_AT`), its record read from the object record table
+/// (`guard::prototype`); any other object leaves with nothing written.
+#[inline(always)]
+fn prototype_row(s: S) -> Out {
+    let receiver = hole64::<HOLE_A>();
+    let guard = Operation::GuardPrototype {
+        source: word_at(s.frame, hole::<0>()),
+        records: word_at(payload(&s), JS_STEP_OBJECT_RECORD_BASE),
+        shape: receiver & u64::from(u32::MAX),
+        link: receiver >> HELD_LINK_AT,
+    };
     guard_row(s, guard)
 }
 
@@ -341,6 +356,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         IC_GET_ROW | IC_GET_HOLDER_ROW | IC_SET_ROW | IC_SET_INT_ROW | IC_PROOF_ROW | IC_KNOWN_GET_ROW | IC_KNOWN_SET_ROW | IC_KNOWN_SET_INT_ROW =>
             ic_rows::run::<KIND, ENTRY, D, A>(s),
         DECLARED_ROW => declared_row(s),
+        PROTOTYPE_ROW => prototype_row(s),
         CHAR_CODE_AT_ROW => char_code_at_row::<D, B>(s, payload),
         PARSE_INT_ROW => parse_int_row::<D>(s, payload),
         _ => element_row::<KIND, ENTRY, D, A, B>(s, payload),

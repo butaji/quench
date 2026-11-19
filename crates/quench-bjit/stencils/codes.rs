@@ -240,6 +240,11 @@ numbered_codes! {
     /// whose language its tag alone decides, in the mask of hole 1 (`shared_words::language`), where the mask
     /// is the declared set. A hit continues at NEXT; a miss leaves through EXIT0 with nothing written.
     DECLARED_ROW,
+    /// A class-typed parameter's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a direct
+    /// object of the exact shape in hole 1's low half whose prototype link is its high half (`HELD_LINK_AT`), the record
+    /// found in the payload's object record table (`guard::prototype`). A hit continues at NEXT; a miss leaves through
+    /// EXIT0 with nothing written.
+    PROTOTYPE_ROW,
     /// `String.prototype.charCodeAt` of a flat string (hole 1: the receiver's frame slot) at an int32 index in range (hole 2):
     /// the code unit, an int32 into the destination (hole 0). Any other receiver, index or form leaves through EXIT0 with
     /// nothing written, to the call's own step.

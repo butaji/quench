@@ -166,6 +166,8 @@ pub(super) struct Layout<'a> {
     /// The declared Number parameters the function never writes, which the entry's Number guards prove
     /// (`declared::entry_numbers`).
     pub(super) numbers: Vec<Register>,
+    /// The class-typed parameters the function never writes, with the prototype each entry checks (`declared::class_prototypes`).
+    pub(super) prototypes: Vec<super::function::ClassProto>,
 }
 
 impl Layout<'_> {

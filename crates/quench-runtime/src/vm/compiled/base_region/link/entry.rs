@@ -25,7 +25,8 @@ impl EntryRow {
 /// active one, each pinned register live at the header (or, for a resume stub, at its PC; `entered` are
 /// the webs live there) loads its int32, each int slot is checked
 /// (or, dead there, tagged), and each other Number register live there is checked, so a loop whose
-/// values are no Numbers is never entered. Then each declared parameter's entry test (`layout.guards`).
+/// values are no Numbers is never entered. Then each declared parameter's entry test (`layout.guards`), and
+/// each class-typed parameter's receiver test (`layout.prototypes`: exact shape and prototype link).
 pub(in super::super) fn entry_rows(layout: &Layout, entered: &[usize]) -> Result<Vec<EntryRow>, String> {
     let guard = |kind, dst, offset: u64| {
         numeric::stencil(numeric::Row { kind, dst, a: Place::Mem, b: Place::Mem, speculate: true }).map(|stencil| EntryRow {
@@ -59,6 +60,11 @@ pub(in super::super) fn entry_rows(layout: &Layout, entered: &[usize]) -> Result
     let test = HeapRow { heap: Heap::Declared, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     for EntryGuard { register, languages } in &layout.guards {
         rows.push(EntryRow { stencil: base_rows::stencil(test)?, holes: padded_holes([u64::from(*register) * SLOT, u64::from(*languages), 0]), declared: true });
+    }
+    let prototype = HeapRow { heap: Heap::Prototype, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+    for proto in &layout.prototypes {
+        let receiver = u64::from(proto.shape) | (u64::from(proto.link) << numeric::library::HELD_LINK_AT);
+        rows.push(EntryRow { stencil: base_rows::stencil(prototype)?, holes: padded_holes([u64::from(proto.register) * SLOT, receiver, 0]), declared: true });
     }
     Ok(rows)
 }
