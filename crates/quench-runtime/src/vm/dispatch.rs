@@ -687,9 +687,9 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(Value::UNDEFINED);
                 self.write(f, i.result_register(), value);
             }
-            Op::MakeClosure if self.closure_needs_no_environment(p, i.closure_function_index()) => {
+            Op::MakeClosure if p.closure_takes_no_environment(i.closure_function_index()) => {
                 // Nothing the closure runs reads its environment: it takes none, and the frame
-                // keeps its locals unpromoted (`Vm::closure_needs_no_environment`).
+                // keeps its locals unpromoted (`ResidualProgram::closure_takes_no_environment`).
                 let v = self.closure(p, i.closure_function_index(), Value::NULL)?;
                 self.write(f, i.result_register(), v);
             }

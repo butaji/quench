@@ -124,7 +124,7 @@ pub(super) unsafe extern "C" fn lane_new_closure<H: Host>(vm: u64, residual: u64
     }
     let captured = vm.frames[dispatch.frame].captured;
     // A closure that reads nothing of its environment takes none, and the frame stays unpromoted.
-    let env = if vm.closure_needs_no_environment(program, id as u32) {
+    let env = if program.closure_takes_no_environment(id as u32) {
         Value::NULL
     } else {
         vm.promote_frame_environment(dispatch.frame)

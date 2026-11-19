@@ -4,7 +4,7 @@ use crate::bytecode::{CALL_PLAN_FLAG_COUNT, DERIVED_FACT_COUNT};
 
 impl crate::bytecode::ResidualProgram {
     /// 154: a program that names private members encodes every closure's reads as the whole chain, which the
-    /// closure environment elision (`Vm::closure_needs_no_environment`) reads.
+    /// closure environment elision (`ResidualProgram::closure_takes_no_environment`) reads.
     /// 147: `LoadGlobalLexical` and `StoreGlobalLexical` address a script's lexicals by declaration index.
     /// 146: function records lost their realm word; a function's realm override is written in its extras.
     pub const FORMAT_VERSION: u8 = 154;

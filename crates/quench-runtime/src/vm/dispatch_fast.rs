@@ -3625,7 +3625,7 @@ fn lane_window_closure_value<H: Host>(
     let code = unsafe { &*(*cx).code };
     let parent = unsafe { (*cx).registers }.env();
     // A closure that reads nothing of its environment takes none, so the window is not made.
-    if vm.closure_needs_no_environment(code, function) {
+    if code.closure_takes_no_environment(function) {
         let value = lane_closure(vm, code, function, Value::NULL);
         note_allocation(vm);
         return value;
@@ -7083,7 +7083,7 @@ fn lane_closure_value_of<H: Host>(cx: *mut LaneContext<H>, id: u32) -> Option<Va
     {
         return None;
     }
-    let env = if vm.closure_needs_no_environment(code, id) {
+    let env = if code.closure_takes_no_environment(id) {
         Value::NULL
     } else {
         let env = vm.promote_frame_environment(frame);

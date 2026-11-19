@@ -58,7 +58,10 @@ fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc
     {
         return Err("invalid residual closure reads parent".into());
     }
-    Ok(Some(std::rc::Rc::new(crate::bytecode::ClosureReads { functions: functions.into_boxed_slice() })))
+    Ok(Some(std::rc::Rc::new(crate::bytecode::ClosureReads {
+        functions: functions.into_boxed_slice(),
+        environment_elision: Default::default(),
+    })))
 }
 
 /// The scopes of a program's nested first-call stubs (`ResidualProgram::first_call_scopes`):

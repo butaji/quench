@@ -49,7 +49,17 @@ pub(super) struct FunctionReads {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ClosureReads {
     pub(super) functions: Box<[FunctionReads]>,
+    /// Each function's `ResidualProgram::closure_takes_no_environment`, filled per function on its
+    /// first closure creation and read after; never serialized.
+    pub(super) environment_elision: std::cell::OnceCell<Box<[std::cell::Cell<u64>]>>,
 }
+
+/// Each function's elision answer takes two bits: whether it is known, and whether it takes none.
+const ELISION_BITS_PER_FUNCTION: usize = 2;
+const ELISION_FUNCTIONS_PER_WORD: usize = u64::BITS as usize / ELISION_BITS_PER_FUNCTION;
+const ELISION_KNOWN: u64 = 0b01;
+const ELISION_TAKES_NONE: u64 = 0b10;
+const ELISION_FIELD: u64 = ELISION_KNOWN | ELISION_TAKES_NONE;
 
 /// What a closure needs of the environment `distance` activations out.
 #[derive(Clone, Copy, Debug)]
@@ -148,6 +158,7 @@ impl ClosureReads {
                     named_slots: function.named_slots.into(),
                 })
                 .collect(),
+            environment_elision: Default::default(),
         }
     }
 
@@ -172,7 +183,7 @@ impl ClosureReads {
     }
 
     /// Whether a closure of `function` reads nothing of the environment it closes over, so it
-    /// may take none (`Vm::closure_needs_no_environment`). The function and every function
+    /// may take none (`ResidualProgram::closure_takes_no_environment`). The function and every function
     /// nested in it read no slot outside themselves (`reads` is empty, not the whole chain),
     /// so no capture reaches an environment. No ancestor holds named slots, which a by-name
     /// lookup walking the chain would find (home objects, private names). An arrow reads no
@@ -198,6 +209,29 @@ impl ClosureReads {
             owner = ancestor.parent;
         }
         closure.parent.is_some()
+    }
+
+    /// Whether a closure of `function` takes no environment, where `derive` answers the
+    /// program's part of that (`ResidualProgram::closure_takes_no_environment`). Asked once per
+    /// function: its answer is a bit read on every later closure creation.
+    pub(crate) fn takes_no_environment(&self, function: u32, derive: impl FnOnce() -> bool) -> bool {
+        let words = self.environment_elision.get_or_init(|| {
+            let bits = self.functions.len() * ELISION_BITS_PER_FUNCTION;
+            vec![std::cell::Cell::new(0); bits.div_ceil(u64::BITS as usize)].into_boxed_slice()
+        });
+        let function = function as usize;
+        let Some(word) = words.get(function / ELISION_FUNCTIONS_PER_WORD) else {
+            return derive();
+        };
+        let shift = (function % ELISION_FUNCTIONS_PER_WORD) * ELISION_BITS_PER_FUNCTION;
+        let field = (word.get() >> shift) & ELISION_FIELD;
+        if field & ELISION_KNOWN != 0 {
+            return field & ELISION_TAKES_NONE != 0;
+        }
+        let takes = derive();
+        let answer = ELISION_KNOWN | if takes { ELISION_TAKES_NONE } else { 0 };
+        word.set(word.get() | (answer << shift));
+        takes
     }
 
     /// What a closure of `function` needs of the environment `distance` (at least 1)
@@ -236,6 +270,42 @@ impl ClosureReads {
             named_slots: &owner_reads.named_slots,
             lexical_this,
         }
+    }
+}
+
+impl crate::bytecode::ResidualProgram {
+    /// Whether a closure of function `id` takes `Value::NULL` for its environment: nothing it
+    /// can run reads its environment, so the scope chain it would keep is unobservable and dies
+    /// with its maker. Only the program's facts decide it, so it is one cached bit per function.
+    /// No `with` check is made at the creation site: a `with` entered in a frame belongs to that
+    /// frame's function, whose `contains_with` makes every function nested in it dynamic
+    /// (`capture_layout::dynamic_name_resolution`), so the closure's reads are the whole chain
+    /// and it is not elided.
+    #[inline(always)]
+    pub(crate) fn closure_takes_no_environment(&self, id: u32) -> bool {
+        self.closure_reads.as_deref().is_some_and(|reads| {
+            reads.takes_no_environment(id, || self.derive_closure_takes_no_environment(id, reads))
+        })
+    }
+
+    /// `closure_takes_no_environment` before its cache: not for an eval's program, nor a
+    /// call-only closure, whose environment rides in its value (`Value::known_closure` takes a
+    /// direct environment only), nor a module's direct child, whose environment its hoisted
+    /// functions are found by (`cached_functions_in_environment`).
+    fn derive_closure_takes_no_environment(&self, id: u32, reads: &ClosureReads) -> bool {
+        if self.kind == crate::bytecode::ProgramKind::Eval {
+            return false;
+        }
+        let Some(slot) = self.functions.get(id as usize) else {
+            return false;
+        };
+        let header = slot.header();
+        if header.prototype_unobservable
+            || header.parent.is_none_or(|parent| parent == crate::vm::ROOT_FUNCTION_ID && self.is_module())
+        {
+            return false;
+        }
+        reads.environment_unobservable(id, || crate::bytecode::arrow_chain_reads_implicit_bindings(self, id))
     }
 }
 
