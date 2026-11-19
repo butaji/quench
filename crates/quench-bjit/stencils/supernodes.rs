@@ -5,6 +5,8 @@
 //! feeds, place sets and evidence). `build.rs` itself includes `supernode_rules.rs` alone, since the
 //! list does not exist until it has run.
 
+/// The rules read the library through their parent (`supernode_rules.rs`, `use super::library`).
+use super::library;
 #[path = "supernode_rules.rs"]
 mod rules;
 pub use rules::*;

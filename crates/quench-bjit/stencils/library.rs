@@ -6,6 +6,8 @@
 #[path = "codes.rs"]
 mod codes;
 pub use codes::*;
+/// The heap rows' names (`row_names.rs`), mounted beside the library by the lib and the build script.
+pub use super::row_names::*;
 
 use std::collections::BTreeSet;
 
@@ -273,18 +275,5 @@ pub fn heap_library() -> Vec<HeapCode> {
             }
         }
     }
-    typed_rows(&dsts, &srcs, &mut rows);
-    for &dst in &dsts {
-        rows.extend([THIS_ROW, LOAD_LOCAL_ROW, LOAD_CHECKED_ROW, ENV_ROW, LEXICAL_READ_ROW, CALLEE_CAPTURE_ROW, EMPTY_OBJECT_ROW, EMPTY_ARRAY_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
-    }
-    for heap in [STORE_LOCAL_ROW, STORE_CHECKED_ROW, CAPTURE_SET_ROW, ENV_SET_ROW, ENV_DEFINE_ROW, APPEND_ROW, LEXICAL_WRITE_ROW] {
-        rows.extend(srcs.iter().map(|&a| heap_canonical((heap, false, MEM, a, MEM))));
-    }
-    for heap in ADD_ROWS {
-        rows.extend([false, true].map(|chained| heap_canonical((heap, chained, MEM, MEM, MEM))));
-    }
-    rows.extend(NAME_ROWS.map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
-    rows.extend([ARRAY_ROW, IDENTITY_ROW, LIVE_ROW, REALM_ROW, OBJECT_ROW, KEY_ROW, FOR_IN_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, INSTANCEOF_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
-    cache_rows(&dsts, &srcs, &mut rows);
     rows.into_iter().collect()
 }

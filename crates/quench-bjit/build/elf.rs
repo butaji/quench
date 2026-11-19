@@ -5,7 +5,7 @@ use crate::bytes::{ObjectReloc, ObjectRow, c_string, is_row_name, u16_at, u32_at
 use crate::class::{ABS32, ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
 use object::LittleEndian;
 use object::elf::{
-    FileHeader64, Rela64, SectionHeader64, Sym64, EI_CLASS, EI_DATA, ELFCLASS64, ELFDATA2LSB, EM_AARCH64, EM_X86_64, R_AARCH64_ABS64, R_AARCH64_CALL26, R_AARCH64_CONDBR19, R_AARCH64_JUMP26, R_AARCH64_MOVW_UABS_G0,
+    FileHeader64, Rela64, SectionHeader64, Sym64, ELFCLASS64, ELFDATA2LSB, EM_AARCH64, EM_X86_64, R_AARCH64_ABS64, R_AARCH64_CALL26, R_AARCH64_CONDBR19, R_AARCH64_JUMP26, R_AARCH64_MOVW_UABS_G0,
     R_AARCH64_MOVW_UABS_G0_NC, R_AARCH64_MOVW_UABS_G1, R_AARCH64_MOVW_UABS_G1_NC, R_AARCH64_MOVW_UABS_G2, R_AARCH64_MOVW_UABS_G2_NC, R_AARCH64_MOVW_UABS_G3, R_AARCH64_TSTBR14,
     R_X86_64_32, R_X86_64_32S, R_X86_64_64, R_X86_64_PC32, R_X86_64_PLT32, SHT_RELA, SHT_SYMTAB, STB_GLOBAL, STT_FUNC,
 };
@@ -39,8 +39,9 @@ const AARCH64_CLASSES: [(u32, u8); 12] = [
 ];
 
 const ELF_MAGIC: &[u8] = b"\x7fELF";
-const CLASS_AT: usize = EI_CLASS as usize;
-const DATA_AT: usize = EI_DATA as usize;
+/// The class and data bytes of `e_ident` (ELF spec EI_CLASS, EI_DATA).
+const CLASS_AT: usize = 4;
+const DATA_AT: usize = 5;
 const MACHINE_X86_64: usize = EM_X86_64 as usize;
 const MACHINE_AARCH64: usize = EM_AARCH64 as usize;
 /// `ELF64_ST_TYPE` and `ELF64_ST_BIND` (the symbol's `st_info` fields), `ELF64_R_SYM` and `ELF64_R_TYPE`

@@ -28,8 +28,8 @@
 //! hole roles (`roles`). A tile with no variant is planned as single rows.
 
 
-#[path = "library.rs"]
-mod library;
+/// The library mounted beside the rules: the build script's own, the lib's `numeric::library` (through `supernodes.rs`).
+use super::library;
 pub use library::{Code, HeapCode};
 use library::*;
 use std::collections::BTreeSet;
