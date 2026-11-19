@@ -286,7 +286,7 @@ static void ev_switch(Ast *n) {
     Ast *sc = cases->v[i];
     if (!sc->u.switchCase.value) continue;   /* isDefault */
     if (v.kind != CELL_NUM) ev_fail("switch value is not a number");
-    if (ev_switch_equal(n, v.v, value_for_selected(sc->u.switchCase.value))) start = i;
+    if (ev_switch_equal(n, v.v, value_for_selected(unify_of(sc->u.switchCase.value)))) start = i;
   }
   for (int i = 0; start < 0 && i < cases->n; i++)
     if (!cases->v[i]->u.switchCase.value) start = i;
