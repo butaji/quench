@@ -85,8 +85,7 @@ pub(in super::super) fn index_set(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_
 #[inline(always)]
 pub(super) fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<'_>, destination: Register,
     value: ir::Value, miss: ir::Block) {
-    let made = stage.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
-    super::super::emit_js_guard(stage.builder, made, miss);
+    crate::staged::protocol::guard_received(stage, value, miss);
     <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
         RegisterFact::definition(Type::ANY, Representation::Tagged));
 }

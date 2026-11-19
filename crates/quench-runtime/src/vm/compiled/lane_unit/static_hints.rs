@@ -2,7 +2,7 @@
 //! per-PC call targets (`static_call_targets`). A hint is never a proof: replacement and
 //! aliasing are handled by call-edge admission, which tries each target a site names behind
 //! its own body guard.
-use crate::bytecode::{Atom, Constant, ControlFlowLayout, FieldLookup, Function, InstructionField, PropertyDefinitionMode, WideInstruction};
+use crate::bytecode::{Atom, Constant, ControlFlowLayout, FieldLookup, Function, PropertyDefinitionMode, WideInstruction};
 
 /// The bodies a call site's callee may name statically: a superset of the callees it meets,
 /// which the unit's inlining budgets choose among, each behind its own body guard. A name,
@@ -99,7 +99,7 @@ impl Hints {
     /// global's by name (a script root's function is both its global's and its same-named
     /// slot's, which its functions capture).
     fn note_store(&mut self, start: usize, function: &Function, instruction: WideInstruction, definitions: &[Option<Definition>]) {
-        if !instruction.op().field_layout(InstructionField::A).is_register_field() { return; }
+        if !crate::vm::compiled::meaning_compiled::writes_register_a(instruction) { return; }
         let Some(Definition::Closure(target)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() else { return };
         self.note_method(instruction, target, definitions);
         if let Some(slot) = function.stored_slot(instruction).and_then(|slot| self.captured[start..].get_mut(slot)) { observe(slot, target); }

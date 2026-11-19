@@ -2,19 +2,17 @@
 //! the lane's helper (`Frame::vm_step`).
 
 use super::{Edges, EmitFrame, FRAME};
-use super::super::{emit_js_guard, emit_js_payload_word, emit_js_property_values, emit_lane_helper_call, emit_unlogged_property_store_guard,
+use super::super::{emit_js_guard, emit_js_payload_word, emit_js_property_values, emit_lane_helper_call,
     register_offset, CheckedObject, Emit, JsStepDispatch, LaneHelper, ObjectRecord, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_MISSED};
 use super::super::super::object_slots::inline_storage;
 use crate::vm::global_facts::GlobalSlot;
 use super::{RegisterFact, Representation, Type};
 use crate::bytecode::Register;
 use crate::staged::CallOut;
+use crate::staged::store::bound_full_store;
 use crate::Value;
 use cranelift_codegen::ir;
-use crate::staged::{flow::FlowStage, region::Region, Access, Stage};
-
-/// The property values a global store writes.
-const OBJECT_SLOTS: Access = Region::ObjectSlots.mutable();
+use crate::staged::{flow::FlowStage, Stage};
 
 /// Where a call-out's record is, and what its slow case needs of the lowering: the registers the
 /// helper reads, and where a status other than completion or a miss ends the body.
@@ -170,15 +168,15 @@ pub(super) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
     let address = layout.arena_address(stage.builder, cell.slot, miss)?;
     #[cfg(test)]
     crate::vm::call_out::counts::bump(&crate::vm::call_out::counts::DIRECT_GLOBAL_STORES);
+    let record = stage.and_imm(bits, u64::from(u32::MAX));
+    // A Number is immediate, so the row stores it with no gate and cannot leave.
     if ty.is_subtype(Type::NUMBER) {
-        stage.store_u64(OBJECT_SLOTS, address, 0, value);
-        return Some(());
+        return bound_full_store(stage, record, address, (value, ty), miss);
     }
     let general = super::cold_block(stage.builder);
     let done = stage.builder.create_block();
-    let record = stage.and_imm(bits, u64::from(u32::MAX));
-    emit_unlogged_property_store_guard(stage.builder, crate::staged::StagedRecordSpace::Object, frame.payload, record, value, general);
-    stage.store_u64(OBJECT_SLOTS, address, 0, value);
+    // The store gate of the staged row; a gate that does not admit the write leaves to the VM's step.
+    bound_full_store(stage, record, address, (value, ty), general)?;
     stage.jump(done, &[]);
     stage.builder.switch_to_block(general);
     site_step(frame, stage, frame.call_out?, false, None)?;
