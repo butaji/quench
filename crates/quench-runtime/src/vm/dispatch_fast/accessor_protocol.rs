@@ -117,6 +117,11 @@ impl<H: Host> AccessorCall<H> {
         // once, is answered by its read or activated.
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(self.cx) }.heap.function(getter) {
             let native = *native;
+            // A native getter has no target to admit it: the admission word decides, as a link's
+            // compare would.
+            if !unsafe { vm(self.cx) }.lane_stack.script_calls_allowed() {
+                return Err(exit(ip));
+            }
             if reads {
                 if let Some(value) = unsafe { vm(self.cx) }.pure_native_getter_value(getter, base) {
                     let r = unsafe { (*self.cx).registers };

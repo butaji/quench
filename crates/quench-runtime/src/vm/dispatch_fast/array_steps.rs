@@ -121,7 +121,8 @@ pub(super) fn lane_call_for_each_once<H: Host>(
     args: &[Value],
 ) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
-    if !unsafe { (*cx).script_calls } || vm.with_scope_entered || vm.own_array_length(receiver) != Some(1) {
+    // The callback's target is found through the admission word (`lane_callback_target`).
+    if vm.with_scope_entered || vm.own_array_length(receiver) != Some(1) {
         return None;
     }
     let element = lane_dense_element(vm, receiver, 0)?;

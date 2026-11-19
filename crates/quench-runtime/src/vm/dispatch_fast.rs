@@ -2931,6 +2931,21 @@ impl LaneStack {
         self.refused & Admission::NO_SCRIPT_CALLS == 0
     }
 
+    /// Whether the lane admits activating a script callee of `program` with no link to prove
+    /// it (a getter, a native's callback, a body's call): script calls allowed, no construction
+    /// pending and `program` the active one, in one compare of the admission word, the same
+    /// word every link's admission is compared with.
+    #[inline(always)]
+    pub(super) fn admits_program(&self, program: ProgramId) -> bool {
+        self.admission.0 >> Admission::PROGRAM_SHIFT == program.raw() as u64
+    }
+
+    /// Whether any condition refuses every unlinked activation (`Admission::CONDITIONS`).
+    #[inline(always)]
+    fn refuses_any(&self) -> bool {
+        self.refused & Admission::CONDITIONS != 0
+    }
+
     #[inline(always)]
     fn set_condition(&mut self, bit: u64, holds: bool) {
         self.refused = self.refused & !bit | if holds { bit } else { 0 };
@@ -3088,6 +3103,11 @@ struct LaneContext<H: Host> {
     /// execution mode, memory policy and JIT mode hold for the whole run, so a call reads this
     /// instead of asking the policy again.
     tiers_run: bool,
+    /// Whether a return completes a script frame the run entered from a Wasm export
+    /// (`lane_return_script_frame`): script calls on and inline calls off, kept by
+    /// `lane_set_script_calls`, which every switch of the two makes after setting
+    /// `inline_calls`. A return reads this one flag.
+    returns_script_frame: bool,
     /// The running activation's `this`, or `DELETED` when the frame's binding decides
     /// it (`Vm::current_this`).
     /// The instance environment of the Wasm activations above a JavaScript call of an export
@@ -5254,7 +5274,7 @@ fn lane_return_value_other<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Valu
     if let Some(resumed) = lane_complete_returning(cx, ip, value) {
         return resumed;
     }
-    if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
+    if unsafe { (*cx).returns_script_frame } {
         // This completion already owns its value; native SSA may never have
         // written the Return register. Publish it if this frame cannot retire.
         return Resumed::Exit(lane_return_script_frame(cx, ip, value, true));
@@ -6364,9 +6384,7 @@ fn lane_index_getter_activation<H: Host>(
     base: Value,
     key: Value,
 ) -> Result<(Registers, Ip), Ip> {
-    if !unsafe { (*cx).script_calls } {
-        return Err(exit(ip));
-    }
+    // The getter's activation asks the admission word (`lane_activate_getter`).
     let vm = unsafe { vm(cx) };
     let Some(getter) = vm.proved_symbol_getter(base, key) else {
         return Err(exit(ip));
@@ -8890,11 +8908,9 @@ fn lane_getter_activation<H: Host>(
     ip: Ip,
     i: &LaneInstruction,
 ) -> Result<(Registers, Ip), Ip> {
-    if !unsafe { (*cx).script_calls } {
-        #[cfg(feature = "profile-lane-exits")]
-        super::lane_exits::record_detail("getter decline script_calls".into());
-        return Err(exit(ip));
-    }
+    // No admission test here: the getter's target is found through the admission word
+    // (`lane_script_target_in`, `cross_call_entry`), which refuses a run that calls no script
+    // functions or has a construction pending, and a native getter asks it in `read_getter`.
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     // The object the getter's read is of and its site: a nested site's second field is read
@@ -14487,6 +14503,7 @@ script_handler! {
 unsafe fn lane_set_script_calls<H: Host>(cx: *mut LaneContext<H>, allowed: bool) {
     unsafe {
         (*cx).script_calls = allowed;
+        (*cx).returns_script_frame = allowed && !(*cx).inline_calls;
         vm(cx).lane_stack.set_script_calls(allowed);
     }
 }
@@ -17921,9 +17938,6 @@ fn lane_script_target_in<H: Host>(
     resolved: &mut Option<ScriptCallTarget>,
 ) -> Option<&ScriptCallTarget> {
     let vm = unsafe { vm(cx) };
-    if lane_constructing(vm, callee) {
-        return None;
-    }
     // The paths besides a plain call (constructions, getters, forwarded and applied calls)
     // activate callees of the running program alone. Another program's callee, once
     // resolved, is held apart (`cross_call_entry`) for the callers that activate across
@@ -17935,7 +17949,10 @@ fn lane_script_target_in<H: Host>(
         let target = unsafe { &*entry };
         return lane_admits_activation(target).then_some(target);
     }
-    if vm.cross_call_entry(callee).is_some() {
+    // A cached entry or cross entry is admitted by its link's compare, which refuses under
+    // any condition (no script calls, a construction pending); a resolve makes no compare, so
+    // the conditions refuse it here, once, for every unlinked caller.
+    if vm.lane_stack.refuses_any() || vm.cross_call_entry(callee).is_some() {
         return None;
     }
     let active = vm.active_program;
@@ -21705,7 +21722,7 @@ fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Resumed {
     // SAFETY: called only while a lane runs, from its return handler.
     let i = unsafe { &*ip };
     let vm = unsafe { vm(cx) };
-    if !unsafe { (*cx).inline_calls } && unsafe { (*cx).script_calls } {
+    if unsafe { (*cx).returns_script_frame } {
         return Resumed::Exit(lane_return_script_frame(cx, ip, r.get(i.a), false));
     }
     let pending = unsafe { &mut *(*cx).pending };
@@ -25448,6 +25465,8 @@ impl<H: Host> Vm<H> {
                 && code.kind != crate::bytecode::ProgramKind::Wasm
                 && *frame + 1 == self.frames.len(),
             tiers_run: self.tier_may_run(crate::jit_mode::Tier::ANY),
+            // `script_calls` starts on only where `inline_calls` is.
+            returns_script_frame: false,
             script_constructs: code
                 .function_get(self.frames[*frame].function as usize)
                 .is_some_and(|function| {
@@ -25534,7 +25553,7 @@ impl<H: Host> Vm<H> {
         // A due collection runs on the general path, whose safepoints take it; the lane's
         // floor, set for the native's caller, bounds this run's stack as it bounds the lane's
         // own calls (`LANE_STACK_SLACK`).
-        if !unsafe { (*cx).script_calls } || self.active_program != unsafe { (*cx).program } || self.heap.should_collect() {
+        if !self.lane_stack.admits_program(unsafe { (*cx).program }) || self.heap.should_collect() {
             return None;
         }
         // Each nested run takes native stack, as the general loop's would (`Vm::enter_stack`),
@@ -25643,7 +25662,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         // SAFETY: as `lane_native_callback`'s.
-        if !unsafe { (*cx).script_calls } || self.active_program != unsafe { (*cx).program } || self.heap.should_collect() {
+        if !self.lane_stack.admits_program(unsafe { (*cx).program }) || self.heap.should_collect() {
             return None;
         }
         let _stack = crate::stack::StackGuard::enter().ok()?;
@@ -26091,8 +26110,7 @@ impl<H: Host> Vm<H> {
             || !self.lane_stack.activations().is_empty()
             || self.with_scope_entered
             // SAFETY: the lane's context lives while its native runs.
-            || !unsafe { (*cx).script_calls }
-            || self.active_program != unsafe { (*cx).program }
+            || !self.lane_stack.admits_program(unsafe { (*cx).program })
         {
             return None;
         }

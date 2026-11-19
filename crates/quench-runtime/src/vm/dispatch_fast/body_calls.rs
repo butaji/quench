@@ -159,8 +159,11 @@ fn body_call<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall) -> u64 {
 /// Whether the lane admits a body's call of `callee` at all: it may activate script calls, the
 /// callee is not being constructed, no `with` scope is open, and a returning call may complete.
 fn call_admitted<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>, call: &BodyCall, callee: Value) -> Result<(), u64> {
-    if !unsafe { (*cx).script_calls } { return Err(miss(vm, Miss::NoScriptCalls)); }
-    if lane_constructing(vm, callee) { return Err(miss(vm, Miss::CallConstructing)); }
+    // One compare of the admission word; the miss names which condition refused.
+    if !vm.lane_stack.admits_program(vm.active_program) {
+        let reason = if !vm.lane_stack.script_calls_allowed() { Miss::NoScriptCalls } else { Miss::CallConstructing };
+        return Err(miss(vm, reason));
+    }
     if vm.with_scope_entered { return Err(miss(vm, Miss::WithScope)); }
     if call.site.returns && !lane_returning_call_admitted(cx) { return Err(miss(vm, Miss::CallReturningNotAdmitted)); }
     Ok(())
