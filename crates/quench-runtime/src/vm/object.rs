@@ -728,8 +728,17 @@ impl<H: Host> Vm<H> {
         }
         if let Some(subjects) = subjects.into_iter().collect::<Option<Vec<u32>>>() {
             let next = self.object_data(first).map_or(Value::NULL, |data| data.proto());
+            let proof = crate::heap::IndexFreeChainProof::new(first, next);
+            // The link word mirrors the held proof only where that proof covers `Array.prototype`'s
+            // chain. Recording any other proof replaces a held one, so the word clears then.
+            let link = if first == self.array_prototype_for_realm(self.realm.globals) {
+                u64::from(proof.links[0])
+            } else {
+                crate::heap::NO_INDEX_FREE_CHAIN_LINK
+            };
             self.heap.dependencies().prove(crate::heap::ProofKind::IndexFreeChain, &subjects, |proofs| {
-                proofs.index_free_chain = Some(crate::heap::IndexFreeChainProof::new(first, next));
+                proofs.index_free_chain = Some(proof);
+                crate::heap::set_index_free_chain_link(link);
             });
         }
         true

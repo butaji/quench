@@ -1189,7 +1189,10 @@ impl<H: Host> Vm<H> {
                     Some(value) => vm.coerce_js_string(p, value)?,
                 };
                 let mut output = super::wtf16::JsStringBuilder::default();
-                for index in vm.join_dense_prefix(object, length, &separator, &mut output)..length {
+                // The dense prefix is the one join body (`plain_join_prefix`); the rest is the spec's.
+                let (prefix, stop) = vm.plain_join_prefix(object, length, &separator);
+                output.append(&prefix);
+                for index in stop..length {
                     if index != 0 {
                         output.append(&separator);
                     }

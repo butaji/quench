@@ -2,7 +2,7 @@
 
 use super::*;
 
-natives! {
+row_table! {
     // `Promise.prototype`, in installation order (`[Symbol.toStringTag]` is symbol-keyed).
     (PromisePrototype, "then", PromiseThen, 2),
     (PromisePrototype, "catch", PromiseCatch, 1),

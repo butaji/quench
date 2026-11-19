@@ -131,10 +131,38 @@ mod cell_layout_tests {
     }
 }
 
+/// Declares `Native`, one entry per builtin function kind, in discriminant order. The order fixes
+/// the discriminants that tables index and snapshots serialize, so entries never move. An entry
+/// marked `: unshared` is not a shared function object: `Vm::native_value` never builds it.
+/// `Native::COUNT` (`heap/cell/snapshot.rs`) is the list's length: `ALL`'s type states it, so a
+/// list of another length does not compile.
+macro_rules! natives {
+    ($( $(#[$meta:meta])* $variant:ident $(: $flag:ident)? ),* $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[repr(u16)]
+        pub(crate) enum Native {
+            $( $(#[$meta])* $variant, )*
+        }
+
+        impl Native {
+            /// Every native in discriminant order: `ALL[n as usize]` has discriminant `n`.
+            pub(crate) const ALL: [Native; Native::COUNT as usize] = [$(Native::$variant),*];
+
+            /// Whether this native is a shared function object, which `Vm::native_value` builds on
+            /// first read and every realm shares.
+            pub(crate) const fn has_shared_function(self) -> bool {
+                /// Each native's `unshared` flag, by discriminant.
+                const UNSHARED: [bool; Native::COUNT as usize] = [$(natives!(@unshared $($flag)?)),*];
+                !UNSHARED[self as usize]
+            }
+        }
+    };
+    (@unshared) => { false };
+    (@unshared unshared) => { true };
+}
+
 #[rustfmt::skip]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(u16)]
-pub(crate) enum Native {
+natives! {
     Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, CollectGarbage, RealmTypeError, Eval, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionCaller, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
     Object,
     ObjectKeys, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
@@ -150,7 +178,7 @@ pub(crate) enum Native {
     ReflectSetPrototypeOf,
     ReflectConstruct,
     Proxy, ProxyRevocable, ProxyRevoke,
-    LazyDataProperty, TemporalInitialize,
+    LazyDataProperty: unshared, TemporalInitialize: unshared,
     JsonParse,
     JsonStringify,
     JsonRawJson,
@@ -646,7 +674,7 @@ pub(crate) enum Native {
     PromiseAggregateJob,
     AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
     WithEnter, WithExit,
-    WasmHost,
+    WasmHost: unshared,
     WebAssemblyValidate, WebAssemblyCompile, WebAssemblyInstantiate,
     WasmModule, WasmModuleExports, WasmModuleImports, WasmModuleCustomSections,
     WasmInstance, WasmInstanceExportsGetter,
@@ -655,75 +683,11 @@ pub(crate) enum Native {
     WasmGlobal, WasmGlobalValueGetter, WasmGlobalValueSetter, WasmGlobalValueOf, WasmTag,
     WasmCompileError, WasmLinkError, WasmRuntimeError,
     /// A Wasm function as JavaScript sees it; its environment is the Wasm closure.
-    WasmExportedFunction,
-    HostFunction,
+    WasmExportedFunction: unshared,
+    HostFunction: unshared,
     CallSiteConstructor,
     CallSiteGetFunction,
-    MathInitialize,
-    /// Initializers of the lazily installed namespaces and groups (`install_lazy_builtin_namespace`).
-    AtomicsInitialize,
-    WebAssemblyInitialize,
-    IntlInitialize,
-    ReflectInitialize,
-    ProxyInitialize,
-    WeakRefInitialize,
-    FinalizationRegistryInitialize,
-    DataViewInitialize,
-}
-
-/// A native's traits, each derived once at compile time from its defining predicate
-/// (`Native::derive_*`) and read with one load: the call protocol asks several per call.
-mod native_traits {
-    pub(super) const RUNS_FROM_LANE: u8 = 1;
-    pub(super) const RUNS_BESIDE_ACTIVATIONS: u8 = 2;
-    pub(super) const HOST_CONTROL: u8 = 4;
-    pub(super) const MATH_FUNCTION: u8 = 8;
-    pub(super) const INTRINSIC_SPECIES_GETTER: u8 = 16;
-}
-
-const NATIVE_TRAITS: [u8; Native::COUNT as usize] = {
-    use native_traits::*;
-    let mut table = [0u8; Native::COUNT as usize];
-    let mut index = 0;
-    while index < Native::COUNT {
-        let Some(native) = Native::from_discriminant(index) else { panic!("discriminants are dense") };
-        let mut traits = 0;
-        if native.derive_runs_from_lane() { traits |= RUNS_FROM_LANE; }
-        if native.derive_runs_beside_activations() { traits |= RUNS_BESIDE_ACTIVATIONS; }
-        if native.derive_host_control_native() { traits |= HOST_CONTROL; }
-        if native.derive_math_function() { traits |= MATH_FUNCTION; }
-        if native.derive_intrinsic_species_getter() { traits |= INTRINSIC_SPECIES_GETTER; }
-        table[index as usize] = traits;
-        index += 1;
-    }
-    table
-};
-
-impl Native {
-    #[inline(always)]
-    const fn has_trait(self, bit: u8) -> bool {
-        NATIVE_TRAITS[self as usize] & bit != 0
-    }
-
-    /// `derive_runs_from_lane`, read from the derived table.
-    #[inline(always)]
-    pub(crate) const fn runs_from_lane(self) -> bool { self.has_trait(native_traits::RUNS_FROM_LANE) }
-
-    /// `derive_runs_beside_activations`, read from the derived table.
-    #[inline(always)]
-    pub(crate) const fn runs_beside_activations(self) -> bool { self.has_trait(native_traits::RUNS_BESIDE_ACTIVATIONS) }
-
-    /// `derive_host_control_native`, read from the derived table.
-    #[inline(always)]
-    pub(crate) const fn is_host_control_native(self) -> bool { self.has_trait(native_traits::HOST_CONTROL) }
-
-    /// `derive_math_function`, read from the derived table.
-    #[inline(always)]
-    pub(crate) const fn is_math_function(self) -> bool { self.has_trait(native_traits::MATH_FUNCTION) }
-
-    /// `derive_intrinsic_species_getter`, read from the derived table.
-    #[inline(always)]
-    pub(crate) const fn is_intrinsic_species_getter(self) -> bool { self.has_trait(native_traits::INTRINSIC_SPECIES_GETTER) }
+    MathInitialize: unshared,
 }
 
 /// A global's cold facts, boxed with its object part so the cell stays compact.
@@ -831,39 +795,6 @@ impl Native {
         )
     }
 
-    /// `String.prototype` methods that, for a string primitive receiver and arguments that
-    /// are not objects, run no guest code and have no effect beyond allocating their result.
-    /// `split` looks `Symbol.split` up only on an object separator (ES2025), so it is among
-    /// them; `match` and `search`, which make a RegExp of a string, are not.
-    #[inline]
-    pub(crate) const fn is_pure_string_method(self) -> bool {
-        matches!(
-            self,
-            Self::StringCharCodeAt
-                | Self::StringCharAt
-                | Self::StringSlice
-                | Self::StringSubstring
-                | Self::StringSubstr
-                | Self::StringIncludes
-                | Self::StringStartsWith
-                | Self::StringEndsWith
-                | Self::StringIndexOf
-                | Self::StringLastIndexOf
-                | Self::StringTrim
-                | Self::StringTrimStart
-                | Self::StringTrimEnd
-                | Self::StringAt
-                | Self::StringCodePointAt
-                | Self::StringToUpperCase
-                | Self::StringToLowerCase
-                | Self::StringConcat
-                | Self::StringRepeat
-                | Self::StringPadStart
-                | Self::StringPadEnd
-                | Self::StringSplit
-        )
-    }
-
     /// The natives whose searches run a RegExp's matcher, after which a search that ran out of
     /// backtracking stack raises (`Vm::regexp_search_outcome`).
     pub(crate) const fn searches_regexps(self) -> bool {
@@ -883,50 +814,6 @@ impl Native {
                 | Self::StringSearch
                 | Self::StringSplit
                 | Self::RegExpStringIteratorNext
-        )
-    }
-
-    /// The functions of the `Math` object (`MATH_FUNCTIONS`, which its test keeps equal).
-    const fn derive_math_function(self) -> bool {
-        matches!(
-            self,
-            Self::MathAbs
-                | Self::MathAcos
-                | Self::MathAcosh
-                | Self::MathAsin
-                | Self::MathAsinh
-                | Self::MathAtan
-                | Self::MathAtan2
-                | Self::MathAtanh
-                | Self::MathCbrt
-                | Self::MathCeil
-                | Self::MathClz32
-                | Self::MathCos
-                | Self::MathCosh
-                | Self::MathExp
-                | Self::MathExpm1
-                | Self::MathF16Round
-                | Self::MathFloor
-                | Self::MathFround
-                | Self::MathHypot
-                | Self::MathImul
-                | Self::MathLog
-                | Self::MathLog10
-                | Self::MathLog1p
-                | Self::MathLog2
-                | Self::MathMax
-                | Self::MathMin
-                | Self::MathPow
-                | Self::MathRandom
-                | Self::MathRound
-                | Self::MathSign
-                | Self::MathSin
-                | Self::MathSinh
-                | Self::MathSqrt
-                | Self::MathSumPrecise
-                | Self::MathTan
-                | Self::MathTanh
-                | Self::MathTrunc
         )
     }
 

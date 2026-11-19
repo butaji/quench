@@ -330,7 +330,10 @@ fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, 
         Native::ArrayLastIndexOf => vm.plain_array_last_index_of(receiver, args),
         Native::ArrayReverse => vm.plain_array_reverse(receiver, args),
         Native::ArrayToReversed => vm.plain_array_to_reversed(receiver, args),
-        Native::ArrayWith => vm.plain_array_with(receiver, args),
+        Native::ArrayWith => {
+            let with = vm.plain_array_with(receiver, args);
+            vm.fast_declined(native, with)
+        }
         _ => None,
     }
 }

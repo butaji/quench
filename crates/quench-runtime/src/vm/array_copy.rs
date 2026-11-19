@@ -52,6 +52,13 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The dense body of `with` (`plain_array_with`) first, unless the in-place attempt declined it.
+        if native == Native::ArrayWith
+            && self.declined_fast.take() != Some(Native::ArrayWith)
+            && let Some(with) = self.plain_array_with(this, args)
+        {
+            return Ok(with);
+        }
         let source = self.box_object_or_type_error(p, this)?;
         let source = self.heap.root(source);
         let used_arguments = match native {

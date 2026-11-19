@@ -48,97 +48,106 @@ impl<H: Host> Vm<H> {
         Some(self.array_of(args))
     }
 
-    /// `Array.prototype.join` of a dense array whose elements are present and are flat ASCII
-    /// strings, numbers, `undefined` or `null` (empty), with an absent or flat ASCII separator.
-    /// The result is one string: its length is counted over the elements, then its bytes are
-    /// written into it.
+    /// `Array.prototype.join` of a dense array whose elements are flat ASCII strings, numbers,
+    /// booleans, `undefined`, `null` or holes no prototype holds, with an absent or flat ASCII
+    /// separator. The result is one string when the prefix covers every element; otherwise `None`,
+    /// and the general native continues from the first index the prefix did not cover.
     pub(in crate::vm) fn plain_array_join(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let separator = match args.first().copied() {
             Some(value) if !value.is_undefined() => owned_flat_ascii(&self.heap, value)?,
             _ => JsString::short_ascii(DEFAULT_JOIN_SEPARATOR),
         };
-        let string = self.join_dense_ascii(receiver, &separator)?;
-        Some(self.heap.alloc_string(string))
+        let length = self.array_search_elements(receiver)?.len();
+        let (text, stop) = self.plain_join_prefix(receiver, length, &separator);
+        (stop == length).then(|| self.heap.alloc_string(text))
     }
 
-    /// The `join` text of the dense array `receiver` with `separator` between elements, as one
-    /// string; `None` for a hole, a wide string, an object, or a result past the longest string.
+    /// The join text of the elements of `array` below `length`, with `separator` between them, for
+    /// as long as each element is decided without guest code and as ASCII text: a String, a Number,
+    /// a Boolean, `undefined`, `null`, or a hole no prototype holds. Returns that text and the first
+    /// index it does not cover, where the general algorithm continues (`length` when it covers all).
     /// The elements are read from the heap, which is not written while the text is made.
-    fn join_dense_ascii(&self, receiver: Value, separator: &JsString) -> Option<JsString> {
-        let elements = self.array_search_elements(receiver)?;
-        let separator = ascii_bytes(separator)?;
-        let length = self.join_length(elements, separator.len())?;
-        Some(JsString::from_ascii_zeroed_with(length, |out| self.write_join(elements, separator, out)))
+    pub(in crate::vm) fn plain_join_prefix(&self, array: Value, length: usize, separator: &JsString) -> (JsString, usize) {
+        let (Some(elements), Some(separator)) = (self.array_search_elements(array), ascii_bytes(separator)) else {
+            return (JsString::short_ascii(b""), 0);
+        };
+        let covered = length.min(elements.len());
+        let (stop, text_len) = self.join_prefix_extent(array, elements, covered, separator.len());
+        let text = JsString::from_ascii_zeroed_with(text_len, |out| {
+            self.write_join_prefix(array, elements, stop, separator, out);
+        });
+        (text, stop)
     }
 
-    /// The byte length of the `join` text of `elements` with `separator_len` bytes between them;
-    /// `None` for a hole, a non-ASCII element, or a length past the longest string.
-    fn join_length(&self, elements: &crate::heap::ArrayElements, separator_len: usize) -> Option<usize> {
+    /// The byte length of the join text of the first `covered` elements of `array` with
+    /// `separator_len` bytes between them, and the index where that text stops: the first element
+    /// not decided as text, or whose text would pass `MAX_STRING_UNITS` (the general algorithm then
+    /// raises the error).
+    fn join_prefix_extent(&self, array: Value, elements: &crate::heap::ArrayElements, covered: usize, separator_len: usize) -> (usize, usize) {
         let mut length = 0;
-        for (index, value) in elements.range(0..elements.len()).enumerate() {
-            if value.is_deleted() {
-                return None;
+        for (index, value) in elements.range(0..covered).enumerate() {
+            let separator = if index > 0 { separator_len } else { 0 };
+            let Some(piece) = self.join_piece(array, index, value, |bytes| bytes.len()) else {
+                return (index, length);
+            };
+            if length + separator + piece > MAX_STRING_UNITS {
+                return (index, length);
             }
-            if index > 0 {
-                length += separator_len;
-            }
-            length += self.join_piece_len(value)?;
-            if length > MAX_STRING_UNITS {
-                return None;
-            }
+            length += separator + piece;
         }
-        Some(length)
+        (covered, length)
     }
 
-    /// The byte length of `value` as a `join` element: a number's text, a flat ASCII string's
-    /// bytes, nothing for `undefined` or `null`; `None` for any other value.
-    fn join_piece_len(&self, value: Value) -> Option<usize> {
-        if let Some(int) = value.as_int() {
-            return Some(itoa::Buffer::new().format(int).len());
-        }
-        if let Some(number) = value.as_number() {
-            let mut text = crate::number_to_string::Short::new();
-            crate::number_to_string::write(number, &mut text);
-            return Some(text.len());
-        }
-        if value.is_undefined() || value.is_null() {
-            return Some(0);
-        }
-        match self.heap.flat_text(value)?.units() {
-            Units::Ascii(bytes) => Some(bytes.len()),
-            Units::Wide(_) => None,
-        }
-    }
-
-    /// Writes the `join` text of `elements` with `separator` between them into `out`, which
-    /// `join_length` sized over the same elements.
-    fn write_join(&self, elements: &crate::heap::ArrayElements, separator: &[u8], out: &mut [u8]) {
+    /// Writes the join text of the first `stop` elements of `array` with `separator` between them
+    /// into `out`, which `join_prefix_extent` sized over the same elements.
+    fn write_join_prefix(&self, array: Value, elements: &crate::heap::ArrayElements, stop: usize, separator: &[u8], out: &mut [u8]) {
         let mut at = 0;
-        for (index, value) in elements.range(0..elements.len()).enumerate() {
+        for (index, value) in elements.range(0..stop).enumerate() {
             if index > 0 {
                 at = put(out, at, separator);
             }
-            at = self.write_join_piece(value, out, at);
+            let next = self.join_piece(array, index, value, |bytes| put(out, at, bytes));
+            at = next.unwrap_or(at);
         }
-        assert_eq!(at, out.len(), "the elements fill the length `join_length` counted");
+        assert_eq!(at, out.len(), "the elements fill the length `join_prefix_extent` counted");
     }
 
-    /// Writes the `join` text of one element at `at` in `out`, returning the offset past it.
-    fn write_join_piece(&self, value: Value, out: &mut [u8], at: usize) -> usize {
+    /// Applies `f` to the bytes of the join piece of element `index` of `array` (`value`, its slot):
+    /// a hole no prototype holds is empty. `None` for an element whose text needs guest code or is
+    /// not ASCII.
+    fn join_piece<R>(&self, array: Value, index: usize, value: Value, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        if value.is_deleted() {
+            return self.inherited_index_absent(array, index).then(|| f(&[]));
+        }
+        if value.is_undefined() || value.is_null() {
+            return Some(f(&[]));
+        }
         if let Some(int) = value.as_int() {
-            return put(out, at, itoa::Buffer::new().format(int).as_bytes());
+            return Some(f(itoa::Buffer::new().format(int).as_bytes()));
         }
         if let Some(number) = value.as_number() {
             let mut text = crate::number_to_string::Short::new();
             crate::number_to_string::write(number, &mut text);
-            return put(out, at, &text);
+            return Some(f(&text));
         }
-        let Some(text) = self.heap.flat_text(value) else {
-            return at;
+        if let Some(flag) = value.as_bool() {
+            let word: &[u8] = if flag { b"true" } else { b"false" };
+            return Some(f(word));
+        }
+        self.with_join_text(value, f)
+    }
+
+    /// Applies `f` to the bytes of the flat ASCII string `value`, read in place (a rope is flattened
+    /// as the general join reads it); `None` for a wide string or a value that is not a string.
+    fn with_join_text<R>(&self, value: Value, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        let existing = self.heap.flat_text(value);
+        let units = match &existing {
+            Some(text) => text.units(),
+            None => self.heap.string(value)?.flat().view(),
         };
-        match text.units() {
-            Units::Ascii(bytes) => put(out, at, bytes),
-            Units::Wide(_) => at,
+        match units {
+            Units::Ascii(bytes) => Some(f(bytes)),
+            Units::Wide(_) => None,
         }
     }
 }

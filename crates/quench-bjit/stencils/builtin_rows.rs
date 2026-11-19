@@ -17,8 +17,8 @@ use crate::heap_rows::{payload, word_at};
 use crate::layout::call_record::{CallRecord, REGISTER_BYTES};
 use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
 use crate::layout::{
-    JS_STEP_ARMED_ARRAY_PROOFS, JS_STEP_ARRAY_CHAIN_INDEX_FREE, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_ASCII_UNIT_STRINGS,
-    JS_STEP_STRING_RECORD_BASE,
+    JS_STEP_ARMED_ARRAY_PROOFS, JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS, JS_STEP_ARRAY_RECORD_BASE,
+    JS_STEP_ASCII_UNIT_STRINGS, JS_STEP_STRING_RECORD_BASE,
 };
 use crate::stage::StencilStage;
 use crate::staged::{builtins, elements, math, object, strings};
@@ -193,13 +193,13 @@ unsafe fn proofs_armed(s: &S) -> bool {
 }
 
 /// `push(value)` of the dense array receiver (`builtins::array_push_one`): its room is the backing's
-/// capacity word, and its prototype link must be the one the held index-free chain proof covers
-/// (`JS_STEP_ARRAY_CHAIN_INDEX_FREE`), which proves no prototype holds an index. The value must hold
-/// no heap reference, so its store is unlogged. The new length.
+/// capacity word, and its prototype link must be the one the held index-free chain proof covers,
+/// which the link word names (`JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS`) and which proves no prototype
+/// holds an index. The value must hold no heap reference, so its store is unlogged. The new length.
 #[inline(always)]
 unsafe fn array_push(s: &S, record: usize) -> Option<u64> {
     // SAFETY: as `is_callee`, `payload`'s and the receiver's reads; the header is the backing's,
-    // live with its record.
+    // live with its record; the payload's address names the thread's link word, live for the thread.
     unsafe {
         if !is_callee(s, record) {
             return None;
@@ -208,7 +208,7 @@ unsafe fn array_push(s: &S, record: usize) -> Option<u64> {
         let mut stage = StencilStage::from_hole(0);
         let backing = elements::array_backing(&mut stage, records, receiver(s, record), ())?;
         let object = stage.add_imm(backing.record, ARRAY.object_offset as u64);
-        let chain = word_at(payload(s), JS_STEP_ARRAY_CHAIN_INDEX_FREE);
+        let chain = word_at(word_at(payload(s), JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS) as usize, 0);
         if chain == 0 || object::proto_link(&mut stage, object) != chain {
             return None;
         }

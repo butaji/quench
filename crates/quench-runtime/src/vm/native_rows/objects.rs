@@ -3,7 +3,7 @@
 
 use super::*;
 
-natives! {
+row_table! {
     // `Object`, in the order the specification lists its properties (Node's order).
     (ObjectConstructor, "assign", ObjectAssign, 2),
     (ObjectConstructor, "getOwnPropertyDescriptor", ObjectGetOwnPropertyDescriptor, 2),

@@ -138,7 +138,10 @@ use typed_view::TypedViewTable;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 pub(crate) use array_elements::NARROW_LEN;
 mod array_proofs;
-pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, armed_proofs_address, retire_array_storage_proofs};
+pub(crate) use array_proofs::{
+    ArrayStorageProofs, LaneProofScope, NO_INDEX_FREE_CHAIN_LINK, armed_proofs_address, index_free_chain_link_address,
+    retire_array_storage_proofs, set_index_free_chain_link,
+};
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{

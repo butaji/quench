@@ -267,9 +267,10 @@ pub(crate) const JS_STEP_ENV_STORAGE: usize = 440;
 /// The address of the thread's armed array proofs word (`JsStepDispatch::armed_array_proofs`): the word it
 /// names is nonzero while a lane run's proofs are armed.
 pub(crate) const JS_STEP_ARMED_ARRAY_PROOFS: usize = 448;
-/// The encoded link of `Array.prototype` while its chain holds no index, else zero
-/// (`JsStepDispatch::array_chain_index_free`).
-pub(crate) const JS_STEP_ARRAY_CHAIN_INDEX_FREE: usize = 456;
+/// The address of the thread's index-free chain link word (`JsStepDispatch::array_chain_index_free_address`):
+/// the word it names is the encoded link of `Array.prototype` while the held index-free chain proof covers
+/// its chain, else zero.
+pub(crate) const JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS: usize = 456;
 /// The running activation's receiver (`this`) word, `DELETED` where it has none: the entry of a
 /// lane body or loop region publishes the one it is entered with, for its run.
 pub(crate) const JS_STEP_RECEIVER: usize = 192;

@@ -282,6 +282,31 @@ pub(crate) fn armed_proofs_address() -> usize {
     ARMED_PROOFS.as_ptr().addr()
 }
 
+/// The word that holds no index-free chain link: the mirror's value while no proof covers the
+/// chain of `Array.prototype`.
+pub(crate) const NO_INDEX_FREE_CHAIN_LINK: u64 = 0;
+
+/// The encoded link of `Array.prototype` while the held index-free chain proof covers its chain,
+/// else `NO_INDEX_FREE_CHAIN_LINK`: the word a push row matches a dense array's prototype link
+/// against (`JsStepDispatch::array_chain_index_free_address`). It mirrors the proof, so it is
+/// written only with that proof: `prove_index_free_chain` sets it with the proof it records, and
+/// `Proofs::retire` clears it with the proof. A `#[thread_local]` static like `ARMED_PROOFS`.
+#[thread_local]
+static INDEX_FREE_CHAIN_LINK: std::cell::Cell<u64> = std::cell::Cell::new(NO_INDEX_FREE_CHAIN_LINK);
+
+/// The address of the thread's index-free chain link word (`INDEX_FREE_CHAIN_LINK`), which a
+/// stencil row reads through `JsStepDispatch::array_chain_index_free_address`. The address is
+/// stable for the thread's life, so the row sees each set and clear as it happens.
+pub(crate) fn index_free_chain_link_address() -> usize {
+    INDEX_FREE_CHAIN_LINK.as_ptr().addr()
+}
+
+/// Sets the index-free chain link word to `link`, an encoded prototype link, or to
+/// `NO_INDEX_FREE_CHAIN_LINK`.
+pub(crate) fn set_index_free_chain_link(link: u64) {
+    INDEX_FREE_CHAIN_LINK.set(link);
+}
+
 /// Retires the armed proofs (`ARMED_PROOFS`): a change that may falsify one is about to
 /// happen, or the lane run that made them enters a nested run or ends. Where no proof is
 /// held this only reads the thread's pointer.

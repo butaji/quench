@@ -102,7 +102,10 @@ pub(crate) struct Proofs {
 impl Proofs {
     fn retire(&mut self, kind: ProofKind) {
         match kind {
-            ProofKind::IndexFreeChain => self.index_free_chain = None,
+            ProofKind::IndexFreeChain => {
+                self.index_free_chain = None;
+                super::set_index_free_chain_link(super::NO_INDEX_FREE_CHAIN_LINK);
+            }
         }
     }
 }
@@ -200,6 +203,13 @@ pub(crate) struct Dependencies(Box<UnsafeCell<Table>>);
 impl Default for Dependencies {
     fn default() -> Self {
         Self(Box::new(UnsafeCell::new(Table::default())))
+    }
+}
+
+impl Drop for Dependencies {
+    /// Retires the held proofs: the thread's link word mirrors them, and outlives this heap.
+    fn drop(&mut self) {
+        self.table_mut().retire_kind(ProofKind::IndexFreeChain);
     }
 }
 
