@@ -2,95 +2,64 @@
 //! the stencils dispatch on (`wasm_rows.rs`) and the stitcher looks a row up by. An operator is
 //! its selector tag (`I64BinaryOperator`, `I64UnaryOperator`): the i32 operators are the first
 //! tags of their i64 namesakes.
+//!
+//! The row kinds are one table, `wasm_row_kinds!` below. A kind's code is its position in that
+//! table, and each kind lists the families of rows it holds, so `wasm_library.rs` builds the
+//! library from the same table and no code is typed by hand. Operator tags and counts that the
+//! runtime defines are asserted equal to the runtime's values in
+//! `quench-runtime/src/vm/compiled/wasm_codes_check.rs`, because this crate (compiled alone as the
+//! stencil build) cannot see them.
+//!
+//! Some items are read only by `build.rs` and others only by the stencils or the runtime, so the
+//! lint is off for the whole module.
 
-/// A row's kind.
-pub const BINARY: u8 = 0;
-pub const UNARY: u8 = 1;
-/// A conditional branch on a comparison operator.
-pub const JUMP_IF: u8 = 2;
-/// `D = A`: a register's word.
-pub const MOVE: u8 = 3;
-/// `D = ` the word in the row's hole.
-pub const CONSTANT: u8 = 4;
-/// Continues at the taken successor.
-pub const GOTO: u8 = 5;
-/// `D = memory[A + B]`, the access the operator code indexes in `ACCESSES`; traps out of bounds.
-pub const LOAD: u8 = 6;
-/// `memory[A + B] = D`, likewise.
-pub const STORE: u8 = 7;
-/// Calls the `WasmEntry` in the cell at address B with the arguments from register A on and
-/// the result to D; a trap's status leaves. Its row is a `call_` row (`wasm_name`).
-pub const CALL: u8 = 8;
-/// `D = A op B` on floats (width `W32` is f32), an `F64BinaryOperator` tag; a comparison
-/// leaves an i32 flag.
-pub const FLOAT_BINARY: u8 = 9;
-/// `D = op A` on floats, an `F64UnaryOperator` tag.
-pub const FLOAT_UNARY: u8 = 10;
-/// `D = op A`, a `ScalarConversionOperator` tag; a truncation traps.
-pub const CONVERT: u8 = 11;
-/// `D = (the i32 in hole 3) ? A : B`.
-pub const SELECT: u8 = 12;
-/// Traps: `unreachable`.
-pub const TRAP: u8 = 13;
-/// `D = ` the frame memory's size in pages.
-pub const MEMORY_SIZE: u8 = 14;
-/// Fills `memory[A..A + C]` with the byte in B; traps out of bounds, writing nothing.
-pub const MEMORY_FILL: u8 = 15;
-/// Copies `memory[B..B + C]` to `memory[A..]` (overlap allowed); traps out of bounds.
-pub const MEMORY_COPY: u8 = 16;
-/// `D = ` the global bound at environment slot B, its storage the operator code
-/// (`STORAGE_BITS32`, `STORAGE_BITS64`); the context's global area holds the cell.
-pub const GLOBAL_GET: u8 = 17;
-/// The global bound at environment slot B `= A`, likewise.
-pub const GLOBAL_SET: u8 = 18;
-/// Calls through the table of the indirect call's binding: the element index in register B,
-/// the result to D, a trap's status leaves. Its row is a `call_` row (`wasm_name`).
-pub const CALL_INDIRECT: u8 = 19;
-/// A VM callout of a table, segment or `memory.init` operation (`wasm_rows_callout.rs`): OP is
-/// `CALLOUT_RESULT | CALLOUT_WRAP` bits (`0..=3`). Its row is a `call_` row (`wasm_name`).
-pub const CALLOUT: u8 = 31;
-/// A callout's OP bits: the callout writes a result word to the destination, and that word is an
-/// i32 to be zero-extended from its low 32 bits.
-pub const CALLOUT_RESULT: u32 = 1;
-pub const CALLOUT_WRAP: u32 = 2;
-/// The frame offset a callout's absent operand names: the row passes the zero word.
-#[allow(dead_code)] // The rows and the stitcher read it; `build.rs` includes this file too.
-pub const CALLOUT_ABSENT: u32 = u32::MAX;
-/// `D = memory.grow` of the frame's memory by the pages in register C, the size before in pages
-/// (-1 on failure). Calls the VM through the context's `memory_grow` slot, so its row is a `call_`
-/// row (`wasm_name`).
-pub const MEMORY_GROW: u8 = 30;
-/// A direct call of a defined function the stitcher did not stitch: the VM runs it through the
-/// callout in hole B (`wasm_rows_call_vm.rs`), the callee's defined index in hole FOURTH. Its row
-/// is a `call_` row (`wasm_name`).
-pub const CALL_VM: u8 = 32;
-/// Native roots of a stitched frame (`wasm_rows_roots.rs`): `ROOT_PUSH` holds up to four registers,
-/// named 16 bits each in hole 0, in the context's native roots; `ROOT_POP` releases the count its
-/// hole names. Neither calls, so their rows are not `call_` rows.
-pub const ROOT_PUSH: u8 = 70;
-pub const ROOT_POP: u8 = 71;
-/// The allocating GC step's callout (`wasm_rows_callout.rs`, `gc_allocate`): it reads the operands
-/// from the frame, named by its holes. Its row is a `call_` row (`wasm_name`).
-pub const GC_ALLOCATE: u8 = 72;
-/// A global's storage operator codes: a 32-bit payload, a 64-bit payload.
-pub const STORAGE_BITS32: u32 = 0;
-pub const STORAGE_BITS64: u32 = 1;
+#![allow(dead_code)]
 
-/// The float operators, the conversions.
-pub const FLOAT_BINARY_COUNT: u32 = 14;
-pub const FLOAT_UNARY_COUNT: u32 = 7;
-pub const CONVERT_COUNT: u32 = 33;
+/// One row family: operators at one width, each at every shape.
+#[derive(Clone, Copy)]
+pub struct RowFamily {
+    pub ops: RowOps,
+    pub width: u8,
+    pub shapes: &'static [u8],
+}
 
-/// The rows that once compiled with a constant-pool load: none now, since their float bounds and
-/// masks are built from integer immediates (`wasm_rows_convert.rs`). Kept so the library and its
-/// tests name one list.
-pub const CONVERT_NEEDS_CONSTANTS: [u32; 0] = [];
-pub const FLOAT_BINARY_NEEDS_CONSTANTS: [u32; 0] = [];
+/// The operators a family's rows take.
+#[derive(Clone, Copy)]
+pub enum RowOps {
+    /// The operators `first..end`.
+    Span(u32, u32),
+    /// The operators `first..end` except those listed.
+    Except(u32, u32, &'static [u32]),
+    /// The operators listed.
+    List(&'static [u32]),
+    /// Every scalar access (`ACCESSES`), by its index.
+    Accesses,
+    /// Every scalar access that does not sign-extend (`ACCESSES`), by its index.
+    UnsignedAccesses,
+}
 
-/// The frame's header words before the registers: the result pointer, the memory base and its
-/// length (the call row reloads the pins from them).
-#[allow(dead_code)] // The stitcher reads it; `build.rs` includes this file too.
-pub const FRAME_HEADER_WORDS: u64 = 3;
+/// A family of a kind's rows: the operators `ops` at `width`, each at every shape in `shapes`.
+pub const fn row_family(ops: RowOps, width: u8, shapes: &'static [u8]) -> RowFamily {
+    RowFamily { ops, width, shapes }
+}
+
+/// The row kinds, one table. Each entry is a kind's name and its families. The kind's code is its
+/// position (counted from 0), so a kind added anywhere renumbers the kinds after it; the names
+/// that carry a code (`w_<kind>_<op>_<width>_<shape>`, `call_w_...`) follow, since `build.rs` and
+/// the stitcher both read these constants. `ROW_FAMILIES` is the table as data: each kind with its
+/// families, in table order.
+macro_rules! wasm_row_kinds {
+    (@number $n:expr;) => {};
+    (@number $n:expr; $kind:ident $(, $rest:ident)*) => {
+        pub const $kind: u8 = $n;
+        wasm_row_kinds!(@number $n + 1; $($rest),*);
+    };
+    ($($kind:ident => [$($family:expr),* $(,)?]),* $(,)?) => {
+        wasm_row_kinds!(@number 0; $($kind),*);
+        /// Every kind with its row families, in table order.
+        pub const ROW_FAMILIES: &[(u8, &[RowFamily])] = &[$(($kind, &[$($family),*])),*];
+    };
+}
 
 /// The value types of an access.
 pub const T_I32: u8 = 0;
@@ -114,7 +83,63 @@ pub const W64: u8 = 1;
 pub const REGISTER: u8 = 0;
 pub const IMMEDIATE: u8 = 1;
 
-/// The binary operators: those both widths have, then the i64-only wide products.
+/// A callout's OP bits: the callout writes a result word to the destination, and that word is an
+/// i32 to be zero-extended from its low 32 bits.
+pub const CALLOUT_RESULT: u32 = 1;
+pub const CALLOUT_WRAP: u32 = 2;
+/// The frame offset a callout's absent operand names: the row passes the zero word.
+pub const CALLOUT_ABSENT: u32 = u32::MAX;
+
+/// A global's storage operator codes: a 32-bit payload, a 64-bit payload.
+pub const STORAGE_BITS32: u32 = 0;
+pub const STORAGE_BITS64: u32 = 1;
+
+/// The float operators, the conversions. `FLOAT_BINARY_COUNT` is `F64BinaryOperator`'s selectors
+/// (13: `Add` through `GreaterEqual`); the runtime asserts it.
+pub const FLOAT_BINARY_COUNT: u32 = 13;
+pub const FLOAT_UNARY_COUNT: u32 = 7;
+pub const CONVERT_COUNT: u32 = 33;
+
+/// The rows that once compiled with a constant-pool load: none now, since their float bounds and
+/// masks are built from integer immediates (`wasm_rows_convert.rs`). Kept so the library and its
+/// tests name one list.
+pub const CONVERT_NEEDS_CONSTANTS: [u32; 0] = [];
+pub const FLOAT_BINARY_NEEDS_CONSTANTS: [u32; 0] = [];
+
+/// The frame's header words, before the registers. `wasm_entry.rs` writes them and the rows read
+/// the memory base and length from them. `FRAME_HEADER_WORDS` is one past the last header word.
+pub const FRAME_RESULT_WORD: usize = 0;
+pub const FRAME_BASE_WORD: usize = 1;
+pub const FRAME_LENGTH_WORD: usize = 2;
+pub const FRAME_HEADER_WORDS: u64 = (FRAME_LENGTH_WORD + 1) as u64;
+
+/// The log2 of a Wasm page. The stencil build cannot see `crate::wasm::memory`, so the runtime
+/// asserts it equals `WASM_PAGE_BITS` (`wasm_codes_check.rs`).
+pub const WASM_PAGE_BITS: u32 = 16;
+
+/// `CallContext`'s byte offsets the `call_indirect` row reads (`wasm_rows_indirect.rs`). The
+/// runtime's `offset_of!` values are asserted equal to these in `wasm_codes_check.rs`.
+pub const CONTEXT_TABLE_WORDS_AT: usize = 0x48;
+pub const CONTEXT_CALL_REFERENCE_AT: usize = 0x58;
+pub const CONTEXT_MEMORY_LENGTH_AT: usize = 0x90;
+pub const CONTEXT_INSTANCE_AT: usize = 0x100;
+
+/// `TableTarget`'s size and the offsets of its fields (`SIGNATURE`, `ENTRY`, `INSTANCE`, `BODY`),
+/// and `TableWords`' (`BASE`, `LENGTH`). Asserted against the runtime's types in
+/// `wasm_codes_check.rs`.
+pub const TARGET_BYTES: usize = 24;
+pub const TARGET_SIGNATURE_AT: usize = 0;
+pub const TARGET_ENTRY_AT: usize = 4;
+pub const TARGET_INSTANCE_AT: usize = 8;
+pub const TARGET_BODY_AT: usize = 16;
+pub const TABLE_WORDS_BASE_AT: usize = 0;
+pub const TABLE_WORDS_LENGTH_AT: usize = 8;
+/// `TableTarget::NO_ENTRY`: an element that is no module function's body.
+pub const NO_ENTRY: u32 = u32::MAX;
+
+/// The width-independent counts of the integer families: the i32 operators are the first
+/// `SHARED_*` tags of the i64 families, which have the wide operators after them. The runtime
+/// asserts each count and the comparison bounds.
 pub const SHARED_BINARY: u32 = 25;
 pub const BINARY_COUNT: u32 = 27;
 /// The comparisons, `Equal` through `GreaterEqualUnsigned`.
@@ -124,18 +149,111 @@ pub const LAST_COMPARISON: u32 = 24;
 pub const SHARED_UNARY: u32 = 6;
 pub const UNARY_COUNT: u32 = 7;
 
-/// Vector rows (`wasm_rows_simd.rs`): the kinds 50..=59; the OP of each is its `SimdOperator` tag.
-pub const SIMD_BINARY: u8 = 50;
-pub const SIMD_UNARY: u8 = 51;
-pub const SIMD_SHUFFLE: u8 = 52;
-pub const SIMD_CONST: u8 = 53;
-pub const SIMD_LOAD: u8 = 54;
-pub const SIMD_STORE: u8 = 55;
-pub const SIMD_SPLAT: u8 = 56;
-pub const SIMD_EXTRACT: u8 = 57;
-pub const SIMD_REPLACE: u8 = 58;
-pub const SIMD_MOVE: u8 = 59;
+/// The row kinds, in table order. Each family says what the library builds for its kind: the
+/// stencil symbol of every row is `w_<kind>_<op>_<width>_<shape>`, or `call_w_...` for a row that
+/// calls (`wasm_library.rs`, `wasm_name`).
+wasm_row_kinds! {
+    // A binary or unary operator at each width, its second operand a register or an immediate.
+    // `D = A op B`; a comparison branches through `JUMP_IF`.
+    BINARY => [
+        row_family(RowOps::Span(0, SHARED_BINARY), W32, &[REGISTER, IMMEDIATE]),
+        row_family(RowOps::Span(0, BINARY_COUNT), W64, &[REGISTER, IMMEDIATE]),
+    ],
+    // `D = op A`.
+    UNARY => [
+        row_family(RowOps::Span(0, SHARED_UNARY), W32, &[REGISTER]),
+        row_family(RowOps::Span(0, UNARY_COUNT), W64, &[REGISTER]),
+    ],
+    // A conditional branch on a comparison operator.
+    JUMP_IF => [
+        row_family(RowOps::Span(FIRST_COMPARISON, LAST_COMPARISON + 1), W32, &[REGISTER, IMMEDIATE]),
+        row_family(RowOps::Span(FIRST_COMPARISON, LAST_COMPARISON + 1), W64, &[REGISTER, IMMEDIATE]),
+    ],
+    // `D = A`: a register's word.
+    MOVE => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // `D = ` the word in the row's hole.
+    CONSTANT => [row_family(RowOps::Span(0, 1), W64, &[IMMEDIATE])],
+    // Continues at the taken successor.
+    GOTO => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // `D = memory[A + B]`, the access the operator code indexes in `ACCESSES`; traps out of bounds.
+    LOAD => [row_family(RowOps::Accesses, W64, &[REGISTER])],
+    // `memory[A + B] = D`, likewise; only the accesses that do not sign-extend store.
+    STORE => [row_family(RowOps::UnsignedAccesses, W64, &[REGISTER])],
+    // Calls the `WasmEntry` in the cell at address B with the arguments from register A on and the
+    // result to D; a trap's status leaves. A `call_` row.
+    CALL => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // `D = A op B` on floats (width `W32` is f32), an `F64BinaryOperator` tag; a comparison leaves
+    // an i32 flag.
+    FLOAT_BINARY => [
+        row_family(RowOps::Except(0, FLOAT_BINARY_COUNT, &FLOAT_BINARY_NEEDS_CONSTANTS), W32, &[REGISTER]),
+        row_family(RowOps::Except(0, FLOAT_BINARY_COUNT, &FLOAT_BINARY_NEEDS_CONSTANTS), W64, &[REGISTER]),
+    ],
+    // `D = op A` on floats, an `F64UnaryOperator` tag.
+    FLOAT_UNARY => [
+        row_family(RowOps::Span(0, FLOAT_UNARY_COUNT), W32, &[REGISTER]),
+        row_family(RowOps::Span(0, FLOAT_UNARY_COUNT), W64, &[REGISTER]),
+    ],
+    // `D = op A`, a `ScalarConversionOperator` tag; a truncation traps.
+    CONVERT => [row_family(RowOps::Except(0, CONVERT_COUNT, &CONVERT_NEEDS_CONSTANTS), W64, &[REGISTER])],
+    // `D = (the i32 in hole 3) ? A : B`.
+    SELECT => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // Traps: `unreachable`.
+    TRAP => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // `D = ` the frame memory's size in pages.
+    MEMORY_SIZE => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // Fills `memory[A..A + C]` with the byte in B; traps out of bounds, writing nothing.
+    MEMORY_FILL => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // Copies `memory[B..B + C]` to `memory[A..]` (overlap allowed); traps out of bounds.
+    MEMORY_COPY => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // `D = ` the global bound at environment slot B, its storage the operator code
+    // (`STORAGE_BITS32`, `STORAGE_BITS64`); the context's global area holds the cell.
+    GLOBAL_GET => [row_family(RowOps::List(&[STORAGE_BITS32, STORAGE_BITS64]), W64, &[REGISTER])],
+    // The global bound at environment slot B `= A`, likewise.
+    GLOBAL_SET => [row_family(RowOps::List(&[STORAGE_BITS32, STORAGE_BITS64]), W64, &[REGISTER])],
+    // Calls through the table of the indirect call's binding: the element index in register B, the
+    // result to D, a trap's status leaves. A `call_` row.
+    CALL_INDIRECT => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // `D = memory.grow` of the frame's memory by the pages in register C, the size before in pages
+    // (-1 on failure). Calls the VM through the context's `memory_grow` slot: a `call_` row.
+    MEMORY_GROW => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // A VM callout of a table, segment or `memory.init` operation (`wasm_rows_callout.rs`): OP is
+    // `CALLOUT_RESULT | CALLOUT_WRAP` bits. A `call_` row.
+    CALLOUT => [row_family(RowOps::Span(0, (CALLOUT_RESULT | CALLOUT_WRAP) + 1), W64, &[REGISTER])],
+    // A direct call of a defined function the stitcher did not stitch: the VM runs it through the
+    // callout in hole B (`wasm_rows_call_vm.rs`). A `call_` row.
+    CALL_VM => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // Native roots of a stitched frame (`wasm_rows_roots.rs`): `ROOT_PUSH` holds up to four
+    // registers, `ROOT_POP` releases the count its hole names. Neither calls.
+    ROOT_PUSH => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    ROOT_POP => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // The allocating GC step's callout (`wasm_rows_callout.rs`, `gc_allocate`). A `call_` row.
+    GC_ALLOCATE => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // Vector rows (`wasm_rows_simd.rs`): each OP is its `SimdOperator` tag.
+    SIMD_BINARY => [row_family(RowOps::List(SIMD_BINARY_OPS), W64, &[REGISTER])],
+    SIMD_UNARY => [row_family(RowOps::List(SIMD_UNARY_OPS), W64, &[REGISTER])],
+    SIMD_SHUFFLE => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    SIMD_CONST => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    SIMD_LOAD => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    SIMD_STORE => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    SIMD_SPLAT => [row_family(RowOps::List(SIMD_SPLAT_OPS), W64, &[REGISTER])],
+    SIMD_EXTRACT => [row_family(RowOps::List(SIMD_EXTRACT_OPS), W64, &[REGISTER])],
+    SIMD_REPLACE => [row_family(RowOps::List(SIMD_REPLACE_OPS), W64, &[REGISTER])],
+    SIMD_MOVE => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // Vector rows beyond `SIMD_*` (`wasm_rows_simd_more.rs`): each OP is its `SimdOperator` tag.
+    SIMD_MORE_BINARY => [row_family(RowOps::List(SIMD_MORE_BINARY_OPS), W64, &[REGISTER])],
+    SIMD_MORE_COMPARE => [row_family(RowOps::List(SIMD_MORE_COMPARE_OPS), W64, &[REGISTER])],
+    SIMD_MORE_FLOAT => [row_family(RowOps::List(SIMD_MORE_FLOAT_OPS), W64, &[REGISTER])],
+    SIMD_MORE_SHIFT => [row_family(RowOps::List(SIMD_MORE_SHIFT_OPS), W64, &[REGISTER])],
+    SIMD_MORE_TEST => [row_family(RowOps::List(SIMD_MORE_TEST_OPS), W64, &[REGISTER])],
+    SIMD_MORE_UNARY => [row_family(RowOps::List(SIMD_MORE_UNARY_OPS), W64, &[REGISTER])],
+    SIMD_MORE_WIDEN => [row_family(RowOps::List(SIMD_MORE_WIDEN_OPS), W64, &[REGISTER])],
+    SIMD_MORE_WIDE => [row_family(RowOps::List(SIMD_MORE_WIDE_OPS), W64, &[REGISTER])],
+    SIMD_MORE_CONVERT => [row_family(RowOps::List(SIMD_MORE_CONVERT_OPS), W64, &[REGISTER])],
+    SIMD_MORE_LOAD => [row_family(RowOps::List(SIMD_MORE_LOAD_OPS), W64, &[REGISTER])],
+}
 
+/// Vector operator tags: each is the runtime's `SimdOperator` (or `MemoryLoad`) discriminant,
+/// asserted in `wasm_codes_check.rs` and in `wasm_stitch_simd*.rs`.
 pub const SIMD_V128_NOT: u32 = 0;
 pub const SIMD_V128_AND: u32 = 1;
 pub const SIMD_V128_ANDNOT: u32 = 2;
@@ -231,17 +349,6 @@ pub const SIMD_SPLAT_OPS: &[u32] = &[SIMD_I8X16_SPLAT, SIMD_I16X8_SPLAT, SIMD_I3
 pub const SIMD_EXTRACT_OPS: &[u32] = &[SIMD_I8X16_EXTRACT_S, SIMD_I8X16_EXTRACT_U, SIMD_I16X8_EXTRACT_S, SIMD_I16X8_EXTRACT_U, SIMD_I32X4_EXTRACT, SIMD_I64X2_EXTRACT, SIMD_F32X4_EXTRACT, SIMD_F64X2_EXTRACT];
 pub const SIMD_REPLACE_OPS: &[u32] = &[SIMD_I8X16_REPLACE, SIMD_I16X8_REPLACE, SIMD_I32X4_REPLACE, SIMD_I64X2_REPLACE, SIMD_F32X4_REPLACE, SIMD_F64X2_REPLACE];
 
-/// Kinds 60..=69 (`wasm_rows_simd_more.rs`); each row's OP is its `SimdOperator` tag.
-pub const SIMD_MORE_BINARY: u8 = 60;
-pub const SIMD_MORE_COMPARE: u8 = 61;
-pub const SIMD_MORE_FLOAT: u8 = 62;
-pub const SIMD_MORE_SHIFT: u8 = 63;
-pub const SIMD_MORE_TEST: u8 = 64;
-pub const SIMD_MORE_UNARY: u8 = 65;
-pub const SIMD_MORE_WIDEN: u8 = 66;
-pub const SIMD_MORE_WIDE: u8 = 67;
-pub const SIMD_MORE_CONVERT: u8 = 68;
-pub const SIMD_MORE_LOAD: u8 = 69;
 pub const SIMD_I8X16_MIN_S: u32 = 88; pub const SIMD_I8X16_MIN_U: u32 = 89;
 pub const SIMD_I8X16_MAX_S: u32 = 90; pub const SIMD_I8X16_MAX_U: u32 = 91;
 pub const SIMD_I16X8_MIN_S: u32 = 119; pub const SIMD_I16X8_MIN_U: u32 = 120;

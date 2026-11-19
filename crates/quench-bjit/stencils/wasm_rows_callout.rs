@@ -1,5 +1,5 @@
 //! The VM callout row of the table, element-segment, data-segment and `memory.init` operations
-//! (`TableOp`): one `call_w_31_<OP>_1_0` row per OP (`wasm_library.rs`, `CALLOUT`). It calls
+//! (`TableOp`): one `call_w_21_<OP>_1_0` (kind `CALLOUT`) row per OP (`wasm_library.rs`, `CALLOUT`). It calls
 //! `table_op_callout::<H>` (`vm/compiled/wasm_table_ops_stage.rs`), the callout the u-jit's
 //! `Emitter::table_op` calls with the same request and words, so both tiers run one semantics.
 //!

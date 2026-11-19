@@ -31,28 +31,15 @@ use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole64};
 
 use super::{reload_memory, trap};
 
-/// `TableTarget::NO_ENTRY`: an element that is no module function's body. The stitcher asserts it.
-///
-/// The row does not test it: a row's body is 0 unless it names a compiled function of its
-/// instance (`InstanceContext::published_body` publishes 0 for `NO_ENTRY`), so `body != 0` covers it.
-#[allow(dead_code)]
-const NO_ENTRY: u32 = u32::MAX;
-/// `CallContext`'s offsets of `table_words`, `call_reference`, `instance` and `memory_length`
-/// (`CONTEXT_TABLE_WORDS`, `CONTEXT_CALL_REFERENCE`, `CONTEXT_INSTANCE`, `CONTEXT_MEMORY_LENGTH`);
-/// `wasm_stitch_indirect.rs` asserts each equal to the runtime's.
-const CONTEXT_TABLE_WORDS_AT: usize = 0x48;
-const CONTEXT_CALL_REFERENCE_AT: usize = 0x58;
-const CONTEXT_INSTANCE_AT: usize = 0x100;
-const CONTEXT_MEMORY_LENGTH_AT: usize = 0x90;
-/// `size_of::<TableTarget>()`, and the offsets of its fields (`TableTarget::SIGNATURE`, `ENTRY`,
-/// `INSTANCE`, `BODY`) and of `TableWords`' (`BASE`, `LENGTH`). The stitcher asserts each against
-/// the runtime's (`wasm_stitch_indirect.rs`).
-const TARGET_BYTES: usize = 24;
-const SIGNATURE_AT: usize = 0;
-#[allow(dead_code)]
-const ENTRY_AT: usize = 4;
-const INSTANCE_AT: usize = 8;
-const BODY_AT: usize = 16;
+use crate::wasm_codes::{
+    CONTEXT_CALL_REFERENCE_AT, CONTEXT_INSTANCE_AT, CONTEXT_MEMORY_LENGTH_AT, CONTEXT_TABLE_WORDS_AT, TARGET_BODY_AT, TARGET_BYTES,
+    TARGET_INSTANCE_AT, TARGET_SIGNATURE_AT,
+};
+
+// The offsets and sizes the row reads are defined once, in `wasm_codes.rs`; the runtime asserts
+// each equal to its own layout (`quench-runtime/src/vm/compiled/wasm_codes_check.rs`).
+// The row does not test `NO_ENTRY`: a row's body is 0 unless it names a compiled function of its
+// instance (`InstanceContext::published_body` publishes 0 for `NO_ENTRY`), so `body != 0` covers it.
 
 /// `TableWords`: the first row of the table's mirror and its length in elements.
 #[repr(C)]
@@ -114,9 +101,9 @@ pub(crate) unsafe fn call_indirect(s: S) -> Out {
         let row = (*words).base + index as usize * TARGET_BYTES;
         // The fast path, one compare and branch each: the expected id (the rule's first test,
         // `unless_equal`), a compiled body (0 also for an element with no entry), this instance.
-        if *((row + SIGNATURE_AT) as *const u32) == expected {
-            let body = *((row + BODY_AT) as *const usize);
-            if body != 0 && *((row + INSTANCE_AT) as *const usize) == *((context + CONTEXT_INSTANCE_AT) as *const usize) {
+        if *((row + TARGET_SIGNATURE_AT) as *const u32) == expected {
+            let body = *((row + TARGET_BODY_AT) as *const usize);
+            if body != 0 && *((row + TARGET_INSTANCE_AT) as *const usize) == *((context + CONTEXT_INSTANCE_AT) as *const usize) {
                 let body: Body = core::mem::transmute(body);
                 let status = body(context, s.p[1] as u64, s.p[2] as u64, window as *const u64, destination as *mut u64);
                 return finish(s, u64::from(status), CONTEXT_MEMORY_LENGTH_AT);

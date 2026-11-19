@@ -5,9 +5,14 @@
 
 use super::wasm::WasmStage;
 use crate::WasmType;
+#[cfg(not(stencil_build))]
 use crate::bytecode::{Class, Op, WideInstruction};
+#[cfg(not(stencil_build))]
 use std::ops::Range;
 
+/// The binding-time decisions the interpreter and the u-jit make per instruction; the stencil
+/// build does not decode instructions, so it has none of them.
+#[cfg(not(stencil_build))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Instance {
     /// `a = b`.
@@ -24,6 +29,7 @@ pub(crate) enum Instance {
     GlobalSet,
 }
 
+#[cfg(not(stencil_build))]
 impl Instance {
     pub(crate) const fn of(op: Op) -> Option<Self> {
         match op.class() {

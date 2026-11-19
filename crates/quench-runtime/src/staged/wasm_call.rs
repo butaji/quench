@@ -22,7 +22,7 @@ pub(crate) enum Call {
 }
 
 impl Call {
-    pub(crate) fn of(op: Op) -> Option<Self> {
+    pub(crate) const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::CallKnown => Some(Self::Known),
             Class::WasmIndirectTarget => Some(Self::IndirectTarget),

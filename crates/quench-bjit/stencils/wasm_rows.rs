@@ -83,8 +83,9 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
             }
             CONVERT => convert_row::<OP>(s),
             SELECT => {
-                let taken = read::<HOLE_FOURTH>(&s) as u32 != 0;
-                write::<0>(&s, if taken { read::<HOLE_A>(&s) } else { read::<HOLE_B>(&s) });
+                // The condition is the i32 word in hole FOURTH: `a = (condition ? b : c)`.
+                let condition = u64::from(read::<HOLE_FOURTH>(&s) as u32);
+                write::<0>(&s, ConcreteWasm.select(condition, read::<HOLE_A>(&s), read::<HOLE_B>(&s)));
                 Out::Next(s)
             }
             TRAP => trap(s, WasmTrap::Unreachable),
@@ -233,7 +234,9 @@ pub(crate) unsafe fn jump<const OP: u32, const W: u8, const SHAPE: u8>(s: S) -> 
     let operator = const { binary_operator(OP) };
     unsafe {
         let (left, right) = (read::<HOLE_A>(&s), right::<SHAPE>(&s));
-        if ConcreteWasm.operate(operator, const { width_of(W) }, left, right) != 0 { Out::Taken(s) } else { Out::Next(s) }
+        // A comparison traps on nothing (`integer_binary` checks only divisions), so its flag is the word.
+        let flag = integer_binary(&mut ConcreteWasm, operator, const { width_of(W) }, left, right).unwrap_or(0);
+        if flag != 0 { Out::Taken(s) } else { Out::Next(s) }
     }
 }
 
@@ -356,11 +359,6 @@ unsafe fn memory_store<const OP: u32>(s: S) -> Out {
 /// The u-jit's compiled-function ABI, which every Wasm function's entry takes, stitched or not.
 type WasmEntry = unsafe extern "C" fn(usize, u64, u64, *const u64, *mut u64) -> u32;
 
-/// The frame header's words (`FRAME_HEADER_WORDS`): the memory base, then the memory length.
-const BASE_WORD: usize = 1;
-const LENGTH_WORD: usize = 2;
-const _: () = assert!(crate::wasm_codes::FRAME_HEADER_WORDS as usize > LENGTH_WORD);
-
 /// After a call (or a VM callout) that may have grown the memory: the frame's length word takes
 /// the context's current length, read at `length_at` (`CONTEXT_MEMORY_LENGTH`, a hole), since a
 /// callee's growth refreshes the context and not this frame's header. The base is reloaded from
@@ -371,8 +369,8 @@ pub(crate) unsafe fn reload_memory(s: &mut S, length_at: usize) {
     unsafe {
         let header = s.frame as *mut usize;
         let length = *((s.ctx + length_at) as *const u64) as usize;
-        *header.add(LENGTH_WORD) = length;
-        s.p[1] = *header.add(BASE_WORD);
+        *header.add(FRAME_LENGTH_WORD) = length;
+        s.p[1] = *header.add(FRAME_BASE_WORD);
         s.p[2] = length;
     }
     // Wasm rows keep nothing in the other pins (the status pin is written only on a leave), so

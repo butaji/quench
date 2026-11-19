@@ -1,7 +1,7 @@
 //! The VM callout of the reference and field operations of the b-jit's Wasm functions
 //! (`Step::Gc`): array length, `ref.is_null`, `ref.as_non_null`, `ref.eq`, `ref.test`, `ref.cast`,
 //! and the struct and array field accesses (`struct.get`, `array.set`, ...). The rows that call it
-//! are `call_w_31_<flags>_1_0` (`quench-bjit/stencils/wasm_rows_callout.rs`), the same kind-31 row
+//! are `call_w_21_<flags>_1_0` (`quench-bjit/stencils/wasm_rows_callout.rs`), the same kind-21 (`CALLOUT`) row
 //! the table callouts use, so no stencil is added.
 //!
 //! The callout's ABI, the one `wasm_table_ops_stage::table_op_callout` has:

@@ -1,27 +1,33 @@
 //! Wasm opcodes of the shared vocabulary. The general step delegates the
 //! whole Wasm family here, so JavaScript dispatch keeps its own compact match
-//! while both run in the same loop over the same frames.
+//! while both run in the same loop over the same frames. The family is
+//! dispatched on its catalog step (`Step::of`): one arm per step kind, each
+//! group's arms its enum's variants. The GC group's sub-kinds (`gc.rs`) and the
+//! atomics, which have no step group, still match opcodes.
 
 use super::*;
 use crate::bytecode::Class;
 use crate::staged::ConcreteWasm;
 use crate::staged::machine::MachineStage as _;
 use crate::staged::wasm::{Width, integer_binary};
+use crate::staged::wasm_call::Call;
+use crate::staged::wasm_exception::Exception;
+use crate::staged::wasm_flow::Flow;
 use crate::staged::wasm_float::{convert, float_binary};
-use crate::staged::wasm_operation::{Operand, WasmOperation};
-use crate::staged::wasm_simd::WasmSimd as _;
-use crate::staged::wasm_simd_concrete::{ConcreteSimd, execute};
 use crate::staged::wasm_instance::Instance;
 use crate::staged::wasm_machine::ConcreteMemory;
-use crate::staged::wasm_memory::{fill as memory_fill_rule, pages as memory_pages_rule, scalar_address};
+use crate::staged::wasm_memory::{Memory, fill as memory_fill_rule, pages as memory_pages_rule, scalar_address};
+use crate::staged::wasm_operation::{Operand, WasmOperation};
+use crate::staged::wasm_simd::{Simd, WasmSimd as _};
+use crate::staged::wasm_simd_concrete::{ConcreteSimd, execute};
 use crate::staged::wasm_step::Step;
-use crate::staged::wasm_table_ops::TableOp;
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 
 mod gc;
-pub(super) use gc::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance, wasm_gc_value_op, wasm_gc_value_ops};
+pub(super) use gc::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance, wasm_gc_value_ops};
 
 impl<H: Host> Vm<H> {
+    /// One Wasm instruction, dispatched on its catalog step (`Step::of`).
     #[inline(never)]
     pub(super) fn step_wasm(
         &mut self,
@@ -30,162 +36,167 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         pc: &mut usize,
     ) -> Result<StepResult, JsError> {
-        if let Some(Step::Numeric(operation)) = Step::of(i.op(), i.imm()) {
-            self.wasm_numeric_step(p, f, i, pc, operation)?;
-            return Ok(StepResult::Continue);
+        match Step::of(i.op(), i.imm()) {
+            Some(Step::Numeric(operation)) => self.wasm_numeric_step(p, f, i, pc, operation)?,
+            Some(Step::Instance(Instance::Fill)) => self.wasm_fill_registers(f, i)?,
+            Some(Step::Instance(Instance::Move | Instance::Constant)) => {
+                unreachable!("the general loop makes moves and constants")
+            }
+            Some(Step::Instance(step)) => self.wasm_instance_step(f, i, step)?,
+            Some(Step::Memory(step)) => self.wasm_memory_step(f, i, step)?,
+            Some(Step::Flow(step)) => return self.wasm_flow_step(f, i, pc, step),
+            Some(Step::Table(_)) => self.wasm_table_step(f, i)?,
+            Some(Step::Simd(step)) => self.wasm_simd_step(p, f, i, step)?,
+            Some(Step::Gc(_) | Step::Call(Call::IndirectTarget | Call::RefFunc)) => self.wasm_gc_arm(f, i)?,
+            Some(Step::Call(Call::Known | Call::Reference)) => unreachable!("the general loop makes calls"),
+            Some(Step::Exception(step)) => self.wasm_exception_step(f, i, step)?,
+            None => self.wasm_unlisted_step(f, i)?,
         }
-        match i.op() {
-            Op::WasmInstanceBinding | Op::WasmGlobalGet | Op::WasmGlobalSet => {
-                self.wasm_instance_step(f, i)?;
+        Ok(StepResult::Continue)
+    }
+
+    /// `Instance::Fill`: every register of the window takes the constant the instruction names.
+    fn wasm_fill_registers(&mut self, f: usize, i: WideInstruction) -> Result<(), JsError> {
+        let value = self
+            .programs
+            .constant(self.frames[f].program, i.constant_index())
+            .ok_or_else(|| JsError::validation("constant index is outside program".into()))?;
+        // The registers the staged fill names (`Instance::Fill`).
+        for register in Instance::Fill.constant_registers(i).into_iter().flatten() {
+            self.write(f, register, value);
+        }
+        Ok(())
+    }
+
+    /// A linear-memory step (`Memory`): the access's width and sign, the size and grow, and the
+    /// bulk fill and copy.
+    fn wasm_memory_step(&mut self, f: usize, i: WideInstruction, step: Memory) -> Result<(), JsError> {
+        match step {
+            Memory::Load(access) => self.wasm_direct_load(f, i, access),
+            Memory::Store(access) => self.wasm_direct_store(f, i, access),
+            Memory::Size | Memory::Grow => self.wasm_memory_pages_step(f, i, step),
+            Memory::Fill | Memory::Copy => self.wasm_memory_bulk_step(f, i, step),
+        }
+    }
+
+    /// `memory.size` and `memory.grow`: the size in pages, before a growth where the memory grows.
+    fn wasm_memory_pages_step(&mut self, f: usize, i: WideInstruction, step: Memory) -> Result<(), JsError> {
+        let memory = self.read(f, i.register_b());
+        let pages = match step {
+            Memory::Grow => {
+                let delta = self.wasm_memory_index(memory, self.read(f, i.register_c()))?;
+                self.wasm_memory_grow(memory, delta)?
             }
-            op if wasm_gc_value_op(op) => {
-                if let Some(value) = self.wasm_gc_general_step(self.frames[f].program, self.frames[f].env, i, |vm, register| vm.read(f, register))? {
-                    self.write(f, i.result_register(), value);
-                }
+            _ => {
+                let page_bits = self.wasm_memory_type(memory)?.page_size_log2();
+                Some(self.wasm_memory_read(memory, |stage| memory_pages_rule(stage, page_bits))?)
             }
-            op if TableOp::of(op).is_some() => self.wasm_table_step(f, i)?,
-            Op::WasmMemoryCopy | Op::WasmMemoryFill => {
-                let destination = self.read(f, i.register_a());
-                let source = self.read(f, i.register_b());
-                let (output, input) = i.register_pair();
-                let output = self.wasm_memory_index(destination, self.read(f, output))?;
-                let index_type = self.wasm_memory_index_type(destination)?;
-                let length_type = match i.op() {
-                    Op::WasmMemoryCopy => {
-                        match (index_type, self.wasm_memory_index_type(source)?) {
-                            (crate::WasmType::I64, crate::WasmType::I64) => crate::WasmType::I64,
-                            _ => crate::WasmType::I32,
-                        }
-                    }
-                    _ => index_type,
-                };
-                let length = self.wasm_index_operand(self.read(f, i.register_c()), length_type)?;
-                if i.op() == Op::WasmMemoryFill {
-                    let byte = u64::from(Self::wasm_u32_operand(source)?);
-                    self.wasm_memory_bulk(destination, |stage| {
-                        memory_fill_rule(stage, output, byte, length)
-                    })?;
-                } else {
-                    let input = self.wasm_memory_index(source, self.read(f, input))?;
-                    self.wasm_copy_bytes(destination, Some(source), output, input, length)?;
-                }
+        };
+        let index_type = self.wasm_memory_index_type(memory)?;
+        let value = self.encode_wasm_index_size(index_type, pages);
+        self.write(f, i.result_register(), value);
+        Ok(())
+    }
+
+    /// `memory.fill` and `memory.copy`: the length's type follows the memories' index types, and
+    /// the range checks run before any byte moves.
+    fn wasm_memory_bulk_step(&mut self, f: usize, i: WideInstruction, step: Memory) -> Result<(), JsError> {
+        let destination = self.read(f, i.register_a());
+        let source = self.read(f, i.register_b());
+        let (output, input) = i.register_pair();
+        let output = self.wasm_memory_index(destination, self.read(f, output))?;
+        let index_type = self.wasm_memory_index_type(destination)?;
+        let length_type = match step {
+            Memory::Copy => match (index_type, self.wasm_memory_index_type(source)?) {
+                (crate::WasmType::I64, crate::WasmType::I64) => crate::WasmType::I64,
+                _ => crate::WasmType::I32,
+            },
+            _ => index_type,
+        };
+        let length = self.wasm_index_operand(self.read(f, i.register_c()), length_type)?;
+        match step {
+            Memory::Fill => {
+                let byte = u64::from(Self::wasm_u32_operand(source)?);
+                self.wasm_memory_bulk(destination, |stage| memory_fill_rule(stage, output, byte, length))
             }
-            Op::WasmMemoryAddress => {
-                let memory = self.read(f, i.register_c());
-                let index = self.wasm_memory_index(memory, self.read(f, i.register_b()))?;
-                let Constant::WasmBits64(offset) = p.constants[i.constant_index()] else {
-                    return Err(JsError::validation(
-                        "invalid Wasm memory offset constant".into(),
-                    ));
-                };
-                let effective = scalar_address(&mut ConcreteWasm, index, offset)
-                    .map_err(JsError::wasm_trap_error)?;
-                let value = self.encode_wasm_value(crate::WasmValue::I64(effective as i64));
-                self.write(f, i.result_register(), value);
+            _ => {
+                let input = self.wasm_memory_index(source, self.read(f, input))?;
+                self.wasm_copy_bytes(destination, Some(source), output, input, length)
             }
-            Op::WasmAtomicFence => crate::wasm::atomic::fence(),
-            Op::WasmAtomicAccess => {
-                use crate::wasm::atomic::{AtomicInput, AtomicOperator};
-                let operator =
-                    AtomicOperator::from_tag(i.imm()).expect("validated atomic operator");
-                let window = i.register_window();
-                let input = |role: AtomicInput| self.read(f, window.base + role as u16);
-                let memory = input(AtomicInput::Memory);
-                let address = self.wasm_i64_operand(input(AtomicInput::Address))? as u64;
-                let value = if window.count > AtomicInput::Value as u16 {
-                    Some(self.decode_wasm_value(input(AtomicInput::Value), operator.value_type())?)
-                } else {
-                    None
-                };
-                let replacement = if window.count > AtomicInput::Auxiliary as u16 {
-                    Some(self.decode_wasm_value(
-                        input(AtomicInput::Auxiliary),
-                        operator.auxiliary_type(),
-                    )?)
-                } else {
-                    None
-                };
-                let Some(Cell::WasmMemory { bytes, .. }) = self.heap.get(memory) else {
-                    return Err(JsError::validation("invalid atomic memory binding".into()));
-                };
-                let result = operator
-                    .apply(bytes, address, value, replacement)
-                    .map_err(JsError::wasm_trap_error)?;
-                let result = result
-                    .map(|value| self.encode_wasm_value(value))
-                    .unwrap_or(Value::UNDEFINED);
-                self.write(f, i.result_register(), result);
+        }
+    }
+
+    /// A tagged memory load: the memory in `b` at the 64-bit address `c`, read by the operator
+    /// `imm` names (a vector load, or a lane's scalar one).
+    fn wasm_tagged_memory_load(&mut self, f: usize, i: WideInstruction) -> Result<(), JsError> {
+        let memory = self.read(f, i.register_b());
+        let address = self.wasm_i64_operand(self.read(f, i.register_c()))? as u64;
+        let operator = crate::wasm::memory::MemoryLoad::from_tag(i.imm()).expect("validated memory load");
+        let value = operator
+            .read(&self.wasm_memory_bytes(memory)?, address)
+            .map_err(JsError::wasm_trap_error)?;
+        let value = self.encode_wasm_value(value);
+        self.write(f, i.result_register(), value);
+        Ok(())
+    }
+
+    /// A tagged memory store: the value in `a` to the memory in `b` at the 64-bit address `c`,
+    /// written by the operator `imm` names (a vector store, or a lane's scalar one).
+    fn wasm_tagged_memory_store(&mut self, f: usize, i: WideInstruction) -> Result<(), JsError> {
+        let memory = self.read(f, i.register_b());
+        let address = self.wasm_i64_operand(self.read(f, i.register_c()))? as u64;
+        let operator = crate::wasm::memory::MemoryStore::from_tag(i.imm()).expect("validated memory store");
+        self.wasm_memory_store(memory, address, operator, self.read(f, i.register_a()))
+    }
+
+    /// The control steps (`Flow`): a select, a branch table, a trap and a return. A jump is
+    /// the general loop's.
+    fn wasm_flow_step(
+        &mut self,
+        f: usize,
+        i: WideInstruction,
+        pc: &mut usize,
+        step: Flow,
+    ) -> Result<StepResult, JsError> {
+        match step {
+            Flow::Select => {
+                // `MachineStage::select`, the primitive the Wasm flow stage selects with.
+                let (condition, _) = i.register_pair();
+                let flag = u64::from(self.read(f, condition).wasm_bits32());
+                let mut stage = ConcreteWasm;
+                let chosen = stage.select(
+                    flag,
+                    self.read(f, i.register_b()).to_bits(),
+                    self.read(f, i.register_c()).to_bits(),
+                );
+                self.write(f, i.result_register(), Value::from_bits(chosen));
             }
-            Op::WasmI32Load
-            | Op::WasmI64Load
-            | Op::WasmF32Load
-            | Op::WasmF64Load
-            | Op::WasmI32Load8S
-            | Op::WasmI32Load8U
-            | Op::WasmI32Load16S
-            | Op::WasmI32Load16U
-            | Op::WasmI64Load8S
-            | Op::WasmI64Load8U
-            | Op::WasmI64Load16S
-            | Op::WasmI64Load16U
-            | Op::WasmI64Load32S
-            | Op::WasmI64Load32U => self.wasm_direct_load(f, i)?,
-            Op::WasmI32Store
-            | Op::WasmI64Store
-            | Op::WasmF32Store
-            | Op::WasmF64Store
-            | Op::WasmI32Store8
-            | Op::WasmI32Store16
-            | Op::WasmI64Store8
-            | Op::WasmI64Store16
-            | Op::WasmI64Store32 => self.wasm_direct_store(f, i)?,
-            Op::WasmMemoryLoad | Op::WasmMemoryStore => {
-                let memory = self.read(f, i.register_b());
-                let address = self.wasm_i64_operand(self.read(f, i.register_c()))? as u64;
-                if i.op() == Op::WasmMemoryLoad {
-                    let operator = crate::wasm::memory::MemoryLoad::from_tag(i.imm())
-                        .expect("validated memory load");
-                    let value = operator
-                        .read(&self.wasm_memory_bytes(memory)?, address)
-                        .map_err(JsError::wasm_trap_error)?;
-                    let value = self.encode_wasm_value(value);
-                    self.write(f, i.result_register(), value);
-                } else {
-                    let operator = crate::wasm::memory::MemoryStore::from_tag(i.imm())
-                        .expect("validated memory store");
-                    self.wasm_memory_store(
-                        memory,
-                        address,
-                        operator,
-                        self.read(f, i.register_a()),
-                    )?;
-                }
+            Flow::Table => *pc += self.branch_table_case(f, i),
+            Flow::Unreachable => return Err(JsError::wasm_trap_error(crate::WasmTrap::Unreachable)),
+            Flow::Return => {
+                let word = self.read(f, i.register_a()).to_bits();
+                return Ok(StepResult::Return(self.encode_bits64(word)));
             }
-            Op::WasmMemorySize | Op::WasmMemoryGrow => {
-                let memory = self.read(f, i.register_b());
-                let pages = if i.op() == Op::WasmMemoryGrow {
-                    let delta = self.wasm_memory_index(memory, self.read(f, i.register_c()))?;
-                    self.wasm_memory_grow(memory, delta)?
-                } else {
-                    let page_bits = self.wasm_memory_type(memory)?.page_size_log2();
-                    Some(self.wasm_memory_read(memory, |stage| memory_pages_rule(stage, page_bits))?)
-                };
-                let index_type = self.wasm_memory_index_type(memory)?;
-                let value = self.encode_wasm_index_size(index_type, pages);
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmSimd => {
-                let (kernel, _) =
-                    crate::wasm::simd::SimdKernel::of(i.imm()).expect("validated SIMD operator");
+            Flow::Jump => unreachable!("the general loop takes jumps"),
+        }
+        Ok(StepResult::Continue)
+    }
+
+    /// The vector steps (`Simd`): an operator on lanes, a shuffle, the effective address of a
+    /// vector access, and its load and store.
+    fn wasm_simd_step(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, step: Simd) -> Result<(), JsError> {
+        match step {
+            Simd::Operator { selector } => {
+                let (kernel, _) = crate::wasm::simd::SimdKernel::of(selector).expect("validated SIMD operator");
                 let left = self.decode_wasm_value(self.read(f, i.register_b()), kernel.left)?;
                 let right = kernel
                     .right
                     .map(|ty| self.decode_wasm_value(self.read(f, i.register_c()), ty))
                     .transpose()?;
-                let value = self.encode_wasm_value(execute(i.imm(), left, right));
+                let value = self.encode_wasm_value(execute(selector, left, right));
                 self.write(f, i.result_register(), value);
             }
-            Op::WasmSimdShuffle => {
+            Simd::Shuffle => {
                 let crate::WasmValue::V128(left) =
                     self.decode_wasm_value(self.read(f, i.register_b()), crate::WasmType::V128)?
                 else {
@@ -203,39 +214,32 @@ impl<H: Host> Vm<H> {
                 let value = self.encode_wasm_value(crate::WasmValue::V128(bits));
                 self.write(f, i.result_register(), value);
             }
-            Op::WasmUnreachable => {
-                return Err(JsError::wasm_trap_error(crate::WasmTrap::Unreachable));
-            }
-            Op::WasmFillRegisters => {
-                let value = self
-                    .programs
-                    .constant(self.frames[f].program, i.constant_index())
-                    .ok_or_else(|| {
-                        JsError::validation("constant index is outside program".into())
-                    })?;
-                // The registers the staged fill names (`Instance::Fill`).
-                for register in Instance::Fill.constant_registers(i).into_iter().flatten() {
-                    self.write(f, register, value);
-                }
-            }
-            Op::WasmSelect => {
-                // `MachineStage::select`, the primitive the Wasm flow stage selects with.
-                let (condition, _) = i.register_pair();
-                let flag = u64::from(self.read(f, condition).wasm_bits32());
-                let mut stage = ConcreteWasm;
-                let chosen = stage.select(
-                    flag,
-                    self.read(f, i.register_b()).to_bits(),
-                    self.read(f, i.register_c()).to_bits(),
-                );
-                self.write(f, i.result_register(), Value::from_bits(chosen));
-            }
-            Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
-            Op::WasmReturn64 => {
-                let word = self.read(f, i.register_a()).to_bits();
-                return Ok(StepResult::Return(self.encode_bits64(word)));
-            }
-            Op::WasmExceptionNew => {
+            Simd::Address => self.wasm_address_step(p, f, i)?,
+            Simd::Load => self.wasm_tagged_memory_load(f, i)?,
+            Simd::Store => self.wasm_tagged_memory_store(f, i)?,
+        }
+        Ok(())
+    }
+
+    /// The effective address of an access: the 32-bit address in `b` plus the constant's static
+    /// offset, as 64 bits; a sum that wraps traps. The memory is in `c`.
+    fn wasm_address_step(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<(), JsError> {
+        let memory = self.read(f, i.register_c());
+        let index = self.wasm_memory_index(memory, self.read(f, i.register_b()))?;
+        let Constant::WasmBits64(offset) = p.constants[i.constant_index()] else {
+            return Err(JsError::validation("invalid Wasm memory offset constant".into()));
+        };
+        let effective = scalar_address(&mut ConcreteWasm, index, offset).map_err(JsError::wasm_trap_error)?;
+        let value = self.encode_wasm_value(crate::WasmValue::I64(effective as i64));
+        self.write(f, i.result_register(), value);
+        Ok(())
+    }
+
+    /// The exception steps (`Exception`): building one, a catch's tag test and payload read, and
+    /// `throw_ref`.
+    fn wasm_exception_step(&mut self, f: usize, i: WideInstruction, step: Exception) -> Result<(), JsError> {
+        match step {
+            Exception::New => {
                 use crate::wasm::tag::ExceptionInput;
                 let window = i.register_window();
                 if window.count < ExceptionInput::MIN_COUNT {
@@ -248,21 +252,84 @@ impl<H: Host> Vm<H> {
                 let value = self.wasm_exception_new(tag, payload)?;
                 self.write(f, i.result_register(), value);
             }
-            Op::WasmExceptionMatch => {
-                let matches = self.wasm_exception_matches(
-                    self.read(f, i.register_b()),
-                    self.read(f, i.register_c()),
-                )?;
+            Exception::Match => {
+                let (exception, expected) = (self.read(f, i.register_b()), self.read(f, i.register_c()));
+                let matches = self.wasm_exception_matches(exception, expected)?;
                 self.write(f, i.result_register(), Value::integer(i32::from(matches)));
             }
-            Op::WasmExceptionPayload => {
-                let value = self.wasm_exception_payload(self.read(f, i.register_b()), i.imm())?;
+            Exception::Payload => {
+                let exception = self.read(f, i.register_b());
+                let value = self.wasm_exception_payload(exception, i.imm())?;
                 self.write(f, i.result_register(), value);
             }
-            Op::WasmThrowRef => return Err(self.wasm_throw_ref(self.read(f, i.register_a()))),
-            op => unreachable!("{op:?} is not a Wasm opcode"),
+            Exception::ThrowRef => {
+                let exception = self.read(f, i.register_a());
+                return Err(self.wasm_throw_ref(exception));
+            }
         }
-        Ok(StepResult::Continue)
+        Ok(())
+    }
+
+    /// A GC value step, or a call target (`ref.func`, an indirect target), which writes its
+    /// result register when it makes a value.
+    fn wasm_gc_arm(&mut self, f: usize, i: WideInstruction) -> Result<(), JsError> {
+        if let Some(value) = self.wasm_gc_general_step(
+            self.frames[f].program,
+            self.frames[f].env,
+            i,
+            |vm, register| vm.read(f, register),
+        )? {
+            self.write(f, i.result_register(), value);
+        }
+        Ok(())
+    }
+
+    /// The steps no group names: a scalar lane's memory access (a vector access is `Step::Simd`),
+    /// and the atomics, whose fence and access have no step group.
+    fn wasm_unlisted_step(&mut self, f: usize, i: WideInstruction) -> Result<(), JsError> {
+        match i.op().class() {
+            Class::WasmMemoryLoad => self.wasm_tagged_memory_load(f, i),
+            Class::WasmMemoryStore => self.wasm_tagged_memory_store(f, i),
+            _ => match i.op() {
+                Op::WasmAtomicFence => {
+                    crate::wasm::atomic::fence();
+                    Ok(())
+                }
+                Op::WasmAtomicAccess => self.wasm_atomic_access(f, i),
+                op => unreachable!("{op:?} is not a Wasm opcode"),
+            },
+        }
+    }
+
+    /// An atomic read-modify-write, compare-exchange or wait on the memory the instruction names.
+    fn wasm_atomic_access(&mut self, f: usize, i: WideInstruction) -> Result<(), JsError> {
+        use crate::wasm::atomic::{AtomicInput, AtomicOperator};
+        let operator = AtomicOperator::from_tag(i.imm()).expect("validated atomic operator");
+        let window = i.register_window();
+        let input = |role: AtomicInput| self.read(f, window.base + role as u16);
+        let memory = input(AtomicInput::Memory);
+        let address = self.wasm_i64_operand(input(AtomicInput::Address))? as u64;
+        let value = if window.count > AtomicInput::Value as u16 {
+            Some(self.decode_wasm_value(input(AtomicInput::Value), operator.value_type())?)
+        } else {
+            None
+        };
+        let replacement = if window.count > AtomicInput::Auxiliary as u16 {
+            Some(self.decode_wasm_value(input(AtomicInput::Auxiliary), operator.auxiliary_type())?)
+        } else {
+            None
+        };
+        let Some(Cell::WasmMemory { bytes, .. }) = self.heap.get(memory) else {
+            return Err(JsError::validation("invalid atomic memory binding".into()));
+        };
+        let result = operator
+            .apply(bytes, address, value, replacement)
+            .map_err(JsError::wasm_trap_error)?;
+        let result = result
+            .map(|value| self.encode_wasm_value(value))
+            .unwrap_or(Value::UNDEFINED);
+        self.write(f, i.result_register(), result);
+        Ok(())
     }
 }
 

@@ -20,11 +20,10 @@
 
 use crate::staged::machine::{Machine, MachineStage};
 use crate::staged::wasm_concrete::{ConcreteWasm, delegated};
-use crate::staged::wasm_float::{Float, Truncation, convert};
+use crate::staged::wasm_float::{Float, Truncation, convert, float_binary};
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::F64BinaryOperator as FloatBinary;
 use crate::wasm::WasmTrap;
-use crate::wasm_codes::W32;
 use crate::words::{HOLE_A, HOLE_B, Out, S, slot};
 
 /// The `CopySign` tag of `F64BinaryOperator` (`FLOAT_BINARY_NEEDS_CONSTANTS`'s only entry).
@@ -140,12 +139,21 @@ impl MachineStage for ConstantFree {
         constant(width: crate::staged::wasm::Width, value: i64) -> u64;
         operate(operator: crate::wasm::integer::I64BinaryOperator, width: crate::staged::wasm::Width, left: u64, right: u64) -> u64;
         operate_unary(operator: crate::wasm::integer::I64UnaryOperator, width: crate::staged::wasm::Width, value: u64) -> u64;
-        operate_float(operator: crate::wasm::float::F64BinaryOperator, float: Float, left: u64, right: u64) -> u64;
         operate_float_unary(operator: crate::wasm::float::F64UnaryOperator, float: Float, value: u64) -> u64;
         float_unordered(float: Float, left: u64, right: u64) -> u64;
         float_constant(float: Float, bits: u64) -> u64;
         select(flag: u64, taken: u64, other: u64) -> u64;
         trap_when(flag: u64, trap: WasmTrap) -> Result<(), WasmTrap>;
+    }
+
+    /// `ConcreteWasm::operate_float`, with CopySign as the sign-bit operation: `f64::copysign`
+    /// lowers to a sign-mask constant from the constant pool.
+    #[inline(always)]
+    fn operate_float(&mut self, operator: FloatBinary, float: Float, left: u64, right: u64) -> u64 {
+        match operator {
+            FloatBinary::CopySign => copysign_bits(float, left, right),
+            _ => ConcreteWasm.operate_float(operator, float, left, right),
+        }
     }
 
     /// `ConcreteWasm::truncation_overflows`, with the bounds from bits. `trunc` is `roundsd` on the
@@ -207,19 +215,23 @@ pub(crate) unsafe fn convert_row<const OP: u32>(s: S) -> Out {
     }
 }
 
-/// `D = copysign(A, B)` at width `W` (`W32` is f32): A's bits below the sign, B's sign bit. The
-/// `CopySign` arm of `staged::wasm_concrete`'s `float_width!`, which `staged::wasm_float::float_binary`
-/// returns unchanged (no NaN rule). An f32 word is zero-extended, as the staged rule's is.
+/// CopySign at `float`: A's bits below the sign, B's sign bit. An f32 word is zero-extended, as
+/// the interpreter's is. `ConstantFree::operate_float` computes it.
+#[inline(always)]
+fn copysign_bits(float: Float, left: u64, right: u64) -> u64 {
+    match float {
+        Float::F32 => u64::from(((left as u32) & !(SIGN32 as u32)) | ((right as u32) & (SIGN32 as u32))),
+        Float::F64 => (left & !SIGN64) | (right & SIGN64),
+    }
+}
+
+/// `D = copysign(A, B)` at width `W` (`W32` is f32): the staged `float_binary` rule over
+/// `ConstantFree`, which returns CopySign's word unchanged (no NaN rule).
 #[inline(always)]
 pub(crate) unsafe fn copysign_row<const W: u8>(s: S) -> Out {
     unsafe {
-        let left = *(slot::<HOLE_A>(&s) as *const u64);
-        let right = *(slot::<HOLE_B>(&s) as *const u64);
-        let word = if W == W32 {
-            u64::from(((left as u32) & !(SIGN32 as u32)) | ((right as u32) & (SIGN32 as u32)))
-        } else {
-            (left & !SIGN64) | (right & SIGN64)
-        };
+        let (left, right) = (*(slot::<HOLE_A>(&s) as *const u64), *(slot::<HOLE_B>(&s) as *const u64));
+        let word = float_binary(&mut ConstantFree, FloatBinary::CopySign, super::float_of(W), left, right);
         *(slot::<0>(&s) as *mut u64) = word;
     }
     Out::Next(s)

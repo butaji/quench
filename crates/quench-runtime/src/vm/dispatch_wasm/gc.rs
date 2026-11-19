@@ -6,50 +6,26 @@ use super::super::*;
 use super::super::wasm_gc::{ArrayInitialization, GcFieldIndex};
 use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind, GcField, GcFieldAccess, StructConstruction};
 use crate::wasm::reference::ReferenceTarget;
-use crate::staged::wasm_gc::{Aggregate, WasmGc, array_copy, array_fill, array_length, field_read, field_write, non_null, reference_cast};
+use crate::staged::wasm_gc::{Aggregate, GcOp, WasmGc, array_copy, array_fill, array_length, field_read, field_write, non_null, reference_cast};
+use crate::staged::wasm_call::Call;
 use super::super::wasm_gc::stage::HeapStage;
 
-/// Applies `$then!` to the opcodes `Vm::wasm_gc_value_step` makes: the one list that
-/// `wasm_gc_value_op` and the lane's handler of each opcode derive from.
-macro_rules! wasm_gc_value_ops {
-    ($then:ident) => {
-        $then!(WasmRefIsNull WasmRefAsNonNull WasmRefEq WasmI31 WasmExternalConversion
-            WasmArrayGet WasmArrayGetS WasmArrayGetU WasmArraySet WasmArrayLen
-            WasmArrayNewData WasmArrayNewElem WasmArrayInitData WasmArrayInitElem WasmArrayFill WasmArrayCopy
-            WasmArrayNew WasmArrayNewDefault WasmArrayNewFixed
-            WasmStructGet WasmStructGetS WasmStructGetU WasmStructSet
-            WasmStructNew WasmStructNewDefault WasmStructNewDesc WasmStructNewDefaultDesc WasmRefGetDesc
-            WasmRefTest WasmRefCast WasmDescriptorTest WasmDescriptorCast WasmIndirectTarget WasmRefFunc)
-    };
-}
-pub(in crate::vm) use wasm_gc_value_ops;
+/// The one list of the GC value opcodes (`staged::wasm_gc::wasm_gc_table!`), which the lane's
+/// handler of each opcode derives from.
+pub(in crate::vm) use crate::staged::wasm_gc::wasm_gc_value_ops;
 
-/// Whether `op` is one of the operations `Vm::wasm_gc_value_step` makes.
-#[inline(always)] pub(in crate::vm) const fn wasm_gc_value_op(op: Op) -> bool {
-    macro_rules! listed {
-        ($($name:ident)*) => { matches!(op, $(Op::$name)|*) };
-    }
-    wasm_gc_value_ops!(listed)
-}
-
-/// Whether `op`, a `wasm_gc_value_op`, can allocate a heap cell, which can make a collection
-/// due: every one but the field accesses, the array length and the reference tests, which only
-/// read or write cells that exist.
+/// Whether the GC value opcode `op` can allocate a heap cell, which can make a collection due:
+/// its group's `allocates`. A call target has no group and is taken to allocate, as before.
 #[inline(always)] pub(in crate::vm) const fn wasm_gc_allocates(op: Op) -> bool {
-    !(wasm_gc_field_op(op)
-        || matches!(
-            op,
-            Op::WasmArrayLen | Op::WasmRefIsNull | Op::WasmRefAsNonNull | Op::WasmRefEq | Op::WasmRefTest | Op::WasmRefCast
-        ))
+    match GcOp::of(op) {
+        Some(group) => group.allocates(),
+        None => true,
+    }
 }
 
-/// Whether `op`, a `wasm_gc_value_op`, reads or writes a struct field or an array element.
+/// Whether the GC value opcode `op` reads or writes a struct field or an array element.
 #[inline(always)] pub(in crate::vm) const fn wasm_gc_field_op(op: Op) -> bool {
-    matches!(
-        op,
-        Op::WasmStructGet | Op::WasmStructGetS | Op::WasmStructGetU | Op::WasmStructSet
-            | Op::WasmArrayGet | Op::WasmArrayGetS | Op::WasmArrayGetU | Op::WasmArraySet
-    )
+    matches!(GcOp::of(op), Some(GcOp::Field))
 }
 
 /// A field access's operands (`Vm::wasm_field_operands`): the object, the field or element, its
@@ -62,14 +38,14 @@ struct FieldOperands {
     value: Option<Value>,
 }
 
-/// Whether `op`, a `wasm_gc_value_op`, reads the running instance's environment: the
+/// Whether the GC value opcode `op` reads the running instance's environment: the
 /// operations that name one of its functions or tables' targets.
 #[inline(always)] pub(in crate::vm) const fn wasm_gc_reads_instance(op: Op) -> bool {
-    matches!(op, Op::WasmIndirectTarget | Op::WasmRefFunc)
+    matches!(Call::of(op), Some(Call::IndirectTarget | Call::RefFunc))
 }
 
 impl<H: Host> Vm<H> {
-    /// One of the `wasm_gc_value_op`s of `program`'s instance `env`, of the registers `read` answers: the value
+    /// One of the GC value opcodes of `program`'s instance `env`, of the registers `read` answers: the value
     /// it writes to its result register, if any. Inlined, so a lane handler of one opcode
     /// keeps only that opcode's arm.
     #[inline(always)]
@@ -80,9 +56,28 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value + Copy,
     ) -> Result<Option<Value>, JsError> {
+        match GcOp::of(i.op()) {
+            Some(GcOp::Field) => self.wasm_field_step(i, read),
+            Some(GcOp::ArrayLength) => self.wasm_array_bulk_step(i, read),
+            Some(GcOp::Null | GcOp::Equal) => self.wasm_reference_step(i, read),
+            Some(GcOp::Test) => self.wasm_cast_step(program, i, read),
+            Some(GcOp::Allocating) => self.wasm_allocating_step(program, i, read),
+            None => self.wasm_call_target_step(program, env, i, read).map(Some),
+        }
+    }
+
+    /// The step of an allocating GC operation (`GcOp::Allocating`): the array's bulk fill and
+    /// copy, the array and struct constructors, the segment operations, a descriptor test or
+    /// cast, and the i31 and extern conversions.
+    #[inline(always)]
+    fn wasm_allocating_step(
+        &mut self,
+        program: ProgramId,
+        i: WideInstruction,
+        read: impl Fn(&Self, u16) -> Value + Copy,
+    ) -> Result<Option<Value>, JsError> {
         match i.op() {
-            op if wasm_gc_field_op(op) => self.wasm_field_step(i, read),
-            Op::WasmArrayLen | Op::WasmArrayFill | Op::WasmArrayCopy => self.wasm_array_bulk_step(i, read),
+            Op::WasmArrayFill | Op::WasmArrayCopy => self.wasm_array_bulk_step(i, read),
             Op::WasmArrayNew | Op::WasmArrayNewDefault | Op::WasmArrayNewFixed => {
                 self.wasm_array_new_step(program, i, read)
             }
@@ -91,10 +86,7 @@ impl<H: Host> Vm<H> {
             }
             Op::WasmStructNew | Op::WasmStructNewDefault | Op::WasmStructNewDesc
             | Op::WasmStructNewDefaultDesc | Op::WasmRefGetDesc => self.wasm_struct_new_step(program, i, read),
-            Op::WasmRefTest | Op::WasmRefCast | Op::WasmDescriptorTest | Op::WasmDescriptorCast => {
-                self.wasm_cast_step(program, i, read)
-            }
-            Op::WasmIndirectTarget | Op::WasmRefFunc => self.wasm_call_target_step(program, env, i, read).map(Some),
+            Op::WasmDescriptorTest | Op::WasmDescriptorCast => self.wasm_cast_step(program, i, read),
             _ => self.wasm_reference_step(i, read),
         }
     }

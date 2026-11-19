@@ -20,15 +20,21 @@ use crate::staged::wasm_step::Step;
 use quench_bjit::padded_holes;
 use quench_bjit::wasm as codes;
 
-// The row's stencil hard-codes these runtime layouts (`wasm_rows_indirect.rs`).
-const _: () = assert!(TableTarget::NO_ENTRY == u32::MAX);
-const _: () = assert!(size_of::<TableTarget>() == 24);
-const _: () = assert!(TableTarget::SIGNATURE == 0 && TableTarget::ENTRY == 4 && TableTarget::INSTANCE == 8);
-const _: () = assert!(TableTarget::BODY == 16);
-const _: () = assert!(TableWords::BASE == 0 && TableWords::LENGTH == 8);
-// The row's `CONTEXT_*_AT` constants: `CallContext`'s offsets, which the row does not take in holes.
-const _: () = assert!(CONTEXT_TABLE_WORDS == 0x48 && CONTEXT_CALL_REFERENCE == 0x58);
-const _: () = assert!(CONTEXT_INSTANCE == 0x100 && CONTEXT_MEMORY_LENGTH == 0x90);
+// The row's stencil reads these layouts from `quench_bjit::wasm` (`wasm_rows_indirect.rs`), so each
+// is asserted against the runtime's own.
+const _: () = assert!(TableTarget::NO_ENTRY == codes::NO_ENTRY);
+const _: () = assert!(size_of::<TableTarget>() == codes::TARGET_BYTES);
+const _: () = assert!(TableTarget::SIGNATURE as usize == codes::TARGET_SIGNATURE_AT);
+const _: () = assert!(TableTarget::ENTRY as usize == codes::TARGET_ENTRY_AT);
+const _: () = assert!(TableTarget::INSTANCE as usize == codes::TARGET_INSTANCE_AT);
+const _: () = assert!(TableTarget::BODY as usize == codes::TARGET_BODY_AT);
+const _: () = assert!(TableWords::BASE as usize == codes::TABLE_WORDS_BASE_AT);
+const _: () = assert!(TableWords::LENGTH as usize == codes::TABLE_WORDS_LENGTH_AT);
+// `CallContext`'s offsets, which the row does not take in holes.
+const _: () = assert!(CONTEXT_TABLE_WORDS as usize == codes::CONTEXT_TABLE_WORDS_AT);
+const _: () = assert!(CONTEXT_CALL_REFERENCE as usize == codes::CONTEXT_CALL_REFERENCE_AT);
+const _: () = assert!(CONTEXT_INSTANCE as usize == codes::CONTEXT_INSTANCE_AT);
+const _: () = assert!(CONTEXT_MEMORY_LENGTH as usize == codes::CONTEXT_MEMORY_LENGTH_AT);
 
 /// Whether `instruction` is a `Call::Reference`.
 fn is_reference(instruction: WideInstruction) -> bool {

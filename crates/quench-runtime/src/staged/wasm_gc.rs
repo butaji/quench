@@ -8,6 +8,7 @@ use super::machine::MachineStage;
 use super::wasm::Width;
 use crate::WasmTrap;
 use crate::WasmTypes;
+use crate::bytecode::Op;
 use crate::wasm::gc::{GcField, GcFieldAccess};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 use crate::wasm::reference::ReferenceTarget;
@@ -247,26 +248,86 @@ pub(crate) enum GcOp {
     Allocating,
 }
 
-#[cfg(not(stencil_build))]
+/// The one table of the Wasm GC value opcodes the value lane runs, each with its group (`GcOp::of`)
+/// or `None` for a call target (`Call`, which the group does not own). `wasm_gc_table!` hands the
+/// entries to a projector: `wasm_gc_of` makes `GcOp::of`'s match, `wasm_gc_names` the bare
+/// names the lane's handler table and `wasm_gc_value_ops!` apply their macro to. The list is written
+/// here once; nothing else names these opcodes as a set.
+macro_rules! wasm_gc_table {
+    ($projector:ident $extra:ident) => {
+        $crate::staged::wasm_gc::$projector! {
+            $extra ;
+            WasmStructGet => Some(GcOp::Field),
+            WasmStructGetS => Some(GcOp::Field),
+            WasmStructGetU => Some(GcOp::Field),
+            WasmStructSet => Some(GcOp::Field),
+            WasmArrayGet => Some(GcOp::Field),
+            WasmArrayGetS => Some(GcOp::Field),
+            WasmArrayGetU => Some(GcOp::Field),
+            WasmArraySet => Some(GcOp::Field),
+            WasmArrayLen => Some(GcOp::ArrayLength),
+            WasmRefIsNull => Some(GcOp::Null),
+            WasmRefAsNonNull => Some(GcOp::Null),
+            WasmRefEq => Some(GcOp::Equal),
+            WasmRefTest => Some(GcOp::Test),
+            WasmRefCast => Some(GcOp::Test),
+            WasmI31 => Some(GcOp::Allocating),
+            WasmExternalConversion => Some(GcOp::Allocating),
+            WasmArrayNewData => Some(GcOp::Allocating),
+            WasmArrayNewElem => Some(GcOp::Allocating),
+            WasmArrayInitData => Some(GcOp::Allocating),
+            WasmArrayInitElem => Some(GcOp::Allocating),
+            WasmArrayFill => Some(GcOp::Allocating),
+            WasmArrayCopy => Some(GcOp::Allocating),
+            WasmArrayNew => Some(GcOp::Allocating),
+            WasmArrayNewDefault => Some(GcOp::Allocating),
+            WasmArrayNewFixed => Some(GcOp::Allocating),
+            WasmStructNew => Some(GcOp::Allocating),
+            WasmStructNewDefault => Some(GcOp::Allocating),
+            WasmStructNewDesc => Some(GcOp::Allocating),
+            WasmStructNewDefaultDesc => Some(GcOp::Allocating),
+            WasmRefGetDesc => Some(GcOp::Allocating),
+            WasmDescriptorTest => Some(GcOp::Allocating),
+            WasmDescriptorCast => Some(GcOp::Allocating),
+            WasmIndirectTarget => None,
+            WasmRefFunc => None,
+        }
+    };
+}
+pub(crate) use wasm_gc_table;
+
+/// Projects `wasm_gc_table!`'s entries to the match of `GcOp::of`, over the opcode `$op`.
+macro_rules! wasm_gc_of {
+    ($op:ident ; $($name:ident => $group:expr,)*) => {
+        match $op {
+            $(Op::$name => $group,)*
+            _ => None,
+        }
+    };
+}
+pub(crate) use wasm_gc_of;
+
+/// Projects `wasm_gc_table!`'s entries to the bare opcode names, applying `$then!` to them.
+macro_rules! wasm_gc_names {
+    ($then:ident ; $($name:ident => $group:expr,)*) => {
+        $then!($($name)*)
+    };
+}
+pub(crate) use wasm_gc_names;
+
+/// Applies `$then!` to the names of every Wasm GC value opcode: the one list (`wasm_gc_table!`)
+/// that `GcOp::of` and the lane's handlers both derive from.
+macro_rules! wasm_gc_value_ops {
+    ($then:ident) => {
+        $crate::staged::wasm_gc::wasm_gc_table!(wasm_gc_names $then)
+    };
+}
+pub(crate) use wasm_gc_value_ops;
+
 impl GcOp {
-    /// The group of `op`, `None` for an opcode that is no GC operation.
-    pub(crate) fn of(op: crate::bytecode::Op) -> Option<Self> {
-        use crate::bytecode::Op;
-        Some(match op {
-            Op::WasmStructGet | Op::WasmStructGetS | Op::WasmStructGetU | Op::WasmStructSet
-            | Op::WasmArrayGet | Op::WasmArrayGetS | Op::WasmArrayGetU | Op::WasmArraySet => Self::Field,
-            Op::WasmArrayLen => Self::ArrayLength,
-            Op::WasmRefIsNull | Op::WasmRefAsNonNull => Self::Null,
-            Op::WasmRefEq => Self::Equal,
-            Op::WasmRefTest | Op::WasmRefCast => Self::Test,
-            Op::WasmI31 | Op::WasmExternalConversion
-            | Op::WasmArrayNewData | Op::WasmArrayNewElem | Op::WasmArrayInitData | Op::WasmArrayInitElem
-            | Op::WasmArrayFill | Op::WasmArrayCopy | Op::WasmArrayNew | Op::WasmArrayNewDefault
-            | Op::WasmArrayNewFixed | Op::WasmStructNew | Op::WasmStructNewDefault | Op::WasmStructNewDesc
-            | Op::WasmStructNewDefaultDesc | Op::WasmRefGetDesc | Op::WasmDescriptorTest
-            | Op::WasmDescriptorCast => Self::Allocating,
-            _ => return None,
-        })
+    /// The group of `op`, `None` for an opcode that is no GC operation (a call target is none).
+    pub(crate) const fn of(op: Op) -> Option<Self> {
+        wasm_gc_table!(wasm_gc_of op)
     }
 
     /// Whether the operation can allocate (`Allocating`); the others only read or write cells

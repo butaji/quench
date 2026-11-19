@@ -17,15 +17,40 @@
 //! - HOLE_B: the offset of `memory_grow` in `CallContext`.
 //! - HOLE_FOURTH: the offset of `memory_length` in `CallContext`.
 //!
-//! The row's name is `call_w_30_0_1_0` (`wasm_library.rs` makes a `call_` name for it), since it
+//! The row's name is `call_w_20_0_1_0` (kind `MEMORY_GROW`) (`wasm_library.rs` makes a `call_` name for it), since it
 //! calls through a function pointer, which `build/checks.rs` requires of a `call_` row.
 
 use super::{read, reload_memory, write};
+use crate::staged::machine::MachineStage;
+use crate::staged::wasm_concrete::scalar_stage;
+use crate::staged::wasm_memory::WasmMemoryGrow;
+use crate::wasm::conversion::ScalarConversionOperator;
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole64};
 
 /// `memory_grow_callout::<H>`: (context, pages) -> the size in pages before as a word, or -1
 /// (all ones) where the memory cannot grow. Trap-free.
 type Grow = unsafe extern "C" fn(usize, u64) -> u64;
+
+/// The memory a grow row grows: the context's callout, which the staged `WasmMemoryGrow` rule
+/// calls for the growth. The growth is the one primitive the rule leaves to its stage.
+struct GrowStage {
+    context: usize,
+    grow: Grow,
+}
+
+scalar_stage!(GrowStage);
+
+impl WasmMemoryGrow for GrowStage {
+    #[inline(always)]
+    fn memory_grow(&mut self, pages: u64) -> u64 {
+        // The pages operand is an i32 word, zero-extended in its frame word.
+        // SAFETY: the callout is the context's `memory_grow` slot, which takes the context and
+        // the pages and is trap-free.
+        let before = unsafe { (self.grow)(self.context, u64::from(pages as u32)) };
+        // The result is an i32 word (`WrapI64` in the u-jit), zero-extended as every i32 register.
+        self.convert(ScalarConversionOperator::WrapI64, before)
+    }
+}
 
 /// `a = memory.grow b by c`: the pages register's word (an i32, zero-extended), grown by the VM's
 /// callout; the result is the i32 word of the size before, or -1.
@@ -33,15 +58,13 @@ type Grow = unsafe extern "C" fn(usize, u64) -> u64;
 pub(crate) unsafe fn memory_grow(mut s: S) -> Out {
     unsafe {
         let (grow_at, length_at) = (hole64::<HOLE_B>() as usize, hole64::<HOLE_FOURTH>() as usize);
-        // The pages operand is an i32 word, zero-extended in its frame word.
-        let pages = u64::from(read::<HOLE_A>(&s) as u32);
         let grow: Grow = core::mem::transmute(*((s.ctx + grow_at) as *const usize));
-        let before = grow(s.ctx, pages);
+        let mut stage = GrowStage { context: s.ctx, grow };
+        let before = stage.memory_grow(read::<HOLE_A>(&s));
         // The callout refreshed the context's length: the frame's length word takes it, and the
         // pins are reloaded from the header.
         reload_memory(&mut s, length_at);
-        // The result is an i32 word (`WrapI64` in the u-jit), zero-extended as every i32 register.
-        write::<0>(&s, u64::from(before as u32));
+        write::<0>(&s, before);
     }
     Out::Next(s)
 }
