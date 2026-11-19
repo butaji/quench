@@ -34,4 +34,6 @@ done <<< "$map"
 if [ -n "$gatefile" ] && [ -f "$gatefile" ]; then
   node "$here/vision-ledger.mjs" gate "$gatefile" "$work/scan-gate.json"; scans+=("$work/scan-gate.json")
 fi
+inv="$work/$(echo v2-merged | tr '/' '_')/crates/quench-tier-corpus/tier_inversions.txt"
+if [ -f "$inv" ]; then node "$here/vision-ledger.mjs" inversions "$inv" "$work/scan-inversions.json"; scans+=("$work/scan-inversions.json"); fi
 node "$here/vision-ledger.mjs" combine "$out" "$out/state.json" "${scans[@]}"

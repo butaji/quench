@@ -185,7 +185,9 @@ function scan(tree, branch, wantOwners) {
     const testFile = isTestPath(rel);
     const src = fs.readFileSync(path.join(tree, rel), "utf8");
     if (rel.endsWith("heap/cell.rs")) {
-      const m = /enum Native\s*\{([\s\S]*?)\n\}/.exec(src);
+      const list = /\nnatives!\s*\{([\s\S]*?)\n\}/.exec(src); // one natives! list generates the enum
+      if (list) nativeKeys = [...strip(list[1]).replace(/:\s*[a-z_]+/g, "").matchAll(/\b([A-Z][A-Za-z0-9]+)\b/g)].map(x => x[1]);
+      const m = list ? null : /enum Native\s*\{([\s\S]*?)\n\}/.exec(src);
       if (m) {
         nativeKeys = [...strip(m[1]).matchAll(/\b([A-Z][A-Za-z0-9]+)\b/g)].map(x => x[1]);
         add("hand-table", rel, lineOf(lineStarts(src), m.index), "enum Native", `Native enum hand-lists ${nativeKeys.length} builtins; other registries should derive from one table`, { owner: "Builtins" });
@@ -281,6 +283,34 @@ function scan(tree, branch, wantOwners) {
       for (const m of s.matchAll(/\b(numbered_codes|codes|call_rows)!\s*\{/g)) add("hand-table", rel, lineOf(starts, m.index), `${m[1]}!`, `${m[1]}! hand-lists row names`);
     }
 
+    // H. Rules from principles.md and the project instructions.
+    const inRuntime = /^crates\/quench-(runtime|bjit)\//.test(rel);
+    const tierCode = /^crates\/quench-bjit\/|vm\/compiled|vm\/dispatch_fast|vm\/dispatch\.rs|vm\/tier_policy/.test(rel);
+    // P3: no opcode exclusion tables.
+    if (tierCode) for (const m of s.matchAll(/\b(?:const|static)\s+([A-Z_]*(?:EXCLUD|UNSUPPORTED|REJECT|DENY|REFUSE|NOT_SUPPORTED|DECLINE)[A-Z_]*)\b/g))
+      if (!inRanges(tests, m.index)) add("exclusion-table", rel, lineOf(starts, m.index), m[1], `${m[1]}: an exclusion table in tier code (principle 3: every op has a row, no exclusion tables)`);
+    // P3: one frame model.
+    if (inRuntime && !/staged\/frame\.rs$/.test(rel)) for (const m of s.matchAll(/\bstruct\s+([A-Za-z0-9_]*(?:Frame|Activation|Window)[A-Za-z0-9_]*)\b/g))
+      if (!inRanges(tests, m.index) && !/(Frames|Words|Plan|Kind|Stats|Builder|Ref|Id|Key|Info)$/.test(m[1])) add("frame-model", rel, lineOf(starts, m.index), m[1], `frame type ${m[1]} (principle 3: one frame model; staged/frame.rs is the layout source)`, { owner: "Calls and frames" });
+    // P2/P3: one entry mechanism (a fn-pointer transmute is a hand-made way into compiled code).
+    if (inRuntime && /vm\//.test(rel)) for (const m of s.matchAll(/transmute::<[^>]*extern\s+"C"|transmute\s*\([^)]*\)\s*as\s*(?:unsafe\s+)?extern|as\s+(?:unsafe\s+)?extern\s+"C"\s+fn/g))
+      if (!inRanges(tests, m.index)) add("entry-mechanism", rel, lineOf(starts, m.index), `entry@${lineOf(starts, m.index)}`, `a hand-made entry into compiled code (fn-pointer cast); principle 3: one trampoline, one EntryDescriptor`, { owner: /wasm/.test(rel) ? "Wasm" : "u-jit" });
+    // P7: facts in one lattice.
+    if (inRuntime) for (const m of s.matchAll(/\benum\s+(Rep|Repr|Representation|SlotType|ValueKind|Tagged[A-Za-z]*Role)\b/g))
+      if (!inRanges(tests, m.index)) add("duplicate-lattice", rel, lineOf(starts, m.index), m[1], `enum ${m[1]}: another value-representation lattice (principle 7: facts in one lattice)`, { owner: "Fact store" });
+    // P8: TS syntax refused instead of run.
+    if (/compile\//.test(rel)) for (const m of s.matchAll(/outside the supported subset|unsupported TypeScript|TypeScript[^\n]{0,40}not supported/g))
+      add("ts-rejected", rel, lineOf(starts, m.index), `ts@${lineOf(starts, m.index)}`, `TypeScript syntax refused here (principle 8: TS is first-class)`, { owner: "Front end" });
+    // P10: optimizations are general, never benchmark-specific.
+    if (inRuntime) for (const m of src.matchAll(/\b(richards|deltablue|delta_blue|navier|raytrace|earley|boyer|splay|babylon|nbody|n_body|jetstream|octane|sunspider|crypto_aes|validatorjs|acorn_wtb|babel_wtb)\b/gi))
+      if (!inRanges(tests, m.index) && !/^\s*\/\//.test(src.slice(src.lastIndexOf("\n", m.index) + 1, m.index))) add("benchmark-specific", rel, lineOf(starts, m.index), `bench@${lineOf(starts, m.index)}`, `names benchmark "${m[1]}" in engine code (principle 10)`);
+    // P12: delete dead paths.
+    for (const m of s.matchAll(/#\[allow\(dead_code\)\]/g))
+      if (!inRanges(tests, m.index)) add("dead-code", rel, lineOf(starts, m.index), `dead@${lineOf(starts, m.index)}`, `#[allow(dead_code)] keeps a dead path (principle 12)`);
+    // One policy home: QUENCH_* switches outside vm/switches.rs.
+    if (inRuntime && !/vm\/switches\.rs$/.test(rel)) for (const m of src.matchAll(/env::var(?:_os)?\(\s*"(QUENCH_[A-Z0-9_]+)"/g))
+      if (!inRanges(tests, m.index)) add("policy-outside-home", rel, lineOf(starts, m.index), m[1], `${m[1]} read outside vm/switches.rs (one policy home)`, { owner: "Compile pipeline" });
+
     // E. Per-call re-checks in call, return and entry paths.
     if (/vm\/dispatch_fast|vm\/compiled\/(entry|lane_body|exit|osr_lane|frameless)|crates\/quench-bjit\/.*call/.test(rel)) {
       for (const f of fns) {
@@ -326,6 +356,15 @@ function scan(tree, branch, wantOwners) {
 }
 
 // ---------- gate budgets ----------
+function inversions(file) {
+  const items = [];
+  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+    const m = /^([a-z0-9_]+)\s+(b-jit|u-jit)\s*$/.exec(line);
+    if (m) items.push({ cat: "tier-inversion", owner: m[2], file: "tier_inversions.txt", line: 0, symbol: `${m[1]} ${m[2]}`, branch: "v2-merged",
+      key: `tier-inversion|${m[1]}|${m[2]}`, detail: `${m[1]}: ${m[2]} runs it in more instructions than the tier below (principle 5: tier order by design)` });
+  }
+  return items;
+}
 function gate(file) {
   const txt = fs.readFileSync(file, "utf8");
   const items = [];
@@ -358,7 +397,12 @@ const CAT_TITLE = {
   "clif-not-row": "Cranelift helpers with hand value semantics", "builtin-bodies": "Builtins with more than one body",
   "hand-table": "Hand-written tables", "per-call-recheck": "Per-call re-checks", "budget-over-c6": "JIT tiers over C + 6 (gate)",
   "budget-over-floor": "Interpreter over its C floor (gate)", "ts-types-unused": "TS types that reach no tier",
+  "tier-inversion": "Tier inversions (gate debt)", "exclusion-table": "Opcode exclusion tables", "frame-model": "Frame types beside the one frame model",
+  "entry-mechanism": "Hand-made entries into compiled code", "duplicate-lattice": "Extra value lattices", "ts-rejected": "TypeScript syntax refused",
+  "benchmark-specific": "Benchmark-specific code", "dead-code": "Dead code kept alive", "policy-outside-home": "Switches outside the policy home",
 };
+const MEASURED = new Set(["budget-over-c6", "budget-over-floor", "tier-inversion"]);
+const kindOf = it => MEASURED.has(it.cat) ? "measured" : "code";
 function combine(outDir, statePath, inputs) {
   const all = [];
   for (const f of inputs) all.push(...JSON.parse(fs.readFileSync(f, "utf8")));
@@ -376,6 +420,8 @@ function combine(outDir, statePath, inputs) {
   const weight = it => it.cat === "opcode-named" ? (+(/^(\d+)/.exec(it.detail) || [0, 1])[1]) : 1;
 
   let md = `# Vision ledger\n\nGenerated ${stamp} by tools/vision-ledger.mjs (reading only, no build). Branches: ${[...new Set(items.map(i => i.branch))].join(", ")}.\n\n`;
+  const codeN = items.filter(i => kindOf(i) === "code").length, measN = items.length - codeN;
+  md += `**Code gaps: ${codeN}** (closable now by editing; must reach zero). **Measured gaps: ${measN}** (gate rows; need a build, close at stabilization).\n\n`;
   md += `**${items.length} open items** (${items.filter(i => i.status === "new").length} new since the last run, ${closed.length} closed). Opcode names counted individually: ${items.filter(i => i.cat === "opcode-named").reduce((a, i) => a + weight(i), 0)}.\n\n`;
   md += `Each owner's items come from that owner's own pushed branch tip; gate items from the newest v2-merged ir-budget report. "Calls a staged row" is decided by name, so counts are an upper bound: triage before deleting.\n\n`;
   md += `| owner | ${cats.map(c => c.replace(/-/g, " ")).join(" | ")} | total |\n|---|${cats.map(() => "--:").join("|")}|--:|\n`;
@@ -385,8 +431,9 @@ function combine(outDir, statePath, inputs) {
   }
   md += `| **all** | ${cats.map(c => items.filter(i => i.cat === c).length || "").join(" | ")} | **${items.length}** |\n\n`;
   for (const o of owners) {
-    md += `## ${o}\n\n`;
-    for (const c of cats) {
+    const mineAll = items.filter(i => i.owner === o);
+    md += `## ${o} (code ${mineAll.filter(i => kindOf(i) === "code").length}, measured ${mineAll.filter(i => kindOf(i) === "measured").length})\n\n`;
+    for (const c of [...cats.filter(c => !MEASURED.has(c)), ...cats.filter(c => MEASURED.has(c))]) {
       const mine = items.filter(i => i.owner === o && i.cat === c);
       if (!mine.length) continue;
       md += `### ${CAT_TITLE[c]} (${mine.length})\n\n`;
@@ -398,14 +445,27 @@ function combine(outDir, statePath, inputs) {
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, "ledger.md"), md);
 
-  let delta = `Vision ledger ${stamp}: ${items.length} open, ${items.filter(i => i.status === "new").length} new, ${closed.length} closed.\n`;
+  const prevCode = prev.code || {};
+  const codeBy = {};
+  let delta = `Vision ledger ${stamp}: code gaps ${codeN}, measured gaps ${measN}; ${items.filter(i => i.status === "new").length} new, ${closed.length} closed.\n`;
+  fs.mkdirSync(path.join(outDir, "owners"), { recursive: true });
   for (const o of owners) {
     const mine = items.filter(i => i.owner === o);
+    const code = mine.filter(i => kindOf(i) === "code"), meas = mine.filter(i => kindOf(i) === "measured");
+    codeBy[o] = code.length;
     const nw = mine.filter(i => i.status === "new");
-    delta += `- ${o}: ${mine.length} open${nw.length ? `, ${nw.length} new` : ""} (${cats.filter(c => mine.some(i => i.cat === c)).map(c => `${c} ${mine.filter(i => i.cat === c).length}`).join(", ")})\n`;
+    const stuck = prevCode[o] != null && code.length > 0 && code.length >= prevCode[o];
+    delta += `- ${o}: code ${code.length}${prevCode[o] != null ? ` (was ${prevCode[o]})` : ""}${stuck ? " NOT DROPPING" : ""}, measured ${meas.length}${nw.length ? `, ${nw.length} new` : ""} (${cats.filter(c => mine.some(i => i.cat === c)).map(c => `${c} ${mine.filter(i => i.cat === c).length}`).join(", ")})\n`;
+    let om = `# ${o}: open vision gaps (${stamp})\n\nCode gaps ${code.length}${prevCode[o] != null ? ` (previous pass ${prevCode[o]})` : ""}: close now by editing; must reach zero. Measured gaps ${meas.length}: gate rows, close at stabilization.\nRead from: ${[...new Set(mine.map(i => i.branch))].join(", ")}. Counts are by name: triage before deleting, and report false positives to the "Track the full vision gap" thread.\n\n`;
+    for (const [title, list] of [["Code gaps", code], ["Measured gaps", meas]]) {
+      if (!list.length) continue;
+      om += `## ${title}\n\n`;
+      for (const c of cats) { const l = list.filter(i => i.cat === c); if (!l.length) continue; om += `### ${CAT_TITLE[c]} (${l.length})\n\n` + l.map(it => `- ${it.status === "new" ? "**NEW** " : ""}\`${it.file}${it.line ? ":" + it.line : ""}\` ${it.detail}`).join("\n") + "\n\n"; }
+    }
+    fs.writeFileSync(path.join(outDir, "owners", o.replace(/[^A-Za-z0-9-]+/g, "_") + ".md"), om);
   }
   fs.writeFileSync(path.join(outDir, "delta.md"), delta);
-  fs.writeFileSync(statePath, JSON.stringify({ stamp, keys: [...nowKeys] }));
+  fs.writeFileSync(statePath, JSON.stringify({ stamp, keys: [...nowKeys], code: codeBy }));
   process.stdout.write(delta);
 }
 
@@ -417,6 +477,10 @@ if (cmd === "scan") {
   const items = scan(path.resolve(tree), branch, owners);
   fs.writeFileSync(out, JSON.stringify(items));
   process.stdout.write(`${branch}: ${items.length} items\n`);
+} else if (cmd === "inversions") {
+  const items = inversions(args[0]);
+  fs.writeFileSync(args[1], JSON.stringify(items));
+  process.stdout.write(`inversions: ${items.length} items\n`);
 } else if (cmd === "gate") {
   const items = gate(args[0]);
   fs.writeFileSync(args[1], JSON.stringify(items));
