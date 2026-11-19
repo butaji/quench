@@ -42,9 +42,9 @@ const THIS_NONE: u64 = 1;
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub(super) struct ShadowRecord {
-    call_pc: u64,
-    this: Value,
-    callee: Value,
+    pub(super) call_pc: u64,
+    pub(super) this: Value,
+    pub(super) callee: Value,
 }
 
 /// An admitted callee, by its value, in the collection epoch it was admitted in: its native
