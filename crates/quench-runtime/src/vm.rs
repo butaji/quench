@@ -1935,10 +1935,10 @@ pub(crate) struct Vm<H> {
     /// Whether the innermost running job queue has entered the host's context for unobserved
     /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.
     unobserved_jobs_entered: bool,
-    /// The native whose fast in-place body a dispatcher tried and declined on the call that is
-    /// about to reach its general native, so that native skips that body (the one-shot flag is
-    /// taken at each such native's entry, and cleared at each dispatcher attempt).
-    declined_fast: Option<Native>,
+    /// The programs the running job queues return to, innermost last (`Vm::run_job_queue`):
+    /// an await's job leaves its function's program active for the queue's next jobs, so a
+    /// collection keeps each of these, which the queue makes active again when it ends.
+    job_queue_programs: Vec<ProgramId>,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,

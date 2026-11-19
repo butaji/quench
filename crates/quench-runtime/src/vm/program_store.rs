@@ -2613,6 +2613,21 @@ impl ProgramStore {
         Some(entry.views_in_lane.of(&entry.residual))
     }
 
+    /// What a lane run's context reads of program `id` (`Vm::lane_context`), from one look at
+    /// its entry: its lane views (`lane_views`, none for a program linked to native entries or
+    /// one the store does not hold) and its constants (`constants`).
+    #[inline(always)]
+    pub(super) fn lane_tables(&self, id: ProgramId) -> (&[LaneViewCell], &[Value]) {
+        let Some(entry) = self.entry(id) else {
+            return (&[], &[]);
+        };
+        #[cfg(feature = "native-execution")]
+        if entry.native_js.is_some() {
+            return (&[], &entry.constants[..]);
+        }
+        (entry.lane_views.of(&entry.residual), &entry.constants[..])
+    }
+
     /// The lane view a general-loop entry of `function` runs with. A function that may loop
     /// gets it at its first entry; any other once its deferred runs are complete
     /// (`LANE_VIEW_DEFERRED_RUNS`), so code that runs a few times without looping (a module

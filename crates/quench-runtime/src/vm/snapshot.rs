@@ -51,7 +51,7 @@ impl<H: Host> Vm<H> {
             queue_resumed: _,
             declined_fast: _,
             unobserved_jobs_entered: _,
-            main_realm,
+            job_queue_programs: _,
             host,
             specialized,
             heap,

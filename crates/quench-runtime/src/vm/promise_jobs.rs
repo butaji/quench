@@ -483,8 +483,12 @@ impl<H: Host> Vm<H> {
             }
             return outcome;
         };
+        // The host's hooks run in the queue's program, which an earlier await's job, or this
+        // job's own, may have left (`Vm::run_job_queue`).
+        self.restore_queue_program();
         let previous = self.host.enter_job_context(context);
         let outcome = self.promise_job_boundary(Some(context), true).and_then(|()| body(self));
+        self.restore_queue_program();
         let after = self.promise_job_boundary(Some(context), false);
         self.host.restore_job_context(previous);
         self.release_job_context(context);
@@ -499,16 +503,17 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let value = reaction.value;
         self.run_promise_job(reaction.realm, reaction.execution_context.get(), |vm| {
-            let await_reaction = vm.heap.await_state(reaction.handler).is_some();
-            if !await_reaction && !vm.is_function(reaction.handler) {
+            // One look at the handler's await state both tells an await's reaction and gives
+            // what it resumes.
+            let awaited = vm.heap.await_state(reaction.handler).map(|state| state.pending());
+            if awaited.is_none() && !vm.is_function(reaction.handler) {
                 let state = if reaction.rejected { PromiseState::Rejected } else { PromiseState::Fulfilled };
                 return vm.settle_reaction(p, reaction.next, state, value);
             }
-            let called = if await_reaction {
-                vm.resume_await(p, reaction.handler, reaction.rejected, value)
-            } else {
+            let called = match awaited {
+                Some(pending) => vm.resume_queued_await(p, (reaction.handler, pending), reaction.rejected, value),
                 // The job's call roots hold the handler and its argument (`Vm::run_pending_job`).
-                vm.call_value_from_frame(p, reaction.handler, Value::UNDEFINED, &[value])
+                None => vm.call_value_from_frame(p, reaction.handler, Value::UNDEFINED, &[value]),
             };
             let (state, result) = match called {
                 Ok(result) => (PromiseState::Fulfilled, result),
