@@ -349,6 +349,42 @@ impl Traits {
     pub(crate) const CONST_ARRAY_OBJECT2_TAIL: Self = Self(1 << 49);
     /// The superinstruction that fuses `CONST_ARRAY_OBJECT2`. Tagged: `SuperConstArrayObject2`.
     pub(crate) const FUSED_CONST_ARRAY_OBJECT2: Self = Self(1 << 50);
+    /// The op that copies a whole activation environment for a per-iteration or block scope. Tagged: `CloneEnv`.
+    pub(crate) const ENVIRONMENT_CLONE: Self = Self(1 << 71);
+    /// The op that loads an environment-resident local slot into its result register. Tagged: `LoadEnvLocal`.
+    pub(crate) const ENV_LOCAL_LOAD: Self = Self(1 << 72);
+    /// The op that stores its register A into an environment-resident local slot. Tagged: `StoreEnvLocal`.
+    pub(crate) const ENV_LOCAL_STORE: Self = Self(1 << 73);
+    /// The op that loads a captured slot into its result register. Tagged: `LoadCapture`.
+    pub(crate) const CAPTURE_LOAD: Self = Self(1 << 74);
+    /// The op that stores its register A into a captured slot. Tagged: `StoreCapture`.
+    pub(crate) const CAPTURE_STORE: Self = Self(1 << 75);
+    /// The indexed element read of an operand register (`obj[key]`). Tagged: `GetIndex`.
+    pub(crate) const ELEMENT_LOAD: Self = Self(1 << 76);
+    /// A call that spreads the array of its one-value argument window. Tagged: `CallSpread`.
+    pub(crate) const SPREAD_CALL: Self = Self(1 << 77);
+    /// A call that spreads a rest parameter's kept values in place of its array. Tagged: `CallRest`.
+    pub(crate) const REST_SPREAD_CALL: Self = Self(1 << 78);
+    /// A read of one kept rest value by index. Tagged: `RestGet`.
+    pub(crate) const REST_INDEX_READ: Self = Self(1 << 79);
+    /// The read of a rest parameter's length from its kept values. Tagged: `RestLength`.
+    pub(crate) const REST_LENGTH_READ: Self = Self(1 << 80);
+    /// The call whose callee and arguments are both registers, without a spread or a method site. Tagged: `Call`.
+    pub(crate) const PLAIN_CALL: Self = Self(1 << 81);
+    /// The raw-register form of a Wasm i64 or f64 operation (`raw_webs`). Tagged: every `*Raw` row and `WasmReturn64`.
+    pub(crate) const RAW_FORM: Self = Self(1 << 82);
+    /// The family of the i64 binary operation, boxed or raw. Tagged: `WasmI64Binary`, `WasmI64BinaryRaw`.
+    pub(crate) const I64_BINARY_FAMILY: Self = Self(1 << 83);
+    /// The family of the i64 binary operation with an immediate operand. Tagged: `WasmI64BinaryImmediate`, `WasmI64BinaryImmediateRaw`.
+    pub(crate) const I64_BINARY_IMMEDIATE_FAMILY: Self = Self(1 << 84);
+    /// The family of the i64 unary operation. Tagged: `WasmI64Unary`, `WasmI64UnaryRaw`.
+    pub(crate) const I64_UNARY_FAMILY: Self = Self(1 << 85);
+    /// The family of the f64 binary operation. Tagged: `WasmF64Binary`, `WasmF64BinaryRaw`.
+    pub(crate) const F64_BINARY_FAMILY: Self = Self(1 << 86);
+    /// The family of the f64 unary operation. Tagged: `WasmF64Unary`, `WasmF64UnaryRaw`.
+    pub(crate) const F64_UNARY_FAMILY: Self = Self(1 << 87);
+    /// The family of a function's return, boxed or raw. Tagged: `Return`, `WasmReturn64`.
+    pub(crate) const RETURN_FAMILY: Self = Self(1 << 88);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }

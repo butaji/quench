@@ -26,7 +26,7 @@
 //! (`RawWebs::raw_ops`).
 
 use super::RegisterSet;
-use crate::bytecode::{Class, Function, Op, Successors, WideInstruction};
+use crate::bytecode::{Class, Function, Op, Successors, Traits, WideInstruction};
 use crate::compile::liveness::MethodSite;
 use crate::staged::wasm_operation::{Operand, WasmOperation};
 use crate::WasmType;
@@ -44,17 +44,36 @@ const fn wide(ty: WasmType) -> bool {
     matches!(ty, WasmType::I64 | WasmType::F64)
 }
 
-/// The raw form of `op`: the opcode that runs the same operation over raw i64 registers.
+/// The families a boxed op and its raw form share (their catalog rows' family traits).
+const RAW_FAMILIES: u128 = Traits::I64_BINARY_FAMILY
+    .union(Traits::I64_BINARY_IMMEDIATE_FAMILY)
+    .union(Traits::I64_UNARY_FAMILY)
+    .union(Traits::F64_BINARY_FAMILY)
+    .union(Traits::F64_UNARY_FAMILY)
+    .union(Traits::RETURN_FAMILY)
+    .0;
+
+/// The raw form of `op`: the opcode that runs the same operation over raw i64 registers, the
+/// raw row of `op`'s family. A raw op has none.
 pub(crate) const fn raw_form(op: Op) -> Option<Op> {
-    Some(match op {
-        Op::WasmI64Binary => Op::WasmI64BinaryRaw,
-        Op::WasmI64BinaryImmediate => Op::WasmI64BinaryImmediateRaw,
-        Op::WasmI64Unary => Op::WasmI64UnaryRaw,
-        Op::WasmF64Binary => Op::WasmF64BinaryRaw,
-        Op::WasmF64Unary => Op::WasmF64UnaryRaw,
-        Op::Return => Op::WasmReturn64,
-        _ => return None,
-    })
+    if is_raw(op) {
+        return None;
+    }
+    let family = op.traits().0 & RAW_FAMILIES;
+    if family == 0 {
+        return None;
+    }
+    let mut index = 0;
+    while index < Op::COUNT {
+        if let Some(candidate) = Op::from_index(index)
+            && is_raw(candidate)
+            && candidate.traits().0 & RAW_FAMILIES == family
+        {
+            return Some(candidate);
+        }
+        index += 1;
+    }
+    None
 }
 
 /// Whether `operation` is an f64 operator whose result depends on a NaN operand only through
@@ -71,7 +90,7 @@ fn nan_agnostic(operation: WasmOperation) -> bool {
 
 /// Whether `op` is a raw form: analyzing code the lowering already switched finds its webs again.
 const fn is_raw(op: Op) -> bool {
-    matches!(op, Op::WasmI64BinaryRaw | Op::WasmI64BinaryImmediateRaw | Op::WasmI64UnaryRaw | Op::WasmF64BinaryRaw | Op::WasmF64UnaryRaw | Op::WasmReturn64)
+    op.traits().has(Traits::RAW_FORM)
 }
 
 /// How an instruction touches its registers, where it is not all boxed.
@@ -137,7 +156,7 @@ fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool,
         Class::Move => Some(Roles::Copy { destination: a, sources: vec![b] }),
         Class::WasmSelect => Some(Roles::Copy { destination: a, sources: vec![b, instruction.c()] }),
         Class::LoadConst | Class::WasmFillRegisters if rewritten || constant_neutral(instruction.constant_index()) => Some(Roles::Neutral),
-        Class::Return if returns_wide && !rewritten && op == Op::Return => Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] }),
+        Class::Return if returns_wide && !rewritten && op.traits().has(Traits::RETURN_VALUE) => Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] }),
         Class::WasmReturn64 => Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] }),
         _ => None,
     }

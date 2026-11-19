@@ -1,4 +1,4 @@
-use crate::bytecode::{Function, Op};
+use crate::bytecode::{Function, Traits};
 
 pub(super) fn report(functions: &[Function]) {
     let mut captured = functions
@@ -13,23 +13,24 @@ pub(super) fn report(functions: &[Function]) {
     let mut max_depth = 0;
     for (id, function) in functions.iter().enumerate() {
         for instruction in &function.code {
-            match instruction.op() {
-                Op::MakeClosure => defining_closures[id] += 1,
-                Op::LoadEnvLocal => environment_loads += 1,
-                Op::StoreEnvLocal => environment_stores += 1,
-                Op::LoadCapture | Op::StoreCapture => {
-                    capture_loads += usize::from(instruction.op() == Op::LoadCapture);
-                    capture_stores += usize::from(instruction.op() == Op::StoreCapture);
-                    let depth = usize::from(instruction.capture_depth());
-                    max_depth = max_depth.max(depth);
-                    if let Some(owner) = ancestor(functions, id, depth + 1) {
-                        let slot = usize::from(instruction.capture_slot());
-                        if slot < captured[owner].len() {
-                            captured[owner][slot] = true;
-                        }
+            let traits = instruction.op().traits();
+            if traits.has(Traits::MAKES_CLOSURE) {
+                defining_closures[id] += 1;
+            } else if traits.has(Traits::ENV_LOCAL_LOAD) {
+                environment_loads += 1;
+            } else if traits.has(Traits::ENV_LOCAL_STORE) {
+                environment_stores += 1;
+            } else if instruction.op().addresses_capture() {
+                capture_loads += usize::from(traits.has(Traits::CAPTURE_LOAD));
+                capture_stores += usize::from(traits.has(Traits::CAPTURE_STORE));
+                let depth = usize::from(instruction.capture_depth());
+                max_depth = max_depth.max(depth);
+                if let Some(owner) = ancestor(functions, id, depth + 1) {
+                    let slot = usize::from(instruction.capture_slot());
+                    if slot < captured[owner].len() {
+                        captured[owner][slot] = true;
                     }
                 }
-                _ => {}
             }
         }
     }
