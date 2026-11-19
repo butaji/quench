@@ -183,7 +183,9 @@ mod tests {
     /// stepped by `next()` (a windowed activation), a nested read's getter (its caller's field
     /// site, `Vm::called_field_source`), defines that raise beside activations (`lane_raise`,
     /// caught in the lane or not), and an async function after its `await` (a job's root), whose
-    /// traces the jobs compare after the rounds.
+    /// traces the jobs compare after the rounds. §5.3 adds operations made in place that raise
+    /// beside activations (`unwound_in_place`): `undefined.x` and a BigInt plus Number caught by
+    /// the caller, `null[0]` caught in the raising function, their messages and frames Node's.
     #[test]
     fn lane_stack_captures_match_materialized_traces() {
         let source = r#"
@@ -220,12 +222,19 @@ mod tests {
           function viaPrivate() { var o = {}; new Stamp(o); try { new Stamp(o); } catch (e) { return e.stack; } }
           function caughtHere() { try { new Sealing(); return "none"; } catch (e) { return e.message; } }
           function viaCaught() { return caughtHere(); }
+          function readField(o) { var v = o.x; return v; }
+          function viaUndefinedField() { try { readField(undefined); return "none"; } catch (e) { return e.stack; } }
+          function readIndex(o) { try { var v = o[0]; return v; } catch (e) { return e.stack; } }
+          function viaNullIndex() { return readIndex(null); }
+          function mix(a, b) { var s = a + b; return s; }
+          function viaMixedAdd() { try { mix(1n, 1); return "none"; } catch (e) { return e.stack; } }
           var jobTraces = [];
           async function afterAwait() { await null; jobTraces.push(new Error("job").stack); }
           function round() {
             afterAwait();
             return [outer(), viaCapture(), viaGetter(), viaCallback(), viaConstructor(), viaCall(), viaMethod(), viaEval(), viaAsync(),
-              viaForwarder(), viaGenerator(), viaNestedGetter(), viaDefine(), viaPrivate(), viaCaught()];
+              viaForwarder(), viaGenerator(), viaNestedGetter(), viaDefine(), viaPrivate(), viaCaught(),
+              viaUndefinedField(), viaNullIndex(), viaMixedAdd()];
           }
           function names(trace, n) {
             return trace.split("\n").slice(1, 1 + n).map(function (l) { return l.trim().split(" ")[1]; }).join(",");
@@ -238,7 +247,8 @@ mod tests {
                 if (got[k] !== first[k]) return "round " + i + " case " + k + "\n" + first[k] + "\n--\n" + got[k];
               }
             }
-            return names(first[0], 5) + "|" + names(first[1], 3);
+            var raised = first.slice(15).map(function (t) { return t.split("\n")[0] + "@" + names(t, 3); });
+            return [names(first[0], 5), names(first[1], 3)].concat(raised).join("|");
           }
           print(run());
           Promise.resolve().then(function () {
@@ -252,6 +262,12 @@ mod tests {
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = Engine::specialize(source, "lane-stack-captures.js").unwrap();
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), ["inner,middle,outer,round,run|viaCapture,round,run", "3001 jobs|afterAwait"]);
+        let rounds = concat!(
+            "inner,middle,outer,round,run|viaCapture,round,run",
+            "|TypeError: Cannot read properties of undefined (reading 'x')@readField,viaUndefinedField,round",
+            "|TypeError: Cannot read properties of null (reading '0')@readIndex,viaNullIndex,round",
+            "|TypeError: Cannot mix BigInt and other types, use explicit conversions@mix,viaMixedAdd,round",
+        );
+        assert_eq!(output.borrow().as_slice(), [rounds, "3001 jobs|afterAwait"]);
     }
 }

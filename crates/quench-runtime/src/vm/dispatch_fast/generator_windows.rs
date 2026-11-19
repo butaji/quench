@@ -150,8 +150,10 @@ pub(super) fn start_called_generator<H: Host>(
     // generator's frame takes them.
     let arguments = super::super::call_arguments::CallArguments::from_slice(unsafe { lane_call_window(r, i) });
     let (this, context) = (r.get(i.c), CallContext::user_function(function, callee));
-    let value = lane_in_place(cx, ip, |vm, code| vm.call_generator(code, function, env, this, arguments.as_slice(), context));
-    Some(lane_native_complete(cx, ip, i, value))
+    match unwound_in_place(cx, ip, |vm, code| vm.call_generator(code, function, env, this, arguments.as_slice(), context)) {
+        Ok(value) => Some(lane_native_complete(cx, ip, i, Some(value))),
+        Err(next) => Some(Resumed::Exit(next)),
+    }
 }
 
 /// How a resumed generator's window carries its locals (`FrameRecord::open_environment_window`):

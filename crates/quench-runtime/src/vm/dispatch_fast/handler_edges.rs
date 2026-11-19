@@ -110,44 +110,20 @@ pub(super) fn unwind_raised<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Ip {
 
 /// `lane_raise` beside frameless activations (frame-switches.md #6): the instruction at `ip`
 /// failed before any effect, with an error whose stack, if it made one, the capture read
-/// without the activations (no native call was deferred). `again` makes it a second time as
-/// a native beside the activations runs (`DeferredLaneCall`, as `lane_in_place` makes an
-/// operation): it fails the same way, and the error it builds now captures its stack from the
-/// frame walk (`Vm::lane_stack_sites`), so the error is the one the general path, which used
-/// to run the instruction again from the frames, raises. That error is unwound in the lane
-/// (`unwind_raised`: `catch_raised` with `throw_record`'s declines, else `lane_raised_exit`).
-/// Where the second run observed the deferred call (a capture the walk declined made the
-/// activations frames), the error is raised from those frames on the general path, as
-/// `lane_in_place` raises one; where it unexpectedly succeeded, its effect is made and the
-/// general path continues after the record.
+/// without the activations (no native call was deferred). `again` makes it a second time in
+/// place beside the activations (`unwound_in_place`): it fails the same way, and the error it
+/// builds now captures its stack from the frame walk (`Vm::lane_stack_sites`), so the error is
+/// the one the general path, which used to run the instruction again from the frames, raises,
+/// and it is raised and unwound as any operation made in place raises (`unwind_raised` where
+/// the activations stayed the lane's, else from frames on the general path). Where it
+/// unexpectedly succeeded, its effect is made and the general path continues after the record.
 pub(super) fn raise_again<H: Host, T>(
     cx: *mut LaneContext<H>,
     ip: Ip,
     again: impl FnOnce(&mut Vm<H>, &ResidualProgram) -> Result<T, JsError>,
 ) -> Ip {
-    lane_materialize_running_leaf(cx);
-    let vm = unsafe { vm(cx) };
-    // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
-    // running function's view.
-    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
-    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc, frames: vm.frames.len() });
-    let generation_key = (vm.heap.collection_epoch(), vm.realm.globals);
-    let result = again(vm, code);
-    // The error's construction allocates, which can make a collection due.
-    note_allocation(vm);
-    if (vm.heap.collection_epoch(), vm.realm.globals) != generation_key {
-        lane_after_nested_collection(cx);
-    }
-    let unobserved = vm.lane_deferred.take().is_some();
-    match result {
-        Err(error) if unobserved => {
-            vm.lane_completion.raise(error);
-            unwind_raised(cx, ip)
-        }
-        Err(error) => {
-            vm.lane_completion.raise(error);
-            exit(ip)
-        }
+    match unwound_in_place(cx, ip, again) {
+        Err(next) => next,
         Ok(_) => {
             debug_assert!(false, "an instruction that failed before any effect fails again");
             exit(following(ip))
@@ -203,10 +179,16 @@ fn catchable_value<H: Host>(cx: *mut LaneContext<H>) -> Option<Value> {
     if leaf || wasm || vm.lane_deferred.is_some() || vm.lane_stack.native_boundary.is_some() {
         return None;
     }
-    let error = vm.lane_completion.raised_mut()?;
+    vm.lane_completion.raised_mut().filter(|error| unwinds_in_lane(error))?.thrown_value()
+}
+
+/// Whether the lane may unwind `error` (`catch_raised`): a thrown value whose message the
+/// general loop does not rewrite (`Vm::name_non_callable_callee`). Any other error (a
+/// termination, a trap, an error with no value yet) the general path raises.
+pub(super) fn unwinds_in_lane(error: &JsError) -> bool {
     let renamed = error.has_message(super::super::call_printer::NOT_CALLABLE_MESSAGE)
         || error.has_message(super::super::call_printer::NOT_CONSTRUCTOR_MESSAGE);
-    if renamed { None } else { error.thrown_value() }
+    !renamed && error.thrown_value().is_some()
 }
 
 /// The handler of the running function covering `record`, entered for the thrown `value` as the

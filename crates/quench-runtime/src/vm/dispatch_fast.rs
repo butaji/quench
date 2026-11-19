@@ -3677,6 +3677,8 @@ macro_rules! next {
 /// call record that returns the completion (`lane_frame_return`).
 enum Resumed {
     At(Registers, Ip, Carried),
+    /// The handler's result as it is: an `exit`, or a record the lane dispatches next from its
+    /// context's state (a handler a raise entered, `unwound_in_place`).
     Exit(Ip),
 }
 
@@ -4552,11 +4554,12 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
         .and_then(|row| row.call_out()).expect("a result step is a call-out row");
     let operands = operation.operands().read(&code.method_arguments, |register| r.get(register));
-    let Some(value) = lane_in_place(cx, ip, |vm, code| {
+    let value = match unwound_in_place(cx, ip, |vm, code| {
         let site = super::call_out::CallSite { owner: vm.call_out_owner(operation), function, resume: pc + 1 };
         vm.call_out(code, site, operation, operands)
-    }) else {
-        return Resumed::Exit(exit(ip));
+    }) {
+        Ok(value) => value,
+        Err(next) => return Resumed::Exit(next),
     };
     // Guest code the step ran made the activations frames, whose registers these are.
     let r = unsafe { (*cx).registers };
@@ -4578,6 +4581,69 @@ fn lane_in_place<H: Host, T>(
     ip: Ip,
     operation: impl FnOnce(&mut Vm<H>, &ResidualProgram) -> Result<T, JsError>,
 ) -> Option<T> {
+    made_in_place(cx, ip, operation).map_err(|(error, made)| raised_in_place(cx, ip, error, made, false)).ok()
+}
+
+/// `lane_in_place` whose raise stays in the lane where the lane can unwind it
+/// (frame-switches.md §5.3): `Err` carries the record the run goes on at, for the caller to
+/// return as its handler's result (`Resumed::Exit` of it). The error was made as the
+/// operation runs, with the record's pc published in a frame run, or deferred at the record
+/// beside frameless activations (`DeferredLaneCall`), whose stack capture then read the frame
+/// walk (`Vm::lane_stack_sites`); so it is the error the general path raises, and it is raised
+/// and unwound at the record (`handler_edges::unwind_raised`): a handler of the running
+/// function or of a plain caller takes it, else it leaves as a body's raise leaves
+/// (`lane_raised_exit`). Where guest code or a declined walk made the activations frames
+/// (`InPlaceMade::Materialized`), or the error is one the lane never unwinds
+/// (`handler_edges::unwinds_in_lane`), it is raised from frames on the general path, exactly as
+/// `lane_in_place` raises it.
+#[inline(always)]
+fn unwound_in_place<H: Host, T>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    operation: impl FnOnce(&mut Vm<H>, &ResidualProgram) -> Result<T, JsError>,
+) -> Result<T, Ip> {
+    made_in_place(cx, ip, operation).map_err(|(error, made)| raised_in_place(cx, ip, error, made, true))
+}
+
+/// The raise of an operation made in place at the record `ip`, out of line: the record the run
+/// goes on at. Where `unwind` asks and the lane can (`unwound_in_place`), the raise is unwound
+/// in the lane (`handler_edges::unwind_raised`); else frameless activations nothing observed
+/// are made frames, deferred at the record as the operation was, and the general path raises
+/// from them (`exit`).
+#[cold]
+#[inline(never)]
+fn raised_in_place<H: Host>(cx: *mut LaneContext<H>, ip: Ip, error: JsError, made: InPlaceMade, unwind: bool) -> Ip {
+    let vm = unsafe { vm(cx) };
+    let unwinds = unwind && made != InPlaceMade::Materialized && handler_edges::unwinds_in_lane(&error);
+    if made == InPlaceMade::Beside && !unwinds {
+        // SAFETY: `ip` is a record of the running function's view.
+        let pc = unsafe { ip.offset_from((*cx).base) as usize };
+        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc, frames: vm.frames.len() });
+        vm.materialize_deferred_lane();
+    }
+    vm.lane_completion.raise(error);
+    if unwinds { handler_edges::unwind_raised(cx, ip) } else { exit(ip) }
+}
+
+/// Where an operation made in place (`made_in_place`) ran, as its raise needs to know.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InPlaceMade {
+    /// In the frame's own run, its pc published at the record.
+    Frame,
+    /// Beside frameless activations, which nothing observed: they are still the lane's.
+    Beside,
+    /// Beside activations that guest code or a stack capture made frames.
+    Materialized,
+}
+
+/// The operation of `lane_in_place`, made with its record published (frame) or deferred
+/// (beside activations); its error with where it ran.
+#[inline(always)]
+fn made_in_place<H: Host, T>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    operation: impl FnOnce(&mut Vm<H>, &ResidualProgram) -> Result<T, JsError>,
+) -> Result<T, (JsError, InPlaceMade)> {
     lane_materialize_running_leaf(cx);
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
@@ -4598,18 +4664,14 @@ fn lane_in_place<H: Host, T>(
     if (vm.heap.collection_epoch(), vm.realm.globals) != generation_key {
         lane_after_nested_collection(cx);
     }
-    let unobserved = beside && vm.lane_deferred.take().is_some();
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            if unobserved {
-                vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc, frames: vm.frames.len() });
-                vm.materialize_deferred_lane();
-            }
-            vm.lane_completion.raise(error);
-            None
-        }
-    }
+    let made = if !beside {
+        InPlaceMade::Frame
+    } else if vm.lane_deferred.take().is_some() {
+        InPlaceMade::Beside
+    } else {
+        InPlaceMade::Materialized
+    };
+    result.map_err(|error| (error, made))
 }
 
 /// A lane run continues past guest code an operation made in place (`lane_in_place`), and
@@ -5148,8 +5210,9 @@ script_handler! {
         else {
             return exit(ip);
         };
-        let Some(value) = lane_in_place(cx, ip, |vm, code| vm.binary(code, operator, left, right)) else {
-            return exit(ip);
+        let value = match unwound_in_place(cx, ip, |vm, code| vm.binary(code, operator, left, right)) {
+            Ok(value) => value,
+            Err(next) => return next,
         };
         // Guest code the operator ran made the activations frames, whose registers these are.
         let r = unsafe { (*cx).registers };
@@ -6292,8 +6355,9 @@ fn lane_get_index_beside_activations<H: Host>(
     base: Value,
     key: Value,
 ) -> Resumed {
-    let Some(value) = lane_in_place(cx, ip, |vm, code| vm.get_index(code, base, key)) else {
-        return Resumed::Exit(exit(ip));
+    let value = match unwound_in_place(cx, ip, |vm, code| vm.get_index(code, base, key)) {
+        Ok(value) => value,
+        Err(next) => return Resumed::Exit(next),
     };
     // Guest code the read ran made the activations frames, whose registers these are.
     let r = unsafe { (*cx).registers };
@@ -6718,8 +6782,8 @@ fn lane_set_index_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Regist
     }
     let strict = body.strict || instruction.boolean_flag().unwrap_or(false);
     let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
-    if lane_in_place(cx, ip, |vm, code| vm.set_index_mode(code, object, key, value, strict)).is_none() {
-        return Resumed::Exit(exit(ip));
+    if let Err(next) = unwound_in_place(cx, ip, |vm, code| vm.set_index_mode(code, object, key, value, strict)) {
+        return Resumed::Exit(next);
     }
     // Guest code the store ran made the activations frames, whose registers these are.
     let r = unsafe { (*cx).registers };
@@ -9003,16 +9067,18 @@ fn lane_field_read_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Regis
 script_handler! {
     /// `lane_get_field` past its caches within a frameless activation
     /// (`lane_field_read_beside_activations`): the general read made in place
-    /// (`lane_in_place`), so an uncached getter, a proxy or a throw makes the activations
-    /// frames only when it runs, instead of leaving the lane, which makes them all frames.
+    /// (`unwound_in_place`), so an uncached getter or a proxy makes the activations frames
+    /// only when it runs, instead of leaving the lane, which makes them all frames, and a
+    /// throw (`undefined.x`) is unwound in the lane.
     #[inline(never)]
     fn lane_get_field_beside_activations<>(cx, r, ip, i, view) {
         let Some(base) = lane_field_read_beside_activations(cx, r, i) else {
             return exit(ip);
         };
         let (atom, site) = (i.imm(), i.c);
-        let Some(value) = lane_in_place(cx, ip, |vm, code| vm.get_field_cached(code, base, atom, site)) else {
-            return exit(ip);
+        let value = match unwound_in_place(cx, ip, |vm, code| vm.get_field_cached(code, base, atom, site)) {
+            Ok(value) => value,
+            Err(next) => return next,
         };
         // Guest code the read ran made the activations frames, whose registers these are.
         let r = unsafe { (*cx).registers };
@@ -9483,8 +9549,8 @@ fn lane_set_field_in_place<H: Host>(
     if let Some(resumed) = proxy_traps::lane_store_set_trap(cx, r, ip, object, atom, value, strict) {
         return resumed;
     }
-    if lane_in_place(cx, ip, |vm, code| vm.set_field_cached(code, object, atom, value, site, strict)).is_none() {
-        return Resumed::Exit(exit(ip));
+    if let Err(next) = unwound_in_place(cx, ip, |vm, code| vm.set_field_cached(code, object, atom, value, site, strict)) {
+        return Resumed::Exit(next);
     }
     // Guest code the store ran made the activations frames, whose registers these are.
     let r = unsafe { (*cx).registers };
@@ -9743,18 +9809,19 @@ script_handler! {
 }
 
 /// `DefinePropertyRecord` of the record at `ip`, defined as the general step defines it: a
-/// class method or accessor, or an object literal accessor. An out-of-domain mode or a throw
-/// leaves the instruction to the general path. Out of line, as `lane_set_index_slot_store`:
+/// class method or accessor, or an object literal accessor. An out-of-domain mode leaves the
+/// instruction to the general path, a throw is raised at the record (`unwound_in_place`):
+/// `Err` is the record the run goes on at. Out of line, as `lane_set_index_slot_store`:
 /// the handler's frame then holds none of the descriptor.
 #[inline(never)]
 fn lane_define_property_record_in_place<H: Host>(
     cx: *mut LaneContext<H>,
     ip: Ip,
     i: &LaneInstruction,
-) -> Option<()> {
-    let mode = crate::bytecode::PropertyDefinitionMode::from_word(i.imm())?;
+) -> Result<(), Ip> {
+    let mode = crate::bytecode::PropertyDefinitionMode::from_word(i.imm()).ok_or(exit(ip))?;
     let (value, target, key) = (i.a, i.b, i.c);
-    lane_in_place(cx, ip, |vm, code| {
+    unwound_in_place(cx, ip, |vm, code| {
         let (value, target, key) = {
             let r = unsafe { (*cx).registers };
             (r.get(value), r.get(target), r.get(key))
@@ -9771,8 +9838,8 @@ script_handler! {
     /// has any effect.
     #[inline(never)]
     fn lane_define_property_record<>(cx, r, ip, i, view) {
-        if lane_define_property_record_in_place(cx, ip, i).is_none() {
-            return exit(ip);
+        if let Err(next) = lane_define_property_record_in_place(cx, ip, i) {
+            return next;
         }
         // Guest code the definition ran made the activations frames, whose registers these are.
         let r = unsafe { (*cx).registers };
@@ -21645,8 +21712,16 @@ script_handler! {
                         };
                     }
                 },
-                RETURNING_UNARY => lane_unary_value(cx, r, i).or_else(|| lane_operation_in_place(cx, ip, r, i, true)),
-                RETURNING_BINARY => lane_returning_binary_value(cx, r, i).or_else(|| lane_operation_in_place(cx, ip, r, i, false)),
+                // An operation the lane's values decline is made in place; a raise goes on
+                // where `unwound_in_place` unwound it.
+                RETURNING_UNARY | RETURNING_BINARY => {
+                    let unary = KIND == RETURNING_UNARY;
+                    let own = if unary { lane_unary_value(cx, r, i) } else { lane_returning_binary_value(cx, r, i) };
+                    match own.map(Ok).unwrap_or_else(|| lane_operation_in_place(cx, ip, r, i, unary)) {
+                        Ok(value) => Some(value),
+                        Err(next) => return next,
+                    }
+                }
                 RETURNING_OBJECT => Some(lane_object_pair(cx, r, i.imm(), [i.b, i.c])),
                 RETURNING_OBJECT_LITERAL => Some(lane_object_literal_value(cx, r, i.imm(), lane_literal_window(i))),
                 _ => lane_literal_value(cx, r, i),
@@ -21660,19 +21735,22 @@ script_handler! {
 }
 
 /// The value of a `Unary` (`unary`) or `Binary` record whose operands the lane's own values
-/// decline, made by the general operation in place (`lane_in_place`): it may reach guest code
-/// (an object's `ToPrimitive` hook) or throw, which takes the general path. `None` for an
+/// decline, made by the general operation in place (`unwound_in_place`): it may reach guest
+/// code (an object's `ToPrimitive` hook) or throw, which is raised at the record. `Err` is the
+/// record the run goes on at: the handler a throw entered, or the general path, also for an
 /// operand the lane cannot read. Out of line, so the returning handlers keep their code.
 #[cold]
 #[inline(never)]
-fn lane_operation_in_place<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, i: &LaneInstruction, unary: bool) -> Option<Value> {
+fn lane_operation_in_place<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, i: &LaneInstruction, unary: bool) -> Result<Value, Ip> {
     let operator = i.imm();
     if unary {
         let operand = r.get(i.b);
-        return lane_in_place(cx, ip, |vm, code| vm.unary(code, operator, operand));
+        return unwound_in_place(cx, ip, |vm, code| vm.unary(code, operator, operand));
     }
-    let (left, right) = (lane_operand_value(cx, r, i.b)?, lane_operand_value(cx, r, i.c)?);
-    lane_in_place(cx, ip, |vm, code| vm.binary(code, operator, left, right))
+    let (Some(left), Some(right)) = (lane_operand_value(cx, r, i.b), lane_operand_value(cx, r, i.c)) else {
+        return Err(exit(ip));
+    };
+    unwound_in_place(cx, ip, |vm, code| vm.binary(code, operator, left, right))
 }
 
 script_handler! {

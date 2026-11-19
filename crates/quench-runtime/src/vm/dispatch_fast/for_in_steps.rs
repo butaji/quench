@@ -10,11 +10,10 @@ script_handler! {
     fn lane_for_in_next<BACKWARD: bool>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let state = r.get(i.b);
-        let Some(step) = vm
-            .for_in_step_listed(state)
-            .or_else(|| lane_in_place(cx, ip, |vm, code| vm.for_in_next(code, state)))
-        else {
-            return exit(ip);
+        let listed = vm.for_in_step_listed(state);
+        let step = match listed.map(Ok).unwrap_or_else(|| unwound_in_place(cx, ip, |vm, code| vm.for_in_next(code, state))) {
+            Ok(step) => step,
+            Err(next) => return next,
         };
         // Guest code the step ran may have made the activations frames, whose registers these are.
         let r = unsafe { (*cx).registers };

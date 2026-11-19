@@ -19,12 +19,13 @@ script_handler! {
 script_handler! {
     /// `lane_unary` of an operand its value declines: the general operation made in place
     /// (`lane_in_place`), which may reach guest code (a `ToPrimitive` hook of an object
-    /// concatenated or negated) or throw. A throw takes the general path, which raises it.
+    /// concatenated or negated) or throw. A throw is raised at the record (`unwound_in_place`).
     #[inline(never)]
     fn lane_unary_general<>(cx, r, ip, i, view) {
         let (operator, operand) = (i.imm(), r.get(i.b));
-        let Some(value) = lane_in_place(cx, ip, |vm, code| vm.unary(code, operator, operand)) else {
-            return exit(ip);
+        let value = match unwound_in_place(cx, ip, |vm, code| vm.unary(code, operator, operand)) {
+            Ok(value) => value,
+            Err(next) => return next,
         };
         // Guest code the operator ran made the activations frames, whose registers these are.
         let r = unsafe { (*cx).registers };
