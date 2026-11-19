@@ -6,6 +6,8 @@ use crate::bytecode::{
 use super::liveness::{RegisterSet, register_bit};
 mod copies;
 use copies::forward_move_sources;
+mod loop_constants;
+pub(super) use loop_constants::hoist_loop_constants;
 pub(super) use crate::bytecode::OpSet;
 
 /// The one op each role names, derived from the catalog. The rewriter spells its ops by role,

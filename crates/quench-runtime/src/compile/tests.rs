@@ -521,3 +521,22 @@ fn a_strict_eval_var_is_a_register() {
         assert!(!listing.contains(op), "{listing}");
     }
 }
+
+#[test]
+fn loop_invariant_constants_load_before_their_loop() {
+    let source = "function f() { let s = 0; for (let i = 0; i < 10; i++) s = s + 1; return s; }\nf();";
+    let program = Engine::specialize(source, "loop-constants.js").unwrap();
+    let mut loops = 0;
+    for function in program.functions.iter() {
+        for (tail, head) in function.back_edges() {
+            loops += 1;
+            assert!(
+                function.code[head..=tail]
+                    .iter()
+                    .all(|instruction| instruction.op() != Op::LoadConst),
+                "a loop body reloads a constant it could load once before the loop"
+            );
+        }
+    }
+    assert!(loops > 0);
+}
