@@ -31,6 +31,10 @@ mod sources;
 mod shards;
 #[path = "stencils/supernodes.rs"]
 mod supernodes;
+#[path = "stencils/wasm_families.rs"]
+mod wasm_families;
+#[path = "stencils/wasm_kinds.rs"]
+mod wasm_kinds;
 #[path = "stencils/wasm_library.rs"]
 mod wasm_library;
 #[path = "build/transfer.rs"]

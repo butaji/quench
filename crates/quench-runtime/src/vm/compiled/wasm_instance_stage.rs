@@ -5,7 +5,7 @@ use super::{Analysis, AnalysisState, Emitter, Host, Kind, Region, Slot};
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineAccess, MachineStage, MachineVector};
 use crate::staged::wasm::Width;
-use crate::staged::wasm_instance::{Instance, Storage, WasmInstance, global_get, global_set};
+use crate::staged::wasm_instance::{Instance, Storage, WasmInstance, global_get, global_set, local_register};
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use cranelift_codegen::ir;
 
@@ -76,8 +76,22 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             // A binding is known statically per instruction; the globals it names are reached
             // through the context. Constants were defined above.
+            Instance::LoadLocal | Instance::StoreLocal => self.local_access(pc, instruction, step),
             Instance::Binding | Instance::Constant | Instance::Fill => {}
         }
+    }
+
+    /// A frame local's access: a load defines `a` as the local, a store defines the local as `a`.
+    /// Both move the operand's kind (`operand_kind`), so the local's bits keep their Wasm type.
+    fn local_access(&mut self, pc: usize, instruction: WideInstruction, step: Instance) {
+        let kind = self.operand_kind(pc);
+        let local = local_register(self.plan.registers, instruction.imm());
+        let (from, to) = match step {
+            Instance::StoreLocal => (instruction.a(), local),
+            _ => (local, instruction.a()),
+        };
+        let value = self.read(from, kind);
+        self.write(to, kind, value);
     }
 
     /// The global the access at `pc` names and the kind of the register it moves.
@@ -149,8 +163,24 @@ impl<H: Host> Analysis<'_, H> {
             Instance::GlobalGet | Instance::GlobalSet => {
                 self.transfer_global(state, registers, instruction, step)
             }
+            Instance::LoadLocal | Instance::StoreLocal => self.transfer_local(function, instruction, state, step),
             Instance::Constant | Instance::Fill => unreachable!("defined by their registers"),
         }
+    }
+
+    /// A frame local's access: a load gives `a` the kind the local holds, a store gives the local
+    /// the kind of `a`. A local lies past the function's registers, so its state is bounded by them
+    /// and its locals.
+    fn transfer_local(&self, function: &Function, instruction: WideInstruction, state: &mut AnalysisState, step: Instance) -> Option<()> {
+        let registers = function.registers;
+        let bound = registers.checked_add(function.locals)?;
+        let local = local_register(registers, instruction.imm());
+        let (from, to) = match step {
+            Instance::StoreLocal => (instruction.a(), local),
+            _ => (local, instruction.a()),
+        };
+        let kind = value_kind(state.get(from, bound)?)?;
+        state.set(to, bound, Slot::Value(kind))
     }
 
     /// A global access reads the global its `b` register binds, whose type's kind is that of

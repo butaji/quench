@@ -46,7 +46,8 @@ mod stage;
 mod staged;
 mod supernode_rows;
 mod wasm;
-mod wasm_codes;
+mod wasm_kinds;
+mod wasm_layout;
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod wasm_entry;
 #[cfg(all(fixed_rows, target_arch = "aarch64", not(target_vendor = "apple")))]

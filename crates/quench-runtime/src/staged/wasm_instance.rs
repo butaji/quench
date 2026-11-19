@@ -27,6 +27,18 @@ pub(crate) enum Instance {
     GlobalGet,
     /// The global bound in `b` `= a`.
     GlobalSet,
+    /// `a = frame local imm`: a block's saved input, or the thrown value a handler binds.
+    LoadLocal,
+    /// `frame local imm = a`.
+    StoreLocal,
+}
+
+/// The register holding frame local `slot` of a function with `registers` registers: the u-jit
+/// keeps its locals after its registers, in the same register file. A slot past the file's end
+/// saturates to the last register, which no state holds, so its use is rejected.
+#[cfg(not(stencil_build))]
+pub(crate) fn local_register(registers: u16, slot: u32) -> u16 {
+    u16::try_from(slot).map_or(u16::MAX, |slot| registers.saturating_add(slot))
 }
 
 #[cfg(not(stencil_build))]
@@ -39,6 +51,8 @@ impl Instance {
             Class::WasmInstanceBinding => Some(Self::Binding),
             Class::WasmGlobalGet => Some(Self::GlobalGet),
             Class::WasmGlobalSet => Some(Self::GlobalSet),
+            Class::LoadLocal => Some(Self::LoadLocal),
+            Class::StoreLocal => Some(Self::StoreLocal),
             _ => None,
         }
     }

@@ -40,7 +40,8 @@
 
 use crate::staged::wasm_call::{allocate_step, call_table_op};
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, LAST_HOLE, Out, S, hole64};
-use crate::wasm_codes::{CALLOUT_RESULT, CALLOUT_WRAP, FRAME_HEADER_WORDS};
+use crate::wasm_kinds::{CALLOUT_RESULT, CALLOUT_WRAP};
+use crate::wasm_layout::FRAME_HEADER_WORDS;
 
 use super::wasm_call_stage::{CallStage, leave_with};
 use super::wasm_frame::{high, low, operand};

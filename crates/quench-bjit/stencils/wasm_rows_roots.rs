@@ -24,7 +24,7 @@ use super::wasm_call_stage::{RootsStage, leave_with};
 use super::wasm_frame::{high, low, native_roots};
 use crate::staged::wasm_roots::{pop, push};
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole64};
-use crate::wasm_codes::FRAME_HEADER_WORDS;
+use crate::wasm_layout::FRAME_HEADER_WORDS;
 
 /// Holds the registers named by hole 0 (`count` of them, at most four: 16 bits each) in the native
 /// roots, in order after the live ones. A push with no room for them traps `CallStackExhausted`,

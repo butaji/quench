@@ -16,9 +16,21 @@ pub mod call;
 pub mod call_record;
 pub mod shared_words;
 pub mod stub;
-/// The Wasm rows: their codes and names (`stencils/wasm_library.rs`).
+#[path = "../stencils/wasm_kinds.rs"]
+mod wasm_kinds;
+#[path = "../stencils/wasm_families.rs"]
+mod wasm_families;
+#[path = "../stencils/wasm_layout.rs"]
+mod wasm_layout;
+#[path = "../stencils/wasm_runtime_codes.rs"]
+mod wasm_runtime_codes;
 #[path = "../stencils/wasm_library.rs"]
-pub mod wasm;
+mod wasm_library;
+/// The Wasm rows and codes the runtime reads, one namespace over the files that define them
+/// (`stencils/wasm_kinds.rs`, `wasm_families.rs`, `wasm_layout.rs`, `wasm_runtime_codes.rs`, `wasm_library.rs`).
+pub mod wasm {
+    pub use crate::{wasm_families::*, wasm_kinds::*, wasm_layout::*, wasm_library::*, wasm_runtime_codes::*};
+}
 pub use class::{EXIT, LOCAL, NEXT, TAKEN, ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
 pub use patch::{HOLES, Imm32, padded_holes, PatchError, patch_successor, patch_value};
 pub use stub::{EXIT_STUB_LEN, exit_stub};

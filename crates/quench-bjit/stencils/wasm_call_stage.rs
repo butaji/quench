@@ -10,7 +10,7 @@ use crate::staged::wasm_call::{WasmCall, WasmTable};
 use crate::staged::wasm_concrete::{ConcreteWasm, scalar_operators};
 use crate::staged::wasm_roots::WasmRoots;
 use crate::wasm::WasmTrap;
-use crate::wasm_codes::{TARGET_BYTES, TARGET_SIGNATURE_AT};
+use crate::wasm_layout::{TARGET_BYTES, TARGET_SIGNATURE_AT};
 use crate::words::{Out, S};
 
 use super::wasm_frame::trap;

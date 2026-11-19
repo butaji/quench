@@ -1,7 +1,7 @@
 //! The Wasm float rows that need a float constant, as stencils with no constant pool: the
 //! float-to-integer conversions (trapping and saturating), the unsigned 64-bit integer-to-float
 //! conversions, and copysign. LLVM loads every float bound or mask those rows use from a
-//! RIP-relative constant-pool entry, which a row cannot relocate (`wasm_codes.rs`). The bit forms
+//! RIP-relative constant-pool entry, which a row cannot relocate (`wasm_families.rs`). The bit forms
 //! of those constants and their conversions are the staged helpers of `staged::wasm_float`
 //! (`saturated`, `unsigned_to_f64`, ...), which turn an integer immediate into a float, so LLVM
 //! emits a `movabs` and a `movq`.

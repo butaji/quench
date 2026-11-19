@@ -4,7 +4,7 @@
 //! Not a rows file: every fn here is an accessor, shared by all `wasm_rows*.rs`.
 //!
 //! The decoders that read a stencil code (`W32`, `STORAGE_BITS32`, `ACCESSES`) live here, not in
-//! `staged`, which cannot name `wasm_codes.rs`; the tag decoders of the runtime's operators are the
+//! `staged`, which cannot name `wasm_kinds.rs`; the tag decoders of the runtime's operators are the
 //! staged ones (`staged::wasm::binary_operator` and kin).
 
 use super::wasm_stage::StencilMemory;
@@ -153,7 +153,7 @@ pub(crate) unsafe fn vector_write<const H: u8>(s: &S, bits: u128) {
 /// The word at frame offset `offset`, or 0 where the operand is absent (`CALLOUT_ABSENT`).
 #[inline(always)]
 pub(crate) unsafe fn operand(frame: usize, offset: u32) -> u64 {
-    if offset == crate::wasm_codes::CALLOUT_ABSENT { 0 } else { unsafe { *((frame + offset as usize) as *const u64) } }
+    if offset == crate::wasm_layout::CALLOUT_ABSENT { 0 } else { unsafe { *((frame + offset as usize) as *const u64) } }
 }
 
 /// The `NativeRoots` the context names at byte offset `at` of `CallContext` (`native_roots`).

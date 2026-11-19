@@ -5240,6 +5240,10 @@ struct Plan {
     /// Per instruction, the operand registers of an allocating GC step (`allocating_reads`) with
     /// their kinds, which the allocation callout converts; empty elsewhere.
     gc_reads: Vec<Vec<(u16, Kind)>>,
+    /// The frame's registers: its locals are the registers after them (`staged::wasm_instance::local_register`).
+    registers: u16,
+    /// Per instruction, the catch a raise there enters: the handler covering it (`catch_sites`).
+    catches: Vec<Option<wasm_exception_stage::Catch>>,
 }
 
 impl Plan {
@@ -5253,6 +5257,8 @@ impl Plan {
             seconds: Vec::new(),
             references: Vec::new(),
             gc_reads: Vec::new(),
+            registers: self.registers,
+            catches: Vec::new(),
         }
     }
 
@@ -5263,6 +5269,20 @@ impl Plan {
     /// The selected operand fact of reachable instruction `pc`.
     fn operand(&self, pc: usize) -> Slot {
         self.operands[pc].expect("reachable")
+    }
+}
+
+/// Joins `incoming` into the state at `target`, queueing `target` where its state changed.
+fn join_state(states: &mut [Option<AnalysisState>], work: &mut Vec<usize>, target: usize, incoming: AnalysisState) {
+    let changed = match &mut states[target] {
+        Some(existing) => existing.join_from(&incoming),
+        slot @ None => {
+            *slot = Some(incoming);
+            true
+        }
+    };
+    if changed {
+        work.push(target);
     }
 }
 
@@ -5464,7 +5484,7 @@ impl<H: Host> Analysis<'_, H> {
             self.reject(index, || "missing-signature".into());
             return None;
         };
-        if function.locals != 0 {
+        if function.locals != 0 && self.code.kind != crate::bytecode::ProgramKind::Wasm {
             self.reject(index, || format!("frame-locals:{}", function.locals));
             return None;
         }
@@ -5510,6 +5530,11 @@ impl<H: Host> Analysis<'_, H> {
         let mut states: Vec<Option<AnalysisState>> = vec![None; instructions.len()];
         states[0] = Some(entry);
         let mut work = vec![0usize];
+        let Some(catches) = wasm_exception_stage::catch_sites(function) else {
+            self.reject(index, || "unsupported-handler".into());
+            return None;
+        };
+        let bound = function.registers.checked_add(function.locals)?;
         while let Some(pc) = work.pop() {
             let instruction = instructions[pc];
             let mut state = states[pc]
@@ -5523,6 +5548,7 @@ impl<H: Host> Analysis<'_, H> {
                 self.reject(index, || format!("uncompiled-callee:{callee}@{pc}"));
                 return None;
             }
+            let before = catches[pc].map(|_| state.clone());
             if self
                 .transfer(
                     function,
@@ -5537,6 +5563,9 @@ impl<H: Host> Analysis<'_, H> {
                 let op = instruction.op();
                 self.reject(index, || format!("unsupported-instruction:{op:?}@{pc}"));
                 return None;
+            }
+            if let (Some(catch), Some(before)) = (catches[pc], before) {
+                join_state(&mut states, &mut work, catch.target, catch.entry(before, bound)?);
             }
             for successor in successors(function, pc, instruction) {
                 if successor >= instructions.len() {
@@ -5561,8 +5590,8 @@ impl<H: Host> Analysis<'_, H> {
             .map(|(state, instruction)| {
                 let state = state.as_ref()?;
                 let operand = Step::of(instruction.op(), instruction.imm())
-                    .map_or(instruction.b(), |step| step.operand(*instruction));
-                Some(state.get(operand, function.registers).unwrap_or(Slot::Conflict))
+                    .map_or(instruction.b(), |step| step.operand(*instruction, function.registers));
+                Some(state.get(operand, bound).unwrap_or(Slot::Conflict))
             })
             .collect();
         let seconds: Vec<Option<Slot>> = states
@@ -5639,6 +5668,8 @@ impl<H: Host> Analysis<'_, H> {
             seconds,
             references,
             gc_reads,
+            registers: function.registers,
+            catches,
         })
     }
 
@@ -6398,6 +6429,8 @@ struct Emitter<'a, 'b, H: Host> {
     /// The reference registers the instruction being emitted holds (`Plan::references`): the
     /// roots a call it makes holds (`wasm_roots`).
     roots: &'a [u16],
+    /// The instruction being emitted: a raised status of its calls takes its catch (`Plan::catches`).
+    pc: usize,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -6539,13 +6572,21 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.branch_if(status, (unwound, &[]), (next, &[]));
         self.body.core.builder.switch_to_block(unwound);
         self.body.core.builder.seal_block(unwound);
+        match self.plan.catches[self.pc] {
+            Some(catch) => self.catch_raised(status, catch),
+            None => self.leave_raised(status),
+        }
+        self.body.core.builder.switch_to_block(next);
+        self.body.core.builder.seal_block(next);
+    }
+
+    /// Leaves the activation with the raised `status` and a zero result.
+    fn leave_raised(&mut self, status: ir::Value) {
         let mut values = vec![status];
         if let Some(ty) = self.plan.result {
             values.push(self.raw_const(Kind::of(ty).expect("planned").lane(), 0));
         }
         self.leave(&values);
-        self.body.core.builder.switch_to_block(next);
-        self.body.core.builder.seal_block(next);
     }
 
     /// An imported call: arguments go to the VM in a stack array, through
@@ -6837,6 +6878,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             .expect("planned instructions have a denotation");
         let plan = self.plan;
         self.roots = &plan.references[pc];
+        self.pc = pc;
         match step {
             Step::Numeric(operation) => self.operation(pc, instruction, operation),
             Step::Instance(step) => {
@@ -7126,9 +7168,10 @@ impl<'a, H: Host> Analysis<'a, H> {
             indirect: None,
             checked_row: None,
             roots: &[],
+            pc: 0,
         };
         // Registers start at i32 zero, as an activation's register file does.
-        for register in 0..function.registers {
+        for register in 0..function.registers.saturating_add(function.locals) {
             emitter.write_constant(register, Kind::I32, 0);
             emitter.write_constant(register, Kind::I64, 0);
         }
@@ -7175,6 +7218,9 @@ impl<'a, H: Host> Analysis<'a, H> {
                 if target < instructions.len() && plan.reachable(target) {
                     emitter.block(target);
                 }
+            }
+            if let Some(catch) = plan.catches[pc] {
+                emitter.block(catch.target);
             }
         }
         let mut open = false;

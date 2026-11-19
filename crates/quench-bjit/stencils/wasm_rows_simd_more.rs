@@ -9,7 +9,8 @@ use super::{StencilMemory, StencilSimd, read, trap, write};
 use crate::staged::wasm_memory_vector::load_lane;
 use crate::staged::wasm_simd_rules::{selector_of, simd_scalar};
 use crate::staged::wasm_simd_lanes::SimdOperator;
-use crate::wasm_codes::*;
+use crate::wasm_kinds::*;
+use crate::wasm_layout::*;
 use crate::words::{HOLE_A, HOLE_B, Out, S};
 
 /// The bits of operator `OP` on the operands: the operator's own body (`SimdOperator::bits`). A tag
