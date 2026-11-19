@@ -99,6 +99,7 @@ impl<W, P> Operation<W, P> {
         match self {
             Self::Move { .. } | Self::LogicalNot { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER)]),
             Self::LoadConst { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("constant", BYTECODE)]),
+            Self::Unary { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER), ("operator", BYTECODE)]),
             Self::LoadLocalPlain { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("slot", REGISTER)]),
             Self::StoreLocalPlain { .. } => SmallVec::from_slice(&[("source", REGISTER), ("slot", REGISTER),
                 ("result", REGISTER)]),

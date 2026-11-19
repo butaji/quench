@@ -760,7 +760,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None, entry: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None, entry: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -2542,6 +2542,10 @@ macro_rules! row_decode {
             Operation::decode_wasm_access($fields, crate::staged::DecodeContext::EMPTY)
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmVector)) } {
             Operation::decode_wasm_vector($fields, crate::staged::DecodeContext::EMPTY)
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Property)) } {
+            // A named read, a named store or `delete` (`f5df21c6c1`): without it every GetField row
+            // decoded to nothing and left for the general step.
+            Operation::decode_property(crate::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Literal)) } {
             Operation::decode_literal(crate::staged::Fields::wide($fields), ())
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Lane)) } {
@@ -3212,6 +3216,29 @@ pub(in crate::vm::dispatch_fast) const fn protocol_miss<H: Host>(miss: u16) -> H
         F::VECTOR => super::vector_miss_of::<H>(F::parameters(miss)),
         F::GENERATOR => super::generator_miss_of::<H>(F::parameters(miss)),
         _ => general_step_in_lane::<H>,
+    }
+}
+
+/// Whether opcode `op`'s protocol row (`protocol_row`) completes no record: its decoder is none of the
+/// ones `row_decode!` decodes (a call's, a named read's, or no staged decoder at all), so the row
+/// decodes to nothing and leaves at its miss on every record. Keep this list in step with `row_decode!`.
+pub(in crate::vm::dispatch_fast) const fn protocol_row_declines(op: Op) -> bool {
+    !matches!(op.staged(), Some(
+        crate::bytecode::Decoder::Flow | crate::bytecode::Decoder::Local | crate::bytecode::Decoder::Value
+            | crate::bytecode::Decoder::Generic | crate::bytecode::Decoder::WasmInt | crate::bytecode::Decoder::Names
+            | crate::bytecode::Decoder::Element | crate::bytecode::Decoder::WasmFloat | crate::bytecode::Decoder::WasmState
+            | crate::bytecode::Decoder::WasmMemory | crate::bytecode::Decoder::WasmVector | crate::bytecode::Decoder::Literal
+            | crate::bytecode::Decoder::Lane | crate::bytecode::Decoder::Proved))
+}
+
+/// The handler a protocol record of opcode `OP` at miss `MISS` is installed with: `protocol_row`, or, where
+/// the row declines every record (`protocol_row_declines`), the record's protocol miss body itself, so the
+/// record skips the row's decode and its tail call.
+pub(in crate::vm::dispatch_fast) const fn protocol_handler<H: Host, const OP: u16, const ACC: u8, const MISS: u16>() -> Handler {
+    if protocol_row_declines(LaneFields::<OP>::OPCODE) {
+        protocol_miss::<H>(MISS)
+    } else {
+        protocol_row::<H, OP, ACC, MISS> as Handler
     }
 }
 

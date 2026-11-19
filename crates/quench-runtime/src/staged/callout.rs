@@ -35,6 +35,7 @@ pub(crate) const TAG_STORE_FIELD: u8 = 22;
 pub(crate) const TAG_STORE_ELEMENT: u8 = 23;
 pub(crate) const TAG_LOAD_FIELD: u8 = 24;
 pub(crate) const TAG_LOAD_ELEMENT: u8 = 25;
+pub(crate) const TAG_DECIDE_OPERAND: u8 = 26;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -84,6 +85,10 @@ pub(crate) enum CallOut {
     /// case. It defines no register; its answer is a canonical boolean, which a lane's helper
     /// reports as its status (`LANE_CALL_HOLDS`).
     Decide { left: Register, right: Register, operator: u32 } = TAG_DECIDE,
+    /// `left operator right` decided by the VM as `Decide` is, where either operand may be a program constant
+    /// (`Operand::constant`): the truth of the general `Binary` result (`ToBoolean`, `Vm::binary`). Used by a
+    /// comparison jump whose operand is a constant the words do not decide.
+    DecideOperand { left: Operand, right: Operand, operator: u32 } = TAG_DECIDE_OPERAND,
     /// `base[key]` of a for-in's enumerated read whose state's memo did not answer: the element read.
     EnumeratedGet { base: Register, key: Register } = TAG_ENUMERATED_GET,
     /// The running activation's environment cloned by environment clone plan `plan`, the copy a
@@ -104,8 +109,9 @@ pub(crate) enum CallOut {
     /// operand's negation, plus or bitwise not. Defines the result.
     Unary { operator: u32, value: Register } = TAG_UNARY,
     /// `object.atom = value` through cache `site` by the VM's named store (`Vm::set_field_cached`), which
-    /// refuses by throwing where `strict`. Defines no register.
-    StoreField { object: Register, value: Register, atom: u32, site: u16, strict: bool } = TAG_STORE_FIELD,
+    /// refuses by throwing where `strict`. `object` is the register the store names, or `None` for the frame's
+    /// `this` (a store to `this`, which the VM reads with `checked_this_binding`). Defines no register.
+    StoreField { object: Option<Register>, value: Register, atom: u32, site: u16, strict: bool } = TAG_STORE_FIELD,
     /// `object[index] = value` by the VM's keyed store (`Vm::set_index_mode`), strict where `strict` or the
     /// running function is. The value is the operand list's one register (`Arguments::Window`). Defines no register.
     StoreElement { object: Register, index: Register, value: Register, strict: bool } = TAG_STORE_ELEMENT,
@@ -188,14 +194,14 @@ impl CallOut {
     /// list of arguments a call passes.
     pub(crate) fn operands(self) -> Operands {
         let fixed = match self {
-            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::LoadElement { base: left, key: right } =>
-                return Operands::of_operands([Some(left), Some(right)]),
+            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::DecideOperand { left, right, .. }
+                | Self::LoadElement { base: left, key: right } => return Operands::of_operands([Some(left), Some(right)]),
             Self::Delete { base: left, key: right, .. }
                 | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand }
                 | Self::ToNumeric { source: operand } | Self::IncDec { source: operand, .. }
                 | Self::Unary { value: operand, .. } => [None, Some(operand)],
-            Self::StoreField { object, value, .. } => return Operands::of_fixed([Some(object), Some(value)]),
+            Self::StoreField { object, value, .. } => return Operands::of_fixed([object, Some(value)]),
             Self::StoreElement { object, index, value, .. } => return Operands {
                 fixed: [Some(Operand::register(object)), Some(Operand::register(index))],
                 list: Some(Arguments::Window { first: value, count: 1 }),

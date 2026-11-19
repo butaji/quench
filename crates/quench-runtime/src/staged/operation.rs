@@ -91,6 +91,9 @@ pub(crate) enum Operation<W, P> {
     LoadName { destination: Register, atom: u32, site: u16, receiver: Option<Register>, proof: P },
     /// Define `destination` as `undefined` (`void`).
     Void { destination: Register },
+    /// The VM's unary `operator` (a `UnaryOperator`, or an internal unary test) of register `source`, defining
+    /// `destination` (`CallOut::Unary`): an operator no staged row decides.
+    Unary { destination: Register, source: Register, operator: u32 },
     /// ToPropertyKey of a string `source`, which is its own key; any other value leaves at the
     /// miss edge, where the VM converts it (`Vm::to_property_key`: a Number allocates, an object
     /// runs guest code).
@@ -209,6 +212,7 @@ impl<W, P> Operation<W, P> {
     /// (`Op::staged`). `None` where the opcode has no staged operation, or where its constant or
     /// method site is not available to this tier: the caller then takes its own exact path. The
     /// heap operations are the frame's (`Frame::field_read`); a tier decodes those itself.
+    #[inline(always)]
     pub(crate) fn decode(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         match instruction.op().staged()? {
             Decoder::Flow => Self::decode_flow(instruction, context),
@@ -234,6 +238,7 @@ impl<W, P> Operation<W, P> {
     /// (its result flags: a return, a `this` write), and those flags. A tier that completes a
     /// record's result itself asks this instead of naming the opcode; `decode` alone stays the
     /// operation with no completion.
+    #[inline(always)]
     pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
         let (plain, flags) = Self::completion_split(instruction)?;
         Some((Self::decode(plain, context)?, flags))
@@ -249,6 +254,7 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The record `instruction` is without its completion flags, and those flags: a return, or a `this` write.
+    #[inline(always)]
     fn completion_split(instruction: WideInstruction) -> Option<(WideInstruction, crate::bytecode::Register)> {
         use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
         // The returned flags are the completions only: a return, or a `this` write. A numeric local target
@@ -396,25 +402,37 @@ impl<W, P> Operation<W, P> {
                 root: false },
             Op::StoreCapture => Self::StoreCapture {
                 source: instruction.register_a(), depth: instruction.capture_depth(), slot: instruction.capture_slot() },
-            Op::Unary => return Self::decode_unary(instruction),
+            Op::Unary => Self::decode_unary(instruction),
             _ => return None,
         })
     }
 
     /// The unary operators of `decode_value`.
     #[inline(always)]
-    fn decode_unary(instruction: WideInstruction) -> Option<Self> {
+    fn decode_unary(instruction: WideInstruction) -> Self {
         let (destination, source) = (instruction.result_register(), instruction.register_b());
         let operator = instruction.unary_operator();
-        Some(match operator {
+        if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
+            return Self::TypeofTest { destination, source, index: index as u64, negated };
+        }
+        match operator {
+            #[cfg(not(stencil_build))]
             _ if operator == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot { destination, source },
+            #[cfg(not(stencil_build))]
+            _ if operator == oxc_ast::ast::UnaryOperator::Typeof as u32 => Self::TypeofString { destination, source },
             _ if operator == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex { destination, source },
             _ if operator == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 =>
                 Self::Number(NumberOperation::BitwiseNot { destination, source: Operand::register(source) }),
-            _ if operator == oxc_ast::ast::UnaryOperator::Void as u32 && !instruction.returns_from_frame() =>
-                Self::Void { destination },
-            _ => return None,
-        })
+            #[cfg(not(stencil_build))]
+            _ if operator == oxc_ast::ast::UnaryOperator::UnaryNegation as u32 =>
+                Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Negate),
+            #[cfg(not(stencil_build))]
+            _ if operator == oxc_ast::ast::UnaryOperator::UnaryPlus as u32 =>
+                Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Plus),
+            #[cfg(not(stencil_build))]
+            _ if operator == oxc_ast::ast::UnaryOperator::Void as u32 => Self::Void { destination },
+            _ => Self::Unary { destination, source, operator },
+        }
     }
 
     /// The local-slot operations of `decode`.
@@ -453,6 +471,7 @@ impl Operation<u64, ()> {
 
     /// The lane's own rows (`Decoder::Lane`): a string-case index over the constants the record names, and an
     /// `await` the lane's frame suspends.
+    #[inline(always)]
     pub(crate) fn decode_lane(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
