@@ -4122,8 +4122,19 @@ impl Lowering<'_, '_> {
             match array.views {
                 ElementViews::Dense => {
                     let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
-                    // Stores through the hoisted view then write the element alone.
-                    if array.writable { super::emit_dense_array_uncounted(&mut self.builder, view); }
+                    if self.int32_loop(array) {
+                        // An int32 loop keeps the backing's exact count of others, which is zero: guarded here
+                        // before any mark, and kept by its int32 stores (`int32_loop`), so the view marks nothing.
+                        let others = {
+                            let mut stage = super::object_slots::emit(&mut self.builder);
+                            stage.load_u32(crate::staged::region::Region::Elements.mutable(), view.values, crate::heap::OTHERS_FROM_VALUES)
+                        };
+                        let none = self.raw_compare_imm(Relation::Equal, others, 0);
+                        emit_js_guard(&mut self.builder, none, exit);
+                    } else if array.writable {
+                        // Stores through the hoisted view then write the element alone.
+                        super::emit_dense_array_uncounted(&mut self.builder, view);
+                    }
                     self.builder.def_var(variables.values, view.values);
                     self.builder.def_var(variables.length, view.length);
                     let unproved = self.raw_const(Lane::I32, 0);
@@ -4231,8 +4242,9 @@ impl Lowering<'_, '_> {
                 continue;
             }
             let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
-            // A grown backing may count its values again; stores through the view keep none.
-            if array.writable {
+            // A grown backing may count its values again; stores through the view keep none. An int32
+            // loop's count stays exact (`hoist_arrays`), so its view marks nothing.
+            if array.writable && !self.int32_loop(array) {
                 super::emit_dense_array_uncounted(&mut self.builder, super::DenseArrayView { values, length, writable: true, uncounted: false, double: None });
             }
             self.builder.def_var(variables.values, values);
@@ -4289,11 +4301,17 @@ impl Lowering<'_, '_> {
         self.goto(helper, &[]);
         self.builder.switch_to_block(helper);
         self.builder.seal_block(helper);
-        let proof = super::EmitProof::IndexSetHelper { miss: exit };
-        self.step(state, frame::Edges::ValueGuarded { miss: exit },
-            crate::staged::Operation::IndexSetHelper { base, key, value, proof });
-        self.reload_dense_arrays(pc as usize);
-        self.goto(done, &[]);
+        if self.int32_loop(array) {
+            // An int32 loop's store past the end would make a hole, which its reads do not test for
+            // (`int32_loop`): it leaves before any write, and the VM makes the store.
+            self.goto(exit, &[]);
+        } else {
+            let proof = super::EmitProof::IndexSetHelper { miss: exit };
+            self.step(state, frame::Edges::ValueGuarded { miss: exit },
+                crate::staged::Operation::IndexSetHelper { base, key, value, proof });
+            self.reload_dense_arrays(pc as usize);
+            self.goto(done, &[]);
+        }
         self.builder.switch_to_block(done);
         self.builder.seal_block(done);
     }

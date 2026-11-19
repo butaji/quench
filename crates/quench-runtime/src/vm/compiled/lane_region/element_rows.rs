@@ -6,6 +6,7 @@
 use super::*;
 use crate::staged::typed_elements::{typed_read_integer, TypedView};
 use crate::staged::{Operation, Stage, Step};
+use crate::staged::NumericStage as _;
 
 impl Lowering<'_, '_> {
     /// The row of `instruction` where it is an element access whose operands this unit holds.
@@ -44,6 +45,8 @@ impl Lowering<'_, '_> {
     fn element_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, crate::bytecode::Operand)) -> bool {
         let exit = self.guard_exit(state, pc as u32);
         let array = self.loop_array(pc, Some(base));
+        if let Some(array) = array.filter(|array| self.int32_read(*array, pc))
+            && self.int32_element_read(state, (destination, key), array, exit) { return true; }
         if let Some(array) = array.filter(|array| self.reads_int32(*array))
             && self.integer_element_read(state, (destination, key), array, exit) { return true; }
         // An element read as a Number (`number_reads`) needs no hole test of its own: a hole is a NaN
@@ -116,6 +119,68 @@ impl Lowering<'_, '_> {
     /// Whether `array` is a hoisted typed array of a fixed kind whose elements are all int32s.
     fn reads_int32(&self, array: LoopArray) -> bool {
         array.views.observed_kind().and_then(NativeKind::new).is_some_and(NativeKind::is_int32)
+    }
+
+    /// Whether the hoisted dense `array` holds int32s throughout its loop (`int32_loop`) and the
+    /// read at `pc` is one the loop observed as an int32 (`int32_read_at`): such a read takes no tag test.
+    fn int32_read(&self, array: LoopArray, pc: usize) -> bool {
+        let ArraySource::Register(source) = array.source else { return false };
+        self.int32_loop(array) && self.int32_read_at(pc, source) && !self.generic.contains(&pc)
+    }
+
+    /// Whether the element read at `pc` reads register `source` as its base and was observed an int32.
+    fn int32_read_at(&self, pc: usize, source: Register) -> bool {
+        let instruction = self.unit.instructions[pc];
+        matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. }))
+            && instruction.operand_b().register_index() == Some(source)
+            && self.observed.at(pc).is_some_and(|ty| ty.is_int32())
+    }
+
+    /// Whether the hoisted dense `array` holds only int32s for its whole loop, so its element
+    /// reads need no tag test. The heap keeps a backing's count of values that are no int32
+    /// (`OTHERS_FROM_VALUES`, holes included), zero exactly when every element below the length is
+    /// an int32, and `hoist_arrays` guards that count at the loop's entry. The count stays zero
+    /// because every store of the loop is an int32 through `array`'s own register (`int32_stores`),
+    /// and a store past the end leaves to the VM instead of making a hole (`dense_element_write`).
+    /// Only an array the loop reads as int32s (`int32_read_at`) qualifies, so the guard never
+    /// leaves for an array the loop would not read as one.
+    pub(super) fn int32_loop(&self, array: LoopArray) -> bool {
+        let ArraySource::Register(source) = array.source else { return false };
+        array.views == ElementViews::Dense && self.int32_stores(array, source)
+            && (array.header..=array.back).any(|pc| self.int32_read_at(pc, source) && !self.generic.contains(&pc))
+    }
+
+    /// Whether every store of the loop `array` belongs to is an int32 stored through `source`, the
+    /// array's own register (the loop never redefines it, so it names the same array), and no append
+    /// runs: an append or a store through another register could make a hole or a non-int32 element.
+    fn int32_stores(&self, array: LoopArray, source: Register) -> bool {
+        (array.header..=array.back).all(|pc| {
+            if super::native_calls::appends(&self.intrinsics, pc) { return false; }
+            match crate::vm::compiled::performed(self.unit.instructions[pc]) {
+                Some(crate::staged::Operation::ElementWrite { value, base, .. }) => base == source
+                    && self.facts.at(pc).and_then(|types| types.get(usize::from(value))).is_some_and(|ty| ty.is_subtype(Type::INT32)),
+                _ => true,
+            }
+        })
+    }
+
+    /// An element read of a hoisted dense `array` that `int32_read` admits, into `destination`: the
+    /// element's word, narrowed to its int32, past the bounds test alone (no hole, no tag test).
+    fn int32_element_read(&mut self, state: &mut State, (destination, key): (Register, crate::bytecode::Operand),
+        array: LoopArray, exit: ir::Block) -> bool {
+        let Some(index) = self.operand_index(state, key, exit) else { return false };
+        let (values, length) = self.hoisted_view(array);
+        let word = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let index = stage.uextend32(index);
+            let length = stage.uextend32(length);
+            let (_, word) = crate::staged::elements::packed_element(&mut stage, values, length, index, exit)
+                .expect("the emit stage continues past its guards");
+            word
+        };
+        let int = super::super::object_slots::emit(&mut self.builder).narrow(word);
+        self.set_int(state, destination, int);
+        true
     }
 
     /// An element read of a hoisted typed array of an int32 kind (`reads_int32`) into `destination`
