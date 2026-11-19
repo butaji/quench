@@ -15003,7 +15003,9 @@ script_handler! {
             sibling!(lane_script_call_prove::<H, ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
         }
         debug_assert!(!lane_constructing(vm, callee));
-        debug_assert!(target.entry == CallEntry::Activates);
+        // A leaf entry its own call form proved (`lane_script_call_leaf_prove`) activates as
+        // `Activates` from any other call (`CallEntry::activates`).
+        debug_assert!(target.entry.activates());
         // SAFETY: the target's view lives with its program.
         debug_assert!(!unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
         debug_assert!(!vm.programs.js_jit_diagnostics_enabled());

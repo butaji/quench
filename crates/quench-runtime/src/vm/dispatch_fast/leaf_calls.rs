@@ -13,7 +13,65 @@ script_handler! {
     /// `lane_script_call_full`, which activates a leaf as any registers-only target. `ARGC`
     /// is the record's argument count (`leaf_call_handler`), which a call returning its
     /// completion never has.
+    ///
+    /// The proved form (leaf-keeping-c.md, as link-proofs.md's `lane_script_call`): the entry
+    /// the link names, masked to the cache, is tested whole by one admission compare (the
+    /// generation, the program, the run's conditions, `DIAGNOSED`, and the proof `UNPROVEN`,
+    /// which `lane_script_call_leaf_prove` clears for a leaf entry whose cell body is
+    /// unpublished), the callee's identity, the entry's form and the site's argument count
+    /// against its parameters. The room is one compare (`LaneStack::plain_room`). Anything
+    /// else takes `lane_script_call_leaf_prove`, which makes the call as before.
     fn lane_script_call_leaf<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
+        debug_assert!(unsafe { (*cx).script_calls || !vm(cx).lane_stack.script_calls_allowed() });
+        let vm = unsafe { vm(cx) };
+        let callee = r.get(i.b);
+        let entries = &vm.lane_stack.script_targets.entries;
+        let index = usize::from(i.call_link.get()) & (entries.len() - 1);
+        // SAFETY: the cache's length is a power of two, so the masked index lies within it;
+        // nothing in the leaf resolves a target or collects.
+        let target = unsafe { &*std::ptr::from_ref(entries.get_unchecked(index)) };
+        if target.callee != callee
+            || target.admission != vm.lane_stack.admission
+            || target.entry != CallEntry::leaf(LEAF)
+            || !crate::staged::call::concrete_fits(u64::from(target.params), u64::from(ARGC))
+        {
+            sibling!(lane_script_call_leaf_prove::<H, LEAF, ARGC>, r, ip, Carried::script(cx))
+        }
+        debug_assert!(!vm.programs.js_jit_diagnostics_enabled());
+        // SAFETY: the target's view lives with its program.
+        debug_assert!(!unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
+        debug_assert!(!lane_crosses::<H, true>(cx, target));
+        debug_assert!(!vm.with_scope_entered);
+        let receiver = r.get(i.c);
+        let this = if leaf_binds_this(LEAF) {
+            lane_direct_call_this(vm, target, receiver)
+        } else {
+            lane_binds_directly(target, receiver).then_some(receiver)
+        };
+        let Some(this) = this else {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+        };
+        // The activation count and the values' room in one compare, the depth loaded only by
+        // the exact test past it; a leaf pushes no plain activation, so the bound stands.
+        debug_assert_eq!(vm.lane_stack.plain_room(vm.lane_stack.plain.depth.get(), target.room), lane_activation_room(vm, target));
+        if !vm.lane_stack.plain_room(vm.lane_stack.plain.depth.get(), target.room) {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+        }
+        // SAFETY: as `lane_script_call_leaf_prove`'s.
+        let (registers, base) = unsafe { lane_run_leaf::<H, LEAF, ARGC>(cx, r, ip, i, target, this) };
+        next!(cx, registers, base, Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_script_call_leaf` of a site whose link is not proved: the target it links, whose
+    /// entry, where it is this form's leaf, is proved (`Admission::UNPROVEN` cleared) unless the
+    /// tier's diagnostics count entries or its cell holds a body; then the call as the unproved
+    /// leaf call always made it. A plain activation's entry takes it in place, another leaf
+    /// form's call its handler, any other the full form.
+    #[cold]
+    #[inline(never)]
+    fn lane_script_call_leaf_prove<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         // A pending construction refuses every cached target (`LaneStack::set_refused`).
@@ -30,11 +88,20 @@ script_handler! {
         // activation's in place, another leaf form's through it, any other through the
         // full form.
         if target.entry != CallEntry::leaf(LEAF) {
-            std::hint::cold_path();
             if target.entry == CallEntry::Activates {
                 lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, false)
             }
             sibling!(other_leaf_form::<H, ARGC>(target.entry), r, ip, Carried::script(cx))
+        }
+        // The proof: a leaf entry activates as `Activates` (`CallEntry::activates`), so a proved
+        // plain call that lands on it may activate it too; neither proves a published body's.
+        // SAFETY: the target's view lives with its program.
+        if !vm.programs.js_jit_diagnostics_enabled() && !unsafe { (*target.view).entry_published() } {
+            let (index, resolved) = (link_index(i.call_link.get()), std::ptr::from_ref(target));
+            let entry = &mut vm.lane_stack.script_targets.entries[index];
+            debug_assert!(std::ptr::eq(entry, resolved), "the link names the entry it resolved");
+            entry.admission.0 &= !Admission::UNPROVEN;
+            debug_assert!(entry.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
         }
         // Only a leaf reading its receiver binds it here; any other binds it if it
         // materializes (`lane_materialize_leaf`), which a binding past the receiver's own
@@ -56,26 +123,49 @@ script_handler! {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
         vm.programs.record_js_jit_lane_entry(target.program(), target.function);
-        let stack: &mut LaneStack = &mut vm.lane_stack;
-        // SAFETY: as `lane_push_passed`'s window, which the stack's length covers only once
-        // the leaf is materialized: no collection runs before.
-        let registers = unsafe {
-            let registers = stack.values.top();
-            fill_admitted_window(registers, usize::from(target.fill), usize::from(target.registers));
-            copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), ARGC);
-            Registers(registers)
-        };
-        // SAFETY: the program store keeps a derived view alive with its program; the tier
-        // claims no leaf's view, so its activation starts at its first record.
-        let base = unsafe { (*target.view).records() };
-        // SAFETY: the running lane's context; the window is the callee's.
-        unsafe {
-            lane_enter_leaf(cx, registers, ip, r, target, LEAF, ARGC, this, None);
-            (*cx).registers = registers;
-            (*cx).base = base;
-        }
+        // SAFETY: the target is the running program's admitted leaf of form `LEAF`, whose
+        // parameters take `ARGC` values and whose window the stack holds.
+        let (registers, base) = unsafe { lane_run_leaf::<H, LEAF, ARGC>(cx, r, ip, i, target, this) };
         next!(cx, registers, base, Carried::script(cx))
     }
+}
+
+/// The leaf call of `target` by the call record `i` at `ip` past its admission: its window at
+/// the lane stack's top filled and the leaf record entered: the callee's registers and first
+/// record, which the handler dispatches.
+///
+/// # Safety
+/// `cx` is the running lane's context; `target` is the running program's leaf of form `LEAF`,
+/// cached, whose parameters take `ARGC` values and whose activation's room the stack holds;
+/// `this` is the receiver its form binds.
+#[inline(always)]
+unsafe fn lane_run_leaf<H: Host, const LEAF: u8, const ARGC: u16>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    target: &ScriptCallTarget,
+    this: Value,
+) -> (Registers, Ip) {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: as `lane_push_passed`'s window, which the stack's length covers only once
+    // the leaf is materialized: no collection runs before.
+    let registers = unsafe {
+        let registers = vm.lane_stack.values.top();
+        fill_admitted_window(registers, usize::from(target.fill), usize::from(target.registers));
+        copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), ARGC);
+        Registers(registers)
+    };
+    // SAFETY: the program store keeps a derived view alive with its program; the tier
+    // claims no leaf's view, so its activation starts at its first record.
+    let base = unsafe { (*target.view).records() };
+    // SAFETY: the running lane's context; the window is the callee's.
+    unsafe {
+        lane_enter_leaf(cx, registers, ip, r, target, LEAF, ARGC, this, None);
+        (*cx).registers = registers;
+        (*cx).base = base;
+    }
+    (registers, base)
 }
 
 /// The `lane_script_call_leaf` form of `entry` for a record of `ARGC` arguments, or

@@ -2,43 +2,125 @@
 //! writes at fixed offsets. Everything else (return linkage, kind) belongs to the lane, which
 //! asserts these against the record it lays out (`vm::compiled::ShadowFrame`).
 
-/// The callee's descriptor (`DirectCallee`), null for a frame the lane made.
-pub(crate) const CALLEE: usize = 0;
-/// The callee's receiver, as value bits.
-pub(crate) const THIS: usize = 8;
-/// The published body (`LaneMethod`) the frame runs, 0 when none.
-pub(crate) const BODY: usize = 16;
-/// The address of the frame's first register; its registers, then what it keeps, follow.
-pub(crate) const WINDOW: usize = 24;
-/// The prefix every frame starts with.
-pub(crate) const PREFIX_BYTES: usize = 32;
+use core::mem::{offset_of, size_of};
 
-/// The context words below every window's register 0 (call protocol v2): the runtime's
-/// `register_file::FRAME_CONTEXT` and the b-jit's `FRAME_CONTEXT_WORDS` are this.
-pub(crate) const CONTEXT_WORDS: usize = 8;
-/// Each context word, counted down from register 0: the receiver, environment, captures,
-/// then a plain activation's header (the caller's call record, registers and records, the
-/// packed word, the callee).
-pub(crate) const CONTEXT_THIS: usize = 1;
-pub(crate) const CONTEXT_ENV: usize = 2;
-pub(crate) const CONTEXT_CAPTURE: usize = 3;
-pub(crate) const CONTEXT_CALL: usize = 4;
-pub(crate) const CONTEXT_CALLER_REGISTERS: usize = 5;
-pub(crate) const CONTEXT_CALLER_BASE: usize = 6;
-pub(crate) const CONTEXT_PACKED: usize = 7;
-pub(crate) const CONTEXT_CALLEE: usize = 8;
+/// Bytes in a word: frame offsets are byte counts, context and window indices are word counts.
+const WORD_BYTES: usize = size_of::<usize>();
+
+/// The four words every frame starts with, in address order.
+#[repr(C)]
+#[allow(dead_code)]
+struct FramePrefix {
+    callee: usize,
+    this: usize,
+    body: usize,
+    window: usize,
+}
+
+/// The callee's descriptor (`DirectCallee`), null for a frame the lane made.
+pub(crate) const CALLEE: usize = offset_of!(FramePrefix, callee);
+/// The callee's receiver, as value bits.
+pub(crate) const THIS: usize = offset_of!(FramePrefix, this);
+/// The published body (`LaneMethod`) the frame runs, 0 when none.
+pub(crate) const BODY: usize = offset_of!(FramePrefix, body);
+/// The address of the frame's first register; its registers, then what it keeps, follow.
+pub(crate) const WINDOW: usize = offset_of!(FramePrefix, window);
+/// The prefix every frame starts with.
+pub(crate) const PREFIX_BYTES: usize = size_of::<FramePrefix>();
+const _: () = assert!(CALLEE == 0);
+const _: () = assert!(THIS == 8);
+const _: () = assert!(BODY == 16);
+const _: () = assert!(WINDOW == 24);
+const _: () = assert!(PREFIX_BYTES == 32);
+
+/// The context words below every window's register 0 (call protocol v2), in address order:
+/// the runtime's `register_file::FRAME_CONTEXT` and the b-jit's `FRAME_CONTEXT_WORDS` are this.
+/// The receiver, environment, captures, then a plain activation's header (the caller's call
+/// record, registers and records, the packed word, the callee).
+#[repr(C)]
+#[allow(dead_code)]
+struct ContextWords {
+    callee: usize,
+    packed: usize,
+    caller_base: usize,
+    caller_registers: usize,
+    call: usize,
+    capture: usize,
+    env: usize,
+    this: usize,
+}
+
+pub(crate) const CONTEXT_WORDS: usize = size_of::<ContextWords>() / WORD_BYTES;
+
+/// A context field's index, counted down from register 0: the last field is word 1 and the
+/// first is `CONTEXT_WORDS`.
+const fn context_index(field_offset: usize) -> usize {
+    CONTEXT_WORDS - field_offset / WORD_BYTES
+}
+
+pub(crate) const CONTEXT_THIS: usize = context_index(offset_of!(ContextWords, this));
+pub(crate) const CONTEXT_ENV: usize = context_index(offset_of!(ContextWords, env));
+pub(crate) const CONTEXT_CAPTURE: usize = context_index(offset_of!(ContextWords, capture));
+pub(crate) const CONTEXT_CALL: usize = context_index(offset_of!(ContextWords, call));
+pub(crate) const CONTEXT_CALLER_REGISTERS: usize = context_index(offset_of!(ContextWords, caller_registers));
+pub(crate) const CONTEXT_CALLER_BASE: usize = context_index(offset_of!(ContextWords, caller_base));
+pub(crate) const CONTEXT_PACKED: usize = context_index(offset_of!(ContextWords, packed));
+pub(crate) const CONTEXT_CALLEE: usize = context_index(offset_of!(ContextWords, callee));
 const _: () = assert!(CONTEXT_CALLEE == CONTEXT_WORDS);
-/// The packed word: function in bits 0-31, flags in 32-47, argc from `ARGC_SHIFT`.
-pub(crate) const PLAIN_FLAG: u64 = 1 << 32;
-/// A plain frame whose callee runs a compiled body (b-jit direct calls).
-pub(crate) const BODY_FLAG: u64 = 1 << 33;
-/// A plain frame a native (u-jit) direct call wrote.
-pub(crate) const NATIVE_FLAG: u64 = 1 << 34;
-pub(crate) const ARGC_SHIFT: u32 = 48;
-/// The plain activations' words (`PlainFrames`): depth, innermost window, program.
-pub(crate) const PLAIN_DEPTH_AT: usize = 0;
-pub(crate) const PLAIN_REGISTERS_AT: usize = 8;
-pub(crate) const PLAIN_PROGRAM_AT: usize = 16;
-/// An activation record's size and where its kind tag lies (`Activation`).
+const _: () = assert!(CONTEXT_THIS == 1);
+const _: () = assert!(CONTEXT_ENV == 2);
+const _: () = assert!(CONTEXT_CAPTURE == 3);
+const _: () = assert!(CONTEXT_CALL == 4);
+const _: () = assert!(CONTEXT_CALLER_REGISTERS == 5);
+const _: () = assert!(CONTEXT_CALLER_BASE == 6);
+const _: () = assert!(CONTEXT_PACKED == 7);
+const _: () = assert!(CONTEXT_WORDS == 8);
+
+/// The packed word: function in bits 0-31, flags from bit `FLAG_BASE`, argc from `ARGC_SHIFT`.
+const FUNCTION_BITS: u32 = 32;
+const FLAG_BASE: u32 = FUNCTION_BITS;
+const FLAG_BITS: u32 = 16;
+
+/// The packed word's flags, each one bit counted up from `FLAG_BASE`.
+#[repr(u32)]
+#[allow(dead_code)]
+enum PackedFlag {
+    /// A plain frame.
+    Plain = FLAG_BASE,
+    /// A plain frame whose callee runs a compiled body (b-jit direct calls).
+    Body,
+    /// A plain frame a native (u-jit) direct call wrote.
+    Native,
+}
+
+pub(crate) const PLAIN_FLAG: u64 = 1 << PackedFlag::Plain as u32;
+pub(crate) const BODY_FLAG: u64 = 1 << PackedFlag::Body as u32;
+pub(crate) const NATIVE_FLAG: u64 = 1 << PackedFlag::Native as u32;
+pub(crate) const ARGC_SHIFT: u32 = FLAG_BASE + FLAG_BITS;
+const _: () = assert!(PLAIN_FLAG == 1 << 32);
+const _: () = assert!(BODY_FLAG == 1 << 33);
+const _: () = assert!(NATIVE_FLAG == 1 << 34);
+const _: () = assert!(ARGC_SHIFT == 48);
+
+/// The plain activations' words (`PlainFrames`), in address order: depth, innermost window,
+/// program.
+#[repr(C)]
+#[allow(dead_code)]
+struct PlainFrameWords {
+    depth: usize,
+    registers: usize,
+    program: usize,
+}
+
+pub(crate) const PLAIN_DEPTH_AT: usize = offset_of!(PlainFrameWords, depth);
+pub(crate) const PLAIN_REGISTERS_AT: usize = offset_of!(PlainFrameWords, registers);
+pub(crate) const PLAIN_PROGRAM_AT: usize = offset_of!(PlainFrameWords, program);
+const _: () = assert!(PLAIN_DEPTH_AT == 0);
+const _: () = assert!(PLAIN_REGISTERS_AT == 8);
+const _: () = assert!(PLAIN_PROGRAM_AT == 16);
+
+/// An activation record's size and where its kind tag lies (`Activation`). The b-jit stencil
+/// crate cannot name the runtime's `Activation`, so these stay literal; `dispatch_fast.rs`
+/// asserts them against `size_of::<Activation>()` and `KIND_OFFSET`.
 pub(crate) const ACTIVATION_BYTES: usize = 128;
 pub(crate) const ACTIVATION_KIND_OFFSET: usize = 72;

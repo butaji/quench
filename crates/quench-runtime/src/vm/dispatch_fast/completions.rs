@@ -1,6 +1,7 @@
 //! Lane activations' completions: what a return yields to the call it completes, by the
 //! completion its activation was made with (`Completion`).
 use super::*;
+use crate::staged::call_complete::{concrete_admits_returning_call, concrete_returns_callee_completion, concrete_write_call_result};
 
 /// The completion of the innermost activation with `value`, which the record at `ip`
 /// returns, past the common return (`lane_complete_plain_activation`), by what it yields to
@@ -51,7 +52,7 @@ fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: V
         return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
     }
     // SAFETY: the call record belongs to the caller's live view.
-    if unsafe { (*top?.call()).a } & crate::bytecode::RETURN_REGISTER != 0 {
+    if concrete_returns_callee_completion(unsafe { (*top?.call()).a }) {
         return None;
     }
     let activation = vm.lane_stack.pop_activation()?;
@@ -98,11 +99,13 @@ pub(super) fn lane_complete_cross_activation<H: Host>(cx: *mut LaneContext<H>, v
 #[inline(always)]
 pub(super) fn lane_returning_call_admitted<H: Host>(cx: *mut LaneContext<H>) -> bool {
     let vm = unsafe { vm(cx) };
-    if !vm.host.proper_tail_calls() {
-        return true;
-    }
-    let function = lane_running_function(cx);
-    !unsafe { &*(*cx).code }.function(function as usize).strict
+    let proper = vm.host.proper_tail_calls();
+    // The running function's strictness is read only where proper tail calls are on.
+    let strict = proper && {
+        let function = lane_running_function(cx);
+        unsafe { &*(*cx).code }.function(function as usize).strict
+    };
+    concrete_admits_returning_call(proper, strict)
 }
 
 /// The frame's own call record at `call` returns `value`, its callee's completion: the
@@ -195,7 +198,7 @@ fn returning_chain_outermost(activations: &[Activation]) -> Option<(usize, bool)
             return None;
         }
         // SAFETY: the call record belongs to the caller's live view.
-        if unsafe { (*activation.call()).a } & crate::bytecode::RETURN_REGISTER == 0 {
+        if !concrete_returns_callee_completion(unsafe { (*activation.call()).a }) {
             return Some((index, crossed));
         }
     }
@@ -272,7 +275,8 @@ pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: 
 #[inline(always)]
 pub(super) fn lane_resume_after_call(activation: &Activation, memory: MemoryView, value: Value) -> Resumed {
     // SAFETY: the call record belongs to the caller's live view.
-    activation.caller_registers().set(unsafe { (*activation.call()).a }, value);
+    let result = unsafe { (*activation.call()).a };
+    concrete_write_call_result(activation.caller_registers().0.expose_provenance() as u64, result, value);
     lane_resume_at(activation, memory, following(activation.call()))
 }
 
