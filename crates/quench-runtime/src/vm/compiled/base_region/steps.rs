@@ -355,7 +355,10 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     let (spills, reloads) = (layout.spills(pc), if shape.returning { Vec::new() } else { layout.spills(pc + 1) });
     let proven_args = if layout.inlined(pc) { 0 } else { layout.proven_args.get(shape.call_pc as usize).copied().unwrap_or(0) };
     let read = shape.method.map(|method| super::plan::method_read(shape.this, method.cache, method.scratch)).transpose()?;
-    let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads, proven_args, read };
+    let chain = shape.method.map_or_else(Vec::new, |method| super::plan::chain_reads(layout, shape.this, method.cache, method.scratch));
+    // The holders the chain's reads answer through: the body subscribes to them, so a change of their values retires it.
+    layout.holders.borrow_mut().extend(chain.iter().map(|read| read.holder));
+    let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads, proven_args, read, chain };
     let CallChain { parts, records: record, choice } = call_plan::plan_call(&plan)?;
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     #[cfg(test)]

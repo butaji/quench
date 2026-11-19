@@ -2,6 +2,7 @@ use super::*;
 use quench_bjit::numeric::supernodes::Node;
 use quench_bjit::{padded_holes, HOLES};
 use super::super::LaneHelper;
+use super::call_plan::ChainRead;
 
 /// Where the registers of the region live: pinned (int32 or double), int slots, or tagged
 /// frame slots.
@@ -293,6 +294,29 @@ fn chosen_row(kind: Kind, [dst, a, b]: [Place; 3], variant: Variant, general: bo
         numeric::stencil(row).map(|stencil| (row, stencil))
     };
     row(speculates(variant, general)).or_else(|_| row(!general)).or_else(|_| checked(speculates(variant, general)))
+}
+
+/// The prototype-held entries of a method site (`Known::reads`): each load that one holder value a `folded_read` takes,
+/// as a Held row over the receiver (`Heap::Held`: the receiver's exact shape and prototype link, then the value the holder
+/// held at compile time, into `scratch`). The holder is listed in `Layout::holders`, so a change of its values retires the
+/// body; a call's direct row compares the value by identity. Empty where the receiver is not framed, or the site records none.
+pub(super) fn chain_reads(layout: &Layout, receiver: Register, cache: u16, scratch: Register) -> Vec<ChainRead> {
+    let Some(reads) = layout.reads else { return Vec::new() };
+    if layout.homes.place(receiver) != Place::Mem {
+        return Vec::new();
+    }
+    let row = HeapRow { heap: Heap::Held, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+    reads(cache).into_iter().filter_map(|load| {
+        let (holder, inherited) = (load.holder?, load.inherited?);
+        let [(link, value)] = inherited.values() else { return None };
+        if load.function_shape {
+            return None;
+        }
+        let folded = Folded { shape: load.shape, link: *link, holder };
+        let object = u64::from(scratch) * SLOT | u64::from(receiver) * SLOT << numeric::site_bits::SITE_OBJECT_AT;
+        let holes = padded_holes([object, folded.word(), value.to_bits(), 0, 0]);
+        Some(ChainRead { callee: value.to_bits(), holder, stencil: base_rows::stencil(row).ok()?, holes })
+    }).take(crate::vm::compiled::tier_policy::POLYMORPHISM).collect()
 }
 
 /// The site read of a method call's callee (`call_plan::Method`): the field cache entry `cache` answers for the
