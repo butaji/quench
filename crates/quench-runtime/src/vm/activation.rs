@@ -15,9 +15,6 @@ pub(crate) use generator_record::{GeneratorRecord, GeneratorState};
 pub(crate) enum Completion {
     GeneratorStart,
     Return(Value),
-    // Current thrown resumes enter the shared frame error boundary directly.
-    #[allow(dead_code)]
-    Throw(Value),
     Yield(Value),
     Await(Value),
 }
@@ -293,7 +290,6 @@ impl Continuation {
         out.extend(match self.completion {
             Completion::GeneratorStart => None,
             Completion::Return(value)
-            | Completion::Throw(value)
             | Completion::Yield(value)
             | Completion::Await(value) => Some(value),
         });

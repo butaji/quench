@@ -189,7 +189,7 @@ impl<H: Host> Vm<H> {
         self.promise_settle(p, promise, PromiseState::Rejected, reason)
     }
 
-    /// The rooted promise of a settling lane call (`LaneStack::settling`), made now for a call
+    /// The rooted promise of a settling lane call (`SidePayload::Settles`), made now for a call
     /// that deferred it to its awaiting caller: something other than the await may read it.
     /// Without lifecycle hooks, which settling calls exclude, making it runs no guest code.
     pub(super) fn settling_root(&mut self, root: Option<crate::heap::RootId>) -> crate::heap::RootId {

@@ -309,7 +309,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         // The receiver may be a wrapper only this loop holds; a reducer's accumulator, its
         // result, changes with each step.
-        let roots = [self.heap.root(iteration.receiver), self.heap.root(iteration.result)];
+        // Held on the call roots (`active_call_roots`), not the root table: the loop is one
+        // native scope, so the two slots are a push and a truncate, and the result's per-step
+        // update an indexed store, where the table cost an insert, a remove and a slot lookup
+        // per update. Everything the loop's callbacks push above them they truncate again.
+        let roots = self.active_call_roots.len();
+        self.active_call_roots.extend_from_slice(&[iteration.receiver, iteration.result]);
         let mut filtered_value_roots = Vec::new();
         let (this, typed_array) = (iteration.receiver, iteration.typed_array);
         let typed_filter = typed_array && iteration.native == Native::ArrayFilter;
@@ -341,7 +346,7 @@ impl<H: Host> Vm<H> {
                 if let Some(done) = vm.array_iteration_apply(p, iteration, index, value, mapped)? {
                     return Ok(done);
                 }
-                vm.heap.update_root(roots[1], iteration.result);
+                vm.active_call_roots[roots + 1] = iteration.result;
             }
             if !typed_filter {
                 return Ok(iteration.completion());
@@ -355,7 +360,8 @@ impl<H: Host> Vm<H> {
             vm.heap.release_root(target_root);
             result.map(|()| target)
         });
-        for root in roots.into_iter().chain(filtered_value_roots) {
+        self.active_call_roots.truncate(roots);
+        for root in filtered_value_roots {
             self.heap.release_root(root);
         }
         outcome

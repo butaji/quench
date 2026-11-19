@@ -53,7 +53,7 @@ fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: V
     let vm = unsafe { vm(cx) };
     // The trap's frame read where it is (no spill, one-frame-one-call.md F4).
     let top = vm.lane_stack.top_return();
-    if proxy_traps::trap_result_needs_general_path(vm, top.and_then(|frame| frame.completion), value) {
+    if proxy_traps::trap_result_needs_general_path(vm, top.map_or(SidePayload::None, |frame| frame.payload), value) {
         return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
     }
     // SAFETY: the call record belongs to the caller's live view.
@@ -344,16 +344,16 @@ pub(super) fn lane_resume_at(frame: &FrameReturn, memory: MemoryView, at: Ip, wr
 #[inline(always)]
 pub(super) fn lane_caller_returns_in_frame<H: Host>(vm: &mut Vm<H>, value: Value, then: &mut Value) -> bool {
     // The caller read where it is (no spill, one-frame-one-call.md F4).
-    match vm.lane_stack.top_return().map(|caller| caller.completion) {
+    match vm.lane_stack.top_return() {
         None => true,
-        Some(Some(Completion::SettlesPromise)) => match lane_settled_then(vm, value) {
+        Some(caller) if caller.completion == Some(Completion::SettlesPromise) => match lane_settled_then(vm, value) {
             Some(read) => {
                 *then = read;
                 false
             }
             None => true,
         },
-        Some(completion) => proxy_traps::trap_result_needs_general_path(vm, completion, value),
+        Some(caller) => proxy_traps::trap_result_needs_general_path(vm, caller.payload, value),
     }
 }
 
@@ -372,11 +372,11 @@ pub(super) fn lane_settled_then<H: Host>(vm: &mut Vm<H>, value: Value) -> Option
 
 /// The completion of a settling activation (`Completion::SettlesPromise`) whose caller the
 /// lane restored, with `value` and the `then` `lane_settled_then` read from it: its promise,
-/// the innermost of `LaneStack::settling`, resolved with the value, which its call yields.
+/// `rooted`, which its side record carried (`SidePayload::Settles`), resolved with the value,
+/// which its call yields.
 #[inline(never)]
-pub(super) fn lane_settle_promise<H: Host>(cx: *mut LaneContext<H>, value: Value, then: Value) -> Value {
+pub(super) fn lane_settle_promise<H: Host>(cx: *mut LaneContext<H>, value: Value, then: Value, rooted: Option<crate::heap::RootId>) -> Value {
     let vm = unsafe { vm(cx) };
-    let rooted = vm.lane_stack.settling.pop().expect("each settling activation has its entry");
     // Only the `await` after the call reads an unrooted promise: a primitive fulfills it, and
     // awaiting a primitive takes the one job awaiting that fulfilled promise takes.
     if concrete_settles_without_promise(rooted.is_some(), vm.is_object_like(value)) {

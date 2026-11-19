@@ -54,17 +54,11 @@ pub(super) fn left_lane(resume: Ip) -> bool {
     resume.addr() & EXIT_TAG != 0
 }
 
-/// Changes the completion of the lane's `depth`th activation `from` one `to` another;
-/// false, changing nothing, where it holds another or is no script activation.
+/// Changes the completion of the lane's `depth`th activation `from` one `to` another, where it
+/// is (`LaneStack::recomplete_at`: a header's side record, or a record); false, changing
+/// nothing, where it holds another or is no script activation.
 fn recomplete<H: Host>(cx: *mut LaneContext<H>, depth: usize, from: Completion, to: Completion) -> bool {
-    // spills: writes the completion into the record a plain header does not have.
-    match unsafe { vm(cx) }.lane_stack.activations_mut().get_mut(depth).map(|activation| activation.kind_mut()) {
-        Some(ActivationKind::Script(script)) if script.completion == from => {
-            script.completion = to;
-            true
-        }
-        _ => false,
-    }
+    unsafe { vm(cx) }.lane_stack.recomplete_at(depth, from, to)
 }
 
 /// Leaves the body for the lane at `resume`, the callee's activation's record
@@ -433,8 +427,7 @@ fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target:
     // lies outside its records: a loop region's `Callee` exit (`lane_loop_native`) leaves the
     // lane there and needs its PC. `lane_specialize` below takes the prologue's warming step.
     let start = unsafe { (*cx).base };
-    // Counted without making a plain activation a record: `finish` reads the records, which
-    // spills them, so the index then names this activation.
+    // The activation's index among every frame, which `finish` finds it at where it is.
     let depth = vm.lane_stack.activation_count() - 1;
     let leave = move |resume: Ip, acc: Value| finish(cx, depth, resume, acc, constructs);
     // SAFETY: the program's views outlive the lane run.

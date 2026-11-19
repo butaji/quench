@@ -369,7 +369,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     let instance = unsafe { (*cx).instance };
     let (registers, start) = lane_push_passed::<H, true, false>(cx, r, ip, &target, args.as_ptr(), argc16.min(target.params), this, false);
     vm.lane_stack.recomplete_top(Completion::ToWasm);
-    vm.lane_stack.to_wasm.push(ToWasmCall { instance, memory: memory_binding, result });
+    vm.lane_stack.attach_payload(SidePayload::ToWasm(ToWasmCall { instance, memory: memory_binding, result }));
     unsafe {
         (*cx).inline_calls = false;
         lane_set_script_calls(cx, true);

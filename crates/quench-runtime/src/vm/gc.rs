@@ -977,6 +977,8 @@ impl<H: Host> Vm<H> {
         // stack resolved before names cells the sweep freed (`LaneStack::retire_after_collection`).
         let generation_key = (self.heap.collection_epoch(), self.realm.globals);
         self.lane_stack.retire_after_collection(generation_key);
+        // A swept function's id may go to another record (`RealmNativeProofs`).
+        self.realm_native_proofs.forget();
         super::dispatch_fast::retire_running_lane_context();
         // Records keeping a root slot's value read the slot again (`lane_load_root_constant`).
         self.retire_root_constants();

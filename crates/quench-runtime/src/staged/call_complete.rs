@@ -163,28 +163,32 @@ pub(crate) fn concrete_frame_completes_plainly(window: u64) -> bool {
 
 /// The side-record flags of a frame (one-frame-one-call.md F4): `keeps` (passed values past its
 /// registers), `env` (environment entries and locals in its window), `crosses` (its caller runs
-/// another program) and `completes` (a completion past `Plain` and `Cross`). Zero for a frame
-/// whose header is all of it. Writes nothing.
+/// another program), `completes` (a completion past `Plain` and `Cross`) and `owns` (an eval
+/// record its side record names, one-frame-one-call.md F4 (3)). Zero for a frame whose header
+/// is all of it. Writes nothing.
 #[inline(always)]
-pub(crate) fn side_flags<S: Stage>(stage: &mut S, keeps: S::Cond, env: S::Cond, crosses: S::Cond, completes: S::Cond) -> S::Word {
+pub(crate) fn side_flags<S: Stage>(stage: &mut S, keeps: S::Cond, env: S::Cond, crosses: S::Cond, completes: S::Cond, owns: S::Cond) -> S::Word {
     let none = stage.constant(0);
     let keeps_flag = stage.constant(frame::KEEPS_FLAG);
     let env_flag = stage.constant(frame::ENV_FLAG);
     let crosses_flag = stage.constant(frame::CROSSES_FLAG);
     let completes_flag = stage.constant(frame::COMPLETION_FLAG);
+    let owns_flag = stage.constant(frame::OWNS_FLAG);
     let keeps = stage.select(keeps, keeps_flag, none);
     let env = stage.select(env, env_flag, none);
     let crosses = stage.select(crosses, crosses_flag, none);
     let completes = stage.select(completes, completes_flag, none);
+    let owns = stage.select(owns, owns_flag, none);
     let flags = stage.or(keeps, env);
     let flags = stage.or(flags, crosses);
-    stage.or(flags, completes)
+    let flags = stage.or(flags, completes);
+    stage.or(flags, owns)
 }
 
 /// `side_flags` on machine facts.
 #[inline(always)]
-pub(crate) fn concrete_side_flags(keeps: bool, env: bool, crosses: bool, completes: bool) -> u64 {
-    side_flags(&mut super::Concrete::new(std::ptr::null()), keeps, env, crosses, completes)
+pub(crate) fn concrete_side_flags(keeps: bool, env: bool, crosses: bool, completes: bool, owns: bool) -> u64 {
+    side_flags(&mut super::Concrete::new(std::ptr::null()), keeps, env, crosses, completes, owns)
 }
 
 /// Write `flags` as the side-record flags of the frame header below `window`
@@ -271,8 +275,9 @@ mod tests {
 
     #[test]
     fn side_flags_select_their_completion() {
-        assert_eq!(concrete_side_flags(false, false, false, false), 0);
-        let flags = concrete_side_flags(true, false, true, false);
+        assert_eq!(concrete_side_flags(false, false, false, false, false), 0);
+        assert_eq!(concrete_side_flags(false, false, false, false, true), frame::OWNS_FLAG);
+        let flags = concrete_side_flags(true, false, true, false, false);
         assert_eq!(flags, frame::KEEPS_FLAG | frame::CROSSES_FLAG);
         let side = concrete_side_completion(crate::staged::protocol::plain_packed(4, 1, flags));
         assert!(side.sided && side.crosses && !side.completes);

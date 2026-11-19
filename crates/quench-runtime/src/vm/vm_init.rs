@@ -88,6 +88,7 @@ impl<H: Host> Vm<H> {
             native_program_resolver: None,
             execution_interrupt,
             active_call_roots: vec![],
+            realm_native_proofs: super::iterators::RealmNativeProofs::new(),
             with_stack: vec![],
             with_scope_entered: false, scope_names: Default::default(),
             test262_agent: Default::default(),

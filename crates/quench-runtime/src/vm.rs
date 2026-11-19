@@ -786,11 +786,33 @@ struct AccessorFieldCache {
     epoch: u64,
     /// The site's next older entry in `Vm::accessor_fields`, or `NO_ACCESSOR_FIELD`.
     next: u32,
-    /// The getter whose call a field read of the receiver answers (`answer`), or undefined:
-    /// `Vm::memoized_getter_answer` reads it in place of the call.
+    /// The accessor function whose call `answer` stands for, or undefined: a read site's
+    /// getter (`Vm::getter_entry_read`), a store site's setter (`Vm::setter_entry_forward`).
+    /// The forward holds while the holder still holds this function: its body, and so what
+    /// `answer` derived from it, is the function's own.
     getter: Value,
-    /// That read's field entry, which proves the receiver's shape itself.
-    answer: FieldCache,
+    /// What the call of `getter` on a receiver of the entry's layout does, without a call
+    /// (getters-as-calls.md, trivial accessors).
+    answer: AccessorForward,
+}
+/// What an accessor entry's function does for a receiver of its layout
+/// (`AccessorFieldCache::answer`), recognized once from its body: a field read or store at a
+/// fixed slot, a constant, or the receiver itself. `None` is no forward: the call runs (a
+/// store site's `None` beside its setter records that the setter's body forwards nothing).
+#[derive(Clone, Copy)]
+enum AccessorForward {
+    None,
+    /// `return this.f` or `return this.#f`: that read's field entry, which proves the
+    /// receiver's shape itself (an own or holder entry of a public name; a private name's
+    /// own slot under the getter's home).
+    Field(FieldCache),
+    /// `return k` of a primitive `k` that is no heap value.
+    Constant(Value),
+    /// `return this` of a function with its own `this` binding.
+    Receiver,
+    /// `this.f = v` of the setter's first parameter, then `return`: the store entry of `f`
+    /// (an own data field of the receiver's exact shape) and its name.
+    Store { cache: FieldCache, atom: crate::bytecode::Atom },
 }
 /// A cache site without an accessor entry (`Vm::accessor_field_indices`).
 const NO_ACCESSOR_FIELD: u32 = object::MRU_CHAIN_END;
@@ -1878,6 +1900,8 @@ pub(crate) struct Vm<H> {
     /// (`Vm::release_lowered_tier0`).
     /// By residual address, which the collection matches against the live programs'.
     lowered_tier0: std::cell::RefCell<Vec<(usize, u32)>>,
+    /// Functions proved to be the current realm's natives (`Vm::is_current_realm_native`).
+    realm_native_proofs: iterators::RealmNativeProofs,
     /// Emptied call stacks of finished general loops, one per nesting level reached: a loop
     /// takes one on entry, so running a job allocates no stack of its own.
     pending_call_stacks: Vec<Vec<dispatch_frame::PendingGeneralCall>>,
@@ -2277,6 +2301,8 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn swap_realm_global(&mut self, previous: Value, global: Value) {
         self.clear_call_targets();
+        // A native of the realm being left is not the next realm's own.
+        self.realm_native_proofs.forget();
         // SAFETY: native lane bodies invoke no guest callbacks/realm switches.
         unsafe { self.programs.retire_native_calls_across_realms(); }
         let leaving = ParkedRealm {
@@ -3154,6 +3180,7 @@ impl<H: Host> Vm<H> {
         self.temporal_plain_month_day_proto = Value::NULL;
         self.temporal_plain_year_month_proto = Value::NULL;
         self.random_state = fresh_random_seed();
+        self.realm_native_proofs.forget();
         self.realm.globals = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));

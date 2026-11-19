@@ -11,7 +11,7 @@ impl LaneStack {
         self.extend_window_roots(programs, out);
         out.extend(self.frames().filter_map(|frame| frame.script()).map(|script| script.callee));
         out.extend(self.with_object_roots());
-        out.extend(self.forwarders.iter().flat_map(|forwarder| [forwarder.callee, forwarder.env]));
+        out.extend(self.side_roots());
         out.extend(self.steps.iter().flat_map(LaneArrayStep::roots));
         for (_, record) in &self.records {
             record.extend_roots(out);

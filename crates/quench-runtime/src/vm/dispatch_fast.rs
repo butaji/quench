@@ -1335,6 +1335,19 @@ impl Registers {
         }
     }
 
+    /// Write the plain header's call record, caller registers and caller records: a trampoline's
+    /// header taking its trampoline's words as its own (`LaneStack::edit_top_side`), a moved
+    /// caller window (`LaneStack::relocate_plain`).
+    #[inline(always)]
+    fn set_plain_caller(self, call: Ip, registers: Registers, base: Ip) {
+        // SAFETY: as for `plain_caller`; the words are the header's own.
+        unsafe {
+            *self.0.sub(CONTEXT_CALL).cast::<Ip>() = call;
+            *self.0.sub(CONTEXT_CALLER_REGISTERS).cast::<Registers>() = registers;
+            *self.0.sub(CONTEXT_CALLER_BASE).cast::<Ip>() = base;
+        }
+    }
+
     /// The plain header's function, argc and callee.
     #[inline(always)]
     fn plain_callee(self) -> (u32, u16, Value) {
@@ -1780,8 +1793,8 @@ enum Completion {
     /// caller's program the lane's again as `Cross` does.
     CrossConstructs,
     /// It runs the method a forwarding constructor's body would have called
-    /// (`ScriptCallTarget::forwarded_method`), whose frame `LaneStack::forwarders` keeps the
-    /// last entry of: the construction yields `this`, the receiver, whatever it returns.
+    /// (`ScriptCallTarget::forwarded_method`), whose frame its side record names
+    /// (`SidePayload::Forwarder`): the construction yields `this`, the receiver, whatever it returns.
     Forwarder,
     /// A native's call of JavaScript run frameless from the lane that called the native
     /// (`Vm::lane_native_callback`): its return ends that run with the value, which the
@@ -1789,8 +1802,8 @@ enum Completion {
     /// it, which no pending call names.
     ReturnsToNative,
     /// A plain call of a non-suspending async function of the caller's program
-    /// (`CallEntry::Settles`): its return resolves the promise the call made, which
-    /// `LaneStack::settling` keeps, and the call yields that promise. Made a frame, its
+    /// (`CallEntry::Settles`): its return resolves the promise the call made, which its side
+    /// record keeps (`SidePayload::Settles`), and the call yields that promise. Made a frame, its
     /// pending call settles it (`PendingGeneralCall::completion`).
     SettlesPromise,
     /// A store's setter (`setters::lane_store_setter`): the assignment yields the value
@@ -1798,7 +1811,7 @@ enum Completion {
     /// frame, its pending call yields it the same way (`CallCompletion::Assigned`).
     Assigns,
     /// A proxy `get` trap (`proxy_traps::lane_read_get_trap`): the read's value, once the
-    /// target's invariants have checked it (`LaneStack::trap_checks`); a read the target's
+    /// target's invariants have checked it (`SidePayload::Trapped`); a read the target's
     /// changed shape now constrains returns from the trap's frame, whose pending call checks
     /// it in full (`CallCompletion::Trapped`).
     ReadsTrapped,
@@ -1818,8 +1831,8 @@ enum Completion {
     ConstructsToBody,
     /// A Wasm call of a JavaScript-backed import (`wasm_calls::lane_activate_js_import`), of
     /// another program than its Wasm caller's: its return gives the caller the value's Wasm
-    /// form and runs the caller's program and instance again, as `LaneStack::to_wasm` keeps
-    /// them (`lane_complete_to_wasm`). Made a frame, its pending call converts the value
+    /// form and runs the caller's program and instance again, as its side record keeps them
+    /// (`SidePayload::ToWasm`, `lane_complete_to_wasm`). Made a frame, its pending call converts the value
     /// (`CallCompletion::ToWasm`).
     ToWasm,
     /// A generator the lane resumed over its suspended frame's register file
@@ -2308,11 +2321,20 @@ pub(super) struct LaneStack {
     activation_records: std::cell::UnsafeCell<LaneActivations>,
     /// The plain activations above the innermost record, whose headers the value stack holds.
     plain: PlainFrames,
-    /// The side records of the plain activations whose headers carry a side flag
-    /// (`lane_frames::Side`, `frame::SIDE_FLAGS`), innermost last: what a record would hold
-    /// beyond the header (one-frame-one-call.md F4). Written through `&mut self` and cleared by
-    /// `spill_plain`, which makes their frames records.
+    /// The side records, innermost last, one per frame that has one (one-frame-one-call.md F4):
+    /// each plain header whose packed word carries a side flag (`frame::SIDE_FLAGS`), and each
+    /// record whose completion carries a payload (`LaneStack::record_sided`). A side record is
+    /// tagged by its header's flags and holds what a record would beyond the header, and what
+    /// the frame's completion carries (`lane_frames::SidePayload`: a skipped forwarder, a
+    /// settling promise, a Wasm caller, a trap's invariants), so it pushes and pops with its
+    /// frame. Written through `&mut self` and by `spill_plain`, which makes its frames records.
     sides: std::cell::UnsafeCell<Vec<lane_frames::Side>>,
+    /// The plain headers each record pushed over them sealed (`frame_walk::PlainSegment`),
+    /// innermost last: a record's push saves the `plain` words instead of spilling the headers,
+    /// and its pop restores them (`LaneStack::seal_plain`, `unseal_plain`).
+    segments: std::cell::UnsafeCell<Vec<frame_walk::PlainSegment>>,
+    /// The headers the segments hold, which `activation_count` counts.
+    sealed: std::cell::Cell<usize>,
     /// The return trampoline of the native callbacks pushed as plain activations
     /// (`CallbackTrampoline`), at an address their headers name.
     callback_return: Box<CallbackTrampoline>,
@@ -2342,38 +2364,29 @@ pub(super) struct LaneStack {
     read_memos: Vec<ReadMemo>,
     /// The callee each in-place native row admits in this generation (`native_calls::NativeIdentities`).
     native_identities: native_calls::NativeIdentities,
-    /// The forwarding constructors whose activations constructions skipped, one per
-    /// `Completion::Forwarder` activation, innermost last.
-    forwarders: Vec<SkippedForwarder>,
-    /// The rooted promises of the `Completion::SettlesPromise` activations, innermost last:
-    /// each activation's return resolves its own, which its frame's pending call takes when
-    /// it materializes (`PendingGeneralCall::completion`). `None` for a call whose result
-    /// only the `await` after it reads (`ImmediateLayout::LANE_CALL_RESULT_AWAITED_FLAG`): its
-    /// promise is made only where one is observable, and a primitive return reaches the
-    /// `await` as it is.
-    settling: Vec<Option<crate::heap::RootId>>,
+    /// The stack bounds the lane's native calls are checked against (`Vm::call_native_from_lane`),
+    /// read at each lane entry (`enter_generation`), under the guard that entry holds.
+    pub(super) native_stack: crate::stack::StackLimit,
     /// The array iterations of the `Completion::ArrayStep` activations, innermost last; each
     /// activation's frame takes its own when it materializes (`CallCompletion::ArrayStep`).
+    /// Not a side record: an iteration outlives each of its callback's frames, which it pushes
+    /// again per element (`lane_step_header_again`), and a trampoline's header names its entry
+    /// by index (one-frame-one-call.md F4 (3)).
     steps: Vec<LaneArrayStep>,
     /// The iterators the activations' `for-of` loops would close, each with the index of
     /// the activation whose loop pushed it (`IteratorCleanupPush`), innermost last: a
     /// frame's `active_iterators`, which the activation's frame takes when it materializes.
     /// A completion drops its activation's entries, as a frame's pop drops its list.
     iterators: Vec<(usize, super::ActiveIterator)>,
-    /// What the `Completion::ReadsTrapped` and `AssignsTrapped` activations owe their targets'
-    /// invariants, each with the index of its activation, innermost last; its frame takes it
-    /// when it materializes (`CallCompletion::Trapped`).
-    trap_checks: Vec<(usize, TrapCheck)>,
-    /// What each `Completion::ToWasm` activation restores of its caller, innermost last; each
-    /// activation's frame takes its result type when it materializes (`CallCompletion::ToWasm`).
-    pub(super) to_wasm: Vec<ToWasmCall>,
     /// The JavaScript-backed import a Wasm call last activated (`wasm_calls::lane_activate_js_import`),
     /// read off its wrapper once; a collection forgets it (`forget_dead_callees`).
     pub(super) js_import: Option<JsImportPlan>,
-    /// The bound function without bound arguments a `function_call_miss` last forwarded through,
-    /// with its target and bound receiver, which never change (`Vm::bound_function_parts`); a
-    /// collection forgets it (`forget_dead_callees`).
-    pub(super) bound_call: Option<(Value, Value, Value)>,
+    /// The bound function of a user function a `function_call_miss` last forwarded through,
+    /// with its target, bound receiver and list of bound arguments (`undefined` for none), which
+    /// never change (`Vm::bound_function_words`): the next call of it reads no parts. Not roots:
+    /// the bound function in the call's callee register keeps them, and a collection forgets
+    /// them (`forget_dead_callees`) before any id is reused.
+    pub(super) bound_call: Option<(Value, Value, Value, Value)>,
     /// The `with` objects of the activations' scope chains (`with_scopes`), each with the index of
     /// the activation that owns it, innermost last: a frame's `with_objects`, which the
     /// activation's frame takes when it materializes. A completion drops its activation's
@@ -2473,7 +2486,7 @@ impl LaneStack {
     /// `/mnt/project-files/calls-frames/call-protocol-v2.md`).
     #[inline(always)]
     pub(in crate::vm) fn activations(&self) -> &LaneActivations {
-        if self.plain.depth.get() != 0 { self.spill_plain(); }
+        if self.has_plain_frames() { self.spill_plain(); }
         // SAFETY: only `spill_plain` writes through a shared reference, and never while a
         // reference it returned lives: plain activations are pushed through `&mut self` only.
         unsafe { &*self.activation_records.get() }
@@ -2481,7 +2494,7 @@ impl LaneStack {
     /// `activations` for writing.
     #[inline(always)]
     pub(in crate::vm) fn activations_mut(&mut self) -> &mut LaneActivations {
-        if self.plain.depth.get() != 0 { self.spill_plain(); }
+        if self.has_plain_frames() { self.spill_plain(); }
         // The records may change, or the values move (`reserve_values`): the proved calls'
         // bound (`PlainFrames::bound`) names neither any more.
         self.plain.bound.set(0);
@@ -2492,9 +2505,19 @@ impl LaneStack {
     /// activation limit bounds.
     #[inline(always)]
     pub(in crate::vm) fn activation_count(&self) -> usize {
-        // SAFETY: reads the length alone.
-        unsafe { (*self.activation_records.get()).len() + self.plain.depth.get() }
+        self.frames_below_plain() + self.plain.depth.get()
     }
+
+    /// The frames below the innermost plain headers: the records and the headers they sealed.
+    #[inline(always)]
+    fn frames_below_plain(&self) -> usize {
+        // SAFETY: reads the length alone.
+        unsafe { (*self.activation_records.get()).len() + self.sealed.get() }
+    }
+
+    /// Whether any frame is a plain header, innermost or sealed below a record.
+    #[inline(always)]
+    fn has_plain_frames(&self) -> bool { self.plain.depth.get() != 0 || self.sealed.get() != 0 }
 
     /// The innermost activation's function, read from its header where it is plain, so the
     /// read makes no record.
@@ -2511,30 +2534,35 @@ impl LaneStack {
     #[inline(always)]
     pub(in crate::vm) fn plain_frames_word(&self) -> usize { (&raw const self.plain).expose_provenance() }
 
-    /// Make the plain activations records, outermost first, as their pushes would have.
+    /// Make every frame a record, outermost first, as their pushes would have: the plain
+    /// headers, innermost and sealed alike, each the record the frame view reads it as
+    /// (`lane_frames::plain_record`), side record included. Only emitted code's entry
+    /// (`Vm::lane_stack_words`, step F5) and a deferred native's callback (whose trampoline
+    /// header must be the only one) still need it: every other reader walks the frames where
+    /// they are (one-frame-one-call.md F4 (3)).
     #[cold]
     #[inline(never)]
     fn spill_plain(&self) {
-        let depth = self.plain.depth.get();
-        // The records grow by `depth`: the proved calls' bound no longer holds.
+        // The records change: the proved calls' bound no longer holds.
         self.plain.bound.set(0);
-        // SAFETY: no reference into the records lives (`activations`).
-        let records = unsafe { &mut *self.activation_records.get() };
-        let len = records.len();
-        debug_assert!(len + depth <= records.capacity(), "the activation limit counts plain activations");
-        // Innermost first, each into its own slot above the records, outermost lowest; each the
-        // record the frame view reads it as (`lane_frames::plain_record`), side record included.
-        for (slot, activation) in (len..len + depth).rev().zip(self.plain_frames_innermost()) {
-            // SAFETY: the activation limit counts plain activations within the capacity, so
-            // the slot lies in the allocation; the length covers it once all are written.
-            unsafe { records.top_ptr().sub(len).add(slot).write(activation) };
+        // Innermost first; each record keeps its side record where its completion carries a
+        // payload (`record_sided`), which a header's carries exactly then.
+        let frames: Vec<(Activation, Option<lane_frames::Side>)> = self.walk_innermost().map(|walked| (self.walked_record(&walked), walked.side)).collect();
+        // SAFETY: the walk above ended; no reference into the records or side records lives.
+        let (records, sides) = unsafe { (&mut *self.activation_records.get(), &mut *self.sides.get()) };
+        debug_assert!(frames.len() <= records.capacity(), "the activation limit counts plain activations");
+        sides.clear();
+        // SAFETY: records hold no drop glue; the activation limit keeps every frame within the
+        // capacity, so each push has its slot.
+        unsafe { records.set_len(0) };
+        for (activation, side) in frames.into_iter().rev() {
+            if Self::record_sided(&activation) { sides.push(side.expect("a sided record's header had its side record")); }
+            // SAFETY: as above.
+            unsafe { records.push_unchecked(activation) };
         }
-        // SAFETY: every slot up to `len + depth` was written above.
-        unsafe { records.set_len(len + depth) };
         self.plain.depth.set(0);
-        // Every side record belonged to a plain activation, each a record now.
-        // SAFETY: the walk above ended; no reference into the side records lives.
-        unsafe { (*self.sides.get()).clear() };
+        // SAFETY: as above; `spill_plain` alone writes the seals through a shared reference.
+        unsafe { self.clear_segments() };
     }
 
     /// Set `PlainFrames::bound` for plain activations pushed over the records from `floor`, the
@@ -2544,8 +2572,7 @@ impl LaneStack {
     /// bound is cleared, so the exact test decides until the depth is 0 again.
     #[inline(always)]
     fn refresh_plain_bound(&self, floor: usize) {
-        // SAFETY: reads the length alone.
-        let records = unsafe { (*self.activation_records.get()).len() };
+        let records = self.frames_below_plain();
         let allowed = self.activation_limit.get().saturating_sub(records);
         let bound = if allowed == 0 || self.plain.depth.get() != 0 {
             0
@@ -2575,19 +2602,10 @@ impl LaneStack {
     #[cold]
     #[inline(never)]
     fn plain_room_exact(&self, depth: usize, room: u16) -> bool {
-        // SAFETY: reads the length alone.
-        let records = unsafe { (*self.activation_records.get()).len() };
+        let records = self.frames_below_plain();
         if depth == 0 { self.refresh_plain_bound(self.values.top().addr()); }
         records + depth < self.activation_limit.get()
             && crate::staged::call::concrete_fits(self.values.room() as u64, u64::from(room))
-    }
-
-    /// Whether `activation` may be a plain activation whose header is all of it: a script
-    /// activation of the lane's own windows that completes plainly and keeps, forwards and
-    /// promotes nothing (`header_flags` of 0).
-    #[inline(always)]
-    fn is_plain(activation: &Activation, window: *mut Value) -> bool {
-        Self::header_flags(activation, window) == Some(0)
     }
 
     /// The side-record flags of `activation` pushed as a header (one-frame-one-call.md F4,
@@ -2669,6 +2687,8 @@ impl Default for LaneStack {
                 bound: std::cell::Cell::new(0),
             },
             sides: std::cell::UnsafeCell::new(Vec::new()),
+            segments: std::cell::UnsafeCell::new(Vec::new()),
+            sealed: std::cell::Cell::new(0),
             callback_return: Box::new(CallbackTrampoline::new()),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
@@ -2680,12 +2700,9 @@ impl Default for LaneStack {
             construct_watches: Box::new([const { None }; CONSTRUCT_PLANS]),
             read_memos: Vec::new(),
             native_identities: native_calls::NativeIdentities::new(),
-            forwarders: Vec::new(),
-            settling: Vec::new(),
+            native_stack: crate::stack::StackLimit::CLOSED,
             steps: Vec::new(),
             iterators: Vec::new(),
-            trap_checks: Vec::new(),
-            to_wasm: Vec::new(),
             js_import: None,
             bound_call: None,
             with_objects: Vec::new(),
@@ -2801,34 +2818,14 @@ impl LaneStack {
         }
         activation.native.window = window.addr();
         let frame_storage_bytes = activation.frame_storage_bytes();
-        let records = self.activations_mut();
+        // A record over plain headers seals them where they are (one-frame-one-call.md F4 (3)):
+        // no spill.
+        self.seal_plain();
+        let records = self.records_mut();
         debug_assert!(records.len() < records.capacity(), "lane activations stay within capacity");
         // SAFETY: the slot at `len` lies within capacity and is uninitialized; the top
         // covers it only once written.
         unsafe { records.push_unchecked(activation); }
-        self.wasm_storage_bytes += frame_storage_bytes;
-    }
-
-    /// `push_activation` of a copy of `template`, a record no plain activation is (a prepared
-    /// callback's), copied straight into its slot rather than through a temporary.
-    ///
-    /// # Safety
-    /// As `push_activation`.
-    #[inline(always)]
-    unsafe fn push_activation_copy(&mut self, template: &Activation, window: *mut Value) {
-        debug_assert!(!Self::is_plain(template, window), "a prepared activation completes to its native");
-        let records = self.activations_mut();
-        let len = records.len();
-        debug_assert!(len < records.capacity(), "lane activations stay within capacity");
-        // SAFETY: the slot at `len` lies within capacity and is uninitialized; the length
-        // covers it once written.
-        let frame_storage_bytes = unsafe {
-            let slot = records.top_ptr();
-            std::ptr::copy_nonoverlapping(template, slot, 1);
-            (*slot).native.window = window.addr();
-            records.set_len(len + 1);
-            (*slot).frame_storage_bytes()
-        };
         self.wasm_storage_bytes += frame_storage_bytes;
     }
 
@@ -2843,10 +2840,12 @@ impl LaneStack {
             self.drop_owned_from(self.activation_count());
             return Some(returned);
         }
-        let activation = self.activations_mut().pop()?;
+        let activation = self.records_mut().pop()?;
         self.wasm_storage_bytes -= activation.frame_storage_bytes();
+        let payload = self.pop_record_side(&activation);
+        self.unseal_plain();
         self.drop_owned_from(self.activation_count());
-        Some(FrameReturn::of_record(&activation))
+        Some(FrameReturn { payload, ..FrameReturn::of_record(&activation) })
     }
 
     /// The return of the innermost plain activation, whose window is `window`: its caller's
@@ -2861,7 +2860,7 @@ impl LaneStack {
         let caller = crate::staged::protocol::pop_plain(
             &mut crate::staged::Concrete::new(std::ptr::null()), self.plain_frames_word() as u64, window.addr() as u64,
         );
-        // SAFETY: a plain window is the lane stack's own (`is_plain`), never a heap window, so
+        // SAFETY: a plain window is the lane stack's own (`header_flags`), never a heap window, so
         // its release is the top's move without `release_window`'s test.
         unsafe { self.values.set_top(window) };
         (
@@ -2872,10 +2871,11 @@ impl LaneStack {
     }
 
     /// Drops what the activations from index `depth` on owned, which completed: their loops'
-    /// iterators, their `with` objects, eval records and trap checks.
+    /// iterators, their `with` objects and eval records (a trap's check pops with its side
+    /// record).
     #[inline(always)]
     fn drop_owned_from(&mut self, depth: usize) {
-        if !self.iterators.is_empty() || !self.with_objects.is_empty() || !self.records.is_empty() || !self.trap_checks.is_empty() {
+        if !self.iterators.is_empty() || !self.with_objects.is_empty() || !self.records.is_empty() {
             self.drop_owned_held_from(depth);
         }
     }
@@ -2886,7 +2886,6 @@ impl LaneStack {
         self.iterators.retain(|(owner, _)| *owner < depth);
         self.with_objects.retain(|(owner, _)| *owner < depth);
         self.records.retain(|(owner, _)| *owner < depth);
-        self.trap_checks.retain(|(owner, _)| *owner < depth);
     }
 
     /// The generation of a lane run under `key`: the current one while the key holds, else
@@ -2940,6 +2939,9 @@ impl LaneStack {
     }
 
     fn enter_generation(&mut self, key: (u64, Value)) {
+        // Every lane entry comes here under the guard it entered; the origin is fixed while
+        // that guard is held, so the bounds hold for every native call of the run.
+        self.native_stack = crate::stack::StackLimit::here();
         if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
             self.generation = self.generation.wrapping_add(1);
             if self.generation == NO_SCRIPT_GENERATION {
@@ -4091,8 +4093,9 @@ fn lane_window_closure_value<H: Host>(
     registers: u16,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    // spills: `take_record_bindings` reads the record a plain header does not have.
-    let activation = vm.lane_stack.activations().last().copied()?;
+    // The innermost read where it is: a plain header's eval record is its side record's
+    // (one-frame-one-call.md F4 (3)).
+    let activation = vm.lane_stack.top_frame()?;
     let owner = activation.function();
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -8960,29 +8963,23 @@ script_handler! {
     /// `childNodeKeys[this.type]` was written to the emptied lane stack, not its frame).
     #[inline(never)]
     fn lane_get_field_getter<>(cx, r, ip, i, view) {
-        if let Some(value) = lane_memoized_getter_read(cx, r, i) {
-            r.set(i.a, value);
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
-        match lane_getter_activation(cx, r, ip, i) {
+        // One walk of the site's accessor entries: a trivial getter's forward, or the getter
+        // to call with no second lookup (`getters::lane_getter_step`).
+        let read = match getters::lane_getter_step(cx, r, ip, i) {
+            getters::GetterStep::Answer(value) => {
+                r.set(i.a, value);
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+            getters::GetterStep::Read(read) => read,
+            getters::GetterStep::Miss => lane_getter_activation(cx, r, ip, i),
+        };
+        match read {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
             // A native getter that raised is not called again: the general path raises it.
             Err(next) if (unsafe { vm(cx) }).lane_completion.is_raised() => next,
             Err(_) => sibling!(lane_get_field::<H>, unsafe { (*cx).registers }, ip, Carried::script_in(cx, view)),
         }
     }
-}
-
-/// The value of a `GetField` record `i` of a register or `this` that writes its register,
-/// where its site's accessor entry memoizes the getter's read (`Vm::memoized_getter_answer`).
-#[inline(always)]
-fn lane_memoized_getter_read<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 || i.b == crate::bytecode::FieldBase::NESTED {
-        return None;
-    }
-    let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }?;
-    let vm = unsafe { vm(cx) };
-    vm.memoized_getter_answer(base, vm.field_cache_index(i.c))
 }
 
 /// The base of a `GetField` of a register or `this` that a frameless activation makes in
@@ -9098,6 +9095,11 @@ fn lane_activate_getter<H: Host>(
         let Some(this) = lane_call_this(vm, &target, base) else {
             return Err(exit(ip));
         };
+        // A getter is an ordinary call: the plain header push where the call is plain
+        // (getters-as-calls.md), else the kept activation's checks and push.
+        if let Some(entered) = getters::lane_push_getter(cx, r, ip, &target, this) {
+            return Ok(entered);
+        }
         return lane_activate_kept::<H, false>(cx, r, ip, &target, &[], this);
     }
     // A getter that makes closures, of this program or another, runs as the environment
@@ -14187,8 +14189,9 @@ impl<H: Host> Vm<H> {
         }
         #[cfg(feature = "profile-lane-exits")]
         super::lane_exits::record_detail(format!("materialize depth {}", self.lane_stack.activation_count()));
-        // spills: moves the records out by value; F3's header-pop rewrite removes this.
-        let mut activations = std::mem::take(self.lane_stack.activations_mut());
+        // Every frame taken off the stack where it is, each as the record its frame becomes reads
+        // it, with what its side record carries (one-frame-one-call.md F4 (3)): no spill.
+        let (activations, payloads): (Vec<Activation>, Vec<SidePayload>) = self.lane_stack.take_frames().into_iter().unzip();
         let lane_wasm_storage_bytes = std::mem::take(&mut self.lane_stack.wasm_storage_bytes);
         debug_assert_eq!(
             lane_wasm_storage_bytes,
@@ -14199,10 +14202,8 @@ impl<H: Host> Vm<H> {
         );
         let root = unsafe { (*cx).root };
         let mut caller = root.caller_of_first(self.frames.len());
-        let mut forwarders = std::mem::take(&mut self.lane_stack.forwarders).into_iter();
-        let (mut settling, mut steps, mut traps) = (std::mem::take(&mut self.lane_stack.settling).into_iter(), std::mem::take(&mut self.lane_stack.steps).into_iter(), std::mem::take(&mut self.lane_stack.trap_checks).into_iter());
+        let mut steps = std::mem::take(&mut self.lane_stack.steps).into_iter();
         let iterators = std::mem::take(&mut self.lane_stack.iterators);
-        let mut to_wasm = std::mem::take(&mut self.lane_stack.to_wasm).into_iter();
         let scopes = std::mem::take(&mut self.lane_stack.with_objects);
         // Each frame holds the environment its eval promoted; the records go with the activations.
         let _records = std::mem::take(&mut self.lane_stack.records);
@@ -14211,7 +14212,7 @@ impl<H: Host> Vm<H> {
         // pending calls and executing program (`NativeBoundary`).
         let boundary = self.lane_stack.native_boundary.take();
         let before = self.frames.len();
-        for (depth, (activation, state)) in activations.drain().zip(states).enumerate() {
+        for (depth, ((activation, payload), state)) in activations.into_iter().zip(payloads).zip(states).enumerate() {
             let below = boundary.filter(|boundary| depth < boundary.activation);
             if let Some(boundary) = boundary
                 && depth == boundary.activation
@@ -14252,16 +14253,15 @@ impl<H: Host> Vm<H> {
             let window = unsafe { activation.window(count) };
             let completion = match activation.script().map(|script| script.completion) {
                 Some(completion) if completion.constructs() => CallCompletion::Constructor(state.this),
-                Some(Completion::SettlesPromise) => CallCompletion::Promise(
-                    self.settling_root(settling.next().expect("each settling activation has its entry"))),
+                Some(Completion::SettlesPromise) => CallCompletion::Promise(self.settling_root(payload.settles())),
                 Some(Completion::ArrayStep) => {
                     let step = steps.next().expect("each array step activation has its entry");
                     CallCompletion::ArrayStep(Box::new(self.array_step_call(step.iteration, step.element, step.index)))
                 }
-                Some(Completion::ToWasm) => CallCompletion::ToWasm(to_wasm.next().expect("each import activation has its entry").result),
+                Some(Completion::ToWasm) => CallCompletion::ToWasm(payload.to_wasm().result),
                 other => match *activation.kind() {
                     ActivationKind::WasmEntry { result, .. } => CallCompletion::WasmExport(result),
-                    _ => setters::frame_completion(other, &mut traps),
+                    _ => setters::frame_completion(other, payload),
                 },
             };
             // A native's callback is the entry frame of the loop that finishes it.
@@ -14298,7 +14298,7 @@ impl<H: Host> Vm<H> {
                         // A native frame's is its descriptor's (`NativeFrames`), which no entry holds.
                         // SAFETY: a native frame's callee outlives the run.
                         let forwarder = unsafe { activation.native.callee.as_ref() }
-                            .map_or_else(|| forwarders.next(), |callee| callee.forwarder)
+                            .map_or_else(|| payload.forwarder(), |callee| callee.forwarder)
                             .expect("each forwarder activation has its skipped constructor");
                         let constructor_registers = vec![
                             Value::UNDEFINED;
@@ -14384,9 +14384,7 @@ impl<H: Host> Vm<H> {
             }
             caller = caller.wrapping_add(1);
         }
-        debug_assert!(settling.next().is_none(), "every settling root belongs to an activation");
         debug_assert!(steps.next().is_none(), "every array step belongs to an activation");
-        debug_assert!(traps.next().is_none(), "every trapped activation has its entry taken");
         if let Some(boundary) = boundary {
             // The native's caller is now the innermost of its activations' frames, as when
             // its deferred call is observed (`materialize_deferred_lane_now`).
@@ -14395,7 +14393,6 @@ impl<H: Host> Vm<H> {
             self.shift_beside_natives(natives, boundary.deferred.frames, added);
         }
         self.lane_stack.values.clear();
-        *self.lane_stack.activations_mut() = activations;
         // The frames now hold the guards the activations were counted against.
         self.lane_stack.refresh_activation_limit();
         // The lane continues in the innermost frame, whose register file the general path's
@@ -14890,6 +14887,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn lane_stack_words(&mut self, frames: usize) -> LaneStackWords {
         let stack = &mut self.lane_stack;
         let frames = frames.min(stack.activation_limit.get().saturating_sub(stack.activation_count() + 1));
+        // The one spill left for emitted code (one-frame-one-call.md F5): its direct calls push
+        // native frames onto the records' top and read no header yet.
         let frames_end = stack.activations().top_ptr().wrapping_add(frames).addr();
         // SAFETY: the values' capacity bounds the vector's own allocation.
         let values_end = unsafe { stack.values.as_mut_ptr().add(stack.values.capacity()) }.addr();
@@ -15564,9 +15563,10 @@ script_handler! {
             note_allocation(vm);
             Some(vm.heap.root(promise))
         };
-        vm.lane_stack.settling.push(root);
         let arguments = ImmediateLayout::call_window_base(i.imm());
         let (registers, base) = lane_push_activation::<H, false, true>(cx, r, ip, &target, arguments, this, false);
+        // The promise rides in the activation's side record (one-frame-one-call.md F4 (3)).
+        vm.lane_stack.attach_payload(SidePayload::Settles(root));
         next!(cx, registers, base, Carried::script_in(cx, view))
     }
 }
@@ -16297,12 +16297,21 @@ script_handler! {
         }
         // A bound function without bound arguments the lane last forwarded through, whose
         // target the site linked: its target and receiver, read once (`LaneStack::bound_call`).
-        if let Some((bound, target, this)) = vm.lane_stack.bound_call
+        if let Some((bound, target, this, list)) = vm.lane_stack.bound_call
             && bound == r.get(i.b)
+            && list.is_undefined()
             && vm.script_call_holds(link, target)
             && !vm.tier_may_run(crate::jit_mode::Tier::ANY)
         {
             resume!(cx, lane_function_call_activation(cx, r, ip, i, target, this, window))
+        }
+        // The bound function with bound arguments the lane last called: its words are read
+        // once (`LaneStack::bound_call`), so the call walks no `forwarded_call`.
+        if let Some((bound, _, _, list)) = vm.lane_stack.bound_call
+            && bound == r.get(i.b)
+            && !list.is_undefined()
+        {
+            resume!(cx, lane_bound_arguments_call(cx, r, ip, i));
         }
         let Some(super::function::Forwarded { callee, receiver, args, kind, through_call }) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             resume!(cx, lane_bound_arguments_call(cx, r, ip, i));
@@ -16330,16 +16339,18 @@ script_handler! {
     }
 }
 
-/// Remembers `callee` for `function_call_miss`'s bound fast path (`LaneStack::bound_call`)
-/// when it is a bound function without bound arguments of a user function.
+/// Remembers `callee` for `function_call_miss`'s bound fast paths (`LaneStack::bound_call`)
+/// when it is a bound function of a user function: its words, with an empty list of bound
+/// arguments kept as `undefined`, so the window alone is what such a call passes.
 #[inline(never)]
 fn lane_remember_bound_call<H: Host>(vm: &mut Vm<H>, callee: Value) {
     let Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) = vm.heap.function(callee) else {
         return;
     };
-    let Some((target, this, bound)) = vm.bound_function_parts(*env) else { return };
-    if bound.is_empty() && matches!(vm.heap.function(target), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
-        vm.lane_stack.bound_call = Some((callee, target, this));
+    let Some((target, this, list)) = vm.bound_function_words(*env) else { return };
+    let list = if vm.heap.array_elements(list).is_some_and(|elements| elements.len() != 0) { list } else { Value::UNDEFINED };
+    if matches!(vm.heap.function(target), Some(FunctionRecord { kind: FunctionKind::User(..), .. })) {
+        vm.lane_stack.bound_call = Some((callee, target, this, list));
     }
 }
 
@@ -16352,13 +16363,38 @@ fn lane_bound_arguments_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip:
     let vm = unsafe { vm(cx) };
     // SAFETY: as in `function_call_miss`; the values are copied before anything runs.
     let window = unsafe { lane_call_window(r, i) };
-    let copied = smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::from_slice(window);
-    let Some(super::function::Forwarded { callee, receiver, args, kind, .. }) = vm.forwarded_call(r.get(i.b), r.get(i.c), copied) else {
-        return Resumed::Exit(exit(ip));
+    // The bound function the lane last called (`LaneStack::bound_call`): its target, a user
+    // function, and its receiver as remembered, and the passed values filled once, the bound
+    // list's elements then the window, with no walk of its parts.
+    let remembered = match vm.lane_stack.bound_call {
+        Some((bound, target, this, list)) if bound == r.get(i.b) && !list.is_undefined() => {
+            vm.heap.array_elements(list).map(|elements| {
+                let bound = elements.as_slice();
+                let mut args = smallvec::SmallVec::<[Value; FRAME_CALL_INLINE_ARGUMENTS]>::with_capacity(bound.len() + window.len());
+                args.extend_from_slice(&bound);
+                args.extend_from_slice(window);
+                (target, this, args)
+            })
+        }
+        _ => None,
     };
-    if !matches!(kind, Some(FunctionKind::User(..))) {
-        return Resumed::Exit(exit(ip));
-    }
+    let (callee, receiver, args) = match remembered {
+        Some(call) => call,
+        None => {
+            // The window is read in place by the walk and copied once, behind the bound
+            // prefix that leads it (`WindowArgs`).
+            let walked = vm.forwarded_call(r.get(i.b), r.get(i.c), super::function::WindowArgs::<FRAME_CALL_INLINE_ARGUMENTS>::Window(window));
+            let Some(super::function::Forwarded { callee, receiver, args, kind, .. }) = walked else {
+                return Resumed::Exit(exit(ip));
+            };
+            if !matches!(kind, Some(FunctionKind::User(..))) {
+                return Resumed::Exit(exit(ip));
+            }
+            let args = args.into_owned();
+            lane_remember_bound_call(vm, r.get(i.b));
+            (callee, receiver, args)
+        }
+    };
     let Some(target) = lane_passed_target(cx, callee, args.len()) else {
         return lane_passed_frame_call(cx, r, ip, i, callee, receiver, FrameCallArguments::List(&args));
     };
@@ -16958,7 +16994,8 @@ mod root_constants;
 mod native_calls; mod getters; mod generator_yields; use generator_yields::suspend_handler;
 mod lane_roots;
 mod lane_trace;
-mod lane_frames; use lane_frames::{FrameReturn, WasmReturn};
+mod lane_frames; use lane_frames::{FrameReturn, FrameView, SidePayload, WasmReturn};
+mod frame_walk;
 mod with_scopes;
 mod scoped_names; mod window_owner; pub(in crate::vm) use window_owner::WindowScope;
 mod lane_eval;
@@ -17279,7 +17316,7 @@ fn lane_call_native_out<H: Host>(
         && (vm.runs_beside_activations(native, callee) || vm.steps_beside_activations(native, receiver))
     {
         vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
-        let result = vm.call_native_guarded(unsafe { &*(*cx).code }, native, receiver, arguments.as_slice(), callee);
+        let result = vm.call_native_from_lane(unsafe { &*(*cx).code }, native, receiver, arguments.as_slice(), callee);
         note_allocation(vm);
         vm.lane_stack.refresh_activation_limit();
         let unobserved = vm.lane_deferred.take().is_some();
@@ -17304,7 +17341,7 @@ fn lane_call_native_out<H: Host>(
         });
     }
     lane_call_from_frame(cx, ip, |vm, code| {
-        vm.call_native_guarded(code, native, receiver, arguments.as_slice(), callee)
+        vm.call_native_from_lane(code, native, receiver, arguments.as_slice(), callee)
     })
 }
 
@@ -19049,7 +19086,7 @@ fn lane_room_prepare<H: Host>(cx: *mut LaneContext<H>, room: LaneRecoverySpace) 
     if !values && !activations { return false; }
     vm.materialize_lane_activations(cx);
     if values { vm.lane_stack.reserve_values(room.values); }
-    if activations { vm.lane_stack.activations_mut().reserve(room.activations); }
+    if activations { vm.lane_stack.records_mut().reserve(room.activations); }
     vm.lane_stack.refresh_activation_limit();
     true
 }
@@ -19446,7 +19483,7 @@ fn lane_raised_exit<H: Host>(cx: *mut LaneContext<H>, record: Ip) -> Ip {
     if let Some(settled) = raised_windows::settle_raised_window(cx, record) {
         return settled;
     }
-    if !vm.lane_stack.activations().is_empty() {
+    if vm.lane_stack.has_frames() {
         // SAFETY: `record` is one of the running function's records.
         let call_pc = unsafe { record.offset_from((*cx).base) } as usize;
         vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
@@ -19691,7 +19728,7 @@ fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool, const
     );
     // SAFETY: the capacity check above leaves room for the activation.
     unsafe { stack.push_activation(activation, callee_registers.0) };
-    if let Some(skipped) = skipped { stack.forwarders.push(skipped); }
+    if let Some(skipped) = skipped { stack.attach_payload(SidePayload::Forwarder(skipped)); }
     // SAFETY: the program store keeps a derived view alive with its program.
     let base = unsafe { (*target.view).records() };
     unsafe {
@@ -19715,7 +19752,7 @@ fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool, const
 /// the record it would build is always plain (no general form, so no crossing; no
 /// construction, settling, keeping or forwarding; an empty native prefix; a lane stack
 /// window), so its header goes below the window straight from the call's words
-/// (`protocol::push_plain_at`), with no `Activation` value and no `LaneStack::is_plain`
+/// (`protocol::push_plain_at`), with no `Activation` value and no `LaneStack::header_flags`
 /// test. `depth` is the plain depth `LaneStack::plain_room` admitted it at.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -20247,7 +20284,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     // SAFETY: the capacity check above leaves room for the activation.
     unsafe { stack.push_activation(activation, callee_registers.0) };
     if let Some(forwarder) = forwarder {
-        stack.forwarders.push(forwarder);
+        stack.attach_payload(SidePayload::Forwarder(forwarder));
     }
     // SAFETY: the program store keeps a derived view alive with its program.
     let base = unsafe { (*target.view).records() };
@@ -20471,7 +20508,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     }
     debug_assert!(unsafe { (*cx).memory.bytes } == cx.cast::<u8>(), "a JavaScript run carries its context");
     unsafe { (*cx).registers = caller_registers; (*cx).base = caller_base; }
-    if SETTLES { value = lane_settle_promise(cx, value, then); }
+    if SETTLES { value = lane_settle_promise(cx, value, then, top.payload.settles()); }
     caller_registers.set(destination, value);
     Some((caller_registers, following(call)))
 }
@@ -20534,11 +20571,12 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
     let vm = unsafe { vm(cx) };
     // The innermost's completion read where it is, a header with its side record or a record:
     // no spill and no record built (one-frame-one-call.md F4).
-    let completion = vm.lane_stack.top_return()?.completion;
+    let top = vm.lane_stack.top_return()?;
+    let completion = top.completion;
     if completion == Some(Completion::ToWasm) {
         return Some(lane_complete_to_wasm(cx, ip, value));
     }
-    if proxy_traps::trap_result_needs_general_path(vm, completion, value) {
+    if proxy_traps::trap_result_needs_general_path(vm, top.payload, value) {
         return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
     }
     // A settling activation whose promise's resolution would observe the value returns it
@@ -20576,11 +20614,9 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             value = setters::completed_value(vm, &frame, completion, this, value);
             if completion == Completion::Forwarder {
                 value = Value::from_bits(crate::staged::call_construct::concrete_forwarder_value(value.to_bits(), this.to_bits()));
-                // A native frame's skipped constructor is its descriptor's, which no entry holds.
-                if !frame.native_callee { vm.lane_stack.forwarders.pop(); }
             }
             if completion == Completion::SettlesPromise {
-                value = lane_settle_promise(cx, value, then);
+                value = lane_settle_promise(cx, value, then, frame.payload.settles());
             }
         } else if let Some(WasmReturn::Entry(result)) = frame.wasm {
             // The export's caller runs its own program again, as the run's JavaScript.
@@ -20613,7 +20649,8 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
 #[inline(never)]
 fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Resumed {
     let vm = unsafe { vm(cx) };
-    let call = *vm.lane_stack.to_wasm.last().expect("an import activation has its entry");
+    // What the import's activation restores, read from its side record where it is.
+    let call = vm.lane_stack.top_return().expect("the import's activation is the innermost").payload.to_wasm();
     let encoded = match call.result {
         None => Some(Value::UNDEFINED),
         Some(crate::WasmType::I32) => value.as_number().map(|number| Value::integer(crate::value::number_to_i32(number))),
@@ -20624,7 +20661,6 @@ fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value)
     let Some(encoded) = encoded else {
         return Resumed::Exit(lane_frame_return(vm, ip, value));
     };
-    vm.lane_stack.to_wasm.pop();
     let frame = vm.lane_stack.pop_activation().expect("the import's activation is the innermost");
     lane_restore_caller(cx, &frame);
     lane_enter_program(cx, frame.caller_program);
@@ -20652,15 +20688,12 @@ fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value)
 #[inline(always)]
 fn lane_complete_wasm_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    // A plain header (with or without its side record) is always a script activation's, so it
-    // is no Wasm one: declined before the records are read, which would spill it.
-    if vm.lane_stack.plain.depth.get() != 0 {
-        return None;
-    }
-    let top = vm.lane_stack.activations().last()?;
-    if matches!(top.kind(), ActivationKind::Script(_))
+    // The innermost read where it is (one-frame-one-call.md F4 (3)): a script activation's,
+    // header or record, has a completion; a Wasm one's has none.
+    let top = vm.lane_stack.top_return()?;
+    if top.completion.is_some()
         // SAFETY: the call record belongs to the caller's live view.
-        || unsafe { (*top.call()).a } & crate::bytecode::RETURN_REGISTER != 0
+        || unsafe { (*top.call).a } & crate::bytecode::RETURN_REGISTER != 0
     {
         return None;
     }
@@ -26159,6 +26192,8 @@ impl<H: Host> Vm<H> {
         let cx: *mut LaneContext<H> = deferred.cx.cast();
         if deferred.frames != self.frames.len()
             || lane_context::<H>() != cx
+            // Spills on purpose: the callback's trampoline header must be the only one, so a
+            // header naming the trampoline already becomes a record (one-frame-one-call.md F2c).
             || self.lane_stack.activations().is_empty()
             || self.lane_stack.native_boundary.is_some()
             || self.with_scope_entered
@@ -26614,7 +26649,10 @@ fn lane_admit_prepared<H: Host>(cx: *mut LaneContext<H>, activation: &Activation
     }
     // SAFETY: as `lane_push_callback`'s.
     let at = stack.values.top();
-    unsafe { stack.push_activation_copy(activation, at) };
+    // A header with its side record (`Completion::ReturnsToNative` or `ArrayStep`, and the
+    // values it keeps), as every script activation of the lane's windows is
+    // (one-frame-one-call.md F4 (3)).
+    unsafe { stack.push_activation(*activation, at) };
     Some(at)
 }
 

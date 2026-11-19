@@ -287,8 +287,9 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
         Some(self.registers.0.expose_provenance() as u64)
     }
 
-    /// A method call's list: the lane's method records keep their own handlers, so no call row
-    /// holds the call records.
+    /// A method site's list (`Arguments::List`, `CallMethod`/`CallThisMethod` only): no lane
+    /// handler runs those records (`other_handler` names neither), so no call row reaches here. A
+    /// method call `o.m(x)` is a register `Call` whose receiver is `c`, which `call_entry` admits.
     #[inline(always)]
     fn call_list(&self, _list: crate::staged::RegisterList) -> Option<&[Register]> {
         None
@@ -301,13 +302,15 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
         (self.call.is_some() && list.count == 0).then_some(&[][..])
     }
 
-    /// A method's load: no call row runs a method site (`call_entry` answers `Helper`).
+    /// A method site's load (`Callee::Method`): as `call_list`, no call row runs a method site.
     #[inline(always)]
     fn call_method(&mut self, _stage: &mut Concrete, _receiver: u64, _atom: u32, _site: u32, _miss: ()) -> Option<u64> {
         None
     }
 
-    /// A construction's receiver: no call row runs a construction (`call_entry` answers `Helper`).
+    /// A construction's receiver: no call row runs a construction (`Construct` takes
+    /// `lane_script_construct`, which requickens to the planned constructions; `CONSTRUCT` has no
+    /// protocol row), and `call_entry` answers `Helper` for `Receiver::Allocated`.
     #[inline(always)]
     fn call_receiver(&mut self, _stage: &mut Concrete, _constructor: u64) -> Option<u64> {
         None

@@ -544,12 +544,36 @@ impl<H: Host> Vm<H> {
         self.as_native_activation(native, callee, |vm| vm.call_native(p, native, this, args))
     }
 
+    /// `call_native_guarded` of a lane's native call: its stack depth is the compare of the
+    /// bounds the lane read at its entry (`LaneStack::native_stack`) in place of a
+    /// `StackGuard`'s thread-local enter and drop; past them the guard decides, as before.
+    pub(super) fn call_native_from_lane(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value],
+        callee: Value) -> Result<Value, JsError> {
+        #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
+        let limit = self.lane_stack.native_stack;
+        self.native_activation_within(native, callee, Some(limit), |vm| vm.call_native(p, native, this, args))
+    }
+
     /// Runs `body` as the native `callee` of kind `native` runs: in its realm, under its
     /// native activation, which stack traces and `caller` read, and its stack guard.
     pub(super) fn as_native_activation<R>(
         &mut self,
         native: Native,
         callee: Value,
+        body: impl FnOnce(&mut Self) -> Result<R, JsError>,
+    ) -> Result<R, JsError> {
+        self.native_activation_within(native, callee, None, body)
+    }
+
+    /// `as_native_activation` with its stack check: a `StackGuard` (`None`), or the compare of
+    /// bounds a lane read at its entry (`Some`, `Vm::call_native_from_lane`), which enters no
+    /// transition of its own.
+    #[inline(always)]
+    fn native_activation_within<R>(
+        &mut self,
+        native: Native,
+        callee: Value,
+        lane_stack: Option<crate::stack::StackLimit>,
         body: impl FnOnce(&mut Self) -> Result<R, JsError>,
     ) -> Result<R, JsError> {
         // A realm's own natives run in that realm; a native shared by every realm runs in
@@ -582,7 +606,13 @@ impl<H: Host> Vm<H> {
                 boundary,
             });
         let result = (|| {
-            let _stack = self.enter_stack()?;
+            // Within the lane's bounds the call needs no guard of its own; outside them (or
+            // with no bounds read yet, `StackLimit::CLOSED`) the guard decides, raising its
+            // RangeError where the budget is spent.
+            let _stack = match lane_stack {
+                Some(limit) if limit.admits() => None,
+                _ => Some(self.enter_stack()?),
+            };
             body(self)
         })();
         self.realm.promise.active_native.pop();

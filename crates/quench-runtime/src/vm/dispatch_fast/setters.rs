@@ -1,5 +1,7 @@
 //! Stores that meet an accessor: the setter runs as an activation of the lane.
 use super::*;
+use crate::vm::AccessorForward;
+use crate::vm::accessor_cache::SetterForward;
 
 /// The store sites a general store has called a setter at, one bit each by the site's cache
 /// index modulo the set's width: the lane looks for a setter only at such a site, so a store
@@ -56,6 +58,10 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     }
     let setter = stored_setter(vm, object, i.imm(), site)?;
     let target = lane_script_target(cx, setter).filter(|target| !target.forwards())?;
+    // A trivial setter (`this.f = v`) is the store it makes (getters-as-calls.md): no call.
+    if lane_forwarded_setter_store(vm, &target, object, site, setter, r.get(i.a)) {
+        return Some(Resumed::At(r, following(ip), Carried::script(cx)));
+    }
     let this = lane_call_this(vm, &target, object)?;
     // SAFETY: the record's value register is one of the running function's.
     let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
@@ -66,6 +72,81 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
         }
         Err(next) => Resumed::Exit(next),
     })
+}
+
+/// Whether the store of `value` to `object` at cache index `site` was made as the call of
+/// `setter` (`target`) would make it, without the call: the site's accessor entry for
+/// `object`'s layout recorded that the setter's body is a forward store
+/// (`trivial_setter_store`), and that store's own field entry holds for `object`
+/// (`Vm::hinted_own_field_store_hit`, which makes the logged store or nothing). A setter
+/// the entry knows nothing of is recognized once and recorded either way, so a setter that
+/// forwards nothing costs one entry walk per store after its first.
+fn lane_forwarded_setter_store<H: Host>(
+    vm: &mut Vm<H>,
+    target: &ScriptCallTarget,
+    object: Value,
+    site: usize,
+    setter: Value,
+    value: Value,
+) -> bool {
+    let (cache, atom) = match vm.setter_entry_forward(object, site, setter) {
+        SetterForward::Store(cache, atom) => (cache, atom),
+        SetterForward::Declined => return false,
+        SetterForward::Unknown => match trivial_setter_store(vm, target, object) {
+            SetterStore::Store(cache, atom) => {
+                vm.memoize_getter_answer(object, site, setter, AccessorForward::Store { cache, atom });
+                (cache, atom)
+            }
+            SetterStore::Never => {
+                vm.memoize_getter_answer(object, site, setter, AccessorForward::None);
+                return false;
+            }
+            // The body's own store site has no entry for this receiver yet: the call fills it.
+            SetterStore::NotYet => return false,
+        },
+    };
+    vm.hinted_own_field_store_hit(cache, object, atom, value)
+}
+
+/// What `trivial_setter_store` found of a setter's body.
+enum SetterStore {
+    /// It stores its first parameter to the own field `atom` of its receiver, whose store
+    /// entry for the receiver's exact shape is this one.
+    Store(FieldCache, crate::bytecode::Atom),
+    /// It is no such body, nor binds the receiver as its `this`: it never forwards.
+    Never,
+    /// It is such a body, but its store site holds no own entry for this receiver yet.
+    NotYet,
+}
+
+/// Recognizes a setter `target` whose whole effect is `this.f = v` of its first parameter,
+/// then returning (`Function::initializer_stores` of exactly one store of parameter 0 as
+/// passed): a call of it on `object`, which it binds as `this`, is that store. The store
+/// is exact where its entry, the setter's own store site's, is an own data field of
+/// `object`'s exact shape: such a store finds no setter, can't throw and runs no guest code;
+/// what the setter returns, an assignment ignores (`Completion::Assigns`). A private name's
+/// store is left to the call (its home is the setter's).
+fn trivial_setter_store<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object: Value) -> SetterStore {
+    if !target.entry.activates() || target.params == 0 || lane_direct_call_this(vm, target, object) != Some(object) {
+        return SetterStore::Never;
+    }
+    let Some(code) = vm.programs.residual(target.program()) else {
+        return SetterStore::Never;
+    };
+    let Some(body) = code.function_get(target.function as usize) else {
+        return SetterStore::Never;
+    };
+    let Some([store]) = body.initializer_stores(&code.constants) else {
+        return SetterStore::Never;
+    };
+    let parameter = crate::bytecode::InitializerValue::Parameter { parameter: 0, fallback: None };
+    if store.value != parameter || vm.is_private_name(store.atom) {
+        return SetterStore::Never;
+    }
+    // The setter is of the running program (`lane_script_target`), whose sites its store's are.
+    let cache = vm.field_cache_entry(store.site);
+    let holds = vm.heap.object_record(object).is_some_and(|receiver| cache.holder == NO_FIELD_HOLDER && cache.receiver == receiver.exact_shape());
+    if holds { SetterStore::Store(cache, store.atom) } else { SetterStore::NotYet }
 }
 
 /// What the call of the returned `frame`, which completed with `value` and receiver `this`, yields
@@ -87,12 +168,12 @@ pub(super) fn completed_value<H: Host>(vm: &Vm<H>, frame: &FrameReturn, completi
 
 /// The frame completion of an activation that neither constructs, settles a promise nor
 /// steps an array: a setter's store keeps yielding the value stored, a proxy trap's access
-/// owes its target's invariants (the next of `traps`), and a generator's step its iterator
+/// owes its target's invariants (its side record's `payload`), and a generator's step its iterator
 /// result, which a delegate's step makes fresh.
-pub(super) fn frame_completion(completion: Option<Completion>, traps: &mut impl Iterator<Item = (usize, TrapCheck)>) -> CallCompletion {
+pub(super) fn frame_completion(completion: Option<Completion>, payload: SidePayload) -> CallCompletion {
     match completion {
         Some(Completion::Assigns) => CallCompletion::Assigned,
-        Some(Completion::ReadsTrapped | Completion::AssignsTrapped) => CallCompletion::Trapped(traps.next().expect("each trapped activation has its entry").1),
+        Some(Completion::ReadsTrapped | Completion::AssignsTrapped) => CallCompletion::Trapped(payload.trap()),
         Some(generator @ (Completion::Generates | Completion::Delegates)) => {
             CallCompletion::Generator(super::super::generator::GeneratorResume::new(generator == Completion::Generates))
         }

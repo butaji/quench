@@ -103,7 +103,8 @@ enum PackedFlag {
     /// The window lies over another register file (a generator's): side record R. Reserved;
     /// such frames stay records until step F4's heap-window cut.
     HeapWindow,
-    /// The frame owns iterators, `with` objects or an eval record (indexed by depth). Reserved.
+    /// The frame owns an eval record (`LaneStack::records`, one-frame-one-call.md F4 (3)): its
+    /// side record names it, as a record's `ScriptActivation::record` does.
     Owns,
     /// A Wasm frame: side record W. Reserved for step F6.
     Wasm,
@@ -119,13 +120,15 @@ pub(crate) const KEEPS_FLAG: u64 = 1 << PackedFlag::Keeps as u32;
 pub(crate) const ENV_FLAG: u64 = 1 << PackedFlag::Env as u32;
 pub(crate) const COMPLETION_FLAG: u64 = 1 << PackedFlag::Completion as u32;
 pub(crate) const CROSSES_FLAG: u64 = 1 << PackedFlag::Crosses as u32;
-pub(crate) const SIDE_FLAGS: u64 = KEEPS_FLAG | ENV_FLAG | COMPLETION_FLAG | CROSSES_FLAG;
+pub(crate) const OWNS_FLAG: u64 = 1 << PackedFlag::Owns as u32;
+pub(crate) const SIDE_FLAGS: u64 = KEEPS_FLAG | ENV_FLAG | COMPLETION_FLAG | CROSSES_FLAG | OWNS_FLAG;
 pub(crate) const ARGC_SHIFT: u32 = FLAG_BASE + FLAG_BITS;
 const _: () = assert!(PLAIN_FLAG == 1 << 32);
 const _: () = assert!(BODY_FLAG == 1 << 33);
 const _: () = assert!(NATIVE_FLAG == 1 << 34);
 const _: () = assert!(ARGC_SHIFT == 48);
 const _: () = assert!(KEEPS_FLAG == 1 << 35 && ENV_FLAG == 1 << 36 && COMPLETION_FLAG == 1 << 37 && CROSSES_FLAG == 1 << 38);
+const _: () = assert!(OWNS_FLAG == 1 << 40);
 const _: () = assert!((PackedFlag::Wasm as u32) < ARGC_SHIFT, "the flags fit below argc");
 
 /// The plain activations' words (`PlainFrames`), in address order: depth, innermost window,

@@ -93,8 +93,38 @@ const fn math_row_call(row: u8) -> crate::staged::call_native::MathCall {
     }
 }
 
-/// The identity slots of the in-place native rows: one per builtin row, then one per Math row.
-const IDENTITY_SLOTS: usize = BUILTIN_ROWS + MATH_ROWS;
+/// The natives a `Call` site calls through the lean native row (`lane_call_in_place`), one
+/// instantiation per row: the native is a constant of the handler, so the site's whole protocol is
+/// the identity compare, the native's in-place body reading the call's window where it lies, and
+/// the store of its value. No `native_call_miss` dispatch on the callee's record, no
+/// `lane_native_value` match, no activation, root or stack guard: an in-place body runs no guest
+/// code, raises nothing and observes no frame (`Vm::in_place_native_value`). Any other callee or
+/// case takes `native_call_miss`, which makes the same in-place attempt first.
+macro_rules! in_place_rows {
+    ($($row:literal => $native:ident),* $(,)?) => {
+        const fn in_place_row_native(row: u8) -> Native {
+            match row { $($row => Native::$native,)* _ => unreachable!() }
+        }
+        fn in_place_handler<H: Host>(native: Native) -> Option<Handler> {
+            match native { $(Native::$native => Some(lane_call_in_place::<H, $row>),)* _ => None }
+        }
+        /// The lean rows, whose identity slots follow the Math rows' (`NativeIdentities`).
+        const IN_PLACE_ROWS: usize = [$($row),*].len();
+    };
+}
+in_place_rows!(
+    0 => DataViewGetFloat64, 1 => DataViewSetFloat64, 2 => StringIndexOf, 3 => StringIncludes,
+    4 => StringSlice, 5 => StringPadStart, 6 => StringPadEnd, 7 => ParseInt,
+);
+
+/// The identity slots of the in-place native rows: one per builtin row, then one per Math row,
+/// then one per lean row.
+const IDENTITY_SLOTS: usize = BUILTIN_ROWS + MATH_ROWS + IN_PLACE_ROWS;
+
+/// The identity slot of lean row `row`.
+const fn in_place_slot(row: u8) -> usize {
+    BUILTIN_ROWS + MATH_ROWS + row as usize
+}
 
 /// The identity slot of Math row `row`.
 const fn math_slot(row: u8) -> usize {
@@ -363,6 +393,44 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// A `Call` site whose callee was the native of lean row `ROW` (`in_place_rows`): the
+    /// native's admission (`native_admitted`, one compare of the callee word), then its in-place
+    /// body over the call's window, read where it lies, and the value stored to the call's
+    /// register: the steps `native_call_miss` reaches through `lane_native_value` for this
+    /// native, in the same order, without its dispatch. Any other callee or case takes
+    /// `native_call_miss`, which tries the same body again and then calls the native.
+    fn lane_call_in_place<ROW: u8>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let native = const { in_place_row_native(ROW) };
+        let value = if !native_admitted(vm, r.get(i.b), const { in_place_slot(ROW) }, native) {
+            None
+        } else {
+            // SAFETY: the call's window is registers of the running function, which no
+            // in-place body moves; the context's program outlives the lane run.
+            let (args, code) = unsafe { (lane_call_window(r, i), &*(*cx).code) };
+            let receiver = r.get(i.c);
+            let float64 = if const { matches!(in_place_row_native(ROW), Native::DataViewGetFloat64 | Native::DataViewSetFloat64) } {
+                let value = vm.lane_data_view_float64(native, receiver, args);
+                if value.is_some() && vm.execution_mode == super::super::ExecutionMode::Compiled {
+                    vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
+                }
+                value
+            } else {
+                None
+            };
+            float64.or_else(|| vm.in_place_native_value_inline(code, native, r.get(i.b), receiver, args))
+        };
+        let Some(value) = value else {
+            sibling!(native_call_miss::<H>, r, ip, Carried::script(cx))
+        };
+        // An in-place body may allocate; a due collection runs at the lane's next safepoint.
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
 /// The handler a `Call` site whose callee resolved to `native` takes from then on
 /// (`script_call_resolve_miss`): a native whose common case the lane makes in place has its
 /// own handler, which tests the callee's identity once and hands any other call to
@@ -377,6 +445,7 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
     match native {
         native if let Some(row) = builtin_row(native) => builtin_handler::<H>(row),
         native if let Some(handler) = math_handler::<H>(native) => handler,
+        native if let Some(handler) = in_place_handler::<H>(native) => handler,
         native if super::number::math_numbers_inline(native) => lane_call_math::<H>,
         native if native.is_array_callback() && result_dead() => lane_call_array_callback::<H, true>,
         native if native.is_array_callback() => lane_call_array_callback::<H, false>,

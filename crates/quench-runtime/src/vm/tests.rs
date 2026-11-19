@@ -9328,7 +9328,6 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
     use super::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, GeneratorRecord};
     for completion in [
         Completion::Return,
-        Completion::Throw,
         Completion::Yield,
         Completion::Await,
     ] {

@@ -23,11 +23,11 @@ impl Activation {
     }
 }
 
-impl Activation {
+impl FrameView {
     /// The dynamic bindings its record holds (implicit ones, a direct eval's), which the
     /// environment its window makes for its first closure takes over, as a frame's promotion
     /// takes its own (`Vm::promote_frame_environment`); none once taken, or for an activation
-    /// without a record.
+    /// without a record (a plain header's is its side record's, `frame::OWNS_FLAG`).
     pub(super) fn take_record_bindings(&self) -> Vec<(crate::bytecode::Atom, Value)> {
         let record = self.script().map_or(std::ptr::null_mut(), |script| script.record);
         // SAFETY: a record outlives the activation that runs over it, and nothing else accesses it.
@@ -44,8 +44,11 @@ impl LaneStack {
     /// The activations' room holds one more.
     pub(super) unsafe fn push_generator_activation(&mut self, mut activation: Activation) {
         activation.native.window |= HEAP_WINDOW;
+        // A heap window stays a record (side record R waits for the window's own header words);
+        // the plain headers below it are sealed, not spilled (one-frame-one-call.md F4 (3)).
+        self.seal_plain();
         // SAFETY: as the caller guarantees; a script activation holds no Wasm storage.
-        unsafe { self.activations_mut().push_unchecked(activation) };
+        unsafe { self.records_mut().push_unchecked(activation) };
     }
 
     /// The iterators a resumed generator's loops left open, now the loops of the activation at

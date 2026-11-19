@@ -732,15 +732,23 @@ impl<H: Host> Vm<H> {
         {
             Ok(value)
         } else {
-            self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
-                let receiver = vm.string_method_receiver(p, native, this)?;
-                if receiver == this {
-                    return vm.call_native_dispatch(p, native, receiver, args);
+            // The receiver and arguments are rooted for the native's run: a lane's caller is
+            // paused at its resume pc, whose liveness need not hold the call's window, and the
+            // values may be a copy only this call holds. Pushed as a slice: the chained
+            // iterator's extend cost each call a callback per value (`call_value_with_target`).
+            let start = self.active_call_roots.len();
+            self.active_call_roots.reserve(args.len() + 2);
+            self.active_call_roots.push(this);
+            self.active_call_roots.extend_from_slice(args);
+            let result = self.string_method_receiver(p, native, this).and_then(|receiver| {
+                if receiver != this {
+                    // A boxed receiver only this call holds.
+                    self.active_call_roots.push(receiver);
                 }
-                vm.with_call_roots([receiver], |vm| {
-                    vm.call_native_dispatch(p, native, receiver, args)
-                })
-            })
+                self.call_native_dispatch(p, native, receiver, args)
+            });
+            self.active_call_roots.truncate(start);
+            result
         };
         // String natives make text on demand; charge it before the caller's next safepoint.
         self.heap.charge_materialized_text();
