@@ -597,14 +597,15 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether `callee` is a native whose construction may run beside a lane's frameless
-    /// activations (`DeferredLaneCall`): any but a host function, a bound function and an
-    /// error constructor, which captures the stack its frames make.
+    /// activations (`DeferredLaneCall`): any but a host function and a bound function. An
+    /// error constructor's stack capture reads the activations from the lane's frame walk
+    /// (`Vm::lane_stack_sites`, frame-switches.md §5), or makes them frames where the walk
+    /// declines, as every other observation point does.
     pub(super) fn constructs_beside_activations(&self, callee: Value) -> bool {
         matches!(
             self.heap.function(callee),
             Some(FunctionRecord { kind: FunctionKind::Native(native), .. })
                 if !matches!(native, Native::HostFunction | Native::FunctionBoundCall)
-                    && !native.is_error_constructor()
         )
     }
 

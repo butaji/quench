@@ -7,11 +7,10 @@
 //!
 //! - admission: the run constructs in place and no construction is pending
 //!   (`admit_construct`, from `admit_construct_run` and `guard_unpending`);
-//! - receiver: the plan's allocation, the deleted marker where it declines
-//!   (`construct_this`, the protocol's `guard_received`); the interpreter's plans answer an
-//!   `Option` instead, so it has no use for this row;
 //! - frame: the receiver is the activation's `this`, context word `frame::CONTEXT_THIS`, beside
-//!   its environment and captures (`enter_construct_context`);
+//!   its environment and captures, as every entered window's (`call_keeping::enter_context`);
+//!   the receiver itself is the plan's (the interpreter's plans answer an `Option`) or, for the
+//!   direct construction, `invoke::callee_this`'s;
 //! - completion: [[Construct]] yields a returned object, else the receiver the frame holds
 //!   (`complete_construct`, `construct_value`); a skipped forwarding constructor's
 //!   construction (`Completion::Forwarder`) yields its receiver whatever the method returned
@@ -24,7 +23,6 @@
 //! `protocol::complete_call` with the receiver.
 
 use super::frame;
-use super::protocol::guard_received;
 use super::region::Region;
 use super::Stage;
 
@@ -88,37 +86,6 @@ pub(crate) fn concrete_unpending(pending: bool) -> bool {
     guard_unpending(&mut super::Concrete::new(std::ptr::null()), u64::from(pending), ()).is_some()
 }
 
-/// The construction's receiver: the plan's `allocated` word, leaving at `miss` where the plan
-/// declined (the deleted marker, `protocol::guard_received`). Reads `allocated` only.
-#[inline(always)]
-#[allow(dead_code)] // one-frame-one-call.md C1 (enter's Receiver(constructs) this) routes through it
-pub(crate) fn construct_this<S: Stage>(stage: &mut S, allocated: S::Word, miss: S::Miss) -> Option<S::Word> {
-    guard_received(stage, allocated, miss)?;
-    Some(allocated)
-}
-
-/// The context words of a construction's activation at `window`.
-#[derive(Clone, Copy)]
-#[allow(dead_code)] // one-frame-one-call.md enter step 4 (C2) routes through it
-pub(crate) struct ConstructContext<W> {
-    /// The receiver, which the completion reads back (`complete_construct`).
-    pub(crate) this: W,
-    pub(crate) env: W,
-    pub(crate) capture: W,
-}
-
-/// Write a construction's context words below `window`: `frame::CONTEXT_THIS`, `CONTEXT_ENV`
-/// and `CONTEXT_CAPTURE`. A construction is never a plain activation (its completion is not
-/// Plain), so it writes no plain header (`protocol::push_plain`); its record is the tier's.
-#[inline(always)]
-#[allow(dead_code)] // one-frame-one-call.md enter step 4 (C2) routes through it
-pub(crate) fn enter_construct_context<S: Stage>(stage: &mut S, window: S::Word, context: ConstructContext<S::Word>) {
-    let at = Region::Frame.mutable();
-    stage.store_u64(at, window, context_at(frame::CONTEXT_THIS), context.this);
-    stage.store_u64(at, window, context_at(frame::CONTEXT_ENV), context.env);
-    stage.store_u64(at, window, context_at(frame::CONTEXT_CAPTURE), context.capture);
-}
-
 /// [[Construct]]'s value of a constructor that returned `value`: `value` where `object` (it is
 /// an object), else `receiver`. Pure.
 #[inline(always)]
@@ -157,7 +124,6 @@ pub(crate) fn concrete_forwarder_value(_value: u64, receiver: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Value;
 
     #[test]
     fn a_construction_is_admitted_only_where_the_run_constructs_and_nothing_is_pending() {
@@ -170,18 +136,11 @@ mod tests {
     }
 
     #[test]
-    fn a_declined_plan_leaves() {
-        let mut stage = super::super::Concrete::new(std::ptr::null());
-        assert_eq!(construct_this(&mut stage, 5, ()), Some(5));
-        assert_eq!(construct_this(&mut stage, Value::DELETED.to_bits(), ()), None);
-    }
-
-    #[test]
     fn the_completion_yields_an_object_else_the_receiver_in_the_context_word() {
         let mut words = [0_u64; frame::CONTEXT_WORDS + 2];
         let window = unsafe { words.as_mut_ptr().add(frame::CONTEXT_WORDS) } as u64;
         let mut stage = super::super::Concrete::new(std::ptr::null());
-        enter_construct_context(&mut stage, window, ConstructContext { this: 11, env: 12, capture: 13 });
+        super::super::call_keeping::enter_context(&mut stage, window, 11, 12, 13);
         assert_eq!(words[frame::CONTEXT_WORDS - frame::CONTEXT_THIS], 11);
         assert_eq!(words[frame::CONTEXT_WORDS - frame::CONTEXT_ENV], 12);
         assert_eq!(words[frame::CONTEXT_WORDS - frame::CONTEXT_CAPTURE], 13);

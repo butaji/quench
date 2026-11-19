@@ -375,39 +375,6 @@ fn lane_call_activation(target: &ScriptCallTarget, argc: u16) -> Option<CallActi
     (form.plain || form.keeping || form.environment).then_some(form)
 }
 
-/// The activation a lane body's call makes of `target`, by the activation row's form `how`
-/// (`lane_call_activation`): its registers; the helper's miss where the lane's keeping or
-/// environment form routes the call to the general path. Each form's words are its push's:
-/// `push_plain` (`BodyCall::push_plain`), `lane_activate_keeping`, `lane_activate_environment`.
-fn lane_body_push<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &ScriptCallTarget, this: Value, constructs: bool, how: CallActivation<bool>)
-    -> Result<Registers, u64> {
-    let refused = || miss(unsafe { vm(cx) }, Miss::NoActivationRoom);
-    Ok(if how.plain {
-        call.push_plain(cx, target, this, constructs)
-    } else if how.keeping {
-        // The activation the lane's own call makes where values are kept or gathered.
-        let mut gathered = Gathered::new();
-        let arguments = call.kept(&mut gathered);
-        lane_activate_keeping::<H, false>(cx, call.registers, call.ip, target, arguments, this, constructs, None).map_err(|_| refused())?.0
-    } else {
-        debug_assert!(how.environment, "lane_call_activation admits one of the three forms");
-        // SAFETY: the call's values are registers of the running function.
-        let values = unsafe { call.values() };
-        lane_activate_environment(cx, call.registers, call.ip, target, &values, (this, constructs)).map_err(|_| refused())?.0
-    })
-}
-
-/// A target without a body warms toward one by a body's calls too, as by the lane's own
-/// (`lane_specialize`): a constructor only body code constructs is entered by nothing else.
-fn lane_warm_callee<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u32) {
-    // row: none, glue: a warming policy (`lane_specialize`), which computes no call word.
-    if own.respecializes() {
-        lane_specialize(cx, own, function, true, &[]);
-    } else if own.lane_body().is_none() {
-        lane_specialize(cx, own, function, false, &[]);
-    }
-}
-
 /// The `this` a callee's body is entered with: the deleted marker where it reads a lexical one.
 #[inline]
 fn lane_body_this(target: &ScriptCallTarget, this: Value) -> Value {
@@ -415,17 +382,47 @@ fn lane_body_this(target: &ScriptCallTarget, this: Value) -> Value {
 }
 
 /// The activation of `target` a lane body's call (`constructs`: `new`) makes, run by the target's
-/// own body where it has one: its completion writes the call's register (`LANE_CALL_COMPLETED`),
-/// and any other end leaves the lane in the activation (`LANE_CALL_LEFT`).
+/// own body where it has one (`lane_body_run`). It is pushed by the form the activation row chose
+/// (`how`, `lane_call_activation`: `staged::call_body::activation`), consumed here, each form's
+/// words its push's: `push_plain` (`BodyCall::push_plain`), `lane_activate_keeping`,
+/// `lane_activate_environment`; a form that routes the call to the general path is the helper's
+/// miss.
 fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &ScriptCallTarget, this: Value, constructs: bool, how: CallActivation<bool>) -> u64 {
-    // row: none, orchestration: runs the callee's nested body and routes its exit. Its words are
-    // `body_calls::lane_body_this` (`call_body::body_this`), the window push (`lane_body_push`) and the completion (`lane_body_completed`).
-    let vm = unsafe { vm(cx) };
     lane_note_late_call(cx, call.ip, target, call.argc());
-    let registers = match lane_body_push(cx, call, target, this, constructs, how) { Ok(registers) => registers, Err(refused) => return refused };
+    let refused = || miss(unsafe { vm(cx) }, Miss::NoActivationRoom);
+    let registers = if how.plain {
+        call.push_plain(cx, target, this, constructs)
+    } else if how.keeping {
+        // The activation the lane's own call makes where values are kept or gathered.
+        let mut gathered = Gathered::new();
+        let arguments = call.kept(&mut gathered);
+        match lane_activate_keeping::<H, false>(cx, call.registers, call.ip, target, arguments, this, constructs, None) {
+            Ok(pushed) => pushed.0,
+            Err(_) => return refused(),
+        }
+    } else {
+        debug_assert!(how.environment, "lane_call_activation admits one of the three forms");
+        // SAFETY: the call's values are registers of the running function.
+        let values = unsafe { call.values() };
+        match lane_activate_environment(cx, call.registers, call.ip, target, &values, (this, constructs)) {
+            Ok(pushed) => pushed.0,
+            Err(_) => return refused(),
+        }
+    };
+    lane_body_run(cx, call, target, this, constructs, registers)
+}
+
+/// The run of the activation a body's call pushed at `registers` by the target's own body, warmed
+/// toward one first where it has none, as the lane's own calls warm it (`lane_specialize`: a
+/// constructor only body code constructs is entered by nothing else): its completion writes the
+/// call's register (`LANE_CALL_COMPLETED`), and any other end leaves the lane in the activation
+/// (`LANE_CALL_LEFT`). Its words are the entered `this` (`lane_body_this`, `call_body::body_this`)
+/// and the return to the call (`lane_body_returned`).
+fn lane_body_run<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &ScriptCallTarget, this: Value, constructs: bool, registers: Registers) -> u64 {
+    let vm = unsafe { vm(cx) };
     // A leave resumes at a record of the callee's view, never at its tier prologue, which
     // lies outside its records: a loop region's `Callee` exit (`lane_loop_native`) leaves the
-    // lane there and needs its PC. `lane_specialize` below takes the prologue's warming step.
+    // lane there and needs its PC. The warming below takes the prologue's step.
     let start = unsafe { (*cx).base };
     // The activation's index among every frame, which `finish` finds it at where it is.
     let depth = vm.lane_stack.activation_count() - 1;
@@ -433,7 +430,8 @@ fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target:
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::super::program_store::derived_lane_view);
     let Some(own) = own else { return leave(start, Value::UNDEFINED) };
-    lane_warm_callee(cx, own, target.function);
+    let respecializes = own.respecializes();
+    if respecializes || own.lane_body().is_none() { lane_specialize(cx, own, target.function, respecializes, &[]); }
     let Some(method) = own.lane_body().filter(|method| lane_body_admits(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
         return leave(start, Value::UNDEFINED);
@@ -449,7 +447,7 @@ fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target:
         lane_record_end(cx, own, &method, exit);
         drop(method);
         super::lane_note_body_end(cx, own, exit, |_| {});
-        return lane_body_completed(cx, call.ip, value, constructs);
+        return lane_body_returned(cx, call, Some(value), constructs);
     }
     let (resumed, feedback) = lane_body_left(cx, registers, own, &method, exit);
     drop(method);
@@ -461,34 +459,26 @@ fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target:
     match resumed {
         LaneBodyLeft::Terminated => LANE_CALL_TERMINATED,
         LaneBodyLeft::Resume(_, resume, carried) => leave(resume, unsafe { carried.acc.get() }),
-        LaneBodyLeft::Raised(_) => lane_pop_raised(cx, call, constructs),
-        LaneBodyLeft::Completed(_, value) => lane_body_completed(cx, call.ip, value, constructs),
+        LaneBodyLeft::Raised(_) => lane_body_returned(cx, call, None, constructs),
+        LaneBodyLeft::Completed(_, value) => lane_body_returned(cx, call, Some(value), constructs),
     }
 }
 
-/// The call whose callee's body raised (`LaneBodyLeft::Raised`): the callee's activation is popped and
-/// the call's register keeps its value, which a handler of the caller may read; the exception waits
-/// in `Vm::lane_raised` for the caller's body (`LANE_CALL_RAISED`).
-fn lane_pop_raised<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, constructs: bool) -> u64 {
-    // The call's register is kept across the pop (`staged::call_complete::call_result`, then
-    // `write_call_result`), which writes the return's `undefined` there; the pop itself is the
-    // lane's return (`lane_complete_activation`, `lane_return_to_body`).
+/// The return of the activation a body's call made to that call, popped through the lane's
+/// return (`lane_complete_activation` for a construction, `lane_return_to_body`): with
+/// `Some(value)`, its completion, a construction's yielding its returned object or the receiver
+/// (`LANE_CALL_COMPLETED`); with `None`, its body raised (`LaneBodyLeft::Raised`): the pop returns
+/// `undefined` and the call's register keeps its value across it
+/// (`staged::call_complete::call_result`, then `write_call_result`), which a handler of the
+/// caller may read, the exception waiting in `Vm::lane_raised` for the caller's body
+/// (`LANE_CALL_RAISED`).
+fn lane_body_returned<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, completed: Option<Value>, constructs: bool) -> u64 {
     let registers = call.registers.0.expose_provenance() as u64;
-    let kept = concrete_call_result(registers, call.site.result);
-    let popped = if constructs { lane_complete_activation(cx, call.ip, Value::UNDEFINED).is_some() } else { lane_return_to_body(cx, Value::UNDEFINED).is_some() };
-    debug_assert!(popped, "the call made the activation its body raised in");
+    let kept = completed.is_none().then(|| concrete_call_result(registers, call.site.result));
+    let value = completed.unwrap_or(Value::UNDEFINED);
+    let popped = if constructs { lane_complete_activation(cx, call.ip, value).is_some() } else { lane_return_to_body(cx, value).is_some() };
+    debug_assert!(popped, "the call made the activation it returns from");
+    let Some(kept) = kept else { return LANE_CALL_COMPLETED };
     concrete_write_call_result(registers, call.site.result, kept);
     LANE_CALL_RAISED
-}
-
-/// The completion of the activation a body's call made, with `value`: a construction's yields its
-/// returned object or the receiver.
-fn lane_body_completed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value, constructs: bool) -> u64 {
-    // row: none, glue: the VM's pop of the activation with its value (`lane_complete_activation`, `lane_return_to_body`).
-    if constructs {
-        lane_complete_activation(cx, ip, value).expect("the construction made an activation");
-    } else {
-        lane_return_to_body(cx, value).expect("the call made a plain activation");
-    }
-    LANE_CALL_COMPLETED
 }

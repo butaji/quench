@@ -32,7 +32,7 @@ pub(super) struct LaneArrayStep {
     /// and whose caller base word is this entry's index in `LaneStack::steps`, with the
     /// callback's own call record and caller registers. `None` for a step whose callback is
     /// its record (a keeping callback, a lane body's iteration). A spill makes the header the
-    /// record either way would push (`LaneStack::plain_record`).
+    /// record either way would push (`LaneStack::plain_frame`).
     pub(super) header: Option<CallbackHeader>,
     /// The caller's records base, which the header's caller base word does not hold.
     pub(super) caller_base: Ip,
@@ -414,7 +414,7 @@ fn lane_finish_array_step<H: Host>(cx: *mut LaneContext<H>, call: Ip, applied: O
 /// shape has one (`LaneStack::push_step_header`), which returns through the array steps'
 /// trampoline (`array_step_returned`), else its header with a side record (`lane_admit_prepared`); then the
 /// callback entered for the step's element. The entry is pushed first, so a spill of the
-/// header finds its step (`LaneStack::plain_record`). `None`, which changes nothing, where the
+/// header finds its step (`LaneStack::plain_frame`). `None`, which changes nothing, where the
 /// lane stack lacks room.
 #[inline(always)]
 fn lane_push_array_step<H: Host>(cx: *mut LaneContext<H>, shape: &PreparedShape, mut step: LaneArrayStep) -> Option<Ip> {

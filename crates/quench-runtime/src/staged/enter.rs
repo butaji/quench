@@ -10,7 +10,8 @@
 //!    values' room (`call::admit_room`, twice);
 //! 3. the `this` binding, where the callee binds one (`protocol::bind_this`);
 //! 4. for a plain-header family: the window (`protocol::fill_window`), the context words `this`,
-//!    `env`, `capture` below register 0, and the header (`protocol::push_plain_at`).
+//!    `env`, `capture` below register 0 (`call_keeping::enter_context`), and the header
+//!    (`protocol::push_plain_at`).
 //!
 //! The other families (construct, callback, iteration, keeping, environment, leaf) stop after
 //! step 3. Their windows, context words and records are the family rows' (`call_construct`,
@@ -21,12 +22,11 @@
 //! the header is popped (`protocol::pop_plain`), so a refused completion changes nothing.
 
 use super::call::admit_room;
-use super::frame;
+use super::call_keeping::enter_context;
 use super::protocol::{
     bind_this, complete_call, fill_window, guard_callee, plain_packed, pop_plain, push_plain_at, PlainCaller,
     PlainHeader, WindowFill,
 };
-use super::region::Region;
 use super::Stage;
 use crate::bytecode::Register;
 
@@ -127,12 +127,6 @@ pub(crate) struct Completed<W> {
     pub(crate) caller: PlainCaller<W>,
 }
 
-/// The byte offset of context word `word` below a window's register 0.
-#[inline(always)]
-const fn context_at(word: usize) -> i32 {
-    -((word * 8) as i32)
-}
-
 /// Enter a call of `kind` with `words`: the shared steps of every call (see the module docs).
 /// Leaves at `miss` where a guard, the admission or the `this` binding refuses; no word is
 /// written before the last guard passes.
@@ -151,10 +145,7 @@ pub(crate) fn enter<S: Stage>(stage: &mut S, kind: CallKind, words: EnterWords<S
         return Some(Entered { window: words.top, this });
     }
     fill_window(stage, words.top, words.registers, WindowFill { first: kind.first, argc: kind.argc, registers: kind.registers });
-    let at = Region::Frame.mutable();
-    stage.store_u64(at, words.top, context_at(frame::CONTEXT_THIS), this);
-    stage.store_u64(at, words.top, context_at(frame::CONTEXT_ENV), words.env);
-    stage.store_u64(at, words.top, context_at(frame::CONTEXT_CAPTURE), words.capture);
+    enter_context(stage, words.top, this, words.env, words.capture);
     let packed = stage.constant(kind.packed());
     let header = PlainHeader { call: words.call, caller_registers: words.registers, caller_base: words.base, packed, callee: words.held };
     push_plain_at(stage, words.plain, words.top, header, words.program, words.depth);

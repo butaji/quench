@@ -80,7 +80,8 @@ impl Iterator for Walk<'_> {
                 continue;
             }
             self.next_record = self.next_record.checked_sub(1)?;
-            let record = &self.records[self.next_record];
+            let records = self.records;
+            let record = &records[self.next_record];
             let payload = if LaneStack::record_sided(record) { self.take_side().payload } else { SidePayload::None };
             return Some((Frame::of_record(record, payload), Walked::Record { index: self.next_record }));
         }

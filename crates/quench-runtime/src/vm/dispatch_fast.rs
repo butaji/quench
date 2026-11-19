@@ -16998,6 +16998,7 @@ mod root_constants;
 mod native_calls; mod getters; mod generator_yields; use generator_yields::suspend_handler;
 mod lane_roots;
 mod lane_trace;
+mod lane_stack_trace;
 mod lane_frames; use lane_frames::{Frame, SidePayload};
 mod frame_walk;
 mod with_scopes;
@@ -19366,7 +19367,7 @@ enum LaneBodyLeft {
     Terminated,
     Resume(Registers, Ip, Carried),
     /// The activation's body raised an exception (`Vm::lane_raised`) at the record: the
-    /// lane unwinds from it, or the call that made the activation pops it (`lane_pop_raised`).
+    /// lane unwinds from it, or the call that made the activation pops it (`body_calls::lane_body_returned`).
     Raised(Ip),
     /// The activation completes with the value, by the record.
     Completed(Ip, Value),
