@@ -1,7 +1,7 @@
 //! Table operators use ordinary VM references and captured instance bindings.
 
 use super::{Lowering, Reachability, WasmImportName, WasmReferenceInitializer};
-use crate::{Diagnostic, bytecode::Register, staged::wasm_emit_data};
+use crate::{Diagnostic, bytecode::Register, staged::wasm_emit};
 use wasmparser::{Operator, RefType, TableType};
 
 /// A table's limits/type and its single evaluated-per-instance initializer.
@@ -119,11 +119,11 @@ impl Lowering<'_> {
                         let depth = self.depth;
                         self.depth = target + 1;
                         let table = self.table_binding(table_index)?;
-                        self.emit_emission(wasm_emit_data::indirect_target(target, table, signature))?;
+                        self.emit_emission(wasm_emit::indirect_target(target, table, signature))?;
                         self.depth = depth;
                     } else {
                         // Validation proves the callable type; preserve the original function/capture.
-                        self.emit_emission(wasm_emit_data::ref_as_non_null(
+                        self.emit_emission(wasm_emit::ref_as_non_null(
                             target,
                             target,
                             super::reference::NonNullCheck::Function as u32,
@@ -146,7 +146,7 @@ impl Lowering<'_> {
                     let result = self.push()?;
                     // Heap type is a validation fact; the runtime null value is uniform.
                     let constant = self.append_constant(crate::bytecode::Constant::Null)?;
-                    self.emit_emission(wasm_emit_data::load_constant(result, constant))?;
+                    self.emit_emission(wasm_emit::load_constant(result, constant))?;
                 }
             }
             Operator::RefFunc { function_index } => {
@@ -157,7 +157,7 @@ impl Lowering<'_> {
                     })?;
                 if self.path == Reachability::Live {
                     let result = self.push()?;
-                    self.emit_emission(wasm_emit_data::ref_func(result, function_index))?;
+                    self.emit_emission(wasm_emit::ref_func(result, function_index))?;
                 }
             }
             Operator::RefIsNull | Operator::RefAsNonNull => {
@@ -165,8 +165,8 @@ impl Lowering<'_> {
                     let input = self.pop()?;
                     let result = self.push()?;
                     let instruction = match operator {
-                        Operator::RefIsNull => wasm_emit_data::ref_is_null(result, input),
-                        _ => wasm_emit_data::ref_as_non_null(
+                        Operator::RefIsNull => wasm_emit::ref_is_null(result, input),
+                        _ => wasm_emit::ref_as_non_null(
                             result,
                             input,
                             super::reference::NonNullCheck::Reference as u32,
@@ -185,8 +185,8 @@ impl Lowering<'_> {
                     self.depth = index + if write { 2 } else { 1 };
                     let table = self.table_binding(table)?;
                     let instruction = match value {
-                        Some(value) => wasm_emit_data::table_set(value, table, index),
-                        None => wasm_emit_data::table_get(index, table, index),
+                        Some(value) => wasm_emit::table_set(value, table, index),
+                        None => wasm_emit::table_get(index, table, index),
                     };
                     self.emit_emission(instruction)?;
                     self.depth = depth;
@@ -212,9 +212,9 @@ impl Lowering<'_> {
                     let table = self.table_binding(table)?;
                     let instruction = match operands {
                         Some((delta, initial)) => {
-                            wasm_emit_data::table_grow(result, table, initial, delta)
+                            wasm_emit::table_grow(result, table, initial, delta)
                         }
-                        None => wasm_emit_data::table_size(result, table),
+                        None => wasm_emit::table_size(result, table),
                     };
                     self.emit_emission(instruction)?;
                     self.depth = depth;
@@ -253,9 +253,9 @@ impl Lowering<'_> {
                         None => input,
                     };
                     let instruction = if matches!(operator, Operator::TableCopy { .. }) {
-                        wasm_emit_data::table_copy(table, source, length, output, input)
+                        wasm_emit::table_copy(table, source, length, output, input)
                     } else {
-                        wasm_emit_data::table_fill(table, source, length, output)
+                        wasm_emit::table_fill(table, source, length, output)
                     };
                     self.emit_emission(instruction)?;
                     self.depth = depth;

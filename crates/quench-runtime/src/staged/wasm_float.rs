@@ -149,7 +149,7 @@ pub(crate) const fn pow2_bits(exponent: u32) -> u64 {
 /// constant-pool load.
 #[inline(always)]
 pub(crate) fn float_of_bits(bits: u64) -> f64 {
-    f64::from_bits(core::hint::black_box(bits))
+    f64::from_bits(opaque(bits))
 }
 
 /// The bounds of a `bits`-wide integer as f64: a truncated value is kept when `lower <= value <
@@ -214,7 +214,7 @@ pub(crate) fn unsigned_to_f64(value: u64) -> f64 {
     if (value as i64) >= 0 {
         value as i64 as f64
     } else {
-        let half = core::hint::black_box((value >> 1) | (value & 1)) as i64 as f64;
+        let half = opaque((value >> 1) | (value & 1)) as i64 as f64;
         half + half
     }
 }
@@ -225,7 +225,7 @@ pub(crate) fn unsigned_to_f32(value: u64) -> f32 {
     if (value as i64) >= 0 {
         value as i64 as f32
     } else {
-        let half = core::hint::black_box((value >> 1) | (value & 1)) as i64 as f32;
+        let half = opaque((value >> 1) | (value & 1)) as i64 as f32;
         half + half
     }
 }
@@ -236,5 +236,20 @@ pub(crate) fn copysign_bits(float: Float, left: u64, right: u64) -> u64 {
     match float {
         Float::F32 => (left & !SIGN32 & WORD32) | (right & SIGN32),
         Float::F64 => (left & !SIGN64) | (right & SIGN64),
+    }
+}
+
+/// A word the optimizer may not fold: in the stencil build a constant would become a constant-pool
+/// load (a relocation stencils may not carry), so the word is hidden behind `black_box`. The
+/// interpreter and u-jit builds fold it freely.
+#[inline(always)]
+fn opaque(word: u64) -> u64 {
+    #[cfg(stencil_build)]
+    {
+        core::hint::black_box(word)
+    }
+    #[cfg(not(stencil_build))]
+    {
+        word
     }
 }

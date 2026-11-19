@@ -26,22 +26,25 @@ use crate::staged::wasm_roots::{pop, push};
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole64};
 use crate::wasm_codes::FRAME_HEADER_WORDS;
 
-/// The most registers one push holds (the hole 0 packs four 16-bit register numbers).
-const PUSH_REGISTERS: usize = 4;
-
-/// Holds the registers named by hole 0 (`count` of them) in the native roots, in order after the
-/// live ones. A push with no room for them traps `CallStackExhausted`, writing nothing.
+/// Holds the registers named by hole 0 (`count` of them, at most four: 16 bits each) in the native
+/// roots, in order after the live ones. A push with no room for them traps `CallStackExhausted`,
+/// writing nothing. Each of the four words is read from its register when the count holds it, so
+/// the array is built whole by its initializer.
 #[inline(always)]
 pub(crate) unsafe fn root_push(s: S) -> Out {
     unsafe {
         let (registers, count_and_context) = (hole64::<0>(), hole64::<HOLE_A>());
         let (depth_and_capacity, slots_at) = (hole64::<HOLE_B>(), low(hole64::<HOLE_FOURTH>()) as usize);
         let count = low(count_and_context) as usize;
-        let mut words = [0u64; PUSH_REGISTERS];
-        for (index, word) in words.iter_mut().enumerate().take(count) {
-            let register = ((registers >> (16 * index)) & 0xffff) as usize;
-            *word = *((s.frame + 8 * (FRAME_HEADER_WORDS as usize + register)) as *const u64);
-        }
+        let word = |index: usize| -> u64 {
+            if index < count {
+                let register = ((registers >> (16 * index)) & 0xffff) as usize;
+                *((s.frame + 8 * (FRAME_HEADER_WORDS as usize + register)) as *const u64)
+            } else {
+                0
+            }
+        };
+        let words = [word(0), word(1), word(2), word(3)];
         let held = words.get(..count).unwrap_or(&words[..]);
         let mut stage = RootsStage {
             header: native_roots(s.ctx, high(count_and_context) as usize),

@@ -1,9 +1,6 @@
 //! A cast target retains a heap-type index; its declaration graph stays in the program.
 use super::{Lowering, Reachability};
-use crate::{
-    Diagnostic,
-    staged::wasm_emit_data::{self, Emission},
-};
+use crate::{Diagnostic, staged::wasm_emit};
 use wasmparser::{AbstractHeapType, HeapType, Operator, RefType, UnpackedIndex};
 
 super::numeric::selectors! { ExternalConversion;
@@ -175,7 +172,7 @@ impl Lowering<'_> {
             if self.path == Reachability::Live {
                 let input = self.pop()?;
                 let result = self.push()?;
-                self.emit_emission(wasm_emit_data::external_conversion(
+                self.emit_emission(wasm_emit::external_conversion(
                     result,
                     input,
                     conversion as u32,
@@ -189,7 +186,7 @@ impl Lowering<'_> {
                     let right = self.pop()?;
                     let left = self.pop()?;
                     let result = self.push()?;
-                    self.emit_emission(wasm_emit_data::ref_eq(result, left, right))?;
+                    self.emit_emission(wasm_emit::ref_eq(result, left, right))?;
                 }
                 return Ok(true);
             }
@@ -235,7 +232,7 @@ impl Lowering<'_> {
                     self.push()?; // Both branch and fallthrough carry the original reference.
                     let condition = self.push()?;
                     self.depth -= 1;
-                    self.emit_emission(wasm_emit_data::ref_test(
+                    self.emit_emission(wasm_emit::ref_test(
                         condition,
                         reference,
                         descriptor,
@@ -245,10 +242,10 @@ impl Lowering<'_> {
                         operator,
                         Operator::BrOnCastFail { .. } | Operator::BrOnCastDescEqFail { .. }
                     ) {
-                        self.emit_emission(wasm_emit_data::i32_unary(
+                        self.emit_emission(wasm_emit::i32_unary(
                             condition,
                             condition,
-                            super::integer::I32UnaryOperator::EqualZero as u32,
+                            super::integer::I32UnaryOperator::EqualZero,
                         ))?;
                     }
                     self.branch_if(relative_depth, super::control::Condition::Value(condition))?;
@@ -285,23 +282,13 @@ impl Lowering<'_> {
             let input = self.pop()?;
             let result = self.push()?;
             let instruction = if cast {
-                wasm_emit_data::ref_cast(result, input, descriptor, target.tag())
+                wasm_emit::ref_cast(result, input, descriptor, target.tag())
             } else {
-                wasm_emit_data::ref_test(result, input, descriptor, target.tag())
+                wasm_emit::ref_test(result, input, descriptor, target.tag())
             };
             self.emit_emission(instruction)?;
         }
         Ok(true)
-    }
-    /// Emits `instruction` through the lowering's one instruction buffer (`Lowering::emit`).
-    pub(super) fn emit_emission(&mut self, instruction: Emission) -> Result<(), Diagnostic> {
-        self.emit(
-            instruction.op,
-            instruction.a,
-            instruction.b,
-            instruction.c,
-            instruction.imm,
-        )
     }
     fn reference_target(&self, ty: RefType) -> Result<ReferenceTarget, Diagnostic> {
         let error = || Diagnostic::unsupported(self.name, "unsupported Wasm reference target");

@@ -49,28 +49,27 @@ impl<H: Host> Emitter<'_, '_, H> {
         };
         restore(self, depth);
     }
+}
 
-    /// The context's native roots, loaded where a root word is read or written.
+impl<H: Host> WasmRoots for Emitter<'_, '_, H> {
+    /// The roots' address, a value in the function: the rule loads it once and every access reuses it.
+    type Roots = ir::Value;
+
     fn native_roots(&mut self) -> ir::Value {
         let context = self.body.core.context;
         self.load_word(Width::I64, invariant(), context, CONTEXT_NATIVE_ROOTS)
     }
-}
 
-impl<H: Host> WasmRoots for Emitter<'_, '_, H> {
-    fn root_depth(&mut self) -> ir::Value {
-        let roots = self.native_roots();
+    fn root_depth(&mut self, roots: ir::Value) -> ir::Value {
         self.load_word(Width::I64, MemFlagsData::trusted(), roots, NativeRoots::DEPTH)
     }
 
-    fn root_capacity(&mut self) -> ir::Value {
-        let roots = self.native_roots();
+    fn root_capacity(&mut self, roots: ir::Value) -> ir::Value {
         self.load_word(Width::I64, MemFlagsData::trusted(), roots, NativeRoots::CAPACITY)
     }
 
-    fn store_root(&mut self, depth: ir::Value, index: usize, value: ir::Value) {
+    fn store_root(&mut self, roots: ir::Value, depth: ir::Value, index: usize, value: ir::Value) {
         let flags = MemFlagsData::trusted();
-        let roots = self.native_roots();
         let slots = self.load_word(Width::I64, flags, roots, NativeRoots::SLOTS);
         let size = self.constant(Width::I64, ROOT as i64);
         let offset = self.operate(Binary::Multiply, Width::I64, depth, size);
@@ -78,8 +77,7 @@ impl<H: Host> WasmRoots for Emitter<'_, '_, H> {
         self.store_word(flags, value, top, (index * ROOT) as i32);
     }
 
-    fn set_root_depth(&mut self, depth: ir::Value) {
-        let roots = self.native_roots();
+    fn set_root_depth(&mut self, roots: ir::Value, depth: ir::Value) {
         self.store_word(MemFlagsData::trusted(), depth, roots, NativeRoots::DEPTH);
     }
 }

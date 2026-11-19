@@ -1,27 +1,10 @@
-//! Emit functions for the Wasm lowering's reference, table, constant, memory and atomic
-//! operations, and register copies. Each one names the meaning of an instruction (a type test,
-//! a table store, a constant load) and returns the instruction it lowers to as an `Emission`:
-//! the same opcode and operands the lowering built before, so the bytecode is unchanged. The
-//! lowering (`wasm/reference.rs`, `wasm/table.rs`, `wasm/memory.rs`, `wasm/atomic.rs`) calls
-//! these and names no opcode itself.
+//! Emit functions for the Wasm lowering's reference, table, segment, memory and atomic
+//! operations. Each one names the meaning of an instruction (a type test, a table store, a
+//! memory access) and returns the `Emission` it lowers to: the same opcode and operands the
+//! lowering built before, so the bytecode is unchanged.
 
+use super::Emission;
 use crate::bytecode::{ImmediateLayout, Op, Register};
-
-/// One instruction a lowering emits: its opcode, its three register operands and its immediate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Emission {
-    pub(crate) op: Op,
-    pub(crate) a: Register,
-    pub(crate) b: Register,
-    pub(crate) c: Register,
-    pub(crate) imm: u32,
-}
-
-impl Emission {
-    const fn new(op: Op, a: Register, b: Register, c: Register, imm: u32) -> Self {
-        Self { op, a, b, c, imm }
-    }
-}
 
 /// `result = conversion(input)`, an externref internalize or externalize, `conversion` the
 /// lowering's selector.
@@ -43,7 +26,13 @@ pub(crate) fn ref_test(
     target: u32,
 ) -> Emission {
     match descriptor {
-        Some(descriptor) => Emission::new(Op::WasmDescriptorTest, result, reference, descriptor, target),
+        Some(descriptor) => Emission::new(
+            Op::WasmDescriptorTest,
+            result,
+            reference,
+            descriptor,
+            target,
+        ),
         None => Emission::new(Op::WasmRefTest, result, reference, 0, target),
     }
 }
@@ -57,14 +46,11 @@ pub(crate) fn ref_cast(
     target: u32,
 ) -> Emission {
     match descriptor {
-        Some(descriptor) => Emission::new(Op::WasmDescriptorCast, result, input, descriptor, target),
+        Some(descriptor) => {
+            Emission::new(Op::WasmDescriptorCast, result, input, descriptor, target)
+        }
         None => Emission::new(Op::WasmRefCast, result, input, 0, target),
     }
-}
-
-/// `result = operator(input)` on an i32, `operator` the lowering's `I32UnaryOperator` tag.
-pub(crate) fn i32_unary(result: Register, input: Register, operator: u32) -> Emission {
-    Emission::new(Op::WasmI32Unary, result, input, 0, operator)
 }
 
 /// `result = input` where `input` is non-null, trapping with the `check` diagnostic otherwise.
@@ -81,11 +67,6 @@ pub(crate) fn ref_is_null(result: Register, input: Register) -> Emission {
 /// `target` holds, in place: the result and the index are the same register.
 pub(crate) fn indirect_target(target: Register, table: Register, signature: u32) -> Emission {
     Emission::new(Op::WasmIndirectTarget, target, table, target, signature)
-}
-
-/// `destination = constant`, `constant` the index the lowering appended to the constant pool.
-pub(crate) fn load_constant(destination: Register, constant: u32) -> Emission {
-    Emission::new(Op::LoadConst, destination, 0, 0, constant)
 }
 
 /// `result = the function reference of function_index`.
@@ -109,7 +90,12 @@ pub(crate) fn table_size(result: Register, table: Register) -> Emission {
 }
 
 /// `result = table.grow(delta, initial)`, `delta` the growth register.
-pub(crate) fn table_grow(result: Register, table: Register, initial: Register, delta: Register) -> Emission {
+pub(crate) fn table_grow(
+    result: Register,
+    table: Register,
+    initial: Register,
+    delta: Register,
+) -> Emission {
     Emission::new(
         Op::WasmTableGrow,
         result,
@@ -120,7 +106,12 @@ pub(crate) fn table_grow(result: Register, table: Register, initial: Register, d
 }
 
 /// `table[output .. output + length] = value`, a fill of `length` elements from `output`.
-pub(crate) fn table_fill(table: Register, value: Register, length: Register, output: Register) -> Emission {
+pub(crate) fn table_fill(
+    table: Register,
+    value: Register,
+    length: Register,
+    output: Register,
+) -> Emission {
     Emission::new(
         Op::WasmTableFill,
         table,
@@ -156,22 +147,42 @@ pub(crate) fn instance_binding(destination: Register, slot: u32) -> Emission {
 
 /// `effective = address + offset`, a memory32 effective address on `memory`, `offset` the
 /// constant the lowering appended to the constant pool.
-pub(crate) fn memory_address(effective: Register, address: Register, memory: Register, offset: u32) -> Emission {
+pub(crate) fn memory_address(
+    effective: Register,
+    address: Register,
+    memory: Register,
+    offset: u32,
+) -> Emission {
     Emission::new(Op::WasmMemoryAddress, effective, address, memory, offset)
 }
 
 /// `result = memory[selector] at effective`, a scalar or vector load from `memory`.
-pub(crate) fn memory_load(result: Register, memory: Register, effective: Register, selector: u32) -> Emission {
+pub(crate) fn memory_load(
+    result: Register,
+    memory: Register,
+    effective: Register,
+    selector: u32,
+) -> Emission {
     Emission::new(Op::WasmMemoryLoad, result, memory, effective, selector)
 }
 
 /// `memory[selector] at effective = value`, a scalar or vector store to `memory`.
-pub(crate) fn memory_store(value: Register, memory: Register, effective: Register, selector: u32) -> Emission {
+pub(crate) fn memory_store(
+    value: Register,
+    memory: Register,
+    effective: Register,
+    selector: u32,
+) -> Emission {
     Emission::new(Op::WasmMemoryStore, value, memory, effective, selector)
 }
 
 /// `result = vector` with lane `selector` replaced by `scalar`.
-pub(crate) fn lane_replace(result: Register, vector: Register, scalar: Register, selector: u32) -> Emission {
+pub(crate) fn lane_replace(
+    result: Register,
+    vector: Register,
+    scalar: Register,
+    selector: u32,
+) -> Emission {
     Emission::new(Op::WasmSimd, result, vector, scalar, selector)
 }
 
@@ -192,7 +203,13 @@ pub(crate) fn memory_size(result: Register, memory: Register) -> Emission {
 
 /// `memory[output ..] = source[input ..]` over `length` bytes, the source a data segment's
 /// instance binding.
-pub(crate) fn memory_init(memory: Register, source: Register, length: Register, output: Register, input: Register) -> Emission {
+pub(crate) fn memory_init(
+    memory: Register,
+    source: Register,
+    length: Register,
+    output: Register,
+    input: Register,
+) -> Emission {
     Emission::new(
         Op::WasmMemoryInit,
         memory,
@@ -203,7 +220,13 @@ pub(crate) fn memory_init(memory: Register, source: Register, length: Register, 
 }
 
 /// `memory[output ..] = source[input ..]` over `length` bytes, a copy between memories.
-pub(crate) fn memory_copy(memory: Register, source: Register, length: Register, output: Register, input: Register) -> Emission {
+pub(crate) fn memory_copy(
+    memory: Register,
+    source: Register,
+    length: Register,
+    output: Register,
+    input: Register,
+) -> Emission {
     Emission::new(
         Op::WasmMemoryCopy,
         memory,
@@ -214,7 +237,12 @@ pub(crate) fn memory_copy(memory: Register, source: Register, length: Register, 
 }
 
 /// `memory[output .. output + length] = value`, a fill of `memory`.
-pub(crate) fn memory_fill(memory: Register, value: Register, length: Register, output: Register) -> Emission {
+pub(crate) fn memory_fill(
+    memory: Register,
+    value: Register,
+    length: Register,
+    output: Register,
+) -> Emission {
     Emission::new(
         Op::WasmMemoryFill,
         memory,
@@ -230,11 +258,33 @@ pub(crate) fn atomic_fence() -> Emission {
 }
 
 /// `result = the atomic operator (operator) on memory`, its window `inputs` registers wide.
-pub(crate) fn atomic_access(result: Register, memory: Register, inputs: Register, operator: u32) -> Emission {
+pub(crate) fn atomic_access(
+    result: Register,
+    memory: Register,
+    inputs: Register,
+    operator: u32,
+) -> Emission {
     Emission::new(Op::WasmAtomicAccess, result, memory, inputs, operator)
 }
 
-/// `destination = source`, a register copy.
-pub(crate) fn register_copy(destination: Register, source: Register) -> Emission {
-    Emission::new(Op::Move, destination, source, 0, 0)
+/// Drops the instance binding of element or data segment `slot`.
+pub(crate) fn segment_drop(slot: u16) -> Emission {
+    Emission::new(Op::WasmSegmentDrop, 0, 0, 0, u32::from(slot))
+}
+
+/// Copies `length` items of element segment `elements` into `table` at `output`, from `input`.
+pub(crate) fn table_init(
+    table: Register,
+    elements: Register,
+    length: Register,
+    output: Register,
+    input: Register,
+) -> Emission {
+    Emission::new(
+        Op::WasmTableInit,
+        table,
+        elements,
+        length,
+        ImmediateLayout::register_pair_immediate(output, input),
+    )
 }

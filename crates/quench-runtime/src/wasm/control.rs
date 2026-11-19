@@ -5,20 +5,6 @@ use super::*;
 use crate::staged::wasm_emit;
 use wasmparser::{BlockType, Catch, TryTable};
 
-/// The lowering's instruction sink: its own emit appends the instruction.
-impl wasm_emit::Sink for Lowering<'_> {
-    fn write(
-        &mut self,
-        op: crate::bytecode::Op,
-        a: crate::bytecode::Register,
-        b: crate::bytecode::Register,
-        c: crate::bytecode::Register,
-        imm: u32,
-    ) -> Result<(), crate::Diagnostic> {
-        self.emit(op, a, b, c, imm)
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Reachability {
     Live,
@@ -142,7 +128,7 @@ impl Lowering<'_> {
             Operator::ThrowRef => {
                 if self.path == Reachability::Live {
                     let exception = self.pop()?;
-                    wasm_emit::throw_ref(self, exception)?;
+                    self.emit_emission(wasm_emit::throw_ref(exception))?;
                     self.make_dead();
                 }
             }
@@ -189,10 +175,14 @@ impl Lowering<'_> {
                     self.push()?;
                     let condition = self.push()?;
                     self.depth = without_reference;
-                    wasm_emit::ref_is_null(self, condition, reference)?;
+                    self.emit_emission(wasm_emit::ref_is_null(condition, reference))?;
                     let carry_reference = matches!(operator, Operator::BrOnNonNull { .. });
                     if carry_reference {
-                        wasm_emit::i32_unary(self, condition, condition, I32UnaryOperator::EqualZero)?;
+                        self.emit_emission(wasm_emit::i32_unary(
+                            condition,
+                            condition,
+                            I32UnaryOperator::EqualZero,
+                        ))?;
                         self.push()?;
                     }
                     self.branch_if(*relative_depth, Condition::Value(condition))?;
@@ -218,7 +208,7 @@ impl Lowering<'_> {
             }
             Operator::Unreachable => {
                 if self.path == Reachability::Live {
-                    wasm_emit::unreachable(self)?;
+                    self.emit_emission(wasm_emit::unreachable())?;
                     self.make_dead();
                 }
             }
@@ -228,7 +218,7 @@ impl Lowering<'_> {
                     let right = self.pop()?;
                     let left = self.pop()?;
                     let result = self.push()?;
-                    wasm_emit::select(self, result, left, right, condition)?;
+                    self.emit_emission(wasm_emit::select(result, left, right, condition))?;
                     self.produced(result);
                 }
             }
@@ -350,8 +340,8 @@ impl Lowering<'_> {
         };
         if self.path == Reachability::Live {
             let exception = self.push()?;
-            wasm_emit::load_local(self, exception, slot)?;
-            wasm_emit::throw_ref(self, exception)?;
+            self.emit_emission(wasm_emit::load_local(exception, slot))?;
+            self.emit_emission(wasm_emit::throw_ref(exception))?;
             self.make_dead();
         }
         Ok(())
@@ -422,8 +412,8 @@ impl Lowering<'_> {
         }
         let depth = self.depth;
         let exception = self.push()?;
-        wasm_emit::load_local(self, exception, slot)?;
-        wasm_emit::throw_ref(self, exception)?;
+        self.emit_emission(wasm_emit::load_local(exception, slot))?;
+        self.emit_emission(wasm_emit::throw_ref(exception))?;
         self.depth = depth;
         Ok(())
     }
@@ -440,8 +430,8 @@ impl Lowering<'_> {
         self.patch_jump(next, self.code.len())?;
         self.depth = base;
         let exception = self.push()?;
-        wasm_emit::load_local(self, exception, region.slot)?;
-        wasm_emit::throw_ref(self, exception)?;
+        self.emit_emission(wasm_emit::load_local(exception, region.slot))?;
+        self.emit_emission(wasm_emit::throw_ref(exception))?;
         if let Some(normal) = normal {
             self.patch_jump(normal, self.code.len())?;
         }
@@ -464,16 +454,18 @@ impl Lowering<'_> {
         self.push()?;
         // Shift upward in reverse before inserting the tag at the window's head.
         for offset in (0..params).rev() {
-            wasm_emit::move_register(
-                self,
+            self.emit_emission(wasm_emit::move_register(
                 base + offset + super::tag::ExceptionInput::Payload as u16,
                 base + offset,
-            )?;
+            ))?;
         }
         let tag = self.tag_binding(index)?;
-        wasm_emit::move_register(self, base + super::tag::ExceptionInput::Tag as u16, tag)?;
-        wasm_emit::exception_new(self, base, count)?;
-        wasm_emit::throw_ref(self, base)?;
+        self.emit_emission(wasm_emit::move_register(
+            base + super::tag::ExceptionInput::Tag as u16,
+            tag,
+        ))?;
+        self.emit_emission(wasm_emit::exception_new(base, count))?;
+        self.emit_emission(wasm_emit::throw_ref(base))?;
         self.make_dead();
         Ok(())
     }
@@ -499,8 +491,8 @@ impl Lowering<'_> {
         }
         self.depth = base;
         let exception = self.push()?;
-        wasm_emit::load_local(self, exception, region.slot)?;
-        wasm_emit::throw_ref(self, exception)?;
+        self.emit_emission(wasm_emit::load_local(exception, region.slot))?;
+        self.emit_emission(wasm_emit::throw_ref(exception))?;
         if let Some(normal) = normal {
             self.patch_jump(normal, self.code.len())?;
         }
@@ -525,20 +517,20 @@ impl Lowering<'_> {
             .checked_add(count)
             .ok_or_else(|| self.control_error("too many Wasm catch registers"))?;
         let exception = self.push()?;
-        wasm_emit::load_local(self, exception, slot)?;
+        self.emit_emission(wasm_emit::load_local(exception, slot))?;
         let next = if let Some(tag) = tag {
             let tag = self.tag_binding(tag)?;
             let condition = self.push()?;
-            wasm_emit::exception_match(self, condition, exception, tag)?;
+            self.emit_emission(wasm_emit::exception_match(condition, exception, tag))?;
             Some(self.jump_on(Condition::Value(condition), false)?)
         } else {
             None
         };
         for offset in 0..params {
-            wasm_emit::exception_payload(self, base + offset, exception, offset)?;
+            self.emit_emission(wasm_emit::exception_payload(base + offset, exception, offset))?;
         }
         if reference {
-            wasm_emit::move_register(self, base + params, exception)?;
+            self.emit_emission(wasm_emit::move_register(base + params, exception))?;
         }
         self.depth = base + count;
         Ok(next)
@@ -619,7 +611,7 @@ impl Lowering<'_> {
                     .ok_or_else(|| self.control_error("too many Wasm locals"))?;
                 self.temporary_locals += params;
                 for offset in 0..params {
-                    wasm_emit::store_local(self, base + offset, first + offset)?;
+                    self.emit_emission(wasm_emit::store_local(base + offset, first + offset))?;
                 }
                 Some(first)
             } else {
@@ -660,7 +652,7 @@ impl Lowering<'_> {
         let (base, params, saved_inputs) = (control.base, control.params, control.saved_inputs);
         if let Some(first) = saved_inputs {
             for offset in 0..params {
-                wasm_emit::load_local(self, base + offset, first + offset)?;
+                self.emit_emission(wasm_emit::load_local(base + offset, first + offset))?;
             }
         }
         Ok(())
@@ -702,19 +694,23 @@ impl Lowering<'_> {
         };
         if matches!(control.kind, Kind::Function) {
             if control.results == 0 {
-                wasm_emit::load_constant(self, control.base, VOID_RESULT_CONSTANT)?;
+                self.emit_emission(wasm_emit::load_constant(control.base, VOID_RESULT_CONSTANT))?;
             }
             let result = if usize::from(control.results) > SCALAR_RETURN_ARITY {
                 let bundle = self.push()?;
-                wasm_emit::make_array(self, bundle, control.results)?;
+                self.emit_emission(wasm_emit::make_array(bundle, control.results))?;
                 for offset in 0..control.results {
-                    wasm_emit::define_array_element(self, control.base + offset, bundle, offset)?;
+                    self.emit_emission(wasm_emit::define_array_element(
+                        control.base + offset,
+                        bundle,
+                        offset,
+                    ))?;
                 }
                 bundle
             } else {
                 control.base
             };
-            wasm_emit::return_value(self, result)?;
+            self.emit_emission(wasm_emit::return_value(result))?;
         }
         Ok(())
     }
@@ -842,7 +838,7 @@ impl Lowering<'_> {
                         .negated_comparison()
                         .expect("fusable comparison has a negation")
                 };
-                wasm_emit::compare_and_jump(self, comparison, left, right)?;
+                self.emit_emission(wasm_emit::compare_and_jump(comparison, left, right))?;
             }
             Condition::ConstantComparison(comparison, left, constant) => {
                 let comparison = if when {
@@ -852,24 +848,32 @@ impl Lowering<'_> {
                         .negated_comparison()
                         .expect("fusable comparison has a negation")
                 };
-                wasm_emit::compare_immediate_and_jump(self, comparison, left, constant as u16)?;
+                self.emit_emission(wasm_emit::compare_immediate_and_jump(
+                    comparison,
+                    left,
+                    constant as u16,
+                ))?;
             }
             Condition::Zero(value) => {
                 if when {
-                    wasm_emit::jump_if_zero_i32(self, value)?;
+                    self.emit_emission(wasm_emit::jump_if_zero_i32(value))?;
                 } else {
-                    wasm_emit::jump_if_nonzero_i32(self, value)?;
+                    self.emit_emission(wasm_emit::jump_if_nonzero_i32(value))?;
                 }
             }
             Condition::Value(value) => {
                 if when && let Some((step, source, addend)) = self.take_counter_step(value) {
-                    wasm_emit::add_immediate_jump_if_nonzero(self, value, source, addend)?;
+                    self.emit_emission(wasm_emit::add_immediate_jump_if_nonzero(
+                        value,
+                        source,
+                        addend,
+                    ))?;
                     return Ok(step);
                 }
                 if when {
-                    wasm_emit::jump_if_nonzero_i32(self, value)?;
+                    self.emit_emission(wasm_emit::jump_if_nonzero_i32(value))?;
                 } else {
-                    wasm_emit::jump_if_zero_i32(self, value)?;
+                    self.emit_emission(wasm_emit::jump_if_zero_i32(value))?;
                 }
             }
         }
@@ -947,7 +951,7 @@ impl Lowering<'_> {
             .map_err(|e| Diagnostic::unsupported(self.name, e.to_string()))?;
         let cases = u32::try_from(labels.len() - 1)
             .map_err(|_| self.control_error("Wasm branch table too large"))?;
-        wasm_emit::branch_table(self, index, cases)?;
+        self.emit_emission(wasm_emit::branch_table(index, cases))?;
         let entries = labels
             .iter()
             .map(|_| self.jump())
@@ -969,7 +973,10 @@ impl Lowering<'_> {
         // Destinations are below sources, so ascending moves preserve overlap.
         for offset in 0..target.arity {
             if target.base != target.values {
-                wasm_emit::move_register(self, target.base + offset, target.values + offset)?;
+                self.emit_emission(wasm_emit::move_register(
+                    target.base + offset,
+                    target.values + offset,
+                ))?;
             }
         }
         let jump = self.jump()?;
@@ -987,7 +994,7 @@ impl Lowering<'_> {
 
     fn jump(&mut self) -> Result<usize, Diagnostic> {
         let pc = self.code.len();
-        wasm_emit::jump(self)?;
+        self.emit_emission(wasm_emit::jump())?;
         Ok(pc)
     }
 

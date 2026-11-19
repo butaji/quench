@@ -85,7 +85,7 @@ impl Lowering<'_> {
         if self.path == Reachability::Dead {
             return Ok(());
         }
-        wasm_emit::segment_drop(self, slot)?;
+        self.emit_emission(wasm_emit::segment_drop(slot))?;
         Ok(())
     }
 
@@ -118,7 +118,13 @@ impl Lowering<'_> {
                     self.depth = length + 1;
                     let table = self.table_binding(table)?;
                     let elements = self.instance_binding(usize::from(slot))?;
-                    wasm_emit::table_init(self, table, elements, length, output, input)?;
+                    self.emit_emission(wasm_emit::table_init(
+                        table,
+                        elements,
+                        length,
+                        output,
+                        input,
+                    ))?;
                     self.depth = depth;
                 }
             }

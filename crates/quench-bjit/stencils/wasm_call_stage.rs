@@ -123,27 +123,35 @@ impl WasmTable for TableStage {
 }
 
 impl WasmRoots for RootsStage {
+    /// The `NativeRoots` header, which the stage holds.
+    type Roots = *mut u8;
+
     #[inline(always)]
-    fn root_depth(&mut self) -> u64 {
-        unsafe { *(self.header.wrapping_add(self.depth_at) as *const usize) as u64 }
+    fn native_roots(&mut self) -> *mut u8 {
+        self.header
     }
 
     #[inline(always)]
-    fn root_capacity(&mut self) -> u64 {
-        unsafe { *(self.header.wrapping_add(self.capacity_at) as *const usize) as u64 }
+    fn root_depth(&mut self, header: *mut u8) -> u64 {
+        unsafe { *(header.wrapping_add(self.depth_at) as *const usize) as u64 }
     }
 
     #[inline(always)]
-    fn store_root(&mut self, depth: u64, index: usize, value: u64) {
+    fn root_capacity(&mut self, header: *mut u8) -> u64 {
+        unsafe { *(header.wrapping_add(self.capacity_at) as *const usize) as u64 }
+    }
+
+    #[inline(always)]
+    fn store_root(&mut self, header: *mut u8, depth: u64, index: usize, value: u64) {
         unsafe {
-            let slots = *(self.header.wrapping_add(self.slots_at) as *const *mut u64);
+            let slots = *(header.wrapping_add(self.slots_at) as *const *mut u64);
             *slots.add((depth as usize).wrapping_add(index)) = value;
         }
     }
 
     #[inline(always)]
-    fn set_root_depth(&mut self, depth: u64) {
-        unsafe { *(self.header.wrapping_add(self.depth_at) as *mut usize) = depth as usize }
+    fn set_root_depth(&mut self, header: *mut u8, depth: u64) {
+        unsafe { *(header.wrapping_add(self.depth_at) as *mut usize) = depth as usize }
     }
 }
 

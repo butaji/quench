@@ -169,9 +169,9 @@ impl super::Lowering<'_> {
             let depth = self.depth;
             self.depth = right + 1;
             let high = self.push()?;
-            wasm_emit::i64_binary(self, product_high, high, left, right)?;
-            wasm_emit::i64_binary(self, arithmetic, left, left, right)?;
-            wasm_emit::move_register(self, right, high)?;
+            self.emit_emission(wasm_emit::i64_binary(product_high, high, left, right))?;
+            self.emit_emission(wasm_emit::i64_binary(arithmetic, left, left, right))?;
+            self.emit_emission(wasm_emit::move_register(right, high))?;
             self.depth = depth;
         } else {
             let right_high = self.pop()?;
@@ -183,23 +183,27 @@ impl super::Lowering<'_> {
             let low = self.push()?;
             let carry = self.push()?;
             let high = self.push()?;
-            wasm_emit::i64_binary(self, arithmetic, low, left_low, right_low)?;
+            self.emit_emission(wasm_emit::i64_binary(arithmetic, low, left_low, right_low))?;
             let (compare_left, compare_right) = if arithmetic == Binary::Add {
                 (low, left_low)
             } else {
                 (left_low, right_low)
             };
-            wasm_emit::i64_binary(self, Binary::LessUnsigned, carry, compare_left, compare_right)?;
-            wasm_emit::scalar_convert(
-                self,
+            self.emit_emission(wasm_emit::i64_binary(
+                Binary::LessUnsigned,
+                carry,
+                compare_left,
+                compare_right,
+            ))?;
+            self.emit_emission(wasm_emit::scalar_convert(
                 carry,
                 carry,
                 super::conversion::ScalarConversionOperator::ExtendI32Unsigned,
-            )?;
-            wasm_emit::i64_binary(self, arithmetic, high, left_high, right_high)?;
-            wasm_emit::i64_binary(self, arithmetic, high, high, carry)?;
-            wasm_emit::move_register(self, left_low, low)?;
-            wasm_emit::move_register(self, left_high, high)?;
+            ))?;
+            self.emit_emission(wasm_emit::i64_binary(arithmetic, high, left_high, right_high))?;
+            self.emit_emission(wasm_emit::i64_binary(arithmetic, high, high, carry))?;
+            self.emit_emission(wasm_emit::move_register(left_low, low))?;
+            self.emit_emission(wasm_emit::move_register(left_high, high))?;
             self.depth = depth;
         }
         self.push()?;

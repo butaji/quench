@@ -50,7 +50,7 @@ use crate::staged::wasm_flow::Flow as WasmFlow;
 use crate::staged::wasm_instance::Instance;
 use crate::staged::wasm_operation::{Form, WasmOperation};
 use crate::staged::wasm_simd::Simd;
-use crate::staged::wasm_step::{Family, Step, opcodes};
+use crate::staged::wasm_step::{Family, Step, opcodes, wasm_lane_list};
 use crate::staged::wasm::Width;
 
 /// The arithmetic operators the lane decides per operator (`lane_operator`,
@@ -12264,11 +12264,7 @@ fn load_store_handler<H: Host>(load: Op, store: Op, acc: u8) -> Option<Handler> 
             }
         };
     }
-    copies!(
-        (WasmI32Load, WasmI32Store),
-        (WasmI32Load8U, WasmI32Store8),
-        (WasmI64Load, WasmI64Store)
-    )
+    wasm_lane_list!(copies => load_store_copies)
 }
 
 /// The fused handler for i32 load `op`, with address field `acc`, the
@@ -12288,13 +12284,7 @@ fn load_table_handler<H: Host>(op: Op, acc: u8, add: bool) -> Option<Handler> {
             }
         };
     }
-    loads!(
-        WasmI32Load,
-        WasmI32Load8S,
-        WasmI32Load8U,
-        WasmI32Load16S,
-        WasmI32Load16U
-    )
+    wasm_lane_list!(loads => i32_loads)
 }
 
 const fn add_load_handler<H: Host>(op: Op) -> Option<Handler> {
@@ -12306,22 +12296,7 @@ const fn add_load_handler<H: Host>(op: Op) -> Option<Handler> {
             }
         };
     }
-    loads!(
-        WasmI32Load,
-        WasmI64Load,
-        WasmF32Load,
-        WasmF64Load,
-        WasmI32Load8S,
-        WasmI32Load8U,
-        WasmI32Load16S,
-        WasmI32Load16U,
-        WasmI64Load8S,
-        WasmI64Load8U,
-        WasmI64Load16S,
-        WasmI64Load16U,
-        WasmI64Load32S,
-        WasmI64Load32U
-    )
+    wasm_lane_list!(loads => scalar_loads)
 }
 
 lane_handler! {
@@ -12525,13 +12500,7 @@ fn load_pair_binary_handler<H: Host>(load: Op, op: Op, first_left: bool) -> Opti
             }
         };
     }
-    pairs!(
-        (WasmI32Load, WasmI32Add),
-        (WasmI32Load, WasmI32Multiply),
-        (WasmI32Load16S, WasmI32Multiply),
-        (WasmI32Load16U, WasmI32Multiply),
-        (WasmI32Load8U, WasmI32Add)
-    )
+    wasm_lane_list!(pairs => load_operator_pairs)
 }
 
 lane_handler! {
@@ -12593,20 +12562,12 @@ fn offset_mask_jump_handler<H: Host>(first: Op, jump: Op, backward: bool, acc: u
     }
     macro_rules! tested {
         ($first:ident) => {
-            jumps!(
-                $first;
-                WasmJumpI32EqualImmediate,
-                WasmJumpI32NotEqualImmediate,
-                WasmJumpI32LessUnsignedImmediate,
-                WasmJumpI32LessEqualUnsignedImmediate,
-                WasmJumpI32GreaterUnsignedImmediate,
-                WasmJumpI32GreaterEqualUnsignedImmediate
-            )
+            wasm_lane_list!(jumps ($first ;) () => immediate_equal_jumps)
         };
     }
     match first {
-        op if op.is_wasm_i32_add_immediate() => tested!(WasmI32AddImmediate),
-        op if op.is_wasm_i32_subtract_immediate() => tested!(WasmI32SubtractImmediate),
+        op if op.is_wasm_i32_add_immediate() => wasm_lane_list!(tested => i32_add_immediate),
+        op if op.is_wasm_i32_subtract_immediate() => wasm_lane_list!(tested => i32_subtract_immediate),
         _ => None,
     }
 }
@@ -12664,7 +12625,7 @@ fn bit_field_then_handler<H: Host>(second: Op, acc: u8) -> Option<Handler> {
             }
         };
     }
-    seconds!(WasmI32ShiftRightUnsignedAndImmediate, WasmI32Multiply, WasmI32XorImmediate)
+    wasm_lane_list!(seconds => bit_field_seconds)
 }
 
 lane_handler! {
@@ -12716,15 +12677,15 @@ fn compare_jump_load_handler<H: Host>(jump: Op, load: Op, backward: bool, acc: u
     macro_rules! loads {
         ($jump:ident) => {
             match MemoryLoad::from_direct_op(load) {
-                Some(MemoryLoad::I32Load) => accs!($jump, WasmI32Load),
-                Some(MemoryLoad::I32Load8U) => accs!($jump, WasmI32Load8U),
+                Some(MemoryLoad::I32Load) => wasm_lane_list!(accs ($jump ,) () => i32_load),
+                Some(MemoryLoad::I32Load8U) => wasm_lane_list!(accs ($jump ,) () => i32_load_u8),
                 _ => None,
             }
         };
     }
     match I32BinaryOperator::from_immediate_jump_op(jump) {
-        Some(I32BinaryOperator::Equal) => loads!(WasmJumpI32EqualImmediate),
-        Some(I32BinaryOperator::NotEqual) => loads!(WasmJumpI32NotEqualImmediate),
+        Some(I32BinaryOperator::Equal) => wasm_lane_list!(loads => equal_immediate_jump),
+        Some(I32BinaryOperator::NotEqual) => wasm_lane_list!(loads => not_equal_immediate_jump),
         _ => None,
     }
 }
@@ -12788,17 +12749,17 @@ fn add_pair_handler<H: Host>(first: Op, second: Op, backward: bool, acc: u8) -> 
     macro_rules! seconds {
         ($first:ident) => {
             match (second, backward) {
-                (opcodes::I32_ADD, _) => accs!($first, WasmI32Add, false),
-                (opcodes::I32_ADD_IMMEDIATE, _) => accs!($first, WasmI32AddImmediate, false),
-                (opcodes::I32_ADD_IMMEDIATE_JUMP_NON_ZERO, false) => accs!($first, WasmI32AddImmediateJumpNonZero, false),
-                (opcodes::I32_ADD_IMMEDIATE_JUMP_NON_ZERO, true) => accs!($first, WasmI32AddImmediateJumpNonZero, true),
+                (opcodes::I32_ADD, _) => wasm_lane_list!(accs ($first ,) (, false) => i32_add),
+                (opcodes::I32_ADD_IMMEDIATE, _) => wasm_lane_list!(accs ($first ,) (, false) => i32_add_immediate),
+                (opcodes::I32_ADD_IMMEDIATE_JUMP_NON_ZERO, false) => wasm_lane_list!(accs ($first ,) (, false) => i32_add_immediate_jump_non_zero),
+                (opcodes::I32_ADD_IMMEDIATE_JUMP_NON_ZERO, true) => wasm_lane_list!(accs ($first ,) (, true) => i32_add_immediate_jump_non_zero),
                 _ => None,
             }
         };
     }
     match first {
-        opcodes::I32_ADD => seconds!(WasmI32Add),
-        opcodes::I32_ADD_IMMEDIATE => seconds!(WasmI32AddImmediate),
+        opcodes::I32_ADD => wasm_lane_list!(seconds => i32_add),
+        opcodes::I32_ADD_IMMEDIATE => wasm_lane_list!(seconds => i32_add_immediate),
         _ => None,
     }
 }
@@ -12856,12 +12817,12 @@ fn immediate_compare_jump_handler<H: Host>(first: Op, jump: Op, backward: bool) 
     }
     macro_rules! tested {
         ($first:ident) => {
-            jumps!($first; WasmJumpI32Equal, WasmJumpI32NotEqual)
+            wasm_lane_list!(jumps ($first ;) () => register_equal_jumps)
         };
     }
     // Masked tag tests; each further pairing is another family of handler copies.
     match first {
-        opcodes::I32_AND_IMMEDIATE => tested!(WasmI32AndImmediate),
+        opcodes::I32_AND_IMMEDIATE => wasm_lane_list!(tested => i32_and_immediate),
         _ => None,
     }
 }
@@ -12929,25 +12890,8 @@ fn operator_constant_select_handler<H: Host>(op: Op, acc: u8) -> Option<Handler>
             }
         };
     }
-    operators!(
-        WasmI32GreaterSigned,
-        WasmI32GreaterUnsigned,
-        WasmI32LessSigned,
-        WasmI32LessUnsigned,
-        WasmI32Equal,
-        WasmI32NotEqual,
-        WasmI32GreaterEqualSigned,
-        WasmI32LessEqualSigned
-    )
+    wasm_lane_list!(operators => operator_constant_selects)
 }
-
-/// The i32 loads the load fusions below serve.
-macro_rules! i32_loads {
-    ($m:ident) => {
-        $m!(WasmI32Load, WasmI32Load8S, WasmI32Load8U, WasmI32Load16S, WasmI32Load16U)
-    };
-}
-
 
 /// The pointer-chase handler whose second load is `op`.
 fn load_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
@@ -12962,7 +12906,7 @@ fn load_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
             }
         };
     }
-    i32_loads!(loads)
+    wasm_lane_list!(loads => i32_loads)
 }
 
 /// The load-and-test handler for i32 load `op` with address field `acc`, jumping on zero
@@ -12985,7 +12929,7 @@ fn load_jump_handler<H: Host>(op: Op, acc: u8, zero: bool, backward: bool) -> Op
             }
         };
     }
-    i32_loads!(loads)
+    wasm_lane_list!(loads => i32_loads)
 }
 
 /// The move-then-load handler for i32 load `op`, the move reading through field `acc`.
@@ -13001,7 +12945,7 @@ fn move_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
             }
         };
     }
-    i32_loads!(loads)
+    wasm_lane_list!(loads => i32_loads)
 }
 
 lane_handler! {
@@ -13055,7 +12999,7 @@ fn store_move_jump_handler<H: Host>(op: Op, zero: bool, backward: bool) -> Optio
             }
         };
     }
-    stores!(WasmI32Store, WasmI32Store8, WasmI32Store16)
+    wasm_lane_list!(stores => i32_stores)
 }
 
 /// The store-then-move handler for direct store `op` reading through field `acc`.
@@ -13072,7 +13016,7 @@ fn store_move_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
             }
         };
     }
-    stores!(WasmI32Store, WasmI32Store8, WasmI32Store16)
+    wasm_lane_list!(stores => i32_stores)
 }
 
 /// The scalar direct store `store` writes for slot value `value`: registers
@@ -13174,21 +13118,7 @@ fn i32_update_handler<H: Host>(op: Op, left: bool, acc: u8) -> Option<Handler> {
             }
         };
     }
-    updates!(
-        WasmI32Add,
-        WasmI32Subtract,
-        WasmI32Multiply,
-        WasmI32And,
-        WasmI32Or,
-        WasmI32Xor,
-        WasmI32ShiftLeft,
-        WasmI32ShiftRightSigned,
-        WasmI32ShiftRightUnsigned,
-        WasmI32Equal,
-        WasmI32NotEqual,
-        WasmI32LessSigned,
-        WasmI32LessUnsigned
-    )
+    wasm_lane_list!(updates => i32_updates)
 }
 
 lane_handler! {
@@ -13230,17 +13160,7 @@ const fn constant_store_handler<H: Host>(op: Op) -> Option<Handler> {
             }
         };
     }
-    stores!(
-        WasmI32Store,
-        WasmI64Store,
-        WasmF32Store,
-        WasmF64Store,
-        WasmI32Store8,
-        WasmI32Store16,
-        WasmI64Store8,
-        WasmI64Store16,
-        WasmI64Store32
-    )
+    wasm_lane_list!(stores => scalar_stores)
 }
 
 /// Continue in `frame` at `pc`: the record the frame's function resumes at.

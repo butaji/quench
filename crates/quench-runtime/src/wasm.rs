@@ -5,6 +5,7 @@ use crate::bytecode::{
     AtomTable, Constant, DispatchClass, Function, ImmediateLayout, Instr, Op, ProgramKind,
     Register, ResidualProgram, WideInstruction,
 };
+use crate::staged::wasm_emit::Emission;
 use crate::{Diagnostic, Engine};
 use std::rc::Rc;
 use wasmparser::{BinaryReaderError, Operator};
@@ -1709,6 +1710,17 @@ impl Lowering<'_> {
         };
         self.code.push(instruction);
         Ok(())
+    }
+
+    /// Emits `instruction` through the lowering's one instruction buffer (`Lowering::emit`).
+    fn emit_emission(&mut self, instruction: Emission) -> Result<(), Diagnostic> {
+        self.emit(
+            instruction.op,
+            instruction.a,
+            instruction.b,
+            instruction.c,
+            instruction.imm,
+        )
     }
 
     fn push(&mut self) -> Result<Register, Diagnostic> {

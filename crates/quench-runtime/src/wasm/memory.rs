@@ -2,7 +2,7 @@
 
 use super::{WasmTrap, WasmType, WasmValue};
 use crate::bytecode::Register;
-use crate::staged::wasm_emit_data;
+use crate::staged::wasm_emit;
 use std::ops::Range;
 
 /// One linear memory's backing store. The memory type decides the variant:
@@ -570,7 +570,7 @@ impl super::Lowering<'_> {
         slot: usize,
     ) -> Result<crate::bytecode::Register, crate::Diagnostic> {
         let register = self.push()?;
-        self.emit_emission(wasm_emit_data::instance_binding(register, slot as u32))?;
+        self.emit_emission(wasm_emit::instance_binding(register, slot as u32))?;
         Ok(register)
     }
 
@@ -643,7 +643,7 @@ impl super::Lowering<'_> {
         let memory = self.memory_binding(arg.memory)?;
         let effective = self.push()?;
         let offset = self.scalar_constant(WasmValue::I64(arg.offset as i64))?;
-        self.emit_emission(wasm_emit_data::memory_address(effective, address, memory, offset))?;
+        self.emit_emission(wasm_emit::memory_address(effective, address, memory, offset))?;
         let operands = AddressedAccess { direction, selector, value, address, memory, effective };
         self.emit_addressed_access(operands, lane)?;
         self.depth = depth;
@@ -663,8 +663,8 @@ impl super::Lowering<'_> {
         let Some((lane_op, lane)) = lane else {
             let target = value.unwrap_or(address);
             let emission = match direction {
-                Direction::Load => wasm_emit_data::memory_load(target, memory, effective, selector),
-                Direction::Store => wasm_emit_data::memory_store(target, memory, effective, selector),
+                Direction::Load => wasm_emit::memory_load(target, memory, effective, selector),
+                Direction::Store => wasm_emit::memory_store(target, memory, effective, selector),
             };
             return self.emit_emission(emission);
         };
@@ -682,12 +682,12 @@ impl super::Lowering<'_> {
         let scalar = self.push()?;
         let emissions = match lane.direction {
             Direction::Load => [
-                wasm_emit_data::memory_load(scalar, lane.memory, lane.effective, lane.selector),
-                wasm_emit_data::lane_replace(lane.address, lane.vector, scalar, lane_selector),
+                wasm_emit::memory_load(scalar, lane.memory, lane.effective, lane.selector),
+                wasm_emit::lane_replace(lane.address, lane.vector, scalar, lane_selector),
             ],
             Direction::Store => [
-                wasm_emit_data::lane_extract(scalar, lane.vector, lane_selector),
-                wasm_emit_data::memory_store(scalar, lane.memory, lane.effective, lane.selector),
+                wasm_emit::lane_extract(scalar, lane.vector, lane_selector),
+                wasm_emit::memory_store(scalar, lane.memory, lane.effective, lane.selector),
             ],
         };
         for emission in emissions {
@@ -716,8 +716,8 @@ impl super::Lowering<'_> {
         let depth = self.depth;
         let memory = self.memory_binding(index)?;
         let emission = match delta {
-            Some(delta) => wasm_emit_data::memory_grow(result, memory, delta),
-            None => wasm_emit_data::memory_size(result, memory),
+            Some(delta) => wasm_emit::memory_grow(result, memory, delta),
+            None => wasm_emit::memory_size(result, memory),
         };
         self.emit_emission(emission)?;
         self.depth = depth;
@@ -784,11 +784,11 @@ impl super::Lowering<'_> {
         let memory = self.memory_binding(destination)?;
         let source = self.bulk_source(bulk, source, input)?;
         let emission = match bulk {
-            BulkOperator::Init => wasm_emit_data::memory_init(memory, source, length, output, input),
+            BulkOperator::Init => wasm_emit::memory_init(memory, source, length, output, input),
             BulkOperator::Transfer => {
-                wasm_emit_data::memory_copy(memory, source, length, output, input)
+                wasm_emit::memory_copy(memory, source, length, output, input)
             }
-            BulkOperator::Fill => wasm_emit_data::memory_fill(memory, input, length, output),
+            BulkOperator::Fill => wasm_emit::memory_fill(memory, input, length, output),
         };
         self.emit_emission(emission)?;
         self.depth = depth;
