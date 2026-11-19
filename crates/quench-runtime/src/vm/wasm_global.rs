@@ -18,22 +18,25 @@ impl<H: Host> Vm<H> {
         &mut self,
         f: usize,
         i: WideInstruction,
+        step: Instance,
     ) -> Result<(), JsError> {
-        match Instance::of(i.op()) {
-            Some(Instance::Binding) => {
+        match step {
+            Instance::Binding => {
                 let value = self
                     .wasm_binding(self.frames[f].env, i.imm() as usize)
                     .ok_or_else(|| JsError::validation("invalid Wasm instance binding".into()))?;
                 self.write(f, i.result_register(), value);
             }
-            Some(Instance::GlobalGet) => {
+            Instance::GlobalGet => {
                 let value = self.wasm_global_load(self.read(f, i.register_b()))?;
                 self.write(f, i.result_register(), value);
             }
-            Some(Instance::GlobalSet) => {
+            Instance::GlobalSet => {
                 self.wasm_global_store(self.read(f, i.register_b()), self.read(f, i.register_a()))?;
             }
-            _ => unreachable!("step_wasm routes the instance opcodes"),
+            Instance::Move | Instance::Constant | Instance::Fill => {
+                unreachable!("step_wasm routes the other instance steps")
+            }
         }
         Ok(())
     }

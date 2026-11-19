@@ -14,7 +14,6 @@ use super::wasm_machine::{ConcreteBytes, ConcreteMemory};
 use crate::bytecode::{Class, Op, WideInstruction};
 #[cfg(not(stencil_build))]
 use crate::wasm::V128_BYTES;
-#[cfg(not(stencil_build))]
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::integer::I64BinaryOperator as Binary;
 #[cfg(not(stencil_build))]
@@ -44,6 +43,22 @@ impl Access {
             Some(width) => ConcreteWasm.constant(width, value),
             None => raw,
         }
+    }
+
+    /// The value of this scalar access at `address` of `bytes`: out of bounds traps.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub(crate) fn read(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
+        let word = load(&mut ConcreteBytes { memory: bytes }, self, address, 0, false)?;
+        Ok(WasmValue::from_bits(self.ty, word))
+    }
+
+    /// Writes `value` of this scalar access at `address` of `bytes`: out of bounds traps before
+    /// any byte changes.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
+    pub(crate) fn write(self, bytes: &mut [u8], address: u64, value: WasmValue) -> Result<(), WasmTrap> {
+        store(&mut ConcreteMemory { memory: bytes }, self, address, 0, value.word(), false)
     }
 
     /// The access a scalar load makes; a vector load has none. Always inlined: a handler's
@@ -269,7 +284,6 @@ pub(crate) fn effective_address<S: WasmMemory>(
 
 /// The length in pages of `1 << page_bits` bytes each, as an `I64` word: `page_bits` is the
 /// memory type's page size (`page_size_log2`), 0 for one-byte pages.
-#[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn pages<S: WasmMemory>(stage: &mut S, page_bits: u32) -> S::Word {
     let length = stage.memory_length();
@@ -278,7 +292,6 @@ pub(crate) fn pages<S: WasmMemory>(stage: &mut S, page_bits: u32) -> S::Word {
 }
 
 /// `memory.size`: the length in pages of `1 << page_bits` bytes, an `I32` word.
-#[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn size<S: WasmMemory>(stage: &mut S, page_bits: u32) -> S::Word {
     let count = pages(stage, page_bits);
@@ -409,9 +422,7 @@ impl MemoryLoad {
             // SAFETY: the range is `width` bytes inside `bytes`.
             return Ok(unsafe { self.read_vector_at(bytes.as_ptr().add(range.start)) });
         };
-        let mut stage = ConcreteBytes { memory: bytes };
-        let word = load(&mut stage, access, address, 0, false)?;
-        Ok(WasmValue::from_bits(access.ty, word))
+        access.read(bytes, address)
     }
 
     /// The value at `at`, unchecked.
@@ -448,8 +459,7 @@ impl MemoryStore {
             unsafe { self.write_vector_at(bytes.as_mut_ptr().add(range.start), value) };
             return Ok(());
         }
-        let mut stage = ConcreteMemory { memory: bytes };
-        store(&mut stage, Access::of_store(self), address, 0, value.word(), false)
+        Access::of_store(self).write(bytes, address, value)
     }
 
     /// Write `value` at `at`, unchecked.

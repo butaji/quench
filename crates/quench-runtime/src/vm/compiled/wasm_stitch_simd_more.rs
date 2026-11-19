@@ -1,5 +1,5 @@
 //! The b-jit's vector steps beyond `wasm_stitch_simd.rs`: the operators and the splatting, extending
-//! and zeroing vector loads that `wasm_rows_simd_more.rs` runs (kinds `SIMD_MORE_*`, 60..=69). A row
+//! and zeroing vector loads that `wasm_rows_simd_more.rs` runs (kinds `SIMD_MORE_*`, 36..=45). A row
 //! is planned as `wasm_stitch_simd.rs` plans its vector rows: a vector operand's hole is its register's
 //! low-word offset (`vector_slot`), a scalar operand's its frame slot (`slot`).
 //!

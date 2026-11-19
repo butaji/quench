@@ -45,3 +45,4 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/wasm_float.rs"] pub(crate) mod wasm_float;
 #[path = "../../quench-runtime/src/staged/wasm_concrete.rs"] pub(crate) mod wasm_concrete;
 #[path = "../../quench-runtime/src/staged/wasm_memory.rs"] pub(crate) mod wasm_memory;
+#[path = "../../quench-runtime/src/staged/wasm_instance.rs"] #[allow(dead_code)] pub(crate) mod wasm_instance;

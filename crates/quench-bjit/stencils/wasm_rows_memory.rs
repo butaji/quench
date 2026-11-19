@@ -8,8 +8,8 @@
 //! - `memory.fill`: destination in `HOLE_A`, byte in `HOLE_B`, length in `HOLE_FOURTH`.
 //! - `memory.copy`: destination in `HOLE_A`, source in `HOLE_B`, length in `HOLE_FOURTH`.
 //!
-//! Only memory index 0, the frame's memory, has rows: the base and length are the frame header's
-//! words (`FRAME_HEADER_WORDS`), as `call()` reads them. A memory of any other index has no row,
+//! Only memory index 0, the frame's memory, has rows: the base and length are the pins
+//! `s.p[1]` and `s.p[2]`, as the load and store rows read them. A memory of any other index has no row,
 //! and `bulk` in `wasm_stitch_memory.rs` plans none for one.
 //!
 //! The rows are built with the rest of the library (`wasm_library.rs`), so each has its symbol
@@ -17,17 +17,10 @@
 
 use super::{StencilMemory, read, trap, write};
 use crate::staged::wasm_concrete::scalar_stage;
-use crate::staged::wasm_memory::{Access, WasmMemory, WasmMemoryWrite, copy, fill};
+use crate::staged::wasm_memory::{Access, WasmMemory, WasmMemoryWrite, copy, fill, size};
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S};
 
-/// The frame header's memory base and length words (`call()`), after the result pointer.
-const BASE_WORD: usize = 1;
-const LENGTH_WORD: usize = 2;
-const _: () = assert!(crate::wasm_codes::FRAME_HEADER_WORDS as usize > LENGTH_WORD);
-
-/// The log2 of a Wasm page, `crate::wasm::memory::WASM_PAGE_BITS` (16). Written out because the
-/// stencil build does not compile `crate::wasm::memory`.
-const PAGE_BITS: u32 = 16;
+use crate::wasm_codes::WASM_PAGE_BITS;
 
 /// The frame's memory for the bulk rows: `StencilMemory`'s base and length, with the bulk movers
 /// it leaves out. Its accesses delegate to `StencilMemory`.
@@ -123,26 +116,19 @@ unsafe fn copy_bytes(source: *const u8, destination: *mut u8, length: usize) {
     }
 }
 
-/// The frame's memory, its base and length read from the header words as `call()` reads them.
+/// The frame's memory over the base and length pins (`s.p[1]`, `s.p[2]`), as the load and store
+/// rows read them: the entry loads them and `reload_memory` keeps them current after a call.
 #[inline(always)]
-unsafe fn frame_memory(s: &S) -> BulkMemory {
-    let header = s.frame as *const usize;
-    // SAFETY: the header's words are the entry's and live for the row.
-    unsafe {
-        BulkMemory {
-            base: *header.add(BASE_WORD) as *mut u8,
-            length: *header.add(LENGTH_WORD) as u64,
-        }
-    }
+fn pinned_memory(s: &S) -> BulkMemory {
+    BulkMemory { base: s.p[1] as *mut u8, length: s.p[2] as u64 }
 }
 
-/// `D = memory.size`: the length in pages, an i32 word (zero-extended, as every i32 register).
+/// `D = memory.size`: the staged `size` rule, the length in pages as an i32 word.
 #[inline(always)]
 pub(crate) unsafe fn memory_size(s: S) -> Out {
-    unsafe {
-        let pages = frame_memory(&s).length >> PAGE_BITS;
-        write::<0>(&s, u64::from(pages as u32));
-    }
+    let mut memory = pinned_memory(&s);
+    let pages = size(&mut memory, WASM_PAGE_BITS);
+    unsafe { write::<0>(&s, pages) };
     Out::Next(s)
 }
 
@@ -150,7 +136,7 @@ pub(crate) unsafe fn memory_size(s: S) -> Out {
 #[inline(always)]
 pub(crate) unsafe fn memory_fill(s: S) -> Out {
     unsafe {
-        let mut memory = frame_memory(&s);
+        let mut memory = pinned_memory(&s);
         match fill(&mut memory, read::<HOLE_A>(&s), read::<HOLE_B>(&s), read::<HOLE_FOURTH>(&s)) {
             Ok(()) => Out::Next(s),
             Err(error) => trap(s, error),
@@ -163,7 +149,7 @@ pub(crate) unsafe fn memory_fill(s: S) -> Out {
 #[inline(always)]
 pub(crate) unsafe fn memory_copy(s: S) -> Out {
     unsafe {
-        let mut memory = frame_memory(&s);
+        let mut memory = pinned_memory(&s);
         match copy(&mut memory, read::<HOLE_A>(&s), read::<HOLE_B>(&s), read::<HOLE_FOURTH>(&s)) {
             Ok(()) => Out::Next(s),
             Err(error) => trap(s, error),

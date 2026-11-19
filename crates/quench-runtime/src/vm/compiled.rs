@@ -118,6 +118,8 @@ mod wasm_simd_stage;
 // `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod wasm_stitch;
+/// The b-jit's Wasm codes equal the runtime's values (compile-time checks only).
+mod wasm_codes_check;
 #[cfg(target_arch = "x86_64")]
 mod wasm_call_vm;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};

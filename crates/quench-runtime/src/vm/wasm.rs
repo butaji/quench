@@ -929,17 +929,19 @@ impl<H: Host> Vm<H> {
         Ok(u64::from(address) + u64::from(i.imm()))
     }
 
+    /// A scalar load of `access` (its width, its type and its sign) at the address of the
+    /// instruction: the memory in `b`, the 32-bit address in `c`, the static offset in `imm`.
+    /// Out of bounds traps before any value is written.
     #[inline(always)]
     pub(super) fn wasm_direct_load(
         &mut self,
         f: usize,
         i: crate::bytecode::WideInstruction,
+        access: crate::staged::wasm_memory::Access,
     ) -> Result<(), JsError> {
-        let operator = crate::wasm::memory::MemoryLoad::from_direct_op(i.op())
-            .expect("validated direct load opcode");
         let address = self.wasm_direct_address(f, i)?;
         let memory = self.read(f, i.register_b());
-        let value = operator
+        let value = access
             .read(&self.wasm_memory_bytes(memory)?, address)
             .map_err(JsError::wasm_trap_error)?;
         let value = self.encode_wasm_value(value);
@@ -947,17 +949,21 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    /// A scalar store of `access` of the value in `a` at the address of the instruction. The
+    /// value decodes to the access's type; out of bounds traps before any byte changes.
     #[inline(always)]
     pub(super) fn wasm_direct_store(
         &mut self,
         f: usize,
         i: crate::bytecode::WideInstruction,
+        access: crate::staged::wasm_memory::Access,
     ) -> Result<(), JsError> {
-        let operator = crate::wasm::memory::MemoryStore::from_direct_op(i.op())
-            .expect("validated direct store opcode");
         let address = self.wasm_direct_address(f, i)?;
         let memory = self.read(f, i.register_b());
-        self.wasm_memory_store(memory, address, operator, self.read(f, i.register_a()))
+        let value = self.decode_wasm_value(self.read(f, i.register_a()), access.ty)?;
+        access
+            .write(&mut self.wasm_memory_mut(memory)?.0, address, value)
+            .map_err(JsError::wasm_trap_error)
     }
 
     pub(super) fn wasm_memory_store(
