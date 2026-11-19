@@ -6,10 +6,10 @@ use super::*;
 /// One entry of a method site's chain: the read of the method through the Held row (its stencil and holes), the callee
 /// value it answers (the direct row that follows compares it by identity), and the holder whose slot it reads.
 pub(in crate::vm::compiled) struct ChainRead {
-    pub(super) callee: u64,
+    pub(in crate::vm::compiled) callee: u64,
     pub(in crate::vm::compiled) holder: u32,
-    pub(super) stencil: &'static Stencil,
-    pub(super) holes: [u64; HOLES],
+    pub(in crate::vm::compiled) stencil: &'static Stencil,
+    pub(in crate::vm::compiled) holes: [u64; HOLES],
 }
 
 /// The chain of a method call whose site has prototype-held entries (`CallPlan::chain`) that pair with a callee the site
