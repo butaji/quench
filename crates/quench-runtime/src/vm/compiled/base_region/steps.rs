@@ -57,6 +57,7 @@ use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape,
 use super::callees::chains;
 use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::{InstructionField, Op};
+use crate::staged::{Allocation, InlineEmpty};
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
@@ -161,9 +162,21 @@ fn typeof_arm(operator: u32) -> Option<Heap> {
     Some(Heap::TypeofIs { index: u8::try_from(index).ok()?, negated })
 }
 
+/// The heap row that is the fast arm of an empty allocation (`Allocation::inline_empty`): an empty object or a
+/// zero-length array, made from the kind's cursor and template (`EMPTY_OBJECT_ROW`, `EMPTY_ARRAY_ROW`). Its
+/// helper step is the slow arm, which the row leaves into where the cursor's run is spent or the template is
+/// not captured. An empty allocation decodes from its instruction alone, so no definitions follow it.
+fn allocation_arm(instruction: WideInstruction) -> Option<Heap> {
+    let (_, allocation) = Allocation::decode(instruction, &[])?;
+    Some(match allocation.inline_empty()? {
+        InlineEmpty::Object => Heap::EmptyObject,
+        InlineEmpty::Array => Heap::EmptyArray,
+    })
+}
+
 /// The heap row that is the fast arm of `instruction`, where its meaning has one that a register's
 /// word (`staged::iteration`, `staged::value`) or the backing's own layout words
-/// (`elements::append_in_room`) decide.
+/// (`elements::append_in_room`) decide, or it is an empty allocation (`allocation_arm`).
 fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
     match instruction.op().class() {
         Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
@@ -172,7 +185,7 @@ fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
         Class::AppendArray => appends_one(instruction).then_some(Heap::Append),
         Class::ForInNext => Some(Heap::ForIn),
         Class::Unary => typeof_arm(instruction.unary_operator()),
-        _ => None,
+        _ => allocation_arm(instruction),
     }
 }
 
@@ -191,6 +204,8 @@ fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, O
         Heap::Add { .. } => adds::operands(instruction),
         Heap::Name { .. } => (Some(Source::Register(instruction.register_a())), None),
         Heap::Append => (instruction.optional_register_b().map(Source::Register), Some(instruction.register_a())),
+        // An empty allocation reads no register: its destination is the row's only hole.
+        Heap::EmptyObject | Heap::EmptyArray => (None, None),
         _ => (Some(Source::Register(instruction.register_b())), None),
     }
 }

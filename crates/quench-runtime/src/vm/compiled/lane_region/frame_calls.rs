@@ -6,7 +6,7 @@ use super::super::{emit_js_guard, emit_js_payload_word, emit_js_record_base, emi
     JsStepDispatch, LaneHelper};
 use super::{BindingTime, Fact, Proof, Projection, RegisterFact, Representation, Type};
 use crate::bytecode::{Register, RegisterWindow};
-use crate::staged::Allocation;
+use crate::staged::{Allocation, InlineEmpty};
 use cranelift_codegen::ir;
 use crate::Value;
 use cranelift_codegen::ir::types;
@@ -115,12 +115,13 @@ fn window_arguments(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window:
 /// DELETED answer leaves at the proof's miss edge.
 pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     allocation: Allocation, proof: EmitProof) -> Option<ir::Value> {
-    if let Allocation::Empty = allocation {
-        return allocate_template(frame, stage, destination, EMPTY_OBJECT, LaneHelper::NewObject, &[], proof);
-    }
-    if let Allocation::Array { length: 0 } = allocation {
-        let arguments = [stage.raw_const(Lane::I64, 0), stage.raw_const(Lane::I64, 0)];
-        return allocate_template(frame, stage, destination, EMPTY_ARRAY, LaneHelper::NewArray, &arguments, proof);
+    match allocation.inline_empty() {
+        Some(InlineEmpty::Object) => return allocate_template(frame, stage, destination, EMPTY_OBJECT, LaneHelper::NewObject, &[], proof),
+        Some(InlineEmpty::Array) => {
+            let arguments = [stage.raw_const(Lane::I64, 0), stage.raw_const(Lane::I64, 0)];
+            return allocate_template(frame, stage, destination, EMPTY_ARRAY, LaneHelper::NewArray, &arguments, proof);
+        }
+        None => {}
     }
     let (helper, arguments) = match allocation {
         Allocation::Empty | Allocation::Array { length: 0 } => unreachable!("an empty allocation is inline"),
