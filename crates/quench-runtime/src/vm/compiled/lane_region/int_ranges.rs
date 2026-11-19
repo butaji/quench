@@ -38,17 +38,24 @@ pub(super) struct IntRanges {
     non_negative_dividend: CompoundBitSet,
     /// The remainders whose divisor the point before them proves no zero, so no zero-divisor test.
     nonzero_divisor: CompoundBitSet,
+    /// The element stores whose value the point before them holds a Number of (`Point::numeric_store`).
+    numeric_stores: CompoundBitSet,
 }
 
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
             versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions),
-            non_negative_dividend: CompoundBitSet::with_capacity(instructions), nonzero_divisor: CompoundBitSet::with_capacity(instructions) }
+            non_negative_dividend: CompoundBitSet::with_capacity(instructions), nonzero_divisor: CompoundBitSet::with_capacity(instructions),
+            numeric_stores: CompoundBitSet::with_capacity(instructions) }
     }
 
     /// Whether the remainder at `pc` has a dividend no negative: its `-0` is no zero it can make.
     pub(super) fn non_negative_dividend(&self, pc: usize) -> bool { self.non_negative_dividend.contains(pc) }
+
+    /// Whether the element store at `pc` stores a Number, by the facts' type of its value at `pc` (a
+    /// point the analysis never visits proves none).
+    pub(super) fn numeric_store(&self, pc: usize) -> bool { self.numeric_stores.contains(pc) }
 
     /// Whether the remainder at `pc` has a divisor no zero: its zero-divisor test is redundant.
     pub(super) fn nonzero_divisor(&self, pc: usize) -> bool { self.nonzero_divisor.contains(pc) }
@@ -190,6 +197,7 @@ impl Lowering<'_, '_> {
             proved.index_ranges.push((pc, range));
             if self.hoistable(pc, instruction, point) { seen.hoistable.push(pc); }
         }
+        if point.numeric_store(instruction) { proved.numeric_stores.insert(pc); } else { proved.numeric_stores.remove(pc); }
         if point.zero_free(&self.program.constants, instruction) { proved.zero_free.insert(pc); }
         if let Some((dividend, divisor)) = self.remainder_ranges(point, instruction) {
             if dividend.min >= 0 { proved.non_negative_dividend.insert(pc); }

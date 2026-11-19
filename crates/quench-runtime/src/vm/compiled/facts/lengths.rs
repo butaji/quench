@@ -248,6 +248,13 @@ pub(in crate::vm::compiled) enum IndexProof {
 }
 
 impl Point {
+    /// Whether `instruction` is an element store whose value the point holds a Number of: a store that
+    /// runs no guest code, where its view is typed (`Model::typed`).
+    pub(in crate::vm::compiled) fn numeric_store(&self, instruction: WideInstruction) -> bool {
+        matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementWrite { value, .. })
+            if self.types.get(usize::from(value)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)))
+    }
+
     /// The register `register` is known below the value of, if any.
     pub(in crate::vm::compiled) fn under_of(&self, register: Register) -> Option<Register> {
         self.relations.under.get(usize::from(register)).copied().flatten()

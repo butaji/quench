@@ -5,7 +5,6 @@ use super::lengths::Relations;
 use super::ranges::{self, Edge};
 use super::{hold_contracts, join_types, meet_relations, set, transfer_observed, Contract, Facts, Flow, Observed, INLINE_ANALYSIS_ITEMS};
 use crate::bytecode::{Class, Constant, ControlFlowLayout, Register, ResidualProgram, WideInstruction};
-use crate::staged::Operation;
 use crate::typed_ir::{IntRange, Type, WIDENING_ROUNDS};
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::cell::{Cell, RefCell};
@@ -156,8 +155,7 @@ fn step(point: &mut Point, text: &Text<'_>, seeds: Seeds<'_>, pc: usize) -> Flow
     if let Some(model) = seeds.model {
         model.enter_frame(pc, point);
         // A store of a Number runs no guest code (its value and key convert without a call).
-        let numeric_store = matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementWrite { value, .. })
-            if point.types.get(usize::from(value)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)));
+        let numeric_store = point.numeric_store(instruction);
         let lookup = ranges::lookup(&point.types, text.constants);
         point.relations.step(&model, pc, instruction, text.written, &lookup, numeric_store);
     }

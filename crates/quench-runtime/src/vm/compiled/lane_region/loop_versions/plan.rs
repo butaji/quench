@@ -139,7 +139,7 @@ impl Lowering<'_, '_> {
         let array = self.loop_array(shape.pc, Some(shape.array)).filter(|array| matches!(array.source, ArraySource::Register(_)))?;
         let base = match (shape.base, shape.add) { (Some(operand), Some(add)) => Some(self.term(nest, add, operand, true)?), _ => None };
         let scale = match shape.scale { Some((operand, multiply)) => Some(self.term(nest, multiply, operand, false)?), None => None };
-        let header = self.checking_loop((nest, model), shape, array, [base, scale])?;
+        let header = self.checking_loop((nest, model, ranges), shape, array, [base, scale])?;
         let induction = shape.scale.zip(scale)
             .and_then(|((_, multiply), scale)| self.induction(nest, ranges, shape.counter, (multiply, scale)));
         Some(Resolved { version: Version { pc: shape.pc, header, reach: Reach { bound: shape.bound, low: shape.low, base, scale } },
@@ -163,14 +163,15 @@ impl Lowering<'_, '_> {
     /// that hoisted its terms, that writes no register it reads, holds each of them an int32 and
     /// has no instruction that may change a length: the array's length on its entering edge is its
     /// length at the access.
-    fn checking_loop(&self, (nest, model): (Nest<'_>, &Model<'_>), shape: &Shape, array: LoopArray, terms: [Option<Term>; 2]) -> Option<usize> {
+    fn checking_loop(&self, (nest, model, ranges): (Nest<'_>, &Model<'_>, &IntRanges), shape: &Shape, array: LoopArray,
+        terms: [Option<Term>; 2]) -> Option<usize> {
         let terms = terms.into_iter().flatten();
         let registers: Vec<Register> = std::iter::once(shape.bound).chain(terms.clone().filter_map(Term::register)).collect();
         let floor = terms.filter_map(Term::hoisted).filter_map(|pc| nest.hoists.iter().find(|hoist| hoist.pc == pc))
             .map(|hoist| hoist.header).fold(array.header, usize::max);
         nest.around(shape.pc).into_iter().find(|&span| span.0 >= floor && !self.generic.contains(&span.0)
             && nest.unwritten(span, &registers) && registers.iter().all(|register| self.int32_at(span.0, *register))
-            && !(span.0..=span.1).any(|at| model.disturbs_lengths(at, nest.instructions[at], false)))
+            && !(span.0..=span.1).any(|at| model.disturbs_lengths(at, nest.instructions[at], ranges.numeric_store(at))))
             .map(|(header, _)| header)
     }
 
