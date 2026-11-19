@@ -13,6 +13,8 @@ mod graph;
 #[cfg(feature = "aot")]
 pub use graph::{DependencyGraph, GraphRequirement};
 #[cfg(feature = "aot")]
+mod variant;
+#[cfg(feature = "aot")]
 mod compiler;
 #[cfg(feature = "aot")]
 pub use compiler::{SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};

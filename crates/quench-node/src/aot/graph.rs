@@ -35,6 +35,20 @@ impl GraphRequirement {
             Self::Wasm { path } => json!({"kind": "wasm", "path": path}),
         }
     }
+
+    /// Non-literal `require`/`import` targets, which only full support can load at run time.
+    pub fn is_dynamic_load(&self) -> bool {
+        self.dynamic_load_demand().is_some()
+    }
+
+    /// The demand a dynamic load makes, named for compile refusals.
+    pub fn dynamic_load_demand(&self) -> Option<String> {
+        match self {
+            Self::DynamicRequire { from, offset } => Some(format!("dynamic require at {}:{offset}", from.display())),
+            Self::DynamicImport { from, offset } => Some(format!("dynamic import at {}:{offset}", from.display())),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Default)]
