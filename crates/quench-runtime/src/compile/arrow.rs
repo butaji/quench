@@ -167,7 +167,6 @@ impl Compiler<'_> {
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
-            instance_initializer: None,
             constant_fields: Default::default(),
             super_home_atom,
             constructible: false,

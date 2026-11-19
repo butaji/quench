@@ -1466,8 +1466,6 @@ pub struct Function {
     pub is_generator: bool,
     pub is_class_constructor: bool,
     pub derived_constructor: bool,
-    /// Instance-element initialization run when this derived constructor binds `this`.
-    pub instance_initializer: Option<u32>,
     /// A base class constructor's leading constant fields (`ConstantField`): the public fields
     /// its first instructions define, in order, each with the primitive its initializer is;
     /// empty for every other function.
