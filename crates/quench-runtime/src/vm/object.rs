@@ -2124,7 +2124,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let layout = receiver.layout_id();
-        if layout != transition.layouts[0] {
+        if layout != transition.layouts[0] && Self::adopts_wide_run_layout(layout, transition) {
             let (shape, link) = (receiver.exact_shape(), receiver.proto_link());
             self.adopt_wide_run_add_layouts(self.field_cache_index(site), shape, atom, Some(link), layout);
         }
@@ -2192,7 +2192,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let layout = receiver.layout_id();
-        if layout != transition.layouts[0] {
+        if layout != transition.layouts[0] && Self::adopts_wide_run_layout(layout, transition) {
             let shape = receiver.exact_shape();
             self.adopt_wide_run_add_layouts(self.field_cache_index(site), shape, atom, None, layout);
         }
@@ -2201,21 +2201,26 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// Whether an add entry whose `transition` a receiver of another `layout` hit moves to
+    /// that receiver's layouts (`adopt_wide_run_add_layouts`): the receiver's values are in a
+    /// wide arena run, as a learned receiver's are (`preshaped_receiver`), and the entry
+    /// recorded other storage, as its constructor's first receiver, made before the count was
+    /// learned, had. One way only, so receivers of both kinds never move the entry back and
+    /// forth.
+    #[inline(always)]
+    fn adopts_wide_run_layout(layout: u32, transition: Transition) -> bool {
+        Object::layout_is_wide_run(layout) && !Object::layout_is_wide_run(transition.layouts[0])
+    }
+
     /// Moves the add entry of cache site index `site` for receivers of `shape` adding `atom`
     /// (for an adding store, the one whose chain proof holds for prototype `link`) to the
-    /// layouts of a receiver of `layout`, where that is a wide arena run's and the entry
-    /// recorded inline or extras storage: a learned receiver's (`preshaped_receiver`), whose
-    /// constructor's first receiver, made before the count was learned, recorded the site. The
+    /// layouts of a receiver of `layout`, where it adopts them (`adopts_wide_run_layout`). The
     /// staged add row (`add_by_transition`), which guards the layout it recorded, then takes the
     /// learned receivers' adds; any other receiver's take the plain or moving add, as every add
-    /// the row leaves. One way only, so receivers of both kinds never move the entry back and
-    /// forth.
+    /// the row leaves.
     #[cold]
     #[inline(never)]
     fn adopt_wide_run_add_layouts(&mut self, site: usize, shape: u32, atom: Atom, link: Option<ProtoLink>, layout: u32) {
-        if !Object::layout_is_wide_run(layout) {
-            return;
-        }
         let set = self.field_add_indices.get(site);
         if set == NO_FIELD_ADD_SET {
             return;
@@ -2225,10 +2230,9 @@ impl<H: Host> Vm<H> {
             return;
         };
         let entry = set.entry_mut(index);
-        if Object::layout_is_wide_run(entry.layouts[0]) {
-            return;
+        if Self::adopts_wide_run_layout(layout, entry.transition()) {
+            entry.layouts = Object::add_layouts(layout, entry.target_shape);
         }
-        entry.layouts = Object::add_layouts(layout, entry.target_shape);
     }
 
     /// The add `atom`'s site recorded that compiled code may run (`staged::add::site_add`): a define's
