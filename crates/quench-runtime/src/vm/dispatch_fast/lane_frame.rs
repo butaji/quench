@@ -3248,6 +3248,8 @@ pub(in crate::vm::dispatch_fast) mod protocol_family {
     pub(crate) const FRAME_CALL: u16 = 10 << 8;
     /// Leaf, Math and builtin native calls (`leaf_call_miss_of`).
     pub(crate) const LEAF_CALL: u16 = 11 << 8;
+    /// Vector regions (`vector_miss_of`).
+    pub(crate) const VECTOR: u16 = 12 << 8;
     /// The family of `miss`.
     pub(crate) const fn of(miss: u16) -> u16 { miss & 0xff00 }
     /// The family's static parameters in `miss`.
@@ -3271,6 +3273,7 @@ pub(in crate::vm::dispatch_fast) const fn protocol_miss<H: Host>(miss: u16) -> H
         F::RETURN => super::return_miss_of::<H>(F::parameters(miss)),
         F::FRAME_CALL => super::frame_call_miss_of::<H>(F::parameters(miss)),
         F::LEAF_CALL => super::leaf_call_miss_of::<H>(F::parameters(miss)),
+        F::VECTOR => super::vector_miss_of::<H>(F::parameters(miss)),
         _ => lane_general_step::<H>,
     }
 }
