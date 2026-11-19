@@ -24,7 +24,11 @@ pub(crate) enum Allocation {
     ArrayOf { elements: RegisterList },
     /// A fresh object of regexp literal `site`'s compiled template: the matcher program is the
     /// site's, its state is fresh. A pattern that fails to compile raises at the instruction.
-    RegExp { site: u32 },
+    /// `callee`: the register holding the callee of the `replace`/`match`/`search`/`split` call
+    /// the literal is the first argument of (`CreateRegExpLiteral`'s field B), read where the
+    /// tier keeps it: while that callee is the realm's String method the site may answer its one
+    /// shared object (`Vm::regexp_literal_argument_of`), keyed by the activation that evaluates it.
+    RegExp { site: u32, callee: Option<Register> },
     /// The array of the `count` program constants from constant `constant`.
     ConstArray { constant: u32, count: u16 },
     /// An ordinary object of literal `site`'s shape holding registers `first` and `second`.
@@ -99,7 +103,7 @@ impl Allocation {
     fn decode_site_backed(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::CreateRegExpLiteral => Self::RegExp {
-                site: u32::try_from(instruction.regexp_literal_site_index()).ok()? },
+                site: u32::try_from(instruction.regexp_literal_site_index()).ok()?, callee: instruction.optional_register_b() },
             Op::MakeConstArray => Self::ConstArray {
                 constant: u32::try_from(instruction.constant_index()).ok()?, count: instruction.element_count() },
             Op::MakeLiteralTemplate => Self::Template {
@@ -137,7 +141,9 @@ mod tests {
         assert_eq!(make(Op::MakeObject2, 1, 2, 5), Some((3, Allocation::ObjectPair { site: 5, first: 1, second: 2 })));
         assert_eq!(make(Op::MakeConstArray, 2, 0, 5), Some((3, Allocation::ConstArray { constant: 5, count: 2 })));
         assert_eq!(make(Op::MakeArray, 0, 0, 4), Some((3, Allocation::Array { length: 4, numbers: false })));
-        assert_eq!(make(Op::CreateRegExpLiteral, 0, 0, 6), Some((3, Allocation::RegExp { site: 6 })));
+        assert_eq!(make(Op::CreateRegExpLiteral, 0, 0, 6), Some((3, Allocation::RegExp { site: 6, callee: None })));
+        let argument = make(Op::CreateRegExpLiteral, 5 + crate::bytecode::OPTIONAL_REGISTER_BIAS, 0, 6);
+        assert_eq!(argument, Some((3, Allocation::RegExp { site: 6, callee: Some(5) })), "field B names the call's callee");
         assert!(matches!(make(Op::StringConcat, 1, 1, 0), Some((3, Allocation::Concat { .. }))));
         assert!(make(Op::Jump, 0, 0, 0).is_none());
     }

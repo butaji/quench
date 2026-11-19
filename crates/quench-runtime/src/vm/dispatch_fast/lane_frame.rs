@@ -3398,16 +3398,17 @@ fn jump_row_backward<H: Host, const OP: u16>(handler: *const ()) -> bool {
 unsafe fn allocation_in_lane<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
     let cx = cx.cast::<LaneContext<H>>();
     match allocation {
-        Allocation::Empty => Some(new_object_in_lane(unsafe { vm(cx) })),
-        Allocation::Array { length } => Some(new_hole_array_in_lane(unsafe { vm(cx) }, length as usize)),
-        Allocation::ArrayOf { elements } => Some(literal_array_value_in_lane(unsafe { vm(cx) }, r, elements)),
-        Allocation::RegExp { site } => regexp_literal_value_in_lane(cx, site),
-        Allocation::ConstArray { constant, count } => const_array_value_in_lane(cx, constant, count),
-        Allocation::ObjectPair { site, first, second } => Some(object_pair_in_lane(cx, r, site, [first, second])),
-        Allocation::ObjectLiteral { site, window } => Some(object_literal_value_in_lane(cx, r, site, window)),
-        Allocation::Closure { function } => closure_value_of_in_lane(cx, function),
-        Allocation::Template { template } => template_value_in_lane(cx, template),
-        Allocation::Concat { window } => concat_value_in_lane(cx, r, window),
+        Allocation::Empty => Some(lane_new_object(unsafe { vm(cx) })),
+        Allocation::Array { length, numbers } => Some(lane_new_hole_array(unsafe { vm(cx) }, length as usize, numbers)),
+        Allocation::ArrayOf { elements } => Some(lane_literal_array_value(unsafe { vm(cx) }, r, elements)),
+        Allocation::RegExp { site, callee: None } => lane_regexp_literal_value(cx, site),
+        Allocation::RegExp { site, callee: Some(callee) } => lane_regexp_argument_value(cx, r.get(callee), site),
+        Allocation::ConstArray { constant, count } => lane_const_array_value(cx, constant, count),
+        Allocation::ObjectPair { site, first, second } => Some(lane_object_pair(cx, r, site, [first, second])),
+        Allocation::ObjectLiteral { site, window } => Some(lane_object_literal_value(cx, r, site, window)),
+        Allocation::Closure { function } => lane_closure_value_of(cx, function),
+        Allocation::Template { template } => lane_template_value(cx, template),
+        Allocation::Concat { window } => lane_concat_value(cx, r, window),
     }
 }
 
