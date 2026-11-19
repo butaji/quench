@@ -271,6 +271,9 @@ impl<H: Host> Vm<H> {
     /// `copy_data_properties` when a plain copy (`copy_plain_properties`) answers it, or the
     /// source is null or undefined; `false`, before any effect, for any other copy.
     pub(super) fn copy_plain_data_properties(&mut self, target: Value, source: Value, exclusions: Value) -> bool {
+        if self.adopt_source_shape(target, source, exclusions) {
+            return true;
+        }
         if source.is_null() || source.is_undefined() {
             return true;
         }
@@ -505,7 +508,7 @@ impl<H: Host> Vm<H> {
 
     /// Gives an empty `target` the properties `values` of `atoms` under `shape`, the shape their
     /// adds in order reach (`plain_copy_shapes`).
-    fn initialize_plain_copy(&mut self, target: Value, shape: u32, values: &[Value], atoms: impl Iterator<Item = Atom>) {
+    pub(super) fn initialize_plain_copy(&mut self, target: Value, shape: u32, values: &[Value], atoms: impl Iterator<Item = Atom>) {
         self.heap.initialize_object_properties(target, shape, values);
         for atom in atoms {
             if self.method_caches_may_name(atom) {
