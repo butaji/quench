@@ -36,14 +36,14 @@ impl Frame {
 }
 
 impl LaneStack {
-    /// Pushes `activation` over the register file of a suspended frame, which its prefix names
-    /// (`FrameRecord::prefix`): the window is marked as no lane stack's (`HEAP_WINDOW`), so
+    /// Pushes `activation` over the register file of a suspended frame, which its window names
+    /// (the record's `registers`): the window is marked as no lane stack's (`HEAP_WINDOW`), so
     /// its return frees nothing there.
     ///
     /// # Safety
     /// The activations' room holds one more.
     pub(super) unsafe fn push_generator_activation(&mut self, mut activation: Activation) {
-        activation.native.window |= HEAP_WINDOW;
+        activation.window |= HEAP_WINDOW;
         // A heap window stays a record (side record R waits for the window's own header words);
         // the plain headers below it are sealed, not spilled (one-frame-one-call.md F4 (3)).
         self.seal_plain();
@@ -255,8 +255,8 @@ fn lane_resume_generator<H: Host>(
         open_window_locals(vm, frame, locals);
     }
     // SAFETY: the record keeps the frame, and so its registers, until the activation ends.
-    let (prefix, window) = unsafe { ((*frame).prefix(), (*frame).registers.as_mut_ptr()) };
-    push_generator_window(cx, vm, (r, ip, depth), GeneratorWindow { prefix, function, generator, completion, environment, record: frame });
+    let (receiver, window) = unsafe { ((*frame).this().to_bits(), (*frame).registers.as_mut_ptr()) };
+    push_generator_window(cx, vm, (r, ip, depth), GeneratorWindow { this: receiver, window: window.addr(), function, generator, completion, environment, record: frame });
     let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
     // SAFETY: the window holds the suspended registers, which nothing else writes while it runs,
     // and `pc` is where the frame resumes in its function's view.
@@ -280,10 +280,11 @@ pub(super) fn open_window_locals<H: Host>(vm: &mut Vm<H>, frame: *mut FrameRecor
 }
 
 /// What the activation of a resumed generator runs (`generator_activation`): its frame's
-/// prefix and function, the generator, how its caller takes the step, whether its window
+/// receiver and window, its function, the generator, how its caller takes the step, whether its window
 /// carries an environment (`ScriptActivation::environment`) and the record it runs over.
 struct GeneratorWindow {
-    prefix: crate::vm::compiled::ShadowFrame,
+    this: u64,
+    window: usize,
     function: u32,
     generator: Value,
     completion: Completion,
@@ -310,8 +311,7 @@ fn push_generator_window<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, (r, i
 /// function with registers `r`.
 fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, window: GeneratorWindow) -> Activation {
     // SAFETY: the running lane's context, which nothing else accesses.
-    Activation::of_parts(
-        window.prefix,
+    let mut activation = Activation::of_parts(
         window.function,
         ip,
         unsafe { (*cx).base },
@@ -326,7 +326,10 @@ fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
             environment: window.environment,
             record: window.record,
         }),
-    )
+    );
+    activation.this = window.this;
+    activation.window = window.window;
+    activation
 }
 
 /// `yield` (or the pass-on of a `yield*`) of the running generator activation: its frame, resuming

@@ -938,7 +938,7 @@ pub(super) struct LaneTier {
     /// entered rarely but for long (`LaneView::recurrent`) specializes by.
     warm_since: std::cell::Cell<u32>,
     /// Every body it published, kept until the view drops: a native frame running a body that
-    /// retired recovers its leave through `ShadowFrame::body`.
+    /// retired recovers its leave through `Activation::body`.
     pinned: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     history: std::cell::Cell<LaneBodyHistory>,
@@ -1587,10 +1587,15 @@ const LANE_STACK_ACTIVATIONS: usize = 1 << 16;
 #[derive(Clone, Copy)]
 #[repr(C, align(128))]
 pub(in crate::vm) struct Activation {
-    /// The native prefix: the callee's descriptor, receiver, body and window, which emitted
-    /// code writes for a direct call's frame (`ActivationKind::Native`) and which stays through
-    /// its link (`NativeFrames`); only `window` for an activation the lane made.
-    pub(in crate::vm) native: super::compiled::ShadowFrame,
+    /// The frame prefix (`staged::frame`'s CALLEE, THIS, BODY, WINDOW words): the callee's
+    /// descriptor, receiver, body and window, which emitted code writes for a direct call's frame
+    /// (`ActivationKind::Native`) and which stays through its link (`NativeFrames`); only
+    /// `window` for an activation the lane made. The callee is null for a frame the lane made.
+    pub(in crate::vm) callee: *const super::compiled::DirectCallee,
+    pub(in crate::vm) this: u64,
+    pub(in crate::vm) body: usize,
+    /// The address of its window of registers.
+    pub(in crate::vm) window: usize,
     function: u32,
     call: Ip,
     caller_base: Ip,
@@ -1609,6 +1614,15 @@ pub(in crate::vm) use quench_bjit::shared_words::KIND_NATIVE;
 pub(in crate::vm) const KIND_OFFSET: usize = std::mem::offset_of!(Activation, kind);
 const _: () = assert!(KIND_OFFSET == crate::staged::frame::ACTIVATION_KIND_OFFSET);
 const _: () = assert!(std::mem::size_of::<Activation>() == crate::staged::frame::ACTIVATION_BYTES);
+const _: () = {
+    use crate::staged::frame;
+    assert!(std::mem::offset_of!(Activation, callee) == frame::CALLEE);
+    assert!(std::mem::offset_of!(Activation, this) == frame::THIS);
+    assert!(std::mem::offset_of!(Activation, body) == frame::BODY);
+    assert!(std::mem::offset_of!(Activation, window) == frame::WINDOW);
+    assert!(frame::WINDOW + std::mem::size_of::<usize>() == frame::PREFIX_BYTES);
+    assert!(std::mem::size_of::<Activation>().is_power_of_two());
+};
 const KIND_SCRIPT: u8 = 1;
 const KIND_WASM: u8 = 2;
 
@@ -1689,12 +1703,11 @@ struct ScriptActivation {
 /// this block goes through these methods, so the record's layout (and, next, where a plain
 /// activation's header lives: the value stack) changes here alone.
 impl Activation {
-    /// An activation of `kind`, its native prefix `native`.
+    /// An activation of `kind` with no frame prefix: no callee, receiver or body, and no window yet.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
-    fn of_parts(native: super::compiled::ShadowFrame, function: u32, call: Ip, caller_base: Ip,
+    fn of_parts(function: u32, call: Ip, caller_base: Ip,
         caller_registers: Registers, caller_program: ProgramId, kind: ActivationKind) -> Self {
-        Self { native, function, call, caller_base, caller_registers, caller_program, kind }
+        Self { callee: std::ptr::null(), this: 0, body: 0, window: 0, function, call, caller_base, caller_registers, caller_program, kind }
     }
     /// The function it runs.
     #[inline(always)] fn function(&self) -> u32 { self.function }
@@ -1727,14 +1740,14 @@ impl Activation {
     /// register file (a generator's) alike.
     #[inline(always)]
     pub(in crate::vm) fn window_ptr(&self) -> *mut Value {
-        (self.native.window & !HEAP_WINDOW) as *mut Value
+        (self.window & !HEAP_WINDOW) as *mut Value
     }
 
     /// The prefix's WINDOW word as it stands, which a return hands the lane stack's values to
     /// free the window if the stack holds it (`LaneValues::release_window`).
     #[inline(always)]
     pub(in crate::vm) fn window_word(&self) -> usize {
-        self.native.window
+        self.window
     }
 
     /// The first `len` values from the window: its registers, and what follows them
@@ -2658,9 +2671,9 @@ impl LaneStack {
     fn header_flags(activation: &Activation, window: *mut Value) -> Option<u64> {
         let ActivationKind::Script(script) = activation.kind() else { return None };
         (script.record.is_null()
-            && activation.native.callee.is_null()
-            && activation.native.body == 0
-            && activation.native.this == 0
+            && activation.callee.is_null()
+            && activation.body == 0
+            && activation.this == 0
             && window.addr() & lane_values::HEAP_WINDOW == 0)
             .then(|| lane_frames::Side::flags_of(script))
     }
@@ -2863,7 +2876,7 @@ impl LaneStack {
             if let Some(side) = side { self.sides.get_mut().push(side); }
             return;
         }
-        activation.native.window = window.addr();
+        activation.window = window.addr();
         let frame_storage_bytes = activation.frame_storage_bytes();
         // A record over plain headers seals them where they are (one-frame-one-call.md F4 (3)):
         // no spill.
@@ -14424,7 +14437,7 @@ impl<H: Host> Vm<H> {
                         // registers hold `undefined`; the method's frame runs inside it.
                         // A native frame's is its descriptor's (`NativeFrames`), which no entry holds.
                         // SAFETY: a native frame's callee outlives the run.
-                        let forwarder = unsafe { activation.native.callee.as_ref() }
+                        let forwarder = unsafe { activation.callee.as_ref() }
                             .map_or_else(|| payload.forwarder(), |callee| callee.forwarder)
                             .expect("each forwarder activation has its skipped constructor");
                         let constructor_registers = vec![
@@ -15368,7 +15381,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     let window = unsafe { (*cx).registers.0 };
     unsafe { stack.values.set_top(window.add(usize::from(target.registers) + lane_values::CONTEXT)) };
     let activation = Activation::of_parts(
-        crate::vm::compiled::ShadowFrame::EMPTY, target.function, leaf.call, leaf.caller_base, leaf.caller_registers, leaf.caller_program.unwrap_or(unsafe { (*cx).program }),
+        target.function, leaf.call, leaf.caller_base, leaf.caller_registers, leaf.caller_program.unwrap_or(unsafe { (*cx).program }),
         ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             argc: leaf.argc,
@@ -19906,7 +19919,7 @@ fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool, const
     // The keeping row's record words (`staged::call_keeping::KeepingRecord`).
     let record = crate::staged::call_keeping::KeepingRecord::of_kept(argc, kept);
     let activation = Activation::of_parts(
-        crate::vm::compiled::ShadowFrame::EMPTY, target.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
+        target.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
         ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             argc: record.argc,
@@ -20158,7 +20171,7 @@ fn lane_activate_environment<H: Host>(
         Registers(registers)
     };
     let activation = Activation::of_parts(
-        crate::vm::compiled::ShadowFrame::EMPTY, target.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
+        target.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
         ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             argc,
@@ -20457,7 +20470,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     // (a rest body's rest array among them): its materialization reads them there.
     let record = crate::staged::call_keeping::KeepingRecord::of(shape, argc);
     let activation = Activation::of_parts(
-        crate::vm::compiled::ShadowFrame::EMPTY, target.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
+        target.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
         ActivationKind::Script(ScriptActivation {
             callee: target.callee,
             argc: record.argc,
@@ -22314,7 +22327,7 @@ fn lane_activate_wasm_export<H: Host>(
     unsafe {
         let at = stack.values.as_mut_ptr().wrapping_add(window);
         stack.push_activation(Activation::of_parts(
-            super::compiled::ShadowFrame::EMPTY, function, ip, caller_base, r, caller_program,
+            function, ip, caller_base, r, caller_program,
             ActivationKind::WasmEntry { instance, result, frame_storage_bytes },
         ), at);
     }
@@ -26574,7 +26587,7 @@ impl PreparedShape {
         let keeps = target.forwards() || argc > params && !target.drops_extra_arguments();
         let size = if keeps { registers + argc } else { registers };
         let activation = Activation::of_parts(
-            crate::vm::compiled::ShadowFrame::EMPTY, target.function, call, caller.base, caller.registers, caller.program,
+            target.function, call, caller.base, caller.registers, caller.program,
             ActivationKind::Script(ScriptActivation {
                 callee: target.callee,
                 argc: if keeps { argc } else { argc.min(params) } as u16,

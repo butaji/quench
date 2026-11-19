@@ -20,8 +20,11 @@ use super::*;
 /// frame is a copy: writers edit it where it is.
 #[derive(Clone, Copy)]
 pub(in crate::vm) struct Frame {
-    /// Its native prefix: a record's own, a header's `ShadowFrame::EMPTY` but its window.
-    native: super::super::compiled::ShadowFrame,
+    /// Its frame prefix: a record's own, a header's with no callee or body but its window.
+    pub(super) callee: *const super::super::compiled::DirectCallee,
+    pub(super) this: u64,
+    pub(super) body: usize,
+    pub(super) window: usize,
     function: u32,
     call: Ip,
     caller_base: Ip,
@@ -37,7 +40,10 @@ impl Frame {
     #[inline(always)]
     pub(super) fn of_record(record: &Activation, payload: SidePayload) -> Self {
         Self {
-            native: record.native,
+            callee: record.callee,
+            this: record.this,
+            body: record.body,
+            window: record.window,
             function: record.function(),
             call: record.call(),
             caller_base: record.caller_base(),
@@ -51,7 +57,11 @@ impl Frame {
     /// The record it becomes (a spill's, a materialization's): a record's own again.
     #[inline(always)]
     pub(super) fn record(&self) -> Activation {
-        Activation::of_parts(self.native, self.function, self.call, self.caller_base, self.caller_registers, self.caller_program, self.kind)
+        Activation {
+            callee: self.callee, this: self.this, body: self.body, window: self.window,
+            function: self.function, call: self.call, caller_base: self.caller_base, caller_registers: self.caller_registers,
+            caller_program: self.caller_program, kind: self.kind,
+        }
     }
 
     /// The function it runs.
@@ -71,13 +81,10 @@ impl Frame {
     /// What its completion carries (`SidePayload`).
     #[inline(always)] pub(super) fn payload(&self) -> SidePayload { self.payload }
     /// Its prefix's WINDOW word, heap mark included (`Activation::window_word`).
-    #[inline(always)] pub(in crate::vm) fn window_word(&self) -> usize { self.native.window }
-    /// Its native prefix: a linked native header's descriptor and body, or a record's own (F5).
-    #[inline(always)] pub(super) fn native_prefix(&self) -> super::super::compiled::ShadowFrame { self.native }
-
+    #[inline(always)] pub(in crate::vm) fn window_word(&self) -> usize { self.window }
     /// The address of its first register (`Activation::window_ptr`).
     #[inline(always)]
-    pub(in crate::vm) fn window_ptr(&self) -> *mut Value { (self.native.window & !HEAP_WINDOW) as *mut Value }
+    pub(in crate::vm) fn window_ptr(&self) -> *mut Value { (self.window & !HEAP_WINDOW) as *mut Value }
 
     /// Its JavaScript frame state; `None` for Wasm and an unlinked native frame.
     #[inline(always)]
@@ -288,17 +295,15 @@ impl LaneStack {
         let (packed, callee) = unsafe { (*window.0.sub(CONTEXT_PACKED).cast::<u64>(), *window.0.sub(CONTEXT_CALLEE)) };
         let (forwards, kept, environment, record) =
             side.map_or((false, 0, false, std::ptr::null_mut()), |side| (side.forwards, side.kept, side.environment, side.record));
-        let native = match side {
-            Some(side) if side.native != NO_NATIVE => super::super::compiled::ShadowFrame {
-                callee: self.native_table[side.native] as *const super::super::compiled::DirectCallee,
-                body: self.body_table[side.native],
-                window: window.0.addr(),
-                ..super::super::compiled::ShadowFrame::EMPTY
-            },
-            _ => super::super::compiled::ShadowFrame { window: window.0.addr(), ..super::super::compiled::ShadowFrame::EMPTY },
+        let (callee_at, body) = match side {
+            Some(side) if side.native != NO_NATIVE => (self.native_table[side.native] as *const super::super::compiled::DirectCallee, self.body_table[side.native]),
+            _ => (std::ptr::null(), 0),
         };
         Frame {
-            native,
+            callee: callee_at,
+            this: 0,
+            body,
+            window: window.0.addr(),
             function: packed as u32,
             call,
             caller_base,
@@ -544,17 +549,11 @@ impl LaneStack {
         unsafe { self.records_unspilled() }.native_depth()
     }
 
-    /// The prefix of the innermost frame while a native body runs in it
-    /// (`LaneActivations::top_native`): none for a plain header.
+    /// The innermost frame while a native body runs in it (`top_native`): a linked native
+    /// header or a record whose callee still runs its body; none for a plain header.
     #[inline(always)]
-    pub(in crate::vm) fn top_native(&self) -> Option<super::super::compiled::ShadowFrame> {
-        if self.plain.depth.get() != 0 {
-            // A linked native header carries its prefix in its frame; an unlinked one is linked first by its callers.
-            let prefix = self.top_frame()?.native_prefix();
-            return (!prefix.callee.is_null() && prefix.body != 0).then_some(prefix);
-        }
-        // SAFETY: the reference ends here.
-        unsafe { self.records_unspilled() }.top_native()
+    pub(in crate::vm) fn top_native(&self) -> Option<Frame> {
+        self.top_frame().filter(|frame| !frame.callee.is_null() && frame.body != 0)
     }
 }
 
@@ -564,7 +563,7 @@ mod tests {
 
     fn script(function: u32, caller_registers: *mut Value, completion: Completion, kept: u16) -> Activation {
         Activation::of_parts(
-            crate::vm::compiled::ShadowFrame::EMPTY, function, std::ptr::null(), std::ptr::null(), Registers(caller_registers), ProgramId::MAIN,
+            function, std::ptr::null(), std::ptr::null(), Registers(caller_registers), ProgramId::MAIN,
             ActivationKind::Script(ScriptActivation {
                 callee: Value::UNDEFINED,
                 argc: 1,

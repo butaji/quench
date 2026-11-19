@@ -5,7 +5,7 @@
 //! frames' descriptors alone, and never moves the context, so the body keeps running natively.
 //! A leave inside the frames then continues the lane in the innermost (`advance_into_frames`).
 use super::*;
-use super::super::compiled::{ShadowFrame, LANE_CALL_LEFT, LANE_CALL_TERMINATED};
+use super::super::compiled::{DirectCallee, LANE_CALL_LEFT, LANE_CALL_TERMINATED};
 use crate::staged::frame::{CONTEXT_CALL, CONTEXT_CALLER_BASE, CONTEXT_PACKED};
 
 /// What a call's caller runs with, which its activation saves for the return: the registers
@@ -25,13 +25,14 @@ impl CallerState {
         unsafe { Self { registers: (*cx).registers, base: (*cx).base, program: (*cx).program } }
     }
 
-    /// What the body `frame` runs with, which a lane call into its callee would have made the
-    /// context's (`lane_enter_window`). A direct callee runs in its caller's program.
-    fn of_frame(frame: &ShadowFrame) -> Self {
+    /// What the body of a native frame (its `callee` descriptor, its `window`) runs with, which a
+    /// lane call into its callee would have made the context's (`lane_enter_window`). A direct
+    /// callee runs in its caller's program.
+    fn of_frame(callee: *const DirectCallee, window: usize) -> Self {
         // SAFETY: a frame names the caller-owned callee, whose view outlives the run.
-        let callee = unsafe { &*frame.callee };
+        let callee = unsafe { &*callee };
         Self {
-            registers: Registers(frame.window as *mut Value),
+            registers: Registers(window as *mut Value),
             base: unsafe { (*callee.target.view).records() },
             program: callee.target.program(),
         }
@@ -154,36 +155,37 @@ fn link_header<H: Host>(cx: *mut LaneContext<H>, window: Registers, index: usize
 pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
     let vm = unsafe { vm(cx) };
     // SAFETY: each slot below the top holds at least its prefix.
-    let below = depth.checked_sub(1).map(|below| unsafe { (*vm.lane_stack.records_mut().slot(below)).native }).filter(|frame| !frame.callee.is_null());
-    let caller = below.map_or_else(|| CallerState::of_context(cx), |frame| CallerState::of_frame(&frame));
+    let below = depth.checked_sub(1).map(|below| unsafe { let record = &*vm.lane_stack.records_mut().slot(below); (record.callee, record.window) }).filter(|&(callee, _)| !callee.is_null());
+    let caller = below.map_or_else(|| CallerState::of_context(cx), |(callee, window)| CallerState::of_frame(callee, window));
     let slot = vm.lane_stack.records_mut().slot(depth);
     // SAFETY: the frame names the caller-owned callee, whose call record lies in its caller's view.
-    let (frame, callee) = unsafe { let frame = (*slot).native; (frame, &*frame.callee) };
+    let (callee_at, this, body, window_at) = unsafe { let prefix = &*slot; (prefix.callee, prefix.this, prefix.body, prefix.window) };
+    let callee = unsafe { &*callee_at };
     let argc = ImmediateLayout::argument_count(unsafe { (*(callee.call as Ip)).imm() });
     let completion = if callee.forwarder.is_some() { Completion::Forwarder } else { Completion::Plain };
     // SAFETY: the slot lies within the activations' capacity, below the top.
     unsafe {
-        slot.write(Activation::of_parts(
-            frame,
-            callee.target.function,
-            callee.call as Ip,
-            caller.base,
-            caller.registers,
-            caller.program,
-            ActivationKind::Script(ScriptActivation {
+        slot.write(Activation {
+            callee: callee_at, this, body, window: window_at,
+            function: callee.target.function,
+            call: callee.call as Ip,
+            caller_base: caller.base,
+            caller_registers: caller.registers,
+            caller_program: caller.program,
+            kind: ActivationKind::Script(ScriptActivation {
                 callee: callee.target.callee,
                 argc,
                 completion,
                 forwards: false,
-            kept: 0,
+                kept: 0,
                 environment: false,
                 record: std::ptr::null_mut(),
             }),
-        ));
+        });
     }
     // The frame's window takes the context words its call would have written (`lane_enter_window`).
-    let window = Registers(frame.window as *mut Value);
-    window.set_this(Value::from_bits(frame.this));
+    let window = Registers(window_at as *mut Value);
+    window.set_this(Value::from_bits(this));
     window.set_env(callee.target.env);
     window.set_capture(callee.target.capture);
     vm.programs.record_js_jit_lane_entry(callee.target.program(), callee.target.function);
@@ -204,7 +206,7 @@ pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl 
     let owner = CallerState::of_context(cx);
     // Native frames are records on top of the records: a record index.
     let depth = vm.lane_stack.record_count();
-    CallerState::of_frame(&frame).install(cx);
+    CallerState::of_frame(frame.callee, frame.window).install(cx);
     let status = helper();
     if status == LANE_CALL_LEFT {
         // The lane continues above the frames, which return into the interpreter.
@@ -248,20 +250,21 @@ fn advance_into_native_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'sta
     vm.link_natives(cx);
     let headers = vm.lane_stack.header_native_depth();
     let (count, len) = (vm.lane_stack.record_native_depth_in_run(headers), vm.lane_stack.record_count());
-    let mut innermost = None;
+    // The innermost frame's callee, body and window, as the frames leave it.
+    let mut innermost: Option<(*const DirectCallee, usize, usize)> = None;
     for depth in len - count..len {
         let slot = vm.lane_stack.records_mut().slot(depth);
         // SAFETY: a linked frame holds its prefix; its callee outlives the run.
-        let frame = unsafe { (*slot).native };
+        let (callee, body, window) = unsafe { let prefix = &*slot; (prefix.callee, prefix.body, prefix.window) };
         // The leave inside the callee's body counts on its cell's word, which no handler entry notes.
-        unsafe { &*(*frame.callee).target.view }.note_native_leave();
-        unsafe { (*slot).native.callee = std::ptr::null() };
+        unsafe { &*(*callee).target.view }.note_native_leave();
+        unsafe { (*slot).callee = std::ptr::null() };
         // Its skipped constructor, its descriptor's until now, rides in its side record from
         // here on (`LaneStack::record_sided`); the frames are the innermost, outermost first.
-        if let Some(skipped) = unsafe { &*frame.callee }.forwarder {
+        if let Some(skipped) = unsafe { &*callee }.forwarder {
             vm.lane_stack.push_record_side(depth, SidePayload::Forwarder(skipped));
         }
-        innermost = Some(frame);
+        innermost = Some((callee, body, window));
     }
     // The plain headers that are native, innermost first: each is advanced into and its side names no
     // callee after (`Side::native`); the innermost's prefix is the one the lane continues in.
@@ -276,21 +279,19 @@ fn advance_into_native_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'sta
             let side = unsafe { &mut (*stack.sides.get())[side_at] };
             let desc = unsafe { &*(stack.native_table[index] as *const super::super::compiled::DirectCallee) };
             unsafe { &*desc.target.view }.note_native_leave();
-            let frame = super::super::compiled::ShadowFrame {
-                callee: desc as *const _, this: 0, body: stack.body_table[index], window: window.0.addr(),
-            };
+            let frame = (desc as *const DirectCallee, stack.body_table[index], window.0.addr());
             if let Some(skipped) = desc.forwarder { side.payload = super::lane_frames::SidePayload::Forwarder(skipped); }
             side.native = super::lane_frames::NO_NATIVE;
             if above == 0 { innermost = Some(frame); }
             window = window.plain_caller().1;
         }
     }
-    let frame = innermost?;
-    CallerState::of_frame(&frame).install(cx);
+    let (callee_at, body, window) = innermost?;
+    CallerState::of_frame(callee_at, window).install(cx);
     // The body the call ran is the cell's at that moment, not the descriptor's; the caller's
     // code lease pins a named callee body through recovery, and the view pins every body it published.
-    let callee = unsafe { &*frame.callee };
-    Some(unsafe { (&*callee.target.view, &*(frame.body as *const super::super::compiled::LaneMethod)) })
+    let callee = unsafe { &*callee_at };
+    Some(unsafe { (&*callee.target.view, &*(body as *const super::super::compiled::LaneMethod)) })
 }
 
 /// Drops the native frames a terminated run left, with their windows.

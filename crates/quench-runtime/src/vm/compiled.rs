@@ -176,7 +176,7 @@ pub(super) use code_heap::{flush_retired_writers, CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
 mod direct_callee;
-pub(super) use direct_callee::{names_dead_callee, window_width, DirectCallee, DirectCandidates, ShadowFrame};
+pub(super) use direct_callee::{names_dead_callee, window_width, DirectCallee, DirectCandidates};
 #[path = "compiled/lane_storage.rs"]
 mod lane_storage;
 mod lane_body_run;

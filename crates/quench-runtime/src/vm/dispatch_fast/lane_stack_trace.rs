@@ -108,7 +108,7 @@ impl<H: Host> Vm<H> {
             // its descriptor's for a native frame (`NativeFrames`), else its side record's.
             let record = activation.record();
             // SAFETY: a native frame's callee outlives the run.
-            let forwarder = unsafe { record.native.callee.as_ref() }
+            let forwarder = unsafe { record.callee.as_ref() }
                 .map_or_else(|| activation.payload().forwarder(), |callee| callee.forwarder)?;
             let forwarder_pc = forwarder.method.call_pc as usize;
             sites.push(FrameSite {

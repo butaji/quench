@@ -122,7 +122,7 @@ impl LaneStack {
     /// until the lane continues in the frame (`native_frames::advance_into_frames`). A header
     /// spilled into a record carries a payload exactly then, so its side record stays its own.
     pub(super) fn record_sided(record: &Activation) -> bool {
-        record.native.callee.is_null() && record.script().is_some_and(|script| script.completion.carries_payload())
+        record.callee.is_null() && record.script().is_some_and(|script| script.completion.carries_payload())
     }
 
     /// Give the innermost activation, just pushed or recompleted, what its completion carries
@@ -305,7 +305,7 @@ mod tests {
 
     fn script(function: u32, caller_registers: *mut Value, completion: Completion) -> Activation {
         Activation::of_parts(
-            crate::vm::compiled::ShadowFrame::EMPTY, function, std::ptr::null(), std::ptr::null(), Registers(caller_registers), ProgramId::MAIN,
+            function, std::ptr::null(), std::ptr::null(), Registers(caller_registers), ProgramId::MAIN,
             ActivationKind::Script(ScriptActivation {
                 callee: Value::UNDEFINED,
                 argc: 0,
@@ -333,7 +333,7 @@ mod tests {
             stack.push_activation(script(0, std::ptr::null_mut(), Completion::Plain), windows[0]);
             stack.push_activation(script(1, windows[0], Completion::Constructs), windows[1]);
             let mut generator = script(2, windows[1], Completion::Generates);
-            generator.native.window = heap.as_mut_ptr().addr();
+            generator.window = heap.as_mut_ptr().addr();
             stack.push_generator_activation(generator);
         }
         assert_eq!((stack.plain.depth.get(), stack.record_count(), stack.activation_count()), (0, 1, 3));

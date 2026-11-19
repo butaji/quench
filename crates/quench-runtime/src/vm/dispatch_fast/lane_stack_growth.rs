@@ -32,7 +32,7 @@ impl LaneStack {
         let after = self.values.as_ptr().addr();
         let moved = |address: usize| if before.contains(&address) { address.wrapping_sub(before.start).wrapping_add(after) } else { address };
         for activation in self.records_mut().iter_mut() {
-            activation.native.window = moved(activation.native.window);
+            activation.window = moved(activation.window);
         }
         self.relocate_plain(moved);
     }

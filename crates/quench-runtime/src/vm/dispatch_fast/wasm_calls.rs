@@ -92,7 +92,7 @@ macro_rules! enter_wasm_function {
             unsafe {
                 let at = stack.values.as_mut_ptr().wrapping_add(window);
                 stack.push_activation(Activation::of_parts(
-                    crate::vm::compiled::ShadowFrame::EMPTY, u32::from($function),
+                    u32::from($function),
                     ip,
                     (*cx).base,
                     r,

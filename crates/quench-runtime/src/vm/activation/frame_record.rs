@@ -9,21 +9,19 @@ use crate::bytecode::Atom;
 use crate::compile::liveness::RegisterSet;
 use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
 use crate::heap::EnvironmentSlots;
-use crate::vm::compiled::ShadowFrame;
 use crate::vm::dispatch_fast::{WINDOW_ENVIRONMENT, WINDOW_LOCALS};
 use crate::vm::program_store::ProgramId;
 use crate::vm::register_file::RegisterFile;
 use crate::vm::{ActiveIterator, CaptureCache, Frame};
 use crate::Value;
 
-/// A frame's record. The prefix is the one emitted code writes for a frame (`CALLEE`,
-/// `THIS`, `BODY`, `WINDOW`, `staged::frame`); its `WINDOW` word points into `registers`,
-/// whose buffer a move of the record leaves in place and a clone makes anew
-/// (`bind_window`). The receiver lives in the prefix alone (`this`); the program is the
-/// one the frame resumes in, and the realm the owner's (`GeneratorRecord::realm`, the await
-/// state's).
+/// A frame's record. Its window is its register file's first register (`WINDOW`, `staged::frame`),
+/// so it names no address of its own; the receiver lives in the record alone (`receiver`,
+/// `THIS`). The program is the one the frame resumes in, and the realm the owner's
+/// (`GeneratorRecord::realm`, the await state's).
 pub(crate) struct FrameRecord {
-    prefix: ShadowFrame,
+    /// The receiver, as value bits (the frame prefix's THIS word, `staged::frame`).
+    receiver: u64,
     pub(in crate::vm) context: CallContext,
     pub(in crate::vm) reflected_parameters: u16,
     pub(in crate::vm) original_arguments: Vec<Value>,
@@ -83,14 +81,9 @@ pub(in crate::vm) fn note_frame_made() {
 }
 
 impl FrameRecord {
-    /// Binds `WINDOW` to the register file's first register.
-    fn bind_window(&mut self) {
-        self.prefix.window = self.registers.as_mut_ptr().addr();
-    }
-
     /// The suspended receiver.
     pub(in crate::vm) fn this(&self) -> Value {
-        Value::from_bits(self.prefix.this)
+        Value::from_bits(self.receiver)
     }
 
     /// The value the instruction the frame suspended at evaluates to, which a resume sends: it
@@ -99,12 +92,6 @@ impl FrameRecord {
         if let Some(slot) = register.and_then(|register| self.registers.get_mut(usize::from(register))) {
             *slot = sent;
         }
-    }
-
-    /// The prefix words (`CALLEE`, `THIS`, `BODY`, `WINDOW`) a lane activation over the register
-    /// file starts from: no native callee or body, and the window as the file's address.
-    pub(in crate::vm) fn prefix(&self) -> ShadowFrame {
-        self.prefix
     }
 
     /// Lays the environment window of a lane activation over the register file after its
@@ -116,7 +103,6 @@ impl FrameRecord {
     pub(in crate::vm) fn open_environment_window(&mut self, captured: u64, own_slots: Option<*const EnvironmentSlots>) {
         let count = self.registers.len();
         self.registers.reserve(usize::from(WINDOW_LOCALS) + self.locals.len() + crate::vm::dispatch_fast::INLINED_WINDOW_ROOM);
-        self.bind_window();
         // SAFETY: the capacity holds the entries and the locals after the registers, which
         // nothing else reads or writes while a window runs the frame.
         unsafe {
@@ -181,7 +167,7 @@ impl FrameRecord {
     /// captured, with no registers or locals of its own until the window is pulled.
     pub(in crate::vm) fn for_eval(program: ProgramId, function: u32, callee: Value, this: Value, env: Value) -> Box<Self> {
         let mut record = Self {
-            prefix: ShadowFrame { this: this.to_bits(), ..ShadowFrame::EMPTY },
+            receiver: this.to_bits(),
             context: CallContext::Function(callee),
             reflected_parameters: 0,
             original_arguments: Vec::new(),
@@ -202,14 +188,13 @@ impl FrameRecord {
             environment_window: false,
             binding_site_pc: None,
         };
-        record.bind_window();
         Box::new(record)
     }
 
     /// Makes `this` the receiver an eval's code reads (`CallerView::this`) and returns the
     /// one it replaces, which the caller puts back when the eval ends.
     pub(in crate::vm) fn replace_this(&mut self, this: Value) -> Value {
-        Value::from_bits(std::mem::replace(&mut self.prefix.this, this.to_bits()))
+        Value::from_bits(std::mem::replace(&mut self.receiver, this.to_bits()))
     }
 
     /// The suspension of a frame that ran in a lane activation over its register file: it resumes
@@ -248,14 +233,12 @@ impl FrameRecord {
             initialized_registers: _, capture_cache: _, with_base: _, js_jit_interpreter_started: _,
             fixed_this: _, js_jit_skip_entry_once,
         } = *frame;
-        let prefix = ShadowFrame { this: this.to_bits(), ..ShadowFrame::EMPTY };
         let mut record = Self {
-            prefix, context, reflected_parameters, original_arguments, program, function, pc, env,
+            receiver: this.to_bits(), context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             live_registers: None, suspended_epoch: 0, window_plan: None, js_jit_skip_entry_once, environment_window: false,
             binding_site_pc: None,
         };
-        record.bind_window();
         Box::new(record)
     }
 
@@ -267,7 +250,7 @@ impl FrameRecord {
         self.settle_registers(u64::MAX);
         let this = self.this();
         let Self {
-            prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,
+            receiver: _, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             live_registers: _, suspended_epoch: _, window_plan: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
         } = *self;
@@ -318,8 +301,8 @@ impl std::fmt::Debug for FrameRecord {
 
 impl Clone for FrameRecord {
     fn clone(&self) -> Self {
-        let mut copy = Self {
-            prefix: self.prefix,
+        Self {
+            receiver: self.receiver,
             context: self.context,
             reflected_parameters: self.reflected_parameters,
             original_arguments: self.original_arguments.clone(),
@@ -339,9 +322,7 @@ impl Clone for FrameRecord {
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
             environment_window: false,
             binding_site_pc: None,
-        };
-        copy.bind_window();
-        copy
+        }
     }
 }
 
@@ -381,7 +362,7 @@ impl Snap for FrameRecord {
             function: Snap::unsnap(reader)?,
             pc: Snap::unsnap(reader)?,
             env: Snap::unsnap(reader)?,
-            prefix: ShadowFrame { this: Value::unsnap(reader)?.to_bits(), ..ShadowFrame::EMPTY },
+            receiver: Value::unsnap(reader)?.to_bits(),
             locals: Snap::unsnap(reader)?,
             dynamic_bindings: Snap::unsnap(reader)?,
             registers: Snap::unsnap(reader)?,
@@ -395,7 +376,6 @@ impl Snap for FrameRecord {
             environment_window: false,
             binding_site_pc: None,
         };
-        record.bind_window();
         Ok(record)
     }
 }

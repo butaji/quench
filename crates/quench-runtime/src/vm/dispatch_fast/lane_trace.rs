@@ -78,7 +78,6 @@ mod tests {
         let held = vm.heap.alloc_object(Vm::<TestHost>::empty_object(vm.object_proto));
         let registers = [held, Value::integer(7)];
         let wasm = Activation::of_parts(
-            crate::vm::compiled::ShadowFrame::EMPTY,
             0,
             std::ptr::null(),
             std::ptr::null(),

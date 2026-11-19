@@ -379,11 +379,11 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: the owner keeps the frame, and so its registers, until the run ends.
         let record = unsafe { &mut *frame };
-        let (prefix, registers, size) = (record.prefix(), record.registers.as_mut_ptr(), record.registers.len());
+        let (receiver, registers, size) = (record.this().to_bits(), record.registers.as_mut_ptr(), record.registers.len());
         // SAFETY: the program store keeps a derived view alive with its program.
         let base = unsafe { (*view).records() };
         let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
-        let activation = job_activation(&entry, base, registers, job, prefix, environment, frame);
+        let activation = job_activation(&entry, base, registers, job, receiver, environment, frame);
         Some(JobWindow { frame, registers, base, pc, entry, activation, _stack: stack })
     }
 
@@ -483,12 +483,11 @@ fn job_activation(
     base: Ip,
     window: *mut Value,
     job: JobRoot,
-    prefix: crate::vm::compiled::ShadowFrame,
+    receiver: u64,
     environment: bool,
     record: *mut FrameRecord,
 ) -> Activation {
-    Activation::of_parts(
-        prefix,
+    let mut activation = Activation::of_parts(
         entry.function,
         base,
         base,
@@ -503,5 +502,8 @@ fn job_activation(
             environment,
             record,
         }),
-    )
+    );
+    activation.this = receiver;
+    activation.window = window.addr();
+    activation
 }

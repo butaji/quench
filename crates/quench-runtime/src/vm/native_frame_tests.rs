@@ -1,8 +1,9 @@
 //! Native frames in the lane stack's activations (`dispatch_fast::native_frames`): the tag and
 //! top word emitted code writes through, and chains of direct calls whose helpers, collections,
 //! exceptions and leaves must match the lane's own run.
-use super::compiled::{DirectCallee, ShadowFrame};
+use super::compiled::DirectCallee;
 use super::dispatch_fast::{KIND_NATIVE, KIND_OFFSET};
+use crate::staged::frame;
 use super::lane_activations::LaneActivations;
 use super::*;
 use crate::test_host::TestHost;
@@ -41,20 +42,21 @@ fn chain(depth: usize, innermost: &str, wrap: impl Fn(usize) -> String) -> Strin
 fn native_frames_pushed_through_the_top_word_are_counted_until_linked() {
     let mut activations = LaneActivations::with_capacity(4);
     // A frame that still runs its body: `top_native` names only those (`retire_bodies` clears it).
-    let frame = ShadowFrame { callee: std::ptr::dangling::<DirectCallee>(), body: 1, ..ShadowFrame::EMPTY };
+    let callee = std::ptr::dangling::<DirectCallee>();
     assert!(!activations.top_is_native());
     for pushed in 1..=2 {
         // SAFETY: the allocation holds four slots; emitted code writes the prefix, the tag and the top the same way.
         unsafe {
             let top = *activations.top_word();
-            top.cast::<ShadowFrame>().write(frame);
+            top.cast::<u8>().add(frame::CALLEE).cast::<*const DirectCallee>().write(callee);
+            top.cast::<u8>().add(frame::BODY).cast::<usize>().write(1);
             top.cast::<u8>().add(KIND_OFFSET).write(KIND_NATIVE);
             *activations.top_word() = top.add(1);
         }
         assert!(activations.top_is_native());
         assert_eq!((activations.len(), activations.unlinked(), activations.native_depth()), (pushed, pushed, pushed));
     }
-    assert!(activations.top_native().is_some_and(|top| top.callee == frame.callee));
+    assert!(activations.last().is_some_and(|top| top.callee == callee && top.body == 1));
 }
 
 #[test]
