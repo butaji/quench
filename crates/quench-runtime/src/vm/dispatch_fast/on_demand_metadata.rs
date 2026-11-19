@@ -59,7 +59,7 @@ pub(super) fn record_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target:
     if unsafe { (*cx).late_settled } == ip { return; }
     let vm = unsafe { vm(cx) };
     // The innermost frame's function: a native callee's frame is linked, so it is the activation's.
-    let function = match vm.lane_stack.activations().last() {
+    let function = match vm.lane_stack.top_frame() {
         Some(activation) => activation.function(),
         None => { let Some(frame) = vm.frames.get(unsafe { (*cx).frame() }) else { return }; frame.function }
     };

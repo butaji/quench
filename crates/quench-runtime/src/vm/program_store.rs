@@ -669,7 +669,8 @@ struct ProgramEntry {
     module_imports: Vec<(u16, ModuleImport)>,
     /// Each root slot's rule, derived from the residual and `module_imports` on first read.
     root_slots: std::cell::OnceCell<Box<[crate::bytecode::RootSlotRule]>>,
-    /// Its root slots written once, and how many runs its root has made.
+    /// Its root slots written once, the read records that keep their values, and how many
+    /// runs its root has made.
     root_constants: root_constants::RootConstants,
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.

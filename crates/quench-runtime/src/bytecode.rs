@@ -924,7 +924,7 @@ opcodes!($;
     MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex; class MakeObjectLiteral; step Body; traits RETURNING_OBJECT_LITERAL FRAME_RETURNABLE WINDOW_LITERAL_MAKE DISTANT_PRODUCER, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex; class SuperConstArrayObject2; step Body; traits RETURNING_LITERAL FRAME_RETURNABLE FUSED_CONST_ARRAY_OBJECT2, @ Returnable, @ fields(ResultRegister, Unused, Unused),
     GetIterator => READ_THROW; layout Scalar; meaning Unused; class GetIterator; staged Names; step LaneResult, @ Register, @ fields(ResultRegister, Register, Unused),
-    GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused; step Body, @ Register, @ fields(ResultRegister, Register, Unused),
+    GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused; staged Names; step Body, @ Register, @ fields(ResultRegister, Register, Unused),
     CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex; class CreateRegExpLiteral; step Body; traits DISTANT_PRODUCER, @ Register, @ fields(ResultRegister, Unused, Unused),
     IteratorClose => READ_THROW; layout Scalar; meaning Unused; class IteratorClose; staged Names; step LaneResult, @ Register, @ fields(ResultRegister, Register, Unused),
     // ArrayAccumulation past a literal's static prefix: `length` elisions, then the optional
@@ -932,7 +932,9 @@ opcodes!($;
     AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; class AppendArray; staged Names; step LaneResult; traits ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, OptionalReadRegister, BooleanFlag),
     RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused; class RequireObjectCoercible; staged Value; traits ROW_HANDLER INLINABLE PURE_SETUP LIFETIME_SAFE MAY_ALLOCATE, @ Register, @ fields(Unused, Register, Unused),
     RequireIteratorResult => READ_THROW; layout Scalar; meaning Unused; class RequireIteratorResult; staged Value; step Lane; traits ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(BooleanFlag, Register, Unused),
-    SuperCallCheck => READ_THROW; layout Scalar; meaning Unused; staged Names; step Body; traits NAME_OPERATION CALL_LINK MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
+    // Reads the frame's `this` binding and continues or throws: a lane step in place
+    // (`lane_general_step`) where the lane runs the derived constructor's frame.
+    SuperCallCheck => READ_THROW; layout Scalar; meaning Unused; staged Names; step Lane; traits NAME_OPERATION CALL_LINK MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
     IteratorCleanupPush => Effect::CONTROL; layout Scalar; meaning Unused; class IteratorCleanupPush; staged Names; step Lane; traits ROW_HANDLER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, Register, Unused),
     IteratorCleanupPop => Effect::CONTROL; layout Scalar; meaning Unused; class IteratorCleanupPop; staged Names; step Lane; traits ROW_HANDLER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
     // `a` = the next key of the for-in state `b` (`Vm::for_in_next`) that is still an enumerable property; to `imm` once none is left.
@@ -2271,6 +2273,22 @@ impl Function {
             .map(|index| self.local_registers[index].register)
     }
 
+    /// How many leading parameters live in registers in place, parameter `k` in register `k`,
+    /// where every promoted local is such a parameter (and none is a rest parameter, whose
+    /// array its frame makes): the layout a function that makes closures gets for the
+    /// parameters none of them names (`Compiler::promoted_local_plan`'s `parameters_only`).
+    /// An environment activation fills those registers as a call fills a plain activation's
+    /// (`call_environment::EnvironmentPassed::in_registers`). 0 for any other layout.
+    pub(crate) fn parameters_promoted_in_place(&self) -> u16 {
+        let in_place = self.local_registers.iter().enumerate().all(|(index, entry)| {
+            usize::from(entry.local) == index
+                && usize::from(entry.register) == index
+                && entry.local < self.params
+                && !(self.rest && entry.local + 1 == self.params)
+        });
+        if in_place { u16::try_from(self.local_registers.len()).unwrap_or(0) } else { 0 }
+    }
+
     /// Whether the instruction at `pc` returns `register`. A call is in tail position only
     /// when the instruction after it returns that call's own result.
     /// Whether its rest parameter is read only by `RestGet`, `RestLength` and `CallRest`
@@ -2575,6 +2593,19 @@ impl Function {
         self.widened(self.code[pc])
     }
 
+    /// The field site of the nested read (`GetField` of `FieldLookup::Site`) at `pc`, if the
+    /// instruction there is one: a frame paused at it calls its last read's getter.
+    pub(crate) fn nested_read_site(&self, pc: usize) -> Option<usize> {
+        let instruction = self.widened(*self.code.get(pc)?);
+        if !matches!(instruction.op(), Op::GetField) {
+            return None;
+        }
+        match instruction.field_lookup()? {
+            FieldLookup::Site(site) => Some(site),
+            FieldLookup::Atom { .. } => None,
+        }
+    }
+
     /// The opcode of the packed instruction `packed` of this function, without decoding its
     /// operands.
     #[inline(always)]
@@ -2849,13 +2880,17 @@ impl Function {
                         .addressed_local_slots()
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
-            // An ordinary call places its arguments in the window's locals, which a promoted
-            // parameter has none of, and fills the registers with `undefined`; a suspended
-            // frame is made with both, and no suspending function starts its registers apart
-            // from `undefined` (Wasm's i32 zero belongs to its bodies, which never suspend).
+            // An ordinary call places its arguments in the window's locals and fills the
+            // registers with `undefined`, but for the parameters promoted in place, parameter
+            // `k` in register `k` (`parameters_promoted_in_place`), which it places in their
+            // registers as a plain activation's call does: a function that makes closures keeps
+            // the parameters none of them names there (one-frame-one-call.md F6). Any other
+            // promoted local has no window home. A suspended frame is made with both, and no
+            // suspending function starts its registers apart from `undefined` (Wasm's i32 zero
+            // belongs to its bodies, which never suspend).
             let environment_activation = in_loop
                 && self.parent.is_some()
-                && self.local_registers.is_empty()
+                && (self.local_registers.is_empty() || self.parameters_promoted_in_place() != 0)
                 && self.initial_register == InitialRegister::Undefined
                 && self.locals_ride_window(tables);
             let suspendable = self.suspends_in_record();
@@ -3329,16 +3364,21 @@ impl Function {
 
     /// Whether no read of the `arguments` binding in local `slot`, `passes` among them, can
     /// follow any of `passes`: the object a pass makes is the binding's last read, so no
-    /// later read needs it. A handler's edges are not traced, so a body with one answers
-    /// `false`.
+    /// later read needs it. A handler's edges are traced too (`Successors`, its target and a
+    /// `finally`'s return target from every instruction it covers, the pass included), so a
+    /// read in a `catch` or `finally` that may run after a pass answers `false`; one that
+    /// runs only before any pass reads the object a materialized frame made on entry, from
+    /// the same kept values (one-frame-one-call.md F6 (d)).
     fn arguments_passed_last(&self, instructions: &[WideInstruction], slot: u16, passes: &[usize]) -> bool {
-        if !self.handlers.is_empty() {
-            return false;
-        }
+        let successors = (!self.handlers.is_empty()).then(|| Successors::of(self, instructions));
+        let successors_of = |pc: usize, work: &mut Vec<usize>| match &successors {
+            Some(successors) => work.extend(successors.at(pc).map(|(next, _)| next)),
+            None => crate::bytecode::for_each_instruction_successor(pc, instructions[pc], |next| work.push(next)),
+        };
         let mut reached = crate::bitset::BitSet::new(instructions.len());
         let mut work = Vec::new();
         for &pass in passes {
-            crate::bytecode::for_each_instruction_successor(pass, instructions[pass], |next| work.push(next));
+            successors_of(pass, &mut work);
         }
         while let Some(pc) = work.pop() {
             let Some(instruction) = instructions.get(pc) else {
@@ -3350,7 +3390,7 @@ impl Function {
             if instruction.addressed_local_slots().any(|addressed| addressed == slot) {
                 return false;
             }
-            crate::bytecode::for_each_instruction_successor(pc, *instruction, |next| work.push(next));
+            successors_of(pc, &mut work);
         }
         true
     }
@@ -3733,6 +3773,12 @@ impl FieldSite {
             FieldPart::Second => 1,
             FieldPart::Sink => 2,
         }]
+    }
+
+    /// The part whose read comes last (the second field's where it has one): the read whose
+    /// getter a call from the site's record makes (`Vm::resolve_field`).
+    pub(crate) fn last_read_part(self) -> FieldPart {
+        if self.second.is_some() { FieldPart::Second } else { FieldPart::First }
     }
 }
 

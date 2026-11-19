@@ -276,6 +276,18 @@ impl Native {
                 | Self::PromiseResolve
                 | Self::PromiseWithResolvers
                 | Self::WasmExportedFunction
+                // A stack capture reads the activations from the lane's frame walk
+                // (`Vm::lane_stack_sites`, frame-switches.md §5): chai's AssertionError calls
+                // `Error.captureStackTrace` on every failure. An error constructor called
+                // without `new` constructs (`Vm::call_native`'s error arm).
+                | Self::ErrorCaptureStackTrace
+                | Self::Error
+                | Self::EvalError
+                | Self::RangeError
+                | Self::ReferenceError
+                | Self::SyntaxError
+                | Self::TypeError
+                | Self::URIError
         )
     }
 }

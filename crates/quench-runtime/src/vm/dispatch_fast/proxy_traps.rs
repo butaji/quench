@@ -48,11 +48,8 @@ pub(super) fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, ta
     let by_layout = vm.heap.array(target).is_none() || (atom != vm.length_atom && !vm.atom_class(atom).contains(crate::vm::object::AtomClass::ARRAY_INDEX));
     let layout = if by_layout { vm.object_data(target).map_or(0, |data| data.layout_id()) } else { 0 };
     let check = TrapCheck { target, atom, access, layout };
-    let depth = vm.lane_stack.activation_count() - 1;
-    if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
-        script.completion = completion;
-    }
-    vm.lane_stack.trap_checks.push((depth, check));
+    vm.lane_stack.recomplete_top(completion);
+    vm.lane_stack.attach_payload(SidePayload::Trapped(check));
 }
 
 /// Whether `activation` is a trap's (`Completion::ReadsTrapped`, `AssignsTrapped`) whose
@@ -61,14 +58,9 @@ pub(super) fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, ta
 /// store's trap returns a falsish value, which is the store's `TypeError`. It returns from
 /// its frame, so that its pending call checks it (`CallCompletion::Trapped`).
 #[inline(always)]
-pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, activation: Option<&Activation>, value: Value) -> bool {
-    let Some(ActivationKind::Script(script)) = activation.map(|activation| activation.kind()) else {
-        return false;
-    };
-    if !matches!(script.completion, Completion::ReadsTrapped | Completion::AssignsTrapped) {
-        return false;
-    }
-    let Some((_, check)) = vm.lane_stack.trap_checks.last() else {
+pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, payload: SidePayload, value: Value) -> bool {
+    // A trap's activation carries its check in its side record (one-frame-one-call.md F4 (3)).
+    let SidePayload::Trapped(check) = payload else {
         return false;
     };
     match check.access {

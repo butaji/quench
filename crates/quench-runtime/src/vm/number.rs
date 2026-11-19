@@ -2,6 +2,7 @@ use super::native_rows::Holder;
 use super::property_key::PropertyKey;
 use super::*;
 use crate::staged::math::FloatUnary;
+use crate::staged::call_native::MathCall;
 use num_bigint::{BigInt, Sign};
 
 const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
@@ -568,6 +569,26 @@ fn math_unary_function(native: Native) -> Option<MathFunction> {
     })
 }
 
+/// The staged row (`staged::call_native::math_call`) of the Math function `native`, whose
+/// call of Number arguments a site makes in place, int32 fast paths included; `None` for any
+/// other native.
+pub(super) const fn math_call(native: Native) -> Option<MathCall> {
+    Some(match native {
+        Native::MathSqrt => MathCall::Unary(FloatUnary::Sqrt),
+        Native::MathAbs => MathCall::Unary(FloatUnary::Abs),
+        Native::MathFloor => MathCall::Unary(FloatUnary::Floor),
+        Native::MathCeil => MathCall::Unary(FloatUnary::Ceil),
+        Native::MathRound => MathCall::Unary(FloatUnary::Round),
+        Native::MathTrunc => MathCall::Unary(FloatUnary::Trunc),
+        Native::MathFround => MathCall::Unary(FloatUnary::Fround),
+        Native::MathSign => MathCall::Sign,
+        Native::MathMax => MathCall::Extreme(true),
+        Native::MathMin => MathCall::Extreme(false),
+        Native::MathImul => MathCall::Imul,
+        _ => return None,
+    })
+}
+
 /// The value of a Math function of Number arguments that may read more than its first
 /// (`Math.max`, `Math.min`, `Math.pow`, `Math.atan2`, `Math.imul`), a missing argument being
 /// NaN as `undefined` converts; `None` for any other function. Each runs no guest code once its
@@ -649,43 +670,6 @@ pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
         MathFunction::Unary(operation) => Some(operation(value)),
         MathFunction::Extreme(_) | MathFunction::Imul | MathFunction::Binary(_) => None,
     }
-}
-
-/// Select the numeric operation before entering its implementation, so rejection
-/// and simple operations do not pay the stack setup of more complex operations.
-#[inline(always)]
-fn math_unary_operation(native: Native) -> Option<fn(f64) -> f64> {
-    Some(match native {
-        Native::MathFloor => |value| crate::staged::math::float_unary(FloatUnary::Floor, value),
-        Native::MathAbs => |value| crate::staged::math::float_unary(FloatUnary::Abs, value),
-        Native::MathCeil => |value| crate::staged::math::float_unary(FloatUnary::Ceil, value),
-        Native::MathRound => |value| crate::staged::math::float_unary(FloatUnary::Round, value),
-        Native::MathTrunc => |value| crate::staged::math::float_unary(FloatUnary::Trunc, value),
-        Native::MathSqrt => |value| crate::staged::math::float_unary(FloatUnary::Sqrt, value),
-        Native::MathAcos => f64::acos,
-        Native::MathAsin => f64::asin,
-        Native::MathAtan => super::fdlibm_math::atan,
-        Native::MathCos => f64::cos,
-        Native::MathExp => f64::exp,
-        Native::MathSin => f64::sin,
-        Native::MathTan => f64::tan,
-        Native::MathAcosh => f64::acosh,
-        Native::MathAsinh => f64::asinh,
-        Native::MathAtanh => math_atanh,
-        Native::MathCbrt => super::fdlibm_math::cbrt,
-        Native::MathCosh => f64::cosh,
-        Native::MathExpm1 => f64::exp_m1,
-        Native::MathFround => |value| crate::staged::math::float_unary(FloatUnary::Fround, value),
-        Native::MathLog10 => f64::log10,
-        Native::MathLog1p => f64::ln_1p,
-        Native::MathLog2 => f64::log2,
-        Native::MathSinh => f64::sinh,
-        Native::MathTanh => f64::tanh,
-        Native::MathClz32 => |value| f64::from(crate::staged::math::leading_zeros(crate::value::number_to_u32(value))),
-        Native::MathF16Round => f16_round,
-        Native::MathSign => |value| crate::staged::math::float_unary(FloatUnary::Sign, value),
-        _ => return None,
-    })
 }
 
 impl<H: Host> Vm<H> {

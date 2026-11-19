@@ -196,6 +196,12 @@ fn primitive_leaf_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native:
     result
 }
 
+/// The catalog fact the lean native rows derive from (`native_calls::in_place_handler`): whether
+/// `native` has an in-place body, which runs no guest code, raises nothing and observes no frame.
+pub(super) const fn runs_no_guest_code(native: Native) -> bool {
+    IN_PLACE_FAMILIES[native as usize] != 0
+}
+
 /// `in_place_families` of every native, by discriminant.
 const IN_PLACE_FAMILIES: [u16; Native::COUNT as usize] = {
     let mut table = [0; Native::COUNT as usize];

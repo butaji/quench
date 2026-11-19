@@ -250,7 +250,7 @@ pub(super) use code_heap::{flush_retired_writers, CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
 mod direct_callee;
-pub(super) use direct_callee::{names_dead_callee, window_width, DirectCallee, DirectCandidates, ShadowFrame};
+pub(super) use direct_callee::{names_dead_callee, window_width, DirectCallee, DirectCandidates};
 #[path = "compiled/lane_storage.rs"]
 mod lane_storage;
 mod lane_body_run;
@@ -1169,7 +1169,7 @@ fn materialize_chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatc
             Err(failure) => { recovered.failure = Some(failure); break; }
         }
     }
-    let call_pc = chain[0].call_pc as usize;
+    let call_pc = chain[0].link.call_pc as usize;
     dispatch.outcome = Some(JsNativeStep { instruction_pc: call_pc, next_pc: call_pc + 1,
         result: Ok(StepResult::ResumeFrames(Box::new(recovered))) });
 }
@@ -1180,16 +1180,18 @@ fn materialize_chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatc
 fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usize, entry: ChainFrame)
     -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
     let body = program.function(vm.frames[caller].function as usize);
-    let instruction = body.widened(body.code[entry.call_pc as usize]);
+    let call_pc = entry.link.call_pc as u32;
+    let function = frameless::admitted_function(vm, entry.link.callee);
+    let instruction = body.widened(body.code[call_pc as usize]);
     // The activation the instruction's step pushes (`Vm::pushed_frame`).
-    let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.callee, entry.this);
+    let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.link.callee, entry.link.this);
     let env = vm.heap.function(callee).expect("admitted inline closure").env;
     let passed: *const [Value] = vm.register_window(caller, window);
-    let target = (vm.frames[caller].program, entry.function, env);
+    let target = (vm.frames[caller].program, function, env);
     // SAFETY: the caller's window outlives the callee's setup.
-    let pushed = vm.push_in_loop_activation(program, caller, entry.call_pc as usize + 1, target, callee, receiver,
+    let pushed = vm.push_in_loop_activation(program, caller, call_pc as usize + 1, target, callee, receiver,
         unsafe { &*passed }, instruction.result_register(), completion).expect("a recovered callee shares its caller's program");
-    let super::StepResult::PushFrame { call_guard: guard, completion, .. } = pushed.map_err(|error| (entry.call_pc, error))? else {
+    let super::StepResult::PushFrame { call_guard: guard, completion, .. } = pushed.map_err(|error| (call_pc, error))? else {
         unreachable!("an in-loop push pushes a frame")
     };
     let frame = vm.frames.last_mut().expect("recovered inline frame");
@@ -1200,7 +1202,7 @@ fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usiz
     frame.pc_is_resume = true;
     vm.active_registers = frame.registers.as_mut_ptr();
     Ok(super::dispatch_frame::PendingGeneralCall {
-        caller, caller_cursor: None, call_pc: entry.call_pc, destination: instruction.result_register(),
+        caller, caller_cursor: None, call_pc: call_pc, destination: instruction.result_register(),
         completion, returns: instruction.returns_from_frame(), call_guard: Some(guard), caller_program: None,
     })
 }
@@ -3473,7 +3475,7 @@ impl CompiledOsrRegion {
                             EntryStamp { captures: captures_key(vm, frame), ..EntryStamp::of(vm, (program, function, frame), lane_context, registers, residual.specialized) }
                         }
                     };
-                    osr_lane::bind_loop::<H>(&mut dispatch, region, entry, lane_context);
+                    osr_lane::bind_loop::<H>(&mut dispatch, region, entry, lane_context, registers);
                     osr_lane::bind_captures::<H>(region, entry, lane_context, registers, calls, &mut captures);
                     self.stamp.set(Some(stamp));
                     let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend), region.header);
@@ -3483,12 +3485,14 @@ impl CompiledOsrRegion {
                 // A run entered while another of the region's runs holds the parked dispatch, or the
                 // first runs, builds its own activation. The first run parks an idle dispatch for the
                 // runs after it.
-                None => JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
-                    native.dispatch.bind_native_storage(std::ptr::from_mut(vm));
-                    osr_lane::bind_loop::<H>(&mut native.dispatch, region, entry, lane_context);
+                None => JsStepDispatch::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |dispatch, vm| {
+                    dispatch.bind_native_storage(std::ptr::from_mut(vm));
+                    osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context, registers);
                     osr_lane::bind_captures::<H>(region, entry, lane_context, registers, calls, &mut captures);
-                    osr_lane::bind_frame(&mut native.dispatch, &native._program, vm, (program, function, lane_context), registers, false);
-                    let run = osr_lane::enter(&mut native.dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend), region.header);
+                    // `with_function` admitted the program; it holds it for the run.
+                    let Some(residual) = vm.programs.get(program) else { return RegionRun::own(LaneExit::Terminated) };
+                    osr_lane::bind_frame(dispatch, &residual, vm, (program, function, lane_context), registers, false);
+                    let run = osr_lane::enter(dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend), region.header);
                     if self.crossing == Crossing::General && !self.made.replace(true) {
                         self.parked.set(Some(Box::new(JsStepDispatch::idle())));
                     }
@@ -3683,7 +3687,7 @@ struct JsStepDispatch {
     /// may move frames or initialize a derived constructor, so refresh this before
     /// returning to generated code. Direct field reads do not cross a safepoint.
     fixed_this_slot: *const Value,
-    /// Immutable function admitted with `residual` by `JsNativeActivation`.
+    /// Immutable function admitted with `residual` by `JsStepDispatch::with_function`.
     body: *const crate::bytecode::Function,
     /// A lane body's scratch window (`BodyRunContext::scratch`), where a leave inside an inlined
     /// callee writes the callee's registers.
@@ -3697,14 +3701,6 @@ struct JsStepDispatch {
     native_end: usize,
     shadow_top: usize,
     shadow_end: usize,
-    /// A lane run's lane stack, where a direct call places its callee's registers and its
-    /// native frame (`DirectCallee`): the words that hold the values' and the activations'
-    /// tops, which the VM's `LaneStack` owns (`Vm::stack_words_in_lane`), the end of the values'
-    /// capacity, and the end of the frames the run nests (`SHADOW_FRAMES`).
-    lane_values_top: usize,
-    lane_values_end: usize,
-    lane_activations_top: usize,
-    lane_frames_end: usize,
     /// The element read past a present dense element (`general_elements`).
     element_get: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
@@ -3726,16 +3722,6 @@ struct JsStepDispatch {
     typed_view_directory: usize,
     typed_view_pages: usize,
     buffer_relocations: usize,
-    /// The function records' mark blocks and their count, which a store into a function's own
-    /// properties reads as the object records' are (`StagedRecordSpace::Function`); and the empty
-    /// string's word, which a function's inferred name replaces (`staged::naming`).
-    function_mark_blocks: usize,
-    function_mark_block_count: usize,
-    empty_string: u64,
-    /// The word of the storage the running lane body's environment-owned locals live in, which its environment rows
-    /// read through (`staged::environment::environment_slot`): its activation's window, or storage that holds no
-    /// slot where it runs in a frame (`heap::absent_environment_storage`).
-    environment_storage: u64,
     /// The address of the thread's armed array proofs word (`heap::array_proofs::armed_proofs_address`).
     /// Its word is nonzero while a lane run's proofs are armed, which a row that shrinks an array's
     /// backing must miss on: it cannot retire them. Read at every use, so never stale.
@@ -3748,6 +3734,23 @@ struct JsStepDispatch {
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
     stop_pc: usize,
+    /// The object space's allocation cursor (`Heap::native_object_cursor`), which an inline
+    /// allocation bumps (`NATIVE_RECORD_CURSOR_LAYOUT`); zero where absent. Refreshed with the bases.
+    /// Declared last, with the other words only generated allocation reads: the stencils' offsets
+    /// are of the head's fields (`staged::js_step_head`), which keep their places.
+    object_cursor: usize,
+    /// The record words of an empty object made for the realm's prototype `empty_object_proto`
+    /// (`capture_empty_object`): an inline allocation stores them into the record it bumps.
+    /// `empty_object_layout` zero: no template yet, and the allocation is made by its helper.
+    empty_object_layout: u64,
+    empty_object_payload: u64,
+    empty_object_proto: u64,
+    /// The array space's allocation cursor and the record words of an empty array made for the
+    /// realm's `Array.prototype`, as the object's above (`empty_object_*`).
+    array_cursor: usize,
+    empty_array_layout: u64,
+    empty_array_payload: u64,
+    empty_array_proto: u64,
 }
 
 /// Reads and writes of the head's fields go through the head (`JsStepDispatch::head`).
@@ -4422,7 +4425,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn publish_body_receiver(&self, receiver: Value) {
         let frame = frame_in_lane();
         // SAFETY: as `refresh_body_bases`.
-        unsafe { (*frame).dispatch.receiver = receiver.to_bits() }
+        unsafe { set_frame_word((*frame).dispatch.native_registers, CONTEXT_THIS, receiver.to_bits()) }
     }
 
     /// Reloads the heap bases of the payload of the native loop region the lane entered, whose address the
@@ -4659,15 +4662,7 @@ fn run_js_native_entry<H: Host>(
     Some((status, word))
 }
 
-/// Owns immutable metadata for one resumable native activation. Holding the
-/// program prevents unique-owner record release while its dispatch borrows it.
-/// Reentrant entries own separate activations, never a VM-local ID in TLS.
-struct JsNativeActivation {
-    _program: Rc<ResidualProgram>,
-    dispatch: JsStepDispatch,
-}
-
-impl JsNativeActivation {
+impl JsStepDispatch {
     /// Construct and consume one owned activation in the entry's scope. The
     /// large dispatch does not cross an optional aggregate-return boundary.
     #[cfg(feature = "native-execution")]
@@ -4680,13 +4675,16 @@ impl JsNativeActivation {
 
     /// `with` for `function` of `program_id`, which runs above VM frame `frame`: a frameless
     /// activation's function is not its frame's, and may not be of the frame's program.
+    /// The program is held as a local for the run: the payload borrows it (`residual`), and
+    /// holding it keeps its record from unique-owner release while the dispatch runs. Reentrant
+    /// entries own separate payloads, never a VM-local ID in TLS.
     #[inline(always)]
     fn with_function<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, (frame, function): (usize, u32), start_pc: usize,
         allow_inline_calls: bool, views: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
         let program = vm.programs.get(program_id)?;
         let body = program.function_get(function as usize)? as *const _;
         let activation = &mut vm.frames[frame];
-        let mut native = Self { dispatch: JsStepDispatch {
+        let mut dispatch = JsStepDispatch {
             head: JsStepHead {
                 native_locals: activation.locals.as_mut_ptr(),
                 local_count: activation.locals.len(),
@@ -4699,19 +4697,17 @@ impl JsNativeActivation {
             register_count: activation.registers.len(),
             body,
             ..JsStepDispatch::idle()
-        }, _program: program };
+        };
         // The prologue already coerced `this` (`Vm::call_this_value`); a frame that has not
         // initialized it leaves the receiver `DELETED`, at which a body's `LoadThis` leaves.
         let frame = &vm.frames[frame];
         let this = if frame.fixed_this { frame.this } else { Value::DELETED };
         // SAFETY: the activation's register file is live for this run, and its header is its own.
-        unsafe { set_frame_word(native.dispatch.native_registers, CONTEXT_THIS, this.to_bits()) };
-        if views { native.dispatch.refresh_heap_bases(vm, &native._program); }
-        Some(run(&mut native, vm))
+        unsafe { set_frame_word(dispatch.native_registers, CONTEXT_THIS, this.to_bits()) };
+        if views { dispatch.refresh_heap_bases(vm, &program); }
+        Some(run(&mut dispatch, vm))
     }
-}
 
-impl JsStepDispatch {
     /// The payload of no activation: no frame, registers, locals or VM, every base word unbound.
     fn idle() -> Self {
         Self {
@@ -4733,20 +4729,14 @@ impl JsStepDispatch {
             stop_pc: JS_NO_STOP_PC,
             native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
-            capture_values: std::ptr::null(), capture_len: 0, capture_stores: 0,
-            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0,
+            ascii_unit_strings: 0,
             object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
             array_cursor: 0, empty_array_layout: 0, empty_array_payload: 0, empty_array_proto: 0,
-            object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
-            property_buffer: 0, field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
-            call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
-            loop_entry: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
-            empty_string: Value::DELETED.to_bits(),
-            environment_storage: crate::heap::absent_environment_storage(),
+            typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
+            call_cache: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
             armed_array_proofs: crate::heap::armed_proofs_address(),
             array_chain_index_free_address: crate::heap::index_free_chain_link_address(),
-            receiver: Value::DELETED.to_bits(),
-            vm: 0, residual: 0, body: std::ptr::null(), inlined: 0, exit_line: 0, lane_context: 0, returned_pc: 0,
+            body: std::ptr::null(), inlined: 0, exit_line: 0,
             native_top: 0, native_end: 0, shadow_top: 0, shadow_end: 0,
             outcome: None,
         }
@@ -4854,7 +4844,7 @@ impl JsStepDispatch {
     }
 
     /// Readies a region's parked dispatch (`CompiledOsrRegion::parked`) for a run of `program`
-    /// above VM frame `frame`: the words `JsNativeActivation::with_function` and
+    /// above VM frame `frame`: the words `JsStepDispatch::with_function` and
     /// `bind_native_storage` bind, the run state the last run left reset to `idle`'s, and the
     /// bases refreshed (`refresh_heap_bases`), which reread only what moved since the last run.
     /// The words the run's binds set (`osr_lane`) are theirs.
@@ -4871,7 +4861,7 @@ impl JsStepDispatch {
     /// The run state a region's run leaves, reset to `idle`'s.
     #[inline(always)]
     fn reset_region_run(&mut self) {
-        (self.capture_values, self.capture_len, self.capture_stores) = (std::ptr::null(), 0, 0);
+        self.set_captures_word(0);
         (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
         (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
         self.environment_storage = crate::heap::absent_environment_storage();
@@ -5210,7 +5200,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             entered_from.set(Some(vm.active_program));
             vm.set_active_program(dispatch.program_id);
         }
-        // SAFETY: the owning JsNativeActivation admits both pointers once and retains the shared
+        // SAFETY: the owning activation (`JsStepDispatch::with`) admits both pointers once and retains the shared
         // program until native execution (including reentry) finishes; release needs it unique.
         let program = unsafe { &*(dispatch.residual as *const ResidualProgram) };
         if let Some(step) = frameless::leave(vm, program, dispatch, pc) { return Ok(JsCalloutStep::Stop(step)); }
@@ -8266,7 +8256,7 @@ impl<H: Host> Vm<H> {
         outcome: super::FrameOutcome) -> Result<super::StepResult, JsError> {
         let outcome = match outcome {
             super::FrameOutcome::ConstructComplete { value, this } =>
-                super::FrameOutcome::Complete(if self.is_object_like(value) { value } else { this }),
+                super::FrameOutcome::Complete(Value::from_bits(crate::staged::call_construct::concrete_construct_value(value.to_bits(), this.to_bits(), self.is_object_like(value)))),
             outcome => outcome,
         };
         match outcome {
@@ -9731,13 +9721,13 @@ impl<H: Host> Vm<H> {
         let failure = |message: String| JsNativeStep {
             instruction_pc: start_pc, next_pc: start_pc, result: Err(JsError::validation(message)),
         };
-        JsNativeActivation::with(self, program, frame, start_pc, allow_inline_calls, true, |activation, vm| {
+        JsStepDispatch::with(self, program, frame, start_pc, allow_inline_calls, true, |activation, vm| {
             // SAFETY: the activation owns the immutable function admitted above.
-            let instruction_count = unsafe { (*activation.dispatch.body).code.len() };
+            let instruction_count = unsafe { (*activation.body).code.len() };
             let Some(entry) = code.entries().get(function as usize).copied() else {
                 return Some(failure("linked native function is missing".into()));
             };
-            let dispatch = &mut activation.dispatch;
+            let dispatch = &mut *activation;
             dispatch.bind_captures(vm);
             dispatch.stop_pc = stop_pc.unwrap_or(JS_NO_STOP_PC);
             vm.frames[frame].pc = start_pc;
@@ -11032,8 +11022,8 @@ mod tests {
         let receiver = vm.object();
         vm.frames[0].this = receiver;
         vm.frames[0].fixed_this = false;
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
-            assert!(activation.dispatch.fixed_this_slot.is_null());
+        JsStepDispatch::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
+            assert!(activation.fixed_this_slot.is_null());
         }).unwrap();
         vm.frames[0].fixed_this = true;
         let slots = crate::heap::EnvironmentSlots::from(vec![Value::number(7.0)]);
@@ -11041,13 +11031,13 @@ mod tests {
             env: vm.frames[0].env, captured: vm.frames[0].captured,
             epoch: vm.cache_epochs.gc, slots: &slots, root: None,
         };
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
-            assert_eq!(activation.dispatch.fixed_this_slot, &vm.frames[0].this as *const Value);
-            assert!(quench_bjit::shared_words::capture_values(activation.dispatch.captures_word()) != 0);
+        JsStepDispatch::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
+            assert_eq!(activation.fixed_this_slot, &vm.frames[0].this as *const Value);
+            assert!(quench_bjit::shared_words::capture_values(activation.captures_word()) != 0);
         }).unwrap();
         vm.frames[0].capture_cache.root = Some(Some(ProgramId::MAIN.raw()));
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
-            assert_eq!(quench_bjit::shared_words::capture_values(activation.dispatch.captures_word()), 0);
+        JsStepDispatch::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
+            assert_eq!(quench_bjit::shared_words::capture_values(activation.captures_word()), 0);
         }).unwrap();
     }
 
@@ -11272,8 +11262,8 @@ mod tests {
         vm: &mut Vm<crate::test_host::TestHost>, pc: usize,
         run: impl FnOnce(*mut CallContext, *mut u64) -> i64,
     ) -> (i64, u64, Option<JsNativeStep>) {
-        JsNativeActivation::with(vm, ProgramId::MAIN, 0, pc, false, true, |activation, vm| {
-            let dispatch = &mut activation.dispatch;
+        JsStepDispatch::with(vm, ProgramId::MAIN, 0, pc, false, true, |activation, vm| {
+            let dispatch = &mut *activation;
             let mut context = CallContext::native_adapter(
                 (dispatch as *mut JsStepDispatch).cast(),
                 vm.execution_interrupt.attention_flag(), None,
@@ -11353,9 +11343,9 @@ mod tests {
         let probe = vm.lookup_atom("tableProbe").unwrap();
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let assert_binding = |vm: &mut Vm<crate::test_host::TestHost>, expected| {
-            JsNativeActivation::with(vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
+            JsStepDispatch::with(vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
                 assert_ne!(expected, 0);
-                assert_eq!(activation.dispatch.object_record_base, expected);
+                assert_eq!(activation.object_record_base, expected);
                 assert_eq!(vm.heap.object_record_base().unwrap() as usize, expected);
             }).unwrap();
         };
@@ -11371,9 +11361,9 @@ mod tests {
         let other_base = other.heap.object_record_base().unwrap() as usize;
         // Reentry in another VM admits that VM's table, without changing the
         // outer activation's admitted base or retaining it for later entries.
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
+        JsStepDispatch::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
             assert_binding(&mut other, other_base);
-            assert_eq!(activation.dispatch.object_record_base, original);
+            assert_eq!(activation.object_record_base, original);
         }).unwrap();
 
         // Realm initialization destroys the old heap reservation. Rebuild the
@@ -11399,18 +11389,19 @@ mod tests {
         let vm_source = "throw 7;";
         let mut first_vm = semantic_vm(vm_source);
         let mut second_vm = semantic_vm(vm_source);
-        let weak = JsNativeActivation::with(&mut first_vm, ProgramId::MAIN, 0, 0, false, true, |first, _| {
-            JsNativeActivation::with(&mut second_vm, ProgramId::MAIN, 0, 0, false, true, |second, _| {
-                assert_eq!(first.dispatch.program_id, second.dispatch.program_id);
-                assert!(!Rc::ptr_eq(&first._program, &second._program));
-                assert_eq!(first.dispatch.residual, Rc::as_ptr(&first._program) as usize);
-                assert_eq!(first.dispatch.body, first._program.function(0) as *const _);
-                assert_ne!(first.dispatch.body, second.dispatch.body);
-                let weak = Rc::downgrade(&first._program);
-                let mut program = first._program.clone();
-                assert!(Rc::get_mut(&mut program).is_none(), "admitted records cannot be uniquely released");
-                weak
-            }).unwrap()
+        let weak = JsStepDispatch::with(&mut first_vm, ProgramId::MAIN, 0, 0, false, true, |first, first_vm| {
+            let first_program = first_vm.programs.get(ProgramId::MAIN).unwrap();
+            JsStepDispatch::with(&mut second_vm, ProgramId::MAIN, 0, 0, false, true, |second, second_vm| {
+                let second_program = second_vm.programs.get(ProgramId::MAIN).unwrap();
+                assert_eq!(first.program_id, second.program_id);
+                assert!(!Rc::ptr_eq(&first_program, &second_program));
+                assert_eq!(first.residual, Rc::as_ptr(&first_program) as usize);
+                assert_eq!(first.body, first_program.function(0) as *const _);
+                assert_ne!(first.body, second.body);
+            }).unwrap();
+            let mut shared = first_program.clone();
+            assert!(Rc::get_mut(&mut shared).is_none(), "admitted records cannot be uniquely released");
+            Rc::downgrade(&first_program)
         }).unwrap();
         // Only the VM owns the program after the native scope returns.
         assert_eq!(weak.strong_count(), 1);
@@ -11430,8 +11421,8 @@ mod tests {
         }
         let mut vm = semantic_vm("throw 7;");
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
-                let dispatch = &mut activation.dispatch;
+            JsStepDispatch::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
+                let dispatch = &mut *activation;
                 let interrupt = vm.execution_interrupt.attention_flag() as *const _;
                 run_js_native_entry(report_panic, vm, ProgramId::MAIN,
                     (dispatch as *mut JsStepDispatch).cast(), interrupt, None)
@@ -11440,8 +11431,8 @@ mod tests {
         assert_eq!(panic.downcast_ref::<&str>(), Some(&"native panic"));
 
         let (_memory, entry, _operands) = live_native_graph(&vm);
-        JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
-            let dispatch = &mut activation.dispatch;
+        JsStepDispatch::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
+            let dispatch = &mut *activation;
             let interrupt = vm.execution_interrupt.attention_flag() as *const _;
             let (status, _) = run_js_native_entry(entry, vm, ProgramId::MAIN,
                 (dispatch as *mut JsStepDispatch).cast(), interrupt, None).unwrap();

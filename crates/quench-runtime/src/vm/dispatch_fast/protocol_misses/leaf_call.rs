@@ -25,6 +25,16 @@ pub(in crate::vm::dispatch_fast) const fn leaf_parameters(leaf: u8, argc: u8) ->
     LEAF_KIND | (leaf << 3) | argc
 }
 
+/// The leaf form and argument count of a leaf call's `parameters` (`leaf_parameters`); `None` for
+/// another kind. The lane frame's leaf call (`LaneFrame::call_entry`) reads its form from here.
+pub(in crate::vm::dispatch_fast) const fn leaf_of(parameters: u8) -> Option<(u8, u16)> {
+    if parameters & KIND_MASK != LEAF_KIND {
+        return None;
+    }
+    let payload = parameters & PAYLOAD_MASK;
+    Some((payload >> 3, (payload & 7) as u16))
+}
+
 /// The miss body of a record of this family with static parameters `parameters`
 /// (`protocol_row::<H, OP, ACC, { protocol_family::LEAF_CALL | parameters }>`).
 pub(in crate::vm::dispatch_fast) const fn leaf_call_miss_of<H: Host>(parameters: u8) -> Handler {

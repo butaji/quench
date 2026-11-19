@@ -12,7 +12,7 @@ use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
 use super::super::entry_cell::{EntryCell, RAISED_RUN};
 use super::super::exit_protocol::{status_is, StatusClass};
-use super::super::super::dispatch_fast::{LaneRecoverySpace, KIND_NATIVE, KIND_OFFSET};
+use super::super::super::dispatch_fast::LaneRecoverySpace;
 use crate::staged::call::admit_room;
 use crate::staged::{Access, Region};
 use crate::staged::{plan_entry, CallEntry, CallFrame, CalleeKind, DirectPlan, Entered, Identity, Invocation, Resolved, Room, Stage};
@@ -115,27 +115,34 @@ impl EmitFrame<'_> {
         stage.load_u64(DISPATCH, self.payload, field(offset))
     }
 
-    /// The lane stack's two tops, each read through the word that holds it (the values' and the
-    /// activations'): the callee's window and its frame begin there.
-    fn stack_tops(&self, stage: &mut Emit<'_, '_>) -> (ir::Value, ir::Value) {
+    /// The lane stack's values' top, read through the word that holds it: the callee's window begins there.
+    fn values_top(&self, stage: &mut Emit<'_, '_>) -> ir::Value {
         let values = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_values_top));
-        let activations = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_activations_top));
-        (stage.load_u64(DISPATCH, values, 0), stage.load_u64(DISPATCH, activations, 0))
+        stage.load_u64(DISPATCH, values, 0)
     }
 
-    /// Writes `top` and `frame` back through the tops' words: the call's window and its frame pop.
-    fn set_stack_tops(&self, stage: &mut Emit<'_, '_>, (top, frame): (ir::Value, ir::Value)) {
+    /// Writes the values' top through its word.
+    fn set_values_top(&self, stage: &mut Emit<'_, '_>, top: ir::Value) {
         let values = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_values_top));
-        let activations = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_activations_top));
         stage.store_u64(DISPATCH, values, 0, top);
-        stage.store_u64(DISPATCH, activations, 0, frame);
     }
 
-    /// Admit the callee's window to the lane stack's values, and its frame and recovery space to
-    /// its activations, each a room row leaving at `miss`.
+    /// The total frame count a native header is indexed by (one-frame-one-call.md F5): the frames
+    /// below the plain headers (`*activation_count`) plus the plain depth, the count before the push.
+    fn frame_index(&self, stage: &mut Emit<'_, '_>) -> ir::Value {
+        let count_at = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.activation_count));
+        let count = stage.load_u64(DISPATCH, count_at, 0);
+        let plain = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.plain_depth));
+        let depth = stage.load_u64(Region::Payload.mutable(), plain, crate::staged::frame::PLAIN_DEPTH_AT as i32);
+        stage.add(count, depth)
+    }
+
+    /// Admit the callee's window to the lane stack's values, and its native header to the plain frames
+    /// (the index bound: `index + RECOVERY_ACTIVATIONS_AT + 1 <= plain_depth_limit`), each a room row
+    /// leaving at `miss`.
     fn admit_stacks(&self, stage: &mut Emit<'_, '_>, callee: &DirectCallee, cell: ir::Value, miss: ir::Block) -> Option<Room<ir::Value>> {
         let word = std::mem::size_of::<Value>() as u64;
-        let (top, frame) = self.stack_tops(stage);
+        let top = self.values_top(stage);
         let end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_values_end));
         // The next window's context words follow the callee's registers (`lane_values::CONTEXT`).
         let next = stage.add_imm(top, (u64::from(callee.registers) + crate::vm::register_file::FRAME_CONTEXT as u64) * word);
@@ -144,36 +151,75 @@ impl EmitFrame<'_> {
         let bytes = stage.mul_imm(recovered_values, word);
         let reserved = stage.add(next, bytes);
         admit_room(stage, end, reserved, miss)?;
-        let frames_end = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.lane_frames_end));
+        let index = self.frame_index(stage);
         let activations = stage.load_u64(ENTRY_CELL, recovery, field(std::mem::offset_of!(LaneRecoverySpace, activations)));
         let frames = stage.add_imm(activations, 1_u64);
-        let frame_bytes = stage.mul_imm(frames, super::super::FRAME_BYTES as u64);
-        let recovered = stage.add(frame, frame_bytes);
-        admit_room(stage, frames_end, recovered, miss)?;
-        Some(Room { cell, top, next, shadow: frame })
+        let reserved = stage.add(index, frames);
+        let limit_at = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.plain_depth_limit));
+        let limit = stage.load_u64(DISPATCH, limit_at, 0);
+        admit_room(stage, limit, reserved, miss)?;
+        Some(Room { cell, top, next, shadow: index })
     }
 
-    /// The callee's native frame pushed (`ShadowFrame` and `ActivationKind::Native`), which the lane
-    /// links only should a helper observe it or the callee leave, and the stacks' tops moved past
-    /// its window and its frame.
-    fn push_native(&self, stage: &mut Emit<'_, '_>, callee: &DirectCallee, this: ir::Value, room: Room<ir::Value>) {
+    /// The callee's native header (one-frame-one-call.md F5), written below its window with NATIVE_FLAG:
+    /// its receiver, the caller's registers, the callee's constant words and the packed word. Its body and
+    /// descriptor go in the tables at its index, the plain depth is bumped and the window set as the innermost.
+    /// The link (`native_frames::link_header`) fills the call record, caller base, argc and side record.
+    fn push_native(&self, stage: &mut Emit<'_, '_>, callee: &DirectCallee, this: ir::Value, caller_registers: ir::Value, room: Room<ir::Value>) {
+        use crate::staged::frame::{CONTEXT_CALL, CONTEXT_CALLEE, CONTEXT_CALLER_BASE, CONTEXT_CALLER_REGISTERS, CONTEXT_PACKED, CONTEXT_THIS};
+        let window = room.top;
+        let at = Region::Frame.mutable();
         let descriptor = address(self.helpers, stage.builder, RelocKind::Descriptor, callee.target.function, callee as *const DirectCallee as u64);
         let body = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, body)));
-        for (offset, value) in [(std::mem::offset_of!(ShadowFrame, callee), descriptor), (std::mem::offset_of!(ShadowFrame, this), this),
-            (std::mem::offset_of!(ShadowFrame, body), body), (std::mem::offset_of!(ShadowFrame, window), room.top)] {
-            stage.store_u64(DISPATCH, room.shadow, field(offset), value);
-        }
-        let tag = stage.constant(u64::from(KIND_NATIVE));
-        stage.store_u64(DISPATCH, room.shadow, field(KIND_OFFSET), tag);
-        let pushed = stage.add_imm(room.shadow, super::super::FRAME_BYTES as u64);
-        self.set_stack_tops(stage, (room.next, pushed));
+        let call = stage.constant(callee.call as u64);
+        let caller_base = stage.constant(callee.caller_base as u64);
+        let packed = stage.constant(u64::from(callee.target.function) | crate::staged::frame::PLAIN_FLAG | crate::staged::frame::NATIVE_FLAG);
+        let callee_word = stage.constant(callee.callee.to_bits());
+        stage.store_u64(at, window, context_at(CONTEXT_THIS), this);
+        stage.store_u64(at, window, context_at(CONTEXT_CALL), call);
+        stage.store_u64(at, window, context_at(CONTEXT_CALLER_REGISTERS), caller_registers);
+        stage.store_u64(at, window, context_at(CONTEXT_CALLER_BASE), caller_base);
+        stage.store_u64(at, window, context_at(CONTEXT_PACKED), packed);
+        stage.store_u64(at, window, context_at(CONTEXT_CALLEE), callee_word);
+        // The index's entries: the body and the descriptor, one word each.
+        let offset = stage.mul_imm(room.shadow, std::mem::size_of::<usize>() as u64);
+        let bodies = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.body_table));
+        let body_at = stage.add(bodies, offset);
+        stage.store_u64(at, body_at, 0, body);
+        let descriptors = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.native_table));
+        let descriptor_at = stage.add(descriptors, offset);
+        stage.store_u64(at, descriptor_at, 0, descriptor);
+        // The plain frames: one more header, with the window as the innermost.
+        let plain = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.plain_depth));
+        let depth = stage.load_u64(Region::Payload.mutable(), plain, crate::staged::frame::PLAIN_DEPTH_AT as i32);
+        let depth = stage.add_imm(depth, 1_u64);
+        stage.store_u64(Region::Payload.mutable(), plain, crate::staged::frame::PLAIN_DEPTH_AT as i32, depth);
+        stage.store_u64(Region::Payload.mutable(), plain, crate::staged::frame::PLAIN_REGISTERS_AT as i32, window);
+        let count_at = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.body_top));
+        let index = stage.add_imm(room.shadow, 1_u64);
+        stage.store_u64(DISPATCH, count_at, 0, index);
+        self.set_values_top(stage, room.next);
     }
 
-    /// Pops the callee's window and frame, where the call began (`Room`).
+    /// Pops the callee's native header, where the call began (`Room`): the plain depth drops, the innermost
+    /// window becomes the header's caller registers, the body top returns to the index, and the values' top
+    /// returns to the window.
     fn pop_native(&self, stage: &mut Emit<'_, '_>, room: Room<ir::Value>) {
-        self.set_stack_tops(stage, (room.top, room.shadow));
+        use crate::staged::frame::{CONTEXT_CALLER_REGISTERS, PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
+        let caller = stage.load_u64(Region::Frame.mutable(), room.top, context_at(CONTEXT_CALLER_REGISTERS));
+        let plain = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.plain_depth));
+        let depth = stage.load_u64(Region::Payload.mutable(), plain, PLAIN_DEPTH_AT as i32);
+        let depth = stage.add_imm(depth, u64::MAX);
+        stage.store_u64(Region::Payload.mutable(), plain, PLAIN_DEPTH_AT as i32, depth);
+        stage.store_u64(Region::Payload.mutable(), plain, PLAIN_REGISTERS_AT as i32, caller);
+        let count_at = self.stack_word(stage, std::mem::offset_of!(JsStepDispatch, head.body_top));
+        stage.store_u64(DISPATCH, count_at, 0, room.shadow);
+        self.set_values_top(stage, room.top);
     }
 }
+
+/// The context word at `index` counted down from register 0 (`staged::frame`).
+const fn context_at(index: usize) -> i32 { -((index * std::mem::size_of::<u64>()) as i32) }
 
 impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_entry(&self, site: &Invocation) -> CallEntry {
@@ -225,15 +271,14 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let callee = call.callee?;
         // An initializing construction's receiver is finished (`call_receiver`): the body is not entered,
         // so no frame is pushed and no entry is called. The status is the returned one as a constant, which
-        // `complete_call` takes as the construction's receiver; `call_settle` then restores the tops it
-        // admitted (unchanged, as nothing was pushed).
+        // `complete_call` takes as the construction's receiver; `call_settle` pops no header for it.
         if call.initializing.is_some() {
             let returned = stage.constant(u64::from(LANE_BODY_RETURNED));
             let unfinished = stage.builder.create_block();
             stage.builder.set_cold_block(unfinished);
             return Some(Entered { status: returned, word: this, unfinished });
         }
-        self.push_native(stage, callee, this, room);
+        self.push_native(stage, callee, this, call.registers, room);
         let entry = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, entry)));
         let signature = lane_body_signature(types::I64, stage.builder.func.signature.call_conv);
         let signature = stage.builder.import_signature(signature);
@@ -255,7 +300,8 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         value: ir::Value) -> Option<()> {
         let call = self.call_site()?;
         let helper = self.helper_block()?;
-        self.pop_native(stage, room);
+        // An initializing construction pushed no header (`call_enter`): there is none to pop.
+        if call.initializing.is_none() { self.pop_native(stage, room); }
         stage.store_u64(FRAME, call.registers, register_offset(site.result), value);
         stage.jump(call.completed, &[]);
         let (left, missed, threw, raised) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
