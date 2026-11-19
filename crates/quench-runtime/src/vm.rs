@@ -3733,7 +3733,10 @@ impl<H: Host> Vm<H> {
         match target {
             CallTarget::Native(native) => {
                 self.profile.call_target(0, args.len());
-                self.call_native_guarded(p, native, this, args, callee)
+                // Every caller holds `args`: `call_value_with_target` roots them, and the
+                // `_from_frame` calls pass the registers of a frame parked at the call, which
+                // the collector scans at the call's liveness, or values their caller roots.
+                self.call_native_guarded_arguments_held(p, native, this, args, callee)
             }
             CallTarget::User(program_id, id, env) => {
                 // A native a lane called runs its callee in that lane where the lane's own call

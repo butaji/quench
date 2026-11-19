@@ -6,22 +6,22 @@ use crate::vm::accessor_cache::SetterForward;
 /// The store sites a general store has called a setter at, one bit each by the site's cache
 /// index modulo the set's width: the lane looks for a setter only at such a site, so a store
 /// that meets none pays no lookup. Sites sharing a bit only make that lookup.
+/// The set is the lane stack's own (`LaneStack::setter_sites`): a plain load per store, no
+/// thread-local access or borrow.
 const SETTER_SITE_BITS: usize = 1 << 16;
 
-thread_local! {
-    static SETTER_SITES: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// `SETTER_SITES`' word and bit of the site at cache index `site`.
+/// `LaneStack::setter_sites`' word and bit of the site at cache index `site`.
+#[inline(always)]
 fn setter_site_bit(site: usize) -> (usize, u64) {
     let bit = site % SETTER_SITE_BITS;
     (bit / u64::BITS as usize, 1 << (bit % u64::BITS as usize))
 }
 
 /// Whether a general store called a setter at the site at cache index `site`.
-fn met_setter(site: usize) -> bool {
+#[inline(always)]
+fn met_setter(stack: &LaneStack, site: usize) -> bool {
     let (word, bit) = setter_site_bit(site);
-    SETTER_SITES.with_borrow(|sites| sites.get(word).is_some_and(|bits| bits & bit != 0))
+    stack.setter_sites.get(word).is_some_and(|bits| bits & bit != 0)
 }
 
 /// The setter a store of `atom` to `object` calls at the store site `site`: the site's cached
@@ -53,7 +53,7 @@ fn stored_setter<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::
 pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let site = vm.field_cache_index(i.c);
-    if !met_setter(site) {
+    if !met_setter(&vm.lane_stack, site) {
         return None;
     }
     let setter = stored_setter(vm, object, i.imm(), site)?;
@@ -183,15 +183,14 @@ pub(super) fn frame_completion(completion: Option<Completion>, payload: SidePayl
 
 impl<H: Host> Vm<H> {
     /// The general store's call of `setter` at `site` with `value` on `object`, which marks
-    /// the site as one that meets a setter (`SETTER_SITES`).
+    /// the site as one that meets a setter (`LaneStack::setter_sites`).
     pub(in crate::vm) fn call_stored_setter(&mut self, p: &ResidualProgram, site: u16, setter: Value, object: Value, value: Value) -> Result<Value, JsError> {
         let (word, bit) = setter_site_bit(self.field_cache_index(site));
-        SETTER_SITES.with_borrow_mut(|sites| {
-            if sites.is_empty() {
-                sites.resize(SETTER_SITE_BITS / u64::BITS as usize, 0);
-            }
-            sites[word] |= bit;
-        });
+        let sites = &mut self.lane_stack.setter_sites;
+        if sites.is_empty() {
+            sites.resize(SETTER_SITE_BITS / u64::BITS as usize, 0);
+        }
+        sites[word] |= bit;
         self.call_value(p, setter, object, &[value])
     }
 

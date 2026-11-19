@@ -2362,6 +2362,11 @@ pub(super) struct LaneStack {
     /// The reads call sites answered (`ReadMemo`), each in the slot its record names
     /// (`CallOperand::memo`).
     read_memos: Vec<ReadMemo>,
+    /// The store sites a general store called a setter at (`setters::met_setter`), one bit per
+    /// cache index modulo `setters::SETTER_SITE_BITS`; empty until the first such call, so a
+    /// VM that never meets a setter holds none of it. Only a filter: a clear bit sends the
+    /// store to the general path, which calls the setter and sets it.
+    setter_sites: Vec<u64>,
     /// The callee each in-place native row admits in this generation (`native_calls::NativeIdentities`).
     native_identities: native_calls::NativeIdentities,
     /// The stack bounds the lane's native calls are checked against (`Vm::call_native_from_lane`),
@@ -2699,6 +2704,7 @@ impl Default for LaneStack {
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             construct_watches: Box::new([const { None }; CONSTRUCT_PLANS]),
             read_memos: Vec::new(),
+            setter_sites: Vec::new(),
             native_identities: native_calls::NativeIdentities::new(),
             native_stack: crate::stack::StackLimit::CLOSED,
             steps: Vec::new(),
@@ -17305,18 +17311,36 @@ fn lane_call_native_out<H: Host>(
     if !unsafe { (*cx).script_calls } {
         return None;
     }
-    // The values are copied before activations become frames, which moves the registers
-    // they may lie in; the frames then root what the call passes.
-    let arguments = super::call_arguments::CallArguments::from_slice(args);
+    // Arguments in the call's window are held by the frame parked at the call, so the native
+    // roots only its receiver; any others (an `apply`'s elements) are rooted with it.
+    let held = lane_arguments_in_window(cx, args);
     // SAFETY: `ip` is a record of the active view, which is the running function's.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    // Without activations the window lies in the lane's frame's register file, which nothing
+    // moves or writes while the frame is parked at the call: the native reads it in place.
+    if held && !vm.lane_stack.has_frames() && lane_registers_are_frames(vm, cx) {
+        return lane_call_from_frame(cx, ip, |vm, code| {
+            vm.call_native_from_lane_arguments_held(code, native, receiver, args, callee)
+        });
+    }
+    // The values are copied before activations become frames, which moves the registers
+    // they may lie in; the frames then hold what the call passes.
+    let arguments = super::call_arguments::CallArguments::from_slice(args);
+    let call = |vm: &mut Vm<H>, code: &ResidualProgram| {
+        if held {
+            vm.call_native_from_lane_arguments_held(code, native, receiver, arguments.as_slice(), callee)
+        } else {
+            vm.call_native_from_lane(code, native, receiver, arguments.as_slice(), callee)
+        }
+    };
     // A native that observes frames only through the points `materialize_deferred_lane`
-    // guards runs beside the activations; the first such point makes them frames.
+    // guards runs beside the activations; the first such point makes them frames, and a
+    // collection takes that point before it scans (`Vm::collect_inner`).
     if vm.lane_stack.has_frames()
         && (vm.runs_beside_activations(native, callee) || vm.steps_beside_activations(native, receiver))
     {
         vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
-        let result = vm.call_native_from_lane(unsafe { &*(*cx).code }, native, receiver, arguments.as_slice(), callee);
+        let result = call(vm, unsafe { &*(*cx).code });
         note_allocation(vm);
         vm.lane_stack.refresh_activation_limit();
         let unobserved = vm.lane_deferred.take().is_some();
@@ -17340,9 +17364,33 @@ fn lane_call_native_out<H: Host>(
             native => format!("materializes for native {native:?}"),
         });
     }
-    lane_call_from_frame(cx, ip, |vm, code| {
-        vm.call_native_from_lane(code, native, receiver, arguments.as_slice(), callee)
-    })
+    lane_call_from_frame(cx, ip, call)
+}
+
+/// Whether `args` lie in the running function's registers, as its call record's window does:
+/// the frame parked at the call (the lane's own, or the one the innermost activation becomes,
+/// which a collection makes first) holds them live at the call's pc, where the collector scans
+/// a parked frame (`Frame::source_instruction_pc`). Values a call made of others (an `apply`'s
+/// array elements, a bound prefix) lie elsewhere. Only addresses are compared.
+#[inline(always)]
+fn lane_arguments_in_window<H: Host>(cx: *mut LaneContext<H>, args: &[Value]) -> bool {
+    if args.is_empty() {
+        return true;
+    }
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let count = usize::from(code.function(lane_running_function(cx) as usize).registers);
+    let registers = unsafe { (*cx).registers.0 }.cast_const();
+    let first = args.as_ptr();
+    registers <= first && first.wrapping_add(args.len()) <= registers.wrapping_add(count)
+}
+
+/// Whether the lane's registers are its frame's register file, which stays where it is while
+/// the frame is parked at a call.
+#[inline(always)]
+fn lane_registers_are_frames<H: Host>(vm: &Vm<H>, cx: *mut LaneContext<H>) -> bool {
+    // SAFETY: the lane runs, so its context lives.
+    unsafe { (*cx).has_frame() && vm.frames[(*cx).frame()].registers.as_ptr() == (*cx).registers.0.cast_const() }
 }
 
 /// A native call at the lane `Call` record `ip` made from the running frame: the callee

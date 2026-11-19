@@ -1300,6 +1300,9 @@ impl<H: Host> Vm<H> {
                 let terminal = i.returns_from_frame();
                 self.direct_eval = direct_eval;
                 self.parameter_eval = parameter_eval;
+                // A spread call's values are the array's elements, which its callee may change
+                // while it runs: no register holds them, so its call roots them (`call_value`).
+                let spread = spread_arguments.is_some();
                 let arguments = spread_arguments
                     .unwrap_or_else(|| CallArguments::from_slice(self.register_window(f, window)));
                 let args = arguments.as_slice();
@@ -1394,7 +1397,7 @@ impl<H: Host> Vm<H> {
                     self.parameter_eval = previous_parameter_eval;
                     return result;
                 }
-                let called = if discarded_wasm_frame {
+                let called = if discarded_wasm_frame || spread {
                     self.call_value(p, callee, this, args)
                 } else {
                     self.call_value_from_frame(p, callee, this, args)
