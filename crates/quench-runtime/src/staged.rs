@@ -481,6 +481,33 @@ pub(crate) const fn chain_mode(mode: u8, raw: u8) -> u8 { mode | (raw << CHAIN_R
 pub(crate) const fn chain_base(mode: u8) -> u8 { mode & ((1 << CHAIN_RAW_SHIFT) - 1) }
 /// The raw mask of a chain `MODE`: bit `k` for link `k`.
 pub(crate) const fn chain_raw(mode: u8) -> u8 { mode >> CHAIN_RAW_SHIFT }
+/// The raw-mask bit of a chain's last link: its double result stays raw into the record after the chain,
+/// where a Number binary row reads it (`fuse_chains`, `number_binary_row`). No in-chain link names it
+/// (`chain_raw_links` names only links with a next link in the chain), so it is free at either length.
+pub(crate) const CHAIN_RAW_OUT: u8 = 3;
+/// The `MODE` bit that keeps a fused record's last link's double result raw into the next record (the
+/// raw-out bit). A pair's `MODE` carries it above its staged mode; a chain's carries it as `chain_mode`'s
+/// raw mask bit `CHAIN_RAW_OUT`, which is the same bit. Only a Number operator's last link takes it.
+pub(crate) const FUSED_RAW_OUT: u8 = 1 << (CHAIN_RAW_SHIFT + CHAIN_RAW_OUT);
+/// A pair's staged mode without its raw-out bit (`FUSED_RAW_OUT`).
+pub(crate) const fn fused_base(mode: u8) -> u8 { mode & !FUSED_RAW_OUT }
+/// `FUSED_RAW_OUT` where the last row `op` of a pair may keep its double result raw (a Number operator),
+/// else 0: the raw-out bit `fuse_rows` ORs into the pair's `MODE`.
+pub(crate) const fn raw_out_bit(op: Op) -> u8 { if number_operator(op) { FUSED_RAW_OUT } else { 0 } }
+/// The raw mask bits `fuse_chains` may set for `chain`: `chain_raw_links`, plus `CHAIN_RAW_OUT` where the
+/// chain's last link is a Number operator (its raw result may feed the record after the chain).
+pub(crate) const fn chain_raw_eligible(chain: [u16; 4]) -> u8 {
+    let last = if chain[3] == NO_LINK { chain[2] } else { chain[3] };
+    chain_raw_links(chain) | (if number_operator(row_op(last)) { 1 << CHAIN_RAW_OUT } else { 0 })
+}
+/// The row of a Number binary operator (`JsDenotation::NumericBinary`): `Binary`, `NumericAdd`, `NumericMultiply`.
+/// Its operands are read as Numbers (`numeric::binary_operation`), so a raw double operand is one. These
+/// are the only rows a raw result (`FUSED_RAW_OUT`) may feed: a Unary's operand reads as an int32 first.
+pub(crate) const BINARY_ROW: u16 = Op::Binary as u16;
+/// The row of `NumericAdd`, a Number binary operator (see `BINARY_ROW`).
+pub(crate) const NUMERIC_ADD_ROW: u16 = Op::NumericAdd as u16;
+/// The row of `NumericMultiply`, a Number binary operator (see `BINARY_ROW`).
+pub(crate) const NUMERIC_MULTIPLY_ROW: u16 = Op::NumericMultiply as u16;
 
 /// Whether the result of a `FUSED_CHAINS` link may stay raw where the next link reads it: the next
 /// link is a keyed element access (`keyed_element`), which reads its key as a Number, or both links

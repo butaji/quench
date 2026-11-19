@@ -411,8 +411,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The lane context and the completion a raw `WasmReturn64` row hands its returned word
     /// (`lane_complete_wasm_activation`), where the row is one (`returns_raw_row`). `None` otherwise.
     wasm_return: Option<(*mut (), unsafe fn(*mut (), Value) -> Option<Resumed>)>,
-    /// The row's double result keeps its double bits, not an int32 canonical form (`FUSED_RAW`):
-    /// set only for the producer of a raw pair, whose one reader is the next Number row.
+    /// The row's double result keeps its double bits, not an int32 canonical form: set for a fused
+    /// record's raw producer (`FUSED_RAW`'s `A`, or a last link with `FUSED_RAW_OUT` / `CHAIN_RAW_OUT`),
+    /// whose one reader is the next Number row. A NaN still canonicalizes (`write`).
     raw_result: bool,
 }
 
@@ -3230,7 +3231,8 @@ lane_handler! {
     /// reads its flag from its record at run time. `MODE` is the pair's `staged::FUSED_*`:
     /// `FUSED_DEAD_FIRST` skips `A`'s register write (installed only where liveness proves
     /// `A`'s register dead and `B` does not name it); `FUSED_RAW` keeps `A`'s double result as its
-    /// bits (`LaneFrame::raw_result`), which `B`, a Number operator, reads as its operand.
+    /// bits (`LaneFrame::raw_result`), which `B`, a Number operator, reads as its operand. `FUSED_RAW_OUT`
+    /// (a bit above the staged mode, `fused_base`) keeps `B`'s own double result raw for the next record.
     /// `FUSED_TARGET` (a backward `B` whose target run holds: `PREFIX` (or none) then the test `TEST`):
     /// the back edge's fuel check and the target run in this record (`target_run`), which continues at
     /// the test's taken or fall-through edge. Any other mode ignores `PREFIX` and `TEST`.
@@ -3245,10 +3247,10 @@ lane_handler! {
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
             let mut frame = row_frame::<H, A, ACC_NONE, { $flag }>(cx, r, ip, i, view);
-            frame.raw_result = const { MODE == crate::staged::FUSED_RAW };
+            frame.raw_result = const { crate::staged::fused_base(MODE) == crate::staged::FUSED_RAW };
             match row_step!(LaneFields::<A>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
-                    if const { !crate::staged::row_writes_result(LaneFields::<A>::OPCODE) && MODE != crate::staged::FUSED_DEAD_FIRST } {
+                    if const { !crate::staged::row_writes_result(LaneFields::<A>::OPCODE) && crate::staged::fused_base(MODE) != crate::staged::FUSED_DEAD_FIRST } {
                         r.set(i.a, Value::from_bits(value));
                     }
                 }
@@ -3257,7 +3259,7 @@ lane_handler! {
         }}; }
         if LaneFields::<A>::FLAG_ROLE {
             if i.imm() != 0 { step_a!(FLAG_SET) } else { step_a!(FLAG_CLEAR) }
-        } else if const { MODE == crate::staged::FUSED_WINDOW } {
+        } else if const { crate::staged::fused_base(MODE) == crate::staged::FUSED_WINDOW } {
             step_a!(FLAG_WINDOW)
         } else {
             step_a!(FLAG_UNREAD)
@@ -3283,7 +3285,7 @@ lane_handler! {
             let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Control(Edge::Target) => {
-                    if const { MODE == crate::staged::FUSED_TARGET } {
+                    if const { crate::staged::fused_base(MODE) == crate::staged::FUSED_TARGET } {
                         target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST)
                     } else {
                         resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None))
@@ -3304,13 +3306,17 @@ lane_handler! {
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
             let mut frame = row_frame::<H, B, ACC_NONE, { $flag }>(cx, r, ip, i, view);
+            // `B` is the last link: its double result stays raw where the next record reads it (`FUSED_RAW_OUT`).
+            frame.raw_result = const { MODE & crate::staged::FUSED_RAW_OUT != 0 };
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<B>::OPCODE) } {
                         r.set(i.a, Value::from_bits(value));
                     }
                     if const { row_produces(LaneFields::<B>::OPCODE) } {
-                        next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
+                        // A raw result carries the register's word (canonical NaN), not its raw bits.
+                        let acc = if const { MODE & crate::staged::FUSED_RAW_OUT != 0 } { r.get(i.a) } else { Value::from_bits(value) };
+                        next!(cx, r, following(ip), Carried { acc: Slot::of(acc), ..view })
                     }
                     next!(cx, r, following(ip), view)
                 }
@@ -3319,7 +3325,7 @@ lane_handler! {
         }}; }
         if LaneFields::<B>::FLAG_ROLE {
             if i.imm() != 0 { step_b!(FLAG_SET) } else { step_b!(FLAG_CLEAR) }
-        } else if const { MODE == crate::staged::FUSED_WINDOW } {
+        } else if const { crate::staged::fused_base(MODE) == crate::staged::FUSED_WINDOW } {
             step_b!(FLAG_WINDOW)
         } else {
             step_b!(FLAG_UNREAD)
@@ -3371,13 +3377,17 @@ lane_handler! {
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
             let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, ip, i, view);
+            // The last link's double result stays raw where the next record reads it (`CHAIN_RAW_OUT`).
+            frame.raw_result = const { (crate::staged::chain_raw(MODE) >> crate::staged::CHAIN_RAW_OUT) & 1 != 0 };
             match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<$L>::OPCODE) } {
                         r.set(i.a, Value::from_bits(value));
                     }
                     if const { row_produces(LaneFields::<$L>::OPCODE) } {
-                        next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
+                        // A raw result carries the register's word (canonical NaN), not its raw bits.
+                        let acc = if const { (crate::staged::chain_raw(MODE) >> crate::staged::CHAIN_RAW_OUT) & 1 != 0 } { r.get(i.a) } else { Value::from_bits(value) };
+                        next!(cx, r, following(ip), Carried { acc: Slot::of(acc), ..view })
                     }
                     next!(cx, r, following(ip), view)
                 }
@@ -3463,6 +3473,27 @@ fn chain_link_raw(records: &[LaneInstruction], live: Option<&crate::compile::liv
     }
 }
 
+/// Whether a fused record's last link `producer` keeps its double result raw (`FUSED_RAW_OUT`, `CHAIN_RAW_OUT`):
+/// the record after it is a Number binary row (`number_binary_row`) that reads the producer's register as an
+/// operand, and the register is dead after that record or that record writes it. Its raw bits are then only
+/// ever read as the Number operand of that row, which reads a raw double as a Number (`number_operand`).
+fn raw_out_link<H: Host>(records: &[LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, producer: usize) -> bool {
+    let Some(next) = records.get(producer + 1) else { return false };
+    let register = records[producer].a;
+    let reads = [next.b, next.c].into_iter().any(|field| Operand(field).register_index() == Some(register));
+    reads && number_binary_row::<H>(next.handler)
+        && (next.a == register || live.and_then(|masks| masks.get(producer + 2))
+            .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(register))))
+}
+
+/// Whether `handler` is a plain Number binary row (`staged::BINARY_ROW`, `NUMERIC_ADD_ROW`, `NUMERIC_MULTIPLY_ROW`):
+/// the rows a raw result may feed (`raw_out_link`).
+fn number_binary_row<H: Host>(handler: *const ()) -> bool {
+    plain_row::<H, { crate::staged::BINARY_ROW }>(handler)
+        || plain_row::<H, { crate::staged::NUMERIC_ADD_ROW }>(handler)
+        || plain_row::<H, { crate::staged::NUMERIC_MULTIPLY_ROW }>(handler)
+}
+
 /// Gives each record that starts a run of records whose rows are a chain of
 /// `staged::FUSED_CHAINS` the chain's record (`chain_rows`). Runs before `fuse_rows`, so a
 /// chain wins over the pair at its head; the later records keep their own rows for jumps
@@ -3474,15 +3505,15 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
     if const { crate::staged::FUSED_CHAINS.is_empty() } { return Vec::new(); }
     macro_rules! link { ($chain:literal, $k:literal) => { crate::staged::FUSED_CHAINS[chain_index($chain)][$k] }; }
     // Chain `$chain`'s record handlers over the raw masks `$raw`, as `[raw][backward]`: `chain_mode` names
-    // the `MODE` a mask takes, `$mode` the chain's staged mode. A mask past the chain's eligible links
-    // (`staged::chain_raw_links`) names the same record as the mask without them, so it is built once.
+    // the `MODE` a mask takes, `$mode` the chain's staged mode. A mask past the chain's eligible bits
+    // (`staged::chain_raw_eligible`) names the same record as the mask without them, so it is built once.
     macro_rules! chain_rows_of {
         ($mode:path, $chain:literal, $($raw:literal),*) => {
             [$(
                 [chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) },
-                    { crate::staged::chain_mode($mode, $raw & crate::staged::chain_raw_links(crate::staged::FUSED_CHAINS[chain_index($chain)])) }>(false),
+                    { crate::staged::chain_mode($mode, $raw & crate::staged::chain_raw_eligible(crate::staged::FUSED_CHAINS[chain_index($chain)])) }>(false),
                  chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) },
-                    { crate::staged::chain_mode($mode, $raw & crate::staged::chain_raw_links(crate::staged::FUSED_CHAINS[chain_index($chain)])) }>(true)],
+                    { crate::staged::chain_mode($mode, $raw & crate::staged::chain_raw_eligible(crate::staged::FUSED_CHAINS[chain_index($chain)])) }>(true)],
             )*]
         };
     }
@@ -3497,8 +3528,8 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
                 ],
                 if link!($chain, 3) == crate::staged::NO_LINK { 3usize } else { 4 },
                 (|handler| if const { link!($chain, 3) == crate::staged::NO_LINK } { jump_row_backward::<H, { link!($chain, 2) }>(handler) } else { jump_row_backward::<H, { link!($chain, 3) }>(handler) }) as fn(*const ()) -> bool,
-                chain_rows_of!(crate::staged::FUSED_PLAIN, $chain, 0, 1, 2, 3, 4, 5, 6, 7),
-                crate::staged::chain_raw_links(crate::staged::FUSED_CHAINS[chain_index($chain)]),
+                chain_rows_of!(crate::staged::FUSED_PLAIN, $chain, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+                crate::staged::chain_raw_eligible(crate::staged::FUSED_CHAINS[chain_index($chain)]),
                 crate::staged::chain_keyed_links(crate::staged::FUSED_CHAINS[chain_index($chain)]),
             )),*]
         };
@@ -3516,8 +3547,8 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
                 ],
                 if link!($chain, 3) == crate::staged::NO_LINK { 3usize } else { 4 },
                 (|handler| if const { link!($chain, 3) == crate::staged::NO_LINK } { jump_row_backward::<H, { link!($chain, 2) }>(handler) } else { jump_row_backward::<H, { link!($chain, 3) }>(handler) }) as fn(*const ()) -> bool,
-                chain_rows_of!(crate::staged::FUSED_WINDOW, $chain, 0, 1, 2, 3, 4, 5, 6, 7),
-                crate::staged::chain_raw_links(crate::staged::FUSED_CHAINS[chain_index($chain)]),
+                chain_rows_of!(crate::staged::FUSED_WINDOW, $chain, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+                crate::staged::chain_raw_eligible(crate::staged::FUSED_CHAINS[chain_index($chain)]),
                 crate::staged::chain_keyed_links(crate::staged::FUSED_CHAINS[chain_index($chain)]),
             )),*]
         };
@@ -3537,6 +3568,9 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
             for k in 0..length - 1 {
                 if eligible & (1 << k) != 0 && chain_link_raw(records, live, pc + k, keyed & (1 << k) != 0) { raw |= 1 << k; }
             }
+            // The last link's raw-out bit (`CHAIN_RAW_OUT`): the record after the chain reads it as a Number.
+            let out = crate::staged::CHAIN_RAW_OUT;
+            if eligible & (1 << out) != 0 && raw_out_link::<H>(records, live, pc + length - 1) { raw |= 1 << out; }
         }
         records[pc].handler = rows[raw][usize::from(backward(records[pc + length - 1].handler))] as *const ();
         fused_records.push((pc, pc + length - 1));
@@ -3572,6 +3606,7 @@ const fn fused_index(pair: usize) -> usize { if pair < crate::staged::FUSED_ROWS
 /// pair's fused record (`fused_rows`); the next record keeps its own row. A `FUSED_DEAD_FIRST`
 /// pair takes its fused record only where `liveness` proves `A`'s result register dead after
 /// the pair and `B` names that register in no operand; otherwise it takes the `FUSED_PLAIN` record.
+/// A pair whose `B` is a Number operator takes its raw-out record (`FUSED_RAW_OUT`) where `raw_out_link` holds.
 /// A `FUSED_RAW` pair takes its raw record only where `raw_results` (no handler in the function) and
 /// `B` reads `A`'s register with `A`'s register dead after it or overwritten by `B`. Returns each fused
 /// record's head and its last record, which `derive_lane_view` reads for the accumulator carry.
@@ -3586,10 +3621,18 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
                 // Both rows are Number operators: a `FUSED_RAW` pair's double result is then only a Number's operand.
                 const { crate::staged::number_operator(LaneFields::<{ crate::staged::FUSED_ROWS[fused_index($pair)].0 }>::OPCODE)
                     && crate::staged::number_operator(LaneFields::<{ crate::staged::FUSED_ROWS[fused_index($pair)].1 }>::OPCODE) },
+                // `B` is a Number operator, so its result may be a raw-out (`FUSED_RAW_OUT`) producer.
+                const { crate::staged::number_operator(LaneFields::<{ crate::staged::FUSED_ROWS[fused_index($pair)].1 }>::OPCODE) },
                 [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_ROWS[fused_index($pair)].2 }>(false),
                     fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_ROWS[fused_index($pair)].2 }>(true)],
                 [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN }>(false),
                     fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN }>(true)],
+                // The raw-out records: `B`'s double result stays raw where the next record reads it (`raw_out_link`).
+                // `B` is a Number operator only then (`out_bit`); otherwise these are the records above.
+                [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_ROWS[fused_index($pair)].2 | crate::staged::raw_out_bit(crate::staged::row_op(crate::staged::FUSED_ROWS[fused_index($pair)].1)) }>(false),
+                    fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_ROWS[fused_index($pair)].2 | crate::staged::raw_out_bit(crate::staged::row_op(crate::staged::FUSED_ROWS[fused_index($pair)].1)) }>(true)],
+                [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN | crate::staged::raw_out_bit(crate::staged::row_op(crate::staged::FUSED_ROWS[fused_index($pair)].1)) }>(false),
+                    fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN | crate::staged::raw_out_bit(crate::staged::row_op(crate::staged::FUSED_ROWS[fused_index($pair)].1)) }>(true)],
             )),*]
         };
     }
@@ -3617,7 +3660,7 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
             fused_records.push((pc, pc + 1));
             continue;
         }
-        let Some((_, _, backward, mode, numbers, fused, plain)) = pairs.iter().find(|(a, b, _, _, _, _, _)| a(first) && b(second)) else {
+        let Some((_, _, backward, mode, numbers, number_b, fused, plain, fused_out, plain_out)) = pairs.iter().find(|(a, b, _, _, _, _, _, _, _, _)| a(first) && b(second)) else {
             continue;
         };
         let direction = usize::from(backward(second));
@@ -3649,10 +3692,14 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
             reads && (consumer.a == producer.a
                 || live.and_then(|masks| masks.get(pc + 2)).is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(producer.a))))
         };
-        let handler = if (*mode == crate::staged::FUSED_DEAD_FIRST && !dead_first) || (*mode == crate::staged::FUSED_RAW && !raw) {
-            plain[direction]
-        } else {
-            fused[direction]
+        // `B`'s raw-out: its double result feeds the next record as a raw Number (`raw_out_link`).
+        let out = raw_results && *number_b && raw_out_link::<H>(records, live, pc + 1);
+        let fused_mode = !((*mode == crate::staged::FUSED_DEAD_FIRST && !dead_first) || (*mode == crate::staged::FUSED_RAW && !raw));
+        let handler = match (fused_mode, out) {
+            (true, false) => fused[direction],
+            (false, false) => plain[direction],
+            (true, true) => fused_out[direction],
+            (false, true) => plain_out[direction],
         };
         records[pc].handler = handler as *const ();
         fused_records.push((pc, pc + 1));
