@@ -36,6 +36,8 @@ pub(crate) const TAG_STORE_ELEMENT: u8 = 23;
 pub(crate) const TAG_LOAD_FIELD: u8 = 24;
 pub(crate) const TAG_LOAD_ELEMENT: u8 = 25;
 pub(crate) const TAG_DECIDE_OPERAND: u8 = 26;
+pub(crate) const TAG_GLOBAL_LEXICAL_LOAD: u8 = 27;
+pub(crate) const TAG_GLOBAL_LEXICAL_STORE: u8 = 28;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -69,6 +71,11 @@ pub(crate) enum CallOut {
     GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool } = TAG_GLOBAL_WRITE,
     /// The `typeof` name of the global `atom` through cache `site`.
     GlobalTypeof { atom: u32, site: u16 } = TAG_GLOBAL_TYPEOF,
+    /// The script-top-level binding `declaration` names, read through cache `site` (`LoadGlobalLexical`).
+    GlobalLexicalLoad { declaration: u32, site: u16 } = TAG_GLOBAL_LEXICAL_LOAD,
+    /// `source` to the script-top-level binding `declaration` names, through cache `site`, `initialize`
+    /// for a declaration (`StoreGlobalLexical`).
+    GlobalLexicalStore { source: Register, declaration: u32, site: u16, initialize: bool } = TAG_GLOBAL_LEXICAL_STORE,
     /// `delete base[key]` by the VM's `delete_reference_property_mode`, which throws on a
     /// refusal where `strict` or the running function is strict.
     Delete { base: Register, key: Register, strict: bool } = TAG_DELETE,
@@ -175,7 +182,8 @@ impl CallOut {
         match self {
             Self::Decide { left, right, operator } if equality_operator(operator).is_some_and(|(strict, _)| strict) =>
                 Some(([left, right], operator)),
-            Self::Equality { left, right, strict: true, negated } => Some(([left, right], equality_binary_operator(true, negated))),
+            Self::Equality { left, right, strict: true, negated } =>
+                Some(([left.register_index()?, right.register_index()?], equality_binary_operator(true, negated))),
             _ => None,
         }
     }
@@ -207,9 +215,10 @@ impl CallOut {
                 list: Some(Arguments::Window { first: value, count: 1 }),
             },
             Self::ArgumentGet { index, .. } => [Some(index), None],
-            Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
+            Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. }
+                | Self::GlobalLexicalStore { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. }
-                | Self::CloneEnv { .. } | Self::LoadField { .. } => [None, None],
+                | Self::CloneEnv { .. } | Self::LoadField { .. } | Self::GlobalLexicalLoad { .. } => [None, None],
             Self::Accessor { receiver, .. } => [Some(receiver), None],
             Self::Protocol { operands, .. } => operands,
             Self::Spread { callee, receiver, arguments, .. } =>

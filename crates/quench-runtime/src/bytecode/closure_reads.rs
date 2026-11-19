@@ -202,7 +202,59 @@ impl ClosureReads {
     /// chain (`FunctionReads::reads`).
     pub(crate) fn captures(&self, function: u32) -> Option<(&[(u32, u16)], Option<u32>)> {
         let reads = self.functions.get(function as usize)?;
-        Some((reads.reads.as_deref()?, reads.parent))
+        Some((reads.reads.as_deref()?, reads.enclosing()))
+    }
+
+    /// Whether a closure of `function` reads nothing of the environment it closes over, so it
+    /// may take none (`ResidualProgram::closure_takes_no_environment`). The function and every function
+    /// nested in it read no slot outside themselves (`reads` is empty, not the whole chain),
+    /// so no capture reaches an environment. No ancestor holds named slots, which a by-name
+    /// lookup walking the chain would find (home objects, private names). An arrow reads no
+    /// implicit binding of its enclosing non-arrow (`reads_lexical`).
+    pub(crate) fn environment_unobservable(&self, function: u32, reads_lexical: impl FnOnce() -> bool) -> bool {
+        let Some(closure) = self.functions.get(function as usize) else {
+            return false;
+        };
+        if !closure.reads.as_deref().is_some_and(|reads| reads.is_empty()) {
+            return false;
+        }
+        if closure.is_arrow && reads_lexical() {
+            return false;
+        }
+        let mut owner = closure.enclosing();
+        while let Some(id) = owner {
+            let Some(ancestor) = self.functions.get(id as usize) else {
+                return false;
+            };
+            if !ancestor.named_slots.is_empty() {
+                return false;
+            }
+            owner = ancestor.enclosing();
+        }
+        closure.enclosing().is_some()
+    }
+
+    /// Whether a closure of `function` takes no environment, where `derive` answers the
+    /// program's part of that (`ResidualProgram::closure_takes_no_environment`). Asked once per
+    /// function: its answer is a bit read on every later closure creation.
+    pub(crate) fn takes_no_environment(&self, function: u32, derive: impl FnOnce() -> bool) -> bool {
+        let words = self.environment_elision.get_or_init(|| {
+            let bits = self.functions.len() * ELISION_BITS_PER_FUNCTION;
+            vec![std::cell::Cell::new(0); bits.div_ceil(u64::BITS as usize)].into_boxed_slice()
+        });
+        let function = function as usize;
+        let Some(word) = words.get(function / ELISION_FUNCTIONS_PER_WORD) else {
+            return derive();
+        };
+        let shift = (function % ELISION_FUNCTIONS_PER_WORD) * ELISION_BITS_PER_FUNCTION;
+        let field = (word.get() >> shift) & ELISION_FIELD;
+        if field & ELISION_KNOWN != 0 {
+            return field & ELISION_TAKES_NONE != 0;
+        }
+        let takes = derive();
+        let answer = ELISION_KNOWN | if takes { ELISION_TAKES_NONE } else { 0 };
+        word.set(word.get() | (answer << shift));
+        takes
     }
 
     /// What a closure of `function` needs of the environment `distance` (at least 1)

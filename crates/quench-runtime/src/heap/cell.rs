@@ -644,6 +644,15 @@ natives! {
     CallSiteConstructor,
     CallSiteGetFunction,
     MathInitialize: unshared,
+    /// Initializers of the lazily installed namespaces and groups (`install_lazy_builtin_namespace`).
+    AtomicsInitialize: unshared,
+    WebAssemblyInitialize: unshared,
+    IntlInitialize: unshared,
+    ReflectInitialize: unshared,
+    ProxyInitialize: unshared,
+    WeakRefInitialize: unshared,
+    FinalizationRegistryInitialize: unshared,
+    DataViewInitialize: unshared,
 }
 
 /// A global's cold facts, boxed with its object part so the cell stays compact.

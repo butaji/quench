@@ -1,25 +1,27 @@
 //! Stores that meet an accessor: the setter runs as an activation of the lane.
 use super::*;
+use crate::vm::AccessorForward;
+use crate::vm::accessor_cache::SetterForward;
 
 /// The store sites a general store has called a setter at, one bit each by the site's cache
 /// index modulo the set's width: the lane looks for a setter only at such a site, so a store
 /// that meets none pays no lookup. Sites sharing a bit only make that lookup.
+/// The set is the lane stack's own (`LaneStack::setter_sites`): a plain load per store, no
+/// thread-local access or borrow.
 const SETTER_SITE_BITS: usize = 1 << 16;
 
-thread_local! {
-    static SETTER_SITES: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// `SETTER_SITES`' word and bit of the site at cache index `site`.
+/// `LaneStack::setter_sites`' word and bit of the site at cache index `site`.
+#[inline(always)]
 fn setter_site_bit(site: usize) -> (usize, u64) {
     let bit = site % SETTER_SITE_BITS;
     (bit / u64::BITS as usize, 1 << (bit % u64::BITS as usize))
 }
 
 /// Whether a general store called a setter at the site at cache index `site`.
-pub(super) fn met_setter(site: usize) -> bool {
+#[inline(always)]
+pub(super) fn met_setter(stack: &LaneStack, site: usize) -> bool {
     let (word, bit) = setter_site_bit(site);
-    SETTER_SITES.with_borrow(|sites| sites.get(word).is_some_and(|bits| bits & bit != 0))
+    stack.setter_sites.get(word).is_some_and(|bits| bits & bit != 0)
 }
 
 /// The setter a store of `atom` to `object` calls at the store site `site`: the site's cached
@@ -42,28 +44,136 @@ pub(super) fn stored_setter<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate:
     setter
 }
 
-/// What the call of `activation`, which completed with `value` and receiver `this`, yields
+/// A store of the record `i` (at `ip`) to `object` that meets a setter of the running
+/// program the lane activates: its activation with the stored value as its one argument and
+/// `object` as its receiver, whose completion leaves the record's registers as they are
+/// (`Completion::Assigns`). `None`, before any effect, leaves any other store to its path;
+/// an activation the lane has no room for exits at the record, where the general path makes
+/// the call.
+pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let site = vm.field_cache_index(i.c);
+    if !met_setter(&vm.lane_stack, site) {
+        return None;
+    }
+    let setter = stored_setter(vm, object, i.imm(), site)?;
+    let target = script_target_in_lane(cx, setter).filter(|target| !target.forwards())?;
+    // A trivial setter (`this.f = v`) is the store it makes (getters-as-calls.md): no call.
+    if lane_forwarded_setter_store(vm, &target, object, site, setter, r.get(i.a)) {
+        return Some(Resumed::At(r, following(ip), Carried::script(cx)));
+    }
+    let this = call_this_in_lane(vm, &target, object)?;
+    // SAFETY: the record's value register is one of the running function's.
+    let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
+    Some(match activate_kept_in_lane::<H, false>(cx, r, ip, &target, stored, this) {
+        Ok((registers, next)) => {
+            vm.lane_stack.recomplete_top(Completion::Assigns);
+            Resumed::At(registers, next, Carried::script(cx))
+        }
+        Err(next) => Resumed::Exit(next),
+    })
+}
+
+/// Whether the store of `value` to `object` at cache index `site` was made as the call of
+/// `setter` (`target`) would make it, without the call: the site's accessor entry for
+/// `object`'s layout recorded that the setter's body is a forward store
+/// (`trivial_setter_store`), and that store's own field entry holds for `object`
+/// (`Vm::hinted_own_field_store_hit`, which makes the logged store or nothing). A setter
+/// the entry knows nothing of is recognized once and recorded either way, so a setter that
+/// forwards nothing costs one entry walk per store after its first.
+fn lane_forwarded_setter_store<H: Host>(
+    vm: &mut Vm<H>,
+    target: &ScriptCallTarget,
+    object: Value,
+    site: usize,
+    setter: Value,
+    value: Value,
+) -> bool {
+    let (cache, atom) = match vm.setter_entry_forward(object, site, setter) {
+        SetterForward::Store(cache, atom) => (cache, atom),
+        SetterForward::Declined => return false,
+        SetterForward::Unknown => match trivial_setter_store(vm, target, object) {
+            SetterStore::Store(cache, atom) => {
+                vm.memoize_getter_answer(object, site, setter, AccessorForward::Store { cache, atom });
+                (cache, atom)
+            }
+            SetterStore::Never => {
+                vm.memoize_getter_answer(object, site, setter, AccessorForward::None);
+                return false;
+            }
+            // The body's own store site has no entry for this receiver yet: the call fills it.
+            SetterStore::NotYet => return false,
+        },
+    };
+    vm.hinted_own_field_store_hit(cache, object, atom, value)
+}
+
+/// What `trivial_setter_store` found of a setter's body.
+enum SetterStore {
+    /// It stores its first parameter to the own field `atom` of its receiver, whose store
+    /// entry for the receiver's exact shape is this one.
+    Store(crate::vm::FieldCache, crate::bytecode::Atom),
+    /// It is no such body, nor binds the receiver as its `this`: it never forwards.
+    Never,
+    /// It is such a body, but its store site holds no own entry for this receiver yet.
+    NotYet,
+}
+
+/// Recognizes a setter `target` whose whole effect is `this.f = v` of its first parameter,
+/// then returning (`Function::initializer_stores` of exactly one store of parameter 0 as
+/// passed): a call of it on `object`, which it binds as `this`, is that store. The store
+/// is exact where its entry, the setter's own store site's, is an own data field of
+/// `object`'s exact shape: such a store finds no setter, can't throw and runs no guest code;
+/// what the setter returns, an assignment ignores (`Completion::Assigns`). A private name's
+/// store is left to the call (its home is the setter's).
+fn trivial_setter_store<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object: Value) -> SetterStore {
+    if !target.entry.activates() || target.params == 0 || direct_call_this_in_lane(vm, target, object) != Some(object) {
+        return SetterStore::Never;
+    }
+    let Some(code) = vm.programs.residual(target.program()) else {
+        return SetterStore::Never;
+    };
+    let Some(body) = code.function_get(target.function as usize) else {
+        return SetterStore::Never;
+    };
+    let Some([store]) = body.initializer_stores(&code.constants) else {
+        return SetterStore::Never;
+    };
+    let parameter = crate::bytecode::InitializerValue::Parameter { parameter: 0, fallback: None };
+    if store.value != parameter || vm.is_private_name(store.atom) {
+        return SetterStore::Never;
+    }
+    // The setter is of the running program (`script_target_in_lane`), whose sites its store's are.
+    let cache = vm.field_cache_entry(store.site);
+    let holds = vm.heap.object_record(object).is_some_and(|receiver| cache.holder == crate::vm::NO_FIELD_HOLDER && cache.receiver == receiver.exact_shape());
+    if holds { SetterStore::Store(cache, store.atom) } else { SetterStore::NotYet }
+}
+
+/// What the call of the returned `frame`, which completed with `value` and receiver `this`, yields
 /// before a forwarder's or a promise's substitution: [[Construct]] of an ordinary constructor
 /// its returned object, otherwise the receiver it allocated; a setter's store
 /// (`Completion::Assigns`) the value stored, which the caller's register still holds.
 #[inline(always)]
-pub(super) fn completed_value<H: Host>(vm: &Vm<H>, activation: &Activation, completion: Completion, this: Value, value: Value) -> Value {
+pub(super) fn completed_value<H: Host>(vm: &Vm<H>, frame: &Frame, completion: Completion, this: Value, value: Value) -> Value {
     match completion {
-        completion if completion.constructs() && !vm.is_object_like(value) => this,
+        // The construct family's completion row (`staged::call_construct::construct_value`).
+        completion if completion.constructs() =>
+            Value::from_bits(crate::staged::call_construct::concrete_construct_value(value.to_bits(), this.to_bits(), vm.is_object_like(value))),
         // SAFETY: the call record belongs to the caller's live view.
-        Completion::Assigns | Completion::AssignsTrapped => activation.caller_registers().get(unsafe { (*activation.call()).a }),
+        Completion::Assigns | Completion::AssignsTrapped =>
+            crate::staged::call_complete::concrete_call_result(frame.caller_registers().0.expose_provenance() as u64, unsafe { (*frame.call()).a }),
         _ => value,
     }
 }
 
 /// The frame completion of an activation that neither constructs, settles a promise nor
 /// steps an array: a setter's store keeps yielding the value stored, a proxy trap's access
-/// owes its target's invariants (the next of `traps`), and a generator's step its iterator
+/// owes its target's invariants (its side record's `payload`), and a generator's step its iterator
 /// result, which a delegate's step makes fresh.
-pub(super) fn frame_completion(completion: Option<Completion>, traps: &mut impl Iterator<Item = (usize, TrapCheck)>) -> CallCompletion {
+pub(super) fn frame_completion(completion: Option<Completion>, payload: SidePayload) -> CallCompletion {
     match completion {
         Some(Completion::Assigns) => CallCompletion::Assigned,
-        Some(Completion::ReadsTrapped | Completion::AssignsTrapped) => CallCompletion::Trapped(traps.next().expect("each trapped activation has its entry").1),
+        Some(Completion::ReadsTrapped | Completion::AssignsTrapped) => CallCompletion::Trapped(payload.trap()),
         Some(generator) if generator.is_generator() => {
             CallCompletion::Generator(super::super::generator::GeneratorResume::new(generator.reuses_result()))
         }
@@ -73,15 +183,14 @@ pub(super) fn frame_completion(completion: Option<Completion>, traps: &mut impl 
 
 impl<H: Host> Vm<H> {
     /// The general store's call of `setter` at `site` with `value` on `object`, which marks
-    /// the site as one that meets a setter (`SETTER_SITES`).
+    /// the site as one that meets a setter (`LaneStack::setter_sites`).
     pub(in crate::vm) fn call_stored_setter(&mut self, p: &ResidualProgram, site: u16, setter: Value, object: Value, value: Value) -> Result<Value, JsError> {
         let (word, bit) = setter_site_bit(self.field_cache_index(site));
-        SETTER_SITES.with_borrow_mut(|sites| {
-            if sites.is_empty() {
-                sites.resize(SETTER_SITE_BITS / u64::BITS as usize, 0);
-            }
-            sites[word] |= bit;
-        });
+        let sites = &mut self.lane_stack.setter_sites;
+        if sites.is_empty() {
+            sites.resize(SETTER_SITE_BITS / u64::BITS as usize, 0);
+        }
+        sites[word] |= bit;
         self.call_value(p, setter, object, &[value])
     }
 
@@ -90,7 +199,9 @@ impl<H: Host> Vm<H> {
     /// receiver it allocated; a setter's store the value stored, which the register holds.
     pub(in crate::vm) fn completed_call_value(&self, completion: &CallCompletion, caller: usize, destination: crate::bytecode::Register, value: Value) -> Value {
         match completion {
-            CallCompletion::Constructor(this) if !self.is_object_like(value) => *this,
+            // The construct family's completion row (`staged::call_construct::construct_value`).
+            CallCompletion::Constructor(this) =>
+                Value::from_bits(crate::staged::call_construct::concrete_construct_value(value.to_bits(), this.to_bits(), self.is_object_like(value))),
             CallCompletion::Assigned | CallCompletion::Trapped(TrapCheck { access: TrapAccess::Store | TrapAccess::StrictStore, .. }) => self.read(caller, destination),
             CallCompletion::WasmExport(result) => self.wasm_export_result(value, *result),
             _ => value,

@@ -2473,6 +2473,10 @@ impl<H: Host> Vm<H> {
                                     )
                                     .is_some()
                         );
+                        // A derived constructor's construction yields from its `this` binding,
+                        // which its frame holds as it retires (`complete_user_frame` reads the same).
+                        let derived_this = matches!(pending.completion, CallCompletion::DerivedConstructor)
+                            .then_some(completed_frame.this);
                         match pending.completion.take_generator() {
                             Some(resume) => {
                                 let stop = yielded.take().unwrap_or(super::generator::MaterializedStop::Returned);
@@ -2501,6 +2505,13 @@ impl<H: Host> Vm<H> {
                         // SAFETY: as for `p` at the top of the loop.
                         settle_error = request_error.take().or_else(|| self.trap_result_error(unsafe { &*executing_residual }, &pending, frame, value));
                         value = self.completed_call_value(&pending.completion, frame, pending.destination, value);
+                        if let Some(this) = derived_this {
+                            // SAFETY: as for `p` at the top of the loop.
+                            match self.derived_construct_value(unsafe { &*executing_residual }, value, this) {
+                                Ok(constructed) => value = constructed,
+                                Err(error) => settle_error = Some((pending.call_pc, error)),
+                            }
+                        }
                         if let CallCompletion::ToWasm(result) = pending.completion {
                             // SAFETY: as for `p` at the top of the loop.
                             match self.wasm_import_result(unsafe { &*executing_residual }, value, result) {

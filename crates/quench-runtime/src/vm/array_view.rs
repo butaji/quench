@@ -109,6 +109,82 @@ fn resume_at(range: &std::ops::Range<usize>, reverse: bool) -> Search {
     Search::Resume(if reverse { range.end - 1 } else { range.start })
 }
 
+/// How the elements equal to a searched value are recognised, decided once per search. Every
+/// kind but `Content` and `Nan` compares the raw words of the elements.
+#[derive(Clone, Copy)]
+enum Kind {
+    /// Equal values carry exactly this word.
+    One(u64),
+    /// An integral Number: equal values carry its int32 word or its double word.
+    Two([u64; 2]),
+    /// Zero: equal values carry the int32 0 word or the double word of either zero.
+    Three([u64; 3]),
+    /// NaN under SameValueZero: any NaN double word.
+    Nan,
+    /// NaN under strict equality: no element is equal.
+    Never,
+    /// A string or BigInt: equal by content, compared per element.
+    Content,
+}
+
+/// The searched value with the facts `Vm::search_dense` needs, computed once per search.
+#[derive(Clone, Copy)]
+struct Needle {
+    value: Value,
+    kind: Kind,
+    /// The narrow word a narrow element equal to the value carries, or `None` when no narrow
+    /// element can be equal (only a hole stops the walk then).
+    narrow: Option<u32>,
+}
+
+/// The bit pattern of negative zero, which is a double word.
+const NEGATIVE_ZERO_BITS: u64 = 0x8000_0000_0000_0000;
+
+/// The int32 a Number equals, when it is integral and within `i32`.
+fn integer_of(number: f64) -> Option<i32> {
+    let int = number as i32;
+    (f64::from(int) == number).then_some(int)
+}
+
+/// The narrow word of the elements equal to `search`, when no content comparison is needed.
+fn narrow_key(search: Value) -> Option<u32> {
+    match search.as_number() {
+        Some(number) => integer_of(number).and_then(Value::narrow_integer),
+        None => search.to_narrow(),
+    }
+}
+
+/// The kind of a Number needle, under `mode`.
+fn number_kind(number: f64, mode: Match) -> Kind {
+    if number.is_nan() {
+        return if mode == Match::SameValueZero { Kind::Nan } else { Kind::Never };
+    }
+    if number == 0.0 {
+        return Kind::Three([Value::integer(0).to_bits(), 0.0_f64.to_bits(), NEGATIVE_ZERO_BITS]);
+    }
+    let double = number.to_bits();
+    match integer_of(number) {
+        Some(int) => Kind::Two([Value::integer(int).to_bits(), double]),
+        None => Kind::One(double),
+    }
+}
+
+/// The offset of the first (last when `reverse`) value that is a hole or satisfies `matches`.
+fn first_stop<I>(mut values: I, reverse: bool, matches: impl Fn(Value) -> bool) -> Option<usize>
+where
+    I: DoubleEndedIterator<Item = Value> + ExactSizeIterator,
+{
+    let stop = |value: Value| value.is_deleted() || matches(value);
+    if reverse { values.rposition(stop) } else { values.position(stop) }
+}
+
+/// The offset of the first (last when `reverse`) narrow word that is a hole or `key`.
+fn find_narrow(words: &[u32], reverse: bool, key: Option<u32>) -> Option<usize> {
+    let hole = Value::DELETED.to_narrow();
+    let stop = |word: &u32| Some(*word) == hole || key == Some(*word);
+    if reverse { words.iter().rposition(stop) } else { words.iter().position(stop) }
+}
+
 impl<H: Host> Vm<H> {
     /// The element backing of an array whose indices are all own data properties of it: no
     /// indexed descriptors, sparse storage or arguments mapping. A slot holding the hole

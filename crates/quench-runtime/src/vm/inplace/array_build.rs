@@ -149,7 +149,7 @@ impl<H: Host> Vm<H> {
         };
         match units {
             Units::Ascii(bytes) => Some(f(bytes)),
-            Units::Wide(_) => None,
+            Units::Latin1(_) | Units::Wide(_) => None,
         }
     }
 }

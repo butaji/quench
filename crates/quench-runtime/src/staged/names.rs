@@ -17,6 +17,9 @@ use crate::Value;
 pub(crate) enum Protocol {
     /// The iterator of the operand (`GetIterator`).
     GetIterator,
+    /// The async iterator of the operand (`GetAsyncIterator`): its `@@asyncIterator`, else the
+    /// async-from-sync wrapper of its `@@iterator` (`Vm::get_async_iterator`).
+    GetAsyncIterator,
     /// The for-in state over the operand's key snapshot (`ForInStart`).
     ForInStart,
     /// Close the iterator in the operand (`IteratorClose`).
@@ -35,6 +38,16 @@ pub(crate) enum Protocol {
     /// through cache site `site`, found already holding its name (`Vm::constant_fields_held`).
     /// It reads one cache entry and a shape, runs no guest code and raises nothing.
     ConstantFieldsHeld { site: u16 },
+    /// A literal, template, closure or object-construction step (`protocol_literals`).
+    Literal(super::protocol_literals::LiteralStep),
+    /// A class, private-name or function-naming step (`protocol_classes`).
+    Class(super::protocol_classes::ClassStep),
+    /// A by-name, environment, string or iteration-cleanup step (`protocol_values`).
+    Value(super::protocol_values::ValueStep),
+    /// An activation-variable step: a local, a `var` binding, TDZ, an argument (`protocol_owned`).
+    Owned(super::protocol_owned::OwnedVarStep),
+    /// A Wasm GC, reference, table, memory-init, atomic or exception step (`protocol_wasm`).
+    Wasm(super::protocol_wasm::WasmHostStep),
 }
 
 /// The bits of a `CloneEnv`'s immediate that name its clone plan: an environment window's record
@@ -97,6 +110,7 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
             spread: instruction.boolean_field(crate::bytecode::InstructionField::C)? },
             None, [Some(instruction.register_a()), instruction.optional_register_b()]),
         Op::GetIterator => (Protocol::GetIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::GetAsyncIterator => (Protocol::GetAsyncIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ForInStart => (Protocol::ForInStart, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::IteratorClose => (Protocol::IteratorClose, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ConstantFieldsHeld => (Protocol::ConstantFieldsHeld { site: instruction.cache_site_index() },
@@ -311,6 +325,14 @@ fn load_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
 fn store_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     (source, slot, initialize): (Register, u16, bool), result: Option<Register>) -> Step<S::Word, F::Control> {
     let value = frame.tagged(stage, source);
+    // A window whose names resolve through its scope stores to the `with` object that has the local's name first.
+    if frame.scoped_local_store(stage, slot, value).is_some() {
+        if let Some(result) = result {
+            let fact = frame.fact(source);
+            frame.write(stage, result, value, fact);
+        }
+        return Step::Value(value);
+    }
     if frame.environment_write(stage, slot, value, initialize).is_none() {
         return calling(stage, frame, CallOut::StoreEnvLocal { source, slot, initialize }, result);
     }

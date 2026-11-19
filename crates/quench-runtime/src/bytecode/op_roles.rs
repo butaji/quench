@@ -48,7 +48,7 @@ pub(crate) const fn negated_jump(op: Op) -> Option<Op> {
     let mut index = 0;
     while index < Op::COUNT {
         if let Some(candidate) = Op::from_index(index) {
-            if candidate.traits().0 == swapped && same_encoding(candidate, op) {
+            if candidate.traits().0 == swapped && candidate.traits().1 == op.traits().1 && same_encoding(candidate, op) {
                 assert!(found.is_none(), "a jump has one negation");
                 found = Some(candidate);
             }

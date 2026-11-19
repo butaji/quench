@@ -16,6 +16,7 @@
 //! construction through an initializer is `construct`.
 
 use super::call::admit_room;
+use super::frame;
 use super::layout_offsets::{JS_STEP_BODY_TOP, JS_STEP_LANE_VALUES_TOP, JS_STEP_PLAIN_DEPTH, JS_STEP_RETURNED_PC};
 use super::frame;
 use super::region::Region;
@@ -166,6 +167,97 @@ pub(crate) fn complete_call<S: Stage>(stage: &mut S, status: S::Word, value: S::
     let done = stage.eq_imm(status, u64::from(returned));
     stage.guard_status(done, miss)?;
     Some(receiver.unwrap_or(value))
+}
+
+/// A plain activation's frame header (call protocol v2 stage C), the context words below its
+/// window at `frame::CONTEXT_CALL`..`CONTEXT_CALLEE`, written in place of an activation record.
+#[derive(Clone, Copy)]
+pub(crate) struct PlainHeader<W> {
+    /// The caller's call record.
+    pub(crate) call: W,
+    pub(crate) caller_registers: W,
+    /// The caller's records (the lane context's `base`).
+    pub(crate) caller_base: W,
+    /// `plain_packed`'s word.
+    pub(crate) packed: W,
+    pub(crate) callee: W,
+}
+
+impl PlainHeader<u64> {
+    /// The header of a plain activation of `function` with `argc` values and side-record `flags`,
+    /// called from `call` with its caller's `caller_registers` and `caller_base`, running
+    /// `callee`. The one constructor of the words every plain push writes: the interpreter's
+    /// record-shaped push (`LaneStack::push_activation`), a proved call (`lane_enter_plain_window`)
+    /// and a native callback's trampoline header.
+    #[inline(always)]
+    pub(crate) const fn new(call: u64, caller_registers: u64, caller_base: u64, function: u32, argc: u16, flags: u64,
+        callee: u64) -> Self {
+        Self { call, caller_registers, caller_base, packed: plain_packed(function, argc, flags), callee }
+    }
+}
+
+/// What a plain activation's return reads of its header: the caller's call record, registers
+/// and records.
+#[derive(Clone, Copy)]
+pub(crate) struct PlainCaller<W> {
+    pub(crate) call: W,
+    pub(crate) registers: W,
+    pub(crate) base: W,
+}
+
+/// The header's packed word: `function`, the plain flag and `flags` (`frame::BODY_FLAG`,
+/// `frame::NATIVE_FLAG`), and `argc`.
+#[inline(always)]
+pub(crate) const fn plain_packed(function: u32, argc: u16, flags: u64) -> u64 {
+    function as u64 | frame::PLAIN_FLAG | flags | ((argc as u64) << frame::ARGC_SHIFT)
+}
+
+/// The byte offset of context word `word` below a window's register 0.
+#[inline(always)]
+const fn context_at(word: usize) -> i32 { -((word * 8) as i32) }
+
+/// Push a plain activation whose window starts at `window`: its header below the window, then
+/// the plain activations' words at `plain` (`frame::PLAIN_*_AT`) count it and name its window
+/// and program. One row for the interpreter, the b-jit's direct calls and the u-jit's. The
+/// tier moves the values' top past the window itself.
+#[inline(always)]
+pub(crate) fn push_plain<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word, header: PlainHeader<S::Word>, program: S::Word) {
+    let depth = stage.load_u64(Region::Payload.mutable(), plain, frame::PLAIN_DEPTH_AT as i32);
+    push_plain_at(stage, plain, window, header, program, depth);
+}
+
+/// `push_plain` where the tier already holds the plain depth word `depth` (it loaded it for its
+/// admission, `LaneStack::plain_room`): the same stores, without reloading it.
+#[inline(always)]
+pub(crate) fn push_plain_at<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word, header: PlainHeader<S::Word>, program: S::Word, depth: S::Word) {
+    let at = Region::Frame.mutable();
+    stage.store_u64(at, window, context_at(frame::CONTEXT_CALL), header.call);
+    stage.store_u64(at, window, context_at(frame::CONTEXT_CALLER_REGISTERS), header.caller_registers);
+    stage.store_u64(at, window, context_at(frame::CONTEXT_CALLER_BASE), header.caller_base);
+    stage.store_u64(at, window, context_at(frame::CONTEXT_PACKED), header.packed);
+    stage.store_u64(at, window, context_at(frame::CONTEXT_CALLEE), header.callee);
+    let words = Region::Payload.mutable();
+    let depth = stage.add_imm(depth, 1u64);
+    stage.store_u64(words, plain, frame::PLAIN_DEPTH_AT as i32, depth);
+    stage.store_u64(words, plain, frame::PLAIN_REGISTERS_AT as i32, window);
+    stage.store_u32(words, plain, frame::PLAIN_PROGRAM_AT as i32, program);
+}
+
+/// Pop the innermost plain activation, whose window is `window`: the plain activations' words
+/// at `plain` drop it and name its caller's window, which is the next plain activation's where
+/// one remains. Its caller, which the return resumes. The tier releases the window itself.
+#[inline(always)]
+pub(crate) fn pop_plain<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word) -> PlainCaller<S::Word> {
+    let at = Region::Frame.mutable();
+    let call = stage.load_u64(at, window, context_at(frame::CONTEXT_CALL));
+    let registers = stage.load_u64(at, window, context_at(frame::CONTEXT_CALLER_REGISTERS));
+    let base = stage.load_u64(at, window, context_at(frame::CONTEXT_CALLER_BASE));
+    let words = Region::Payload.mutable();
+    let depth = stage.load_u64(words, plain, frame::PLAIN_DEPTH_AT as i32);
+    let depth = stage.add_imm(depth, u64::MAX);
+    stage.store_u64(words, plain, frame::PLAIN_DEPTH_AT as i32, depth);
+    stage.store_u64(words, plain, frame::PLAIN_REGISTERS_AT as i32, registers);
+    PlainCaller { call, registers, base }
 }
 
 /// The addresses the lane's running state lives at, from the dispatch payload: the values' top word,
@@ -431,7 +523,7 @@ pub(crate) enum HelperOutcome {
 
 /// The helper statuses a call site tests, in the order it tests them (the common one first),
 /// paired with where each goes: the one table both the helper and its call sites share.
-pub(crate) const HELPER_OUTCOMES: [(u32, HelperOutcome); 3] = [
+pub(crate) const HELPER_OUTCOMES: [(u64, HelperOutcome); 3] = [
     (quench_bjit::call_record::LANE_CALL_COMPLETED, HelperOutcome::Completed),
     (quench_bjit::call_record::LANE_CALL_MISSED, HelperOutcome::Missed),
     (quench_bjit::call_record::LANE_CALL_RAISED, HelperOutcome::Raised),

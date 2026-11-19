@@ -11,7 +11,7 @@ use super::{
 };
 use crate::WasmType;
 use crate::bytecode::{Function, WideInstruction};
-use crate::staged::machine::{MachineStage, MachineVector};
+use crate::staged::machine::{MachineAccess, MachineStage, MachineVector};
 use crate::staged::wasm_memory::effective_address;
 use crate::staged::wasm_memory_vector::{load_vector, store_vector};
 use crate::staged::wasm::Width;

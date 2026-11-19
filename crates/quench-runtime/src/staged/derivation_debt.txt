@@ -1,11 +1,10 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 1841
+# total 1840
 <catalog> unstaged:Await 1
 <catalog> unstaged:CacheTemplateObject 1
 <catalog> unstaged:CreateRegExpLiteral 1
-<catalog> unstaged:GetAsyncIterator 1
 <catalog> unstaged:IteratorCleanupPop 1
 <catalog> unstaged:IteratorCleanupPush 1
 <catalog> unstaged:LoadCachedTemplateObject 1

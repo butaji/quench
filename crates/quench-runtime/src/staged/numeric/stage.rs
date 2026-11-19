@@ -30,6 +30,8 @@ pub(crate) trait NumericStage: Stage {
     fn float_extreme(&mut self, maximum: bool, left: Self::Word, right: Self::Word) -> Self::Word;
     /// The wrapping product of two int32 words (`Math.imul`; `staged::math::int_multiply`).
     fn int_multiply(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
+    /// The leading zero bits of the unsigned low 32 bits of an int32 word (`Math.clz32`; `staged::math::leading_zeros`).
+    fn int_leading_zeros(&mut self, value: Self::Word) -> Self::Word;
     /// The int32 word holding `value`.
     fn i32_constant(&mut self, value: i32) -> Self::Word;
     /// The binary64 word holding `value`.

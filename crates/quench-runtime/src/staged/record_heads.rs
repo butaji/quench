@@ -65,8 +65,6 @@ pub(crate) struct FunctionRecord<O, K, V> {
     /// Beside the object, whose 12 bytes it fills to the words after: after them, its 12
     /// bytes and two of padding made the record 48 bytes (jsdom-d3: 114K records at its peak).
     pub(crate) kind: K,
-    /// The creation realm.
-    pub(crate) realm: V,
     /// The closure environment.
     pub(crate) env: V,
 }
@@ -106,6 +104,8 @@ pub(crate) struct CallContextHead<E, C, T, D, P, R> {
     /// The artifact containing the currently executing call site. The active
     /// entry (or its caller) keeps this artifact strongly owned for the callout.
     pub(crate) compiled: *const C,
+    /// The program of the code running (the VM's; compiled code never reads it).
+    pub(crate) program: P,
     /// Number of Wasm-to-host callouts made by this native invocation.
     pub(crate) import_callouts: *mut u64,
     /// Number of direct known calls that had to use the VM fallback.
@@ -135,4 +135,7 @@ pub(crate) struct CallContextHead<E, C, T, D, P, R> {
     /// A stack-owned adapter payload for JS and OSR entries that use this
     /// module's common native-entry trampoline without Wasm callouts.
     pub(crate) adapter_payload: *mut (),
+    /// The program whose functions this call runs: a lane call of its own functions
+    /// (`lane_call_known`, `lane_call_wasm_reference`) records it on the activation it pushes.
+    pub(crate) program: P,
 }

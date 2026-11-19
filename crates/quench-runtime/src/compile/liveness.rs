@@ -336,13 +336,9 @@ fn general_uses(
         ImmediateRole::MethodSiteIndex => method_arguments(instruction, methods),
         ImmediateRole::SuperinstructionIndex => superinstructions
             [instruction.superinstruction_index()]
-        .code
+        .wide
         .iter()
-        .fold(RegisterSet::default(), |mask, nested| {
-            mask | nested_member(*nested).map_or(RegisterSet::MAX, |nested| {
-                uses(nested, methods, fields, superinstructions)
-            })
-        }),
+        .fold(RegisterSet::default(), |mask, &nested| mask | uses(nested, methods, fields, superinstructions)),
         _ => RegisterSet::default(),
     };
     field_reads | result | packed_uses | indexed_uses
@@ -415,11 +411,9 @@ fn general_definitions(
     let indexed_definitions = match instruction.op().immediate_role() {
         ImmediateRole::SuperinstructionIndex => superinstructions
             [instruction.superinstruction_index()]
-        .code
+        .wide
         .iter()
-        .fold(RegisterSet::default(), |mask, nested| {
-            mask | nested_member(*nested).map_or_else(RegisterSet::default, |nested| definitions(nested, superinstructions))
-        }),
+        .fold(RegisterSet::default(), |mask, &nested| mask | definitions(nested, superinstructions)),
         _ => RegisterSet::default(),
     };
     result | field_writes | packed_definitions | indexed_definitions
@@ -468,13 +462,6 @@ fn operand(value: u16, fields: &[FieldSite]) -> RegisterSet {
 
 fn method_arguments(instruction: WideInstruction, methods: &(impl MethodArguments + ?Sized)) -> RegisterSet {
     methods.arguments(instruction.method_site_index())
-}
-
-/// A superinstruction member in fixed-width form. Members are packed without a wide table, so
-/// a wide member has no decoding here: it counts as reading every register and writing none,
-/// which only lengthens liveness.
-fn nested_member(member: Instr) -> Option<WideInstruction> {
-    (!member.is_wide()).then(|| member.as_wide())
 }
 
 /// The registers `base..base + count` that the set covers, as `register_bit` of each.

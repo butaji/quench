@@ -3264,6 +3264,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         // A getter the site's accessor entry answers is the `[[Get]]` result's whole
         // computation: its call with the receiver, without the data walk, which it would fail.
+        // A trivial getter's forward is that call's value (getters-as-calls.md).
+        match self.getter_entry_read(object, site) {
+            super::accessor_cache::GetterEntryRead::Answer(value, _) => return Ok(value),
+            super::accessor_cache::GetterEntryRead::Call(getter) => return self.call_value(p, getter, object, &[]),
+            super::accessor_cache::GetterEntryRead::Miss => {}
+        }
         if let Some(getter) = self.cached_field_getter(object, atom, site) {
             return self.call_value(p, getter, object, &[]);
         }
@@ -3329,7 +3335,7 @@ impl<H: Host> Vm<H> {
                         cell,
                         next: NO_ACCESSOR_FIELD,
                         getter: Value::UNDEFINED,
-                        answer: FieldCache::own(0, 0),
+                        answer: super::AccessorForward::None,
                     },
                 );
             }
@@ -3380,7 +3386,7 @@ impl<H: Host> Vm<H> {
                 cell,
                 next: NO_ACCESSOR_FIELD,
                 getter: Value::UNDEFINED,
-                answer: FieldCache::own(0, 0),
+                answer: super::AccessorForward::None,
             },
         );
     }

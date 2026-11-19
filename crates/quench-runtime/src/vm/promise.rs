@@ -536,10 +536,41 @@ impl<H: Host> Vm<H> {
         self.heap.alloc_string("ModuleSource".into())
     }
 
+    #[cfg(test)]
     pub(super) fn call_native_guarded(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value],
         callee: Value) -> Result<Value, JsError> {
-        #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
         self.as_native_activation(native, callee, |vm| vm.call_native(p, native, this, args))
+    }
+
+    /// `call_native_guarded` of `Vm::call_value_with_target_inner`, whose callers hold the
+    /// arguments for the call (`call_value` roots them; the `_from_frame` calls' frame is parked
+    /// at the call, which the collector scans at the call's liveness), so the native roots only
+    /// its receiver (`call_native_arguments_held`).
+    pub(super) fn call_native_guarded_arguments_held(&mut self, p: &ResidualProgram, native: Native, this: Value,
+        args: &[Value], callee: Value) -> Result<Value, JsError> {
+        #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
+        self.as_native_activation(native, callee, |vm| vm.call_native_arguments_held(p, native, this, args))
+    }
+
+    /// `call_native_guarded` of a lane's native call: its stack depth is the compare of the
+    /// bounds the lane read at its entry (`LaneStack::native_stack`) in place of a
+    /// `StackGuard`'s thread-local enter and drop; past them the guard decides, as before.
+    pub(super) fn call_native_from_lane(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value],
+        callee: Value) -> Result<Value, JsError> {
+        #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
+        let limit = self.lane_stack.native_stack;
+        self.native_activation_within(native, callee, Some(limit), |vm| vm.call_native(p, native, this, args))
+    }
+
+    /// `call_native_from_lane` of a call whose `args` are its call record's window in the
+    /// running function's registers (`dispatch_fast::lane_arguments_in_window`): the frame
+    /// parked at the call (the lane's own, or the one its activation becomes, before any
+    /// collection) holds them live at the call's pc, so only the receiver is rooted.
+    pub(super) fn call_native_from_lane_arguments_held(&mut self, p: &ResidualProgram, native: Native, this: Value,
+        args: &[Value], callee: Value) -> Result<Value, JsError> {
+        #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
+        let limit = self.lane_stack.native_stack;
+        self.native_activation_within(native, callee, Some(limit), |vm| vm.call_native_arguments_held(p, native, this, args))
     }
 
     /// Runs `body` as the native `callee` of kind `native` runs: in its realm, under its
@@ -548,6 +579,20 @@ impl<H: Host> Vm<H> {
         &mut self,
         native: Native,
         callee: Value,
+        body: impl FnOnce(&mut Self) -> Result<R, JsError>,
+    ) -> Result<R, JsError> {
+        self.native_activation_within(native, callee, None, body)
+    }
+
+    /// `as_native_activation` with its stack check: a `StackGuard` (`None`), or the compare of
+    /// bounds a lane read at its entry (`Some`, `Vm::call_native_from_lane`), which enters no
+    /// transition of its own.
+    #[inline(always)]
+    fn native_activation_within<R>(
+        &mut self,
+        native: Native,
+        callee: Value,
+        lane_stack: Option<crate::stack::StackLimit>,
         body: impl FnOnce(&mut Self) -> Result<R, JsError>,
     ) -> Result<R, JsError> {
         // A realm's own natives run in that realm; a native shared by every realm runs in
@@ -580,7 +625,13 @@ impl<H: Host> Vm<H> {
                 boundary,
             });
         let result = (|| {
-            let _stack = self.enter_stack()?;
+            // Within the lane's bounds the call needs no guard of its own; outside them (or
+            // with no bounds read yet, `StackLimit::CLOSED`) the guard decides, raising its
+            // RangeError where the budget is spent.
+            let _stack = match lane_stack {
+                Some(limit) if limit.admits() => None,
+                _ => Some(self.enter_stack()?),
+            };
             body(self)
         })();
         self.realm.promise.active_native.pop();

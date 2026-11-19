@@ -35,7 +35,7 @@ type KeptValues = unsafe fn(*mut ()) -> Option<(u16, u16)>;
 /// reads one entry and a shape.
 type ConstantFieldsTest = unsafe fn(*mut (), Value, u16) -> bool;
 
-/// How a by-name load's record reads its name once resolved (`lane_name_resolution`).
+/// How a by-name load's record reads its name once resolved (`name_resolution`).
 #[derive(Clone, Copy)]
 pub(super) enum NameRead {
     /// The active realm's function for the native the name stands for (`Vm::intrinsic_natives`).
@@ -154,6 +154,46 @@ impl Decisions {
     }
 }
 
+/// The hand-off of a call the lane frame admitted (`LaneCall::activate`): over the lane context
+/// (erased), the caller's registers, the call record and where it is, the admitted entry, the plain
+/// depth the room was admitted at, and the bound `this`, the callee's window filled and its plain
+/// header pushed or its leaf entered: the callee's registers and first record, the context already
+/// switched to them.
+pub(in crate::vm::dispatch_fast) type CallActivation =
+    unsafe fn(*mut (), Registers, Ip, *const LaneInstruction, *const ScriptCallTarget, usize, Value) -> (Registers, Ip);
+
+/// The static form of a call row (`protocol_row` of `MISS`, `call_form`): its leaf form (`NOT_LEAF`
+/// for a plain activation), its argument count (`ANY_ARGC` where the record's immediate holds it),
+/// and whether its receiver is its function's `undefined` register (`script_call_miss`'s `PLAIN`).
+#[derive(Clone, Copy)]
+pub(in crate::vm::dispatch_fast) struct CallForm {
+    leaf: LeafForm,
+    argc: u16,
+    plain: bool,
+}
+
+/// The call record a call row runs (`protocol_row`), erased of its host so the frame names no `H`:
+/// what `CallFrame`'s hooks read of the lane (`lane_frame::staged_ops`), and what `call_entry` and
+/// `call_room` admitted, for the hooks past them.
+pub(in crate::vm::dispatch_fast) struct LaneCall {
+    /// The lane context (`*mut LaneContext<H>`), which `activate` takes.
+    context: *mut (),
+    /// The running lane's stack (`Vm::lane_stack`) and the realm's global object, which a sloppy
+    /// callee binds for `undefined` and `null`.
+    stack: *const LaneStack,
+    globals: *const Value,
+    /// The call record and where it is.
+    record: *const LaneInstruction,
+    ip: Ip,
+    form: CallForm,
+    /// The entry `call_entry` admitted.
+    target: std::cell::Cell<*const ScriptCallTarget>,
+    /// The plain depth `call_room` admitted the call at (`LaneStack::plain_room`), which the plain
+    /// header's push writes past.
+    depth: usize,
+    activate: CallActivation,
+}
+
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
 pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
@@ -231,6 +271,8 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     window: Option<*mut Value>,
     /// The plan of the named read the frame runs, as its record holds it (`RecordPlan`).
     plan: Option<RecordPlan>,
+    /// The call record a call row runs (`LaneCall`), for the frame's call hooks.
+    call: Option<LaneCall>,
     /// The object a `GetField` of a local slot reads, where the local holds a plain value
     /// (`plain_local_operand`); `PropertyFrame::local_base` answers it. `None` otherwise.
     local_object: Option<u64>,
@@ -637,14 +679,14 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None, entry: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None, entry: None, call: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
     #[inline(always)]
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
-        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: lane_delete_value::<H>,
-            read_name: lane_name_value::<H>, kept_values: kept_values::<H>, constant_fields: constant_fields_value::<H>, name: None };
+        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: delete_value_in_lane::<H>,
+            read_name: name_value_in_lane::<H>, kept_values: kept_values::<H>, constant_fields: constant_fields_value::<H>, name: None };
         Self { host: Some(host), ..Self::new(registers, view) }
     }
 
@@ -662,7 +704,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, reads: Reads::NONE, suspends: None }
+            ..Self::new(registers, view) }
     }
 }
 
@@ -745,7 +787,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
         // environment its frame would capture from: the lane's frame, or a frameless activation's
         // function and environment, whose frame would hold that environment as its closure's.
         if vm.is_private_name(atom) {
-            return match vm.lane_stack.activations().last() {
+            return match vm.lane_stack.top_frame() {
                 None => vm.private_field_value(code, object, atom),
                 Some(activation) => {
                     let function = activation.script().map(|_| activation.function())?;
@@ -3039,7 +3081,8 @@ pub(in crate::vm::dispatch_fast) const fn protocol_row_declines(op: Op) -> bool 
 /// the row declines every record (`protocol_row_declines`), the record's protocol miss body itself, so the
 /// record skips the row's decode and its tail call.
 pub(in crate::vm::dispatch_fast) const fn protocol_handler<H: Host, const OP: u16, const ACC: u8, const MISS: u16>() -> Handler {
-    if protocol_row_declines(LaneFields::<OP>::OPCODE) {
+    // A plain or leaf script call's row runs its call hooks (`call_form`), whatever its decoder.
+    if protocol_row_declines(LaneFields::<OP>::OPCODE) && call_form(MISS).is_none() {
         protocol_miss::<H>(MISS)
     } else {
         protocol_row::<H, OP, ACC, MISS> as Handler
@@ -3056,6 +3099,35 @@ lane_handler! {
     /// handler. An opcode with no staged decoder decodes to nothing and takes that arm directly
     /// until its row lands.
     pub(super) fn protocol_row<OP: u16, ACC: u8, MISS: u16>(cx, r, ip, i, view) {
+        // A plain or leaf script call's row (`call_form`) decodes by the call decoder, which the
+        // generic decode (`row_decode!`) leaves out, and steps over a frame whose call hooks make the
+        // proved call (`call_frame`, `CallFrame::call_activate`).
+        if const { call_form(MISS).is_some() } {
+            // A call row's records are JavaScript, whose view carries its context (`script_handler!`).
+            debug_assert_eq!(view.memory.bytes.cast::<LaneContext<H>>(), context_in_lane::<H>(), "a JavaScript view carries its context");
+            let fields = LaneFields::<OP>(i);
+            let decoded = match const { LaneFields::<OP>::OPCODE.staged() } {
+                Some(crate::bytecode::Decoder::Call) =>
+                    Operation::decode_call(crate::staged::Fields::wide(fields), crate::staged::DecodeContext::EMPTY),
+                _ => None,
+            };
+            let Some(operation) = decoded else {
+                sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
+            };
+            let mut stage = Concrete::new(std::ptr::null());
+            let mut frame = call_frame::<H, OP, ACC, MISS>(cx, r, ip, i, view);
+            match crate::staged::step(&mut stage, &mut frame, operation) {
+                Step::Value(value) => {
+                    r.set(i.a, Value::from_bits(value));
+                    next!(cx, r, following(ip), Carried::script_in(cx, view))
+                }
+                Step::Control(LaneControl::Edge(Edge::Following)) => next!(cx, r, following(ip), Carried::script_in(cx, view)),
+                // The frame activated the callee (`CallFrame::call_activate`): its first record, as the
+                // proved handlers continue (`script_call_miss`, `script_call_leaf_miss`).
+                Step::Control(LaneControl::Resumed(resumed)) => resume!(cx, resumed),
+                Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
+            }
+        }
         let fields = LaneFields::<OP>(i);
         let Some(operation) = row_decode!(OP, FLAG_UNREAD, fields) else {
             sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
@@ -3083,6 +3155,125 @@ lane_handler! {
             Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
         }
     }
+}
+
+/// The static form of the call row whose miss is `miss` (`CallForm`): a plain script call of a
+/// `script_call_miss` instantiation (`protocol_misses::script_call`'s argument codes), or a leaf call
+/// of a `script_call_leaf_miss` one (`protocol_misses::leaf_call::leaf_of`); `None` for any other
+/// miss, whose record the lane frame does not answer.
+pub(in crate::vm::dispatch_fast) const fn call_form(miss: u16) -> Option<CallForm> {
+    use super::protocol_misses::script_call as code;
+    let parameters = protocol_family::parameters(miss);
+    match protocol_family::of(miss) {
+        protocol_family::SCRIPT_CALL if parameters & !code::PLAIN <= code::ARGC_ANY => {
+            let argc = parameters & !code::PLAIN;
+            let argc = if argc == code::ARGC_ANY { ANY_ARGC } else { argc as u16 };
+            Some(CallForm { leaf: NOT_LEAF, argc, plain: parameters & code::PLAIN != 0 })
+        }
+        protocol_family::LEAF_CALL => match super::protocol_misses::leaf_call::leaf_of(parameters) {
+            Some((leaf, argc)) if leaf >= PLAIN_LEAF && leaf <= THIS_LEAF && argc <= FIXED_ARGUMENT_COPIES =>
+                Some(CallForm { leaf, argc, plain: false }),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The hand-off of the call row whose miss is `miss` (`call_form`): its leaf form's run at its
+/// argument count (`leaf_call_activation`), else the plain activation at its argument count
+/// (`plain_call_activation`), each an instantiation whose count and form are constants.
+const fn call_activation<H: Host>(miss: u16) -> CallActivation {
+    let Some(form) = call_form(miss) else { return plain_call_activation::<H, ANY_ARGC> };
+    macro_rules! leaf {
+        ($form:ident) => {
+            match form.argc {
+                0 => leaf_call_activation::<H, $form, 0> as CallActivation,
+                1 => leaf_call_activation::<H, $form, 1>,
+                2 => leaf_call_activation::<H, $form, 2>,
+                3 => leaf_call_activation::<H, $form, 3>,
+                _ => leaf_call_activation::<H, $form, 4>,
+            }
+        };
+    }
+    match form.leaf {
+        PLAIN_LEAF => leaf!(PLAIN_LEAF),
+        CAPTURE_LEAF => leaf!(CAPTURE_LEAF),
+        CONTEXT_LEAF => leaf!(CONTEXT_LEAF),
+        THIS_LEAF => leaf!(THIS_LEAF),
+        _ => match form.argc {
+            0 => plain_call_activation::<H, 0> as CallActivation,
+            1 => plain_call_activation::<H, 1>,
+            2 => plain_call_activation::<H, 2>,
+            3 => plain_call_activation::<H, 3>,
+            4 => plain_call_activation::<H, 4>,
+            _ => plain_call_activation::<H, ANY_ARGC>,
+        },
+    }
+}
+
+/// The plain activation of `target` past the lane frame's admission of the call record `record` at
+/// `ip` (`CallActivation`): the proved arm of `lane_plain_activation!` from its window on, its
+/// window filled from the record's (`fill_window_in_lane`) and its header pushed straight below it at
+/// the admitted `depth` (`lane_enter_plain_window`). `ARGC` is the record's argument count
+/// (`call_argument_count`).
+///
+/// # Safety
+/// `context` is the running lane's context and `record` the call record at `ip` of the caller's
+/// registers `r`; `target` is the entry the frame admitted for it (one admission compare, its
+/// callee, its parameters taking the arguments, a plain activation's room at `depth`), of an
+/// unpublished entry cell (its proof), and `this` the receiver it binds.
+#[inline(always)]
+unsafe fn plain_call_activation<H: Host, const ARGC: u16>(context: *mut (), r: Registers, ip: Ip, record: *const LaneInstruction,
+    target: *const ScriptCallTarget, depth: usize, this: Value) -> (Registers, Ip) {
+    let cx = context.cast::<LaneContext<H>>();
+    // SAFETY: the function's contract.
+    let (vm, i, target) = unsafe { (vm(cx), &*record, &*target) };
+    debug_assert!(target.entry.activates() && !target.settles());
+    debug_assert!(!unsafe { (*target.view).entry_published() }, "publishing unproves the view's entries");
+    let argc = call_argument_count::<ARGC>(i);
+    // SAFETY: the record's window of `r` holds its values.
+    let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
+    let callee_registers = fill_window_in_lane(vm, target, passed, argc);
+    lane_enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this)
+}
+
+/// The leaf call of `target` of form `LEAF` past the lane frame's admission of the call record
+/// `record` at `ip` (`CallActivation`): `script_call_leaf_miss`'s proved arm from its run on
+/// (`lane_run_leaf`). A leaf pushes no plain activation, so the depth is not read.
+///
+/// # Safety
+/// As `plain_call_activation`, `target` an entry of leaf form `LEAF` whose parameters take `ARGC`
+/// values.
+#[inline(always)]
+unsafe fn leaf_call_activation<H: Host, const LEAF: u8, const ARGC: u16>(context: *mut (), r: Registers, ip: Ip,
+    record: *const LaneInstruction, target: *const ScriptCallTarget, _depth: usize, this: Value) -> (Registers, Ip) {
+    // SAFETY: the function's contract.
+    unsafe { super::leaf_calls::lane_run_leaf::<H, LEAF, ARGC>(context.cast(), r, ip, &*record, &*target, this) }
+}
+
+/// The frame a call row of `MISS` steps over (`protocol_row`): the register file and the carried view,
+/// and, for a plain or leaf script call (`call_form`), the call record its call hooks read
+/// (`LaneCall`), whose form and hand-off are constants of the instantiation.
+#[inline(always)]
+fn call_frame<H: Host, const OP: u16, const ACC: u8, const MISS: u16>(cx: *mut LaneContext<H>, r: Registers, ip: Ip,
+    i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
+    let mut frame = row_frame::<H, OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
+    if let Some(form) = const { call_form(MISS) } {
+        // SAFETY: the running lane's context; the addresses are taken, nothing is read.
+        let vm = unsafe { vm(cx) };
+        frame.call = Some(LaneCall {
+            context: cx.cast(),
+            stack: &raw const *vm.lane_stack,
+            globals: &raw const vm.realm.globals,
+            record: std::ptr::from_ref(i),
+            ip,
+            form,
+            target: std::cell::Cell::new(std::ptr::null()),
+            depth: 0,
+            activate: const { call_activation::<H>(MISS) },
+        });
+    }
+    frame
 }
 
 script_handler! {
@@ -3194,17 +3385,17 @@ fn jump_row_backward<H: Host, const OP: u16>(handler: *const ()) -> bool {
 pub(super) unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
     let cx = cx.cast::<LaneContext<H>>();
     match allocation {
-        Allocation::Empty => Some(lane_new_object(unsafe { vm(cx) })),
-        Allocation::Array { length, numbers } => Some(lane_new_hole_array(unsafe { vm(cx) }, length as usize, numbers)),
-        Allocation::ArrayOf { elements } => Some(lane_literal_array_value(unsafe { vm(cx) }, r, elements)),
-        Allocation::RegExp { site, callee: None } => lane_regexp_literal_value(cx, site),
+        Allocation::Empty => Some(new_object_in_lane(unsafe { vm(cx) })),
+        Allocation::Array { length, numbers } => Some(new_hole_array_in_lane(unsafe { vm(cx) }, length as usize, numbers)),
+        Allocation::ArrayOf { elements } => Some(literal_array_value_in_lane(unsafe { vm(cx) }, r, elements)),
+        Allocation::RegExp { site, callee: None } => regexp_literal_value_in_lane(cx, site),
         Allocation::RegExp { site, callee: Some(callee) } => lane_regexp_argument_value(cx, r.get(callee), site),
-        Allocation::ConstArray { constant, count } => lane_const_array_value(cx, constant, count),
-        Allocation::ObjectPair { site, first, second } => Some(lane_object_pair(cx, r, site, [first, second])),
-        Allocation::ObjectLiteral { site, window } => Some(lane_object_literal_value(cx, r, site, window)),
-        Allocation::Closure { function } => lane_closure_value_of(cx, function),
-        Allocation::Template { template } => lane_template_value(cx, template),
-        Allocation::Concat { window } => lane_concat_value(cx, r, window),
+        Allocation::ConstArray { constant, count } => const_array_value_in_lane(cx, constant, count),
+        Allocation::ObjectPair { site, first, second } => Some(object_pair_in_lane(cx, r, site, [first, second])),
+        Allocation::ObjectLiteral { site, window } => Some(object_literal_value_in_lane(cx, r, site, window)),
+        Allocation::Closure { function } => closure_value_of_in_lane(cx, function),
+        Allocation::Template { template } => template_value_in_lane(cx, template),
+        Allocation::Concat { window } => concat_value_in_lane(cx, r, window),
     }
 }
 
@@ -3230,7 +3421,7 @@ unsafe fn kept_values<H: Host>(cx: *mut ()) -> Option<(u16, u16)> {
     if unsafe { (*cx).registers }.env().is_deleted() {
         return None;
     }
-    let script = unsafe { vm(cx) }.lane_stack.activations().last()?.script().filter(|script| script.forwards)?;
+    let script = unsafe { vm(cx) }.lane_stack.top_frame()?.script().filter(|script| script.forwards)?;
     Some((script.argc, script.kept))
 }
 
@@ -3337,14 +3528,14 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
         // keyed as the VM keys it. A frameless activation beside the lane leaves the step to the general path.
         CallOut::Protocol { step: Protocol::Literal(crate::staged::protocol_literals::LiteralStep::CacheTemplate { site }), .. } => {
             let frame = unsafe { (*cx.cast::<LaneContext<H>>()).frame() };
-            if !vm.lane_stack.activations().is_empty() || frame >= vm.frames.len() {
+            if vm.lane_stack.has_frames() || frame >= vm.frames.len() {
                 return None;
             }
             Some(vm.cache_template_object(frame, site, first?))
         }
         CallOut::Protocol { step: Protocol::Literal(crate::staged::protocol_literals::LiteralStep::LoadTemplate { site }), .. } => {
             let frame = unsafe { (*cx.cast::<LaneContext<H>>()).frame() };
-            if !vm.lane_stack.activations().is_empty() || frame >= vm.frames.len() {
+            if vm.lane_stack.has_frames() || frame >= vm.frames.len() {
                 return None;
             }
             Some(vm.load_template_object(frame, site))
@@ -3362,7 +3553,7 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
         // general step. A proxy target's define runs its trap, and a keeping activation beside the lane
         // holds registers that are not the frame's, so both leave to the general step too.
         CallOut::Protocol { step: Protocol::Class(ClassStep::DefineComputedField { key: key_register }), .. } => {
-            if !vm.lane_stack.activations().is_empty() {
+            if vm.lane_stack.has_frames() {
                 return None;
             }
             let (value, object) = (first?, second?);
@@ -3393,7 +3584,7 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
         // throw; a copy it declines leaves to the row's miss, which takes the general step. The exclusions are
         // the running frame's registers, so a keeping activation beside the lane leaves the copy to its miss.
         CallOut::Protocol { step: Protocol::Literal(crate::staged::protocol_literals::LiteralStep::CopyDataProperties { exclusions }), .. } => {
-            if !vm.lane_stack.activations().is_empty() {
+            if vm.lane_stack.has_frames() {
                 return None;
             }
             let (target, source) = (first?, second?);
@@ -3435,7 +3626,7 @@ fn const_array_value_in_lane<H: Host>(cx: *mut LaneContext<H>, constant: u32, co
 #[inline(never)]
 fn template_value_in_lane<H: Host>(cx: *mut LaneContext<H>, template: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if !vm.lane_stack.activations().is_empty() {
+    if vm.lane_stack.has_frames() {
         return None;
     }
     // SAFETY: the context's program outlives the lane run.

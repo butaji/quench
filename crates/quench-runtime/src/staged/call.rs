@@ -361,6 +361,26 @@ pub(crate) fn enter_cached<S: Stage>(stage: &mut S, held: S::Word, expected: Opt
     Some(stage.load_u64(Region::EntryCell.mutable(), cell, CELL.entry_offset))
 }
 
+/// The direct native call both JIT tiers emit at a bound call site: the callee identity guard
+/// inlined (`guard_callee`, one compare of the held word against the identity the site was bound
+/// to) and the code pointer read from the callee's entry cell, the word the tier then jumps or
+/// calls through (`call *entry`). No validity compare is needed: `entry` is the native validity
+/// itself, a withdrawn or never-published body leaves the stub there, which enters nothing and
+/// answers the status the tier's fallback already handles. Where the identity is folded (a
+/// written-once root binding, `Identity::Folded`) the tier passes `expected = None` and the row
+/// is the one load. `cell` is the bound function's cell, a constant at a bound site.
+#[allow(dead_code)] // emitted by the JIT tiers (u-jit `call_frames.rs`, b-jit `call_rows.rs`)
+#[inline(always)]
+pub(crate) fn enter_cached<S: Stage>(stage: &mut S, held: S::Word, expected: Option<u64>, cell: S::Word, miss: S::Miss)
+    -> Option<S::Word> {
+    if let Some(expected) = expected {
+        // `protocol::guard_callee`, written out: the stencil build includes this file without `protocol`.
+        let same = stage.eq_imm(held, expected);
+        stage.guard(same, miss)?;
+    }
+    Some(stage.load_u64(Region::EntryCell.mutable(), cell, CELL.entry_offset))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,6 +400,17 @@ mod tests {
             ENTRY_CELL.proven_offset, ENTRY_CELL.numbers_offset, ENTRY_CELL.uses_this_offset];
         assert_eq!(offsets, [0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80]);
         assert_eq!((std::mem::size_of::<EntryCellLayoutWords>(), std::mem::align_of::<EntryCellLayoutWords>()), (128, 64));
+    }
+
+    #[test]
+    fn a_cached_entry_is_one_identity_compare_and_one_load() {
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut cell = cell(7, 5, 8, 2, 1);
+        cell.entry = 0xC0DE;
+        let at = std::ptr::addr_of!(cell) as u64;
+        assert_eq!(enter_cached(&mut stage, 42, Some(42), at, ()), Some(0xC0DE));
+        assert_eq!(enter_cached(&mut stage, 41, Some(42), at, ()), None, "another callee leaves");
+        assert_eq!(enter_cached(&mut stage, 41, None, at, ()), Some(0xC0DE), "a folded identity is the load alone");
     }
 
     #[test]

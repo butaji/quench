@@ -3288,13 +3288,13 @@ impl<'a> Compiler<'a> {
             .collect();
         if let Some(root) = self.functions.first_mut() {
             root.set_global_declarations(
-                crate::bytecode::GlobalDeclarations {
-                    lexical: global_lexical_atoms,
-                    var: global_var_atoms,
-                    function: global_function_atoms,
-                    annex_b_var: global_annex_b_var_atoms,
-                    immutable: global_immutable_atoms,
-                }
+                crate::bytecode::GlobalDeclarations::new(
+                    global_lexical_atoms,
+                    global_var_atoms,
+                    global_function_atoms,
+                    global_annex_b_var_atoms,
+                    global_immutable_atoms,
+                )
                 .boxed(),
             );
             // A strict eval's vars are its own bindings, not the global object's.
