@@ -134,7 +134,7 @@ fn global_layout(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, cell: GlobalSl
     let records = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
     let bits = stage.constant(cell.global.to_bits());
     let address = ObjectRecord::prove(stage.builder, bits, records, None, miss).address(stage.builder);
-    let inline = inline_storage(stage.builder, address);
+    let inline = inline_storage(stage.builder, stage.layout_table, address);
     let (arena, _) = emit_js_property_values(stage.builder, frame.payload);
     Some((CheckedObject::prove_arena_extras(stage.builder, address, inline, arena, cell.storage_len, miss)?, bits))
 }

@@ -502,7 +502,7 @@ pub(super) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, layout_table: None };
     if view.uncounted {
         crate::staged::elements::replace_uncounted_element(&mut stage, address, value);
     } else {
@@ -635,19 +635,20 @@ fn emit_js_cached_field_slot(
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
     let base = receiver;
-    let record_id = crate::staged::value::direct_object_id(&mut object_slots::emit(builder), base);
+    let record_id = crate::staged::value::direct_object_id(&mut emit_at(builder, payload), base);
 
     let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback, None));
     let FieldSlotBinding { holder, receiver: receiver_shape, slot, records, arena, .. } = binding;
-    let own = object_slots::emit(builder).raw_compare_imm(Relation::Equal, holder, i64::from(CACHE.own_holder));
+    let own = emit_at(builder, payload).raw_compare_imm(Relation::Equal, holder, i64::from(CACHE.own_holder));
     if !allow_holder {
         emit_js_guard(builder, own, fallback);
     }
 
+    let layouts = Some(emit_js_object_layouts(builder, payload));
     let object_slots::ObjectHeader { record, shape, inline, address: object } = header
-        .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, base, records, None, fallback));
+        .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, layouts, base, records, None, fallback));
     // The exact shape includes dictionary storage, which cannot match an own-data row.
-    let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
+    let same_shape = emit_at(builder, payload).raw_compare(Relation::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
     // A holder read uses only the receiver's shape and prototype link. Its own
     // property representation is unrelated to the holder's slot address.
@@ -655,9 +656,9 @@ fn emit_js_cached_field_slot(
         if let Some(packed_slot) = packed_slot {
             let packed = builder.create_block();
             let arena = builder.create_block();
-            object_slots::emit(builder).branch_if(inline, (packed, &[]), (arena, &[]));
+            emit_at(builder, payload).branch_if(inline, (packed, &[]), (arena, &[]));
             builder.switch_to_block(packed);
-            let mut stage = object_slots::emit(builder);
+            let mut stage = emit_at(builder, payload);
             let storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), object, OBJECT.payload_offset as i32);
             let plain = plain_payload(&mut stage, storage);
             stage.guard(plain, fallback);
@@ -674,7 +675,7 @@ fn emit_js_cached_field_slot(
             builder.seal_block(arena);
             builder.switch_to_block(arena);
         }
-        let mut stage = object_slots::emit(builder);
+        let mut stage = emit_at(builder, payload);
         if packed_slot.is_none() {
             let arena_storage = stage.raw_compare_imm(Relation::Equal, inline, 0);
             stage.guard(arena_storage, fallback);
@@ -692,18 +693,19 @@ fn emit_js_cached_field_slot(
         let holder_block = builder.create_block();
         let join = builder.create_block();
         builder.append_block_param(join, types::I64);
-        object_slots::emit(builder).branch_if(own, (own_block, &[]), (holder_block, &[]));
+        emit_at(builder, payload).branch_if(own, (own_block, &[]), (holder_block, &[]));
         builder.switch_to_block(own_block);
         let storage = own_storage(builder);
         let address = arena.address(builder, storage, slot, fallback);
-        object_slots::emit(builder).goto(join, &[address]);
+        emit_at(builder, payload).goto(join, &[address]);
 
         builder.switch_to_block(holder_block);
-        let mut stage = object_slots::emit(builder);
+        let mut stage = emit_at(builder, payload);
         let link = proto_link(&mut stage, object);
         let id = proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
         let prototype = object_record_at(&mut stage, records, id);
-        let proto_shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), prototype);
+        let layouts = stage.layout_table;
+        let proto_shape = object_slots::exact_shape(stage.builder, layouts, MemFlagsData::trusted(), prototype);
         let same_holder = stage.raw_compare(Relation::Equal, proto_shape, holder);
         stage.guard(same_holder, fallback);
         let inline = inline_storage(&mut stage, prototype);
@@ -745,6 +747,19 @@ fn emit_js_cached_field_slot(
 }
 
 /// A word of the running dispatch's payload (`JsStepDispatch`).
+/// The stage of the rows emitted for `payload`: `object_slots::emit` with the running process's
+/// object layout table, which a record's layout id indexes.
+fn emit_at<'a, 'b>(builder: &'a mut FunctionBuilder<'b>, payload: ir::Value) -> object_slots::Emit<'a, 'b> {
+    let layouts = emit_js_object_layouts(builder, payload);
+    object_slots::Emit { builder, property_values: None, gate: Some(payload), layout_table: Some(layouts) }
+}
+
+/// The base of the running process's object layout table (`JsStepDispatch::object_layouts`):
+/// a static of that process, which code built elsewhere cannot name.
+pub(super) fn emit_js_object_layouts(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> ir::Value {
+    emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_layouts))
+}
+
 fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
     use crate::staged::region::Region;
     let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
@@ -893,7 +908,10 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
     let (found, done) = (builder.create_block(), builder.create_block());
-    let mut stage = object_slots::emit(builder);
+    // The receiver's shape and storage form are its layout's words: read the table the entry
+    // bound, which this process's code can name and another process's cannot.
+    let layouts = emit_js_object_layouts(builder, payload);
+    let mut stage = object_slots::Emit { builder, property_values: Some(properties), gate: Some(payload), layout_table: Some(layouts) };
     let none = stage.raw_const(Lane::I32, i64::from(super::NO_FIELD_RECEIVER));
     let null = stage.raw_const(Lane::I64, 0);
     let outside = stage.raw_const(Lane::I8, 0);
@@ -913,7 +931,8 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let record_id = stage.raw_unary(Unary::ZeroExtend(Lane::I64), record_id);
     let address = crate::staged::object::object_record_at(&mut stage, records, record_id);
     // The exact shape carries the dictionary bit, so a dictionary never matches.
-    let shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), address);
+    let layouts = stage.layout_table;
+    let shape = object_slots::exact_shape(stage.builder, layouts, MemFlagsData::trusted(), address);
     let inline = crate::staged::object::inline_storage(&mut stage, address);
     stage.builder.def_var(receiver.object, address);
     stage.builder.def_var(receiver.shape, shape);
@@ -3387,6 +3406,9 @@ struct JsStepDispatch {
     /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
     /// of them, so each is read again after one (`refresh_heap_bases`).
     object_record_base: usize,
+    /// The object layout table's base (`heap::layouts::table_base`). It is a static of the
+    /// running process, so code built for another one reads it here instead of naming it.
+    object_layouts: usize,
     /// The function record reservation, whose records' own fields reads take
     /// (`ObjectHeader::prove_readable`); zero where absent.
     function_record_base: usize,
@@ -4365,7 +4387,7 @@ impl JsStepDispatch {
             native_registers: std::ptr::null_mut(), register_count: 0, native_locals: std::ptr::null_mut(), local_count: 0,
             fixed_this_slot: std::ptr::null(),
             capture_values: std::ptr::null(), capture_len: 0, capture_stores: 0,
-            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0,
+            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, object_layouts: 0, function_record_base: 0,
             object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
             property_buffer: 0, field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
             call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
@@ -4398,6 +4420,7 @@ impl JsStepDispatch {
     /// Allocation or collection between native entries may move any of them.
     fn refresh_object_bases<H: Host>(&mut self, vm: &Vm<H>) {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
+        self.object_layouts = crate::heap::layouts::table_base() as usize;
         self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
         self.string_record_base = vm.heap.string_record_base().map_or(0, |base| base as usize);
@@ -9200,7 +9223,7 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
-        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None };
+        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None, layout_table: None };
         let encoded = crate::staged::store::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
         builder.seal_all_blocks();

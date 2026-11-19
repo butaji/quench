@@ -562,7 +562,6 @@ mod tests {
     /// table is still embedded (`process_addresses` reports it, one per body with a field
     /// read); this is the acceptance check for giving it a payload word instead.
     #[test]
-    #[ignore = "the lowering still embeds the shape descriptor table's address"]
     fn linked_bodies_name_no_process_address() {
         let program = crate::Engine::specialize(
             "function f(o){let s=0;for(let i=0;i<8;i++){s=s+o.x;}return s;} f({x:1});",

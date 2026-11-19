@@ -128,7 +128,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             Owner::Temporary => {
                 let records = headers::object_table_base(stage.builder, entry, self.payload);
                 let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
-                ObjectHeader::prove_readable(stage.builder, object, records, functions, miss)
+                ObjectHeader::prove_readable(stage.builder, stage.layout_table, object, records, functions, miss)
             }
             Owner::This => self.object_header(stage.builder, entry, None, readable, miss),
             Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss),

@@ -20,6 +20,10 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
     /// The dispatch payload that holds the slot-observation flag and the object marks the store
     /// barrier's test reads, where the operation stores (`Stage::store_gate`).
     pub(in crate::vm::compiled) gate: Option<ir::Value>,
+    /// The running process's object layout table (`Table::Layouts`), where the caller bound the
+    /// payload: the table is a static of the process that runs the code, not of the one that
+    /// built it.
+    pub(in crate::vm::compiled) layout_table: Option<ir::Value>,
 }
 
 /// An immediate of the Cranelift stage: a constant, or a value the caller holds as one (a stencil's
@@ -266,8 +270,12 @@ impl Stage for Emit<'_, '_> {
     fn table(&mut self, table: Table) -> ir::Value {
         match table {
             Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base"),
-            // The table is a static that never moves; in-process code embeds its address.
-            Table::Layouts => self.builder.ins().iconst(types::I64, crate::heap::layouts::table_base() as i64),
+            // Live code may embed the address of its own process's table; code that runs in
+            // another process reads the word its entry bound (`JsStepDispatch::object_layouts`).
+            Table::Layouts => match self.layout_table {
+                Some(base) => base,
+                None => self.builder.ins().iconst(types::I64, crate::heap::layouts::table_base() as i64),
+            },
         }
     }
     /// The walk unrolled up to the tier's bound; a longer chain is undecided, for the caller's

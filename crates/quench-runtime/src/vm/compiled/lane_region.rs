@@ -2731,7 +2731,10 @@ impl Lowering<'_, '_> {
         let makes_environment = operation.makes_environment();
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
-        let mut stage = Emit { builder: &mut self.builder, property_values, gate };
+        // The running process's layout table, which this build cannot name: every row that
+        // reads a record's layout reads its base from the word the entry bound.
+        let layout_table = super::emit_js_object_layouts(&mut self.builder, self.payload);
+        let mut stage = Emit { builder: &mut self.builder, property_values, gate, layout_table: Some(layout_table) };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held,
             stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
@@ -4112,8 +4115,9 @@ impl Lowering<'_, '_> {
         let present = self.raw_compare_imm(Relation::NotEqual, object, 0);
         self.branch_if(present, (found, &[]), (done, &[]));
         self.builder.switch_to_block(found);
-        let shape = super::object_slots::exact_shape(&mut self.builder, regions::shape_word(), object);
-        let inline = super::object_slots::inline_storage(&mut self.builder, object);
+        let layouts = super::emit_js_object_layouts(&mut self.builder, self.payload);
+        let shape = super::object_slots::exact_shape(&mut self.builder, Some(layouts), regions::shape_word(), object);
+        let inline = super::object_slots::inline_storage(&mut self.builder, Some(layouts), object);
         self.builder.def_var(shape_var, shape);
         self.builder.def_var(inline_var, inline);
         self.goto(done, &[]);

@@ -97,26 +97,27 @@ impl ObjectRecord {
         emit(builder).raw_binary(Binary::Add, base, offset)
     }
 
-    pub(super) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
+    pub(super) fn header(self, builder: &mut FunctionBuilder<'_>, layouts: Option<ir::Value>,
+        known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
         let address = self.address(builder);
         let shape = match known.and_then(|fact| fact.ty.object_shape()) {
             Some(shape) => emit(builder).raw_const(Lane::I32, i64::from(shape)),
-            None => exact_shape(builder, regions::shape_word(), address),
+            None => exact_shape(builder, layouts, regions::shape_word(), address),
         };
-        ObjectHeader { record: self, shape, inline: inline_storage(builder, address), address }
+        ObjectHeader { record: self, shape, inline: inline_storage(builder, layouts, address), address }
     }
 }
 
 impl ObjectHeader {
-    pub(super) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
+    pub(super) fn prove(builder: &mut FunctionBuilder<'_>, layouts: Option<ir::Value>, bits: ir::Value,
         records: impl Into<ObjectTable>, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
-        ObjectRecord::prove(builder, bits, records, known, miss).header(builder, known)
+        ObjectRecord::prove(builder, bits, records, known, miss).header(builder, layouts, known)
     }
 
     /// `prove` for a read, which a function's own fields answer too: a direct function's
     /// record holds its `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`, of the same words.
     /// A store must not take this proof: its barrier reads object record marks.
-    pub(super) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
+    pub(super) fn prove_readable(builder: &mut FunctionBuilder<'_>, layouts: Option<ir::Value>, bits: ir::Value,
         records: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
         let function = crate::heap::NATIVE_FUNCTION_LAYOUT;
@@ -142,32 +143,36 @@ impl ObjectHeader {
         let function_object = emit(builder).raw_binary_imm(Binary::Add, function_record, function.object_offset as i64);
         emit(builder).goto(join, &[function_object]);
         builder.switch_to_block(join);
-        let shape = exact_shape(builder, regions::shape_word(), record);
-        Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, record), address: record }
+        let shape = exact_shape(builder, layouts, regions::shape_word(), record);
+        Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, layouts, record), address: record }
     }
 }
 
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
 pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
-    Emit { builder, property_values: None, gate: None }
+    Emit { builder, property_values: None, gate: None, layout_table: None }
 }
 
 /// The exact shape (`Object::exact_shape`) of the record at `address`, as an `I32`: its
 /// auxiliary word without the storage-form bits, which no recorded shape carries.
-pub(super) fn exact_shape(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> ir::Value {
+pub(super) fn exact_shape(builder: &mut FunctionBuilder<'_>, layouts: Option<ir::Value>,
+    flags: ir::MemFlagsData, address: ir::Value) -> ir::Value {
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
     let id = builder.ins().load(types::I32, flags, address, layout.layout_offset as i32);
     let id = builder.ins().uextend(types::I64, id);
     let offset = builder.ins().imul_imm_u(id, 8);
-    let base = builder.ins().iconst(types::I64, crate::heap::layouts::table_base() as i64);
+    // The table is a static of the process that runs the code: a caller whose entry bound it
+    // passes its base, and only live in-process code embeds its own.
+    let base = layouts.unwrap_or_else(|| builder.ins().iconst(types::I64, crate::heap::layouts::table_base() as i64));
     let entry = builder.ins().iadd(base, offset);
     let word = builder.ins().load(types::I32, flags, entry, layout.auxiliary_offset as i32);
     builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form)))
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
-pub(super) fn inline_storage(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
-    crate::staged::object::inline_storage(&mut emit(builder), record)
+pub(super) fn inline_storage(builder: &mut FunctionBuilder<'_>, layouts: Option<ir::Value>, record: ir::Value) -> ir::Value {
+    let stage = Emit { builder, property_values: None, gate: None, layout_table: layouts };
+    crate::staged::object::inline_storage(&mut { stage }, record)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -493,7 +498,7 @@ impl CheckedObject {
     /// shape is held by a dependency, so only the representation is tested.
     pub(super) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value, inline: ir::Value,
         base: ir::Value, storage_len: usize, miss: ir::Block) -> Option<Self> {
-        let mut stage = Emit { builder, property_values: Some(base), gate: None };
+        let mut stage = Emit { builder, property_values: Some(base), gate: None, layout_table: None };
         crate::staged::arena_extras_layout(&mut stage, record, inline, storage_len, miss).map(Self)
     }
 
