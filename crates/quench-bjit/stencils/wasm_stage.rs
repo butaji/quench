@@ -12,11 +12,42 @@ use crate::staged::wasm_float::{
 };
 use crate::staged::wasm_instance::{Storage, WasmInstance};
 use crate::staged::wasm_memory::{Access, WasmMemory, WasmMemoryGrow, WasmMemoryWrite};
+use crate::staged::wasm_simd_rules::{Native, WasmSimd, kernel_bits, native_bits, shuffle_bits};
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
-use crate::wasm::WasmTrap;
+use crate::wasm::{V128_BYTES, WasmTrap};
 use crate::words::{HOLE_B, S, hole64, slot};
+
+/// The stencil's vector stage: the shared bodies of `wasm_simd_rules` on the row words (vectors `u128`,
+/// scalars `u64`), the native rows, kernels and shuffle the interpreter runs too.
+pub(crate) struct StencilSimd;
+
+impl WasmSimd for StencilSimd {
+    type Value = u128;
+    type Scalar = u64;
+
+    fn constant_vector(&mut self, bits: u128) -> u128 {
+        bits
+    }
+
+    fn vector_native(&mut self, native: Native, left: u128, right: Option<u128>) -> u128 {
+        native_bits(native, left, right.unwrap_or(0))
+    }
+
+    fn vector_kernel(&mut self, selector: u32, left: u128, right: Option<u128>) -> u128 {
+        kernel_bits(selector, left, right)
+    }
+
+    /// The kernel's bits, the scalar in their low word.
+    fn scalar_kernel(&mut self, selector: u32, left: u128, right: Option<u128>) -> u64 {
+        kernel_bits(selector, left, right) as u64
+    }
+
+    fn vector_shuffle(&mut self, lanes: [u8; V128_BYTES], left: u128, right: u128) -> u128 {
+        shuffle_bits(left, right, lanes)
+    }
+}
 
 /// The linear memory a Wasm function runs over: its base in the second pin, its length in bytes
 /// in the third, as the entry loads them (`wasm_entry.rs`). Unguarded: the staged rule checks every
@@ -43,6 +74,8 @@ impl StencilMemory {
 }
 
 impl WasmMemory for StencilMemory {
+    type Vector = u128;
+
     fn guarded(&self) -> bool {
         false
     }
@@ -72,6 +105,19 @@ impl WasmMemory for StencilMemory {
         };
         access.loaded(raw)
     }
+
+    /// The 16 bytes at `index + offset`, one byte at a time: a stencil calls nothing, so no copy.
+    #[inline(always)]
+    fn memory_load_vector(&mut self, index: u64, offset: u32) -> u128 {
+        let at = self.at(index, offset);
+        let (mut word, mut byte) = (0u128, 0);
+        while byte < V128_BYTES {
+            // SAFETY: the rule checked the vector's bytes inside the memory.
+            word |= u128::from(unsafe { *at.add(byte) }) << (u8::BITS as usize * byte);
+            byte += 1;
+        }
+        word
+    }
 }
 
 impl WasmMemoryWrite for StencilMemory {
@@ -86,6 +132,18 @@ impl WasmMemoryWrite for StencilMemory {
                 4 => (at as *mut u32).write_unaligned(value as u32),
                 _ => (at as *mut u64).write_unaligned(value),
             }
+        }
+    }
+
+    /// The 16 bytes of `value` at `index + offset`, one byte at a time (as the load).
+    #[inline(always)]
+    fn memory_store_vector(&mut self, index: u64, offset: u32, value: u128) {
+        let at = self.at(index, offset);
+        let mut byte = 0;
+        while byte < V128_BYTES {
+            // SAFETY: the rule checked the vector's bytes inside the memory.
+            unsafe { *at.add(byte) = (value >> (u8::BITS as usize * byte)) as u8 };
+            byte += 1;
         }
     }
 

@@ -18250,7 +18250,7 @@ fn push_frame_call_in_lane<H: Host>(
 /// A JavaScript `Call` of an exported Wasm function that `Vm::wasm_export_frame_call`
 /// admits: its frame, over the instance environment, pushed with the pending call that
 /// converts its result (`CallCompletion::WasmExport`) and entered in this lane, as a Wasm
-/// call's frame is (`wasm_calls::lane_call_frame`), so the call nests no native frame and no
+/// call's frame is (`wasm_calls`'s `push_frame`), so the call nests no native frame and no
 /// run of the general loop. Lane activations become frames first, as for any frame call.
 /// `None` leaves the call to the native: a run that is not a frame's own JavaScript run
 /// (`LaneContext::script_calls`), a callee native code may run, a call completing a caller
@@ -18329,7 +18329,7 @@ fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
 
 /// `lane_wasm_export_frame`'s call as a frameless Wasm activation of the export
 /// (`ActivationKind::WasmEntry`) over its instance environment, pushed as a Wasm call's
-/// activation is (`wasm_calls::enter_wasm_function`) beside the caller's activations, which
+/// activation is (`wasm_activation::enter_function`) beside the caller's activations, which
 /// stay activations. The run goes on as a Wasm run (`LaneContext::inline_calls`) until the
 /// activation returns (`complete_activation_in_lane`). `None`, which changes nothing, where the
 /// callee has no lane view yet or the lane no room for it: the frame call takes it.

@@ -107,3 +107,19 @@ pub(crate) fn global_get<S: WasmInstance>(stage: &mut S, slot: u32, storage: Sto
 pub(crate) fn global_set<S: WasmInstance>(stage: &mut S, slot: u32, storage: Storage, value: S::Word) {
     stage.global_store(slot, storage, value);
 }
+
+/// The instance fields a binding step reads: the environment slots its function's instance
+/// holds, each a handle the binding step copies into a register (`Instance::Binding`).
+#[cfg(not(stencil_build))]
+pub(crate) trait WasmBindings: WasmStage {
+    /// The word of the environment slot `slot`, or `None` where the instance holds no field there.
+    fn binding_word(&mut self, slot: u32) -> Option<Self::Word>;
+}
+
+/// `binding`: the word of the instance field at environment slot `slot`. A slot with no field
+/// is `None`, which the caller leaves for the general path to raise.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub(crate) fn binding_get<S: WasmBindings>(stage: &mut S, slot: u32) -> Option<S::Word> {
+    stage.binding_word(slot)
+}

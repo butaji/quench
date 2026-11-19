@@ -16,6 +16,9 @@ pub(crate) mod conversion;
 
 pub(crate) use trap::WasmTrap;
 
+/// The bytes of a v128: the staged definition both builds share.
+pub(crate) use crate::staged::wasm::V128_BYTES;
+
 /// The value types a staged rule reads a width from; references never reach a stencil.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WasmType {

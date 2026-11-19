@@ -15,7 +15,8 @@
 
 use super::*;
 use crate::compile::liveness::{RegisterMasks, RegisterSet, register_in};
-use crate::staged;
+use crate::staged::wasm_simd_rules::{vector_constant, vector_move};
+use crate::staged::wasm_simd_concrete::ConcreteSimd;
 use crate::wasm::simd::{BitKernel, BitShift, ShuffleForm, SimdKernel};
 
 /// The registers a bank names: liveness' width, which every region register lies within.
@@ -207,10 +208,10 @@ impl VectorRegion {
                 Step::MultiplyWords { a, b, c, left, right } => {
                     put!(a, crate::wasm::simd::multiply_words(get!(b), get!(c), left, right))
                 }
-                Step::VectorMove { a, b } => put!(a, get!(b)),
+                Step::VectorMove { a, b } => put!(a, vector_move(&mut ConcreteSimd, get!(b))),
                 Step::Move { a, b } => r.set(a, r.get(b)),
                 Step::Constant { a, value } => r.set(a, value),
-                Step::VectorConstant { a, bits } => put!(a, bits),
+                Step::VectorConstant { a, bits } => put!(a, vector_constant(&mut ConcreteSimd, bits)),
                 Step::I32 { operator, a, b, right, at, leave } => {
                     let right = match right {
                         I32Right::Register(register) => r.i32(register),

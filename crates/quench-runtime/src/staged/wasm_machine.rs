@@ -15,6 +15,7 @@ use crate::heap::TableTarget;
 #[cfg(not(stencil_build))]
 use crate::wasm::memory::MemoryStorage;
 use crate::wasm::memory::checked_range;
+use crate::wasm::V128_BYTES;
 use crate::Value;
 
 /// A stage over a linear memory's bytes, which it reads.
@@ -126,6 +127,20 @@ fn store_word(memory: &mut [u8], access: Access, index: u64, offset: u32, value:
     memory[access_bytes(access, index, offset)].copy_from_slice(bytes);
 }
 
+/// The v128 at the checked `index + offset`, little-endian.
+#[inline(always)]
+fn load_vector_word(memory: &[u8], index: u64, offset: u32) -> u128 {
+    let mut word = [0u8; V128_BYTES];
+    word.copy_from_slice(&memory[access_bytes(Access::VECTOR, index, offset)]);
+    u128::from_le_bytes(word)
+}
+
+/// Writes the v128 `value` at the checked `index + offset`, little-endian.
+#[inline(always)]
+fn store_vector_word(memory: &mut [u8], index: u64, offset: u32, value: u128) {
+    memory[access_bytes(Access::VECTOR, index, offset)].copy_from_slice(&value.to_le_bytes());
+}
+
 /// The flag that `extent` units from `index` pass the end of `length` units: the shared range
 /// check of memories, tables and bulk operations.
 #[inline(always)]
@@ -139,6 +154,8 @@ fn range_past(length: usize, index: u64, extent: u64) -> u64 {
 macro_rules! readable_memory {
     ($($stage:ty),+) => {$(
         impl WasmMemory for $stage {
+            type Vector = u128;
+
             fn guarded(&self) -> bool {
                 false
             }
@@ -160,6 +177,11 @@ macro_rules! readable_memory {
             }
 
             #[inline(always)]
+            fn memory_load_vector(&mut self, index: u64, offset: u32) -> u128 {
+                load_vector_word(self.memory, index, offset)
+            }
+
+            #[inline(always)]
             fn range_exceeds(&mut self, index: u64, extent: u64) -> u64 {
                 range_past(self.memory.len(), index, extent)
             }
@@ -174,6 +196,11 @@ macro_rules! writable_memory {
             #[inline(always)]
             fn memory_store(&mut self, access: Access, index: u64, offset: u32, value: u64) {
                 store_word(self.memory, access, index, offset, value);
+            }
+
+            #[inline(always)]
+            fn memory_store_vector(&mut self, index: u64, offset: u32, value: u128) {
+                store_vector_word(self.memory, index, offset, value);
             }
 
             fn memory_fill(&mut self, index: u64, byte: u64, length: u64) {

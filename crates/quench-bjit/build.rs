@@ -117,6 +117,14 @@ fn main() {
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
     let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &VARIANTS[..1] };
     let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&out, parts.len(), (arch, read), *cpu))).collect();
+    // `rows.rs` builds the Wasm entry and leave routines on every target but Apple AArch64, so each listed routine is a row there.
+    if env::var("CARGO_CFG_TARGET_VENDOR").unwrap_or_default() != "apple" {
+        for (name, (rows, _)) in &built {
+            for routine in wasm_library::ROUTINES {
+                assert!(rows.iter().any(|(row, _)| row.as_str() == routine), "variant {name} lacks the Wasm routine {routine}");
+            }
+        }
+    }
     let mut tables = String::new();
     for (name, _) in VARIANTS {
         let (_, (rows, counts)) = built.iter().find(|(built_name, _)| *built_name == name).unwrap_or(&built[0]);

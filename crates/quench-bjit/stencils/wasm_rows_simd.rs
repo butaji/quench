@@ -31,14 +31,11 @@
 //! traps leaves through `trap`, as the scalar rows do (the access is the only trap).
 
 use super::wasm_frame::{vector_read, vector_write};
-use super::{StencilMemory, read, trap, write};
-use crate::staged::wasm_memory::{Access, check_access};
+use super::{StencilMemory, StencilSimd, read, trap, write};
+use crate::staged::wasm_memory_vector::{load_vector, store_vector};
+use crate::staged::wasm_simd_rules::{selector_of, simd_scalar};
 use crate::staged::wasm_simd_lanes::{SimdOperator, shuffle as shuffle_bytes};
-use crate::wasm::WasmType;
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, LAST_HOLE, Out, S, hole64};
-
-/// A vector access: 16 bytes, as `Access::VECTOR` (which the stencil build does not compile).
-const VECTOR: Access = Access { ty: WasmType::V128, bytes: 16, signed: false };
 
 /// The bits of operator `OP` on the operands: the operator's own body (`SimdOperator::bits`). A tag
 /// that names no operator is zero; the const block folds the lookup, so each row keeps one body.
@@ -96,13 +93,9 @@ pub(crate) unsafe fn constant(s: S) -> Out {
 pub(crate) unsafe fn load(s: S) -> Out {
     let index = unsafe { read::<HOLE_A>(&s) };
     let mut memory = StencilMemory::of(&s);
-    match check_access(&mut memory, VECTOR, index, 0, false) {
-        Ok(()) => {
-            unsafe {
-                let at = memory.at(index, 0) as *const u64;
-                let value = u128::from(at.read_unaligned()) | (u128::from(at.add(1).read_unaligned()) << u64::BITS);
-                vector_write::<0>(&s, value);
-            }
+    match load_vector(&mut memory, index, 0, false) {
+        Ok(value) => {
+            unsafe { vector_write::<0>(&s, value) };
             Out::Next(s)
         }
         Err(error) => trap(s, error),
@@ -115,15 +108,8 @@ pub(crate) unsafe fn store(s: S) -> Out {
     let index = unsafe { read::<HOLE_A>(&s) };
     let value = unsafe { vector_read::<0>(&s) };
     let mut memory = StencilMemory::of(&s);
-    match check_access(&mut memory, VECTOR, index, 0, false) {
-        Ok(()) => {
-            unsafe {
-                let at = memory.at(index, 0) as *mut u64;
-                at.write_unaligned(value as u64);
-                at.add(1).write_unaligned((value >> u64::BITS) as u64);
-            }
-            Out::Next(s)
-        }
+    match store_vector(&mut memory, index, 0, value, false) {
+        Ok(()) => Out::Next(s),
         Err(error) => trap(s, error),
     }
 }
@@ -140,8 +126,9 @@ pub(crate) unsafe fn splat<const OP: u32>(s: S) -> Out {
 /// to an i32, as the operator does).
 #[inline(always)]
 pub(crate) unsafe fn extract<const OP: u32>(s: S) -> Out {
-    let value = unsafe { operate::<OP>(vector_read::<HOLE_A>(&s), 0, hole64::<HOLE_B>() as u8) };
-    unsafe { write::<0>(&s, value as u64) };
+    let (left, lane) = unsafe { (vector_read::<HOLE_A>(&s), hole64::<HOLE_B>() as u8) };
+    let value = simd_scalar(&mut StencilSimd, selector_of(OP, lane), left, None);
+    unsafe { write::<0>(&s, value) };
     Out::Next(s)
 }
 

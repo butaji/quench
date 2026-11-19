@@ -1,7 +1,7 @@
 //! Wasm linear-memory semantics written once over `WasmMemory`: the bounds check of an access
 //! and of a bulk operation, the order in which a copy checks its ranges, and what an access
 //! moves (its width, whether a narrow load sign-extends, little-endian bytes). The interpreter
-//! runs them on `ConcreteMemory` (`MemoryLoad::read`, `MemoryStore::write`), the Wasm tier on
+//! runs them on `ConcreteMemory` (`staged::wasm_memory_bytes`, `wasm_memory_vector`), the Wasm tier on
 //! Cranelift values (`Emitter`, `vm/compiled/wasm_memory_stage.rs`). A stage supplies the
 //! machine: the memory's length, the words an access moves and the bulk movers.
 
@@ -12,12 +12,11 @@ use super::wasm_concrete::ConcreteWasm;
 use super::wasm_machine::{ConcreteBytes, ConcreteMemory};
 #[cfg(not(stencil_build))]
 use crate::bytecode::{Class, Op, WideInstruction};
-#[cfg(not(stencil_build))]
 use crate::wasm::V128_BYTES;
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::integer::I64BinaryOperator as Binary;
 #[cfg(not(stencil_build))]
-use crate::wasm::memory::{MemoryLoad, MemoryStore, checked_range};
+use crate::wasm::memory::{MemoryLoad, MemoryStore};
 use crate::{WasmTrap, WasmType};
 #[cfg(not(stencil_build))]
 use crate::WasmValue;
@@ -98,8 +97,8 @@ impl Access {
         })
     }
 
-    /// A 128-bit vector access, which only the vector steps make.
-    #[cfg(not(stencil_build))]
+    /// A 128-bit vector access: a v128 load or store, which the vector steps make and the
+    /// stages move as one `Vector` word.
     pub(crate) const VECTOR: Self = Self {
         ty: WasmType::V128,
         bytes: V128_BYTES,
@@ -173,6 +172,8 @@ impl Memory {
 
 /// The linear memory of the instance a function runs in, as far as reading it goes.
 pub(crate) trait WasmMemory: WasmStage {
+    /// The word a v128 access moves: the 16 bytes, little-endian.
+    type Vector: Copy;
     /// Whether the machine faults on an access past the memory by itself, a guard region
     /// beyond the reservation, so an access whose index plus extent stays inside the
     /// reservation needs no check.
@@ -183,6 +184,8 @@ pub(crate) trait WasmMemory: WasmStage {
     fn memory_index(&mut self, address: Self::Word) -> Self::Word;
     /// The `access` at `index + offset`, which the rule has checked.
     fn memory_load(&mut self, access: Access, index: Self::Word, offset: u32) -> Self::Word;
+    /// The vector of the 16 bytes at `index + offset`, which the rule has checked.
+    fn memory_load_vector(&mut self, index: Self::Word, offset: u32) -> Self::Vector;
     /// The flag that the `extent` bytes from `index` pass the end of the memory: the length
     /// compared with the end of the range, which a stage whose index is not a bounded word
     /// answers by its own range check (`checked_range`).
@@ -197,6 +200,8 @@ pub(crate) trait WasmMemory: WasmStage {
 /// The linear memory a function writes: stores and the bulk movers.
 pub(crate) trait WasmMemoryWrite: WasmMemory {
     fn memory_store(&mut self, access: Access, index: Self::Word, offset: u32, value: Self::Word);
+    /// Writes the vector `value` over the 16 bytes at `index + offset`, which the rule has checked.
+    fn memory_store_vector(&mut self, index: Self::Word, offset: u32, value: Self::Vector);
     /// `length` copies of the low byte of the `I32` word `byte` from `index`, in range.
     fn memory_fill(&mut self, index: Self::Word, byte: Self::Word, length: Self::Word);
     /// `length` bytes from `source` to `destination`, both in range; overlapping ranges copy
@@ -271,8 +276,8 @@ pub(crate) fn store<S: WasmMemoryWrite>(
     Ok(())
 }
 
-/// The effective address of a vector access: the 32-bit `address` plus its static `offset`, as
-/// an `I64` word that cannot wrap.
+/// The effective address of a vector access: the 32-bit `address` plus its static `offset`, as an
+/// `I64` word that cannot wrap.
 #[inline(always)]
 pub(crate) fn effective_address<S: WasmMemory>(
     stage: &mut S,
@@ -410,42 +415,6 @@ impl Memory {
                 [Some(destination), Some(source), Some(instruction.c())]
             }
         }
-    }
-}
-
-#[cfg(not(stencil_build))]
-impl MemoryLoad {
-    /// The value at `address` of `bytes`: out of bounds traps. A scalar load is the staged
-    /// access (`load`) on the bytes; a vector load decodes its own.
-    #[inline(always)]
-    pub(crate) fn read(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
-        let Some(access) = Access::of_load(self) else {
-            let range = checked_range(address, self.width(), bytes.len())?;
-            // SAFETY: the range is `width` bytes inside `bytes`.
-            return Ok(unsafe { self.read_vector_at(bytes.as_ptr().add(range.start)) });
-        };
-        access.read(bytes, address)
-    }
-}
-
-#[cfg(not(stencil_build))]
-impl MemoryStore {
-    /// Write `value` at `address` of `bytes`: out of bounds traps before any byte changes. A
-    /// scalar store is the staged access (`store`) on the bytes; a vector store writes its own.
-    #[inline(always)]
-    pub(crate) fn write(
-        self,
-        bytes: &mut [u8],
-        address: u64,
-        value: WasmValue,
-    ) -> Result<(), WasmTrap> {
-        if self.value_type() == WasmType::V128 {
-            let range = checked_range(address, self.width(), bytes.len())?;
-            // SAFETY: the range is `width` bytes inside `bytes`.
-            unsafe { self.write_vector_at(bytes.as_mut_ptr().add(range.start), value) };
-            return Ok(());
-        }
-        Access::of_store(self).write(bytes, address, value)
     }
 }
 

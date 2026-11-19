@@ -27,7 +27,7 @@ pub(crate) mod wasm_frame;
 use wasm_frame::{access, float_of, read, right, trap, width_of, write};
 #[path = "wasm_stage.rs"]
 mod wasm_stage;
-pub(crate) use wasm_stage::StencilMemory;
+pub(crate) use wasm_stage::{StencilMemory, StencilSimd};
 #[path = "wasm_call_stage.rs"]
 mod wasm_call_stage;
 use crate::staged::wasm_call::call_entry;

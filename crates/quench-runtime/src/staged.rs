@@ -149,11 +149,16 @@ pub(crate) mod wasm_call;
 pub(crate) mod wasm_roots;
 pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;
+#[cfg(not(stencil_build))]
+pub(crate) mod wasm_activation;
 pub(crate) mod wasm_machine;
 pub(crate) mod wasm_memory;
+pub(crate) mod wasm_memory_vector;
+pub(crate) mod wasm_memory_bytes;
 pub(crate) mod wasm_table_ops;
 pub(crate) mod wasm_operation;
 pub(crate) mod wasm_simd;
+pub(crate) mod wasm_simd_rules;
 pub(crate) mod wasm_simd_concrete;
 pub(crate) mod wasm_simd_lanes;
 pub(crate) mod wasm_step;

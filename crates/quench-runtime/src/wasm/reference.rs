@@ -1,9 +1,10 @@
 //! A cast target retains a heap-type index; its declaration graph stays in the program.
+use super::numeric::selectors;
 use super::{Lowering, Reachability};
 use crate::{Diagnostic, staged::wasm_emit};
 use wasmparser::{AbstractHeapType, HeapType, Operator, RefType, UnpackedIndex};
 
-super::numeric::selectors! { ExternalConversion;
+selectors! { @decoded ExternalConversion;
     Internalize, AnyConvertExtern;
     Externalize, ExternConvertAny;
 }
