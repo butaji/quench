@@ -108,10 +108,8 @@ impl<H: Host> Vm<H> {
         };
         // Eval code that can name private names is shared by every caller of its key (the
         // direct eval cache), whatever class evaluation made the caller: its sites may meet
-        // more than one home (`Vm::unique_private_homes`).
-        if !private_names.is_empty() {
-            self.private_homes_shared = true;
-        }
+        // more than one home, so the names it sees are shared (`PrivateClasses::share`).
+        self.share_eval_private_names(&private_names);
         let caller_has_global_variables = self.eval_caller().is_none() || self.running_global_code();
         // Annex B only concerns function declarations, which the text then names.
         let annex_b_forbidden_names = if source.contains("function") {

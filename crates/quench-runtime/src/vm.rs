@@ -2134,14 +2134,9 @@ pub(crate) struct Vm<H> {
     symbol_load_proofs: symbol_load_proof::SymbolLoadProofs,
     /// Lane private-name sites' homes (`private_site_home`).
     private_site_homes: private_site_home::PrivateSiteHomes,
-    /// Every class constructor a closure was made of, by program and function: each class
-    /// evaluation makes one, and with it the class's private-name homes
-    /// (`Vm::note_class_evaluation`).
-    class_evaluations: FxHashSet<(ProgramId, u32)>,
-    /// Whether some class was evaluated twice (`class_evaluations`), so a private-name site
-    /// may meet more than one home: until then each site's home is one value for good, and a
-    /// receiver shape alone proves its brand (`Vm::unique_private_homes`).
-    private_homes_shared: bool,
+    /// The classes evaluated once and the private names they own, whose sites each meet one
+    /// home for good, so a receiver shape alone proves the brand (`Vm::note_class_evaluation`).
+    private_classes: private_site_home::PrivateClasses,
     /// An array shape with no own `@@iterator` (`Vm::array_iteration_intact`).
     array_iteration_shape: Option<u32>,
     /// A Set or Map shape with no own `@@iterator` (`Vm::intact_iteration_kind`).
@@ -3293,8 +3288,7 @@ impl<H: Host> Vm<H> {
         self.wasm_exported_functions.clear();
         self.private_homes.clear();
         // The heap reset discards every class closure, and so every private home.
-        self.class_evaluations.clear();
-        self.private_homes_shared = false;
+        self.private_classes.clear();
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.instanceof_inheriting_holders = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];

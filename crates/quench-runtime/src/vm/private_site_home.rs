@@ -13,15 +13,16 @@
 //! the home alone, so it outlives a new environment that finds the same home again (an arrow
 //! field's closure per instance).
 //!
-//! Until some class is evaluated twice (`Vm::unique_private_homes`), each site's home is one
-//! value for good: a home is made by a class evaluation, which is a closure of the class's
-//! constructor (`Vm::note_class_evaluation`), and the code of a site is made by the same
-//! evaluation's program. A site's shape and slot then hold for any environment, so an access
-//! compares the receiver's shape alone (`PrivateSiteHomes::unique_field_slot`): the shape names
-//! the private key with its home, so it proves the brand, and no environment is found.
+//! A site whose private name belongs to a class evaluated once (`PrivateClasses`) meets one
+//! home for good: a home is made by a class evaluation, which is a closure of the class's
+//! constructor (`Vm::note_class_evaluation`). A site's shape and slot recorded under that home
+//! then hold for any environment, so an access compares the receiver's shape alone
+//! (`PrivateSiteHomes::unique_field_slot`): the shape names the private key with its home, so
+//! it proves the brand, and no environment is found. A class evaluated again, or a name eval
+//! code can see, disables only the sites of its own names.
 
-use super::{Atom, Host, ResidualProgram, Value, Vm};
-use rustc_hash::FxHashSet;
+use super::{Atom, Host, ProgramId, ResidualProgram, Value, Vm};
+use rustc_hash::FxHashMap;
 use crate::heap::PrivateBrand;
 
 /// Direct-mapped entries: a power of two that holds the private-name sites a request runs
@@ -43,6 +44,11 @@ struct SiteHome {
     /// both (`forget_shapes`).
     shape: u32,
     slot: u32,
+    /// Whether `home` was its class's when `shape` was recorded, and the site's private name
+    /// that class's own (`PrivateClasses::register`): while the name stays unique
+    /// (`PrivateClasses::unique_name`), `home` is the site's for good, and so is `shape`'s
+    /// answer under any environment.
+    unique: bool,
 }
 
 /// `SiteHome::shape` of an entry that records no shape.
@@ -85,8 +91,8 @@ impl PrivateSiteHomes {
         // The element found under the same home stays (`element`).
         let kept = self.entries.get(index).filter(|entry| entry.site == site && entry.home == home);
         let element = kept.and_then(|entry| entry.element);
-        let (shape, slot) = kept.map_or((NO_SHAPE, 0), |entry| (entry.shape, entry.slot));
-        self.entries.set(index, SiteHome { site, environment, home, element, shape, slot });
+        let (shape, slot, unique) = kept.map_or((NO_SHAPE, 0, false), |entry| (entry.shape, entry.slot, entry.unique));
+        self.entries.set(index, SiteHome { site, environment, home, element, shape, slot, unique });
     }
 
     /// The private method or accessor site `site` found for its name under `home`
@@ -117,12 +123,13 @@ impl PrivateSiteHomes {
             .then_some(entry.slot as usize)
     }
 
-    /// `field_slot` under any environment, which only a site whose home is one value for good
-    /// may take (`Vm::unique_private_homes`): the shape names the field's key with that home.
+    /// `field_slot` under any environment, for an entry recorded under its class's home
+    /// (`SiteHome::unique`), which only a site whose private name stays unique may take
+    /// (`PrivateClasses::unique_name`): the shape names the field's key with that home.
     #[inline(always)]
     pub(super) fn unique_field_slot(&self, site: usize, shape: u32) -> Option<usize> {
         let entry = self.entries.get(Self::index(site))?;
-        (entry.site == site && entry.shape == shape && entry.slot != BRAND_SLOT).then_some(entry.slot as usize)
+        (entry.site == site && entry.shape == shape && entry.unique && entry.slot != BRAND_SLOT).then_some(entry.slot as usize)
     }
 
     /// The private method or accessor site `site` reads of an object of `shape`, which
@@ -131,7 +138,7 @@ impl PrivateSiteHomes {
     #[inline(always)]
     pub(super) fn unique_element(&self, site: usize, shape: u32) -> Option<PrivateElement> {
         let entry = self.entries.get(Self::index(site))?;
-        (entry.site == site && entry.shape == shape && entry.slot == BRAND_SLOT).then_some(entry.element).flatten()
+        (entry.site == site && entry.shape == shape && entry.unique && entry.slot == BRAND_SLOT).then_some(entry.element).flatten()
     }
 
     /// Whether objects of `shape` carry the private name site `site` names, a field or a
@@ -139,19 +146,20 @@ impl PrivateSiteHomes {
     /// environment: as `unique_field_slot`, only for a site whose home is one value for good.
     #[inline(always)]
     pub(super) fn unique_carrier(&self, site: usize, shape: u32) -> bool {
-        self.entries.get(Self::index(site)).is_some_and(|entry| entry.site == site && entry.shape == shape)
+        self.entries.get(Self::index(site)).is_some_and(|entry| entry.site == site && entry.shape == shape && entry.unique)
     }
 
     /// Records that objects of `shape`, a shape no dictionary edit changes, carry the brand
-    /// of the private method or accessor site `site` names under `home`: a read's answers the
-    /// entry's element (`unique_element`), an `in`'s is true (`unique_carrier`).
+    /// of the private method or accessor site `site` names under `home`, its class's for a
+    /// name that class owns (`PrivateClasses::register`): a read's answers the entry's element
+    /// (`unique_element`), an `in`'s is true (`unique_carrier`).
     pub(super) fn record_brand_shape(&self, site: usize, home: Value, shape: u32) {
         let index = Self::index(site);
         if let Some(entry) = self.entries.get(index)
             && entry.site == site
             && entry.home == home
         {
-            self.entries.set(index, SiteHome { shape, slot: BRAND_SLOT, ..entry });
+            self.entries.set(index, SiteHome { shape, slot: BRAND_SLOT, unique: true, ..entry });
         }
     }
 
@@ -163,15 +171,16 @@ impl PrivateSiteHomes {
     }
 
     /// Records that private field reads at `site` under `home` find the field at `slot` of
-    /// an object of `shape`, a shape no dictionary edit changes.
-    pub(super) fn record_field_slot(&self, site: usize, home: Value, shape: u32, slot: usize) {
+    /// an object of `shape`, a shape no dictionary edit changes; `unique` where `home` is its
+    /// class's for a name that class owns (`PrivateClasses::register`, `SiteHome::unique`).
+    pub(super) fn record_field_slot(&self, site: usize, home: Value, shape: u32, slot: usize, unique: bool) {
         let index = Self::index(site);
         if let Some(entry) = self.entries.get(index)
             && entry.site == site
             && entry.home == home
             && let Ok(slot) = u32::try_from(slot)
         {
-            self.entries.set(index, SiteHome { shape, slot, ..entry });
+            self.entries.set(index, SiteHome { shape, slot, unique, ..entry });
         }
     }
 
@@ -187,7 +196,7 @@ impl PrivateSiteHomes {
     /// `shape` to `next`, both shapes no dictionary edit changes.
     pub(super) fn record_define(&self, site: usize, home: Value, shape: u32, next: u32) {
         // A define site reads no environment: the home stands in for it, a live value.
-        self.entries.set(Self::index(site), SiteHome { site, environment: home, home, element: None, shape, slot: next });
+        self.entries.set(Self::index(site), SiteHome { site, environment: home, home, element: None, shape, slot: next, unique: false });
     }
 
     pub(super) fn clear(&self) {
@@ -229,30 +238,155 @@ impl PrivateSiteHomes {
     }
 }
 
-impl<H: Host> Vm<H> {
-    /// Records a closure of class constructor `function` of the active program: a class
-    /// evaluation, which makes the homes of the private names the class declares. A second
-    /// closure of one constructor makes a second home for each of them, which the sites of
-    /// the class may meet from then on (`unique_private_homes`). A constructor of another
-    /// program is another class's: a site's code belongs to the program whose evaluation
-    /// made its function (a first-call chunk to its stub's), so the sites of two programs
-    /// are distinct records. A program id that a freed program's reuses is only a false
-    /// second evaluation.
-    pub(super) fn note_class_evaluation(&mut self, function: u32) {
-        if !self.private_homes_shared && !self.class_evaluations.insert((self.active_program, function)) {
-            self.private_homes_shared = true;
-            // Shared for good: the set has nothing more to prove.
-            self.class_evaluations = FxHashSet::default();
+/// `PrivateClasses::ids` of a class constructor no class id could be given: evaluated
+/// again for all the table knows.
+const UNTRACKED_CLASS: u32 = u32::MAX;
+
+/// `PrivateClasses::owners` of a private name no class owns for good: two classes' homes
+/// registered it (the same identity in two programs), its class was evaluated again, or eval
+/// code can name it (`PrivateClasses::share`). No name leaves it before a heap reset.
+const SHARED_NAME: u32 = u32::MAX;
+
+/// Which private names belong to a class evaluated once, so that each site of one meets one
+/// home for good (`Vm::note_class_evaluation`).
+///
+/// A class evaluation is one closure of the class's constructor, keyed by program and
+/// function; it makes the homes of the private names the class declares, the constructor
+/// (static names) and its prototype (instance names), both new objects. A private name's atom
+/// is its declaration's identity (`Compiler::private_name_atom`), which eval code that names
+/// it shares. A site's home is the binding of its name in the scope of an evaluation of the
+/// class that declares the name, the innermost one around the site: a nested class's names
+/// have its homes, and a site of an inner class naming an enclosing class's name has that
+/// class's home. While that class has one evaluation, the site has one home.
+///
+/// A name becomes a class's own when a site records a shape under a home of that class
+/// (`register`), and unique (`unique_name`) until the class is evaluated again, another
+/// class's home registers it, or eval code can name it: then it is shared for good, and only
+/// the sites of that name stop answering from shapes alone.
+#[derive(Default)]
+pub(super) struct PrivateClasses {
+    /// The dense id of each class constructor a closure was made of (`UNTRACKED_CLASS` past
+    /// `u32` ids), by program and function. A program id that a freed program's reuses finds
+    /// its classes evaluated already: a false second evaluation, which shares their names.
+    ids: FxHashMap<(ProgramId, u32), u32>,
+    /// Per class id: the names registered as the class's own while it was evaluated once,
+    /// `None` once it was evaluated again.
+    classes: Vec<Option<Vec<Atom>>>,
+    /// The homes a class's one evaluation made, by value: a home of a class evaluated again
+    /// is removed, so an address a freed home's took again never names a class wrongly.
+    homes: FxHashMap<Value, u32>,
+    /// The class id each registered name belongs to, or `SHARED_NAME`.
+    owners: FxHashMap<Atom, u32>,
+    /// Per atom: whether its name belongs to a class evaluated once (`owners`), the one word
+    /// a site's shape-alone answer reads.
+    unique: Vec<bool>,
+}
+
+crate::snapshot::snap_struct!(PrivateClasses { ids, classes, homes, owners, unique });
+
+impl PrivateClasses {
+    /// Records an evaluation of the class whose constructor is `class`, which made the homes
+    /// `constructor` and `prototype`. A second one shares the names the class owns.
+    fn note_evaluation(&mut self, class: (ProgramId, u32), constructor: Value, prototype: Option<Value>) {
+        let homes = std::iter::once(constructor).chain(prototype);
+        match self.ids.entry(class) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let id = u32::try_from(self.classes.len()).ok().filter(|id| *id != UNTRACKED_CLASS);
+                entry.insert(id.unwrap_or(UNTRACKED_CLASS));
+                if let Some(id) = id {
+                    self.classes.push(Some(Vec::new()));
+                    homes.for_each(|home| {
+                        self.homes.insert(home, id);
+                    });
+                }
+            }
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                let id = *entry.get() as usize;
+                for name in self.classes.get_mut(id).and_then(Option::take).into_iter().flatten() {
+                    self.owners.insert(name, SHARED_NAME);
+                    self.unique[name as usize] = false;
+                }
+                homes.for_each(|home| {
+                    self.homes.remove(&home);
+                });
+            }
         }
     }
 
-    /// Whether every private-name site's home is one value for good: no class was evaluated
-    /// twice (`note_class_evaluation`) and no eval code that names private names, whose
-    /// program its callers share, was compiled. A site's shape then proves its brand under
-    /// any environment (`PrivateSiteHomes::unique_field_slot`).
+    /// Registers private name `name` as the own name of the class whose evaluation made
+    /// `home`, where a site recorded a shape under `home`: whether the name is that class's,
+    /// the class evaluated once. A name another class registered is shared from now on.
+    pub(super) fn register(&mut self, name: Atom, home: Value) -> bool {
+        let Some(&class) = self.homes.get(&home) else { return false };
+        let Some(Some(names)) = self.classes.get_mut(class as usize) else { return false };
+        match self.owners.entry(name) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(class);
+                names.push(name);
+                let index = name as usize;
+                if self.unique.len() <= index {
+                    self.unique.resize(index + 1, false);
+                }
+                self.unique[index] = true;
+                true
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let owner = *entry.get();
+                if owner != class && owner != SHARED_NAME {
+                    entry.insert(SHARED_NAME);
+                    self.unique[name as usize] = false;
+                }
+                owner == class
+            }
+        }
+    }
+
+    /// Shares private name `name` for good: eval code that can name it is shared by every
+    /// caller of its direct-eval key, whatever home each one's evaluation found.
+    fn share(&mut self, name: Atom) {
+        if self.owners.insert(name, SHARED_NAME).is_some_and(|owner| owner != SHARED_NAME) {
+            self.unique[name as usize] = false;
+        }
+    }
+
+    /// Whether private name `name` belongs to a class evaluated once (`register`): a site's
+    /// entry recorded under its class's home (`SiteHome::unique`), or a record's hint made of
+    /// one, then answers from the receiver's shape alone.
     #[inline(always)]
-    pub(super) fn unique_private_homes(&self) -> bool {
-        !self.private_homes_shared
+    pub(super) fn unique_name(&self, name: Atom) -> bool {
+        self.unique.get(name as usize).is_some_and(|unique| *unique)
+    }
+
+    /// Drops the homes `live` reports freed: no site meets them again, and a cell that takes
+    /// one's address is a new home only through `note_evaluation`, which names it anew.
+    pub(super) fn prune_dead(&mut self, live: impl Fn(Value) -> bool) {
+        self.homes.retain(|home, _| live(*home));
+    }
+
+    /// Forgets every class: the heap reset discards every class closure and home.
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// Records a closure `constructor` of class constructor `function` of the active program,
+    /// whose prototype object is `prototype`: a class evaluation, which makes the homes of the
+    /// private names the class declares (`PrivateClasses`). A constructor of another program
+    /// is another class's: a site's code belongs to the program whose evaluation made its
+    /// function (a first-call chunk to its stub's).
+    pub(super) fn note_class_evaluation(&mut self, function: u32, constructor: Value, prototype: Option<Value>) {
+        self.private_classes.note_evaluation((self.active_program, function), constructor, prototype);
+    }
+
+    /// Shares the private names eval code being compiled can see, by their identities: each
+    /// caller of its direct-eval key runs the same code, whatever home its class's evaluation
+    /// made (`PrivateClasses::share`). Names it does not see keep their sites' answers.
+    pub(super) fn share_eval_private_names(&mut self, identities: &[(String, String)]) {
+        for (_, identity) in identities {
+            let name = self.intern_atom(identity);
+            self.private_classes.share(name);
+        }
     }
 
     /// The private brand of `atom` at lane site `site` of `function`, whose frame captures
