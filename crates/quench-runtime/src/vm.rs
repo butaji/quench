@@ -1781,7 +1781,7 @@ impl Shape {
     }
 
     fn set_index_keys(&self, found: bool) {
-        let bits = (if found { 2 } else { 1 }) << ShapeMemo::INDEX_KEYS_SHIFT;
+        let bits: u16 = (if found { 2u16 } else { 1u16 }) << ShapeMemo::INDEX_KEYS_SHIFT;
         self.memo.set((self.memo.get() & !ShapeMemo::INDEX_KEYS_MASK) | bits);
     }
 
@@ -1794,7 +1794,7 @@ impl Shape {
 
     fn set_long_walks(&self, walks: u8) {
         let walks = u16::from(walks.min(ShapeMemo::LONG_WALKS_MAX));
-        self.memo.set((self.memo.get() & !(0xF << ShapeMemo::LONG_WALKS_SHIFT)) | (walks << ShapeMemo::LONG_WALKS_SHIFT));
+        self.memo.set((self.memo.get() & !(0xF_u16 << ShapeMemo::LONG_WALKS_SHIFT)) | (walks << ShapeMemo::LONG_WALKS_SHIFT));
     }
 
     fn child(

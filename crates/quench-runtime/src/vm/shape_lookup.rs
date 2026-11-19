@@ -103,7 +103,7 @@ impl<H: Host> Vm<H> {
             current = link.parent();
             distance += 1;
         }
-        if distance >= object::SHAPE_INDEX_WALK_DISTANCE {
+        if distance >= super::object::SHAPE_INDEX_WALK_DISTANCE {
             self.note_long_shape_walk(shape);
         }
         entries.reverse();
