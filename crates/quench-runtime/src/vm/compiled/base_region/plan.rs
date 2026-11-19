@@ -356,6 +356,14 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, varian
         let planned = heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)])?;
         return Ok(if decoded.recheck { planned.after(vec![stores_guard(pc)?]) } else { planned });
     }
+    // A frame slot the int32 proof holds reads as the int32 its low bits hold, with no tag test (`proven_int_operands`).
+    // A kind whose library holds no MemInt row for that operand keeps the tested read.
+    let proven_a = if a == Place::Mem && decoded.int_a { Place::MemInt } else { a };
+    let proven_b = if b == Place::Mem && decoded.int_b { Place::MemInt } else { b };
+    if (proven_a, proven_b) != (a, b)
+        && let Ok(planned) = number_plan(decoded, layout, pc, (general, variant, helpers), [(dst, dst_hole), (proven_a, a_hole), (proven_b, b_hole)]) {
+        return Ok(planned);
+    }
     number_plan(decoded, layout, pc, (general, variant, helpers), [(dst, dst_hole), (a, a_hole), (b, b_hole)])
 }
 

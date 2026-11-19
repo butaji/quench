@@ -109,8 +109,14 @@ pub(crate) mod typed_ir {
     pub(crate) use super::representation::Representation;
 }
 
+/// The runtime's Number conversions (ToInt32 and its kin), which a row folds into a constant operand.
+#[path = "../../quench-runtime/src/value/number_conversion.rs"]
+#[allow(dead_code)] // the rows take ToInt32 alone
+mod number_conversion;
+
 pub(crate) mod value {
     pub(crate) use super::operations::WORD32_SHIFT_MASK;
+    pub(crate) use super::number_conversion::number_to_u32;
     pub(crate) use crate::layout::value_encoding::{
         HEAP_FAMILY_BITS, HEAP_FAMILY_SHIFT, LOWER_WORD, NARROW_HEAP_FAMILIES, NarrowLayout, TAG_BOOL, TAG_DELETED, TAG_NULL,
         TAG_UNDEFINED, ValueLayout,
@@ -197,20 +203,21 @@ pub(crate) mod vm {
     }
 }
 
-/// The register and operand names the staged numeric rows take. Only a register operand exists
-/// here: a row names its places by register.
+/// The runtime's own operand encodings (`bytecode/operands.rs`), so a row decodes the same words the
+/// runtime writes; `bytecode` names them as the runtime's `crate::bytecode` does.
+#[path = "../../quench-runtime/src/bytecode/operands.rs"]
+#[allow(dead_code)] // the rows read part of the encodings
+mod operands;
+
+/// A literal's element registers (`bytecode/register_list.rs`), which an allocation row carries.
+#[path = "../../quench-runtime/src/bytecode/register_list.rs"]
+#[allow(dead_code)]
+mod register_list;
+
+/// The register, atom and operand names the staged rows take.
 pub(crate) mod bytecode {
     pub(crate) type Register = u16;
-
-    #[derive(Clone, Copy)]
-    pub(crate) struct Operand(Register);
-
-    impl Operand {
-        pub(crate) fn register(value: Register) -> Self {
-            Self(value)
-        }
-        pub(crate) fn register_index(self) -> Option<Register> {
-            Some(self.0)
-        }
-    }
+    pub(crate) type Atom = u32;
+    pub(crate) use super::operands::{ConstructArguments, FieldBase, FieldLookup, Operand, OperandKind, RegisterWindow, REGISTER_MASK, SET_THIS_REGISTER};
+    pub(crate) use super::register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
 }

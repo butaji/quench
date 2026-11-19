@@ -37,6 +37,7 @@ use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_FLAT_ROW, IC_KNOW
 use crate::heap_rows::{payload, word_at};
 use crate::layout::JS_STEP_OBJECT_RECORD_BASE;
 use crate::numeric::{HOLE_A, Out, S, deliver, is_int, number_word};
+use crate::places::deliver_number;
 use crate::places::{Places, finish_chained, site_object};
 use crate::places_property::{Callout, planned_frame, receiver_read, receiver_set};
 use crate::stage::StencilStage;
@@ -119,7 +120,7 @@ fn known_get<const D: u8, const NUMBER: bool>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
     let record = known_record::<GET_RECEIVER>(&s, &mut stage, payload);
     let word = ic::own_field(&mut stage, record, 0, 0, ());
-    finish_chained::<true>(s, word.map_or(Step::Unresolved, Step::Value), |s, word| deliver::<D>(s, word))
+    finish_chained::<true>(s, word.map_or(Step::Unresolved, Step::Value), |s, word| if NUMBER { deliver_number::<D>(s, word) } else { deliver::<D>(s, word) })
 }
 
 /// The own slot of the receiver known to be a direct object of the exact shape in flat form (`SHAPE_FLAT_ROW`,
@@ -182,7 +183,10 @@ pub(crate) fn run<const KIND: u8, const CHAINED: bool, const D: u8, const A: u8>
         IC_GET_HOLDER_ROW => get_row::<true, CHAINED, D>(s, payload),
         IC_SET_INT_ROW => set_row::<true, CHAINED, A>(s, payload),
         IC_PROOF_ROW => proof(s, payload),
-        IC_KNOWN_GET_ROW => known_get::<D>(s, payload),
+        // A known get is always followed by its site row, so its entry flag says instead whether the
+        // fact store proved the slot a Number (`false`: proved; `base_region::plan::ic_plan`).
+        IC_KNOWN_GET_ROW if CHAINED => known_get::<D, false>(s, payload),
+        IC_KNOWN_GET_ROW => known_get::<D, true>(s, payload),
         IC_KNOWN_SET_ROW => known_set::<false, A, false, false>(s, payload),
         IC_KNOWN_SET_INT_ROW => known_set::<true, A, false, false>(s, payload),
         IC_KNOWN_SET_ADMITTED_ROW => known_set::<false, A, true, false>(s, payload),

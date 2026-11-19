@@ -220,6 +220,7 @@ pub(crate) fn slot_holds<S: Stage>(stage: &mut S, bits: S::Word, holds: Type) ->
     held
 }
 
+#[cfg(not(stencil_build))]
 /// The interpreter's reading of `own_store`: `value` stored at `slot` of object record
 /// `record_id` of `heap` where its exact shape is `shape` (a lane record's hint, the whole
 /// auxiliary word, where `hinted`: `admitted_payload`); false changes nothing.
@@ -282,6 +283,7 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
     own_store(&mut stage, record, u64::from(record_id), shape, hinted, slot, value.to_bits(), ()).is_some()
 }
 
+#[cfg(not(stencil_build))]
 /// A hinted own-field store into a narrow run (`Object::formed_narrow_start`): `value`'s
 /// narrow form at `slot` of record `record_id` where its layout id is `shape`, a
 /// narrow run, and the store gate admits the write; false changes nothing (a value without a

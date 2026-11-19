@@ -32,6 +32,8 @@
 //! instruction.
 
 use crate::bytecode::Operand;
+// A store's strictness decides only the VM's refused store, which a row leaves to at its miss: the
+// rows build their writes `strict: false`.
 use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE};
 use crate::layout::shared_words::{capture_len, capture_values};
 use crate::ic_rows;
@@ -195,7 +197,7 @@ fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) 
     if ENTRY {
         let view = entry_dense::<HOLE_A>(payload);
         let mut places = Places::<D, MEM, B>::new(s);
-        let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT) };
+        let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST };
         let mut frame = PlacesView::new(&mut places, LEFT, view);
         match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
             Step::Value(word) => deliver::<D>(places.s, word),
@@ -203,7 +205,7 @@ fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) 
         }
     } else {
         let mut frame = Places::<D, MEM, B>::new(s);
-        match staged_element(&mut frame, Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT) }) {
+        match staged_element(&mut frame, Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST }) {
             Some(word) => deliver::<D>(frame.s, word),
             None => Out::Exit(frame.s),
         }
@@ -217,7 +219,7 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
     if ENTRY {
         let view = entry_dense::<0>(payload);
         let mut places = Places::<MEM, A, B>::new(s);
-        let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT };
+        let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false };
         let mut frame = PlacesView::new(&mut places, DEST, view);
         match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
             Step::Value(_) => Out::Next(places.s),
@@ -225,7 +227,7 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
         }
     } else {
         let mut frame = Places::<MEM, A, B>::new(s);
-        let done = staged_element(&mut frame, Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT }).is_some();
+        let done = staged_element(&mut frame, Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false }).is_some();
         finish(frame, done)
     }
 }
@@ -236,7 +238,7 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
 fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     let view = need!(s, entry_typed::<KIND>(payload, (HOLE_A, TYPED_INDEX_ROW)));
     let mut places = Places::<D, MEM, B>::new(s);
-    let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT) };
+    let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST };
     let mut frame = PlacesView::new(&mut places, LEFT, view);
     let word = match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
         Step::Value(word) => Some(word),
@@ -255,7 +257,7 @@ fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usiz
 fn typed_store_row<const KIND: u8, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
     let view = need!(s, entry_typed::<KIND>(payload, (0, TYPED_STORE_ROW)));
     let mut places = Places::<MEM, A, B>::new(s);
-    let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT };
+    let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false };
     let mut frame = PlacesView::new(&mut places, DEST, view);
     match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
         Step::Value(_) => Out::Next(places.s),

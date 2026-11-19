@@ -439,6 +439,7 @@ mod tests {
     }
 }
 
+#[cfg(not(stencil_build))]
 /// Where a call site goes on a status its call helper returns (`LaneHelper::Call`,
 /// `LaneHelper::ConstructCall`): completed with its result written, missed before any effect,
 /// or raised with the exception stashed. Any other status leaves the region with it.
@@ -449,6 +450,7 @@ pub(crate) enum HelperOutcome {
     Raised,
 }
 
+#[cfg(not(stencil_build))]
 /// The helper statuses a call site tests, in the order it tests them (the common one first),
 /// paired with where each goes: the one table both the helper and its call sites share.
 pub(crate) const HELPER_OUTCOMES: [(u64, HelperOutcome); 3] = [

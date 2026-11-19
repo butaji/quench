@@ -379,3 +379,157 @@ pub(crate) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
     }
     left % right
 }
+
+/// The parser's binary and unary operator codes, as an instruction's operator field holds them
+/// (oxc's `BinaryOperator` and `UnaryOperator` discriminants), named as the parser names them.
+/// Plain numbers, so the rows that build or test an operator field read them in the stencil build
+/// too; `vm::operations` asserts each equals the parser's.
+#[allow(non_upper_case_globals)]
+pub(crate) mod binary_operator {
+    pub(crate) const Equality: u32 = 0;
+    pub(crate) const Inequality: u32 = 1;
+    pub(crate) const StrictEquality: u32 = 2;
+    pub(crate) const StrictInequality: u32 = 3;
+    pub(crate) const LessThan: u32 = 4;
+    pub(crate) const LessEqualThan: u32 = 5;
+    pub(crate) const GreaterThan: u32 = 6;
+    pub(crate) const GreaterEqualThan: u32 = 7;
+    pub(crate) const Addition: u32 = 8;
+    pub(crate) const Subtraction: u32 = 9;
+    pub(crate) const Multiplication: u32 = 10;
+    pub(crate) const Division: u32 = 11;
+    pub(crate) const Remainder: u32 = 12;
+    pub(crate) const Exponential: u32 = 13;
+    pub(crate) const ShiftLeft: u32 = 14;
+    pub(crate) const ShiftRight: u32 = 15;
+    pub(crate) const ShiftRightZeroFill: u32 = 16;
+    pub(crate) const BitwiseOR: u32 = 17;
+    pub(crate) const BitwiseXOR: u32 = 18;
+    pub(crate) const BitwiseAnd: u32 = 19;
+    pub(crate) const In: u32 = 20;
+    pub(crate) const Instanceof: u32 = 21;
+}
+
+/// The unary operator codes (`binary_operator`'s).
+#[allow(non_upper_case_globals)]
+pub(crate) mod unary_operator {
+    pub(crate) const UnaryPlus: u32 = 0;
+    pub(crate) const UnaryNegation: u32 = 1;
+    pub(crate) const LogicalNot: u32 = 2;
+    pub(crate) const BitwiseNot: u32 = 3;
+    pub(crate) const Typeof: u32 = 4;
+    pub(crate) const Void: u32 = 5;
+    pub(crate) const Delete: u32 = 6;
+}
+
+/// The relations' operator codes: the first of each group (`Equal` and `NotEqual` name two operators each,
+/// `==` and `===`, so a caller that needs one of them must not ask), and the relation a code denotes.
+macro_rules! number_relation_codes {
+    ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {
+        impl NumberRelation {
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$relation => [$(binary_operator::$operator),+][0],)+
+                }
+            }
+
+            #[inline(always)]
+            pub(crate) fn from_operator(op: u32) -> Option<Self> {
+                $(
+                    if $(op == binary_operator::$operator)||+ {
+                        return Some(Self::$relation);
+                    }
+                )+
+                None
+            }
+        }
+    };
+}
+number_relation_rows!(number_relation_codes);
+
+/// The arithmetic operations' operator codes, both ways.
+macro_rules! number_arithmetic_codes {
+    ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
+        impl NumberArithmetic {
+            /// The binary operator this arithmetic operation denotes (`from_operator`'s inverse).
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$operation => binary_operator::$operator,)+
+                }
+            }
+
+            #[inline(always)]
+            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
+                $(
+                    if operator == binary_operator::$operator {
+                        return Some(Self::$operation);
+                    }
+                )+
+                None
+            }
+        }
+    };
+}
+number_arithmetic_rows!(number_arithmetic_codes);
+
+impl NumberArithmetic {
+    /// Whether the result of two integers is an integer: all but a division.
+    pub(crate) const fn integral(self) -> bool {
+        !matches!(self, Self::Divide)
+    }
+}
+
+/// The bitwise operations' operator codes, both ways.
+macro_rules! number_bitwise_codes {
+    ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
+        impl NumberBitwise {
+            /// The binary operator this bitwise operation denotes (`from_operator`'s inverse).
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$operation => binary_operator::$operator,)+
+                }
+            }
+
+            #[inline]
+            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
+                $(
+                    if operator == binary_operator::$operator {
+                        return Some(Self::$operation);
+                    }
+                )+
+                None
+            }
+        }
+    };
+}
+number_bitwise_rows!(number_bitwise_codes);
+
+/// Whether an equality operator is strict and whether it is negated; `None` for any other.
+#[inline(always)]
+pub(crate) fn equality_operator(op: u32) -> Option<(bool, bool)> {
+    const EQUALITY: u32 = binary_operator::Equality;
+    // The four operators are consecutive from an aligned first, each negation right after
+    // its test and the strict pair after the loose one, so two bits of the offset decide
+    // them, with no table of branches.
+    const NEGATED: u32 = binary_operator::Inequality - EQUALITY;
+    const STRICT: u32 = binary_operator::StrictEquality - EQUALITY;
+    const _: () = assert!(
+        NEGATED == 1
+            && STRICT == 2
+            && binary_operator::StrictInequality - EQUALITY == STRICT | NEGATED
+            && EQUALITY.is_multiple_of(STRICT << 1)
+    );
+    let offset = op.wrapping_sub(EQUALITY);
+    (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))
+}
+
+/// The equality operator code of `(strict, negated)` (`equality_operator`'s inverse).
+#[inline(always)]
+pub(crate) fn equality_binary_operator(strict: bool, negated: bool) -> u32 {
+    match (strict, negated) {
+        (false, false) => binary_operator::Equality,
+        (false, true) => binary_operator::Inequality,
+        (true, false) => binary_operator::StrictEquality,
+        (true, true) => binary_operator::StrictInequality,
+    }
+}

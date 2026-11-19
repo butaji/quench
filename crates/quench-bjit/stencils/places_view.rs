@@ -16,7 +16,7 @@
 use crate::bytecode::{Operand, Register};
 use crate::heap_rows::{stage_site, word_at};
 use crate::layout::{JS_STEP_LOOP_ENTRY, LOOP_ENTRY_ARRAY_COUNT_AT, TypedArrayKind};
-use crate::typed_ir::Representation;
+use crate::typed_ir::{Representation, Type};
 use crate::places::Places;
 use crate::stage::StencilStage;
 use crate::staged::element_rows::ElementView;
@@ -54,6 +54,9 @@ impl<'a, const D: u8, const A: u8, const B: u8> Frame<Concrete> for PlacesView<'
 
     #[inline(always)]
     fn fact(&self, register: Register) -> Representation { self.places.fact(register) }
+
+    #[inline(always)]
+    fn register_type(&self, register: Register) -> Option<Type> { self.places.register_type(register) }
 
     #[inline(always)]
     fn read(&mut self, stage: &mut Concrete, register: Register) -> u64 { self.places.read(stage, register) }
@@ -139,7 +142,10 @@ impl<'a, const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Place
 
 impl<'a, const D: u8, const A: u8, const B: u8> GlobalFrame<Concrete> for PlacesView<'a, D, A, B> {}
 impl<'a, const D: u8, const A: u8, const B: u8> CallFrame<Concrete> for PlacesView<'a, D, A, B> {}
-impl<'a, const D: u8, const A: u8, const B: u8> PropertyFrame<Concrete> for PlacesView<'a, D, A, B> {}
+impl<'a, const D: u8, const A: u8, const B: u8> PropertyFrame<Concrete> for PlacesView<'a, D, A, B> {
+    type Plans = crate::staged::NoPlans;
+    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+}
 
 impl<'a, const D: u8, const A: u8, const B: u8> ElementFrame<Concrete> for PlacesView<'a, D, A, B> {
     #[inline(always)]

@@ -361,7 +361,7 @@ mod catalog_tests {
             Heap::GlobalStore, Heap::LexicalRead, Heap::LexicalWrite, Heap::Word, Heap::CalleeCapture, Heap::Append, Heap::ForIn,
         ];
         all.extend((0..library::TYPED_KINDS).flat_map(|kind| [Heap::TypedIndex(kind), Heap::TypedStore(kind)]));
-        all.extend((row_names::STAGED_FIRST..=row_names::STAGED_LAST).map(Heap::Staged));
+        all.extend((quench_bjit::numeric::row_names::STAGED_FIRST..=quench_bjit::numeric::row_names::STAGED_LAST).map(Heap::Staged));
         for flag in [false, true] {
             all.push(Heap::IcSet { int: flag });
             all.push(Heap::TypeofIs { index: 0, negated: flag });

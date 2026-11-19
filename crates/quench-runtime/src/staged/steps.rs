@@ -16,9 +16,13 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::IncDecLocal { local, source, decrement } => inc_dec_local(stage, frame, local, source, decrement),
         Operation::Void { .. } | Operation::Unary { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. }
             | Operation::Binary { .. } | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
+        #[cfg(not(stencil_build))]
         Operation::WasmJump(jump) => super::wasm_jump::step(stage, frame, jump),
+        #[cfg(not(stencil_build))]
         Operation::BranchTable(table) => super::wasm_jump::branch_table(stage, frame, table),
-        call @ (Operation::Call(_) | Operation::Return { .. } | Operation::Suspend { .. }) => call_step(stage, frame, call),
+        call @ (Operation::Call(_) | Operation::Return { .. }) => call_step(stage, frame, call),
+        #[cfg(not(stencil_build))]
+        call @ Operation::Suspend { .. } => call_step(stage, frame, call),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. } | Operation::InitializeLocal { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } | Operation::Nop => register_step(stage, frame, operation),
@@ -29,6 +33,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } | Operation::CloneEnv { .. }
             | Operation::IteratorCleanupPush { .. } | Operation::IteratorCleanupPop | Operation::SetFunctionName { .. }
             => super::names::step(stage, frame, operation),
+        #[cfg(not(stencil_build))]
         Operation::SuperConstArrayObject2(pair) => super::superinstructions::step(stage, frame, pair),
         guard @ (Operation::GuardIdentity { .. } | Operation::GuardLive | Operation::GuardRealm { .. } | Operation::GuardDeclared { .. }
             | Operation::GuardPrototype { .. } | Operation::GuardShape { .. } | Operation::GuardStores { .. } | Operation::BackEdge { .. }) => guard_step(stage, frame, guard),
@@ -48,6 +53,7 @@ fn suspended<W, C>(control: Option<C>) -> Step<W, C> {
     }
 }
 
+#[inline(always)]
 fn guard_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let held = match operation {
@@ -84,6 +90,7 @@ fn call_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, 
         Operation::Call(CallOperation::Site(site)) => super::invoke::invoke(stage, frame, frame.miss(), site),
         Operation::Return { source } => return_step(stage, frame, source),
         Operation::Call(operation) => super::protocol::step(stage, frame.miss(), operation),
+        #[cfg(not(stencil_build))]
         Operation::Suspend { kind, destination, value } => super::suspend::suspend(stage, frame, kind, destination, value),
         _ => unreachable!("`step` sends only calls, returns and suspensions"),
     }
@@ -330,6 +337,7 @@ pub(crate) enum RowStep {
     Full,
 }
 
+#[cfg(not(stencil_build))]
 /// The part of `step` opcode `op`'s row reaches.
 pub(crate) const fn row_step(op: Op) -> RowStep {
     match op.staged() {
@@ -359,6 +367,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
     }
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of a Wasm integer row (`RowStep::WasmInt`) on the interpreter's stage and frame; any
 /// other operation is unresolved.
 #[inline(always)]
@@ -426,6 +435,7 @@ pub(crate) fn step_keyed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
     keyed_step(stage, frame, operation)
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of a Wasm float row (`RowStep::WasmFloat`) on the interpreter's stage and frame; any
 /// other operation is unresolved.
 #[inline(always)]
@@ -436,6 +446,7 @@ pub(crate) fn step_wasm_float<F: Frame<Concrete>>(stage: &mut Concrete, frame: &
     }
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of an instance-state row (`RowStep::WasmState`) on the interpreter's stage and frame.
 #[inline(always)]
 pub(crate) fn step_wasm_state<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
@@ -445,6 +456,7 @@ pub(crate) fn step_wasm_state<F: Frame<Concrete>>(stage: &mut Concrete, frame: &
     }
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of a direct memory row (`RowStep::WasmMemory`) on the interpreter's stage and frame.
 #[inline(always)]
 pub(crate) fn step_wasm_access<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
@@ -454,6 +466,7 @@ pub(crate) fn step_wasm_access<F: Frame<Concrete>>(stage: &mut Concrete, frame: 
     }
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of a Wasm vector row (`RowStep::WasmVector`) on the interpreter's stage and frame; any
 /// other operation is unresolved.
 #[inline(always)]
@@ -486,6 +499,7 @@ pub(crate) fn step_generic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, f
     super::generic::step(stage, frame, operation)
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of a Wasm i32 jump row (`RowStep::WasmJump`).
 #[inline(always)]
 pub(crate) fn step_wasm_jump<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {

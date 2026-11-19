@@ -9,8 +9,11 @@
 //! - the arguments are a window of consecutive registers, or a list of registers the call
 //!   records keep.
 
+#[cfg(not(stencil_build))]
 use super::DecodeContext;
-use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, Register, WideInstruction, RETURN_REGISTER};
+#[cfg(not(stencil_build))]
+use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, WideInstruction, RETURN_REGISTER};
+use crate::bytecode::Register;
 
 /// A function of the running program, by its index (`CallKnown`).
 pub(crate) type FunctionId = u16;
@@ -125,6 +128,7 @@ impl CallFacts {
 }
 
 impl Invocation {
+    #[cfg(not(stencil_build))]
     /// The operands of `instruction`, read with the tables of `context`; `None` for any form no
     /// row runs: an eval, which the host decides, a super construction, and an array of arguments.
     #[inline(always)]
@@ -135,6 +139,7 @@ impl Invocation {
             forwards: instruction.op() == Op::CallForwardingArguments })
     }
 
+    #[cfg(not(stencil_build))]
     #[inline(always)]
     fn operands(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Callee, Receiver, Arguments)> {
         match instruction.op() {
@@ -146,6 +151,7 @@ impl Invocation {
         }
     }
 
+    #[cfg(not(stencil_build))]
     /// A call through registers: the callee, receiver and a window of arguments; `None` for an
     /// eval, which the host decides.
     #[inline(always)]
@@ -156,12 +162,14 @@ impl Invocation {
             Arguments::Window { first: ImmediateLayout::call_window_base(imm), count: ImmediateLayout::argument_count(imm) }))
     }
 
+    #[cfg(not(stencil_build))]
     /// A call of a function the record names: no receiver, the window the record names.
     fn known(instruction: WideInstruction) -> (Callee, Receiver, Arguments) {
         let window = instruction.call_window();
         (Callee::Known(instruction.known_function_index()), Receiver::Undefined, Arguments::Window { first: window.base, count: window.count })
     }
 
+    #[cfg(not(stencil_build))]
     /// A construction with its arguments in registers; `None` for `super(...)` and an array of arguments.
     fn construction(instruction: WideInstruction) -> Option<(Callee, Receiver, Arguments)> {
         match instruction.construct_arguments() {
@@ -171,6 +179,7 @@ impl Invocation {
         }
     }
 
+    #[cfg(not(stencil_build))]
     /// A method call: the receiver and the method atom come from the method site, the arguments
     /// from its call record.
     fn method(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Callee, Receiver, Arguments)> {

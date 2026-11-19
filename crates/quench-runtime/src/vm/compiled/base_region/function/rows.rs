@@ -65,7 +65,7 @@ pub(super) fn expanded(sites: &Sites, pc: u32, instruction: WideInstruction) -> 
     (sites.ending == Ending::Body && sites.scratch < crate::bytecode::REGISTER_MASK).then_some(())?;
     let rows = compare_jump(sites.known, pc, instruction, sites.scratch)?;
     #[cfg(test)]
-    note_fast(instruction.op() as u16);
+    note_fast(instruction.op());
     Some(rows.into_iter().map(What::Row).collect())
 }
 
@@ -114,7 +114,7 @@ pub(super) fn cover(region: &LoopRegion, pc: u32, sites: &Sites, instruction: Wi
     }
     #[cfg(test)]
     if is_fast(&row) {
-        note_fast(instruction.op() as u16);
+        note_fast(instruction.op());
     }
     What::Row(Decoded { completes: returning, ..row })
 }

@@ -175,6 +175,16 @@ pub(crate) fn int_word(v: i32) -> u64 {
     u64::from(v as u32) | INT_TAG
 }
 
+/// `bits`, held in an integer register the optimizer cannot see through: a Number constant made from it reaches its
+/// use as a move from that register (`movabs` + `movq`, `mov` + `fmov`), never as a constant-pool load, which a
+/// stencil may not make (`Concrete::f64_constant`, so a staged Number rule's constants build into a row).
+#[inline(always)]
+pub(crate) fn register_bits(mut bits: u64) -> u64 {
+    // SAFETY: a template of only a comment naming the register, which keeps its value.
+    unsafe { core::arch::asm!("/* {0} */", inout(reg) bits, options(pure, nomem, nostack, preserves_flags)) };
+    bits
+}
+
 /// `cvttsd2si` to 32 bits: the truncated int32, or `i32::MIN` where `f` is out of range or NaN
 /// (Rust's saturating `as` would load its bounds from a constant pool, which a stencil may not use).
 #[cfg(target_arch = "x86_64")]
