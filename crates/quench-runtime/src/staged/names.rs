@@ -48,8 +48,6 @@ pub(crate) enum Protocol {
     Owned(super::protocol_owned::OwnedVarStep),
     /// A Wasm GC, reference, table, memory-init, atomic or exception step (`protocol_wasm`).
     Wasm(super::protocol_wasm::WasmHostStep),
-    /// A Wasm GC, reference, table, memory-init, atomic or exception step (`protocol_wasm`).
-    Wasm(super::protocol_wasm::WasmHostStep),
 }
 
 /// The bits of a `CloneEnv`'s immediate that name its clone plan: an environment window's record
