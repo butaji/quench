@@ -5,12 +5,12 @@
  * same payload and builds the object in a C DOM; the canonical JSON text is produced once, as the
  * JS constructor does not serialize, so it is only used for validation. Each timed iteration
  * serializes the DOM to a fresh buffer, as JSON.stringify builds a new string. The last output must
- * equal the canonical text. Usage: json-stringify-inspector [iterations] [jetstream-root] */
+ * equal the canonical text. Usage: json-stringify-inspector [jetstream-root]; run from the repo root. */
 #include "json-analogue.h"
 
 int main(int argc, char **argv) {
-  int iterations = argc > 1 ? atoi(argv[1]) : 20;
-  const char *root = argc > 2 ? argv[2] : "../jetstream";
+  const int iterations = 20; /* // iterations: header */
+  const char *root = argc > 1 ? argv[1] : "quench-bench/jetstream";
   char path[4096];
   snprintf(path, sizeof path, "%s/SeaMonster/inspector-json-payload.js.z", root);
 

@@ -18,7 +18,6 @@
 #include <string.h>
 #include <time.h>
 
-#pragma STDC FP_CONTRACT OFF
 
 #define ITERATIONS 120
 #define EXPECTED_SUM 1666156
@@ -1274,7 +1273,7 @@ static void setup_vars(void) {
     ":2,\"AhzoreQrpvznyFrcnengbe\":\".\",\"AhzoreTebhcFrcnengbe\":\",\",\"PheeraplCbfvgvirCnggrea\":0"
     ",\"CbfvgvirVasvavglFlzoby\":\"Vasvavgl\",\"CbfvgvirFvta\":\"+\",\"CrepragQrpvznyQvtvgf\":2,\"Cre"
     "pragQrpvznyFrcnengbe\":\".\",\"CrepragTebhcFrcnengbe\":\",\",\"CrepragFlzoby\":\"%\",\"CreZvyyrF"
-    "lzoby\":\"\342\200\260\",\"AngvirQvtvgf\":[\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\""
+    "lzoby\":\"\211\",\"AngvirQvtvgf\":[\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\""
     ",\"9\"],\"QvtvgFhofgvghgvba\":1},\"qngrGvzrSbezng\":{\"NZQrfvtangbe\":\"NZ\",\"Pnyraqne\":{\"Zva"
     "FhccbegrqQngrGvzr\":\"@-62135568000000@\",\"ZnkFhccbegrqQngrGvzr\":\"@253402300799999@\",\"Nytbe"
     "vguzGlcr\":1,\"PnyraqneGlcr\":1,\"Renf\":[1],\"GjbQvtvgLrneZnk\":2029,\"VfErnqBayl\":gehr},\"Qng"
@@ -1293,7 +1292,7 @@ static void setup_vars(void) {
     "\"Tertbevna Pnyraqne\",\"NooerivngrqZbaguTravgvirAnzrf\":[\"Wna\",\"Sro\",\"Zne\",\"Nce\",\"Znl"
     "\",\"Wha\",\"Why\",\"Nht\",\"Frc\",\"Bpg\",\"Abi\",\"Qrp\",\"\"],\"ZbaguTravgvirAnzrf\":[\"Wnahn"
     "el\",\"Sroehnel\",\"Znepu\",\"Ncevy\",\"Znl\",\"Whar\",\"Whyl\",\"Nhthfg\",\"Frcgrzore\",\"Bpgbo"
-    "re\",\"Abirzore\",\"Qrprzore\",\"\"]}}", 2259};
+    "re\",\"Abirzore\",\"Qrprzore\",\"\"]}}", 2257};
   str3 = (Str){"{\"anzr\":\"ra-HF\",\"ahzoreSbezng\":{\"PheeraplQrpvznyQvtvgf\":2,\"PheeraplQrpvznyFrcnengbe\":"
     "\".\",\"VfErnqBayl\":snyfr,\"PheeraplTebhcFvmrf\":[3],\"AhzoreTebhcFvmrf\":[3],\"CrepragTebhcFvm"
     "rf\":[3],\"PheeraplTebhcFrcnengbe\":\",\",\"PheeraplFlzoby\":\"$\",\"AnAFlzoby\":\"AnA\",\"Pheer"
@@ -1302,7 +1301,7 @@ static void setup_vars(void) {
     "gf\":2,\"AhzoreQrpvznyFrcnengbe\":\".\",\"AhzoreTebhcFrcnengbe\":\",\",\"PheeraplCbfvgvirCnggrea"
     "\":0,\"CbfvgvirVasvavglFlzoby\":\"Vasvavgl\",\"CbfvgvirFvta\":\"+\",\"CrepragQrpvznyQvtvgf\":2,"
     "\"CrepragQrpvznyFrcnengbe\":\".\",\"CrepragTebhcFrcnengbe\":\",\",\"CrepragFlzoby\":\"%\",\"CreZ"
-    "vyyrFlzoby\":\"\342\200\260\",\"AngvirQvtvgf\":[\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\","
+    "vyyrFlzoby\":\"\211\",\"AngvirQvtvgf\":[\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\","
     "\"8\",\"9\"],\"QvtvgFhofgvghgvba\":1},\"qngrGvzrSbezng\":{\"NZQrfvtangbe\":\"NZ\",\"Pnyraqne\":{"
     "\"ZvaFhccbegrqQngrGvzr\":\"@-62135568000000@\",\"ZnkFhccbegrqQngrGvzr\":\"@253402300799999@\",\""
     "NytbevguzGlcr\":1,\"PnyraqneGlcr\":1,\"Renf\":[1],\"GjbQvtvgLrneZnk\":2029,\"VfErnqBayl\":snyfr}"
@@ -1321,7 +1320,7 @@ static void setup_vars(void) {
     "nyraqneAnzr\":\"Tertbevna Pnyraqne\",\"NooerivngrqZbaguTravgvirAnzrf\":[\"Wna\",\"Sro\",\"Zne\","
     "\"Nce\",\"Znl\",\"Wha\",\"Why\",\"Nht\",\"Frc\",\"Bpg\",\"Abi\",\"Qrp\",\"\"],\"ZbaguTravgvirAnz"
     "rf\":[\"Wnahnel\",\"Sroehnel\",\"Znepu\",\"Ncevy\",\"Znl\",\"Whar\",\"Whyl\",\"Nhthfg\",\"Frcgrz"
-    "ore\",\"Bpgbore\",\"Abirzore\",\"Qrprzore\",\"\"]}}", 2274};
+    "ore\",\"Bpgbore\",\"Abirzore\",\"Qrprzore\",\"\"]}}", 2272};
   str4 = (Str){"HFEYBP=DKWyLHAiMTH9AwHjWxAcqUx9GJ91oaEunJ4tIzyyqlMQo3IhqUW5D29xMG1IHlMQo3IhqUW5GzSgMG1Iozy0MJDtH"
     "3EuqTImWxEgLHAiMTH9BQN3WxkuqTy0qJEyCGZ3YwDkBGVzGT9hM2y0qJEyCF0kZwVhZQH3APMDo3A0LJkQo2EyCGx0ZQDmW"
     "yWyM2yiox5uoJH9D0R%3Q", 213};
@@ -1631,8 +1630,7 @@ static void setup_vars(void) {
     "G16\" fglyr=\"onpxtebhaq-vzntr:hey(uggc://vzt.jykef.pbz/~Yvir.FvgrPbagrag.VQ/~14.2.1230/~/~/~/oy"
     "g16.cat)\">Ybgf bs fgbentr &#40;5 TO&#41; - zber pbby fghss ba gur jnl.<oe> <oe> <n uers=\"uggc:"
     "//znvy.yvir.pbz/znvy/nobhg.nfck\" gnetrg=\"_oynax\">Yrnea zber##/N##</hy>", 631};
-  str33 = (Str){"Bar Jvaqbjf Yvir VQ trgf lbh vagb <o>Ubgznvy</o>, <o>Zrffratre</o>, <o>Kobk YVIR</o> \342\200"
-    "\224 naq bgure cynprf lbh frr #~#argjbexybtb#~#", 131};
+  str33 = (Str){"Bar Jvaqbjf Yvir VQ trgf lbh vagb <o>Ubgznvy</o>, <o>Zrffratre</o>, <o>Kobk YVIR</o> \224 naq bgure cynprf lbh frr #~#argjbexybtb#~#", 129};
   str34 = (Str){"${1}://${2}${3}${4}${5}", 23};
   str35 = (Str){" O=6gnyg0g4znrrn&o=3&f=gc; Q=_lyu=K3bQZGSxnT4lZzD3OS9GNmV3ZGLkAQxRpTyxNmRlZmRmAmNkAQLRqTImqNZjOU"
     "EgpTjQnJ5xMKtgoN--; SCF=qy", 122};
@@ -2030,8 +2028,10 @@ static int64_t runBlock1(void) {
       sum += rx_exec_len(RX[13], &s44[i]);
     }
     for (int i = 0; i < 73; i++) {
+      /* s46 has 72 variants; the JS reads s46[72] as undefined, which re.exec coerces to "undefined". */
+      static const Str undef_str = {"undefined", 9};
       sum += rx_replace_len(RX[18], &s45[i]);
-      sum += rx_exec_len(RX[1], &s46[i]);
+      sum += rx_exec_len(RX[1], i < 72 ? &s46[i] : &undef_str);
     }
     for (int i = 0; i < 70; i++) {
       sum += rx_exec_len(RX[19], &(Str){"", 0});
