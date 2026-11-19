@@ -798,6 +798,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     }
 
     /// A frame that may read and write the activation's local slots.
+    #[inline(always)]
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { this, locals: Some((locals, len)), ..Self::new(registers, view) }
@@ -1850,6 +1851,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         (operand.kind() == Some(crate::bytecode::OperandKind::Constant)).then(|| self.reads.word(operand)).flatten()
     }
 
+    #[inline(always)]
     fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let word = self.operand_word(stage, operand)?;
         Value::from_bits(word).as_number().map(f64::to_bits)
@@ -1857,6 +1859,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
 
     /// The constructor's live `prototype` link, where the VM proved its `instanceof` steady: the
     /// interpreter reads it from the objects each time, so it needs no dependency.
+    #[inline(always)]
     fn stable_prototype(&mut self, stage: &mut Concrete, constructor: Register) -> Option<u64> {
         let Decisions { context, prototype, .. } = self.decisions?;
         prototype(context, Value::from_bits(self.read(stage, constructor))).map(u64::from)
@@ -1864,6 +1867,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
 
     /// ToInt32 of a Number operand, as the bitwise operators read it: an int32 is its own ToInt32, so it
     /// is read as an int and never converted to binary64.
+    #[inline(always)]
     fn int32_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let value = Value::from_bits(self.operand_word(stage, operand)?);
         if let Some(int) = value.as_int() {
