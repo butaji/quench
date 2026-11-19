@@ -16,7 +16,7 @@ fn a_simple_loop_is_planned_by_the_region_specializer() {
             && (instruction.jump_target() as usize) <= pc)
             .then(|| (instruction.jump_target(), pc as u32))
     }).expect("the function has a loop");
-    let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
+    let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner, &|_| false)
         .expect("the loop is admitted");
     let observation = Observation { native_field_loads: &[], store_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], entry_types: &[], operand_kinds: &[], entry_bounds: true, frame_captures: &[], construct_plans: None };
     let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,

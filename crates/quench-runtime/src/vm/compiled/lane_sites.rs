@@ -207,7 +207,7 @@ impl<H: Host> Vm<H> {
     /// The field read `instruction` of a method of strings or arrays that a call runs inline
     /// (`lane_region::native_calls`), where the realm's prototype holds that native as an own
     /// data property now. The receiver is not known: the call guards the callee it reads.
-    fn method_native(&mut self, instruction: &crate::bytecode::WideInstruction) -> Option<GlobalRead> {
+    pub(in crate::vm) fn method_native(&mut self, instruction: &crate::bytecode::WideInstruction) -> Option<GlobalRead> {
         if !instruction.op().is_get_field() { return None; }
         let Some(crate::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup() else { return None };
         let name = self.atom_name(atom);

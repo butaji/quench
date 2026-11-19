@@ -115,7 +115,7 @@ mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_facts::bind_callees as bind_region_callees;
 pub(super) use lane_region::ElementViews;
-pub(in crate::vm) use lane_region::inlines_in_loop;
+pub(in crate::vm) use lane_region::{inlines_in_loop, native_method_call};
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 
@@ -3529,8 +3529,9 @@ pub(super) fn analyze_osr_region_detailed(
     header: u32,
     backedge: u32,
     method_calls: MethodCalls,
+    native_call: &dyn Fn(usize) -> bool,
 ) -> Result<LoopRegion, RegionAnalysisFailure> {
-    osr_loop::region(function, decoded, constants, sites, live, header, backedge, method_calls)
+    osr_loop::region(function, decoded, constants, sites, live, header, backedge, method_calls, native_call)
 }
 
 /// Whether the loop tier compiles regions under `policy` (`PolicyTiers::loop_tier`).
@@ -4720,6 +4721,7 @@ impl JsStepDispatch {
                 epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
                 empty_string: Value::DELETED.to_bits(),
                 environment_storage: crate::heap::absent_environment_storage(),
+                array_mark_blocks: 0, array_mark_block_count: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
             },
@@ -4812,6 +4814,8 @@ impl JsStepDispatch {
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
         let (blocks, count) = vm.heap.native_function_mark_blocks();
         (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
+        let (blocks, count) = vm.heap.native_array_mark_blocks();
+        (self.array_mark_blocks, self.array_mark_block_count) = (blocks as usize, count);
         self.empty_string = vm.empty_string_word().to_bits();
         self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
         let atoms = vm.method_cache_atoms.words();

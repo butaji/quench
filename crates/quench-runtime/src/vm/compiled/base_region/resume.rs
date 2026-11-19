@@ -140,7 +140,7 @@ mod tests {
             (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.jump_target() as usize) <= pc)
                 .then(|| (instruction.jump_target(), pc as u32))
         }).expect("the function has a loop");
-        let region = super::super::super::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, super::super::super::osr_loop::MethodCalls::Inliner).expect("the loop is admitted");
+        let region = super::super::super::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, super::super::super::osr_loop::MethodCalls::Inliner, &|_| false).expect("the loop is admitted");
         (program, id, region)
     }
 

@@ -12,6 +12,9 @@ use crate::staged::element_rows::ElementView;
 use crate::staged::elements::DenseView;
 use crate::staged::typed_elements::TypedView;
 use crate::staged::{ElementFrame, Region, Stage};
+use crate::staged::barrier::{unlogged_store, MarkList};
+use crate::vm::compiled::{emit_js_guard, regions};
+use cranelift_codegen::ir::MemFlagsData;
 
 /// The view of a loop's hoisted array an element row reads and writes through, which the loop's
 /// entering edge proved once: a dense array's backing, or a typed array's elements.
@@ -45,6 +48,25 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             return stage.guard(never, miss);
         }
         calls::index_set(self, stage, (base, key, value), miss);
+        Some(())
+    }
+
+    /// Continues where a store of the reference `value` into the direct array `base` passes the write
+    /// barrier unlogged: the array's record mark bit is clear (`staged::barrier::unlogged_store` over
+    /// the array records' mark list, the same test `Heap::store_logs` makes). A base that is no direct
+    /// array, or a marked one, leaves at `miss`: the general store logs it, which clears the mark, so
+    /// the next store of the loop passes here without a call.
+    fn array_store_gate(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, value: ir::Value, miss: ir::Block)
+        -> Option<()> {
+        let direct = crate::staged::value::is_direct_array(stage, base);
+        stage.guard(direct, miss)?;
+        let record = stage.and_imm(base, u64::from(u32::MAX));
+        let list = MarkList {
+            blocks: std::mem::offset_of!(JsStepDispatch, head.array_mark_blocks),
+            count: std::mem::offset_of!(JsStepDispatch, head.array_mark_block_count),
+        };
+        unlogged_store(stage, (regions::dispatch(), MemFlagsData::trusted()), self.payload, list, (record, value),
+            |stage, condition| emit_js_guard(stage.builder, condition, miss));
         Some(())
     }
 
