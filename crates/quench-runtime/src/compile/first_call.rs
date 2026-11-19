@@ -1,7 +1,7 @@
 //! First-call stubs: a top-level function declaration, or an anonymous function expression
 //! of a top-level statement, whose body was parsed lazily and that nothing at load calls
 //! compiles as a stub, which compiles the function's source as a
-//! program of its own on the function's first call (`Op::CallFirstChunk`). The load then
+//! program of its own on the function's first call (`CallFirstChunk`). The load then
 //! checks the body's syntax and nothing more, as V8's preparser does.
 //!
 //! The chunk compiles the function alone as a Script, so it resolves every free name in the
@@ -10,6 +10,7 @@
 //! text alone and compiles it at its place in the program's text, whose source it shares, so
 //! a chunk costs its function's text, not the program's.
 use super::*;
+use crate::bytecode::{RETURN_OP, Traits, the_op};
 use program_shape::ParsedProgramShape;
 use oxc_ast_visit::Visit;
 use replay::{ReplayViews, ShiftSpans};
@@ -21,6 +22,9 @@ pub(crate) mod nested;
 pub(crate) use nested::{FirstCallScopes, FirstCallStubs};
 pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, alone_body_end, alone_start, free_names, reaches_scopes_by_name, skimmed_free_names};
 pub(in crate::compile) use room::ChunkRoom;
+
+/// The op that runs a first-call stub on its chunk.
+const FIRST_CALL_CHUNK: Op = the_op(Traits::FIRST_CALL_CHUNK);
 
 impl ReplayViews {
     /// The line starts and UTF-16 excess table of `text`, the program's source, which a
@@ -497,15 +501,15 @@ impl FunctionCompiler<'_, '_> {
             ImplicitBody::FirstCallArrowStub => {
                 let arguments = self.load_name(STUB_ARGUMENTS);
                 let result = self.reg();
-                self.emit(Op::CallFirstChunk, result, arguments, arguments, 0);
-                self.emit(Op::Return, result, 0, 0, 0);
+                self.emit(FIRST_CALL_CHUNK, result, arguments, arguments, 0);
+                self.emit(RETURN_OP, result, 0, 0, 0);
             }
             ImplicitBody::FirstCallStub => {
                 let arguments = self.load_name(STUB_ARGUMENTS);
                 let new_target = self.load_name(crate::bytecode::NEW_TARGET_BINDING);
                 let result = self.reg();
-                self.emit(Op::CallFirstChunk, result, arguments, new_target, 0);
-                self.emit(Op::Return, result, 0, 0, 0);
+                self.emit(FIRST_CALL_CHUNK, result, arguments, new_target, 0);
+                self.emit(RETURN_OP, result, 0, 0, 0);
             }
         }
     }

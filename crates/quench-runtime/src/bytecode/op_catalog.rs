@@ -385,6 +385,46 @@ impl Traits {
     pub(crate) const F64_UNARY_FAMILY: Self = Self(1 << 87);
     /// The family of a function's return, boxed or raw. Tagged: `Return`, `WasmReturn64`.
     pub(crate) const RETURN_FAMILY: Self = Self(1 << 88);
+    /// The op that puts a frame local slot into its temporal-dead-zone state. Tagged: `InitializeTdz`.
+    pub(crate) const TDZ_INITIALIZE: Self = Self(1 << 91);
+    /// The op that checks a class's `extends` value before the class is built. Tagged: `ValidateClassHeritage`.
+    pub(crate) const CLASS_HERITAGE_CHECK: Self = Self(1 << 92);
+    /// The op that marks a private method or accessor name onto its home object. Tagged: `MarkPrivateName`.
+    pub(crate) const PRIVATE_NAME_MARK: Self = Self(1 << 93);
+    /// The op that converts a computed property key to its property key value. Tagged: `ToPropertyKey`.
+    pub(crate) const PROPERTY_KEY_CONVERT: Self = Self(1 << 94);
+    /// The op that sets a function's `name` from a computed key and a name prefix. Tagged: `SetFunctionNameKey`.
+    pub(crate) const FUNCTION_NAME_KEY_SET: Self = Self(1 << 95);
+    /// The op that calls a callee with a receiver and a contiguous argument window. Tagged: `Call`.
+    pub(crate) const CALL_INVOKE: Self = Self(1 << 96);
+    /// The op that stores a value at an element index of an object. Tagged: `SetIndex`.
+    pub(crate) const ELEMENT_STORE: Self = Self(1 << 97);
+    /// The op that stores a value into a named own field with sloppy-mode semantics. Tagged: `SetField`.
+    pub(crate) const OBJECT_FIELD_STORE: Self = Self(1 << 98);
+    /// The op that defines a private class field on an instance. Tagged: `DefinePrivateField`.
+    pub(crate) const PRIVATE_FIELD_DEFINE: Self = Self(1 << 99);
+    /// The op that defines a computed-key class field on an instance. Tagged: `DefineComputedField`.
+    pub(crate) const COMPUTED_FIELD_DEFINE: Self = Self(1 << 100);
+    /// The op that defines a named class field on an instance. Tagged: `DefineField`.
+    pub(crate) const FIELD_DEFINE: Self = Self(1 << 101);
+    /// The op that stores a value into a frame local slot as a binding initialization. Tagged: `StoreLocal`.
+    pub(crate) const LOCAL_BINDING_STORE: Self = Self(1 << 102);
+    /// The op that defines a method or accessor property from a property definition record. Tagged: `DefinePropertyRecord`.
+    pub(crate) const PROPERTY_RECORD_DEFINE: Self = Self(1 << 103);
+    /// The op that reads a template site's cached template object. Tagged: `LoadCachedTemplateObject`.
+    pub(crate) const TEMPLATE_CACHE_LOAD: Self = Self(1 << 104);
+    /// The op that stores a freshly built template object into its template site's cache. Tagged: `CacheTemplateObject`.
+    pub(crate) const TEMPLATE_CACHE_STORE: Self = Self(1 << 105);
+    /// The op that builds an array from a window of elements of a given length. Tagged: `MakeArray`.
+    pub(crate) const ARRAY_MAKE: Self = Self(1 << 106);
+    /// The op that allocates a plain object with no properties. Tagged: `MakeObject`.
+    pub(crate) const OBJECT_MAKE: Self = Self(1 << 107);
+    /// The op that loads a constant into its result register. Tagged: `LoadConst`.
+    pub(crate) const CONSTANT_LOAD: Self = Self(1 << 108);
+    /// The op that concatenates a window of string parts into one string. Tagged: `StringConcat`.
+    pub(crate) const STRING_CONCAT: Self = Self(1 << 109);
+    /// The op that runs a first-call stub's function body as its compiled chunk. Tagged: `CallFirstChunk`.
+    pub(crate) const FIRST_CALL_CHUNK: Self = Self(1 << 110);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }

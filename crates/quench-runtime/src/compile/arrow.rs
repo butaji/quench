@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::RETURN_OP;
 
 impl Compiler<'_> {
     pub(super) fn compile_arrow_function(
@@ -129,12 +130,12 @@ impl Compiler<'_> {
                 function.emit_hoisted(&body.statements);
                 function.function_body_statements(&body.statements);
                 let undefined = function.literal(Constant::Undefined);
-                function.emit(Op::Return, undefined, 0, 0, 0);
+                function.emit(RETURN_OP, undefined, 0, 0, 0);
             }
             body => {
                 let expression = body.as_expression().expect("arrow expression body");
                 let result = function.expression(expression);
-                function.emit(Op::Return, result, 0, 0, 0);
+                function.emit(RETURN_OP, result, 0, 0, 0);
             }
         }
         // As in `Compiler::compile_function`: no doubling slack beside the syntax tree.
