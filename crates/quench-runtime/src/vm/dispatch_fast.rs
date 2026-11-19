@@ -295,7 +295,7 @@ impl LaneInstruction {
 
     #[inline(always)]
     fn vector_region(&self) -> *const vector_region::VectorRegion {
-        // SAFETY: the view writes `region` for the records it gives `lane_vector_region`, the
+        // SAFETY: the view writes `region` for the records it gives `vector_region_row`, the
         // only handler that reads it.
         unsafe { self.operand.region }
     }
