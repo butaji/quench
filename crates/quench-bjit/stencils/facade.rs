@@ -27,6 +27,51 @@ impl Value {
     pub(crate) const fn heap_index(self) -> Option<u32> {
         if self.0 & words::TAG_MASK == words::HEAP_TAG { Some(self.0 as u32) } else { None }
     }
+    /// The canonical NaN, as the runtime's `Value::NAN`.
+    pub(crate) const NAN: Self = Self(words::CANONICAL_NAN);
+    /// The runtime's `Value::boolean`.
+    pub(crate) const fn boolean(value: bool) -> Self {
+        if value { Self::TRUE } else { Self::FALSE }
+    }
+    /// The runtime's `Value::integer`: the int32 tag and the payload's low 32 bits.
+    pub(crate) const fn integer(value: i32) -> Self {
+        Self(words::INT_TAG | value as u32 as u64)
+    }
+    /// The runtime's `Value::as_int`.
+    pub(crate) const fn as_int(self) -> Option<i32> {
+        if self.0 & words::TAG_MASK == words::INT_TAG { Some(self.0 as u32 as i32) } else { None }
+    }
+    /// Whether the word is a tag, not a double: its tag field lies in the tag range, as the
+    /// runtime's `Value::is_tagged`.
+    const fn is_tagged(self) -> bool {
+        ((self.0 >> words::TAG_SHIFT) as u32).wrapping_sub(words::FIRST_TAG_FIELD as u32) <= words::TAG_FIELD_SPAN as u32
+    }
+    /// The runtime's `Value::as_number`: a double's bits, or an int32 payload.
+    pub(crate) fn as_number(self) -> Option<f64> {
+        if !self.is_tagged() {
+            Some(f64::from_bits(self.0))
+        } else if self.0 & words::TAG_MASK == words::INT_TAG {
+            Some(self.0 as u32 as i32 as f64)
+        } else {
+            None
+        }
+    }
+    /// The runtime's `Value::number`: an integral value within int32 (but not -0) as an
+    /// int32, NaN as the canonical NaN, any other double as its bits.
+    pub(crate) fn number(value: f64) -> Self {
+        let integer = value as i32;
+        let back = integer as f64;
+        if back < value || back > value {
+            return Self(value.to_bits());
+        }
+        if value != value {
+            return Self::NAN;
+        }
+        if integer != 0 || value.to_bits() == 0 {
+            return Self::integer(integer);
+        }
+        Self(value.to_bits())
+    }
 }
 
 /// The runtime's `ValueType` (`api_native.rs`): the same variants in the same order, so each
@@ -136,6 +181,15 @@ pub(crate) mod vm {
     pub(crate) use crate::layout::NATIVE_FIELD_CACHE_LAYOUT;
     pub(crate) mod wtf16 {
         pub(crate) struct JsString;
+        /// A flat string's units, as the runtime's `Units`: only the concrete callers of the
+        /// shared string rows build one; no stencil does.
+        #[derive(Clone, Copy)]
+        #[allow(dead_code)]
+        pub(crate) enum Units<'a> {
+            Ascii(&'a [u8]),
+            Latin1(&'a [u8]),
+            Wide(&'a [u16]),
+        }
         pub(crate) mod native_string {
             pub(crate) use crate::layout::shared_words::string_tag::*;
             pub(crate) use crate::layout::string_form::*;

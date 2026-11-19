@@ -30,8 +30,13 @@ impl<'a> Units<'a> {
         }
         let found = match (self, search) {
             (Self::Ascii(haystack), Units::Ascii(needle)) => find_ascii(&haystack[start..], needle),
-            (Self::Ascii(haystack), Units::Wide(needle)) => find_units(&haystack[start..], needle),
-            (Self::Wide(haystack), Units::Ascii(needle)) => find_units(&haystack[start..], needle),
+            (Self::Ascii(haystack), Units::Wide(needle)) | (Self::Latin1(haystack), Units::Wide(needle)) => {
+                find_units(&haystack[start..], needle)
+            }
+            (Self::Ascii(haystack), Units::Latin1(needle)) | (Self::Latin1(haystack), Units::Ascii(needle) | Units::Latin1(needle)) => {
+                find_units(&haystack[start..], needle)
+            }
+            (Self::Wide(haystack), Units::Ascii(needle) | Units::Latin1(needle)) => find_units(&haystack[start..], needle),
             (Self::Wide(haystack), Units::Wide(needle)) => find_units(&haystack[start..], needle),
         };
         found.map(|offset| start + offset)

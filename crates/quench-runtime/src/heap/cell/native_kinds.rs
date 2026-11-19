@@ -35,39 +35,6 @@ impl Native {
         )
     }
 
-    /// `String.prototype` methods that, for a string primitive receiver and arguments that
-    /// are not objects, run no guest code and have no effect beyond allocating their result.
-    /// `split` looks `Symbol.split` up only on an object separator (ES2025), so it is among
-    /// them; `match` and `search`, which make a RegExp of a string, are not.
-    #[inline]
-    pub(crate) const fn is_pure_string_method(self) -> bool {
-        matches!(
-            self,
-            Self::StringCharCodeAt
-                | Self::StringCharAt
-                | Self::StringSlice
-                | Self::StringSubstring
-                | Self::StringSubstr
-                | Self::StringIncludes
-                | Self::StringStartsWith
-                | Self::StringEndsWith
-                | Self::StringIndexOf
-                | Self::StringLastIndexOf
-                | Self::StringTrim
-                | Self::StringTrimStart
-                | Self::StringTrimEnd
-                | Self::StringAt
-                | Self::StringCodePointAt
-                | Self::StringToUpperCase
-                | Self::StringToLowerCase
-                | Self::StringConcat
-                | Self::StringRepeat
-                | Self::StringPadStart
-                | Self::StringPadEnd
-                | Self::StringSplit
-        )
-    }
-
     /// The natives whose searches run a RegExp's matcher, after which a search that ran out of
     /// backtracking stack raises (`Vm::regexp_search_outcome`).
     pub(crate) const fn searches_regexps(self) -> bool {

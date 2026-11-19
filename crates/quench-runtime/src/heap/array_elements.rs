@@ -507,11 +507,6 @@ impl ArrayElements {
         self.get(0)
     }
 
-    #[inline]
-    pub(crate) fn last(&self) -> Option<Value> {
-        self.len().checked_sub(1).map(|index| self.read(index))
-    }
-
     /// The values in order.
     #[inline]
     pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + Clone + '_ {

@@ -4,6 +4,29 @@ use super::Native;
 
 pub(crate) use crate::staged::typed_array_catalog::TypedArrayKind;
 
+/// The typed-array kinds, one row each: `(Kind, NativeVariant, "Name", width)`, in
+/// [`TypedArrayKind`] order. `$m` is a callback called as `$m! { rows }`; the snapshot kind
+/// encoding is generated from this list.
+macro_rules! for_each_typed_array {
+    ($m:ident) => {
+        $m! {
+            (Uint8, Uint8Array, "Uint8Array", 1),
+            (Uint8Clamped, Uint8ClampedArray, "Uint8ClampedArray", 1),
+            (Uint16, Uint16Array, "Uint16Array", 2),
+            (Uint32, Uint32Array, "Uint32Array", 4),
+            (Int8, Int8Array, "Int8Array", 1),
+            (Int16, Int16Array, "Int16Array", 2),
+            (Int32, Int32Array, "Int32Array", 4),
+            (BigInt64, BigInt64Array, "BigInt64Array", 8),
+            (BigUint64, BigUint64Array, "BigUint64Array", 8),
+            (Float16, Float16Array, "Float16Array", 2),
+            (Float32, Float32Array, "Float32Array", 4),
+            (Float64, Float64Array, "Float64Array", 8),
+        }
+    };
+}
+pub(crate) use for_each_typed_array;
+
 /// What one typed-array kind is: its constructor intrinsic, that constructor's name and the
 /// element width in bytes.
 pub(crate) struct TypedArrayRow {
