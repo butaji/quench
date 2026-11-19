@@ -3248,6 +3248,16 @@ impl Lowering<'_, '_> {
         Some(equal)
     }
 
+    /// `===` or `==` of two operands: a strict pair of strings the loop holds compares their held
+    /// facts (`held_strings_equal`), and any other pair is decided by `equality_words`.
+    fn equality(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
+        let Some(pair) = self.held_pair(pc as usize, left, right, strict) else {
+            return self.equality_words(state, pc, left, right, strict);
+        };
+        let bits = [self.operand_tagged(state, left)?, self.operand_tagged(state, right)?];
+        Some(self.held_strings_equal(pair, bits))
+    }
+
     /// `Vm::strict_equal` (`strict`) or `==` of two tagged operands. Identical bits are equal
     /// unless NaN, and two Numbers compare as Numbers. Strictly, a pair of strings or of
     /// legacy cells (BigInts) of one family compares by contents (`strict_equal_cells_in_lane`)
@@ -3255,7 +3265,7 @@ impl Lowering<'_, '_> {
     /// `undefined` equal each other and no object record, and two distinct object records are
     /// unequal; any other pair (a string, a Boolean, a function, which may be the IsHTMLDDA
     /// object) leaves at `pc`.
-    fn equality(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
+    fn equality_words(&mut self, state: &mut State, pc: u32, left: Operand, right: Operand, strict: bool) -> Option<ir::Value> {
         use crate::value::ValueLayout;
         let exit = self.guard_exit(state, pc);
         let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);

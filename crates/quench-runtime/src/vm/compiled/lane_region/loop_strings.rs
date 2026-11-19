@@ -1,21 +1,26 @@
 //! The flat strings a loop reads through a register it never redefines (`LoopString`): their
-//! facts the loop's entering edge proves once, which the loop's `length` reads and `charCodeAt`
-//! calls then hold, as C holds a string's length and its pointer across a loop. A string's length
+//! facts the loop's entering edge proves once, which the loop's `length` reads, `charCodeAt`
+//! calls and strict equalities then hold, as C holds a string's length and its pointer across a loop. A string's length
 //! never changes, and a flat string keeps its form for as long as the register holds it, so the
 //! held record and length stay true across the loop. Its units are read from the record where a
 //! call uses them (`strings::record_units`): a record's suballocations may change when the VM runs.
 
-use crate::bytecode::Register;
-use crate::staged::{string_length, strings};
+use crate::bytecode::{Register, WideInstruction};
+use crate::staged::{string_length, strings, Comparison, Operation};
 use super::*;
 use super::builtin_calls::continues;
 
-/// A loop-invariant register whose loop reads a `charCodeAt` of it, and so holds its flat facts.
+/// A loop-invariant register whose flat facts the loop holds: one a `charCodeAt` of the loop reads
+/// (`reads_units`), or one a strict equality of the loop compares (`held_strings_equal`).
 #[derive(Clone, Copy)]
 pub(super) struct LoopString {
     pub(super) header: usize,
     pub(super) back: usize,
     pub(super) register: Register,
+    pub(super) reads_units: bool,
+    /// Whether the loop's entering edge last hoisted it (`hoist_strings`): its variables are defined
+    /// only then.
+    pub(super) hoisted: bool,
 }
 
 /// The variables a held string's facts live in across its loop's iterations: its record's address
@@ -29,9 +34,22 @@ pub(super) struct StringVariables {
     length: Variable,
 }
 
-/// The held strings of `loops`: per loop, each register a `charCodeAt` in the loop reads that no
-/// instruction of the loop writes. A register that is no string leaves the loop at its header
-/// (`hoist_strings`), so only the receivers of a `charCodeAt` qualify, not every `length` read.
+/// The registers a strict equality at `instruction` compares: both operands of a strict `===` or `!==`
+/// jump or value row, where they are registers (`equality`).
+fn strict_compared(instruction: &WideInstruction) -> Vec<Register> {
+    match crate::vm::compiled::performed(instruction) {
+        Some(Operation::CompareJump { comparison: Comparison::Equality { strict: true, .. }, left, right, .. }) =>
+            [left, right].iter().filter_map(|operand| operand.register_index()).collect(),
+        Some(Operation::Equality { left, right, strict: true, .. }) => vec![left, right],
+        _ => Vec::new(),
+    }
+}
+
+/// The held strings of `loops`: per loop, each register a `charCodeAt` in the loop reads, and each
+/// register a strict equality in the loop compares, that no instruction of the loop writes. A register
+/// that is no string leaves the loop at its header (`hoist_strings`) only when a `charCodeAt` reads it;
+/// a register only compared is held where its entering edge proves a string. A `length` read of any
+/// other register is not held.
 pub(super) fn loop_strings(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)],
     intrinsics: &super::native_calls::Intrinsics, lowered: impl Fn(usize) -> bool) -> Vec<LoopString> {
     let mut held: Vec<LoopString> = Vec::new();
@@ -40,10 +58,17 @@ pub(super) fn loop_strings(unit: &super::super::lane_unit::Unit, loops: &[(usize
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let receivers = (header..).zip(body)
             .filter(|(pc, _)| super::native_calls::reads_string(intrinsics, *pc))
-            .map(|(_, instruction)| instruction.register_c());
-        for register in receivers {
-            if written.contains(&register) || held.iter().any(|string| string.header == header && string.register == register) { continue; }
-            held.push(LoopString { header, back, register });
+            .map(|(_, instruction)| (instruction.register_c(), true));
+        let compared = (header..).zip(body)
+            .flat_map(|(_, instruction)| strict_compared(instruction))
+            .map(|register| (register, false));
+        for (register, reads_units) in receivers.chain(compared) {
+            if written.contains(&register) { continue; }
+            if let Some(string) = held.iter_mut().find(|string| string.header == header && string.register == register) {
+                string.reads_units |= reads_units;
+                continue;
+            }
+            held.push(LoopString { header, back, register, reads_units, hoisted: false });
         }
     }
     // A loop inside one that holds the same register reads the facts the outer entry proved.
@@ -57,7 +82,7 @@ impl Lowering<'_, '_> {
     pub(super) fn loop_string(&self, pc: usize, register: Option<Register>) -> Option<LoopString> {
         let register = register?;
         self.loop_strings.iter().copied()
-            .filter(|string| string.register == register && (string.header..=string.back).contains(&pc))
+            .filter(|string| string.hoisted && string.register == register && (string.header..=string.back).contains(&pc))
             .min_by_key(|string| string.back - string.header)
     }
 
@@ -72,13 +97,25 @@ impl Lowering<'_, '_> {
         })
     }
 
+    /// The held strings of the loop at `header` that its entering edge `state` proves, marking each
+    /// (`hoisted`). A register only compared is held where `state` proves a string, else it stays unheld
+    /// and the loop compares it exactly; a register a `charCodeAt` reads leaves at the header, as before.
+    /// The last hoist of the header decides: the entering edge that reaches the loop body.
+    fn strings_to_hoist(&mut self, state: &State, header: usize) -> Vec<LoopString> {
+        for string in self.loop_strings.iter_mut().filter(|string| string.header == header) {
+            string.hoisted = string.reads_units || state.values[usize::from(string.register)].value.ty
+                .is_subtype(Type::language(crate::ValueType::String));
+        }
+        self.loop_strings.iter().copied().filter(|string| string.header == header && string.hoisted).collect()
+    }
+
     /// Prove the flat strings the loop at `header` holds on its entering edge (`loop_strings`). A
     /// register holding a rope takes its flat form from the VM (`LaneHelper::FlattenString`): the
     /// same string in a record that holds its units, which the register then holds. A register that
     /// is no string, whose text has no record form, or a length past int32 leaves at the header
     /// before the loop runs.
     pub(super) fn hoist_strings(&mut self, state: &mut State, header: usize) {
-        let held: Vec<LoopString> = self.loop_strings.iter().copied().filter(|string| string.header == header).collect();
+        let held = self.strings_to_hoist(state, header);
         if held.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);
         for string in held {
@@ -157,5 +194,63 @@ impl Lowering<'_, '_> {
         } else {
             strings::string_char_code_at(&mut stage, flat, index, exit)
         })
+    }
+
+    /// The held pair of a strict equality of two registers both held at `pc` (`equality`).
+    pub(super) fn held_pair(&self, pc: usize, left: Operand, right: Operand, strict: bool) -> Option<[LoopString; 2]> {
+        match (strict, self.loop_string(pc, left.register_index()), self.loop_string(pc, right.register_index())) {
+            (true, Some(left_string), Some(right_string)) => Some([left_string, right_string]),
+            _ => None,
+        }
+    }
+
+    /// `left === right` of a held pair, whose tagged words are `bits`, as C compares two strings: the
+    /// identity test first, then the held lengths; equal lengths go to `held_units_equal`.
+    pub(super) fn held_strings_equal(&mut self, pair: [LoopString; 2], bits: [ir::Value; 2]) -> ir::Value {
+        let [identical, distinct, sized, join] = std::array::from_fn(|_| self.builder.create_block());
+        let equal = self.builder.append_block_param(join, types::I8);
+        let same = self.raw_compare(Relation::Equal, bits[0], bits[1]);
+        self.branch_if(same, (identical, &[]), (distinct, &[]));
+        // A string is never NaN, so identical words are equal.
+        self.builder.switch_to_block(identical);
+        let holds = self.raw_const(Lane::I8, 1);
+        self.goto(join, &[holds]);
+        self.builder.switch_to_block(distinct);
+        let (left, right) = (self.string_variables(pair[0].register), self.string_variables(pair[1].register));
+        let (left_length, right_length) = (self.builder.use_var(left.length), self.builder.use_var(right.length));
+        let same_length = self.raw_compare(Relation::Equal, left_length, right_length);
+        let unequal = self.raw_const(Lane::I8, 0);
+        self.branch_if(same_length, (sized, &[]), (join, &[unequal]));
+        self.builder.switch_to_block(sized);
+        self.held_units_equal([left, right], bits, join);
+        self.builder.switch_to_block(join);
+        equal
+    }
+
+    /// The equal-length case of `held_strings_equal`, in the block it is entered in: two short records
+    /// compare their words (the form holds its units, zero-padded); any other pair is the VM's compare
+    /// (`LaneHelper::StrictEqual`). Its result goes to `join`.
+    fn held_units_equal(&mut self, [left, right]: [StringVariables; 2], bits: [ir::Value; 2], join: ir::Block) {
+        let (left_short, right_short) = (self.builder.use_var(left.short), self.builder.use_var(right.short));
+        let (left_record, right_record) = (self.builder.use_var(left.record), self.builder.use_var(right.record));
+        let meta = regions::flags(crate::staged::region::Region::HeapMeta.mutable());
+        let [words, compare] = std::array::from_fn(|_| self.builder.create_block());
+        let both_short_word = self.raw_binary(Binary::And, left_short, right_short);
+        let both_short = self.raw_compare_imm(Relation::NotEqual, both_short_word, 0);
+        self.branch_if(both_short, (words, &[]), (compare, &[]));
+        self.builder.switch_to_block(words);
+        let mut differ = self.raw_const(Lane::I64, 0);
+        for word in 0..crate::vm::wtf16::native_string::RECORD_SIZE / size_of::<u64>() {
+            let offset = (word * size_of::<u64>()) as i32;
+            let (a, b) = (self.raw_load(Lane::I64, meta, left_record, offset), self.raw_load(Lane::I64, meta, right_record, offset));
+            let mismatch = self.raw_binary(Binary::Xor, a, b);
+            differ = self.raw_binary(Binary::Or, differ, mismatch);
+        }
+        let same_text = self.raw_compare_imm(Relation::Equal, differ, 0);
+        self.goto(join, &[same_text]);
+        self.builder.switch_to_block(compare);
+        let result = self.helper_call(LaneHelper::StrictEqual, &bits);
+        let cells_equal = self.raw_unary(Unary::Narrow(Lane::I8), result);
+        self.goto(join, &[cells_equal]);
     }
 }
