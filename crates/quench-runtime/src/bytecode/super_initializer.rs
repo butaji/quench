@@ -2,7 +2,7 @@
 //! (`Function::super_initializer`).
 use super::{
     AtomTable, Constant, ConstructArguments, Function, ImmediateLayout, InitializerConstant, InitializerStore,
-    InitializerValue, Op, Register, SUPER_BASE_BINDING, Traits, WideInstruction,
+    InitializerValue, Register, SUPER_BASE_BINDING, Traits, WideInstruction,
 };
 use smallvec::SmallVec;
 
@@ -196,10 +196,10 @@ fn binds_parent_construct(parent: Register, [construct, check, binds]: [&WideIns
 /// of the list (the first parameter) and the spread of the list into it.
 fn rest_spread(records: &mut impl Iterator<Item = WideInstruction>) -> Option<Register> {
     let (array, list, append) = (records.next()?, records.next()?, records.next()?);
-    (array.op() == Op::MakeArray
+    (array.op().traits().has(Traits::ARRAY_MAKE)
         && list.op().traits().has(Traits::PLAIN_LOCAL_LOAD)
         && list.local_slot() == 0
-        && append.op() == Op::AppendArray
+        && append.op().traits().has(Traits::ARRAY_APPEND)
         && append.register_a() == array.result_register()
         && append.optional_register_b() == Some(list.result_register())
         && append.boolean_field(super::InstructionField::C) == Some(true))

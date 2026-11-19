@@ -483,6 +483,19 @@ impl Traits {
     /// An op that reads a frame slot into its result register: a local's binding or an arguments slot,
     /// the slot its `LocalSlot` immediate names. Tagged: `LoadLocal`, `ArgumentsLength`, `ArgumentGet`.
     pub(crate) const FRAME_SLOT_READ: Self = Self(1 << 123);
+    /// The op that appends an element window to an array under construction. Tagged: `AppendArray`.
+    pub(crate) const ARRAY_APPEND: Self = Self(1 << 124);
+    /// An op that reaches a binding by its name (an atom immediate): `LoadName`, `LoadNameCall`,
+    /// `LoadNameTypeof`, `ResolveName`, `StoreName`, `DeleteName`.
+    pub(crate) const BY_NAME_ACCESS: Self = Self(1 << 125);
+    /// A Wasm op whose register window's length the atomic operator in its immediate fixes. Tagged: `WasmAtomicAccess`.
+    pub(crate) const WASM_ATOMIC_WINDOW: Self = Self(1 << 126);
+    /// A Wasm op whose register window holds an exception's inputs. Tagged: `WasmExceptionNew`.
+    pub(crate) const WASM_EXCEPTION_WINDOW: Self = Self(1 << 127);
+    /// A Wasm op whose constant is a 64-bit memory offset. Tagged: `WasmMemoryAddress`.
+    pub(crate) const WASM_MEMORY_OFFSET_CONSTANT: Self = Self(1 << 53);
+    /// A Wasm op whose constant is a V128 lane shuffle. Tagged: `WasmSimdShuffle`.
+    pub(crate) const WASM_SHUFFLE_CONSTANT: Self = Self(1 << 58);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
