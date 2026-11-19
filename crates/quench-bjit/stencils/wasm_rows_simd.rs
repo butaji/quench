@@ -31,8 +31,9 @@
 //! traps leaves through `trap`, as the scalar rows do (the access is the only trap).
 
 use super::wasm_frame::{vector_read, vector_write};
-use super::{StencilMemory, read, trap, write};
+use super::{StencilMemory, StencilSimd, read, trap, write};
 use crate::staged::wasm_memory_vector::{load_vector, store_vector};
+use crate::staged::wasm_simd_rules::{selector_of, simd_scalar};
 use crate::staged::wasm_simd_lanes::{SimdOperator, shuffle as shuffle_bytes};
 use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, LAST_HOLE, Out, S, hole64};
 
@@ -125,8 +126,9 @@ pub(crate) unsafe fn splat<const OP: u32>(s: S) -> Out {
 /// to an i32, as the operator does).
 #[inline(always)]
 pub(crate) unsafe fn extract<const OP: u32>(s: S) -> Out {
-    let value = unsafe { operate::<OP>(vector_read::<HOLE_A>(&s), 0, hole64::<HOLE_B>() as u8) };
-    unsafe { write::<0>(&s, value as u64) };
+    let (left, lane) = unsafe { (vector_read::<HOLE_A>(&s), hole64::<HOLE_B>() as u8) };
+    let value = simd_scalar(&mut StencilSimd, selector_of(OP, lane), left, None);
+    unsafe { write::<0>(&s, value) };
     Out::Next(s)
 }
 

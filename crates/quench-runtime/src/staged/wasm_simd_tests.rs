@@ -4,7 +4,8 @@
 
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_memory::effective_address;
-use super::wasm_simd::{Lanes, NATIVE, Native, NativeOp, Simd, WasmSimd, native, simd};
+use super::wasm_simd::{Lanes, Native, NativeOp, Simd, WasmSimd};
+use super::wasm_simd_rules::{NATIVE, native, simd};
 use super::wasm_simd_concrete::{ConcreteSimd, execute};
 use super::wasm_step::Step;
 use super::wasm_tests::Probe;

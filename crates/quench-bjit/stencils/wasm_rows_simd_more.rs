@@ -5,8 +5,9 @@
 //! bytes is the operator it names (`load_operator`), and the zero forms are the bytes themselves.
 
 use super::wasm_frame::{vector_read, vector_write};
-use super::{StencilMemory, read, trap, write};
+use super::{StencilMemory, StencilSimd, read, trap, write};
 use crate::staged::wasm_memory_vector::load_lane;
+use crate::staged::wasm_simd_rules::{selector_of, simd_scalar};
 use crate::staged::wasm_simd_lanes::SimdOperator;
 use crate::wasm_codes::*;
 use crate::words::{HOLE_A, HOLE_B, Out, S};
@@ -143,10 +144,9 @@ pub(crate) unsafe fn shift<const OP: u32>(s: S) -> Out {
 /// `D` (a scalar word) = the any, all or bitmask test of vector `A`.
 #[inline(always)]
 pub(crate) unsafe fn test<const OP: u32>(s: S) -> Out {
-    unsafe {
-        let word = operate::<OP>(vector_read::<HOLE_A>(&s), 0, 0) as u64;
-        write::<0>(&s, word);
-    }
+    let left = unsafe { vector_read::<HOLE_A>(&s) };
+    let word = simd_scalar(&mut StencilSimd, selector_of(OP, 0), left, None);
+    unsafe { write::<0>(&s, word) };
     Out::Next(s)
 }
 

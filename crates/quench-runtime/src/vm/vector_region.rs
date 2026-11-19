@@ -15,7 +15,7 @@
 
 use super::*;
 use crate::compile::liveness::{RegisterMasks, RegisterSet, register_in};
-use crate::staged::wasm_simd::{vector_constant, vector_move};
+use crate::staged::wasm_simd_rules::{vector_constant, vector_move};
 use crate::staged::wasm_simd_concrete::ConcreteSimd;
 use crate::wasm::simd::{BitKernel, BitShift, ShuffleForm, SimdKernel};
 

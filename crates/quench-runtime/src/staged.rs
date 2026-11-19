@@ -113,6 +113,7 @@ pub(crate) mod wasm_memory_bytes;
 pub(crate) mod wasm_table_ops;
 pub(crate) mod wasm_operation;
 pub(crate) mod wasm_simd;
+pub(crate) mod wasm_simd_rules;
 pub(crate) mod wasm_simd_concrete;
 pub(crate) mod wasm_simd_lanes;
 pub(crate) mod wasm_step;

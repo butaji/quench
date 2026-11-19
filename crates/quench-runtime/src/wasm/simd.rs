@@ -6,91 +6,10 @@ use super::{V128_BYTES, WasmType, WasmValue};
 use crate::bytecode::Register;
 use crate::staged::wasm_emit;
 pub(crate) use crate::staged::wasm_simd_lanes::{SimdOperator, lane, lane_mask, replace};
+pub(crate) use crate::staged::wasm_simd_rules::SimdKernel;
 
 mod bits;
 pub(crate) use bits::{bits_of, value_of};
-
-const SELECTOR_LANE_BITS: u32 = u8::BITS;
-const SELECTOR_LANE_MASK: u32 = u8::MAX as u32;
-
-#[inline(always)]
-fn scalar(value: WasmValue) -> u64 {
-    match value {
-        WasmValue::I32(value) => u64::from(value as u32),
-        WasmValue::F32(bits) => u64::from(bits),
-        WasmValue::I64(value) => value as u64,
-        WasmValue::F64(bits) => bits,
-        _ => unreachable!("decoded SIMD scalar"),
-    }
-}
-
-/// An operator as an execution needs it (`SimdKernel::of`): its operand and result types, its lane
-/// count, and the operator whose bits body computes it.
-pub(crate) struct SimdKernel {
-    pub(crate) left: WasmType,
-    pub(crate) right: Option<WasmType>,
-    /// How many lanes a lane immediate may name: one for an operator without one.
-    lanes: u32,
-    result: WasmType,
-    operator: SimdOperator,
-}
-
-impl SimdKernel {
-    /// The kernel and lane immediate a selector names: none for an unknown operator or a
-    /// lane past its count.
-    #[inline]
-    pub(crate) const fn of(selector: u32) -> Option<(&'static Self, u8)> {
-        let index = (selector >> SELECTOR_LANE_BITS) as usize;
-        if index >= SimdOperator::KERNELS.len() {
-            return None;
-        }
-        let kernel = &SimdOperator::KERNELS[index];
-        let lane = (selector & SELECTOR_LANE_MASK) as u8;
-        if (lane as u32) < kernel.lanes { Some((kernel, lane)) } else { None }
-    }
-
-    /// The type of the operator's result, from its table entry.
-    pub(crate) fn result_type(&self, _lane: u8) -> WasmType {
-        self.result
-    }
-
-    /// The type of the result of the operator `selector` names.
-    pub(crate) fn result_of(selector: u32) -> WasmType {
-        SimdOperator::KERNELS[(selector >> SELECTOR_LANE_BITS) as usize].result
-    }
-
-    /// The operator applied to operands given as bits, its result as bits: a vector whole, a
-    /// scalar in the low bits (`ScalarBits`), as compiled code holds them.
-    #[inline(always)]
-    pub(crate) fn apply_bits(&self, left: u128, right: u128, lane: u8) -> u128 {
-        self.operator.bits(left, right, lane)
-    }
-}
-
-/// The lanes a lane immediate may name: the width's count when the operator takes one (`indexed`),
-/// one otherwise.
-const fn lane_count(indexed: &[&str], width: u32) -> u32 {
-    match indexed {
-        [_] => 128 / width,
-        _ => 1,
-    }
-}
-
-/// The kernel table, one entry per operator in tag order, generated from the operator list.
-macro_rules! simd_kernels {
-    ($($name:ident $([$lane:ident])? : $width:expr, $left:ident, $right:expr, $result:ident, $family:ident => |$a:ident, $b:ident, $l:ident| $body:expr;)*) => {
-        impl SimdOperator {
-            const KERNELS: &'static [SimdKernel] = &[$(SimdKernel {
-                left: WasmType::$left,
-                right: $right,
-                lanes: lane_count(&[$(stringify!($lane))?], $width),
-                result: WasmType::$result,
-                operator: SimdOperator::$name,
-            },)*];
-        }
-    };
-}
-crate::staged::wasm_simd_lanes::simd_operator_list!(simd_kernels);
 
 /// The wasmparser operator of each SIMD operator, generated from the operator list: a lane
 /// operator's lane immediate is read from the instruction.
@@ -109,19 +28,6 @@ macro_rules! wasm_operators {
 crate::staged::wasm_simd_lanes::simd_operator_list!(wasm_operators);
 
 impl SimdOperator {
-    pub(crate) fn from_selector(selector: u32) -> Option<(Self, u8)> {
-        let (_, lane) = SimdKernel::of(selector)?;
-        Some((Self::ALL[(selector >> SELECTOR_LANE_BITS) as usize], lane))
-    }
-
-    pub(crate) fn selector(self, lane: u8) -> u32 {
-        ((self as u32) << SELECTOR_LANE_BITS) | u32::from(lane)
-    }
-
-    pub(crate) fn right_type(self) -> Option<WasmType> {
-        Self::KERNELS[self as usize].right
-    }
-
     /// The operator on `left` and `right` at the `WasmValue` boundary: the bits body, typed by the
     /// kernel's result.
     pub(crate) fn apply(self, left: WasmValue, right: Option<WasmValue>, index: u8) -> WasmValue {
@@ -132,7 +38,7 @@ impl SimdOperator {
 
 /// A shuffle's sixteen byte indices, applied to `left` and `right` (the operands' bytes, `left` first).
 pub(crate) fn shuffle(left: u128, right: u128, indices: [u8; V128_BYTES]) -> u128 {
-    crate::staged::wasm_simd_lanes::shuffle(left, right, u128::from_le_bytes(indices))
+    crate::staged::wasm_simd_rules::shuffle_bits(left, right, indices)
 }
 /// The bytes a shuffle selects from: both operands'.
 const SHUFFLE_SOURCE_BYTES: usize = V128_BYTES * 2;
@@ -570,7 +476,7 @@ mod bit_kernel_tests {
     #[test]
     fn bit_kernels_match_their_operators() {
         for (index, _) in SimdOperator::ALL.iter().enumerate() {
-            let selector = (index as u32) << super::SELECTOR_LANE_BITS;
+            let selector = (index as u32) << crate::staged::wasm_simd_rules::SELECTOR_LANE_BITS;
             let (kernel, lane) = SimdKernel::of(selector).expect("operator kernel");
             for count in [None, Some(0)] {
                 let Some(bits) = BitKernel::of(selector, count) else {
