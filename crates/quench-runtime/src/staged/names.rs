@@ -11,7 +11,8 @@ use crate::Value;
 
 /// An iteration or spread step the host makes by the interpreter's own definition
 /// (`Vm::call_out`): the protocol runs guest code (`@@iterator`, `next`, `return`), so a
-/// frame answers it with a callout.
+/// frame answers it with a callout; and the test of a receiver's constant fields, whose
+/// answer is VM state (a cache entry), which a frame answers the same way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Protocol {
     /// The iterator of the operand (`GetIterator`).
@@ -28,6 +29,12 @@ pub(crate) enum Protocol {
     /// parameters while the rest register (`rest`, the second operand) holds `undefined`,
     /// else the array there. A key no kept value answers makes the rest array, into `rest`.
     RestView { get: bool, fixed: usize, rest: Register },
+    /// Whether the operand, a base class constructor's fresh receiver at the run of leading
+    /// constant fields its body defines first, already holds that run as its defines would
+    /// leave it (`ConstantFieldsHeld`): its exact shape is the one the run's first define,
+    /// through cache site `site`, found already holding its name (`Vm::constant_fields_held`).
+    /// It reads one cache entry and a shape, runs no guest code and raises nothing.
+    ConstantFieldsHeld { site: u16 },
 }
 
 /// The staged operation `instruction` denotes among the name, environment and iteration
@@ -77,6 +84,8 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
         Op::GetIterator => (Protocol::GetIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ForInStart => (Protocol::ForInStart, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::IteratorClose => (Protocol::IteratorClose, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::ConstantFieldsHeld => (Protocol::ConstantFieldsHeld { site: instruction.cache_site_index() },
+            Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::RestLength => (Protocol::RestView { get: false, fixed: instruction.array_length(), rest: instruction.register_b() },
             Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::RestGet => (Protocol::RestView { get: true, fixed: instruction.array_length(), rest: instruction.register_c() },

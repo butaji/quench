@@ -15,6 +15,8 @@ pub(crate) mod counts {
     thread_local! {
         pub(crate) static GLOBAL_CALL_OUTS: Cell<usize> = const { Cell::new(0) };
         pub(crate) static DIRECT_GLOBAL_STORES: Cell<usize> = const { Cell::new(0) };
+        /// The receivers whose run of constant field defines was skipped as already held.
+        pub(crate) static CONSTANT_FIELD_SKIPS: Cell<usize> = const { Cell::new(0) };
     }
 
     pub(crate) fn bump(counter: &'static std::thread::LocalKey<Cell<usize>>) {
@@ -182,8 +184,8 @@ impl<H: Host> Vm<H> {
         result
     }
 
-    /// An iteration or spread `step` of its operand values: the value it defines, if any
-    /// (`AppendArray` defines none).
+    /// An iteration or spread `step` of its operand values, or a receiver's constant fields
+    /// test: the value it defines, if any (`AppendArray` defines none).
     fn protocol_step(&mut self, p: &ResidualProgram, step: Protocol, array: Option<Value>, operand: Option<Value>)
         -> Result<Option<Value>, JsError> {
         let source = operand.unwrap_or(Value::UNDEFINED);
@@ -192,6 +194,7 @@ impl<H: Host> Vm<H> {
             Protocol::ForInStart => self.for_in_start(p, source).map(Some),
             Protocol::IteratorClose => self.iterator_close(p, source).map(Some),
             Protocol::RestView { .. } => unreachable!("a rest view's step reads its activation (`rest_view_step`)"),
+            Protocol::ConstantFieldsHeld { site } => Ok(Some(Value::boolean(self.constant_fields_held(source, site)))),
             Protocol::AppendArray { length, spread } => {
                 let array = array.expect("AppendArray names its array");
                 self.append_array_literal_holes(array, length)?;
