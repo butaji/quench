@@ -231,6 +231,8 @@ function resolveInput(input, stage) {
     if (stage >= 2) code += " __nr = createNameResolver(__p); resolveNamesInTypes(__p, __nr); resolveNamesInProtocols(__p, __nr);";
     if (stage >= 3) code += " resolveTypeDefsInTypes(__p); resolveTypeDefsInProtocols(__p); checkRecursiveTypes(__p); synthesizeStructAccessors(__p); synthesizeEnumFunctions(__p);";
     if (stage >= 4) code += " resolveNamesInFunctions(__p, __nr);";
+    if (stage >= 5) code += " resolveTypeDefsInFunctions(__p);";
+    if (stage >= 6) code += " flattenProtocolExtends(__p);";
     run(code);
     return run("__p");
 }

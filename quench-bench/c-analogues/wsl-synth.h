@@ -130,6 +130,29 @@ static Ast *rw(const Rw *r, Ast *n) {
     t->u.intLit.preferred = rw_plain(literal_preferred(n));
     return t;
   }
+  case A_FUNCPARAMETER: {
+    Ast *t = mk_from(A_FUNCPARAMETER, n);
+    t->u.named.name = n->u.named.name;
+    t->u.named.type = rw(r, n->u.named.type);
+    return t;
+  }
+  case A_PROTOCOLFUNCDECL: {
+    /* Rewriter.visitProtocolFuncDecl: a new node; possibleOverloads (live) and protocolDecl are shared */
+    Ast *t = mk_from(A_PROTOCOLFUNCDECL, n);
+    t->u.func.name = n->u.func.name;
+    t->u.func.isCast = n->u.func.isCast;
+    t->u.func.shaderType = n->u.func.shaderType;
+    t->u.func.isRestricted = 0;
+    t->u.func.returnType = rw(r, n->u.func.returnType);
+    for (int i = 0; i < n->u.func.typeParameters.n; i++)
+      list_push(&t->u.func.typeParameters, rw(r, n->u.func.typeParameters.v[i]));
+    for (int i = 0; i < n->u.func.parameters.n; i++)
+      list_push(&t->u.func.parameters, rw(r, n->u.func.parameters.v[i]));
+    t->u.func.hasOv = n->u.func.hasOv;
+    t->u.func.ov = n->u.func.ov;
+    t->u.func.protocolDecl = n->u.func.protocolDecl;
+    return t;
+  }
   case A_TYPEVARIABLE:
   case A_TYPEDEF:
   case A_STRUCTTYPE:
@@ -353,7 +376,9 @@ static void synth_enum_functions(Program *p, NameCtx *global, int count) {
 
 /* resolveNamesInFunctions: the functions by name in the order the program's function map gives
  * (names by first addition, each name's overloads in addition order). */
-static void names_functions(Program *p, NameCtx *global) {
+/* The JS function map's order: each name in first-appearance order, then its functions in order. */
+typedef void (*FuncFn)(void *cx, Ast *f);
+static void each_func_in_map_order(Program *p, FuncFn fn, void *cx) {
   for (int i = 0; i < p->statements.n; i++) {
     Ast *first = p->statements.v[i];
     if (first->tag != A_FUNCDEF && first->tag != A_NATIVEFUNC) continue;
@@ -367,9 +392,48 @@ static void names_functions(Program *p, NameCtx *global) {
     for (int k = i; k < p->statements.n; k++) {
       Ast *f = p->statements.v[k];
       if ((f->tag == A_FUNCDEF || f->tag == A_NATIVEFUNC) && strcmp(f->u.func.name, name) == 0)
-        nr_statement(global, f);
+        fn(cx, f);
     }
   }
+}
+static void nf_cb(void *cx, Ast *f) { nr_statement((NameCtx *)cx, f); }
+static void names_functions(Program *p, NameCtx *global) { each_func_in_map_order(p, nf_cb, global); }
+
+/* resolveTypeDefsInFunctions */
+static void tdr_func_cb(void *cx, Ast *f) { (void)cx; tdr_visit(f); }
+static void resolve_typedefs_in_functions(Program *p) { each_func_in_map_order(p, tdr_func_cb, NULL); }
+
+/* ---- flattenProtocolExtends ---- */
+static Ast *FL_STACK[256];
+static int FL_N;
+
+/* ProtocolDecl.add: sets the signature's protocol and appends it */
+static void proto_add(Ast *proto, Ast *sig) {
+  sig->u.func.protocolDecl = proto;
+  list_push(&proto->u.protocolDecl.signatures, sig);
+}
+
+static void fl_flatten(Ast *proto) {
+  if (!proto->u.protocolDecl.extends.n) return;
+  for (int i = 0; i < FL_N; i++)
+    if (FL_STACK[i] == proto) name_throw(proto, "", "Recursive Protocol");
+  FL_STACK[FL_N++] = proto;
+  for (int i = 0; i < proto->u.protocolDecl.extends.n; i++) {
+    Ast *parent = proto->u.protocolDecl.extends.v[i]->u.nameOnly.target;
+    fl_flatten(parent);
+    Ast *from = parent->u.protocolDecl.typeVariable;
+    Ast *to = proto->u.protocolDecl.typeVariable;
+    Rw r = {&from, &to, 1, 0};
+    for (int j = 0; j < parent->u.protocolDecl.signatures.n; j++)
+      proto_add(proto, rw(&r, parent->u.protocolDecl.signatures.v[j]));
+  }
+  memset(&proto->u.protocolDecl.extends, 0, sizeof(AstList));
+  FL_N--;
+}
+
+static void flatten_protocol_extends(Program *p) {
+  for (int i = 0; i < p->statements.n; i++)
+    if (p->statements.v[i]->tag == A_PROTOCOLDECL) fl_flatten(p->statements.v[i]);
 }
 
 #endif

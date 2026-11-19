@@ -142,6 +142,7 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
   /* a throw unwinds the recursion stacks without popping them */
   RC_N = 0;
   TDR_N = 0;
+  FL_N = 0;
   jmp_buf top;
   WSL_NH = 0;
   WSL_HANDLERS[WSL_NH++] = &top;
@@ -183,6 +184,8 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
       synth_enum_functions(&PREP_OUT, global, PREP_OUT.statements.n);
     }
     if (STAGE >= 4) names_functions(&PREP_OUT, global);
+    if (STAGE >= 5) resolve_typedefs_in_functions(&PREP_OUT);
+    if (STAGE >= 6) flatten_protocol_extends(&PREP_OUT);
   }
   WSL_NH = 0;
   buf_str(b, "program\n");

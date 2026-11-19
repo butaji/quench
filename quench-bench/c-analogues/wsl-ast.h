@@ -34,7 +34,7 @@ struct Ast {
     /* FuncDef, NativeFunc, ProtocolFuncDecl */
     struct { const char *name; int isCast; const char *shaderType; int isRestricted;
              Ast *returnType; AstList typeParameters; AstList parameters; Ast *body;
-             int hasOv; AstList *ov; } func;   /* ov: possibleOverloads (ProtocolFuncDecl), live */
+             int hasOv; AstList *ov; Ast *protocolDecl; } func;   /* ov: possibleOverloads (ProtocolFuncDecl), live; protocolDecl: ProtocolFuncDecl.protocolDecl */
     /* TypeRef */
     struct { const char *name; AstList typeArguments; Ast *type; } typeRef;   /* type: resolved target */
     /* PtrType, ArrayRefType */
