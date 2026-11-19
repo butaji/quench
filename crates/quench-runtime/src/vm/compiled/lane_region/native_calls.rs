@@ -21,6 +21,7 @@ use crate::heap::Native;
 use crate::vm::number::{MathFunction, math_function};
 use crate::vm::global_facts::GlobalRead;
 use super::builtin_calls::Builtin;
+use super::data_view_calls::DataViewCall;
 use crate::vm::global_facts::scalar_native;
 
 /// A native a call runs inline: a Math function of Numbers, the wrapping product of two
@@ -37,6 +38,8 @@ pub(super) enum Inline {
     Builtin(Builtin),
     /// A scalar native (`global_facts::scalar_native`), called in place by its helper (`Lowering::scalar_native_call`).
     Scalar,
+    /// A DataView getter or setter of a fixed-width element, run on the view's bytes (`data_view_calls`).
+    DataView(DataViewCall),
 }
 
 /// The argument counts of the inline operations.
@@ -56,17 +59,18 @@ impl Inline {
         }
         .or_else(|| Builtin::of(native).map(Self::Builtin))
         .or_else(|| scalar_native(native).then_some(Self::Scalar))
+        .or_else(|| DataViewCall::of(native).map(Self::DataView))
     }
 
     /// The arguments the inline operation reads; a call passing another count takes the native.
     const fn arguments(self) -> u16 {
-        match self { Self::Imul | Self::Extreme(_) | Self::Scalar => BINARY_ARGUMENTS, Self::Unary(_) | Self::LeadingZeros => UNARY_ARGUMENTS, Self::Builtin(builtin) => builtin.arguments() }
+        match self { Self::Imul | Self::Extreme(_) | Self::Scalar => BINARY_ARGUMENTS, Self::Unary(_) | Self::LeadingZeros => UNARY_ARGUMENTS, Self::Builtin(builtin) => builtin.arguments(), Self::DataView(call) => call.required() }
     }
 
     /// Whether a call passing `count` arguments runs the operation inline: a scalar native takes one or two (`parseInt(s)`,
     /// `parseInt(s, 10)`), every other operation exactly `arguments`.
     const fn accepts(self, count: u16) -> bool {
-        match self { Self::Scalar => count == 1 || count == BINARY_ARGUMENTS, _ => count == self.arguments() }
+        match self { Self::Scalar => count == 1 || count == BINARY_ARGUMENTS, Self::DataView(call) => call.accepts(count), _ => count == self.arguments() }
     }
 
     /// Whether the operation may change an array's elements, which a loop's hoisted views
@@ -224,6 +228,7 @@ impl Lowering<'_, '_> {
         match inline {
             Inline::Builtin(builtin) => self.builtin_call(state, pc, instruction, builtin, exit),
             Inline::Scalar => self.scalar_native_call(state, pc, instruction, held, exit),
+            Inline::DataView(call) => self.data_view_call(state, instruction, call, exit),
             _ => self.math_call(state, instruction, inline, exit),
         }
         true

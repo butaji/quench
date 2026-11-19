@@ -205,7 +205,7 @@ impl<H: Host> Vm<H> {
         Some((value, native, self.native_holder(object)?))
     }
 
-    /// The field read `instruction` of a method of strings or arrays that a call runs inline
+    /// The field read `instruction` of a method of strings, arrays or DataViews that a call runs inline
     /// (`lane_region::native_calls`), where the realm's prototype holds that native as an own
     /// data property now. The receiver is not known: the call guards the callee it reads.
     pub(in crate::vm) fn method_native(&mut self, instruction: &crate::bytecode::WideInstruction) -> Option<GlobalRead> {
@@ -216,6 +216,7 @@ impl<H: Host> Vm<H> {
         let native = row.native;
         let holder = match row.holder {
             crate::vm::native_rows::Holder::ArrayPrototype => self.array_proto,
+            crate::vm::native_rows::Holder::DataViewPrototype => self.data_view_proto,
             _ => self.string_proto,
         };
         let value = self.own_plain_data(holder, atom)??;
