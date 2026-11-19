@@ -41,6 +41,36 @@ pub(in crate::vm) struct FieldOperands {
     pub(in crate::vm) value: Option<Value>,
 }
 
+/// The operands of a bulk array step (`array.fill`, `array.copy`), decoded from the registers: the
+/// destination and source references, the element count, and the output and input indices (`input`
+/// is only read by a copy).
+pub(in crate::vm) struct ArrayBulkOperands {
+    pub(in crate::vm) destination: Value,
+    pub(in crate::vm) source: Value,
+    pub(in crate::vm) count: u64,
+    pub(in crate::vm) output: u64,
+    pub(in crate::vm) input: u64,
+}
+
+impl<H: Host> Vm<H> {
+    /// The operands of a bulk array step of `i`'s registers, as `wasm_array_bulk_step` and the lane
+    /// decode them (`copy` for `array.copy`, else `array.fill`).
+    #[inline(always)]
+    pub(in crate::vm) fn wasm_array_bulk_operands(
+        &self,
+        i: WideInstruction,
+        read: impl Fn(&Self, u16) -> Value,
+        copy: bool,
+    ) -> Result<ArrayBulkOperands, JsError> {
+        let (destination, source) = (read(self, i.register_a()), read(self, i.register_b()));
+        let count = u64::from(Self::wasm_u32_operand(read(self, i.register_c()))?);
+        let (output, input) = i.register_pair();
+        let output = u64::from(Self::wasm_u32_operand(read(self, output))?);
+        let input = if copy { u64::from(Self::wasm_u32_operand(read(self, input))?) } else { 0 };
+        Ok(ArrayBulkOperands { destination, source, count, output, input })
+    }
+}
+
 /// Whether the GC value opcode `op` reads the running instance's environment: the
 /// operations that name one of its functions or tables' targets.
 #[inline(always)] pub(in crate::vm) const fn wasm_gc_reads_instance(op: Op) -> bool {
@@ -196,22 +226,15 @@ impl<H: Host> Vm<H> {
                 Ok(Some(Value::integer(length as i32)))
             }
             GcStep::ArrayFill => {
-                let (destination, source) = (read(self, i.register_a()), read(self, i.register_b()));
-                let count = u64::from(Self::wasm_u32_operand(read(self, i.register_c()))?);
-                let (output, _) = i.register_pair();
-                let output = u64::from(Self::wasm_u32_operand(read(self, output))?);
+                let ops = self.wasm_array_bulk_operands(i, read, false)?;
                 let stage = &mut HeapStage { vm: self };
-                array_fill(stage, destination.to_bits(), output, source.to_bits(), count)?;
+                array_fill(stage, ops.destination.to_bits(), ops.output, ops.source.to_bits(), ops.count)?;
                 Ok(None)
             }
             _ => {
-                let (destination, source) = (read(self, i.register_a()), read(self, i.register_b()));
-                let count = u64::from(Self::wasm_u32_operand(read(self, i.register_c()))?);
-                let (output, input) = i.register_pair();
-                let output = u64::from(Self::wasm_u32_operand(read(self, output))?);
-                let input = u64::from(Self::wasm_u32_operand(read(self, input))?);
+                let ops = self.wasm_array_bulk_operands(i, read, true)?;
                 let stage = &mut HeapStage { vm: self };
-                array_copy(stage, destination.to_bits(), output, source.to_bits(), input, count)?;
+                array_copy(stage, ops.destination.to_bits(), ops.output, ops.source.to_bits(), ops.input, ops.count)?;
                 Ok(None)
             }
         }

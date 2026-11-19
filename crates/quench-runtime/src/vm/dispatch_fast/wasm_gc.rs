@@ -4,7 +4,7 @@ use super::*;
 use super::super::dispatch_wasm::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance};
 use super::super::wasm_gc::GcFieldIndex;
 use super::super::wasm_gc::stage::HeapStage;
-use crate::staged::wasm_gc::{Aggregate, GcStep, field_read, field_write};
+use crate::staged::wasm_gc::{Aggregate, GcStep, array_copy, array_fill, array_length, field_read, field_write, non_null};
 use crate::wasm::gc::{GcField, GcFieldAccess};
 
 /// The `wasm_gc_value_op` numbered `OP`.
@@ -43,6 +43,50 @@ fn lane_gc_field<H: Host>(
     }
 }
 
+/// `array.fill` and `array.copy` (`GcStep::ArrayFill`, `ArrayCopy`) as the staged rules run them
+/// over the heap, their operands decoded by `Vm::wasm_array_bulk_operands`.
+#[inline(always)]
+fn lane_gc_array_bulk<H: Host>(
+    vm: &mut Vm<H>,
+    step: GcStep,
+    i: WideInstruction,
+    read: impl Fn(&Vm<H>, u16) -> Value,
+) -> Result<Option<Value>, crate::vm::JsError> {
+    let copy = step == GcStep::ArrayCopy;
+    let ops = vm.wasm_array_bulk_operands(i, read, copy)?;
+    if copy {
+        array_copy(&mut HeapStage { vm }, ops.destination.to_bits(), ops.output, ops.source.to_bits(), ops.input, ops.count)?;
+    } else {
+        array_fill(&mut HeapStage { vm }, ops.destination.to_bits(), ops.output, ops.source.to_bits(), ops.count)?;
+    }
+    Ok(None)
+}
+
+/// The non-field GC steps the lane runs as the staged rules over the heap: `ref.as_non_null`,
+/// `array.len`, `array.fill` and `array.copy`. `None` for the others, which the interpreter's step
+/// makes (`Vm::wasm_gc_value_step`).
+#[inline(always)]
+fn lane_gc_rule<H: Host>(
+    vm: &mut Vm<H>,
+    step: GcStep,
+    i: WideInstruction,
+    read: impl Fn(&Vm<H>, u16) -> Value + Copy,
+) -> Option<Result<Option<Value>, crate::vm::JsError>> {
+    match step {
+        GcStep::AsNonNull => {
+            let check = crate::wasm::reference::NonNullCheck::from_tag(i.imm()).expect("validated non-null check");
+            let reference = read(vm, i.register_b()).to_bits();
+            Some(non_null(&mut HeapStage { vm }, reference, check.trap()).map(|word| Some(Value::from_bits(word))))
+        }
+        GcStep::ArrayLen => {
+            let reference = read(vm, i.register_b()).to_bits();
+            Some(array_length(&mut HeapStage { vm }, reference).map(|length| Some(Value::integer(length as i32))))
+        }
+        GcStep::ArrayFill | GcStep::ArrayCopy => Some(lane_gc_array_bulk(vm, step, i, read)),
+        _ => None,
+    }
+}
+
 lane_handler! {
     /// The `wasm_gc_value_op` numbered `OP` of the running function's registers, made by the
     /// interpreter's step; a trap, which writes nothing, takes the general path to raise it.
@@ -68,8 +112,19 @@ lane_handler! {
             }
             next!(cx, r, following(ip), view)
         }
-        let Ok(value) = vm.wasm_gc_value_step(program, env, instruction, |_, register| r.get(register)) else {
-            return exit(ip);
+        let rule = match GcStep::of(op) {
+            Some(step) => lane_gc_rule(vm, step, instruction, |_, register| r.get(register)),
+            None => None,
+        };
+        let value = match rule {
+            Some(Ok(value)) => value,
+            Some(Err(_)) => return exit(ip),
+            None => {
+                let Ok(value) = vm.wasm_gc_value_step(program, env, instruction, |_, register| r.get(register)) else {
+                    return exit(ip);
+                };
+                value
+            }
         };
         if let Some(value) = value {
             r.set(instruction.result_register(), value);
