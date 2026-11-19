@@ -157,8 +157,9 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     Some(padded_holes(match heap {
         Heap::IcGet | Heap::IcKnownGet => { let ic = decoded.ic.unwrap_or_default(); [object, upper, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
         Heap::IcSet { .. } | Heap::IcKnownSet { .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
-        Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), 0],
-        Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), 0],
+        // Hole 4: the shape an ungated store's slot-type proof is of (`Decoded::slot_shape`).
+        Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), u64::from(decoded.slot_shape.unwrap_or_default())],
+        Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), u64::from(decoded.slot_shape.unwrap_or_default())],
         Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole, 0, 0],
         Heap::Site | Heap::SiteChain => [object, upper, decoded.hole, 0, 0],
         Heap::Held => [object, folded, decoded.hole, 0, 0],

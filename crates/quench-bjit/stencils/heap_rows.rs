@@ -21,7 +21,8 @@
 //! (`LENGTH_ROW`, an array's or a string's) takes the destination in hole 0 and the base word's frame offset in hole 1. A
 //! capture store (`CAPTURE_SET_ROW`) takes its value operand in hole 0 and the slot and its byte
 //! offset in holes 1 and 2. A field store (`SITE_STORE_ROW`) takes the object register's frame
-//! offset in hole 0, its value operand in hole 1 and the cache entry's byte offset in hole 2. A
+//! offset in hole 0, its value operand in hole 1 and the cache entry's byte offset in hole 2; an
+//! ungated one the admitted tags in hole 3 and the shape its slot type was proved of in hole 4. A
 //! chained site read (`ENTRY`) carries both entry offsets in hole 2. The rows of the activation's
 //! receiver (`THIS_SITE_ROW`, `THIS_STORE_ROW`) take it from their window's header (`context_word`), so their hole 0 is the
 //! destination alone (a read) or unused (a store).

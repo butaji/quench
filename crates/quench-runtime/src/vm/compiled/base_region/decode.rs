@@ -114,6 +114,10 @@ pub(super) struct Decoded {
     /// The observed type of the own slot a field store writes, where its site proves one own load
     /// (`NativeFieldLoad::ty`).
     pub(super) slot: Option<crate::typed_ir::Type>,
+    /// The exact shape whose slot `slot` is the type of, for a field store: an ungated store row
+    /// writes only into a receiver of this shape (`plan::site_holes`, hole 4), as the site's live
+    /// cache entry may name another shape, whose slot type nothing proved.
+    pub(super) slot_shape: Option<u32>,
     /// A site read's or store's one own flat entry (`decode::fields::ic_hole`: the exact shape, and the
     /// slot's byte offset above 32 bits), whose inline-cache row runs first and falls to the site row
     /// on a miss (`plan::ic_plan`).
@@ -140,7 +144,7 @@ pub(super) struct Decoded {
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, proven: false, relies: false }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, proven: false, relies: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -193,11 +197,21 @@ impl Decoded {
         self.stored_slot_type().filter(|_| self.store_arm(place).is_none()).and(self.declined)
     }
 
-    /// Whether the store row writes its operand in `place` through the store gate: unless the value is
-    /// proven immediate, or is the int32 its slot's type holds (`store_arm`), it may need a barrier log.
+    /// Whether the store row writes its operand in `place` through the store gate.
+    ///
+    /// Invariant: an ungated row writes with no slot-type join, so it is chosen only where the plan
+    /// proved the slot's observed type admits every value the row can write (`store_arm`: the place's
+    /// type is the slot's, or the slot's int32 type holds the frame word once tested), and the value
+    /// needs no barrier log (immediate, or the tested int32). Every other store, including an
+    /// immediate (`Place::Const`, `Place::PinF`, a pinned int32) into a slot whose type the site does
+    /// not prove (no single own load, `Decoded::slot` `None`) or does not admit, is gated: the gate
+    /// refuses every store while slot types are tracked, so the interpreter's store joins the type.
+    /// Slot types only widen, so an admission proved here stays true while the code runs.
     pub(super) fn gated(&self, place: Place) -> bool {
-        !value_fact(place).is_subtype(crate::typed_ir::Type::IMMEDIATE)
-            && !self.store_arm(place).is_some_and(|arm| arm.holds.is_some())
+        match self.store_arm(place) {
+            None => true,
+            Some(arm) => arm.holds.is_none() && !value_fact(place).is_subtype(crate::typed_ir::Type::IMMEDIATE),
+        }
     }
 
     /// Whether the row makes a call or a step the interpreter's operation runs, either of which may
