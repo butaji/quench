@@ -1818,6 +1818,14 @@ pub(crate) struct Vm<H> {
     /// an await's job leaves its function's program active for the queue's next jobs, so a
     /// collection keeps each of these, which the queue makes active again when it ends.
     job_queue_programs: Vec<ProgramId>,
+    /// Whether the innermost running job queue drains with no stopping condition
+    /// (`Vm::run_job_queue`), so an await's job it runs may chain the queue's next ones in its
+    /// lane run (`Vm::chain_next_job`).
+    queue_chains: bool,
+    /// Whether the running job is an unobserved Promise job of a queue that chains
+    /// (`Vm::run_promise_job`), until the await resumption it runs takes it
+    /// (`Vm::resume_queued_await`).
+    chainable_job: bool,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,

@@ -16,6 +16,8 @@ impl<H: Host> Vm<H> {
             queue_resumed: Value::UNDEFINED,
             unobserved_jobs_entered: false,
             job_queue_programs: Vec::new(),
+            queue_chains: false,
+            chainable_job: false,
             specialized: true,
             heap: Heap::new(),
             realm: Realm {
