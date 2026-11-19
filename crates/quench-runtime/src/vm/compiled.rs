@@ -3814,8 +3814,14 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
 /// ToBoolean of `bits`, a value whose cell decides it (`Vm::truthy`): a read, which neither
 /// allocates nor runs guest code.
 unsafe extern "C" fn lane_truthy<H: Host>(vm: u64, _residual: u64, bits: u64) -> u64 {
+    // The word's answer is the staged truthiness row the lane's Cranelift runs (`tagged_truthiness`);
+    // only a heap value the word leaves undecided asks its cell.
+    let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut crate::staged::Concrete::new(std::ptr::null()), bits);
+    if !undecided {
+        return u64::from(truthy);
+    }
     // SAFETY: the payload holds the running VM, live and unborrowed while the body runs.
-    u64::from(unsafe { &*(vm as *const Vm<H>) }.truthy(Value::from_bits(bits)))
+    u64::from(unsafe { &*(vm as *const Vm<H>) }.heap_cell_truthy(Value::from_bits(bits)))
 }
 
 /// Admit a bound slot's write domain before any guest effect or raw store.
