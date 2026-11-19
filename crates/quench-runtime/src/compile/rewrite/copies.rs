@@ -18,6 +18,7 @@
 //! consults them (the note after `forward_move_sources`).
 use super::*;
 use crate::bytecode::{FieldLayout, ImmediateLayout, InstructionField};
+use crate::compile::CompileScratch;
 
 /// Lets the readers of each `Move`'s destination read its source instead, where the move
 /// feeds only them (the module doc), and whether any did.
@@ -27,33 +28,52 @@ pub(super) fn forward_move_sources(
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
     if !function.code.iter().any(|instruction| instruction.op() == MOVE) {
         return false;
     }
-    let Some(mut analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions) else {
+    let Some(mut analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions, scratch) else {
         return false;
     };
     let scope = Scope::of(function);
-    let mut changed = Vec::new();
+    // The changed pcs, the readers of one move, and the readers already forwarded, all taken
+    // from `scratch` and given back below.
+    let mut changed = std::mem::take(&mut scratch.changed);
+    let mut readers = std::mem::take(&mut scratch.readers);
+    let mut rewritten_readers = std::mem::take(&mut scratch.rewritten_readers);
+    changed.clear();
+    rewritten_readers.reset(function.code.len());
     for pc in 0..function.code.len() {
         let uses = |instruction: Instr| liveness::uses(instruction.as_wide(), methods, field_sites, superinstructions);
         let definitions = |instruction: Instr| liveness::definitions(instruction.as_wide(), superinstructions);
-        let Some(rewrites) = forwarded(function, &analysis, &scope, pc, (&uses, &definitions)) else {
+        let Some(forwarding) = scan_move(function, &analysis, &scope, pc, (&uses, &definitions), &mut readers) else {
             continue;
         };
-        function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
-        analysis.transfers[pc] = (RegisterSet::default(), RegisterSet::default());
-        changed.push(pc);
-        for (at, rewritten) in rewrites {
+        for &(at, rewritten) in &readers {
             function.code[at] = rewritten;
             analysis.transfers[at] = (uses(rewritten), definitions(rewritten));
             changed.push(at);
         }
+        // The rewritten readers read the source up to the last of them, which the analysis
+        // predates: its live sets there gain the source, so no later move reads a stale set.
+        if let Some(&(last, _)) = readers.last() {
+            for live in &mut analysis.live[pc + 1..=last] {
+                *live |= forwarding.source;
+            }
+        }
+        if forwarding.dead && !readers.is_empty() {
+            function.code[pc] = Instr::new(NOP, 0, 0, 0, 0);
+            changed.push(pc);
+        }
     }
+    scratch.readers = readers;
+    scratch.rewritten_readers = rewritten_readers;
     changed.sort_unstable();
     changed.dedup();
-    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
+    let rewrote = hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current);
+    scratch.changed = changed;
+    rewrote
 }
 
 // Why the live sets a forward leaves stale are never read again: forwarding `d = Move s` at
@@ -116,39 +136,85 @@ impl CodeLiveness {
 
 type Masks<'m> = (&'m dyn Fn(Instr) -> RegisterSet, &'m dyn Fn(Instr) -> RegisterSet);
 
-/// The readers of a `Move`'s destination, as `move_readers` finds them; most moves have one.
-type Readers = smallvec::SmallVec<[usize; 4]>;
+/// What forwarding one `Move` does: its source, and whether its destination is dead once the
+/// scan ends. The readers its value reaches, each rewritten to read the source, are in the
+/// scan's `readers`.
+struct Forwarding {
+    source: RegisterSet,
+    dead: bool,
+}
 
-/// Each reader of the `Move` at `pc`, rewritten to read the move's source.
-fn forwarded(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: usize, masks: Masks<'_>)
-    -> Option<smallvec::SmallVec<[(usize, Instr); 4]>> {
+/// The scan of the `Move` at `pc`, from the instruction after it through the end of its basic
+/// block, or to the first redefinition of its source or destination. Each read of the
+/// destination on the way is rewritten to read the source (`forward_read`). The scan stops at a
+/// read that cannot be rewritten, at a protected position (a join or region boundary, where the
+/// move's value may meet other values), and at an instruction that leaves the block. `dead`
+/// says the destination is not read after the scan on any path the move's value reaches.
+/// The most live instructions one Move's scan looks at.
+const SCAN_LIMIT: usize = 64;
+
+fn scan_move(
+    function: &BcFunction,
+    analysis: &CodeLiveness,
+    scope: &Scope,
+    pc: usize,
+    (uses, definitions): Masks<'_>,
+    readers: &mut Vec<(usize, Instr)>,
+) -> Option<Forwarding> {
     let mov = function.code[pc];
     if !scope.forwards(mov) || analysis.handler_live(pc) & register_bit(mov.result_register()) != 0 {
         return None;
     }
     let (source, destination) = (mov.register_b(), mov.result_register());
-    let readers = move_readers(function, analysis, scope, pc)?;
-    // Legacy `f.arguments` reflection may rewrite a parameter during the instructions between.
-    if register_bit(source) & scope.parameters != 0 && readers.iter().any(|&at| at > pc + 1) {
-        return None;
+    let (source_bit, destination_bit) = (register_bit(source), register_bit(destination));
+    // Legacy `f.arguments` reflection may rewrite a parameter during the instructions between, so
+    // a parameter's source forwards to its first live reader only.
+    let parameter_source = source_bit & scope.parameters != 0;
+    let dead_before = |at: usize| analysis.live[at] & destination_bit == 0;
+    let dead_after = |at: usize| liveness::live_out(&analysis.successors, &analysis.live, at) & destination_bit == 0;
+    readers.clear();
+    let mut live_seen = 0;
+    let mut dead = false;
+    for at in pc + 1..function.code.len() {
+        if scope.protected.contains(at) || scope.in_handler(at) {
+            dead = dead_before(at);
+            break;
+        }
+        let instruction = function.code[at];
+        if instruction.op() == NOP {
+            continue;
+        }
+        if parameter_source && live_seen == 1 {
+            dead = dead_before(at);
+            break;
+        }
+        live_seen += 1;
+        // Bounds the scan so that a long straight-line block costs linear load time; the Move
+        // stays, and the readers forwarded so far are still valid.
+        if live_seen > SCAN_LIMIT {
+            break;
+        }
+        let (read, written) = (uses(instruction), definitions(instruction));
+        if read & destination_bit != 0 {
+            let Some(rewritten) = forward_read(instruction, destination, source, (uses, definitions)) else {
+                break;
+            };
+            readers.push((at, rewritten));
+        }
+        if !function.widened(instruction).op().control_flow_layout().only_falls_through() {
+            dead = dead_after(at);
+            break;
+        }
+        if written & destination_bit != 0 {
+            dead = true;
+            break;
+        }
+        if written & source_bit != 0 {
+            dead = dead_after(at);
+            break;
+        }
     }
-    readers.into_iter().map(|at| rewritten_reader(function, analysis, at, (source, destination), masks)).collect()
-}
-
-/// The reader at `at` reading register `source` where it read `destination`, when its masks
-/// confirm the rewrite trades the one register for the other and nothing else.
-fn rewritten_reader(
-    function: &BcFunction,
-    analysis: &CodeLiveness,
-    at: usize,
-    (source, destination): (Register, Register),
-    (uses, definitions): Masks<'_>,
-) -> Option<(usize, Instr)> {
-    let consumer = function.code[at];
-    if consumer.is_wide() {
-        return None;
-    }
-    Some(Forwarding { source: source_bit, readers, dead })
+    Some(Forwarding { source: source_bit, dead })
 }
 
 /// The instructions after the `Move` at `pc` that read its destination while it holds the

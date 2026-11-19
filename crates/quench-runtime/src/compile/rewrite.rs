@@ -165,6 +165,7 @@ pub(super) fn apply(
     methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &mut SiteTable<'_, Superinstruction>,
+    scratch: &mut CompileScratch,
 ) {
     let input = function.code.len();
     thread_jumps(function);
@@ -175,14 +176,17 @@ pub(super) fn apply(
     }
     // Each pass hands the liveness of the code it leaves unchanged to the next.
     let mut liveness = None;
-    if coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
+    if coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness, scratch) {
         changed_passes += 1;
     }
-    if forward_move_sources(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
+    if forward_move_sources(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness, scratch) {
         changed_passes += 1;
     }
-    if rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness) {
+    if rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness, scratch) {
         changed_passes += 1;
+    }
+    if let Some(facts) = liveness {
+        facts.recycle(scratch);
     }
     if crate::trace::Channel::Rewrite.on() {
         eprintln!(
@@ -202,12 +206,16 @@ pub(super) fn coalesce_promoted_moves(
     methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
+    scratch: &mut CompileScratch,
 ) {
     // The `Nop`s the passes leave in place are dropped by the one compaction `lower_settled` ends with.
     let mut liveness = None;
-    coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness);
-    forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness);
-    remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness);
+    coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness, scratch);
+    forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness, scratch);
+    remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness, scratch);
+    if let Some(facts) = liveness {
+        facts.recycle(scratch);
+    }
 }
 
 /// Removes each `Move` or `LoadConst` whose destination no path reads before writing it again:
@@ -221,12 +229,13 @@ fn remove_dead_moves(
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
     let removable = |i: Instr| i.op().traits().has(Traits::REMOVABLE_WHEN_DEAD) && !i.is_wide() && i.result_flags() == 0;
     if !function.code.iter().any(|&instruction| removable(instruction)) {
         return false;
     }
-    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions, scratch)
     else {
         return false;
     };
@@ -329,14 +338,26 @@ enum CodeFacts {
     Transfers(Vec<(RegisterSet, RegisterSet)>),
 }
 
+impl CodeFacts {
+    /// Recycles the tables of the facts a pass chain ends with into `scratch`.
+    fn recycle(self, scratch: &mut CompileScratch) {
+        match self {
+            CodeFacts::Live(analysis) => analysis.recycle(scratch),
+            CodeFacts::Transfers(transfers) => scratch.recycle_transfers(transfers),
+        }
+    }
+}
+
 impl CodeLiveness {
-    /// The liveness `current` hands on or completes, otherwise derived from the code.
+    /// The liveness `current` hands on or completes, otherwise derived from the code, with its
+    /// transfer and successor tables taken from `scratch`.
     fn of(
         current: &mut Option<CodeFacts>,
         function: &BcFunction,
         methods: &(impl liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
+        scratch: &mut CompileScratch,
     ) -> Option<Self> {
         let transfers = match current.take() {
             Some(CodeFacts::Live(analysis)) => return Some(analysis),
@@ -348,11 +369,25 @@ impl CodeLiveness {
                 );
                 transfers
             }
-            None => liveness::transfers(function, methods, field_sites, superinstructions)?,
+            None => {
+                let mut transfers = std::mem::take(&mut scratch.transfers);
+                if !liveness::buffers::transfers_into(function, methods, field_sites, superinstructions, &mut transfers) {
+                    scratch.recycle_transfers(transfers);
+                    return None;
+                }
+                transfers
+            }
         };
-        let successors = crate::bytecode::Successors::of_code(function);
-        let live = liveness::analyze_wide(function, &transfers, &successors);
+        let mut successors = std::mem::take(&mut scratch.successors);
+        successors.refill(function);
+        let live = liveness::analyze_wide_with(function, &transfers, &successors, scratch);
         Some(Self { transfers, live, successors })
+    }
+
+    /// Keeps this analysis's tables as the buffers of the next one.
+    fn recycle(self, scratch: &mut CompileScratch) {
+        scratch.recycle_transfers(self.transfers);
+        scratch.recycle_successors(self.successors);
     }
 
     /// Updates the facts for one span `coalesce_distant_producer_moves` coalesced. A span is a
@@ -488,6 +523,7 @@ fn coalesce_distant_producer_moves(
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
     // Liveness is the expensive part; a function without a `Move` has nothing to coalesce.
     if !function
@@ -497,7 +533,7 @@ fn coalesce_distant_producer_moves(
     {
         return false;
     }
-    let Some(mut analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    let Some(mut analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions, scratch)
     else {
         return false;
     };
@@ -979,6 +1015,7 @@ fn rewrite_once(
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
     let rewrites_pair = |first: &Instr, second: &Instr| {
         !first.is_wide()
@@ -995,7 +1032,7 @@ fn rewrite_once(
         return false;
     }
     let Some(CodeLiveness { mut transfers, live, successors }) =
-        CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions)
+        CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions, scratch)
     else {
         return false;
     };
@@ -1056,7 +1093,7 @@ fn rewrite_once(
         return false;
     }
     drop(live);
-    drop(successors);
+    scratch.recycle_successors(successors);
     update_transfers(
         &mut transfers,
         &rewritten,
@@ -1326,7 +1363,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
             Instr::new(Op::Move, 5, 3, 0, 0),
             Instr::new(Op::Return, 5, 0, 0, 0),
         ];
-        assert!(!coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None));
+        assert!(!coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None, &mut CompileScratch::default()));
         assert_eq!(function.code[0].result_register(), 3);
         assert_eq!(function.code[2].op(), Op::Move);
     }
@@ -1444,7 +1481,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
                 register,
             })
             .collect();
-        while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None) {}
+        while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None, &mut CompileScratch::default()) {}
         function
             .code
             .iter()
@@ -1550,7 +1587,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         let function = &mut program.functions[0];
         function.code = code;
         function.registers = registers;
-        rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None);
+        rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None, &mut CompileScratch::default());
         remove_nops(function, &mut None, &mut CompileScratch::default());
         std::mem::take(&mut function.code)
     }

@@ -71,7 +71,7 @@ pub(in crate::compile) fn hoist_loop_constants<M: liveness::MethodArguments + ?S
     if !in_loop_load || function.registers >= liveness::ROOT_MAP_REGISTERS {
         return false;
     }
-    let Some(analysis) = CodeLiveness::of(&mut None, function, methods, field_sites, superinstructions) else {
+    let Some(analysis) = CodeLiveness::of(&mut None, function, methods, field_sites, superinstructions, scratch) else {
         return false;
     };
     let tables = Tables { methods, fields: field_sites, superinstructions };
@@ -214,12 +214,13 @@ impl Hoister {
 
     /// Places the preheaders into `function` and grows its frame by the hoisted registers.
     fn apply(self, function: &mut BcFunction, scratch: &mut CompileScratch) -> bool {
-        if self.preheaders.is_empty() {
-            return false;
+        let placed = !self.preheaders.is_empty();
+        if placed {
+            place_preheaders(function, &self.preheaders, scratch);
+            function.registers = self.base + self.hoisted.len() as Register;
         }
-        place_preheaders(function, &self.preheaders, scratch);
-        function.registers = self.base + self.hoisted.len() as Register;
-        true
+        self.analysis.recycle(scratch);
+        placed
     }
 }
 
