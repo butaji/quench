@@ -2051,6 +2051,22 @@ impl Function {
             .map(|index| self.local_registers[index].register)
     }
 
+    /// How many leading parameters live in registers in place, parameter `k` in register `k`,
+    /// where every promoted local is such a parameter (and none is a rest parameter, whose
+    /// array its frame makes): the layout a function that makes closures gets for the
+    /// parameters none of them names (`Compiler::promoted_local_plan`'s `parameters_only`).
+    /// An environment activation fills those registers as a call fills a plain activation's
+    /// (`call_environment::EnvironmentPassed::in_registers`). 0 for any other layout.
+    pub(crate) fn parameters_promoted_in_place(&self) -> u16 {
+        let in_place = self.local_registers.iter().enumerate().all(|(index, entry)| {
+            usize::from(entry.local) == index
+                && usize::from(entry.register) == index
+                && entry.local < self.params
+                && !(self.rest && entry.local + 1 == self.params)
+        });
+        if in_place { u16::try_from(self.local_registers.len()).unwrap_or(0) } else { 0 }
+    }
+
     /// Whether the instruction at `pc` returns `register`. A call is in tail position only
     /// when the instruction after it returns that call's own result.
     /// Whether its rest parameter is read only by `RestGet`, `RestLength` and `CallRest`
@@ -2351,6 +2367,19 @@ impl Function {
         self.widened(self.code[pc])
     }
 
+    /// The field site of the nested read (`GetField` of `FieldLookup::Site`) at `pc`, if the
+    /// instruction there is one: a frame paused at it calls its last read's getter.
+    pub(crate) fn nested_read_site(&self, pc: usize) -> Option<usize> {
+        let instruction = self.widened(*self.code.get(pc)?);
+        if !matches!(instruction.op(), Op::GetField) {
+            return None;
+        }
+        match instruction.field_lookup()? {
+            FieldLookup::Site(site) => Some(site),
+            FieldLookup::Atom { .. } => None,
+        }
+    }
+
     /// The opcode of the packed instruction `packed` of this function, without decoding its
     /// operands.
     #[inline(always)]
@@ -2613,13 +2642,17 @@ impl Function {
                         .addressed_local_slots()
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
-            // An ordinary call places its arguments in the window's locals, which a promoted
-            // parameter has none of, and fills the registers with `undefined`; a suspended
-            // frame is made with both, and no suspending function starts its registers apart
-            // from `undefined` (Wasm's i32 zero belongs to its bodies, which never suspend).
+            // An ordinary call places its arguments in the window's locals and fills the
+            // registers with `undefined`, but for the parameters promoted in place, parameter
+            // `k` in register `k` (`parameters_promoted_in_place`), which it places in their
+            // registers as a plain activation's call does: a function that makes closures keeps
+            // the parameters none of them names there (one-frame-one-call.md F6). Any other
+            // promoted local has no window home. A suspended frame is made with both, and no
+            // suspending function starts its registers apart from `undefined` (Wasm's i32 zero
+            // belongs to its bodies, which never suspend).
             let environment_activation = in_loop
                 && self.parent.is_some()
-                && self.local_registers.is_empty()
+                && (self.local_registers.is_empty() || self.parameters_promoted_in_place() != 0)
                 && self.initial_register == InitialRegister::Undefined
                 && self.locals_ride_window(tables);
             let suspendable = self.suspends_in_record();
@@ -3463,6 +3496,12 @@ impl FieldSite {
             FieldPart::Second => 1,
             FieldPart::Sink => 2,
         }]
+    }
+
+    /// The part whose read comes last (the second field's where it has one): the read whose
+    /// getter a call from the site's record makes (`Vm::resolve_field`).
+    pub(crate) fn last_read_part(self) -> FieldPart {
+        if self.second.is_some() { FieldPart::Second } else { FieldPart::First }
     }
 }
 

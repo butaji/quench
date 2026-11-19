@@ -602,6 +602,10 @@ struct EnvironmentWindow {
     /// The local of a named function expression's own name (`Function::self_binding_slot`),
     /// which holds the callee.
     self_binding: Option<u16>,
+    /// The leading parameters the compiler promoted in place (`Function::parameters_promoted_in_place`):
+    /// parameter `k` below this lives in register `k`, which its call fills
+    /// (`call_environment::EnvironmentPassed::in_registers`), and its local stays `undefined`.
+    parameter_registers: u16,
 }
 
 /// An environment window's entries after its registers: its environment, `DELETED` until
@@ -9617,16 +9621,25 @@ fn lane_private_field_store<H: Host>(
     true
 }
 
-/// Leave the lane at `ip` after its instruction failed with `error` before any effect: a frame
-/// run raises it there (`Vm::lane_raised`); an activation leaves the instruction to the general
-/// path, which runs it again and raises the same error.
+/// Raise at `ip` after its instruction failed with `error` before any effect, where a handler
+/// of the running function or of a plain caller takes it in the lane
+/// (`handler_edges::unwind_raised`). A frame run raises `error`; beside frameless activations,
+/// whose frames `error`'s stack capture did not read, `again` makes the instruction's error a
+/// second time beside them (`handler_edges::raise_again`, frame-switches.md #6).
 #[inline(never)]
-fn lane_raise<H: Host>(cx: *mut LaneContext<H>, ip: Ip, error: JsError) -> Ip {
+fn lane_raise<H: Host, T>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    error: JsError,
+    again: impl FnOnce(&mut Vm<H>, &ResidualProgram) -> Result<T, JsError>,
+) -> Ip {
     let vm = unsafe { vm(cx) };
-    if !vm.lane_stack.has_frames() {
-        vm.lane_completion.raise(error);
+    if vm.lane_stack.has_frames() {
+        drop(error);
+        return handler_edges::raise_again(cx, ip, again);
     }
-    exit(ip)
+    vm.lane_completion.raise(error);
+    handler_edges::unwind_raised(cx, ip)
 }
 
 script_handler! {
@@ -9648,7 +9661,7 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         if let Err(error) = vm.define_field_cached(code, object, i.imm(), r.get(i.a), i.c) {
-            return lane_raise(cx, ip, error);
+            return lane_raise(cx, ip, error, |vm, code| vm.define_field_cached(code, object, i.imm(), r.get(i.a), i.c));
         }
         // Adding a property can allocate.
         note_allocation(vm);
@@ -9676,7 +9689,7 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let before = vm.object_data(object).map(|data| data.shape());
         if let Err(error) = vm.initialize_private_field(code, object, home, i.imm(), r.get(i.a)) {
-            return lane_raise(cx, ip, error);
+            return lane_raise(cx, ip, error, |vm, code| vm.initialize_private_field(code, object, home, i.imm(), r.get(i.a)));
         }
         if let (Some(before), Some(after)) = (before, vm.object_data(object).map(|data| data.shape()))
             && vm.private_shape_cacheable(before)
@@ -9713,7 +9726,7 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let before = vm.object_data(object).map(|data| data.shape());
         if let Err(error) = vm.mark_private_name(code, object, home, i.imm()) {
-            return lane_raise(cx, ip, error);
+            return lane_raise(cx, ip, error, |vm, code| vm.mark_private_name(code, object, home, i.imm()));
         }
         if object != home
             && let (Some(before), Some(after)) = (before, vm.object_data(object).map(|data| data.shape()))
@@ -19898,7 +19911,9 @@ fn lane_push_callback<H: Host>(
 /// its registers, then its environment, made now as the frame's promotion would make it
 /// (each captured slot its parameter's argument or `undefined`, every other slot owned
 /// elsewhere), then its frame locals (each parameter its argument, a captured slot owned
-/// by the environment, every other local `undefined`), then the values passed. The
+/// by the environment, every other local `undefined`), then the values passed. A parameter
+/// promoted in place (`EnvironmentWindow::parameter_registers`) starts in its register and
+/// leaves its local `undefined`, as a frame's promoted parameter does. The
 /// environment is reachable only from the window until the lane leaves, which makes the
 /// activation a frame holding it.
 #[inline(always)]
@@ -20004,6 +20019,7 @@ fn lane_activate_environment<H: Host>(
                 arguments: passed.as_ptr().expose_provenance() as u64,
                 count: argc,
                 bound: argc.min(target.params),
+                in_registers: argc.min(layout.parameter_registers),
                 rest,
                 self_binding,
             },
@@ -20115,7 +20131,7 @@ unsafe fn window_slots_taken(entries: *mut Value) -> crate::heap::EnvironmentSlo
         let in_place = &*(std::mem::transmute::<Value, u64>(*entries.add(usize::from(WINDOW_SLOTS)))
             as *const crate::heap::EnvironmentSlots);
         let locals = entries.add(usize::from(WINDOW_LOCALS));
-        let window = EnvironmentWindow { locals: in_place.len() as u16, captured, rest: false, self_binding: None };
+        let window = EnvironmentWindow { locals: in_place.len() as u16, captured, rest: false, self_binding: None, parameter_registers: 0 };
         // SAFETY: the mask names locals of the window, which hold owned values.
         let slots = crate::heap::EnvironmentSlots::from_captured(in_place.len(), window.captured, locals);
         // Each captured local, one per bit of the mask, which names no slot past the locals.
@@ -25414,6 +25430,7 @@ fn specialize_environment_window<H: Host>(
             .fold(0, |mask, slot| mask | 1 << slot),
         rest: function.rest,
         self_binding: function.self_binding_slot,
+        parameter_registers: function.parameters_promoted_in_place(),
     })
 }
 

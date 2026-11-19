@@ -93,6 +93,15 @@ impl AwaitState {
         }
     }
 
+    /// The frame of a running activation, read in place: what `take_running` would give a
+    /// materialization (`Vm::lane_stack_sites`).
+    pub(crate) fn running_frame(&self) -> Option<&FrameRecord> {
+        match self {
+            Self::Running { continuation, .. } => Some(&continuation.frame),
+            _ => None,
+        }
+    }
+
     /// Takes the continuation of a running activation, with its realm and promise, leaving the
     /// state spent: the activation awaits again or its frame becomes a VM frame.
     pub(crate) fn take_running(&mut self) -> Option<(Continuation, Value, Value)> {

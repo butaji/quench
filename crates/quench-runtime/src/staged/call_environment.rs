@@ -90,15 +90,19 @@ pub(crate) fn write_entries<S: Stage>(stage: &mut S, entries: S::Word, environme
 }
 
 /// Writes the `count` values at `arguments` into the window's locals at `local`: each of the
-/// first `bound` as its parameter's local, and every one after the `locals`, as the value a
-/// frame keeps for legacy reflection. Reads the `count` values; writes `count + min(count, bound)`
-/// words. (The interpreter's copy of the passed values, on `Concrete`.)
+/// first `bound` past the first `in_registers` as its parameter's local, and every one after the
+/// `locals`, as the value a frame keeps for legacy reflection. A parameter below `in_registers`
+/// lives in its register (`EnvironmentPassed::in_registers`), and its local stays `undefined`, as
+/// a frame clears a promoted parameter's slot (`Frame::initialize_promoted_registers`). Reads the
+/// `count` values; writes `count + min(count, bound) - min(count, in_registers)` words. (The
+/// interpreter's copy of the passed values, on `Concrete`.)
 #[inline(always)]
-pub(crate) fn write_arguments<S: Stage>(stage: &mut S, local: S::Word, locals: u16, (arguments, count): (S::Word, u16), bound: u16) {
+pub(crate) fn write_arguments<S: Stage>(stage: &mut S, local: S::Word, locals: u16, (arguments, count): (S::Word, u16),
+    (in_registers, bound): (u16, u16)) {
     let at = Region::Frame.mutable();
     for slot in 0..u32::from(count) {
         let value = stage.load_u64(at, arguments, words_at(slot));
-        if slot < u32::from(bound) {
+        if slot >= u32::from(in_registers) && slot < u32::from(bound) {
             stage.store_u64(at, local, words_at(slot), value);
         }
         stage.store_u64(at, local, words_at(u32::from(locals) + slot), value);
@@ -153,6 +157,11 @@ pub(crate) struct EnvironmentPassed<W> {
     pub(crate) arguments: W,
     pub(crate) count: u16,
     pub(crate) bound: u16,
+    /// How many of the first values go to registers `0..in_registers` rather than to their
+    /// parameters' locals: the parameters the compiler promoted in place, register `k` holding
+    /// parameter `k` (`EnvironmentWindow::parameter_registers`, at most `bound`). A function that
+    /// makes closures keeps those none of them names in registers (`CallPlan::environment_activation`).
+    pub(crate) in_registers: u16,
     /// The rest parameter's local and the array the tier gathered for it.
     pub(crate) rest: Option<(u16, W)>,
     /// The self binding's local and the callee.
@@ -162,7 +171,8 @@ pub(crate) struct EnvironmentPassed<W> {
 /// Enters an environment callee's window at `registers` (register 0), past its admission
 /// (`admit_environment`): the composite row of the family.
 ///
-/// Writes, in order: the `live` registers `undefined` (`protocol::fill_call`); the environment
+/// Writes, in order: the `live` registers, the first `passed.in_registers` their arguments and the
+/// others `undefined` (`protocol::fill_call`); the environment
 /// entries (`lay_out_entries`); the `locals` `undefined`; the passed values as parameter locals
 /// and kept values (`write_arguments`); the rest array's and the self binding's locals; the frame
 /// context (`bind_context`). Reads only the passed values. Returns the address of the first
@@ -171,12 +181,14 @@ pub(crate) struct EnvironmentPassed<W> {
 #[inline(always)]
 pub(crate) fn enter_environment<S: Stage>(stage: &mut S, registers: S::Word, shape: EnvironmentShape, passed: EnvironmentPassed<S::Word>,
     context: WindowContext<S::Word>) -> S::Word {
-    super::protocol::fill_call(stage, registers, &[], Passed::Window { arguments: registers, count: 0 }, shape.live);
+    // The parameters promoted in place start as their arguments, every other live register
+    // `undefined`; a promoted parameter's register past the live ones is dead at entry.
+    super::protocol::fill_call(stage, registers, &[], Passed::Window { arguments: passed.arguments, count: passed.in_registers }, shape.live);
     let entries = stage.add_imm(registers, word_bytes(shape.registers));
     lay_out_entries(stage, entries, shape.captured, shape.locals);
     let local = stage.add_imm(entries, word_bytes(ENTRY_WORDS));
     super::protocol::fill_call(stage, local, &[], Passed::Window { arguments: local, count: 0 }, shape.locals);
-    write_arguments(stage, local, shape.locals, (passed.arguments, passed.count), passed.bound);
+    write_arguments(stage, local, shape.locals, (passed.arguments, passed.count), (passed.in_registers, passed.bound));
     let at = Region::Frame.mutable();
     if let Some((slot, gathered)) = passed.rest {
         stage.store_u64(at, local, words_at(u32::from(slot)), gathered);
@@ -209,7 +221,7 @@ mod tests {
         let registers = unsafe { words.as_mut_ptr().add(CONTEXT) } as u64;
         let shape = EnvironmentShape { registers: 2, live: 1, locals: 3, captured: 0b10 };
         let local = enter_environment(&mut Concrete::new(std::ptr::null()), registers, shape,
-            EnvironmentPassed { arguments: passed.as_ptr() as u64, count: 3, bound: 2, rest: None, self_binding: Some((2, 99)) },
+            EnvironmentPassed { arguments: passed.as_ptr() as u64, count: 3, bound: 2, in_registers: 0, rest: None, self_binding: Some((2, 99)) },
             WindowContext { this: 7, env: 8, capture: 9 });
         let entries = registers + 2 * 8;
         assert_eq!(local, entries + u64::from(ENTRY_WORDS) * 8);
@@ -220,5 +232,23 @@ mod tests {
         assert_eq!(&w[7..10], &[11, 22, 99], "parameters bound, the rest undefined, then the self binding");
         assert_eq!(&w[10..13], &passed, "every value kept after the locals");
         assert_eq!(&words[CONTEXT - 3..CONTEXT], &[9, 8, 7], "capture, env, this below register 0");
+    }
+
+    #[test]
+    fn parameters_promoted_in_place_start_in_their_registers_and_leave_their_locals_undefined() {
+        const CONTEXT: usize = frame::CONTEXT_WORDS;
+        let undefined = Value::UNDEFINED.to_bits();
+        let passed = [11_u64, 22, 33];
+        let mut words = [0_u64; CONTEXT + 3 + ENTRY_WORDS as usize + 3 + 3];
+        let registers = unsafe { words.as_mut_ptr().add(CONTEXT) } as u64;
+        let shape = EnvironmentShape { registers: 3, live: 3, locals: 3, captured: 0b100 };
+        let local = enter_environment(&mut Concrete::new(std::ptr::null()), registers, shape,
+            EnvironmentPassed { arguments: passed.as_ptr() as u64, count: 3, bound: 3, in_registers: 2, rest: None, self_binding: None },
+            WindowContext { this: 7, env: 8, capture: 9 });
+        let w = &words[CONTEXT..];
+        assert_eq!(&w[0..3], &[11, 22, undefined], "promoted parameters in registers 0 and 1, the rest `undefined`");
+        let locals = (local - registers) as usize / 8;
+        assert_eq!(&w[locals..locals + 3], &[undefined, undefined, 33], "a promoted parameter's local stays `undefined`");
+        assert_eq!(&w[locals + 3..locals + 6], &passed, "every value kept after the locals");
     }
 }

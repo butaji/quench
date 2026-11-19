@@ -34,6 +34,37 @@ impl FrameSite {
 }
 
 impl<H: Host> Vm<H> {
+    /// The field site a frame of `function` of `program` paused at the call record `pc` reads
+    /// from, where that record is a nested read (`FieldLookup::Site`) whose last read's getter
+    /// is the call: the general loop's caller carries it while the getter runs
+    /// (`Vm::with_field_source`). A frame a lane activation's caller became, or the walk's site
+    /// of one, carries it from here, so the getter's caller reads the same position.
+    pub(in crate::vm) fn called_field_source(
+        &self,
+        program: ProgramId,
+        function: u32,
+        pc: usize,
+    ) -> Option<(usize, crate::bytecode::FieldPart)> {
+        let code = self.programs.residual(program)?;
+        let site = code.function_get(function as usize)?.nested_read_site(pc)?;
+        Some((site, code.field_sites.get(site)?.last_read_part()))
+    }
+
+    /// A VM frame's site (`FrameSite::of`): a frame paused at a call record (`pc_is_resume`)
+    /// that names no field site of its own takes the one its call reads from
+    /// (`called_field_source`). The general loop's frames run a nested read's getter with the
+    /// field site set and their pc published unresumed, so only the frames lane activations
+    /// became take it here.
+    pub(in crate::vm) fn frame_site(&self, frame: &Frame) -> FrameSite {
+        let mut site = FrameSite::of(frame);
+        if frame.pc_is_resume && site.source_field.is_none() {
+            site.source_field = self.called_field_source(site.program, site.function, site.pc);
+        }
+        site
+    }
+}
+
+impl<H: Host> Vm<H> {
     /// The call sites `Error.captureStackTrace` records, trimmed through `constructor_opt`
     /// when it is a function on the stack, up to `Error.stackTraceLimit`. While a native runs
     /// beside a lane's activations, they are read from the frame walk, the root frame paused at
@@ -50,17 +81,21 @@ impl<H: Host> Vm<H> {
             self.materialize_deferred_lane();
         }
         let based = self.frames.len();
-        let (root_pc, lane_sites) = lane.map_or((None, Vec::new()), |lane| (Some(lane.root_pc), lane.sites));
+        let (root_pc, lane_sites) = lane.map_or((None, Vec::new()), |lane| (lane.root_pc, lane.sites));
         // The frame at `depth`, the lane's activations above the VM frames.
         let site_at = |vm: &Self, depth: usize| -> FrameSite {
             if let Some(site) = depth.checked_sub(based).map(|above| lane_sites[above]) {
                 return site;
             }
-            let mut site = FrameSite::of(&vm.frames[depth]);
             if depth + 1 == based && let Some(pc) = root_pc {
+                // The root frame, paused at its call of the outermost activation (or at the
+                // deferred call), as `resume_caller_frame` / `resume_deferred_caller` resume it.
+                let mut site = FrameSite::of(&vm.frames[depth]);
                 site.pc = pc;
+                site.source_field = site.source_field.or_else(|| vm.called_field_source(site.program, site.function, pc));
+                return site;
             }
-            site
+            vm.frame_site(&vm.frames[depth])
         };
         let depths = if limit == 0 { 0 } else { based + lane_sites.len() };
         let mut records = Vec::with_capacity(depths.min(limit));

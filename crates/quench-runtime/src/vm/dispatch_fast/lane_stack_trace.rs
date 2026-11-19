@@ -2,111 +2,169 @@
 //! construction, `Error.captureStackTrace` or any other capture a native running beside the
 //! activations makes (`DeferredLaneCall`) reads the activations from the lane's frame walk
 //! (`LaneStack::frames_innermost`) instead of making them VM frames first
-//! (`Vm::materialize_deferred_lane`). Each activation reads as the frame its materialization
+//! (`Vm::materialize_deferred_lane`). Each activation reads as the frames its materialization
 //! would push (`Vm::materialize_lane_activations`): the same program, function, call context and
-//! receiver, and the pc its caller's frame would resume at, so the captured call sites, and the
-//! trace text formatted from them, are the ones the materialized frames give. An activation
-//! whose materialization pushes something else (a skipped forwarding constructor's extra frame,
-//! a generator's or a job's window frame, a Wasm frame) or a lane in a state the walk does not
-//! cover declines, and the capture materializes as before.
+//! receiver, the pc its caller's frame would resume at, and the field site a nested read's
+//! getter call reads from (`Vm::called_field_source`), so the captured call sites, and the trace
+//! text formatted from them, are the ones the materialized frames give. A skipped forwarding
+//! constructor (`Completion::Forwarder`) reads as the two frames it becomes, a generator's or a
+//! job's windowed activation as its owner's frame record, and a job's run has no root frame
+//! beneath its activations. A Wasm frame, or a lane in a state the walk does not cover,
+//! declines, and the capture materializes as before.
 use super::*;
+use super::super::activation::{FrameRecord, SuspendKind};
 use super::super::error::FrameSite;
 
 /// The frames a stack capture reads beside a lane's activations (`Vm::lane_stack_sites`).
 pub(in crate::vm) struct LaneSites {
     /// The source pc of the lane's root frame, the innermost VM frame: its call of the outermost
     /// activation, or the deferred call where no activation is (`Vm::resume_caller_frame`,
-    /// `Vm::resume_deferred_caller`).
-    pub(in crate::vm) root_pc: usize,
-    /// The activations outermost first, each as the frame its materialization pushes.
+    /// `Vm::resume_deferred_caller`). `None` for a job's run, which has no root frame: its bottom
+    /// activation becomes the general loop's entry frame above the VM frames as they are.
+    pub(in crate::vm) root_pc: Option<usize>,
+    /// The activations outermost first, each as the frames its materialization pushes.
     pub(in crate::vm) sites: Vec<FrameSite>,
 }
 
-/// One activation as the walk yields it, innermost first, before its receiver is resolved.
-struct WalkedActivation {
-    function: u32,
-    caller_program: ProgramId,
-    script: ScriptActivation,
-    /// The pc of its call record in its caller's body (`Frame::caller_pc`).
-    caller_pc: usize,
-    window: Registers,
+/// The source pc of the frame an activation's caller becomes, paused at the call of `above`
+/// (`Frame::caller_pc`): `resume_caller_frame` resumes it at `caller_resume`'s pc, after the call
+/// record, or at the `yield*` itself for a delegate step, and a resumed frame's source pc is
+/// the one before (`Frame::source_instruction_pc`).
+fn paused_at(above: &Frame) -> Option<usize> {
+    let call_pc = above.caller_pc()?;
+    Some(above.record().caller_resume(call_pc).1.saturating_sub(1))
 }
 
 impl<H: Host> Vm<H> {
     /// The frames a stack capture reads while a native runs beside the lane's activations
-    /// (`lane_deferred`), read from the frame walk: the root frame's pc and one site per
-    /// activation. `None`, changing nothing but linking native frames (as the materialization's
-    /// first step does, `link_natives`), where no native runs beside activations, where the
-    /// lane is a job's or runs a deferred native's callback (`NativeBoundary`), where frames
-    /// were pushed since the call deferred, or where an activation materializes as anything but
-    /// one plain script frame (`Completion::Forwarder`, a windowed completion, Wasm): the
-    /// caller then materializes.
+    /// (`lane_deferred`), read from the frame walk: the root frame's pc and the sites of the
+    /// activations' frames. `None`, changing nothing but linking native frames (as the
+    /// materialization's first step does, `link_natives`), where no native runs beside
+    /// activations, where the lane runs a deferred native's callback (`NativeBoundary`), where
+    /// frames were pushed since the call deferred, or where an activation is no script
+    /// activation (Wasm) or its frame's state cannot be read: the caller then materializes.
     pub(in crate::vm) fn lane_stack_sites(&mut self) -> Option<LaneSites> {
         let DeferredLaneCall { cx, call_pc, frames } = self.lane_deferred?;
         let cx = cx.cast::<LaneContext<H>>();
         // SAFETY: the deferred call's lane runs, so its context lives.
         let (root, innermost_program) = unsafe { ((*cx).root, (*cx).program) };
-        let root_frame = root.frame()?;
-        if frames != self.frames.len() || root_frame + 1 != frames || self.lane_stack.native_boundary.is_some() {
+        if frames != self.frames.len()
+            || root.frame().is_some_and(|root_frame| root_frame + 1 != frames)
+            || self.lane_stack.native_boundary.is_some()
+        {
             return None;
         }
         self.link_natives(cx);
-        let mut walked: Vec<WalkedActivation> = Vec::with_capacity(self.lane_stack.activation_count());
-        for frame in self.lane_stack.frames_innermost() {
-            let ActivationKind::Script(script) = frame.kind() else { return None };
-            if script.completion.is_windowed() || script.completion == Completion::Forwarder {
-                return None;
-            }
-            walked.push(WalkedActivation {
-                function: frame.function(),
-                caller_program: frame.caller_program(),
-                script,
-                caller_pc: frame.caller_pc()?,
-                window: Registers(frame.window_ptr()),
-            });
+        // Innermost first; each frame a copy (`Frame`), read where it is.
+        let walked: Vec<Frame> = self.lane_stack.frames_innermost().collect();
+        if walked.iter().any(|frame| frame.script().is_none()) {
+            return None;
         }
-        // Each frame resumes after the call of the frame above it (`caller_resume`: no
-        // accepted completion is a delegate's), the innermost after the deferred call.
-        let root_pc = walked.last().map_or(call_pc, |outermost| outermost.caller_pc);
-        let mut sites = Vec::with_capacity(walked.len());
+        // Each frame resumes after the call of the frame above it, the innermost after the
+        // deferred call; a job's bottom activation has no caller frame.
+        let root_pc = match (root, walked.last()) {
+            (LaneRoot::Job(_), _) => None,
+            (LaneRoot::Frame(_), Some(outermost)) => Some(paused_at(outermost)?),
+            (LaneRoot::Frame(_), None) => Some(call_pc),
+        };
+        let mut sites = Vec::with_capacity(walked.len() + 1);
         for (index, activation) in walked.iter().enumerate().rev() {
+            // Its own program is the caller program of the frame above it, the innermost the lane's
+            // (`ActivationState::of`).
             let (program, pc) = match index.checked_sub(1).map(|above| &walked[above]) {
-                Some(above) => (above.caller_program, above.caller_pc),
+                Some(above) => (above.caller_program(), paused_at(above)?),
                 None => (innermost_program, call_pc),
             };
-            sites.push(self.activation_site(program, activation, pc)?);
+            self.push_activation_sites(root, program, activation, pc, &mut sites)?;
         }
         Some(LaneSites { root_pc, sites })
     }
 
-    /// The frame `activation` of `program`, paused at source pc `pc`, becomes when it
-    /// materializes (`push_script_frame_with_registers`): its context, and its receiver as
-    /// `activate_plain_frame` or `activate_general_frame` binds it from the window's.
-    fn activation_site(&mut self, program: ProgramId, activation: &WalkedActivation, pc: usize) -> Option<FrameSite> {
+    /// Appends the frames `activation` of `program`, paused at source pc `pc`, becomes where the
+    /// activations materialize (`materialize_lane_activations`): its owner's frame record for a
+    /// windowed one (`push_window_frame`), the skipped forwarding constructor's frame below the
+    /// method's for a forwarder, else the frame `push_script_frame_with_registers` pushes. Each
+    /// is paused at a call, so it carries the field site its call reads from.
+    fn push_activation_sites(
+        &mut self,
+        root: LaneRoot,
+        program: ProgramId,
+        activation: &Frame,
+        pc: usize,
+        sites: &mut Vec<FrameSite>,
+    ) -> Option<()> {
+        let script = activation.script()?;
+        if script.completion.is_windowed() {
+            let record = self.windowed_record(root, &script)?;
+            let (program, function) = (record.program, record.function);
+            let site = FrameSite { program, function, context: record.context, this: record.this(), pc, source_field: None };
+            sites.push(FrameSite { source_field: self.called_field_source(program, function, pc), ..site });
+            return Some(());
+        }
+        let window = Registers(activation.window_ptr());
+        let (this, env) = (window.this(), window.env());
+        if script.completion == Completion::Forwarder {
+            // The construction's skipped forwarding constructor, pending at its forwarding call:
+            // its descriptor's for a native frame (`NativeFrames`), else its side record's.
+            let record = activation.record();
+            // SAFETY: a native frame's callee outlives the run.
+            let forwarder = unsafe { record.native.callee.as_ref() }
+                .map_or_else(|| activation.payload().forwarder(), |callee| callee.forwarder)?;
+            let forwarder_pc = forwarder.method.call_pc as usize;
+            sites.push(FrameSite {
+                program,
+                function: forwarder.function,
+                context: CallContext::user_function(forwarder.function, forwarder.callee).constructed(),
+                this: self.bound_receiver(program, forwarder.function, this, forwarder.env)?,
+                pc: forwarder_pc,
+                source_field: self.called_field_source(program, forwarder.function, forwarder_pc),
+            });
+        }
+        let function = activation.function();
+        let context = CallContext::user_function(function, script.callee);
+        sites.push(FrameSite {
+            program,
+            function,
+            context: if script.completion.constructs() { context.constructed() } else { context },
+            this: self.bound_receiver(program, function, this, env)?,
+            pc,
+            source_field: self.called_field_source(program, function, pc),
+        });
+        Some(())
+    }
+
+    /// The frame record a windowed activation of a lane run with `root` runs over, read where its
+    /// owner keeps it: the job's (an async function's await state, a generator's record) for a
+    /// job's root, else its generator's (`push_window_frame`).
+    fn windowed_record(&self, root: LaneRoot, script: &ScriptActivation) -> Option<&FrameRecord> {
+        let owner = match root {
+            LaneRoot::Job(job) if script.completion == Completion::ResumesJob => match job.kind {
+                SuspendKind::AsyncFunction => return self.heap.await_state(job.object)?.running_frame(),
+                SuspendKind::AsyncGenerator | SuspendKind::Generator => job.object,
+            },
+            _ => script.callee,
+        };
+        self.heap.iterator(owner)?.ext.generator.as_deref()?.windowed_frame()
+    }
+
+    /// The receiver the frame of `function` of `program` binds from its window's `this` over
+    /// `env`, as `activate_plain_frame` or `activate_general_frame` binds it: an arrow's
+    /// captured `this`, `DELETED` for a derived constructor's general frame, else
+    /// `call_this_value`.
+    fn bound_receiver(&mut self, program: ProgramId, function: u32, this: Value, env: Value) -> Option<Value> {
         let (arrow, derived, strict, plain) = {
             let code = self.programs.residual(program)?;
-            let function = code.function_get(activation.function as usize)?;
-            let plain = activation.function != super::super::ROOT_FUNCTION_ID && function.plain_activation(code);
-            (function.is_arrow, function.derived_constructor, function.strict, plain)
+            let body = code.function_get(function as usize)?;
+            let plain = function != super::super::ROOT_FUNCTION_ID && body.plain_activation(code);
+            (body.is_arrow, body.derived_constructor, body.strict, plain)
         };
-        let (this, env) = (activation.window.this(), activation.window.env());
-        let this = if arrow {
-            self.captured_lexical_this(env).unwrap_or(this)
+        if arrow {
+            Some(self.captured_lexical_this(env).unwrap_or(this))
         } else if derived && !plain {
-            Value::DELETED
+            Some(Value::DELETED)
         } else {
-            self.call_this_value(this, strict).ok()?
-        };
-        let script = activation.script;
-        let context = CallContext::user_function(activation.function, script.callee);
-        Some(FrameSite {
-            program,
-            function: activation.function,
-            context: if script.completion.constructs() { context.constructed() } else { context },
-            this,
-            pc,
-            source_field: None,
-        })
+            self.call_this_value(this, strict).ok()
+        }
     }
 }
 

@@ -541,7 +541,7 @@ impl<H: Host> Vm<H> {
         frame: &Frame,
         hide_identity: bool,
     ) -> Option<(CallSiteRecord, bool)> {
-        self.source_site_record(FrameSite::of(frame), hide_identity)
+        self.source_site_record(self.frame_site(frame), hide_identity)
     }
 
     /// `source_call_site_record` of a frame as a stack capture reads it (`FrameSite`): a VM

@@ -89,12 +89,68 @@ script_handler! {
         let value = r.get(i.a);
         let error = JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, vm.detail_string(value)));
         vm.lane_completion.raise(error);
-        // SAFETY: the record lies in the running view.
-        let pc = unsafe { ip.offset_from((*cx).base) } as u32;
-        vm.lane_raise_site = super::super::compiled::raise_site(lane_running_function(cx), pc);
-        match catch_raised(cx, ip) {
-            Unwound::Caught(target) => target,
-            Unwound::Uncaught(record) => lane_raised_exit(cx, record),
+        unwind_raised(cx, ip)
+    }
+}
+
+/// The raise in `Vm::lane_raised`, raised at the record `ip` of the running function: recorded
+/// there (`Vm::lane_raise_site`), then taken by a handler of the running function or of a plain
+/// caller in the lane (`catch_raised`), else left as a body's raise leaves
+/// (`lane_raised_exit`), from wherever unwinding stopped.
+pub(super) fn unwind_raised<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Ip {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the record lies in the running view.
+    let pc = unsafe { ip.offset_from((*cx).base) } as u32;
+    vm.lane_raise_site = super::super::compiled::raise_site(lane_running_function(cx), pc);
+    match catch_raised(cx, ip) {
+        Unwound::Caught(target) => target,
+        Unwound::Uncaught(record) => lane_raised_exit(cx, record),
+    }
+}
+
+/// `lane_raise` beside frameless activations (frame-switches.md #6): the instruction at `ip`
+/// failed before any effect, with an error whose stack, if it made one, the capture read
+/// without the activations (no native call was deferred). `again` makes it a second time as
+/// a native beside the activations runs (`DeferredLaneCall`, as `lane_in_place` makes an
+/// operation): it fails the same way, and the error it builds now captures its stack from the
+/// frame walk (`Vm::lane_stack_sites`), so the error is the one the general path, which used
+/// to run the instruction again from the frames, raises. That error is unwound in the lane
+/// (`unwind_raised`: `catch_raised` with `throw_record`'s declines, else `lane_raised_exit`).
+/// Where the second run observed the deferred call (a capture the walk declined made the
+/// activations frames), the error is raised from those frames on the general path, as
+/// `lane_in_place` raises one; where it unexpectedly succeeded, its effect is made and the
+/// general path continues after the record.
+pub(super) fn raise_again<H: Host, T>(
+    cx: *mut LaneContext<H>,
+    ip: Ip,
+    again: impl FnOnce(&mut Vm<H>, &ResidualProgram) -> Result<T, JsError>,
+) -> Ip {
+    lane_materialize_running_leaf(cx);
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
+    // running function's view.
+    let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+    vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc, frames: vm.frames.len() });
+    let generation_key = (vm.heap.collection_epoch(), vm.realm.globals);
+    let result = again(vm, code);
+    // The error's construction allocates, which can make a collection due.
+    note_allocation(vm);
+    if (vm.heap.collection_epoch(), vm.realm.globals) != generation_key {
+        lane_after_nested_collection(cx);
+    }
+    let unobserved = vm.lane_deferred.take().is_some();
+    match result {
+        Err(error) if unobserved => {
+            vm.lane_completion.raise(error);
+            unwind_raised(cx, ip)
+        }
+        Err(error) => {
+            vm.lane_completion.raise(error);
+            exit(ip)
+        }
+        Ok(_) => {
+            debug_assert!(false, "an instruction that failed before any effect fails again");
+            exit(following(ip))
         }
     }
 }
