@@ -79,18 +79,10 @@ pub(crate) fn initialized_before_reads(function: &Function, superinstructions: &
                 };
                 match instruction.op().immediate_role() {
                     ImmediateRole::SuperinstructionIndex => {
-                        for member in superinstructions[instruction.superinstruction_index()].code {
-                            if member.is_wide() {
-                                // Members are packed without a wide table; an undecodable member
-                                // may touch any slot.
-                                for slot in 0..candidates.len() {
-                                    apply(slot, Access::Opaque, &mut state, &mut abrupt);
-                                }
-                            } else {
-                                accesses(member.as_wide(), uninitialized_at_entry, |slot, access| {
-                                    apply(slot, access, &mut state, &mut abrupt)
-                                });
-                            }
+                        for member in superinstructions[instruction.superinstruction_index()].wide {
+                            accesses(member, uninitialized_at_entry, |slot, access| {
+                                apply(slot, access, &mut state, &mut abrupt)
+                            });
                         }
                     }
                     _ => accesses(instruction, uninitialized_at_entry, |slot, access| {

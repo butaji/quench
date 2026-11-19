@@ -881,7 +881,7 @@ function.plain_local_slots(&self.superinstructions)
                 || (site.argument_start as usize)
                     .checked_add(site.argument_count as usize)
                     .is_none_or(|end| end > self.method_arguments.len())
-                || site.receiver_path.is_some_and(|(atom, cache)| {
+                || site.receiver_path.get().is_some_and(|(atom, cache)| {
                     !atom_in_bounds(atom, self.atoms.len())
                         || !cache_in_bounds(cache, self.cache_sites.get())
                 })

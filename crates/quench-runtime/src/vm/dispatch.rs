@@ -1530,7 +1530,7 @@ impl<H: Host> Vm<H> {
             Op::CallThisMethod => {
                 self.profile.call_source(CallSource::ThisMethod);
                 let method_site = i.method_site_index();
-                let path = p.method_sites[method_site].receiver_path;
+                let path = p.method_sites[method_site].receiver_path.get();
                 let this = if let Some((atom, cache)) = path {
                     self.get_field_cached(p, self.frames[f].this, atom, cache)?
                 } else {

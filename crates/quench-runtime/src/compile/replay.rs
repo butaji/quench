@@ -8,6 +8,7 @@
 //! the replay reaches, and each function nested in it already has its id and its range.
 
 use crate::bytecode::Atom;
+pub(crate) use super::settled::Settled;
 use rustc_hash::FxHashMap;
 use std::ops::{Index, IndexMut};
 
@@ -433,9 +434,9 @@ pub(crate) struct RewriteRanges {
     /// unlowered and unrewritten, so its encoding says so (`binary::encode_program`) and its
     /// first read settles it; every other kept record was rewritten at load.
     pub(crate) deferred: Box<[u32]>,
-    /// Per function id: where a replay or first read put its rewrites' sites (`Some(Some)`), or
-    /// that they stayed unrun (`Some(None)`); `None` before either.
-    pub(crate) settled: std::cell::RefCell<Vec<Option<Option<crate::compile::replay::RewriteStart>>>>,
+    /// Per function id: where a replay or first read put its rewrites' sites, or that they
+    /// stayed unrun; `Settled::UNSETTLED` before either.
+    pub(crate) settled: std::cell::RefCell<Vec<Settled>>,
 }
 
 impl RewriteRanges {
@@ -959,7 +960,7 @@ pub(crate) fn recompile(
                 let start = site.argument_start as usize;
                 let arguments =
                     program.method_arguments[start..start + usize::from(site.argument_count)].to_vec();
-                format!("{:?}", (site.atom, site.cache, arguments, site.receiver_path))
+                format!("{:?}", (site.atom, site.cache, arguments, site.receiver_path.get()))
             },
         );
         entries.push(("method_sites", index, format!("{value:?}"), loaded));

@@ -13,6 +13,9 @@ pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 pub type Atom = u32;
 pub type Register = u16;
 
+mod slot_records;
+pub(crate) use slot_records::{DeferredRecord, ReceiverPath};
+use slot_records::UnloweredCell;
 mod source_text_snapshot; pub(crate) mod append_vec;
 mod atoms;
 mod control_flow;
@@ -1564,7 +1567,7 @@ struct PackedHeader {
 }
 
 const _: () = assert!(size_of::<PackedHeader>() == 24);
-const _: () = assert!(size_of::<FunctionSlot>() == 64);
+const _: () = assert!(size_of::<FunctionSlot>() == 56);
 
 const NO_WORD: u32 = u32::MAX;
 
@@ -1653,7 +1656,7 @@ enum RecordUse {
 pub struct FunctionSlot {
     header: PackedHeader,
     record: std::cell::OnceCell<std::rc::Rc<Function>>,
-    unlowered: std::cell::RefCell<Option<Unlowered>>,
+    unlowered: UnloweredCell,
     /// The unlowered record its first runs execute until it lowers (`tier0`).
     tier0: tier0::Tier0Cell,
 }
@@ -1692,7 +1695,7 @@ impl Unlowered {
 impl FunctionSlot {
     fn new(header: FunctionHeader, record: Option<Function>, unlowered: Option<Unlowered>) -> Self {
         let record = record.map_or_else(Default::default, |function| std::rc::Rc::new(function).into());
-        Self { header: PackedHeader::pack(&header), record, unlowered: unlowered.into(), tier0: Default::default() }
+        Self { header: PackedHeader::pack(&header), record, unlowered: UnloweredCell::new(unlowered), tier0: Default::default() }
     }
 
     pub(crate) fn compiled(function: Function) -> Self {
@@ -1729,7 +1732,7 @@ impl FunctionSlot {
     /// the record again or decodes it.
     #[cfg(test)]
     pub(crate) fn is_released(&self) -> bool {
-        self.record.get().is_none() && self.unlowered.borrow().is_none() && self.tier0.get().is_none()
+        self.record.get().is_none() && self.unlowered.with(|held| held.is_none()) && self.tier0.get().is_none()
     }
 
     #[inline(always)] pub(crate) fn header(&self) -> FunctionHeader {
@@ -1745,7 +1748,7 @@ impl FunctionSlot {
     /// Drops the record, which its program compiles again on the function's next read.
     fn release(&mut self) {
         self.record.take();
-        self.unlowered.get_mut().take();
+        self.unlowered.take();
         self.tier0.take();
     }
 }
@@ -3381,8 +3384,10 @@ pub(crate) struct MethodSite {
     pub cache: u16,
     pub argument_start: u32,
     pub argument_count: u16,
-    pub receiver_path: Option<(Atom, u16)>,
+    pub receiver_path: ReceiverPath,
 }
+
+const _: () = assert!(size_of::<MethodSite>() == 20);
 
 #[derive(Clone, Debug)]
 pub(crate) struct ObjectSite {
@@ -3419,19 +3424,18 @@ pub(crate) struct RegExpLiteralSite {
     pub receiver: bool,
 }
 
+/// A fused window of narrow instructions, held once in the expanded form dispatch reads (every
+/// operand of every part). Its parts are never wide references, which `new` checks. The packed
+/// form of the same parts was a second copy of them, and nothing reads it.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Superinstruction {
-    pub code: [Instr; 4],
-    /// `code` expanded once for dispatch, which reads every operand of every part.
     pub wide: [WideInstruction; 4],
 }
 
 impl Superinstruction {
     pub(crate) fn new(code: [Instr; 4]) -> Self {
-        Self {
-            code,
-            wide: code.map(Instr::as_wide),
-        }
+        assert!(code.iter().all(|part| !part.is_wide()), "a superinstruction's parts are narrow");
+        Self { wide: code.map(Instr::as_wide) }
     }
 }
 
@@ -4178,20 +4182,6 @@ impl std::fmt::Debug for EncodedRecords {
     }
 }
 
-/// Where a deferred record lies in its program's encoding, and its checksum, which decoding
-/// it checks: the load checked only the encoding's body.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct DeferredRecord {
-    pub(crate) start: u32,
-    pub(crate) length: u32,
-    pub(crate) checksum: u64,
-    /// Whether the record is encoded unlowered, which its first read lowers.
-    pub(crate) unlowered: bool,
-    /// Whether its rewrites wait for that first read too (`RewriteRanges::deferred`), so the
-    /// read settles them before it lowers the record.
-    pub(crate) rewrites_pending: bool,
-}
-
 /// Bytes a host kept for a compiled program (`Host::kept_compiled_program`), which the program
 /// decoded from them keeps for as long as it lives.
 pub type KeptBytes = std::rc::Rc<dyn AsRef<[u8]>>;
@@ -4294,10 +4284,10 @@ impl ResidualProgram {
     fn build_record(&self, index: usize, purpose: RecordUse) -> Function {
         let unlowered = {
             let header = self.functions[index].header();
-            let mut unlowered = self.functions[index].unlowered.borrow_mut();
+            let slot = &self.functions[index].unlowered;
             match purpose {
-                RecordUse::Kept => unlowered.take().map(|unlowered| unlowered.into_function(header)),
-                RecordUse::Transient => unlowered.as_ref().map(|unlowered| unlowered.function(header)),
+                RecordUse::Kept => slot.take().map(|unlowered| unlowered.into_function(header)),
+                RecordUse::Transient => slot.with(|unlowered| unlowered.map(|unlowered| unlowered.function(header))),
             }
         };
         if let Some(unlowered) = unlowered {
@@ -4322,7 +4312,7 @@ impl ResidualProgram {
                 });
                 let entry = self.encoded_records.as_deref().and_then(|records| records.ranges.get(index).copied().flatten());
                 let function = match entry {
-                    Some(record) if record.unlowered => self.lower_unlowered(index, function, record.rewrites_pending),
+                    Some(record) if record.unlowered() => self.lower_unlowered(index, function, record.rewrites_pending()),
                     _ => function,
                 };
                 if let (Some(action), Some(bytes)) = (

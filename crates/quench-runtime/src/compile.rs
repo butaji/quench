@@ -1,6 +1,6 @@
 use crate::bytecode::{
     Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, FunctionSlot, Instr,
-    LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
+    LexicalBindingKind, MethodSite, ReceiverPath, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
     ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, REGISTER_MOVE, RETURN_OP, Register,
     ResidualProgram, SET_THIS_REGISTER, Superinstruction, Traits, WideInstruction, the_op,
 };
@@ -97,6 +97,7 @@ pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 pub(crate) mod replay;
+mod settled;
 mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW, settle_deferred_rewrite};
 mod rewrite; mod rest_alias;
 mod sequence;
@@ -3822,7 +3823,7 @@ impl<'a> Compiler<'a> {
                     cache,
                     argument_start,
                     argument_count,
-                    receiver_path,
+                    receiver_path: receiver_path.into(),
                 }
             })
             .collect();

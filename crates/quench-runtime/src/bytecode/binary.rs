@@ -320,7 +320,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
             && crate::DYNAMIC_EXECUTION_ENABLED
             && !load_records.contains_key(&(index as u32))
             && function.record.get().is_none())
-        .then(|| function.unlowered.borrow().as_ref().map(|unlowered| unlowered.function(function.header())))
+        .then(|| function.unlowered.with(|unlowered| unlowered.map(|unlowered| unlowered.function(function.header()))))
         .flatten();
         let rewrites_pending = program.rewrite_ranges.defers(index);
         out.u8(match (deferred, unlowered.is_some(), rewrites_pending) {
@@ -376,7 +376,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         out.u16(site.cache);
         out.u32(site.argument_start);
         out.u16(site.argument_count);
-        out.optional_atom_pair(site.receiver_path);
+        out.optional_atom_pair(site.receiver_path.get());
     }
     out.u16s(&program.method_arguments);
     out.u32(program.field_sites.len() as u32);
@@ -422,7 +422,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     }
     out.u32(program.superinstructions.len() as u32);
     for site in &program.superinstructions {
-        for instruction in site.code {
+        for instruction in site.wide {
             out.instruction(instruction.op(), instruction.a(), instruction.b(), instruction.c(), instruction.imm());
         }
     }
@@ -715,13 +715,9 @@ fn decode_program(
                 return Err("deferred record outside its region".into());
             }
             let start = u32::try_from(region + offset).map_err(|_| "residual records exceed u32")?;
-            ranges.push(Some(super::DeferredRecord {
-                start,
-                length,
-                checksum,
-                unlowered: entry >= DEFERRED_UNLOWERED,
-                rewrites_pending: entry == DEFERRED_UNREWRITTEN,
-            }));
+            let record = super::DeferredRecord::new(start, length, checksum, entry >= DEFERRED_UNLOWERED, entry == DEFERRED_UNREWRITTEN)
+                .ok_or("deferred record exceeds the encoding's record length")?;
+            ranges.push(Some(record));
             functions.push(FunctionSlot::released(header));
             continue;
         }
@@ -746,7 +742,7 @@ fn decode_program(
             cache: input.u16()?,
             argument_start: input.u32()?,
             argument_count: input.u16()?,
-            receiver_path: input.optional_atom_pair()?,
+            receiver_path: input.optional_atom_pair()?.into(),
         })
     })?;
     let method_arguments = input.u16s()?;
@@ -1540,11 +1536,11 @@ pub(super) fn decode_deferred_function(
 ) -> Option<Result<Function, String>> {
     let record = (*records.ranges.get(index)?)?;
     let start = record.start as usize;
-    let bytes = records.bytes.as_ref().as_ref().get(start..start + record.length as usize)?;
+    let bytes = records.bytes.as_ref().as_ref().get(start..start + record.length())?;
     if compact_checksum(bytes) != record.checksum {
         return Some(Err("deferred record checksum mismatch".into()));
     }
-    let mut reader = BinaryReader { bytes, cursor: 0, atoms: records.atoms.clone(), packed: false, unlowered: record.unlowered };
+    let mut reader = BinaryReader { bytes, cursor: 0, atoms: records.atoms.clone(), packed: false, unlowered: record.unlowered() };
     Some(read_function(&mut reader).and_then(|function| reader.finish().map(|()| function)))
 }
 
@@ -1552,7 +1548,7 @@ pub(super) fn decode_deferred_function(
 pub(super) fn deferred_record_bytes(records: &super::EncodedRecords, index: usize) -> Option<&[u8]> {
     let record = (*records.ranges.get(index)?)?;
     let start = record.start as usize;
-    records.bytes.as_ref().as_ref().get(start..start + record.length as usize)
+    records.bytes.as_ref().as_ref().get(start..start + record.length())
 }
 
 /// A lowered instruction's fixed-width record: four `u16` fields and a `u32` immediate.

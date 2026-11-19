@@ -60,9 +60,9 @@ pub(super) fn drop_unread_self_binding<'a>(
     let named = function.instructions().any(|instruction| {
         if instruction.op().immediate_role() == ImmediateRole::SuperinstructionIndex {
             return superinstructions[instruction.superinstruction_index()]
-                .code
+                .wide
                 .iter()
-                .any(|member| member.is_wide() || member.as_wide().addressed_local_slots().any(|addressed| addressed == slot));
+                .any(|member| member.addressed_local_slots().any(|addressed| addressed == slot));
         }
         instruction.addressed_local_slots().any(|addressed| addressed == slot)
     }) || function.handlers.iter().any(|handler| {
@@ -116,9 +116,9 @@ pub(super) fn promote<'a>(
                 })
                 .flat_map(|instruction| {
                     superinstructions[instruction.superinstruction_index()]
-                        .code
+                        .wide
                         .iter()
-                        .map(|member| member.as_wide())
+                        .copied()
                 }),
         )
         .filter(|instruction| instruction.op().traits().has(Traits::ENVIRONMENT_CLONE))
@@ -148,12 +148,8 @@ pub(super) fn promote<'a>(
     let mut by_name = Vec::new();
     for instruction in function.instructions() {
         if instruction.op().immediate_role() == ImmediateRole::SuperinstructionIndex {
-            for member in superinstructions[instruction.superinstruction_index()].code {
-                if member.is_wide() {
-                    return;
-                }
+            for member in superinstructions[instruction.superinstruction_index()].wide {
                 member
-                    .as_wide()
                     .addressed_local_slots()
                     .for_each(|slot| exclude(usize::from(slot)));
             }
