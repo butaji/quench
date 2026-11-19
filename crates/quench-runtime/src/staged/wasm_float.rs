@@ -2,13 +2,7 @@
 //! extrema and the traps of a truncation with the order in which it checks them. Every other
 //! float operator is a stage primitive (`operate_float`, `operate_float_unary`).
 
-use super::machine::MachineStage;
-use super::register_frame::{Frame, Step, WasmRep, wasm_operand, wasm_result};
 use super::wasm::{WasmStage, Width};
-use super::wasm_concrete::ConcreteWasm;
-use super::wasm_operation::WasmOperation;
-use super::{Concrete, Operation};
-use crate::bytecode::{ImmediateLayout, Op, Register, WideInstruction};
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::numeric::canonical_nan_bits;
