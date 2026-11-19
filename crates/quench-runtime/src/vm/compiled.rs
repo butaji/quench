@@ -286,13 +286,8 @@ fn emit_js_tagged_truthiness(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
 
 /// Decode an already-proved Number without repeating its semantic type check.
 fn emit_known_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
-    use crate::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
-    let integer = crate::staged::value::is_int(&mut stage, bits);
-    let payload = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
-    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), payload);
-    let double = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
-    stage.raw_select(integer, int, double)
+    crate::staged::value::known_number_f64(&mut stage, bits)
 }
 
 /// Unbox a tagged JavaScript Number, branching to the current instruction's
@@ -303,51 +298,18 @@ fn emit_js_tagged_number(
     bits: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    use crate::staged::machine::{Lane, Relation, Unary};
-    let nan = builder.create_block();
-    let tagged = builder.create_block();
-    let integer_block = builder.create_block();
-    let join = builder.create_block();
-    builder.append_block_param(join, types::F64);
+    // The tagged Number row (`tagged_number_f64`): a non-Number word leaves to `fallback`.
     let mut stage = object_slots::emit(builder);
-    let number = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
-    let unordered = stage.raw_compare(Relation::FloatUnordered, number, number);
-    stage.branch_if(unordered, (nan, &[]), (join, &[number]));
-
-    // An integer is the common NaN-space value (a double column holds its integral
-    // values tagged), so its tag is tested first.
-    stage.builder.switch_to_block(nan);
-    let integer = crate::staged::value::is_int(&mut stage, bits);
-    stage.branch_if(integer, (integer_block, &[]), (tagged, &[]));
-
-    // Any other tag leaves; an untagged NaN is the double NaN.
-    stage.builder.switch_to_block(tagged);
-    let double = crate::staged::value::is_double(&mut stage, bits);
-    stage.branch_if(double, (join, &[number]), (fallback, &[]));
-
-    stage.builder.switch_to_block(integer_block);
-    let low = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
-    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), low);
-    stage.goto(join, &[int]);
-    builder.seal_block(nan);
-    builder.seal_block(tagged);
-    builder.seal_block(integer_block);
-    builder.seal_block(join);
-    builder.switch_to_block(join);
-    builder.block_params(join)[0]
+    let (decided, value) = crate::staged::value::tagged_number_f64(&mut stage, bits);
+    stage.guard(decided, fallback);
+    value
 }
 
 /// An exact int32 projection of a Number, including its zero sign. The predicate
 /// rejects fractions, nonfinite values, saturation and -0 before the view is used.
 fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> (ir::Value, ir::Value) {
-    use crate::staged::machine::{Lane, Relation, Unary};
     let mut stage = object_slots::emit(builder);
-    let integer = stage.raw_unary(Unary::ToSignedSaturating(Lane::I32), number);
-    let round_trip = stage.raw_unary(Unary::FromSigned(Lane::F64), integer);
-    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
-    let round_trip_bits = stage.raw_unary(Unary::Bitcast(Lane::I64), round_trip);
-    let exact = stage.raw_compare(Relation::Equal, bits, round_trip_bits);
-    (integer, exact)
+    crate::staged::value::exact_int32(&mut stage, number)
 }
 
 // The boxes `emit_js_box_number` made while a lowering records them (`record_boxed_numbers`):
@@ -382,39 +344,20 @@ pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::
 
 /// `emit_js_box_number` with no branch: the integer, double and NaN encodings, selected.
 fn emit_js_box_number_pure(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    use crate::staged::machine::{Binary, Lane, Relation, Unary};
-    let (integer, is_integer) = emit_js_exact_int32(builder, number);
     let mut stage = object_slots::emit(builder);
-    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
-    let integer_bits = stage.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
-    let int_tag = stage.raw_const(Lane::I64, crate::value::ValueLayout::INT_TAG as i64);
-    let integer_bits = stage.raw_binary(Binary::Or, integer_bits, int_tag);
-    let encoded = stage.raw_select(is_integer, integer_bits, bits);
-    let is_nan = stage.raw_compare(Relation::FloatUnordered, number, number);
-    let canonical_nan = stage.raw_const(Lane::I64, crate::value::ValueLayout::CANONICAL_NAN as i64);
-    stage.raw_select(is_nan, canonical_nan, encoded)
+    crate::staged::value::number_word(&mut stage, number)
 }
 
 fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    use crate::staged::machine::{Binary, Lane, Relation, Unary};
     let (cold, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(cold);
     let result = builder.append_block_param(join, types::I64);
     let mut stage = object_slots::emit(builder);
-    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
-    let truncated = stage.raw_unary(Unary::Truncate, number);
-    let whole_or_nan = stage.raw_compare(Relation::FloatUnorderedEqual, truncated, number);
+    let (whole_or_nan, bits) = crate::staged::value::number_bits_unless_whole(&mut stage, number);
     stage.branch_if(whole_or_nan, (cold, &[]), (join, &[bits]));
     stage.builder.switch_to_block(cold);
     stage.builder.seal_block(cold);
-    let (integer, is_integer) = emit_js_exact_int32(stage.builder, number);
-    let integer_bits = stage.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
-    let int_tag = stage.raw_const(Lane::I64, crate::value::ValueLayout::INT_TAG as i64);
-    let integer_bits = stage.raw_binary(Binary::Or, integer_bits, int_tag);
-    let encoded = stage.raw_select(is_integer, integer_bits, bits);
-    let is_nan = stage.raw_compare(Relation::FloatUnordered, number, number);
-    let canonical_nan = stage.raw_const(Lane::I64, crate::value::ValueLayout::CANONICAL_NAN as i64);
-    let encoded = stage.raw_select(is_nan, canonical_nan, encoded);
+    let encoded = crate::staged::value::number_word(&mut stage, number);
     stage.goto(join, &[encoded]);
     builder.switch_to_block(join);
     builder.seal_block(join);
@@ -424,7 +367,6 @@ fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value)
 /// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
 /// leave through `exit` (`EXACT_I64_TRUNCATION_LIMIT`).
 pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value, exit: ir::Block) -> ir::Value {
-    use crate::staged::machine::{Lane, Relation, Unary};
     // A double converted from an int32 is that int32's exact value, so its ToInt32 is the
     // int32 itself: no round trip through the double, no range guard.
     let number = builder.func.dfg.resolve_aliases(number);
@@ -435,13 +377,11 @@ pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir
     {
         return *integer;
     }
+    // The truncate-to-int32 row: its candidate, leaving to `exit` beyond the exact I64 range.
     let mut stage = object_slots::emit(builder);
-    let magnitude = stage.raw_unary(Unary::FloatAbsolute, number);
-    let bound = stage.raw_const(Lane::F64, crate::value::EXACT_I64_TRUNCATION_LIMIT.to_bits() as i64);
-    let exact = stage.raw_compare(Relation::FloatLess, magnitude, bound);
+    let (int, exact) = crate::staged::value::truncate_int32(&mut stage, number);
     stage.guard(exact, exit);
-    let wide = stage.raw_unary(Unary::ToSignedSaturating(Lane::I64), number);
-    stage.raw_unary(Unary::Narrow(Lane::I32), wide)
+    int
 }
 
 /// Continue native code only when one guard holds. All failures share the exact-PC
@@ -7687,7 +7627,7 @@ impl<H: Host> Vm<H> {
             let body = program.function_get(function as usize)?;
             let last_pc = body.code.len().checked_sub(1)?;
             let terminal = body.code.get(last_pc)?.as_wide();
-            if terminal.op().class().eq(Class::Return) {
+            if matches!(crate::vm::compiled::decoded(terminal), Some(crate::staged::Operation::Return { .. })) {
                 return Some((last_pc, terminal.register_a(), value));
             }
         }
@@ -7897,7 +7837,7 @@ impl<H: Host> Vm<H> {
         let value = compiled.call(arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
         let terminal = function.code.get(last_pc)?.as_wide();
-        (terminal.op().class().eq(Class::Return)).then_some((last_pc, terminal.register_a(), value))
+        matches!(crate::vm::compiled::decoded(terminal), Some(crate::staged::Operation::Return { .. })).then_some((last_pc, terminal.register_a(), value))
     }
 
     /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
@@ -8022,7 +7962,7 @@ impl<H: Host> Vm<H> {
         (compiled.params() == params).then_some(())?;
         let return_pc = body.code.len().checked_sub(1)?;
         let terminal = body.code.get(return_pc)?.as_wide();
-        (terminal.op().class().eq(Class::Return)).then_some(())?;
+        matches!(crate::vm::compiled::decoded(terminal), Some(crate::staged::Operation::Return { .. })).then_some(())?;
         Some(DirectTierEntry {
             compiled: Rc::downgrade(compiled),
             return_pc,
@@ -9104,7 +9044,7 @@ const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
 pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
     body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
-        || body.code.iter().any(|packed| super::dispatch_fast::decoded_instruction(body, *packed).op().is_call())
+        || body.code.iter().any(|packed| crate::staged::meaning::means(super::dispatch_fast::decoded_instruction(body, *packed), crate::staged::meaning::Meaning::Call))
 }
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
