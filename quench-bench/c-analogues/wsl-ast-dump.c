@@ -17,6 +17,7 @@
 #include "wsl-types.h"
 #include "wsl-synth.h"
 #include "wsl-check.h"
+#include "wsl-props.h"
 
 static uint32_t fnv_bytes(uint32_t h, const char *s, size_t n) {
   for (size_t i = 0; i < n; i++) {
@@ -122,6 +123,7 @@ static void bench_parse(int iterations) {
  * then folds constexprs. The standard library is parsed once and kept below the arena mark. */
 static int STAGE = 0;
 static int UNIFY_MODE = 0;   /* --unify (1): the pairwise unification harness; --resolve (2): the overload harness */
+static int PROPS_MODE = 0;   /* --props: check, the literal check and resolveProperties, then the stage-6 dump */
 static int POST_MODE = 0;    /* --post: check, then the post-check passes; status lines only */
 static int CHECK_MODE = 0;   /* --check: the checker on the stage-6 state, with its expression trace */
 static Program STD_PROG, PREP_IN, PREP_OUT;
@@ -194,6 +196,11 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
     if (STAGE >= 5) resolve_typedefs_in_functions(&PREP_OUT);
     if (STAGE >= 6) flatten_protocol_extends(&PREP_OUT);
   }
+  if (PROPS_MODE) {
+    check_program(&PREP_OUT);
+    for (int k = 0; k < PREP_OUT.statements.n; k++) littype_visit(PREP_OUT.statements.v[k]);
+    resolve_properties(&PREP_OUT);
+  }
   if (CHECK_MODE) {
     check_program(&PREP_OUT);
     if (POST_MODE) post_check_passes(&PREP_OUT);
@@ -231,6 +238,7 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[i], "--clone") == 0) CLONE_FLAG = 1;
     else if (strcmp(argv[i], "--check") == 0) CHECK_MODE = 1;
     else if (strcmp(argv[i], "--post") == 0) { CHECK_MODE = 1; POST_MODE = 1; }
+    else if (strcmp(argv[i], "--props") == 0) { PROPS_MODE = 1; DUMP_NO_ROLES = 1; }
     else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
     else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc) benchIterations = atoi(argv[++i]);
     else root = argv[i];
@@ -266,7 +274,7 @@ int main(int argc, char **argv) {
   for (int i = 0; i < NINPUTS; i++) {
     const Input *in = &INPUTS[i];
     const char *kind = i == 0 ? "stdlib" : in->native ? "doLex" : "doPrep";
-    char status[700] = "ok";
+    char status[16384] = "ok";
     Buf b = {0};
     long nodes = 0;
     if (STAGE == 0) arena_reset();

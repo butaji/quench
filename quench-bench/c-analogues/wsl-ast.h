@@ -289,6 +289,7 @@ static void end_scalars(Buf *b, const Ast *n) {
   buf_str(b, "\n");
 }
 
+static int DUMP_NO_ROLES = 0;   /* --props: no old/new role on a reference (the JS dump finds the role only in a read-modify-write it still holds) */
 static void dump_node(Buf *b, const Ast *n, int depth);
 static void dump_child(Buf *b, const Ast *n, int depth) {
   if (!n) { buf_indent(b, depth); buf_str(b, "-\n"); return; }
@@ -512,7 +513,7 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
     return;
   case A_VARIABLEREF:
     buf_scalar_str(b, "name", n->u.varRef.name);
-    if (n->u.varRef.anon) buf_scalar_str(b, "anon", n->u.varRef.anon == 1 ? "old" : "new");
+    if (n->u.varRef.anon && !DUMP_NO_ROLES) buf_scalar_str(b, "anon", n->u.varRef.anon == 1 ? "old" : "new");
     else buf_str(b, " anon=-");
     end_scalars(b, n);
     return;
@@ -566,6 +567,7 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
     end_scalars(b, n);
     return;
   case A_ANONVAR:
+    end_scalars(b, n);   /* a node line with no scalars; the references to it are named "anonVar" */
     return;   /* an AnonymousVariable is only ever a reference target */
   case A_INTLITERALTYPE: case A_UINTLITERALTYPE: case A_FLOATLITERALTYPE: case A_DOUBLELITERALTYPE:
   case A_NULLTYPE:

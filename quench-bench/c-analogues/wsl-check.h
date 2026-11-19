@@ -145,6 +145,7 @@ static void check_func_cb(void *cx, Ast *f);
 static void check_enum_owners(Program *p);
 static void check_program(Program *p);
 static void post_check_passes(Program *p);
+static void resolve_properties(Program *p);   /* wsl-props.h */
 
 
 static int name_in(const char **v, int n, const char *s) {
@@ -1470,10 +1471,13 @@ static void zombie_visit(Ast *n) {
   visit_children(n, zombie_child, NULL);
 }
 
-/* The post-check passes ported so far, in Prepare.js order: checkLiteralTypes, checkProgramWrapped,
- * checkReturns, checkUnreachableCode, checkLoops, checkRecursion, checkProgramWrapped. findHighZombies
- * (zombie_visit) is ported but not wired in: it must run after resolveProperties, which is not ported. */
+/* The post-check passes, in Prepare.js order: checkLiteralTypes, resolveProperties, findHighZombies,
+ * checkLiteralTypes, checkProgramWrapped, checkReturns, checkUnreachableCode, checkLoops, checkRecursion,
+ * checkProgramWrapped, findHighZombies. */
 static void post_check_passes(Program *p) {
+  for (int i = 0; i < p->statements.n; i++) littype_visit(p->statements.v[i]);
+  resolve_properties(p);
+  for (int i = 0; i < p->statements.n; i++) zombie_visit(p->statements.v[i]);
   for (int i = 0; i < p->statements.n; i++) littype_visit(p->statements.v[i]);
   check_program_wrapped(p);
   RR_PROG = p;
@@ -1484,6 +1488,7 @@ static void post_check_passes(Program *p) {
   RR_NSTACK = 0;
   for (int i = 0; i < p->statements.n; i++) rec_visit(p->statements.v[i]);
   check_program_wrapped(p);
+  for (int i = 0; i < p->statements.n; i++) zombie_visit(p->statements.v[i]);
 }
 
 static void check_program(Program *p) {

@@ -284,12 +284,14 @@ const SPEC = {
     CommaExpression: { s: [], k: [K("list", n => n._list)] },
     NullLiteral: { s: [], k: [] },
     BoolLiteral: { s: [S("value", n => n._value)], k: [] },
-    VariableRef: { s: [S("name", n => (anonRoles.get(n.variable) ? "anonVar" : n._name)), S("anon", n => anonRoles.get(n.variable) || null)], k: [] },
+    VariableRef: { s: [S("name", n => (anonRoles.get(n.variable) || (n.variable && classOf(n.variable) === "AnonymousVariable") ? "anonVar" : n._name)), S("anon", n => (propsMode ? null : anonRoles.get(n.variable) || null))], k: [] },
+    AnonymousVariable: { s: [], k: [] },
     CallExpression: { s: [S("name", n => n._name)], k: [K("typeArguments", n => n._typeArguments), K("argumentList", n => n._argumentList)] },
     DotExpression: { s: [S("fieldName", n => n._fieldName)], k: [K("base", n => n.base)] },
     IndexExpression: { s: [], k: [K("base", n => n.base), K("index", n => n._index)] },
     DereferenceExpression: { s: [], k: [K("ptr", n => n._ptr)] },
     MakePtrExpression: { s: [], k: [K("lValue", n => n._lValue)] },
+    ConvertPtrToArrayRefExpression: { s: [], k: [K("lValue", n => n.lValue)] },
     MakeArrayRefExpression: { s: [], k: [K("lValue", n => n._lValue)] },
     LogicalNot: { s: [], k: [K("operand", n => n._operand)] },
     LogicalExpression: { s: [S("text", n => n._text)], k: [K("left", n => n._left), K("right", n => n._right)] },
@@ -307,7 +309,7 @@ const SPEC = {
 const TGT = t => (t === null || t === undefined ? "-" : classOf(t) + "@" + (t.origin.originKind === "native" ? "n" : "u") + t.origin.index);
 const TGTS = l => (l === null || l === undefined ? "-" : "[" + [...l].map(TGT).join(",") + "]");
 const DOT_REFS = { s: [S("getOverloads", n => TGTS(n.possibleGetOverloads)), S("setOverloads", n => TGTS(n.possibleSetOverloads)), S("andOverloads", n => TGTS(n.possibleAndOverloads))], k: [] };
-const LIT_REFS = { s: [S("preferred", n => TGT(n.type.preferredType.type))], k: [] };
+const LIT_REFS = { s: [S("preferred", n => (n.type.preferredType ? TGT(n.type.preferredType.type) : "-"))], k: [] };   // a literal the checker committed has a TypeRef type, with no preferredType
 const REFS = {
     TypeRef: { s: [S("type", n => TGT(n.type))], k: [] },
     VariableRef: { s: [S("variable", n => TGT(n.variable))], k: [] },
@@ -374,6 +376,7 @@ function resolveInput(input, stage) {
     if (stage >= 5) code += " resolveTypeDefsInFunctions(__p);";
     if (stage >= 6) code += " flattenProtocolExtends(__p);";
     run(code);
+    if (propsMode) run("check(__p); checkLiteralTypes(__p); resolveProperties(__p);");
     return run("__p");
 }
 
@@ -405,10 +408,14 @@ function parseInput(input) {
 // --check: the checker (Check.js) on the stage-6 state. Every Expression the checker visits is traced in
 // visit order with the type its visit returned ("E class origin type"); a call also traces its chosen
 // overload and result ("C name overload -> type"). A type error stops the input: its status carries the message.
+const propsMode = process.argv.includes("--props");   // --props: check, the literal check and resolveProperties, then the stage-6 dump
 const postMode = process.argv.includes("--post");   // --post: the checker and the post-check passes, status only
 const checkMode = process.argv.includes("--check") || postMode;
 if (postMode) run(`function __postHarness(p) {
     check(p);
+    checkLiteralTypes(p);
+    resolveProperties(p);
+    findHighZombies(p);
     checkLiteralTypes(p);
     checkProgramWrapped(p);
     checkReturns(p);
@@ -416,6 +423,7 @@ if (postMode) run(`function __postHarness(p) {
     checkLoops(p);
     checkRecursion(p);
     checkProgramWrapped(p);
+    findHighZombies(p);
     return "";
 }`);
 if (checkMode) run(`function __checkHarness(p) {
