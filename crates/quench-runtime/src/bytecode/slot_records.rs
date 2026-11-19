@@ -3,47 +3,7 @@
 //! Each holds its fields in the fewest words they take, so a slot of a large bundle, most of
 //! whose functions never run, pays for these words alone.
 
-use super::{Atom, NO_WORD, Unlowered};
-
-/// A slot's `Option<Unlowered>`, read by taking it out and putting it back, so the slot pays
-/// for the option's sixteen bytes alone: a `RefCell`'s borrow flag would add eight to every
-/// slot, and boxing the option would add an allocation to each unlowered function (most of a
-/// large bundle's functions). Single-threaded, and no read reaches the cell again.
-pub(super) struct UnloweredCell(std::cell::Cell<Option<Unlowered>>);
-
-impl UnloweredCell {
-    pub(super) fn new(unlowered: Option<Unlowered>) -> Self {
-        Self(std::cell::Cell::new(unlowered))
-    }
-
-    /// `read` applied to the held record, or `None`.
-    pub(super) fn with<R>(&self, read: impl FnOnce(Option<&Unlowered>) -> R) -> R {
-        let held = self.0.take();
-        let result = read(held.as_ref());
-        self.0.set(held);
-        result
-    }
-}
-
-impl std::ops::Deref for UnloweredCell {
-    type Target = std::cell::Cell<Option<Unlowered>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Clone for UnloweredCell {
-    fn clone(&self) -> Self {
-        Self(std::cell::Cell::new(self.with(|held| held.cloned())))
-    }
-}
-
-impl std::fmt::Debug for UnloweredCell {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.with(|held| std::fmt::Debug::fmt(&held, formatter))
-    }
-}
+use super::{Atom, NO_WORD};
 
 /// A method site's receiver path (`MethodSite::receiver_path`): the atom and inline cache of
 /// the field its receiver is read from, or none. An `Option<(Atom, u16)>` takes twelve bytes;

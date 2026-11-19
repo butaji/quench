@@ -18,7 +18,6 @@ pub type Register = u16;
 
 mod slot_records;
 pub(crate) use slot_records::{DeferredRecord, ReceiverPath};
-use slot_records::UnloweredCell;
 mod source_text_snapshot; pub(crate) mod append_vec;
 mod atoms;
 mod control_flow;
@@ -1739,7 +1738,7 @@ enum RecordUse {
 pub struct FunctionSlot {
     header: PackedHeader,
     record: std::cell::OnceCell<std::rc::Rc<Function>>,
-    unlowered: UnloweredCell,
+    unlowered: UnlowerCell,
     /// The unlowered record its first runs execute until it lowers (`tier0`).
     tier0: tier0::Tier0Cell,
 }
@@ -1824,7 +1823,7 @@ impl std::fmt::Debug for UnlowerCell {
 impl FunctionSlot {
     fn new(header: FunctionHeader, record: Option<Function>, unlowered: Option<Unlowered>) -> Self {
         let record = record.map_or_else(Default::default, |function| std::rc::Rc::new(function).into());
-        Self { header: PackedHeader::pack(&header), record, unlowered: UnloweredCell::new(unlowered), tier0: Default::default() }
+        Self { header: PackedHeader::pack(&header), record, unlowered: UnlowerCell::new(unlowered), tier0: Default::default() }
     }
 
     pub(crate) fn compiled(function: Function) -> Self {
