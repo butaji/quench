@@ -18,7 +18,7 @@ const DECIMAL_RADIX: i32 = 10;
 const MIN_RADIX: i32 = 2;
 /// The largest radix `toString` takes here.
 const MAX_RADIX: i32 = 36;
-use super::super::string_extra::{RADIX_TEXT_CAPACITY, radix_text};
+use super::super::string_extra::with_radix_text;
 /// 10^0 through 10^MAX_FIXED_DIGITS, each exact in a u128.
 const POWERS_OF_TEN: [u128; MAX_FIXED_DIGITS + 1] = {
     let mut powers = [1u128; MAX_FIXED_DIGITS + 1];
@@ -66,8 +66,7 @@ impl<H: Host> Vm<H> {
         if !(MIN_RADIX..=MAX_RADIX).contains(&radix) || !number.is_finite() {
             return None;
         }
-        let mut buffer = [0u8; RADIX_TEXT_CAPACITY];
-        Some(self.heap.alloc_ascii_run(radix_text(number, radix as u32, &mut buffer)))
+        Some(with_radix_text(number, radix as u32, |text| self.heap.alloc_ascii_run(text)))
     }
 
     /// `Object.getPrototypeOf(object)` of an ordinary object (`Heap::ordinary_object`), whose

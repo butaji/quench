@@ -382,8 +382,46 @@ fn finish_fraction(buffer: &mut [u8; RADIX_TEXT_CAPACITY], count: usize) -> usiz
 /// `number_to_radix` as a string value, for a finite `number`: its text is written on the stack
 /// and copied once into the string.
 pub(super) fn number_to_radix_string(number: f64, radix: u32) -> super::wtf16::JsString {
+    with_radix_text(number, radix, super::wtf16::JsString::from_ascii_bytes)
+}
+
+/// 2^53: integers of smaller magnitude are exact doubles.
+const EXACT_INTEGER_LIMIT: f64 = (1_u64 << f64::MANTISSA_DIGITS) as f64;
+
+/// The most units an exact integer below 2^53 takes in any radix: 53 binary digits and a sign.
+const INTEGER_RADIX_CAPACITY: usize = f64::MANTISSA_DIGITS as usize + 1;
+
+/// Hands `use_text` the radix-`radix` text of the finite `number`, written on the stack: an exact
+/// integer into a buffer of `INTEGER_RADIX_CAPACITY`, any other number into the full
+/// `RADIX_TEXT_CAPACITY` buffer, so the common integer call clears no large buffer.
+pub(super) fn with_radix_text<T>(number: f64, radix: u32, use_text: impl FnOnce(&[u8]) -> T) -> T {
+    let exact = number.trunc() == number && number.abs() < EXACT_INTEGER_LIMIT;
+    if exact {
+        let mut buffer = [0u8; INTEGER_RADIX_CAPACITY];
+        return use_text(integer_radix_text(number as i64, radix, &mut buffer));
+    }
     let mut buffer = [0u8; RADIX_TEXT_CAPACITY];
-    super::wtf16::JsString::from_ascii_bytes(radix_text(number, radix, &mut buffer))
+    use_text(radix_text(number, radix, &mut buffer))
+}
+
+/// The radix-`radix` digits of `integer` (|integer| < 2^53), written backwards into `buffer`.
+fn integer_radix_text(integer: i64, radix: u32, buffer: &mut [u8; INTEGER_RADIX_CAPACITY]) -> &[u8] {
+    let base = u64::from(radix);
+    let mut magnitude = integer.unsigned_abs();
+    let mut start = buffer.len();
+    loop {
+        start -= 1;
+        buffer[start] = RADIX_DIGITS[(magnitude % base) as usize];
+        magnitude /= base;
+        if magnitude == 0 {
+            break;
+        }
+    }
+    if integer < 0 {
+        start -= 1;
+        buffer[start] = b'-';
+    }
+    &buffer[start..]
 }
 
 /// The least double greater than the finite, non-negative `value`.
