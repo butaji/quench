@@ -12,3 +12,4 @@ mod entry; pub(in crate::vm::dispatch_fast) use entry::entry_miss_of;
 mod returns; pub(in crate::vm::dispatch_fast) use returns::return_miss_of;
 mod frame_call; pub(in crate::vm::dispatch_fast) use frame_call::frame_call_miss_of;
 mod leaf_call; pub(in crate::vm::dispatch_fast) use leaf_call::leaf_call_miss_of;
+mod vector; pub(in crate::vm::dispatch_fast) use vector::vector_miss_of;
