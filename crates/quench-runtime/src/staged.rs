@@ -497,22 +497,15 @@ pub(crate) const fn chain_raw_links(chain: [u16; 4]) -> u8 {
     mask
 }
 
-/// The bits of `chain_raw_links` whose next link is a keyed element access. Those take the key rule
-/// instead of the operator rule: the producer's register must be the key alone, never the base or a
-/// store's value.
-pub(crate) const fn chain_keyed_links(chain: [u16; 4]) -> u8 {
-    let mut mask = 0;
-    let mut k = 0;
-    while k < 3 {
-        if chain[k + 1] != NO_LINK && keyed_element(row_op(chain[k + 1])) { mask |= 1 << k; }
-        k += 1;
-    }
-    mask
-}
+/// The bits of `chain_raw_links` whose next link is a keyed element access, which take the key
+/// rule: none, as no keyed link keeps a raw key (`raw_result_link`).
+pub(crate) const fn chain_keyed_links(_chain: [u16; 4]) -> u8 { 0 }
 
 /// Whether `producer`'s result may stay raw in `consumer`, judged by meaning alone.
+/// A keyed consumer is not one: its key guard wants an int32, which an integral raw double is not,
+/// so a raw key would take the row's miss every time.
 const fn raw_result_link(producer: Op, consumer: Op) -> bool {
-    keyed_element(consumer) || (number_operator(producer) && number_operator(consumer))
+    number_operator(producer) && number_operator(consumer)
 }
 
 /// The absent fourth link of a three-link `FUSED_CHAINS` entry.
