@@ -819,44 +819,30 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn array_pop_dense(&mut self, this: Value) -> Option<Value> {
         let object = self.heap.record_array(this)?;
-        if !object.holds_ordinary_elements() {
-            return self.array_pop_plain_elements(this);
-        }
         let records = self.heap.array_record_base()?;
         // A shorter array falsifies the proofs a prototype's elements and the running lane's
         // storage proofs hold, so they retire before the removal.
         object.announce_shrinking();
         match crate::staged::builtins::concrete_array_pop(records, this) {
             Some(popped) => Some(popped),
-            None => self.array_pop_elements(this),
+            None => self.array_pop_slow(this),
         }
     }
 
-    /// `array_pop_dense` past the staged removal: an empty array answers `undefined`, a hole
-    /// (which its prototypes answer) takes the general path (`None`), and otherwise the last
-    /// element leaves the backing in place.
+    /// `array_pop_dense` past the staged removal, which declines a shared backing, a non-ordinary
+    /// one and a hole: an empty array answers `undefined`, a hole (which its prototypes answer)
+    /// takes the general path (`None`), and otherwise the backing is made unique first (its
+    /// copy-on-write) and the last element leaves it.
     #[inline(never)]
-    fn array_pop_elements(&mut self, this: Value) -> Option<Value> {
-        let object = self.heap.record_array(this)?;
-        match object.elements().last() {
-            None => Some(Value::UNDEFINED),
-            Some(last) if last.is_deleted() => None,
-            // Removing stores no reference, which the write barrier passes.
-            Some(_) => super::index::mutable_array_elements(
-                self.heap.record_array_store_mut(this, Value::UNDEFINED)?.elements_mut(),
-            )
-            .pop(),
-        }
-    }
-
-    /// `array_pop_dense` for a dense array that holds no ordinary elements
-    /// (`dense_array_length`), whose backing is edited in place.
-    fn array_pop_plain_elements(&mut self, this: Value) -> Option<Value> {
+    fn array_pop_slow(&mut self, this: Value) -> Option<Value> {
         let length = self.dense_array_length(this)?;
         let Some(last) = length.checked_sub(1) else { return Some(Value::UNDEFINED) };
-        let object = self.heap.array_mut(this)?;
-        if object.elements().get(last).is_some_and(Value::is_deleted) { return None; }
-        super::index::mutable_array_elements(object.elements_mut()).pop()
+        if self.heap.array(this)?.elements().get(last).is_some_and(Value::is_deleted) {
+            return None;
+        }
+        // Removing stores no reference, which the write barrier passes.
+        let array = self.heap.array_store_mut(this, Value::UNDEFINED)?;
+        super::index::mutable_array_elements(array.elements_mut()).pop()
     }
 
     fn array_push_with_array_like_semantics(

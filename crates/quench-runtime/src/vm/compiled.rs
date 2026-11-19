@@ -3473,6 +3473,13 @@ struct JsStepDispatch {
     /// read through (`staged::environment::environment_slot`): its activation's window, or storage that holds no
     /// slot where it runs in a frame (`heap::absent_environment_storage`).
     environment_storage: u64,
+    /// The address of the thread's armed array proofs word (`heap::array_proofs::armed_proofs_address`).
+    /// Its word is nonzero while a lane run's proofs are armed, which a row that shrinks an array's
+    /// backing must miss on: it cannot retire them. Read at every use, so never stale.
+    armed_array_proofs: usize,
+    /// The encoded link of `Array.prototype` while the held index-free chain proof covers its chain,
+    /// else zero (`array_chain_index_free`). Refreshed with the object bases.
+    array_chain_index_free: usize,
     outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
@@ -4397,6 +4404,8 @@ impl JsStepDispatch {
             loop_entry: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
             empty_string: Value::DELETED.to_bits(),
             environment_storage: crate::heap::absent_environment_storage(),
+            armed_array_proofs: crate::heap::array_proofs::armed_proofs_address(),
+            array_chain_index_free: 0,
             receiver: Value::DELETED.to_bits(),
             vm: 0, residual: 0, body: std::ptr::null(), inlined: 0, exit_line: 0, lane_context: 0, returned_pc: 0,
             native_top: 0, native_end: 0, shadow_top: 0, shadow_end: 0,

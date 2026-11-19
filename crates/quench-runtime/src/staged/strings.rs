@@ -179,4 +179,40 @@ mod tests {
         let empty = Heap::new();
         assert!(read(&empty, slice, Value::integer(0)).is_none(), "no record base");
     }
+
+    #[test]
+    fn char_code_at_reads_units_of_either_width_and_answers_nan_outside() {
+        let narrow = Units::Ascii(b"aZ");
+        let wide = [0x61u16, 0x20ac];
+        let wide = Units::Wide(&wide);
+        let at = |units, index: Value| concrete_char_code_at(ConcreteString::Units(units), index).map(Value::to_bits);
+        assert_eq!(at(narrow, Value::integer(1)), Some(Value::integer(0x5a).to_bits()));
+        assert_eq!(at(wide, Value::integer(1)), Some(Value::integer(0x20ac).to_bits()));
+        for index in [2, 100, -1, i32::MIN] {
+            assert_eq!(at(narrow, Value::integer(index)), Some(Value::NAN.to_bits()), "{index} is outside");
+        }
+        assert_eq!(at(Units::Ascii(b""), Value::integer(0)), Some(Value::NAN.to_bits()));
+        assert_eq!(at(narrow, Value::number(0.5)), None, "a double index leaves to the native");
+        assert_eq!(at(narrow, Value::UNDEFINED), None, "an absent index leaves to the native");
+    }
+
+    #[test]
+    fn char_at_answers_ascii_units_from_the_table_and_leaves_the_rest() {
+        let mut table = [Value::UNDEFINED; 128];
+        table[usize::from(b'y')] = Value::integer(7);
+        table[0x7f] = Value::integer(9);
+        let table = table.as_ptr();
+        let wide = [0x61u16, 0x20ac, 0x7f];
+        let wide = Units::Wide(&wide);
+        let at = |units, index: i32| concrete_char_at(ConcreteString::Units(units), table, Value::integer(index));
+        assert_eq!(at(Units::Ascii(b"xy"), 1), Some(Value::integer(7)));
+        assert_eq!(at(Units::Ascii(b"xy"), 0), None, "a unit with no string yet leaves to the native");
+        assert_eq!(at(wide, 1), None, "a unit past ASCII leaves");
+        assert_eq!(at(wide, 2), Some(Value::integer(9)), "the last ASCII unit stays");
+        assert_eq!(at(wide, 3), None, "outside leaves for the native's empty string");
+        assert_eq!(at(wide, -1), None);
+        assert_eq!(concrete_char_at(ConcreteString::Units(wide), table, Value::number(1.5)), None);
+        let no_table: *const Value = std::ptr::null();
+        assert_eq!(concrete_char_at(ConcreteString::Units(wide), no_table, Value::integer(2)), None, "no table yet");
+    }
 }
