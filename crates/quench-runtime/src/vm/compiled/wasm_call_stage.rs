@@ -39,7 +39,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         };
         let arguments = self.known_arguments(instruction, plan);
         let target = self.known_target(callee, plan);
+        let roots = self.root();
         let results = self.call_function(target, &arguments);
+        self.unroot(roots);
         self.propagate(results[0]);
         let destination = instruction.result_register();
         match plan.result {

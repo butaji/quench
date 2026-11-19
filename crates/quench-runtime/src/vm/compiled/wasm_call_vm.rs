@@ -89,14 +89,10 @@ unsafe fn encode_arguments<H: Host>(
 ) -> Result<smallvec::SmallVec<[Value; 8]>, JsError> {
     let mut values = smallvec::SmallVec::new();
     for (offset, ty) in params.iter().enumerate() {
-        let kind = Kind::of(*ty).ok_or_else(|| JsError::validation("unsupported Wasm call parameter".into()))?;
+        Kind::of(*ty).ok_or_else(|| JsError::validation("unsupported Wasm call parameter".into()))?;
         // SAFETY: the caller passes a word per parameter.
         let bits = unsafe { *args.add(offset) };
-        let bits = match kind {
-            Kind::I32 => u64::from(bits as u32),
-            Kind::I64 => bits,
-        };
-        values.push(vm.encode_wasm_value(crate::WasmValue::from_bits(*ty, bits)));
+        values.push(wasm_word_value(vm, *ty, bits));
     }
     Ok(values)
 }
@@ -142,6 +138,10 @@ fn result_bits<H: Host>(vm: &Vm<H>, result: Value, result_type: Option<crate::Wa
     let Some(ty) = result_type else {
         return Ok(0);
     };
+    if Kind::of(ty) == Some(Kind::Reference) {
+        vm.decode_wasm_value(result, ty)?;
+        return Ok(result.to_bits());
+    }
     match vm
         .decode_wasm_value(result, ty)?
         .bits()

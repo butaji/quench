@@ -159,7 +159,12 @@ impl<H: Host> Analysis<'_, H> {
         let Slot::Binding(slot) = state.get(instruction.b(), registers)? else {
             return None;
         };
-        let kind = Kind::of(self.global_type(slot)?)?;
+        let ty = self.global_type(slot)?;
+        // A reference's global is `Storage::Handle`, which `global_store` admits no store to.
+        if matches!(ty, crate::WasmType::Reference { .. }) {
+            return None;
+        }
+        let kind = Kind::of(ty)?;
         if step == Instance::GlobalGet {
             return state.set(instruction.a(), registers, Slot::Value(kind));
         }

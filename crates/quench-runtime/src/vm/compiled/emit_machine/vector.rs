@@ -125,7 +125,7 @@ impl<H: Host> MachineVector for Emitter<'_, '_, H> {
         let value = builder.ins().stack_load(types::I64, types::I64, slot, result);
         match Kind::of(ty).expect("planned") {
             Kind::I32 => builder.ins().ireduce(types::I32, value),
-            Kind::I64 => value,
+            Kind::I64 | Kind::Reference => value,
         }
     }
 }

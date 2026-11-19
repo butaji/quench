@@ -146,8 +146,11 @@ mod wasm_call_stage;
 mod wasm_table_stage;
 mod wasm_table_ops_stage;
 mod wasm_gc_stage;
+mod wasm_gc_allocate;
+use self::wasm_gc_allocate::allocating_reads;
 mod wasm_gc_callout;
 mod wasm_instance_switch;
+mod wasm_roots;
 mod wasm_simd_stage;
 // `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1487,6 +1490,10 @@ impl ExecutionMode {
 enum Kind {
     I32,
     I64,
+    /// A reference (funcref, externref, anyref, GC references). Its Wasm bits are its Value bits,
+    /// held in a 64-bit word like an `I64`; the analysis keeps it apart so only reference
+    /// operations read it, and the frame roots its registers across calls (`wasm_roots`).
+    Reference,
 }
 
 impl Kind {
@@ -1495,6 +1502,7 @@ impl Kind {
         match ty {
             crate::WasmType::I32 | crate::WasmType::F32 => Some(Self::I32),
             crate::WasmType::I64 | crate::WasmType::F64 => Some(Self::I64),
+            crate::WasmType::Reference { .. } => Some(Self::Reference),
             _ => None,
         }
     }
@@ -1502,14 +1510,15 @@ impl Kind {
     fn ir(self) -> ir::Type {
         match self {
             Self::I32 => types::I32,
-            Self::I64 => types::I64,
+            Self::I64 | Self::Reference => types::I64,
         }
     }
 
+    /// The Wasm type of the register's integer view: a reference's bits live in the `I64` view.
     fn integer(self) -> crate::WasmType {
         match self {
             Self::I32 => crate::WasmType::I32,
-            Self::I64 => crate::WasmType::I64,
+            Self::I64 | Self::Reference => crate::WasmType::I64,
         }
     }
 
@@ -1517,8 +1526,19 @@ impl Kind {
         use crate::staged::machine::Lane;
         match self {
             Self::I32 => Lane::I32,
-            Self::I64 => Lane::I64,
+            Self::I64 | Self::Reference => Lane::I64,
         }
+    }
+}
+
+/// The Value of a Wasm word `bits` of type `ty`, as the callout ABI carries it: an i32 from its
+/// low word, a 64-bit number boxed where its payload does not fit, and a reference as its Value
+/// bits (`WasmValue` has no reference word; `encode_wasm_value` gives the reference's Value).
+fn wasm_word_value<H: Host>(vm: &mut Vm<H>, ty: crate::WasmType, bits: u64) -> Value {
+    match Kind::of(ty) {
+        Some(Kind::Reference) => Value::from_bits(bits),
+        Some(Kind::I32) => vm.encode_wasm_value(crate::WasmValue::from_bits(ty, u64::from(bits as u32))),
+        _ => vm.encode_wasm_value(crate::WasmValue::from_bits(ty, bits)),
     }
 }
 
@@ -2542,17 +2562,10 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
         let vm = unsafe { &mut *vm_pointer };
         let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
         for (offset, ty) in params.iter().enumerate() {
-            let kind = Kind::of(*ty)
-                .ok_or_else(|| JsError::validation("unsupported Wasm call parameter".into()))?;
+            Kind::of(*ty).ok_or_else(|| JsError::validation("unsupported Wasm call parameter".into()))?;
             // SAFETY: the generated call frame stores one word per parameter.
             let bits = unsafe { *args.add(offset) };
-            values.push(vm.encode_wasm_value(crate::WasmValue::from_bits(
-                *ty,
-                match kind {
-                    Kind::I32 => u64::from(bits as u32),
-                    Kind::I64 => bits,
-                },
-            )));
+            values.push(wasm_word_value(vm, *ty, bits));
         }
         let compiled_result = same_program_function.and_then(|(target_program, function, env)| {
             vm.run_compiled(target_program, env, function, &values)
@@ -5442,6 +5455,13 @@ struct Plan {
     /// Per instruction, the second binding slot of a table copy or segment init
     /// (`TableOp::bindings`), `None` where the step names none.
     seconds: Vec<Option<Slot>>,
+    /// Per instruction, the registers its state holds as references: the ones a call there holds
+    /// in the native roots (`wasm_roots`). Only a register that is a reference on every path is
+    /// listed, so a number's bits never are.
+    references: Vec<Vec<u16>>,
+    /// Per instruction, the operand registers of an allocating GC step (`allocating_reads`) with
+    /// their kinds, which the allocation callout converts; empty elsewhere.
+    gc_reads: Vec<Vec<(u16, Kind)>>,
 }
 
 impl Plan {
@@ -5453,6 +5473,8 @@ impl Plan {
             result: self.result,
             operands: Vec::new(),
             seconds: Vec::new(),
+            references: Vec::new(),
+            gc_reads: Vec::new(),
         }
     }
 
@@ -5772,6 +5794,38 @@ impl<H: Host> Analysis<'_, H> {
                 state.get(register, function.registers)
             })
             .collect();
+        let references: Vec<Vec<u16>> = states
+            .iter()
+            .map(|state| {
+                state.as_ref().map_or_else(Vec::new, |state| {
+                    state
+                        .slots
+                        .iter()
+                        .filter(|(_, slot)| *slot == Slot::Value(Kind::Reference))
+                        .map(|(register, _)| *register)
+                        .collect()
+                })
+            })
+            .collect();
+        let gc_reads: Vec<Vec<(u16, Kind)>> = states
+            .iter()
+            .zip(&instructions)
+            .map(|(state, instruction)| {
+                let (Some(state), Some(reads)) = (state.as_ref(), allocating_reads(*instruction)) else {
+                    return Vec::new();
+                };
+                // Every operand is checked as a value at analysis, so none is dropped here.
+                reads
+                    .into_iter()
+                    .map(|register| match state.get(register, function.registers)? {
+                        Slot::Value(kind) => Some((register, kind)),
+                        Slot::Memory32Address => Some((register, Kind::I64)),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .unwrap_or_default()
+            })
+            .collect();
         if let Some(started) = plan_started {
             let reachable = states.iter().flatten().count();
             let stored_slots: usize = states.iter().flatten().map(|state| state.slots.len()).sum();
@@ -5803,6 +5857,8 @@ impl<H: Host> Analysis<'_, H> {
             result,
             operands,
             seconds,
+            references,
+            gc_reads,
         })
     }
 
@@ -6517,6 +6573,9 @@ struct Emitter<'a, 'b, H: Host> {
     indirect: Option<wasm_table_stage::IndirectSite>,
     /// The row an indirect target just checked, which the call that follows reads again.
     checked_row: Option<wasm_table_stage::CheckedRow>,
+    /// The reference registers the instruction being emitted holds (`Plan::references`): the
+    /// roots a call it makes holds (`wasm_roots`).
+    roots: &'a [u16],
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -6561,7 +6620,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let (integer, float) = match kind {
             // The i32 view holds the constant zero-extended (`view_ir`).
             Kind::I32 => (self.raw_const(Lane::I64, i64::from(bits as u32)), self.raw_const(Lane::F32, bits)),
-            Kind::I64 => (self.raw_const(Lane::I64, bits), self.raw_const(Lane::F64, bits)),
+            Kind::I64 | Kind::Reference => (self.raw_const(Lane::I64, bits), self.raw_const(Lane::F64, bits)),
         };
         let float_type = counterpart(kind.integer());
         let variables = self.body.views(register);
@@ -6728,7 +6787,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             let value = self.read(window.base + offset as u16, kind);
             let value = match kind {
                 Kind::I32 => self.raw_unary(Unary::ZeroExtend(Lane::I64), value),
-                Kind::I64 => value,
+                Kind::I64 | Kind::Reference => value,
             };
             let address = self.slot_address(slot, (offset as u32 * word) as i32);
             self.raw_store(Lane::I64, MemFlagsData::trusted(), (value, false), address, 0);
@@ -6748,7 +6807,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         let context = self.body.core.context;
         let target = self.raw_load(Lane::I64, invariant(), context, CONTEXT_CALLOUT);
         let function = self.raw_const(Lane::I64, i64::from(function));
+        let roots = self.root();
         let status = self.call_signature(callout_signature, target, &[context, function, args, out])[0];
+        self.unroot(roots);
         self.propagate(status);
         let destination = instruction.result_register();
         match signature.results.first() {
@@ -6757,7 +6818,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let bits = self.raw_load(Lane::I64, MemFlagsData::trusted(), out, 0);
                 let value = match kind {
                     Kind::I32 => self.raw_unary(Unary::Narrow(Lane::I32), bits),
-                    Kind::I64 => bits,
+                    Kind::I64 | Kind::Reference => bits,
                 };
                 self.write(destination, kind, value);
             }
@@ -6948,6 +7009,8 @@ impl<H: Host> Emitter<'_, '_, H> {
     ) -> bool {
         let step = Step::of(instruction.op(), instruction.imm())
             .expect("planned instructions have a denotation");
+        let plan = self.plan;
+        self.roots = &plan.references[pc];
         match step {
             Step::Numeric(operation) => self.operation(pc, instruction, operation),
             Step::Instance(step) => {
@@ -6963,7 +7026,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 true
             }
             Step::Gc(op) => {
-                self.gc(instruction, op);
+                self.gc(pc, instruction, op);
                 true
             }
             Step::Flow(flow) => self.flow(function, pc, instruction, flow),
@@ -7217,6 +7280,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             simd_words: None,
             indirect: None,
             checked_row: None,
+            roots: &[],
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -7362,7 +7426,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             let raw = stage.raw_load(Lane::I64, MemFlagsData::trusted(), args, (offset * 8) as i32);
             call_args.push(match Kind::of(*ty).expect("planned") {
                 Kind::I32 => stage.raw_unary(Unary::Narrow(Lane::I32), raw),
-                Kind::I64 => raw,
+                Kind::I64 | Kind::Reference => raw,
             });
         }
         let table = stage.raw_load(Lane::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
@@ -7371,7 +7435,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         if let Some(ty) = plan.result {
             let value = match Kind::of(ty).expect("planned") {
                 Kind::I32 => stage.raw_unary(Unary::ZeroExtend(Lane::I64), results[1]),
-                Kind::I64 => results[1],
+                Kind::I64 | Kind::Reference => results[1],
             };
             stage.raw_store(Lane::I64, MemFlagsData::trusted(), (value, false), out, 0);
         }
@@ -8913,6 +8977,7 @@ impl<H: Host> Vm<H> {
             raw.push(match Kind::of(*ty)? {
                 Kind::I32 => u64::from(value.wasm_bits32()),
                 Kind::I64 => self.decode_bits64(*value)?,
+                Kind::Reference => value.to_bits(),
             });
         }
         Some(raw)
@@ -9240,6 +9305,7 @@ impl<H: Host> Vm<H> {
                 Some(ty) => match Kind::of(ty)? {
                     Kind::I32 => Value::integer(out as u32 as i32),
                     Kind::I64 => self.encode_bits64(out),
+                    Kind::Reference => Value::from_bits(out),
                 },
                 None => self.programs.constant(program, VOID_RESULT_CONSTANT)?,
             }))
@@ -9308,7 +9374,7 @@ impl<H: Host> Vm<H> {
             for (offset, ty) in params.iter().enumerate() {
                 // SAFETY: the caller passes a word per parameter.
                 let bits = unsafe { *args.add(offset) };
-                values.push(self.encode_wasm_value(crate::WasmValue::from_bits(*ty, bits)));
+                values.push(wasm_word_value(self, *ty, bits));
             }
             if let Some(defined) = defined {
                 let active_program = self.replace_active_program(program);

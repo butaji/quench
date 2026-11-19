@@ -5,7 +5,7 @@
 //! table need keep it alive while it runs; the call is made natively only where the target's
 //! bodies take the arguments the caller passes (`InstanceContext::abi`) and the roots have room.
 
-use super::instance_context::{InstanceContext, NATIVE_ROOT_CAPACITY, NativeRoots, SWITCHED};
+use super::instance_context::{InstanceContext, NativeRoots, SWITCHED};
 use super::{CONTEXT_NATIVE_ROOTS, CallContext, Emitter, Host, Vm, invariant, refresh_memory_length};
 use crate::staged::machine::{MachineAccess, MachineFlow, MachineStage};
 use crate::staged::wasm::Width;
@@ -36,7 +36,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let same_abi = self.operate(Binary::Equal, Width::I64, published, abi);
         let roots = self.load_word(Width::I64, invariant(), context, CONTEXT_NATIVE_ROOTS);
         let depth = self.load_word(Width::I64, flags, roots, NativeRoots::DEPTH);
-        let capacity = self.constant(Width::I64, NATIVE_ROOT_CAPACITY as i64);
+        let capacity = self.load_word(Width::I64, flags, roots, NativeRoots::CAPACITY);
         let room = self.operate(Binary::LessUnsigned, Width::I64, depth, capacity);
         let usable = self.operate(Binary::And, Width::I32, same_abi, room);
         let lookup = self.body.core.builder.create_block();
@@ -91,10 +91,11 @@ impl<H: Host> Emitter<'_, '_, H> {
         let roots = self.load_word(Width::I64, invariant(), context, CONTEXT_NATIVE_ROOTS);
         let depth = self.load_word(Width::I64, flags, roots, NativeRoots::DEPTH);
         let environment = self.load_word(Width::I64, flags, record, InstanceContext::ENV);
+        let slots = self.load_word(Width::I64, flags, roots, NativeRoots::SLOTS);
         let size = self.constant(Width::I64, size_of::<crate::Value>() as i64);
         let offset = self.operate(Binary::Multiply, Width::I64, depth, size);
-        let slot = self.operate(Binary::Add, Width::I64, roots, offset);
-        self.store_word(flags, environment, slot, NativeRoots::SLOTS);
+        let slot = self.operate(Binary::Add, Width::I64, slots, offset);
+        self.store_word(flags, environment, slot, 0);
         let one = self.constant(Width::I64, 1);
         let deeper = self.operate(Binary::Add, Width::I64, depth, one);
         self.store_word(flags, deeper, roots, NativeRoots::DEPTH);
