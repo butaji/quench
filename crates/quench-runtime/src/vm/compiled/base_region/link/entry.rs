@@ -27,7 +27,9 @@ impl EntryRow {
 /// (or, dead there, tagged), and each other Number register live there is checked, so a loop whose
 /// values are no Numbers is never entered. Then each declared parameter's entry test (`layout.guards`), and
 /// each class-typed parameter's receiver test (`layout.prototypes`: exact shape and prototype link).
-pub(in super::super) fn entry_rows(layout: &Layout, entered: &[usize]) -> Result<Vec<EntryRow>, String> {
+/// `at` is the row the entry enters at (0 for the body's entry, a stub's PC for a resume stub): a Mem
+/// slot's Number guard is emitted only where `layout.entry_reads` says a row reads its entry value.
+pub(in super::super) fn entry_rows(layout: &Layout, entered: &[usize], at: usize) -> Result<Vec<EntryRow>, String> {
     let guard = |kind, dst, offset: u64| {
         numeric::stencil(numeric::Row { kind, dst, a: Place::Mem, b: Place::Mem, speculate: true }).map(|stencil| EntryRow {
             stencil,
@@ -52,8 +54,8 @@ pub(in super::super) fn entry_rows(layout: &Layout, entered: &[usize]) -> Result
         rows.push(guard(if live { Kind::Guard } else { Kind::TagInit }, Place::MemInt, slot(*web))?);
     }
     for web in entered.iter().map(|web| *web as Register) {
-        let number = layout.span.number_registers().contains(&layout.homes.orig[usize::from(web)]);
-        if number && layout.homes.place(web) == Place::Mem {
+        let orig = usize::from(layout.homes.orig[usize::from(web)]);
+        if layout.homes.place(web) == Place::Mem && layout.entry_reads.guards(at, orig) {
             rows.push(guard(Kind::Guard, Place::Mem, slot(web))?);
         }
     }

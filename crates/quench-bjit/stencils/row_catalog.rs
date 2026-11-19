@@ -7,8 +7,8 @@
 //! that share the line (a typed kind family). `reserve N` skips N codes no row holds. Rows are listed in
 //! chunks, each a `[END TABLE: ...]`, because the positional values chain through the chunks and a
 //! single macro expansion over every row would nest deeper than the default recursion limit.
-//! Adding a heap row: one line here, and a `Heap` variant with its code in `runtime base_rows.rs`
-//! (the test there checks that every catalog row has one).
+//! Adding a heap row: one line here, and a `Heap` variant with its arm in `Heap::code` in `runtime base_rows.rs`
+//! (the test there checks that every variant's code is one of these rows; it must list the new variant too).
 
 #![allow(dead_code)]
 

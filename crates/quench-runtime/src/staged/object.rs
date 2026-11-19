@@ -122,8 +122,14 @@ pub(crate) fn extras_pointer<S: Stage>(stage: &mut S, payload: S::Word) -> S::Wo
 /// word without the storage-form bits (`storage_form`).
 #[inline(always)]
 pub(crate) fn exact_shape<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
-    let word = header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    let word = aux_word(stage, record);
     recorded_shape(stage, word)
+}
+
+/// The record's whole auxiliary word: its shape and storage-form bits (`recorded_shape`, `storage_form`).
+#[inline(always)]
+pub(crate) fn aux_word<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
+    header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset)
 }
 
 /// `exact_shape` of an auxiliary word already loaded.

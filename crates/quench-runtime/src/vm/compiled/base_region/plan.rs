@@ -309,9 +309,17 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, varian
         if let Some(step) = decoded.declines(a) {
             return plan_step(&Decoded::step(step, None), layout, pc, helpers);
         }
-        return heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
+        let planned = heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)])?;
+        return Ok(if decoded.recheck { planned.after(vec![stores_guard(pc)?]) } else { planned });
     }
     number_plan(decoded, layout, pc, (general, variant), [(dst, dst_hole), (a, a_hole), (b, b_hole)])
+}
+
+/// The run's stores test before a store the proofs re-admit (`Decoded::recheck`), a mid-body guard: a miss leaves at the
+/// store's PC with nothing written, as a failed store guard does (`Exit::Spilling`), and a hit falls into the store.
+fn stores_guard(pc: u32) -> Result<Planned, String> {
+    let row = HeapRow { heap: Heap::Stores, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+    Ok(Planned::single(base_rows::stencil(row)?, padded_holes([0, 0, 0]), None, Some(pc)))
 }
 
 /// The plan of a number row: a jump that polls the interrupt on a backward edge, or the chosen arithmetic row.

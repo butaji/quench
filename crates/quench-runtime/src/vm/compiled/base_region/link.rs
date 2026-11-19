@@ -164,6 +164,8 @@ pub(super) struct Layout<'a> {
     /// Per row, whether its checked operand is a Number on every path into it, so its number guard is redundant
     /// (`numbers::proven_operands`).
     pub(super) number_held: &'a [bool],
+    /// The Number guards a Mem slot's entry keeps, by row (`numbers::entry_reads`).
+    pub(super) entry_reads: &'a super::numbers::EntryReads,
     /// The entry tests of the declared parameters the function never writes (`declared::entry_guards`).
     pub(super) guards: Vec<EntryGuard>,
     /// The declared Number parameters the function never writes, which the entry's Number guards prove
@@ -387,7 +389,7 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, Res
         parts.extend(row.pre.iter().chain(std::iter::once(row)).chain(&row.post).map(|part| (part, *start)));
     }
     let body: Vec<&Planned> = parts.iter().map(|(part, _)| *part).collect();
-    let entry = entry_rows(layout, &layout.webs.entry_live(&layout.span))?;
+    let entry = entry_rows(layout, &layout.webs.entry_live(&layout.span), 0)?;
     let (g, n) = (entry.len(), body.len());
     let (mut leaves, failed) = Leaves::open(layout)?;
     let targets = parts.iter().map(|part| branch_target(layout, &mut leaves, &starts, *part, n, g)).collect::<Result<Vec<_>, _>>()?;

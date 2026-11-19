@@ -3,9 +3,11 @@
 //! `Operation` from its holes and runs the family step over its places (`steps.rs`). Where the
 //! proof fails the guard yields `None` and the row leaves through its own miss edge.
 
+use super::object::Form;
 use super::register_frame::Frame;
 use super::stage::Stage;
 use super::value::tag_languages;
+use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
 /// `identity`: `source` holds exactly the word `expected` (bit identity, no conversion).
 #[inline(always)]
@@ -52,13 +54,24 @@ pub(crate) fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Wo
 }
 
 /// `shape`: `source` is a direct object whose record, found in the object record table `records`, has exact shape
-/// `shape` (`entry::shape_link_matches` without the link). Any other word leaves.
+/// `shape` (`entry::shape_link_matches` without the link) in storage `form`. `Arena` takes the auxiliary word equal to the
+/// shape, which is a flat run with no storage-form bit (`ic::own_field`'s one compare); `Packed` takes the exact shape
+/// with the inline bit set; `Either` the exact shape alone. Any other word leaves.
 #[inline(always)]
-pub(crate) fn shape<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, shape: u64, miss: S::Miss) -> Option<()> {
+pub(crate) fn shape<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (shape, form): (u64, Form), miss: S::Miss) -> Option<()> {
     let (_, record) = super::property::direct_record(stage, records, source, miss)?;
-    let exact = super::object::exact_shape(stage, record);
-    let same = stage.eq_imm(exact, shape);
-    stage.guard(same, miss)
+    let word = super::object::aux_word(stage, record);
+    let recorded = match form {
+        Form::Arena => word,
+        Form::Packed | Form::Either => super::object::recorded_shape(stage, word),
+    };
+    let same = stage.eq_imm(recorded, shape);
+    stage.guard(same, miss)?;
+    if form == Form::Packed {
+        let inline = super::object::storage_form(stage, word, OBJECT.inline_form);
+        stage.guard(inline, miss)?;
+    }
+    Some(())
 }
 
 /// `stores`: the run's dispatch word `specialized` says its stores specialize (`slot_store::store_admitted`). A region's entry

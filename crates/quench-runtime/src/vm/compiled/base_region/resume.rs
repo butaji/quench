@@ -92,7 +92,7 @@ pub(super) fn resume_stubs(layout: &Layout, planned: &[Planned], (first, starts)
         // An entry-seeded proof is re-established by `entry_rows`, which runs every declared guard (`layout.guards`).
         .filter(|&&(_, row)| !layout.relies.get(row as usize).copied().unwrap_or(false))
         .map(|&(pc, row)| {
-            let rows = entry_rows(layout, &layout.webs.live_at(&layout.span, row))?;
+            let rows = entry_rows(layout, &layout.webs.live_at(&layout.span, row), row as usize)?;
             Ok(Stub { pc, rows, target: first + starts[row as usize] })
         })
         .collect()

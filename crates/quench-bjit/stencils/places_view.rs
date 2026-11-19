@@ -14,18 +14,15 @@
 //! typed rows the same site at hole 1 (read) or 0 (store), exactly as the hand rows read them.
 
 use crate::bytecode::{Operand, Register};
-use crate::codes::MEM;
 use crate::heap_rows::{stage_site, word_at};
 use crate::layout::{JS_STEP_LOOP_ENTRY, LOOP_ENTRY_ARRAY_COUNT_AT, TypedArrayKind};
-use crate::numeric::{Out, S, deliver};
 use crate::typed_ir::Representation;
-use crate::places::{DEST, LEFT, Places, RIGHT};
+use crate::places::Places;
 use crate::stage::StencilStage;
 use crate::staged::element_rows::ElementView;
 use crate::staged::elements::DenseView;
 use crate::staged::typed_elements::{NativeKind, TypedView, ViewKind};
-use crate::staged::{CallFrame, Concrete, Constant, ElementFrame, Frame, GlobalFrame, NumericFrame, Operation, PropertyFrame, Step, entry, step};
-use crate::words::canonical;
+use crate::staged::{CallFrame, Concrete, Constant, ElementFrame, Frame, GlobalFrame, NumericFrame, PropertyFrame, entry};
 
 /// The hole holding the site table an element access reads its shape facts from (a dense access's
 /// stage; the entry rows' views are proved by the loop's entry, so they read no site table).
@@ -191,40 +188,3 @@ pub(crate) fn entry_typed<const KIND: u8>(payload: usize, (at, first): (u8, u8))
     Some(ElementView::Typed(TypedView { values, length, kind: ViewKind::Static(native), within: false }))
 }
 
-/// The staged element operation `operation` run over `frame` with the entry `view` of its array in
-/// `array`: its word, `None` where it left at its miss edge.
-#[inline(always)]
-fn staged_entry<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, array: Register, view: ElementView<u64>,
-    operation: Operation<u64, ()>) -> Option<u64> {
-    let mut wrapper = PlacesView { places: frame, array, view };
-    match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut wrapper, operation) {
-        Step::Value(word) => Some(word),
-        _ => None,
-    }
-}
-
-/// An entry row's element read (`ElementRead` of the array at `LEFT`, key `RIGHT`) through the entry
-/// `view`, delivered into the destination. A typed view's Number (an `f64`'s bits) is delivered canonical.
-#[inline(always)]
-pub(crate) fn entry_read<const D: u8, const B: u8>(s: S, view: ElementView<u64>) -> Out {
-    let typed = matches!(view, ElementView::Typed(_));
-    let mut frame = Places::<D, MEM, B>::new(s);
-    let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT) };
-    match staged_entry(&mut frame, LEFT, view, read) {
-        Some(word) if typed => deliver::<D>(frame.s, canonical(f64::from_bits(word))),
-        Some(word) => deliver::<D>(frame.s, word),
-        None => Out::Exit(frame.s),
-    }
-}
-
-/// An entry row's element store (`ElementWrite` of `LEFT` into the array named by `DEST`'s entry view,
-/// key `RIGHT`) through the entry `view`: the value is the Number at hole 1, the key the index at hole 2.
-#[inline(always)]
-pub(crate) fn entry_write<const A: u8, const B: u8>(s: S, view: ElementView<u64>) -> Out {
-    let mut frame = Places::<MEM, A, B>::new(s);
-    let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT };
-    match staged_entry(&mut frame, DEST, view, write) {
-        Some(_) => Out::Next(frame.s),
-        None => Out::Exit(frame.s),
-    }
-}
