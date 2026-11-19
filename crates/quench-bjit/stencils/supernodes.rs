@@ -5,7 +5,6 @@
 //! feeds, place sets and evidence). `build.rs` itself includes `supernode_rules.rs` alone, since the
 //! list does not exist until it has run.
 
-
 #[path = "supernode_rules.rs"]
 mod rules;
 pub use rules::*;

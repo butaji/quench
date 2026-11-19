@@ -38,7 +38,7 @@ mod environment_rows;
 mod key_rows;
 mod name_rows;
 mod site_rows;
-mod layout;
+pub mod layout;
 mod numeric;
 mod places;
 mod places_call;
