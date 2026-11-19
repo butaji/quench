@@ -892,8 +892,13 @@ pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeField
 };
 
 /// One cached property-add transition: an extensible ordinary object of `source_shape` whose
-/// prototype chain still has exactly `prototype_shapes[..prototype_depth]` gains `atom` at `slot`
-/// and moves to `target_shape`.
+/// prototype chain still has exactly the `prototype_depth` shapes interned at `chain`
+/// (`Vm::field_add_chains`) gains `atom` at `slot` and moves to `target_shape`.
+///
+/// 40 bytes: proved epoch (8), atom, source and target shapes, chain, proved prototype (20),
+/// layouts (8), slot and depth (3), padded; an inline `[u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH]`
+/// made it 72, though recorded adds prove at most a few prototypes and the sites of one
+/// constructor's stores share one chain.
 #[derive(Clone, Copy)]
 struct FieldAddCache {
     atom: Atom,
@@ -904,13 +909,30 @@ struct FieldAddCache {
     /// (`Transition::layouts`), which the staged rows guard and store.
     layouts: [u32; 2],
     prototype_depth: u8,
-    prototype_shapes: [u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
+    /// Where the chain's prototype shapes are interned (`Vm::field_add_chains`).
+    chain: u32,
     /// The `prototype_layout_epoch` under which a walk last proved the chain from
     /// `proved_prototype`, or `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
     proved_epoch: u64,
     /// The receiver's prototype link the proof holds for, compared undecoded; a collection
     /// advances the epoch, so it never outlives the record it names.
     proved_prototype: ProtoLink,
+}
+// Keep the entry compact: a monomorphic add site's set is its first entry, a length and a box.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<FieldAddCache>() == 40);
+/// The prototype shapes a cached add must find again (`Vm::add_prototype_guard`), nearest
+/// first, before an entry interns them as its chain.
+#[derive(Clone, Copy)]
+struct AddPrototypeGuard {
+    depth: u8,
+    shapes: [u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
+}
+impl AddPrototypeGuard {
+    const EMPTY: Self = Self { depth: 0, shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH] };
+    fn shapes(&self) -> &[u32] {
+        &self.shapes[..usize::from(self.depth)]
+    }
 }
 /// A `FieldAddCache::proved_epoch` no epoch reaches: the chain is unproven.
 const NO_PROVED_EPOCH: u64 = u64::MAX;
@@ -922,13 +944,10 @@ impl FieldAddCache {
         slot: 0,
         layouts: [0; 2],
         prototype_depth: 0,
-        prototype_shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
+        chain: 0,
         proved_epoch: NO_PROVED_EPOCH,
         proved_prototype: ProtoLink::NULL,
     };
-    fn prototype_shapes(&self) -> &[u32] {
-        &self.prototype_shapes[..usize::from(self.prototype_depth)]
-    }
     /// The shape transition the entry caches, as the staged add row takes it.
     #[inline(always)]
     fn transition(&self) -> Transition {
@@ -1020,9 +1039,11 @@ impl FieldAddCacheSet {
         let kept = match entries[..len]
             .iter()
             .position(|entry| {
+                // Interned chains are equal exactly when their offsets and lengths are.
                 entry.source_shape == cache.source_shape
                     && entry.atom == cache.atom
-                    && entry.prototype_shapes() == cache.prototype_shapes()
+                    && entry.prototype_depth == cache.prototype_depth
+                    && entry.chain == cache.chain
             })
         {
             Some(index) => {
@@ -2195,6 +2216,9 @@ pub(crate) struct Vm<H> {
     accessor_fields: Vec<AccessorFieldCache>,
     field_add_indices: site_table::SiteTable<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
+    /// The prototype chains add entries name (`FieldAddCache::chain`), each once; cleared
+    /// only with every entry (`field_add_sets` and `keyed_adds`).
+    field_add_chains: crate::heap::InternedChains,
     /// The layouts and strings JSON parses share within a collection epoch.
     json_parse_cache: json::JsonParseCache,
     /// Adds a keyed `[[Set]]` of a string naming an atom made (`Vm::keyed_add_hit`): a keyed
@@ -2948,7 +2972,8 @@ impl<H: Host> Vm<H> {
             })
             .sum();
         let field_add_cache_bytes = self.field_add_indices.capacity_bytes()
-            + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>();
+            + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
+            + self.field_add_chains.bytes();
         eprintln!(
             "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"inline_property_values\":{inline_property_values},\"narrowable_inline_property_values\":{narrowable_inline_property_values},\"out_of_line_property_values\":{out_of_line_property_values},\"narrowable_out_of_line_property_values\":{narrowable_out_of_line_property_values},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"dense_array_values\":{dense_array_values},\"narrowable_dense_array_values\":{narrowable_dense_array_values},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"field_cache_sites\":{},\"field_cache_site_capacity\":{},\"active_field_caches\":{active_field_caches},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"field_cache_data_bytes\":{},\"megamorphic_field_index_bytes\":{},\"field_add_index_bytes\":{},\"field_add_set_bytes\":{},\"field_add_sets\":{},\"field_add_cache_entries\":{field_add_cache_entries},\"field_add_cache_depth_counts\":{field_add_cache_depth_counts:?},\"field_add_set_occupancy\":{field_add_set_occupancy:?},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
             self.shapes.len(),
@@ -3233,6 +3258,7 @@ impl<H: Host> Vm<H> {
         self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
+        self.field_add_chains.clear();
         self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.megamorphic_fields.clear();
         self.holder_hints.clear();

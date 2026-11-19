@@ -1006,6 +1006,7 @@ impl<H: Host> Vm<H> {
         self.enumerable_key_value_lists.clear();
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
+        self.field_add_chains.clear();
         self.megamorphic_fields.clear();
         self.heap.dependencies_mut().clear_inherited();
         self.accessor_fields.clear();
@@ -4576,6 +4577,7 @@ impl<H: Host> Vm<H> {
                 && !self.shape_is_dictionary(shape)
                 && let Some(prototype_guard) = add_prototype_guard
             {
+                let guarded = self.guarded_field_add(&prototype_guard);
                 self.record_field_add_cache(
                     site,
                     FieldAddCache {
@@ -4584,7 +4586,7 @@ impl<H: Host> Vm<H> {
                         target_shape: data_shape,
                         slot: slot as u16,
                         layouts: Object::add_layouts(layout, data_shape),
-                        ..prototype_guard
+                        ..guarded
                     },
                 );
             }
@@ -4598,6 +4600,15 @@ impl<H: Host> Vm<H> {
             );
         }
         Ok(())
+    }
+
+    /// An empty add entry proving `guard`'s prototype chain, interned (`field_add_chains`).
+    fn guarded_field_add(&mut self, guard: &AddPrototypeGuard) -> FieldAddCache {
+        FieldAddCache {
+            prototype_depth: guard.depth,
+            chain: self.field_add_chains.intern(guard.shapes()),
+            ..FieldAddCache::EMPTY
+        }
     }
 
     pub(super) fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
@@ -4763,11 +4774,11 @@ impl<H: Host> Vm<H> {
     /// The prototype shapes a cached add of `key` to `object` must find again, as the depth and
     /// shape fields of a `FieldAddCache`; `None` when a link is exotic, a dictionary, or holds
     /// `key` as an accessor or read-only.
-    pub(super) fn add_prototype_guard(&self, object: Value, key: PropertyKey) -> Option<FieldAddCache> {
+    pub(super) fn add_prototype_guard(&self, object: Value, key: PropertyKey) -> Option<AddPrototypeGuard> {
         let mut prototype = self.object_data(object)?.proto();
-        let mut guard = FieldAddCache::EMPTY;
+        let mut guard = AddPrototypeGuard::EMPTY;
         while !prototype.is_null() {
-            let depth = usize::from(guard.prototype_depth);
+            let depth = usize::from(guard.depth);
             if depth == FIELD_ADD_CACHE_MAX_PROTO_DEPTH {
                 return None;
             }
@@ -4781,8 +4792,8 @@ impl<H: Host> Vm<H> {
             {
                 return None;
             }
-            guard.prototype_shapes[depth] = shape;
-            guard.prototype_depth += 1;
+            guard.shapes[depth] = shape;
+            guard.depth += 1;
             prototype = data.proto();
         }
         Some(guard)
@@ -4821,7 +4832,8 @@ impl<H: Host> Vm<H> {
         // Entries record only non-dictionary source and prototype shapes, a shape's
         // dictionary state is fixed when it is created, and shape compaction clears these
         // caches, so a matching shape needs no dictionary probe here or along the chain.
-        if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
+        let chain = self.field_add_chains.get(cache.chain, usize::from(depth));
+        if !self.field_add_prototype_chain_matches(proto, chain) {
             return None;
         }
         self.mark_prototype_links(proto, depth);
@@ -4862,7 +4874,7 @@ impl<H: Host> Vm<H> {
 
     /// The source shape and prototype proof a keyed add of `atom` to `object` would record
     /// (`record_keyed_add`), taken before the add.
-    pub(super) fn keyed_add_guard(&self, object: Value, atom: Atom) -> Option<(u32, FieldAddCache)> {
+    pub(super) fn keyed_add_guard(&self, object: Value, atom: Atom) -> Option<(u32, AddPrototypeGuard)> {
         let data = self.heap.object_record(object)?;
         let shape = data.shape();
         if self.shape_is_dictionary(shape) || self.shape_slot(shape, atom).is_some() || !self.field_add_atom_eligible(atom) {
@@ -4874,7 +4886,7 @@ impl<H: Host> Vm<H> {
     /// Remembers the add of `atom` that moved `object` from `shape`, proved by `guard`
     /// (`keyed_add_guard`), as `keyed_add_hit` replays it: an append at the source shape's
     /// end to a non-dictionary shape.
-    pub(super) fn record_keyed_add(&mut self, object: Value, atom: Atom, shape: u32, guard: FieldAddCache) {
+    pub(super) fn record_keyed_add(&mut self, object: Value, atom: Atom, shape: u32, guard: AddPrototypeGuard) {
         let Some(target_shape) = self.heap.object_record(object).map(Object::shape) else {
             return;
         };
@@ -4890,8 +4902,9 @@ impl<H: Host> Vm<H> {
         let Ok(slot) = u16::try_from(slot) else {
             return;
         };
+        let guarded = self.guarded_field_add(&guard);
         self.keyed_adds[keyed_add_index(shape, atom)] =
-            FieldAddCache { atom, source_shape: shape, target_shape, slot, ..guard };
+            FieldAddCache { atom, source_shape: shape, target_shape, slot, ..guarded };
     }
 
     /// Marks the `depth` links of the chain from `proto` as prototypes, so a later change to

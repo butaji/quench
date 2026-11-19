@@ -23,7 +23,7 @@ pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, retire_array_s
 mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
-    Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache,
+    Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, InternedChains,
     NO_PROVED_LAYOUT, ProofKind, FactStore};
 mod cell_access;
 mod buffer_bytes;

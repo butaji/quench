@@ -584,7 +584,7 @@ impl<H: Host> Vm<H> {
         let epoch = crate::heap::prototype_layout_epoch();
         if !self.symbol_write_proofs.holds(proto, key, epoch) {
             let guard = self.add_prototype_guard(object, symbol)?;
-            self.mark_prototype_links(proto, guard.prototype_depth);
+            self.mark_prototype_links(proto, guard.depth);
             // Marking a link that was no prototype yet leaves the epoch where it was.
             if crate::heap::prototype_layout_epoch() == epoch {
                 self.symbol_write_proofs.record(proto, key, epoch);

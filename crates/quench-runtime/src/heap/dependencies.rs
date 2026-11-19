@@ -62,18 +62,67 @@ pub(crate) struct InheritedFieldCache {
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
     pub(crate) next: u32,
 }
-/// The interned chain whose first shape sits at `offset` (`Dependencies::intern_inherited_chain`).
-fn chain_at(chains: &[u32], offset: u32) -> &[u32] {
-    let offset = offset as usize;
-    let len = chains[offset - 1] as usize;
-    &chains[offset..offset + len]
+/// Shape chains interned once each, by content: a cache entry names its chain by the
+/// offset of its first shape, and keeps its length itself. Stored as each chain's length,
+/// then its shapes, with a hash table of the offsets. Equal chains intern to one offset, so
+/// two entries' chains are equal exactly when their offsets and lengths are.
+#[derive(Default)]
+pub(crate) struct InternedChains {
+    words: Vec<u32>,
+    index: hashbrown::HashTable<u32>,
 }
 
-fn chain_hash(shapes: &[u32]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = rustc_hash::FxHasher::default();
-    shapes.hash(&mut hasher);
-    hasher.finish()
+impl InternedChains {
+    fn at(words: &[u32], offset: u32) -> &[u32] {
+        let offset = offset as usize;
+        let len = words[offset - 1] as usize;
+        &words[offset..offset + len]
+    }
+
+    fn hash(shapes: &[u32]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        shapes.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// The offset of `shapes`, interned first where no chain held them yet; an empty chain
+    /// names offset zero and holds nothing.
+    pub(crate) fn intern(&mut self, shapes: &[u32]) -> u32 {
+        if shapes.is_empty() {
+            return 0;
+        }
+        let hash = Self::hash(shapes);
+        let words = &self.words;
+        if let Some(&offset) = self.index.find(hash, |&offset| Self::at(words, offset) == shapes) {
+            return offset;
+        }
+        self.words.push(shapes.len() as u32);
+        let offset = u32::try_from(self.words.len()).expect("interned chains fit u32");
+        self.words.extend_from_slice(shapes);
+        let words = &self.words;
+        self.index.insert_unique(hash, offset, |&offset| Self::hash(Self::at(words, offset)));
+        offset
+    }
+
+    /// The `len` shapes interned at `offset`; empty for an offset no chain of that length
+    /// starts at.
+    #[inline(always)]
+    pub(crate) fn get(&self, offset: u32, len: usize) -> &[u32] {
+        self.words.get(offset as usize..).and_then(|chain| chain.get(..len)).unwrap_or(&[])
+    }
+
+    /// Drops every chain: no entry names one any more.
+    pub(crate) fn clear(&mut self) {
+        self.words.clear();
+        self.index.clear();
+    }
+
+    /// Bytes held: the words and the index's slots and control bytes.
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn bytes(&self) -> usize {
+        self.words.capacity() * size_of::<u32>() + self.index.capacity() * (size_of::<u32>() + 1)
+    }
 }
 
 /// An `InheritedFieldCache::proved_layout` no layout id reaches.
@@ -143,11 +192,8 @@ struct Table {
     /// The inherited field cache's entries (`Vm::inherited_field_indices`), each of whose
     /// chain proofs the table retires.
     inherited: Vec<InheritedFieldCache>,
-    /// The prototype-shape chains inherited entries name (`InheritedFieldCache::chain`), each
-    /// once: its length, then its shapes, where an entry's `chain` names the first shape.
-    inherited_chains: Vec<u32>,
-    /// `inherited_chains`' chains by content: the offset of each one's first shape.
-    inherited_chain_index: hashbrown::HashTable<u32>,
+    /// The prototype-shape chains inherited entries name (`InheritedFieldCache::chain`).
+    inherited_chains: InternedChains,
     /// Per subject, the fact-table entries (`FactStore`) whose answer read it.
     fact_readers: Vec<Vec<u32>>,
     /// The fact table whose entries a retirement clears.
@@ -353,28 +399,13 @@ impl Dependencies {
     /// (one class hierarchy's), so the table grows by the distinct chains only, however
     /// often a site records.
     pub(crate) fn intern_inherited_chain(&mut self, shapes: &[u32]) -> u32 {
-        if shapes.is_empty() {
-            return 0;
-        }
-        let table = self.table_mut();
-        let hash = chain_hash(shapes);
-        let chains = &table.inherited_chains;
-        if let Some(&offset) = table.inherited_chain_index.find(hash, |&offset| chain_at(chains, offset) == shapes) {
-            return offset;
-        }
-        table.inherited_chains.push(shapes.len() as u32);
-        let offset = table.inherited_chains.len() as u32;
-        table.inherited_chains.extend_from_slice(shapes);
-        let chains = &table.inherited_chains;
-        table.inherited_chain_index.insert_unique(hash, offset, |&offset| chain_hash(chain_at(chains, offset)));
-        offset
+        self.table_mut().inherited_chains.intern(shapes)
     }
 
     /// The prototype shapes `cache`'s chain names, nearest first.
     #[inline(always)]
     pub(crate) fn inherited_chain(&self, cache: &InheritedFieldCache) -> &[u32] {
-        let chains = &self.table().inherited_chains;
-        chains.get(cache.chain as usize..).and_then(|chain| chain.get(..usize::from(cache.depth))).unwrap_or(&[])
+        self.table().inherited_chains.get(cache.chain, usize::from(cache.depth))
     }
 
     /// Adds `cache` as a new inherited entry, and its index.
@@ -424,7 +455,6 @@ impl Dependencies {
         let table = self.table_mut();
         table.inherited.clear();
         table.inherited_chains.clear();
-        table.inherited_chain_index.clear();
         table.inherited_readers.iter_mut().for_each(Vec::clear);
     }
 }
