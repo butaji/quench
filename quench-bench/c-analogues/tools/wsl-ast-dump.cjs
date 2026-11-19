@@ -279,6 +279,7 @@ const SPEC = {
     IfStatement: { s: [], k: [K("conditional", n => n._conditional), K("body", n => n._body), K("elseBody", n => n._elseBody)] },
     WhileLoop: { s: [], k: [K("conditional", n => n._conditional), K("body", n => n._body)] },
     DoWhileLoop: { s: [], k: [K("body", n => n._body), K("conditional", n => n._conditional)] },
+    FunctionLikeBlock: { s: [], k: [K("returnType", n => n.returnType), K("argumentList", n => n.argumentList), K("parameters", n => n.parameters), K("body", n => n.body)] },
     ForLoop: { s: [], k: [K("initialization", n => n._initialization), K("condition", n => n._condition), K("increment", n => n._increment), K("body", n => n._body)] },
     Break: { s: [], k: [] },
     Continue: { s: [], k: [] },
@@ -350,7 +351,8 @@ function dumpRoots(roots) {
             anonRoles.set(x.newValueVar, "new");
         }
         const rs = refsOn && REFS[c] ? REFS[c] : { s: [], k: [] };
-        const scalars = [...spec.s, ...rs.s].map(f => f.label + "=" + scalarText(f.get(x)));
+            const scalars = [...spec.s, ...rs.s].map(f => f.label + "=" + scalarText(f.get(x)));
+            if (ebufMode) for (const k of ["ePtr", "returnEPtr", "resultEPtr"]) if (x[k]) scalars.push(k + "=" + JSON.stringify(x[k].toString()));
         lines.push(indent + c + (scalars.length ? " " + scalars.join(" ") : ""));
         for (const kid of [...spec.k, ...rs.k]) walk(kid.get(x), depth + 1);
     };
@@ -455,7 +457,107 @@ if (visitMode) run(`function __visitHarness(p) {
     } finally { Node.prototype.visit = orig; }
     return lines.join(NL);
 }`);
-if (postMode || instantiateMode || visitMode) run(`function __postHarness(p) {
+// --late: LateChecker (LateChecker.js) over each function of inline()'s first loop: the instance is made, then, unless
+// it is native, visited by LateChecker with the Node.visit trace on. Returns [status, trace lines].
+const lateMode = process.argv.includes("--late");
+if (lateMode) run(`function __lateHarness(p) {
+    const NL = String.fromCharCode(10);
+    const lines = [];
+    const orig = Node.prototype.visit;
+    let status = "ok";
+    try {
+        for (const funcList of p.functions.values())
+            for (const f of funcList) {
+                if (f.typeParameters.length) continue;
+                const inst = p.funcInstantiator.getUnique(f, []);
+                if (inst.isNative) continue;
+                Node.prototype.visit = function(visitor) {
+                    lines.push(this.constructor.name);
+                    return orig.call(this, visitor);
+                };
+                try { inst.visit(new LateChecker()); } finally { Node.prototype.visit = orig; }
+            }
+    } catch (e) {
+        status = "err:" + e.constructor.name + ": " + e.message;
+    }
+    return [status, lines.join(NL)];
+}`);
+// --layout: LateChecker, then StructLayoutBuilder (StructLayoutBuilder.js) on each function of inline()'s first loop.
+// The log: one entry per struct as it is laid out ("struct NAME size=N", then "field NAME offset=N" per field),
+// and one per accessor instance ("impl FIELD offset=N structSize=N fieldSize=N"). Returns [status, entries].
+const layoutMode = process.argv.includes("--layout");
+if (layoutMode) run(`function __layoutHarness(p) {
+    const NL = String.fromCharCode(10);
+    const entries = [];
+    const origStruct = StructLayoutBuilder.prototype.visitStructType;
+    const origNative = StructLayoutBuilder.prototype.visitNativeFuncInstance;
+    StructLayoutBuilder.prototype.visitStructType = function(node) {
+        const laid = node.size != null;
+        origStruct.call(this, node);
+        if (!laid) {
+            let e = "struct " + node.name + " size=" + node.size;
+            for (const f of node.fields) e += NL + "field " + f.name + " offset=" + f.offset;
+            entries.push(e);
+        }
+    };
+    StructLayoutBuilder.prototype.visitNativeFuncInstance = function(node) {
+        origNative.call(this, node);
+        const d = node.implementationData;
+        if (d) entries.push("impl " + d.fieldName + " offset=" + d.offset + " structSize=" + d.structSize + " fieldSize=" + d.fieldSize);
+    };
+    let status = "ok";
+    try {
+        for (const funcList of p.functions.values())
+            for (const f of funcList) {
+                if (f.typeParameters.length) continue;
+                const inst = p.funcInstantiator.getUnique(f, []);
+                if (inst.isNative) continue;
+                inst.visit(new LateChecker());
+                inst.visit(new StructLayoutBuilder());
+            }
+    } catch (e) {
+        status = "err:" + e.constructor.name + ": " + e.message;
+    } finally {
+        StructLayoutBuilder.prototype.visitStructType = origStruct;
+        StructLayoutBuilder.prototype.visitNativeFuncInstance = origNative;
+    }
+    return [status, entries.join(NL)];
+}`);
+// --ebuf: LateChecker, StructLayoutBuilder and EBufferBuilder (EBufferBuilder.js, EBuffer.js, EPtr.js) on each function
+// of inline()'s first loop. The output: the instance trees, each node with its EPtrs (ePtr, returnEPtr, resultEPtr as
+// "B<index>:<offset>"), then "buffers N" and each buffer (Buffer.toString) in creation order. Every EBuffer made is
+// recorded by a subclass installed over the global EBuffer binding (__allBuffers); eBufferCount restarts per input.
+// The instance trees are printed by dumpRoots (ebufMode adds the EPtr scalars there).
+const inlineMode = process.argv.includes("--inline");
+const ebufMode = process.argv.includes("--ebuf") || inlineMode;   // --inline prints the EPtrs too
+if (ebufMode) {
+    run("var __allBuffers = [];");
+    run("(function() { const Orig = EBuffer; EBuffer = class extends Orig { constructor(size) { super(size); __allBuffers.push(this); } }; })()");
+}
+if (ebufMode) run(`function __ebufHarness(p) {
+    const NL = String.fromCharCode(10);
+    eBufferCount = 0;
+    __allBuffers.length = 0;
+    const insts = [];
+    for (const funcList of p.functions.values())
+        for (const f of funcList) {
+            if (f.typeParameters.length) continue;
+            const inst = p.funcInstantiator.getUnique(f, []);
+            if (inst.isNative) continue;
+            inst.visit(new LateChecker());
+            inst.visit(new StructLayoutBuilder());
+            inst.visit(new EBufferBuilder(p));
+            insts.push(inst);
+        }
+    return insts;
+}`);
+// --inline: inline() (Inline.js) on the post-check state; the EBuffer registry restarts first.
+if (inlineMode) run(`function __inlineHarness(p) {
+    eBufferCount = 0;
+    __allBuffers.length = 0;
+    inline(p);
+}`);
+if (postMode || instantiateMode || visitMode || lateMode || layoutMode || ebufMode) run(`function __postHarness(p) {
     check(p);
     checkLiteralTypes(p);
     resolveProperties(p);
@@ -492,7 +594,44 @@ const rows = inputs.map((input, i) => {
     let dump = "";
     let nodes = 0;
     try {
-        if (visitMode) {
+        if (inlineMode) {
+            if (input.kind !== "doLex") {
+                anonRoles.clear(); resolveInput(input, 6); run("__postHarness(__p)");
+                run("__inlineHarness(__p)");
+                // the instances in the order of _instances, as instanceDump; then the buffers as --ebuf
+                const parts = [];
+                let k = 0;
+                for (const [orig, list] of run("__p.funcInstantiator._instances"))
+                    for (const inst of list) parts.push("instance " + k++ + " " + classOf(orig) + " " + inst.typeArguments.length + "\n" + dumpRoots([inst.func]));
+                parts.push("buffers " + run("__allBuffers.length"));
+                for (const b of run("__allBuffers")) parts.push(b.toString());
+                dump = parts.join("\n");
+            }
+        } else if (ebufMode) {
+            if (input.kind !== "doLex") {
+                anonRoles.clear(); resolveInput(input, 6); run("__postHarness(__p)");
+                const insts = run("__ebufHarness(__p)");
+                const parts = insts.map(inst => dumpRoots([inst]));
+                parts.push("buffers " + run("__allBuffers.length"));
+                for (const b of run("__allBuffers")) parts.push(b.toString());
+                dump = parts.join("\n");
+            }
+        } else if (layoutMode) {
+            if (input.kind !== "doLex") {
+                anonRoles.clear(); resolveInput(input, 6); run("__postHarness(__p)");
+                const [st, text] = run("__layoutHarness(__p)");
+                if (st !== "ok") status = st;
+                dump = text;
+            }
+        } else if (lateMode) {
+            if (input.kind !== "doLex") {
+                anonRoles.clear(); resolveInput(input, 6); run("__postHarness(__p)");
+                const [st, trace] = run("__lateHarness(__p)");
+                // the trace is kept up to an error, as the C driver prints it
+                if (st !== "ok") status = st;
+                dump = trace;
+            }
+        } else if (visitMode) {
             if (input.kind !== "doLex") { anonRoles.clear(); resolveInput(input, 6); run("__postHarness(__p)"); dump = run("__visitHarness(__p)"); nodes = dump.split("\n").length; }
         } else if (instantiateMode) {
             if (input.kind !== "doLex") { anonRoles.clear(); resolveInput(input, 6); run("__postHarness(__p)"); dump = instanceDump(ctx.__p); nodes = dump.split("\n").length - 1; }
@@ -522,6 +661,16 @@ const rows = inputs.map((input, i) => {
     return { i, kind: input.kind, textHash: hex8(fnv(input.text)), status, nodes, dump, dumpHash: hex8(fnv(dump)) };
 });
 
+if (lateMode || layoutMode || ebufMode || inlineMode) {
+    const out = [];
+    for (const r of rows) {
+        if (r.kind === "doLex") continue;
+        out.push("input " + r.i + " " + r.kind + " " + r.status);
+        if (r.dump) out.push(r.dump);
+    }
+    console.log(out.join("\n"));
+    process.exit(0);
+}
 if (checkMode) {
     const out = [];
     for (const r of rows) {

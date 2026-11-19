@@ -30,6 +30,7 @@ typedef enum {
 } AstTag;
 
 typedef struct Ast Ast;
+typedef struct EPtrV EPtrV;
 typedef struct { Ast **v; int n, cap; } AstList;
 
 /* The checker's results for a property access (PropertyAccessExpression fields, wsl-check.h). lv is
@@ -47,6 +48,10 @@ struct Ast {
   int origin;                 /* index of the origin token in the source, -1 if none */
   int native;                 /* 1 if the origin kind is "native" (the standard library), else 0 */
   Ast *type;                  /* Value.type of a literal expression: its literal type node (NULL otherwise) */
+  int64_t size; int hasSize;      /* StructType.size, set by the layout (wsl-layout.h); hasSize 0 is undefined */
+  int64_t offset; int hasOffset;  /* Field.offset, set by the layout */
+  EPtrV *ePtr;                    /* ePtr (wsl-ebuf.h): a parameter, variable, anonymous variable or box; FuncDef and CallExpression use ePtrAux */
+  EPtrV *ePtrAux;                 /* returnEPtr (FuncDef) or resultEPtr (CallExpression) */
   union {
     /* FuncDef, NativeFunc, ProtocolFuncDecl */
     struct { const char *name; int isCast; const char *shaderType; int isRestricted;
@@ -54,7 +59,8 @@ struct Ast {
              int hasOv; AstList *ov; Ast *protocolDecl;   /* ov: possibleOverloads (ProtocolFuncDecl), live; protocolDecl: ProtocolFuncDecl.protocolDecl */
              Ast *orig; Ast *uninstRet; int inlined;   /* orig: the generic function of an instance; uninstRet: uninstantiatedReturnType; inlined: Func.inlined */
              Ast *implStruct; const char *implField;   /* a synthesized struct accessor (SynthesizeStructAccessors): its struct and field */
-             Ast *implType; } func;   /* implType: an instance's implementationData.type (the struct instance of its type arguments) */
+             Ast *implType;   /* implType: an instance's implementationData.type (the struct instance of its type arguments) */
+             int implHas; int64_t implOffset, implStructSize, implFieldSize; } func;   /* implOffset..: the accessor's layout data (didLayoutStructsInImplementationData) */
     /* TypeRef */
     struct { const char *name; AstList typeArguments; Ast *type; } typeRef;   /* type: resolved target */
     /* PtrType, ArrayRefType */
@@ -130,6 +136,8 @@ struct Ast {
     struct { long long value; double dbl; int isDbl; Ast *preferred; } intLit;   /* preferred: GenericLiteralType.preferredType */
     /* FloatLiteral, DoubleLiteral: value is the double (float literals are rounded to float) */
     struct { double value; Ast *preferred; } fltLit;
+    /* FunctionLikeBlock (the inliner's replacement of a call; ePtrAux is its returnEPtr) */
+    struct { Ast *returnType; AstList argumentList; AstList parameters; Ast *body; } fblock;
     /* literal types: the literal expression whose type this is (its value and preferredType are read from it) */
     struct { Ast *owner; } litType;
   } u;
@@ -271,6 +279,8 @@ static void buf_ref_list(Buf *b, const char *label, const AstList *l, int has) {
   buf_str(b, "]\"");
 }
 static const Ast *pref_type(const Ast *p) { return p ? p->u.typeRef.type : NULL; }
+static int EBUF_DUMP = 0;   /* --ebuf: the EPtrs of the nodes are printed after their scalars */
+static const char *eptr_str(const EPtrV *p);
 /* End of a node's own scalars: the reference scalars (if any), then the line break. */
 static void end_scalars(Buf *b, const Ast *n) {
   if (REFS_ON) {
@@ -298,6 +308,10 @@ static void end_scalars(Buf *b, const Ast *n) {
     case A_DOUBLELITERAL: buf_ref_target(b, "preferred", pref_type(n->u.fltLit.preferred)); break;
     default: break;
     }
+  }
+  if (EBUF_DUMP) {
+    if (n->ePtr) buf_scalar_str(b, "ePtr", eptr_str(n->ePtr));
+    if (n->ePtrAux) buf_scalar_str(b, n->tag == A_CALL ? "resultEPtr" : "returnEPtr", eptr_str(n->ePtrAux));
   }
   buf_str(b, "\n");
 }
@@ -581,6 +595,13 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
     return;
   case A_ENUMLITERAL:
     end_scalars(b, n);
+    return;
+  case A_FUNCTIONLIKEBLOCK:
+    end_scalars(b, n);
+    dump_child(b, n->u.fblock.returnType, depth + 1);
+    dump_list(b, &n->u.fblock.argumentList, depth + 1);
+    dump_list(b, &n->u.fblock.parameters, depth + 1);
+    dump_child(b, n->u.fblock.body, depth + 1);
     return;
   case A_ANONVAR:
     end_scalars(b, n);   /* a node line with no scalars; the references to it are named "anonVar" */

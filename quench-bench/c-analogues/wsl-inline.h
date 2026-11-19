@@ -124,6 +124,7 @@ static Ast *rx_visit(RX *x, Ast *n) {
     t->u.named.name = n->u.named.name;
     t->u.named.type = rx_visit(x, n->u.named.type);
     rx_map(x, n, t);
+    t->ePtr = n->ePtr;   /* Rewriter.visitFuncParameter */
     return t;
   }
   case A_VARIABLEDECL: {
@@ -132,12 +133,14 @@ static Ast *rx_visit(RX *x, Ast *n) {
     t->u.varDecl.type = rx_visit(x, n->u.varDecl.type);
     t->u.varDecl.initializer = rx_visit(x, n->u.varDecl.initializer);
     rx_map(x, n, t);
+    t->ePtr = n->ePtr;   /* Rewriter.visitVariableDecl */
     return t;
   }
   case A_ANONVAR: {
     Ast *t = mk_from(A_ANONVAR, n);
     t->type = rx_visit(x, n->type);
     rx_map(x, n, t);
+    t->ePtr = n->ePtr;   /* Rewriter.visitAnonymousVariable */
     return t;
   }
   case A_BLOCK: {
@@ -247,6 +250,7 @@ static Ast *rx_visit(RX *x, Ast *n) {
       t->u.intLit.dbl = n->u.fltLit.value;
     }
     t->u.intLit.preferred = rx_visit(x, literal_preferred(n));   /* the literal type's preferredType, visited by this rewriter */
+    t->ePtr = n->ePtr;   /* Rewriter.visitGenericLiteral */
     return t;
   }
   case A_NULLLITERAL: {
@@ -255,11 +259,13 @@ static Ast *rx_visit(RX *x, Ast *n) {
     /* visitNullLiteral: result.type = node.type.visit(this); AutoWrapper returns the NullType as it is */
     if (x->aw) t->type = n->type;
     else t->type->type = rx_visit(x, n->type->type);
+    t->ePtr = n->ePtr;   /* Rewriter.visitNullLiteral */
     return t;
   }
   case A_ENUMLITERAL: {
     Ast *t = mk_from(A_ENUMLITERAL, n);
     t->u.enumLit.member = n->u.enumLit.member;
+    t->ePtr = n->ePtr;   /* Rewriter.visitEnumLiteral */
     return t;
   }
   case A_ASSIGN: {
@@ -306,6 +312,7 @@ static Ast *rx_visit(RX *x, Ast *n) {
     Ast *t = mk_from(n->tag, n);
     t->u.lvalueRef.lValue = rx_visit(x, n->u.lvalueRef.lValue);
     t->u.lvalueRef.numElements = n->tag == A_MAKEARRAYREF ? rx_visit(x, n->u.lvalueRef.numElements) : NULL;
+    t->ePtr = n->ePtr;   /* the Rewriter's MakePtr, MakeArrayRef and ConvertPtrToArrayRef copy the EPtr */
     return t;
   }
   case A_RETURN: {
@@ -343,6 +350,7 @@ static Ast *rx_visit(RX *x, Ast *n) {
       }
     }
     t->u.call.resultType = rx_visit(x, n->u.call.resultType);
+    t->ePtrAux = n->ePtrAux;   /* processDerivedCallData: the resultEPtr */
     if (x->inst) {   /* InstantiationSubstitution.visitCallExpression */
       Ast *f = t->u.call.func;
       if (f && f->tag == A_PROTOCOLFUNCDECL) {
@@ -363,6 +371,7 @@ static Ast *rx_visit(RX *x, Ast *n) {
   case A_LOGICALNOT: {
     Ast *t = mk_from(A_LOGICALNOT, n);
     t->u.notExpr.operand = rx_visit(x, n->u.notExpr.operand);
+    t->ePtr = n->ePtr;   /* Rewriter.visitLogicalNot */
     return t;
   }
   case A_LOGICAL: {
@@ -370,6 +379,7 @@ static Ast *rx_visit(RX *x, Ast *n) {
     t->u.logical.text = n->u.logical.text;
     t->u.logical.left = rx_visit(x, n->u.logical.left);
     t->u.logical.right = rx_visit(x, n->u.logical.right);
+    t->ePtr = n->ePtr;   /* Rewriter.visitLogicalExpression */
     return t;
   }
   case A_IF: {
@@ -520,7 +530,10 @@ static Ast *fi_get_unique(Ast *func, Ast **targs, int nt) {
  * JS program.functions Map (a name at its first statement, then every function of that name in order) gets
  * getUnique(func, []). */
 static int fi_name_eq(const char *a, const char *b) { return (!a || !b) ? a == b : strcmp(a, b) == 0; }
-static void fi_instantiate_top(const Program *p) {
+/* the non-generic functions of inline()'s first loop, in the order of the JS program.functions Map (a name at its
+ * first statement, then every function of that name in order); out must hold the program's statement count */
+static int top_funcs(const Program *p, Ast **out) {
+  int nout = 0;
   for (int k = 0; k < p->statements.n; k++) {
     Ast *s = p->statements.v[k];
     if (s->tag != A_FUNCDEF && s->tag != A_NATIVEFUNC) continue;
@@ -533,9 +546,16 @@ static void fi_instantiate_top(const Program *p) {
     for (int j = k; j < p->statements.n; j++) {
       Ast *f = p->statements.v[j];
       if ((f->tag != A_FUNCDEF && f->tag != A_NATIVEFUNC) || !fi_name_eq(f->u.func.name, s->u.func.name)) continue;
-      if (f->u.func.typeParameters.n == 0) fi_get_unique(f, NULL, 0);
+      if (f->u.func.typeParameters.n == 0) out[nout++] = f;
     }
   }
+  return nout;
+}
+
+static void fi_instantiate_top(const Program *p) {
+  Ast **fs = arena_alloc(sizeof(Ast *) * (p->statements.n + 1));
+  int n = top_funcs(p, fs);
+  for (int i = 0; i < n; i++) fi_get_unique(fs[i], NULL, 0);
 }
 
 static void fi_reset(void) { FI_N = 0; FI_NF = 0; }

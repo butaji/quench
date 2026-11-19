@@ -13,8 +13,12 @@
 #define WSL_VISIT_H
 
 #include "wsl-inline.h"
+#include "wsl-late.h"
+#include "wsl-layout.h"
+#include "wsl-ebuf.h"
 
-typedef struct { Buf *b; int n; } VTrace;
+/* late: 1 for LateChecker's traversal (wsl-late.h): the same visits, with its checks in the cases below */
+typedef struct { Buf *b; int n; int late; int layout; int ebuf; } VTrace;   /* ebuf: EBufferBuilder (wsl-ebuf.h) */
 
 static const char *vis_class(const Ast *n) {
   switch (n->tag) {
@@ -110,7 +114,9 @@ static void vt_node(VTrace *t, Ast *n) {
   if (t->n++) buf_str(t->b, "\n");
   buf_str(t->b, cls);
   switch (n->tag) {
-  case A_FUNCDEF:          /* visitFuncDef */
+  case A_FUNCDEF:          /* visitFuncDef (LateChecker: the shader check first; EBufferBuilder: the return EPtr first) */
+    if (t->late && n->u.func.shaderType) late_shader(n);
+    if (t->ebuf) n->ePtrAux = eb_create(n->u.func.returnType);
     vt_func(t, n);
     vt_req(t, n->u.func.body);
     break;
@@ -121,11 +127,18 @@ static void vt_node(VTrace *t, Ast *n) {
   case A_NATIVEFUNCINST:   /* visitNativeFuncInstance: visitFunc, then func.visitImplementationData (the accessor's type) */
     vt_func(t, n);
     vt_opt(t, n->u.func.implType);
+    if (t->layout) lsb_native_inst(n);   /* then didLayoutStructsInImplementationData */
     break;
-  case A_FUNCPARAMETER:    /* visitFuncParameter */
-  case A_CONSTEXPRTYPEPARAM:   /* visitConstexprTypeParameter */
-  case A_FIELD:            /* visitField */
+  case A_FUNCPARAMETER:    /* visitFuncParameter (EBufferBuilder: its EPtr, without the type) */
+    if (t->ebuf) { n->ePtr = eb_create(n->u.named.type); break; }
     vt_req(t, n->u.named.type);
+    break;
+  case A_CONSTEXPRTYPEPARAM:   /* visitConstexprTypeParameter */
+    vt_req(t, n->u.named.type);
+    break;
+  case A_FIELD:            /* visitField: super.visitField (the type), then the offset and the advance */
+    vt_req(t, n->u.named.type);
+    if (t->layout) lsb_field(n);
     break;
   case A_BLOCK:
     vt_list(t, &n->u.block.statements);
@@ -139,8 +152,9 @@ static void vt_node(VTrace *t, Ast *n) {
     vt_list(t, &n->u.protocolDecl.extends);
     vt_list(t, &n->u.protocolDecl.signatures);
     break;
-  case A_TYPEREF:
+  case A_TYPEREF:          /* visitTypeRef: the type arguments, then (StructLayoutBuilder) the target */
     vt_list(t, &n->u.typeRef.typeArguments);
+    if (t->layout) vt_req(t, n->u.typeRef.type);
     break;
   case A_NATIVETYPE:
     vt_list(t, &n->u.nativeType.typeParameters);
@@ -149,7 +163,15 @@ static void vt_node(VTrace *t, Ast *n) {
     vt_list(t, &n->u.typeDef.typeParameters);
     vt_req(t, n->u.typeDef.type);
     break;
-  case A_STRUCTTYPE:
+  case A_STRUCTTYPE:       /* visitStructType (StructLayoutBuilder: the layout of the fields, when it has none yet) */
+    if (t->layout) {
+      if (n->hasSize) break;
+      int64_t old = lsb_struct_begin(n);
+      vt_list(t, &n->u.structType.typeParameters);
+      vt_list(t, &n->u.structType.fields);
+      lsb_struct_end(n, old);
+      break;
+    }
     vt_list(t, &n->u.structType.typeParameters);
     vt_list(t, &n->u.structType.fields);
     break;
@@ -163,17 +185,28 @@ static void vt_node(VTrace *t, Ast *n) {
   case A_ENUMMEMBER:       /* Node.visit(node.value) */
     vt_opt(t, n->u.nameOnly.value);
     break;
-  case A_ENUMLITERAL:
+  case A_ENUMLITERAL:     /* EBufferBuilder.visitEnumLiteral: a box */
+    if (t->ebuf) n->ePtr = eptr_box();
     break;
   case A_PTRTYPE:          /* visitPtrType -> visitReferenceType -> visitElementalType */
   case A_ARRAYREFTYPE:
+    if (t->late) {         /* LateChecker.visitReferenceType: checked, and the element type is not visited */
+      late_reference(n);
+      break;
+    }
+    if (t->layout) break;  /* StructLayoutBuilder.visitReferenceType: empty */
     vt_req(t, n->u.ref.elementType);
     break;
   case A_ARRAYTYPE:        /* visitArrayType */
     vt_req(t, n->u.arrayType.elementType);
     vt_req(t, n->u.arrayType.numElements);
     break;
-  case A_VARIABLEDECL:
+  case A_VARIABLEDECL:     /* EBufferBuilder.visitVariableDecl: its EPtr, then the initializer only */
+    if (t->ebuf) {
+      n->ePtr = eb_create(n->u.varDecl.type);
+      vt_opt(t, n->u.varDecl.initializer);
+      break;
+    }
     vt_req(t, n->u.varDecl.type);
     vt_opt(t, n->u.varDecl.initializer);
     break;
@@ -203,9 +236,11 @@ static void vt_node(VTrace *t, Ast *n) {
     break;
   case A_MAKEPTR:
   case A_CONVERTPTR:
+    if (t->ebuf) n->ePtr = eptr_box();
     vt_req(t, n->u.lvalueRef.lValue);
     break;
   case A_MAKEARRAYREF:
+    if (t->ebuf) n->ePtr = eptr_box();
     vt_req(t, n->u.lvalueRef.lValue);
     vt_opt(t, n->u.lvalueRef.numElements);
     break;
@@ -246,6 +281,7 @@ static void vt_node(VTrace *t, Ast *n) {
   case A_TRAP:
     break;
   case A_INTLITERAL: case A_UINTLITERAL: case A_FLOATLITERAL: case A_DOUBLELITERAL:
+    if (t->ebuf) { n->ePtr = eptr_box(); break; }   /* EBufferBuilder.visitGenericLiteral: a box, no children */
     vt_req(t, n->type);                 /* visitGenericLiteral: node.type */
     break;
   case A_INTLITERALTYPE: case A_UINTLITERALTYPE: case A_FLOATLITERALTYPE: case A_DOUBLELITERALTYPE: {
@@ -259,11 +295,24 @@ static void vt_node(VTrace *t, Ast *n) {
     vt_opt(t, n->type);
     break;
   case A_NULLLITERAL:      /* visitNullLiteral: node.type */
+    if (t->ebuf) { n->ePtr = eptr_box(); break; }
     vt_req(t, n->type);
     break;
   case A_BOOLLITERAL:
+    if (t->ebuf) n->ePtr = eptr_box();
     break;
-  case A_CALL:             /* visitCallExpression */
+  case A_CALL:             /* visitCallExpression (StructLayoutBuilder: the arguments, instance type arguments, instance and result) */
+    if (t->ebuf) {         /* EBufferBuilder.visitCallExpression: the result EPtr, then the Visitor's traversal */
+      if (!n->u.call.resultType) fatal_unsupported("call without a result type", n);
+      n->ePtrAux = eb_create(n->u.call.resultType);
+    }
+    if (t->layout) {
+      for (int i = 0; i < n->u.call.argumentList.n; i++) vt_opt(t, n->u.call.argumentList.v[i]);
+      vt_list(t, &n->u.call.instTA);
+      vt_opt(t, n->u.call.nfi);
+      vt_opt(t, n->u.call.resultType);
+      break;
+    }
     vt_list(t, &n->u.call.typeArguments);
     for (int i = 0; i < n->u.call.argumentList.n; i++) vt_opt(t, n->u.call.argumentList.v[i]);
     vt_list(t, &n->u.call.actualTA);
@@ -273,16 +322,23 @@ static void vt_node(VTrace *t, Ast *n) {
     vt_opt(t, n->u.call.resultType);
     break;
   case A_LOGICALNOT:
+    if (t->ebuf) n->ePtr = eptr_box();
     vt_req(t, n->u.notExpr.operand);
     break;
   case A_LOGICAL:
+    if (t->ebuf) n->ePtr = eptr_box();
     vt_req(t, n->u.logical.left);
     vt_req(t, n->u.logical.right);
     break;
-  case A_FUNCTIONLIKEBLOCK: /* visitFunctionLikeBlock: not produced until the inliner is ported */
-    fatal_unsupported("visit of a FunctionLikeBlock", n);
+  case A_FUNCTIONLIKEBLOCK: /* visitFunctionLikeBlock (EBufferBuilder: its returnEPtr first) */
+    if (t->ebuf) n->ePtrAux = eb_create(n->u.fblock.returnType);
+    vt_opt(t, n->u.fblock.returnType);
+    vt_list(t, &n->u.fblock.argumentList);
+    vt_list(t, &n->u.fblock.parameters);
+    vt_req(t, n->u.fblock.body);
     break;
-  case A_ANONVAR:          /* visitAnonymousVariable: Node.visit(node.type) */
+  case A_ANONVAR:          /* visitAnonymousVariable: Node.visit(node.type) (EBufferBuilder: its EPtr, no children) */
+    if (t->ebuf) { n->ePtr = eb_create(n->type); break; }
     vt_opt(t, n->type);
     break;
   case A_IDENTITY:
@@ -296,7 +352,7 @@ static void vt_node(VTrace *t, Ast *n) {
 
 /* The --visit trace of a program: the Program line, its top-level statements, then the instances. */
 static int visit_trace(Buf *b, const Program *p) {
-  VTrace t = {b, 0};
+  VTrace t = {b, 0, 0, 0, 0};
   if (t.n++) buf_str(b, "\n");
   buf_str(b, "Program");
   for (int k = 0; k < p->statements.n; k++) vt_node(&t, p->statements.v[k]);
@@ -304,6 +360,83 @@ static int visit_trace(Buf *b, const Program *p) {
     for (int i = 0; i < FI_N; i++)
       if (FI_TAB[i].func == FI_FUNCS[f]) vt_node(&t, FI_TAB[i].inst);
   return t.n;
+}
+
+/* --late: LateChecker (wsl-late.h) on each function of inline()'s first loop: the instance is made, then, unless it is
+ * native, visited by LateChecker's traversal; the instances are visited in order, and the first error stops the input.
+ * Returns the trace lines written to b (no trailing newline). */
+static int late_trace(Buf *b, const Program *p) {
+  VTrace t = {b, 0, 1};
+  Ast **fs = arena_alloc(sizeof(Ast *) * (p->statements.n + 1));
+  int n = top_funcs(p, fs);
+  for (int i = 0; i < n; i++) {
+    Ast *inst = fi_get_unique(fs[i], NULL, 0);
+    if (inst->tag == A_NATIVEFUNCINST) continue;   /* _inlineFunction returns for native functions */
+    vt_node(&t, inst);
+  }
+  return t.n;
+}
+
+/* --layout: for each function of inline()'s first loop, as _inlineFunction does it: LateChecker, then the layout
+ * (wsl-layout.h). The log (LSB_LOG) is the output: one entry per struct laid out and per accessor instance. */
+static void layout_run(Buf *log, const Program *p) {
+  Buf scratch = {0};
+  Ast **fs = arena_alloc(sizeof(Ast *) * (p->statements.n + 1));
+  int n = top_funcs(p, fs);
+  LSB_LOG = log;
+  LSB_NE = 0;
+  for (int i = 0; i < n; i++) {
+    Ast *inst = fi_get_unique(fs[i], NULL, 0);
+    if (inst->tag == A_NATIVEFUNCINST) continue;
+    VTrace lt = {&scratch, 0, 1, 0};
+    vt_node(&lt, inst);
+    scratch.n = 0;
+    LSB_OFF = 0;
+    VTrace st = {&scratch, 0, 0, 1};
+    vt_node(&st, inst);
+    scratch.n = 0;
+  }
+  LSB_LOG = NULL;
+}
+
+/* --ebuf: inline()'s order over the non-generic functions (LateChecker, the layout, then EBufferBuilder for each
+ * instance). The output: the instance trees, each node with its EPtrs (EBUF_DUMP), then "buffers N" and the
+ * buffers in creation order (Buffer.toString). A failure in a pass leaves the output empty (the caller prints
+ * the status alone). */
+static void ebuf_pass(Buf *out, const Program *p) {
+  Buf scratch = {0};
+  Ast **fs = arena_alloc(sizeof(Ast *) * (p->statements.n + 1));
+  int n = top_funcs(p, fs);
+  Ast **insts = arena_alloc(sizeof(Ast *) * (n + 1));
+  int ni = 0;
+  EBUF_COUNT = 0;
+  EBUF_NALL = 0;
+  for (int i = 0; i < n; i++) {
+    Ast *inst = fi_get_unique(fs[i], NULL, 0);
+    if (inst->tag == A_NATIVEFUNCINST) continue;
+    VTrace lt = {&scratch, 0, 1, 0, 0};
+    vt_node(&lt, inst);
+    scratch.n = 0;
+    LSB_OFF = 0;
+    VTrace st = {&scratch, 0, 0, 1, 0};
+    vt_node(&st, inst);
+    scratch.n = 0;
+    VTrace et = {&scratch, 0, 0, 0, 1};
+    vt_node(&et, inst);
+    scratch.n = 0;
+    insts[ni++] = inst;
+  }
+  Buf body = {0};
+  EBUF_DUMP = 1;
+  for (int k = 0; k < ni; k++) dump_node(&body, insts[k], 1);   /* each line ends in a newline */
+  EBUF_DUMP = 0;
+  buf_fmt(&body, "buffers %d\n", EBUF_NALL);
+  for (int j = 0; j < EBUF_NALL; j++) {
+    buf_str(&body, ebuf_str(EBUF_ALL[j]));
+    buf_str(&body, "\n");
+  }
+  if (body.n && body.s[body.n - 1] == '\n') body.n--;   /* the dump text has no trailing newline */
+  buf_put(out, body.s, body.n);
 }
 
 #endif
