@@ -10,6 +10,12 @@ use super::*;
 /// fields are rewritten; the reader's use and definition masks confirm the rewrite trades `d`
 /// for `s` and nothing else. A read of a binding a statement copied before evaluating its other
 /// operands (`o.v = o.v + 1`) then reads the binding: each tier sees one value, not a copy.
+///
+/// Each rewrite updates the transfer masks of the reader and of the dropped move at once, so
+/// a later move feeding the same reader forwards too: `t = Move i; u = Move n; Lt t, u`
+/// becomes `Lt i, n`, the two-operand reads of loop bounds and element accesses
+/// (`a[i]`, `i < n`). The live sets a rewrite leaves stale are those strictly after the move
+/// up to its reader, which no later forward consults (the note after this function).
 pub(super) fn forward_move_sources(
     function: &mut BcFunction,
     methods: &(impl liveness::MethodArguments + ?Sized),
@@ -20,27 +26,35 @@ pub(super) fn forward_move_sources(
     if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
         return false;
     }
-    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions) else {
+    let Some(mut analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions) else {
         return false;
     };
     let scope = Scope::of(function);
-    // The changed pcs, and the readers among them (each after its move) not to forward again.
-    let (mut changed, mut rewritten_readers) = (Vec::new(), crate::bitset::BitSet::new(function.code.len()));
+    let mut changed = Vec::new();
     for pc in 0..function.code.len() {
-        if rewritten_readers.contains(pc) {
-            continue;
-        }
         let uses = |instruction: Instr| liveness::uses(instruction.as_wide(), methods, field_sites, superinstructions);
         let definitions = |instruction: Instr| liveness::definitions(instruction.as_wide(), superinstructions);
         if let Some((at, rewritten)) = forwarded(function, &analysis, &scope, pc, (&uses, &definitions)) {
             function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
             function.code[at] = rewritten;
-            rewritten_readers.insert(at);
+            analysis.transfers[pc] = (RegisterSet::default(), RegisterSet::default());
+            analysis.transfers[at] = (uses(rewritten), definitions(rewritten));
             changed.extend([pc, at]);
         }
     }
     hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
 }
+
+// Why the live sets a forward leaves stale are never read again:
+// forwarding `d = Move s` at `pc` into its reader at `at` changes liveness only at the
+// positions `pc + 1 ..= at`. Before `pc` nothing changes: `s` was live there (the move read
+// it) and stays live (the reader reads it, and nothing between writes it), and `d` was dead
+// there (the move wrote it) and stays dead (its one reader no longer reads it). After `at`
+// nothing changes, as the reader's successors and their code are untouched; a jump target
+// inside the span would be a protected position, which `move_reader` refuses. A later
+// forward reads live sets only through `live_out` of its own reader: a reader past `at`
+// reads untouched sets, and one inside the span asks only about its own destination, which
+// is neither `d` nor `s`, since `move_reader` refused any write of either inside the span.
 
 /// What copy propagation may not cross or rewrite in a function.
 struct Scope {

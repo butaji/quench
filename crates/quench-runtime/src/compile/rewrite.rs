@@ -4,6 +4,7 @@ use crate::bytecode::{
 };
 use super::liveness::{RegisterSet, register_bit};
 mod copies;
+mod producers;
 use copies::forward_move_sources;
 
 #[derive(Clone, Copy)]
@@ -544,9 +545,7 @@ fn coalesce_distant_producer_moves(
         let instruction = function.code[producer];
         if instruction.is_wide()
             || !function.handlers.iter().all(|handler| handler.end as usize <= producer || handler.start as usize > target)
-            || !fuses(instruction.op(), Op::Move, |recipe| {
-                matches!(recipe, Recipe::ProducerMove)
-            })
+            || !producers::coalesces_at_a_distance(instruction.op())
             || instruction.result_register() != source
             || analysis.transfers[producer].1 != register_bit(source)
             || analysis.transfers[producer].0 & pair != 0
