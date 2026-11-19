@@ -2218,6 +2218,29 @@ impl Lowering<'_, '_> {
         false
     }
 
+    /// Whether the int32 product written to `register` at `pc` is read only through its ToInt32, by
+    /// a sum or difference as its next instruction whose other operand is another int32 register
+    /// (`state`, the facts before `pc`, prove it int32 and the product does not write it), and then
+    /// through `truncated_through_sums`. Each added int32 keeps the chain's sums exact in binary64
+    /// as an int32 constant does, so the wrapping product and sum give the low 32 bits of the
+    /// exact sum: its ToInt32, as `(a * 3 + i) | 0` (`int_mul`).
+    pub(super) fn truncated_through_int32_sum(&self, state: &State, pc: usize, register: Register) -> bool {
+        let (at, reader) = self.reader(pc + 1, register);
+        if at != pc + 1 || reader != register { return false; }
+        let Some(next) = self.unit.instructions.get(at).copied() else { return false };
+        if !crate::staged::meaning::means(next, crate::staged::meaning::Meaning::Binary) || next.returns_from_frame()
+            || next.writes_current_this() || next.result_flags() != 0 { return false; }
+        let Some(operation) = crate::vm::compiled::number_arithmetic(next, next.binary_operator()) else { return false };
+        if !operation.int32_projection_is_wrapping() { return false; }
+        let int32_register = |operand: Operand| operand.register_index().filter(|other| *other != register)
+            .is_some_and(|other| state.values[usize::from(other)].value.ty.is_subtype(Type::INT32));
+        let [first, second] = [next.operand_b(), next.operand_c()];
+        let paired = (first.register_index() == Some(register) && int32_register(second))
+            || (second.register_index() == Some(register) && int32_register(first));
+        if !paired || !(next.result_register() == register || self.dead_after(at, register)) { return false; }
+        self.truncated_through_sums(at, next.result_register())
+    }
+
     /// The sum or difference that next reads `register`, written at `pc`, with an int32 constant
     /// as its other operand and `register` dead past it: its PC and result register.
     fn int32_constant_sum(&self, pc: usize, register: Register) -> Option<(usize, Register)> {
