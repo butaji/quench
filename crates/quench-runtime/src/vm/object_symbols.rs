@@ -413,7 +413,8 @@ impl<H: Host> Vm<H> {
             self.initialize_plain_copy(target, shape, &values, slots.iter().map(|(atom, _)| *atom));
             return true;
         }
-        if self.shape_entries(source_shape).any(|(key, _)| matches!(key, PropertyKey::Symbol(_))) {
+        // One shape fact, not a scan of its keys (private names count too, which only declines more).
+        if self.shape_may_have_symbol_keys(source_shape) {
             return false;
         }
         // A rest pattern's excluded keys are strings or symbols; the source has no symbol key,
