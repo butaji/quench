@@ -90,7 +90,7 @@ use young::YoungSlots;
 // genuinely large `new Array(length)` allocations to the sparse representation.
 // The slot limit is derived from Value's representation.
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 1024 * 1024;
-const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
+pub(crate) const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 // A sparse element is an index and a value in a hash table, at least this many dense slots;
 // a sparse array whose elements fill as many slots as its length turns dense.
 const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>();

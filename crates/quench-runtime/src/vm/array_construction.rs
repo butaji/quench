@@ -25,6 +25,12 @@ impl<H: Host> Vm<H> {
         if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > f64::from(u32::MAX) {
             return None;
         }
+        // A length dense storage holds anyway (`sparse_set_length` materializes it with holes)
+        // is one allocation of holes, with no sparse record made and then materialized.
+        let length_units = length as usize;
+        if length_units <= crate::heap::MAX_DENSE_ARRAY_HOLE_LENGTH {
+            return Some(self.heap.alloc_literal_array(prototype, length_units, |_| Value::DELETED));
+        }
         let array = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
         });
