@@ -61,6 +61,7 @@ static TsParser P;
 static TsNode *newNode(int kind) {
   P.nodeCount++;
   TsNode *n = ts_arena_alloc(sizeof(TsNode));
+  memset(n, 0, sizeof *n);
   n->kind = (uint16_t)kind;
   n->pos = 0;
   n->end = 0;
@@ -2871,6 +2872,7 @@ static TsNode *parseVariableDeclarationList(bool inForStatementInitializer) {
   TsNode *n = newNode(TSK_VariableDeclarationList);
   n->declarations = declarations;
   n->extra = flags;
+  n->flags |= (uint32_t)flags; /* NodeFlags.Let / Const / Using: the binder reads them */
   return finishNode(n, pos, -1);
 }
 
@@ -4601,6 +4603,7 @@ static TsNode *parseSourceFile(const char *fileName, const char *text, int len, 
   sf->flags = (uint32_t)P.sourceFlags;
   sf->pos = 0;
   sf->end = len;
+  sf->isDeclarationFile = isDeclarationFile;
   return sf;
 }
 

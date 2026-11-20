@@ -49,6 +49,12 @@ struct TsNode {
   TsList *jsDoc, *tokens, *qualifiers, *assertions, *attributes, *expressions;
   TsList *list1, *list2;
   int32_t extra;              /* small per-kind payload (operator kind, flags, token number) */
+  /* binder (ts-binder.h) */
+  TsNode *parent;
+  struct TsSymbol *symbol, *localSymbol;
+  struct TsSymTable *locals;
+  bool hasExternalModuleIndicator, isDeclarationFile;
+  int32_t binderSymbolCount;  /* SourceFile: file.symbolCount set by the binder */
 };
 
 /* ---- arena ---- */

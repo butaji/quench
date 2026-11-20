@@ -4,13 +4,14 @@
 // jetstream-driver: class=Async preload=tsconfig=TypeScript/src/gen/immer-tiny/actually-a-type-script-config-please-dont-firewall-me.json preload=files=TypeScript/src/gen/immer-tiny/files.json
 /*
  * C analogue of JetStream's typescript-lib (TypeScript/benchmark.js, compileTest over the immer-tiny
- * project of 118 files). THIS PORT IS NOT THE CHECKER. The checker stage (binding of symbols and
- * types, type checking, emit and diagnostics) is NOT YET PORTED. What is ported and validated here:
+ * project of 118 files). THIS PORT IS NOT THE CHECKER. The checker stage (type checking, emit and
+ * diagnostics) is NOT YET PORTED. What is ported and validated here:
  *   - Stage 1: the TypeScript 5.9.2 scanner, the parser and the JSDoc parser (support/ts-scanner.h,
  *     support/ts-parser.h, support/ts-jsdoc.h). Every file is parsed in ParseAll mode, the mode that
  *     createProgram uses, and the per-file nodeCount and identifierCount are compared with node's.
- * Stage 2 (the binder: symbol tables, declaration merging, symbol counts) is NOT YET PORTED either, so
- * no symbol counts are produced and the time printed is parse time only.
+ *   - Stage 2, symbols: the binder's symbol part (support/ts-binder.h). Each parsed file is bound and
+ *     its symbolCount (file.symbolCount in TypeScript) is compared with node's.
+ *   - Stage 2, flow nodes: NOT PORTED. The control-flow graph (createFlowNode) is not built.
  * The benchmark reads files.json (the file name to text map) before the timed region, as the JS
  * harness preloads it, and each iteration parses all 118 files from memory with a fresh node arena.
  * Expected counts are the node 5.9.2 reference in support/ts-immer-expected.h. Each file must match,
@@ -28,6 +29,8 @@
 #include "support/ts-parser.h"
 #pragma GCC diagnostic pop
 #include "support/ts-immer-expected.h"
+#include "support/ts-binder.h"
+#include "support/ts-binder-expected.h"
 
 #define FAIL(...)                  \
   do {                             \
@@ -173,16 +176,20 @@ static void loadFilesJson(const char *path) {
   free(src);
 }
 
-/* Parses every file once; returns the number of files whose counts differ from node. */
-static int parseAllAndCheck(int verify, long *sumNodes, long *sumIdents) {
+/* Parses and binds every file once; with verify set, compares each file with node and returns the
+ * number of files that differ. */
+static int parseAllAndCheck(int verify, long *sumNodes, long *sumIdents, long *sumSymbols) {
   int bad = 0;
   *sumNodes = 0;
   *sumIdents = 0;
+  *sumSymbols = 0;
   for (int i = 0; i < sourceCount; i++) {
     ts_arena_reset();
-    parseSourceFile(sources[i].name, sources[i].text, sources[i].len, sources[i].kind, 0);
+    TsNode *sf = parseSourceFile(sources[i].name, sources[i].text, sources[i].len, sources[i].kind, 0);
+    tsBindSourceFile(sf, sources[i].name);
     *sumNodes += P.nodeCount;
     *sumIdents += P.identifierCount;
+    *sumSymbols += sf->binderSymbolCount;
     if (!verify) continue;
     const ExpectedFile *e = NULL;
     for (int k = 0; k < EXPECTED_FILE_COUNT; k++)
@@ -191,6 +198,13 @@ static int parseAllAndCheck(int verify, long *sumNodes, long *sumIdents) {
     if (P.nodeCount != e->nodes || P.identifierCount != e->idents) {
       printf("MISMATCH %s nodes %ld (node %ld) identifiers %ld (node %ld)\n", sources[i].name, (long)P.nodeCount,
              e->nodes, (long)P.identifierCount, e->idents);
+      bad++;
+    }
+    const ExpectedBinder *b = NULL;
+    for (int k = 0; k < EXPECTED_BINDER_COUNT; k++)
+      if (strcmp(expectedBinder[k].name, sources[i].name) == 0) { b = &expectedBinder[k]; break; }
+    if (!b || sf->binderSymbolCount != b->symbols) {
+      printf("BINDER MISMATCH %s symbols %d (node %ld)\n", sources[i].name, sf->binderSymbolCount, b ? b->symbols : -1L);
       bad++;
     }
   }
@@ -205,19 +219,19 @@ int main(int argc, char **argv) {
   loadFilesJson(path);
   if (sourceCount != EXPECTED_FILE_COUNT) FAIL("expected %d files, found %d", EXPECTED_FILE_COUNT, sourceCount);
 
-  long sumNodes = 0, sumIdents = 0;
-  int bad = parseAllAndCheck(1, &sumNodes, &sumIdents);
+  long sumNodes = 0, sumIdents = 0, sumSymbols = 0;
+  int bad = parseAllAndCheck(1, &sumNodes, &sumIdents, &sumSymbols);
   if (bad) FAIL("%d files differ from node", bad);
 
   double elapsed = 0;
   for (int it = 0; it < iterations; it++) {
     double start = now_ms();
-    parseAllAndCheck(0, &sumNodes, &sumIdents);
+    parseAllAndCheck(0, &sumNodes, &sumIdents, &sumSymbols);
     elapsed += now_ms() - start;
   }
   printf("typescript-lib %d iterations %.3f ms\n", iterations, elapsed);
-  printf("validated: %d files match node (nodeCount, identifierCount, ParseAll); sum nodes %ld identifiers %ld; "
-         "checker and binder not yet ported\n",
-         sourceCount, sumNodes, sumIdents);
+  printf("validated: %d files match node (nodeCount, identifierCount, binder symbolCount); sum nodes %ld "
+         "identifiers %ld symbols %ld; flow nodes and checker not yet ported\n",
+         sourceCount, sumNodes, sumIdents, sumSymbols);
   return 0;
 }

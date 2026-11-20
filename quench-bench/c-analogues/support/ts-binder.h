@@ -1,0 +1,1020 @@
+/*
+ * Binder port (TypeScript 5.9.2 binder.ts, symbol part) for the typescript-lib analogue.
+ *
+ * PORTED: symbol creation and declaration merging (declareSymbol with the SymbolFlags includes and
+ * excludes), symbol tables (locals, exports, members, globalExports), containers and block-scoped
+ * containers, declarations of every TypeScript node kind the binder declares, module instance state
+ * (including the export-specifier alias lookup), strict mode from the project options (strict: true,
+ * so alwaysStrict), and the binder's own symbol counter (SourceFile.symbolCount).
+ *
+ * NOT PORTED (no effect on symbol counts, so they are left out for now):
+ *   - control flow: flow nodes (createFlowNode), flow labels, the reachability checks and
+ *     the flow fields of nodes. The flow-node count is therefore not produced yet.
+ *   - binder diagnostics (bindDiagnostics), strict mode checks that only report errors,
+ *     JavaScript-only assignment declarations, CommonJS handling and JSDoc binding (every file in
+ *     the immer-tiny project is TypeScript, and the JSDoc nodes are not bound for TypeScript files).
+ *   - the lazy re-check of alias targets through the parent chain for nodes not yet bound.
+ *   - identifier escapes: names are compared on the raw identifier text (no \u escape decoding),
+ *     and numeric literal names use the raw text.
+ * Usage: call tsBindSourceFile(sf, fileName) after parsing sf with parseSourceFile; it sets
+ * sf->binderSymbolCount. The arena is shared with the parser: reset it per file.
+ */
+#ifndef TS_BINDER_H
+#define TS_BINDER_H
+
+#include <string.h>
+#include "ts-enums.h"
+
+/* SymbolFlags (TypeScript 5.9.2 names and values) */
+enum {
+  SF_None = 0, SF_FunctionScopedVariable = 1, SF_BlockScopedVariable = 2, SF_Property = 4,
+  SF_EnumMember = 8, SF_Function = 16, SF_Class = 32, SF_Interface = 64, SF_ConstEnum = 128,
+  SF_RegularEnum = 256, SF_ValueModule = 512, SF_NamespaceModule = 1024, SF_TypeLiteral = 2048,
+  SF_ObjectLiteral = 4096, SF_Method = 8192, SF_Constructor = 16384, SF_GetAccessor = 32768,
+  SF_SetAccessor = 65536, SF_Signature = 131072, SF_TypeParameter = 262144, SF_TypeAlias = 524288,
+  SF_ExportValue = 1048576, SF_Alias = 2097152, SF_Prototype = 4194304, SF_ExportStar = 8388608,
+  SF_Optional = 16777216, SF_Assignment = 67108864,
+  SF_Enum = 384, SF_Variable = 3, SF_Value = 111551, SF_Type = 788968, SF_Namespace = 1920,
+  SF_Module = 1536, SF_Accessor = 98304
+};
+
+/* excludes (copied from binder.ts) */
+enum {
+  EX_InterfaceExcludes = 788872, EX_ClassExcludes = 899503, EX_TypeAliasExcludes = 788968,
+  EX_EnumMemberExcludes = 900095, EX_RegularEnumExcludes = 899327, EX_ConstEnumExcludes = 899967,
+  EX_FunctionExcludes = 110991, EX_ValueModuleExcludes = 110735, EX_NamespaceModuleExcludes = 0,
+  EX_BlockScopedVariableExcludes = 111551, EX_ParameterExcludes = 111551,
+  EX_FunctionScopedVariableExcludes = 111550, EX_PropertyExcludes = 0, EX_MethodExcludes = 103359,
+  EX_GetAccessorExcludes = 46015, EX_SetAccessorExcludes = 78783, EX_AccessorExcludes = 13247,
+  EX_TypeParameterExcludes = 526824, EX_AliasExcludes = 2097152, EX_All = -1
+};
+
+/* container flags (binder.ts ContainerFlags) */
+enum {
+  CF_IsContainer = 1, CF_IsBlockScopedContainer = 2, CF_IsControlFlowContainer = 4,
+  CF_IsFunctionLike = 8, CF_IsFunctionExpression = 16, CF_HasLocals = 32, CF_IsInterface = 64,
+  CF_IsObjectLiteralOrClassExpressionMethodOrAccessor = 128
+};
+
+/* a name is a byte string; s == NULL is the undefined name */
+typedef struct { const char *s; int n; } BName;
+
+typedef struct TsSymbol {
+  uint32_t flags;
+  BName name;
+  struct TsSymTable *exports, *members, *globalExports;
+  struct TsSymbol *exportSymbol, *parent;
+  TsNode **decls;
+  int ndecls, declCap;
+  bool constEnumOnlyModule;
+} TsSymbol;
+
+typedef struct TsSymEntry { BName key; TsSymbol *sym; bool used; } TsSymEntry;
+typedef struct TsSymTable { TsSymEntry *e; int cap, n; } TsSymTable;
+
+/* binder state (one file at a time) */
+static TsNode *bFile;
+static const char *bFileName;
+static TsNode *bParent;
+static TsNode *bContainer;
+static TsNode *bBlockScopeContainer;
+static bool bInStrictMode;
+static int32_t bSymbolCount;
+static int bDepth;
+
+static void *ts_arena_zalloc(size_t n) {
+  void *p = ts_arena_alloc(n);
+  memset(p, 0, n);
+  return p;
+}
+
+/* ---- names ---- */
+static BName bnC(const char *s) { BName b = { s, (int)strlen(s) }; return b; }
+static BName bnUndef(void) { BName b = { NULL, 0 }; return b; }
+static bool bnDef(BName b) { return b.s != NULL; }
+static bool bnEq(BName a, BName b) { return a.n == b.n && (a.n == 0 || memcmp(a.s, b.s, (size_t)a.n) == 0); }
+
+/* escapeLeadingUnderscores on raw text: a leading "__" gets one more "_" */
+static BName bnEscapeText(const char *s, int n) {
+  BName b = { s, n };
+  if (n >= 2 && s[0] == '_' && s[1] == '_') {
+    char *o = ts_arena_alloc((size_t)n + 1);
+    o[0] = '_';
+    memcpy(o + 1, s, (size_t)n);
+    b.s = o;
+    b.n = n + 1;
+  }
+  return b;
+}
+
+static BName bnConcat(const char *a, int na, const char *b, int nb) {
+  char *o = ts_arena_alloc((size_t)(na + nb) + 1);
+  memcpy(o, a, (size_t)na);
+  memcpy(o + na, b, (size_t)nb);
+  BName r = { o, na + nb };
+  return r;
+}
+
+/* the value text of a literal: the parser stores string literal text without its quotes */
+static void bLiteralValue(TsNode *lit, const char **s, int *n) {
+  *s = lit->text;
+  *n = lit->textLen;
+}
+
+static bool bIsStringOrNumericLiteralLike(TsNode *n) {
+  return n && (n->kind == TSK_StringLiteral || n->kind == TSK_NoSubstitutionTemplateLiteral || n->kind == TSK_NumericLiteral);
+}
+static bool bIsSignedNumericLiteral(TsNode *n) {
+  return n && n->kind == TSK_PrefixUnaryExpression && (n->extra == TSK_PlusToken || n->extra == TSK_MinusToken) &&
+         n->operand && n->operand->kind == TSK_NumericLiteral;
+}
+static TsNode *bSkipParentheses(TsNode *n) {
+  while (n && n->kind == TSK_ParenthesizedExpression) n = n->expression;
+  return n;
+}
+
+/* ---- symbol tables ---- */
+static uint32_t bHash(BName k) {
+  uint32_t h = 2166136261u;
+  for (int i = 0; i < k.n; i++) h = (h ^ (uint8_t)k.s[i]) * 16777619u;
+  return h;
+}
+
+static TsSymTable *bTableNew(void) {
+  TsSymTable *t = ts_arena_zalloc(sizeof(TsSymTable));
+  t->cap = 8;
+  t->e = ts_arena_zalloc(sizeof(TsSymEntry) * (size_t)t->cap);
+  return t;
+}
+
+static TsSymEntry *bTableFind(TsSymTable *t, BName k) {
+  uint32_t mask = (uint32_t)t->cap - 1, i = bHash(k) & mask;
+  while (t->e[i].used) {
+    if (bnEq(t->e[i].key, k)) return &t->e[i];
+    i = (i + 1) & mask;
+  }
+  return NULL;
+}
+
+static TsSymbol *bTableGet(TsSymTable *t, BName k) {
+  TsSymEntry *e = bTableFind(t, k);
+  return e ? e->sym : NULL;
+}
+
+static void bTableInsertNew(TsSymTable *t, BName k, TsSymbol *sym) {
+  uint32_t mask = (uint32_t)t->cap - 1, i = bHash(k) & mask;
+  while (t->e[i].used) i = (i + 1) & mask;
+  t->e[i].used = true;
+  t->e[i].key = k;
+  t->e[i].sym = sym;
+  t->n++;
+}
+
+static void bTableSet(TsSymTable *t, BName k, TsSymbol *sym) {
+  TsSymEntry *e = bTableFind(t, k);
+  if (e) { e->sym = sym; return; }
+  if ((t->n + 1) * 2 > t->cap) {
+    TsSymEntry *old = t->e;
+    int oldCap = t->cap;
+    t->cap *= 2;
+    t->e = ts_arena_zalloc(sizeof(TsSymEntry) * (size_t)t->cap);
+    t->n = 0;
+    for (int i = 0; i < oldCap; i++)
+      if (old[i].used) bTableInsertNew(t, old[i].key, old[i].sym);
+  }
+  bTableInsertNew(t, k, sym);
+}
+
+static TsSymbol *bCreateSymbol(uint32_t flags, BName name) {
+  bSymbolCount++;
+#ifdef TS_BINDER_DEBUG
+  fprintf(stderr, "symbol %d flags %u name %.*s\n", bSymbolCount, flags, name.s ? name.n : 9, name.s ? name.s : "(undef)");
+#endif
+  TsSymbol *s = ts_arena_zalloc(sizeof(TsSymbol));
+  s->flags = flags;
+  s->name = name;
+  return s;
+}
+
+static void bAddDecl(TsSymbol *s, TsNode *node) {
+  if (s->ndecls == s->declCap) {
+    int cap = s->declCap ? s->declCap * 2 : 4;
+    TsNode **d = ts_arena_alloc(sizeof(TsNode *) * (size_t)cap);
+    if (s->ndecls) memcpy(d, s->decls, sizeof(TsNode *) * (size_t)s->ndecls);
+    s->decls = d;
+    s->declCap = cap;
+  }
+  for (int i = 0; i < s->ndecls; i++) if (s->decls[i] == node) return; /* appendIfUnique */
+  s->decls[s->ndecls++] = node;
+}
+
+/* ---- modifiers and combined flags ---- */
+static uint32_t bModifierFlags(TsNode *n) {
+  uint32_t f = (uint32_t)modifiersToFlags(n->modifiers);
+  if (n->flags & TNF_NestedNamespace) f |= TMF_Export;
+  return f;
+}
+static bool bHasSyntacticModifier(TsNode *n, uint32_t flag) { return (bModifierFlags(n) & flag) != 0; }
+
+static TsNode *bWalkUpBindingElementsAndPatterns(TsNode *binding) {
+  TsNode *n = binding->parent;
+  while (n->parent && n->parent->kind == TSK_BindingElement) n = n->parent->parent;
+  return n->parent;
+}
+
+/* getCombinedFlags over the variable declaration / list / statement chain */
+static uint32_t bCombinedFlags(TsNode *node, bool useModifiers) {
+  if (node->kind == TSK_BindingElement) node = bWalkUpBindingElementsAndPatterns(node);
+  uint32_t flags = useModifiers ? bModifierFlags(node) : (uint32_t)node->flags;
+  if (node->kind == TSK_VariableDeclaration) node = node->parent;
+  if (node && node->kind == TSK_VariableDeclarationList) {
+    flags |= useModifiers ? bModifierFlags(node) : (uint32_t)node->flags;
+    node = node->parent;
+  }
+  if (node && node->kind == TSK_VariableStatement) flags |= useModifiers ? bModifierFlags(node) : (uint32_t)node->flags;
+  return flags;
+}
+
+static TsNode *bRootDeclaration(TsNode *n) {
+  while (n->kind == TSK_BindingElement) n = n->parent->parent;
+  return n;
+}
+
+static bool bIsBlockOrCatchScoped(TsNode *decl) {
+  if ((bCombinedFlags(decl, false) & TNF_BlockScoped) != 0) return true;
+  TsNode *root = bRootDeclaration(decl);
+  return root->kind == TSK_VariableDeclaration && root->parent && root->parent->kind == TSK_CatchClause;
+}
+
+static bool bIsPartOfParameterDeclaration(TsNode *decl) { return bRootDeclaration(decl)->kind == TSK_Parameter; }
+
+static bool bIsBindingPattern(TsNode *n) {
+  return n && (n->kind == TSK_ObjectBindingPattern || n->kind == TSK_ArrayBindingPattern);
+}
+
+static bool bIsEnumConst(TsNode *n) { return (bCombinedFlags(n, true) & TMF_Const) != 0; }
+
+static bool bIsFunctionLikeKind(int k) {
+  switch (k) {
+    case TSK_MethodSignature: case TSK_CallSignature: case TSK_JSDocSignature: case TSK_ConstructSignature:
+    case TSK_IndexSignature: case TSK_FunctionType: case TSK_JSDocFunctionType: case TSK_ConstructorType:
+    case TSK_MethodDeclaration: case TSK_Constructor: case TSK_GetAccessor: case TSK_SetAccessor:
+    case TSK_FunctionDeclaration: case TSK_FunctionExpression: case TSK_ArrowFunction:
+      return true;
+  }
+  return false;
+}
+
+static bool bIsEntityNameExpression(TsNode *n) {
+  if (n->kind == TSK_Identifier) return true;
+  return n->kind == TSK_PropertyAccessExpression && n->name && n->name->kind == TSK_Identifier &&
+         bIsEntityNameExpression(n->expression);
+}
+
+static bool bIsAmbientModule(TsNode *n) {
+  return n->kind == TSK_ModuleDeclaration && (n->name->kind == TSK_StringLiteral || (n->flags & TNF_GlobalAugmentation));
+}
+
+static bool bIsGlobalScopeAugmentation(TsNode *n) { return n->kind == TSK_ModuleDeclaration && (n->flags & TNF_GlobalAugmentation); }
+
+static bool bIsParameterPropertyDeclaration(TsNode *n, TsNode *parent) {
+  return bHasSyntacticModifier(n, TMF_Public | TMF_Private | TMF_Protected | TMF_Readonly | TMF_Override) &&
+         parent->kind == TSK_Constructor;
+}
+
+/* ---- declaration names (getDeclarationName) ---- */
+static TsNode *bContainingClass(TsNode *n) {
+  for (TsNode *p = n->parent; p; p = p->parent)
+    if (p->kind == TSK_ClassDeclaration || p->kind == TSK_ClassExpression) return p;
+  return NULL;
+}
+
+static bool bHasDynamicName(TsNode *decl) {
+  TsNode *name = decl->name;
+  if (!name) return false;
+  if (name->kind != TSK_ComputedPropertyName && name->kind != TSK_ElementAccessExpression) return false;
+  TsNode *expr = name->kind == TSK_ElementAccessExpression ? bSkipParentheses(name->argumentExpression) : name->expression;
+  return !bIsStringOrNumericLiteralLike(expr) && !bIsSignedNumericLiteral(expr);
+}
+
+static bool bIsPropertyNameLiteral(TsNode *n) {
+  return n->kind == TSK_Identifier || n->kind == TSK_StringLiteral || n->kind == TSK_NoSubstitutionTemplateLiteral ||
+         n->kind == TSK_NumericLiteral;
+}
+
+static bool bIsAliasableExpression(TsNode *e) { return bIsEntityNameExpression(e) || e->kind == TSK_ClassExpression; }
+
+static BName bGetDeclarationName(TsNode *node);
+
+/* identifier or literal name as a symbol-table key */
+static BName bNameOfPropertyName(TsNode *name) {
+  if (name->kind == TSK_Identifier) return bnEscapeText(name->text, name->textLen);
+  const char *s;
+  int n;
+  bLiteralValue(name, &s, &n);
+  return bnEscapeText(s, n);
+}
+
+static BName bGetDeclarationName(TsNode *node) {
+  if (node->kind == TSK_ExportAssignment) return node->extra ? bnC("export=") : bnC("default");
+  TsNode *name = node->name;
+  if (name) {
+    if (bIsAmbientModule(node)) {
+      if (bIsGlobalScopeAugmentation(node)) return bnC("__global");
+      const char *s;
+      int n;
+      bLiteralValue(name, &s, &n);
+      char *q = ts_arena_alloc((size_t)n + 3);
+      q[0] = '"';
+      memcpy(q + 1, s, (size_t)n);
+      q[n + 1] = '"';
+      BName r = { q, n + 2 };
+      return r;
+    }
+    if (name->kind == TSK_ComputedPropertyName) {
+      TsNode *e = name->expression;
+      if (bIsStringOrNumericLiteralLike(e)) return bNameOfPropertyName(e);
+      if (bIsSignedNumericLiteral(e)) {
+        const char *op = e->extra == TSK_MinusToken ? "-" : "+";
+        return bnConcat(op, 1, e->operand->text, e->operand->textLen);
+      }
+      return bnUndef();
+    }
+    if (name->kind == TSK_PrivateIdentifier) {
+      TsNode *cls = bContainingClass(node);
+      if (!cls) return bnUndef();
+      void *owner = cls->symbol ? (void *)cls->symbol : (void *)cls;
+      char idbuf[40];
+      int idn = snprintf(idbuf, sizeof idbuf, "__#%p@", owner);
+      return bnConcat(idbuf, idn, name->text, name->textLen);
+    }
+    return bIsPropertyNameLiteral(name) ? bNameOfPropertyName(name) : bnUndef();
+  }
+  switch (node->kind) {
+    case TSK_Constructor: return bnC("__constructor");
+    case TSK_FunctionType: case TSK_CallSignature: return bnC("__call");
+    case TSK_ConstructorType: case TSK_ConstructSignature: return bnC("__new");
+    case TSK_IndexSignature: return bnC("__index");
+    case TSK_ExportDeclaration: return bnC("__export");
+    case TSK_SourceFile: return bnC("export=");
+  }
+  return bnUndef();
+}
+
+/* ---- declarations and symbols ---- */
+static void bAddDeclarationToSymbol(TsSymbol *sym, TsNode *node, uint32_t symbolFlags) {
+  sym->flags |= symbolFlags;
+  node->symbol = sym;
+  bAddDecl(sym, node);
+  if ((symbolFlags & (SF_Class | SF_Enum | SF_Module | SF_Variable)) && !sym->exports) sym->exports = bTableNew();
+  if ((symbolFlags & (SF_Class | SF_Interface | SF_TypeLiteral | SF_ObjectLiteral)) && !sym->members) sym->members = bTableNew();
+}
+
+static TsSymbol *bDeclareSymbol(TsSymTable *table, TsSymbol *parent, TsNode *node, uint32_t includes, uint32_t excludes, bool isComputedName) {
+  if (!table) { fprintf(stderr, "binder: no symbol table for a declaration\n"); abort(); }
+  bool isDefaultExport = bHasSyntacticModifier(node, TMF_Default) ||
+                         (node->kind == TSK_ExportSpecifier && node->name && node->name->textLen == 7 &&
+                          memcmp(node->name->text, "default", 7) == 0);
+  BName name;
+  if (isComputedName) name = bnC("__computed");
+  else if (isDefaultExport && parent) name = bnC("default");
+  else name = bGetDeclarationName(node);
+  TsSymbol *symbol;
+  if (!bnDef(name)) {
+    symbol = bCreateSymbol(0, bnC("__missing"));
+  } else {
+    symbol = bTableGet(table, name);
+    if (!symbol) {
+      symbol = bCreateSymbol(0, name);
+      bTableSet(table, name, symbol);
+    } else if (symbol->flags & excludes) {
+      if (!((includes & SF_Variable) && (symbol->flags & SF_Assignment))) {
+        /* duplicate declaration: diagnostics are not produced; a new symbol is created but not stored */
+        symbol = bCreateSymbol(0, name);
+      }
+    }
+  }
+  bAddDeclarationToSymbol(symbol, node, includes);
+  if (!symbol->parent) symbol->parent = parent;
+  return symbol;
+}
+
+static bool bHasExportDeclarations(TsNode *node) {
+  TsNode *body = node->kind == TSK_SourceFile ? node : (node->body && node->body->kind == TSK_ModuleBlock ? node->body : NULL);
+  if (!body || !body->statements) return false;
+  for (int i = 0; i < body->statements->n; i++) {
+    TsNode *s = body->statements->v[i];
+    if (s->kind == TSK_ExportDeclaration || s->kind == TSK_ExportAssignment) return true;
+  }
+  return false;
+}
+
+static void bSetExportContextFlag(TsNode *node) {
+  if ((node->flags & TNF_Ambient) && !bHasExportDeclarations(node)) node->flags |= TNF_ExportContext;
+  else node->flags &= ~(uint32_t)TNF_ExportContext;
+}
+
+static TsSymbol *bDeclareModuleMember(TsNode *node, uint32_t symbolFlags, uint32_t symbolExcludes) {
+  bool hasExportModifier = (bCombinedFlags(node, true) & TMF_Export) != 0;
+  if (symbolFlags & SF_Alias) {
+    if (node->kind == TSK_ExportSpecifier || (node->kind == TSK_ImportEqualsDeclaration && hasExportModifier))
+      return bDeclareSymbol(bContainer->symbol->exports, bContainer->symbol, node, symbolFlags, symbolExcludes, false);
+    return bDeclareSymbol(bContainer->locals, NULL, node, symbolFlags, symbolExcludes, false);
+  }
+  if (!bIsAmbientModule(node) && (hasExportModifier || (bContainer->flags & TNF_ExportContext))) {
+    if (!bContainer->locals || (bHasSyntacticModifier(node, TMF_Default) && !bnDef(bGetDeclarationName(node)))) {
+      return bDeclareSymbol(bContainer->symbol->exports, bContainer->symbol, node, symbolFlags, symbolExcludes, false);
+    }
+    uint32_t exportKind = (symbolFlags & SF_Value) ? SF_ExportValue : 0;
+    TsSymbol *local = bDeclareSymbol(bContainer->locals, NULL, node, exportKind, symbolExcludes, false);
+    local->exportSymbol = bDeclareSymbol(bContainer->symbol->exports, bContainer->symbol, node, symbolFlags, symbolExcludes, false);
+    node->localSymbol = local;
+    return local;
+  }
+  return bDeclareSymbol(bContainer->locals, NULL, node, symbolFlags, symbolExcludes, false);
+}
+
+static TsSymbol *bDeclareClassMember(TsNode *node, uint32_t symbolFlags, uint32_t symbolExcludes) {
+  if (bHasSyntacticModifier(node, TMF_Static))
+    return bDeclareSymbol(bContainer->symbol->exports, bContainer->symbol, node, symbolFlags, symbolExcludes, false);
+  return bDeclareSymbol(bContainer->symbol->members, bContainer->symbol, node, symbolFlags, symbolExcludes, false);
+}
+
+static TsSymbol *bDeclareSourceFileMember(TsNode *node, uint32_t symbolFlags, uint32_t symbolExcludes) {
+  if (bFile->hasExternalModuleIndicator) return bDeclareModuleMember(node, symbolFlags, symbolExcludes);
+  return bDeclareSymbol(bFile->locals, NULL, node, symbolFlags, symbolExcludes, false);
+}
+
+static TsSymbol *bDeclareSymbolAndAddToSymbolTable(TsNode *node, uint32_t symbolFlags, uint32_t symbolExcludes) {
+  TsNode *c = bContainer;
+  switch (c->kind) {
+    case TSK_ModuleDeclaration: return bDeclareModuleMember(node, symbolFlags, symbolExcludes);
+    case TSK_SourceFile: return bDeclareSourceFileMember(node, symbolFlags, symbolExcludes);
+    case TSK_ClassExpression: case TSK_ClassDeclaration: return bDeclareClassMember(node, symbolFlags, symbolExcludes);
+    case TSK_EnumDeclaration:
+      return bDeclareSymbol(c->symbol->exports, c->symbol, node, symbolFlags, symbolExcludes, false);
+    case TSK_TypeLiteral: case TSK_ObjectLiteralExpression: case TSK_InterfaceDeclaration: case TSK_JsxAttributes:
+      return bDeclareSymbol(c->symbol->members, c->symbol, node, symbolFlags, symbolExcludes, false);
+    case TSK_FunctionType: case TSK_ConstructorType: case TSK_CallSignature: case TSK_ConstructSignature:
+    case TSK_IndexSignature: case TSK_MethodDeclaration: case TSK_MethodSignature: case TSK_Constructor:
+    case TSK_GetAccessor: case TSK_SetAccessor: case TSK_FunctionDeclaration: case TSK_FunctionExpression:
+    case TSK_ArrowFunction: case TSK_ClassStaticBlockDeclaration: case TSK_TypeAliasDeclaration: case TSK_MappedType:
+      return bDeclareSymbol(c->locals, NULL, node, symbolFlags, symbolExcludes, false);
+  }
+  return NULL;
+}
+
+static TsSymbol *bBindAnonymousDeclaration(TsNode *node, uint32_t symbolFlags, BName name) {
+  TsSymbol *symbol = bCreateSymbol(symbolFlags, name);
+  if (symbolFlags & (SF_EnumMember | 106500 /* ClassMember */)) symbol->parent = bContainer->symbol;
+  bAddDeclarationToSymbol(symbol, node, symbolFlags);
+  return symbol;
+}
+
+static TsSymbol *bBindBlockScopedDeclaration(TsNode *node, uint32_t symbolFlags, uint32_t symbolExcludes) {
+  switch (bBlockScopeContainer->kind) {
+    case TSK_ModuleDeclaration:
+      return bDeclareModuleMember(node, symbolFlags, symbolExcludes);
+    case TSK_SourceFile:
+      if (bContainer->hasExternalModuleIndicator) return bDeclareModuleMember(node, symbolFlags, symbolExcludes);
+      /* fall through */
+    default:
+      if (!bBlockScopeContainer->locals) bBlockScopeContainer->locals = bTableNew();
+      return bDeclareSymbol(bBlockScopeContainer->locals, NULL, node, symbolFlags, symbolExcludes, false);
+  }
+}
+
+static TsSymbol *bBindPropertyOrMethodOrAccessor(TsNode *node, uint32_t symbolFlags, uint32_t symbolExcludes) {
+  if (bHasDynamicName(node)) return bBindAnonymousDeclaration(node, symbolFlags, bnC("__computed"));
+  return bDeclareSymbolAndAddToSymbolTable(node, symbolFlags, symbolExcludes);
+}
+
+/* ---- module instance state (getModuleInstanceState) ---- */
+enum { MI_NonInstantiated = 0, MI_Instantiated = 1, MI_ConstEnumOnly = 2 };
+static int bModuleInstanceStateCached(TsNode *n);
+
+static bool bNodeHasName(TsNode *s, TsNode *name) {
+  return s->name && s->name->kind == TSK_Identifier && s->name->textLen == name->textLen &&
+         memcmp(s->name->text, name->text, (size_t)name->textLen) == 0;
+}
+
+static int bAliasTargetState(TsNode *spec) {
+  TsNode *name = spec->propertyName ? spec->propertyName : spec->name;
+  if (name->kind != TSK_Identifier) return MI_Instantiated;
+  for (TsNode *p = spec->parent; p; p = p->parent) {
+    if (p->kind == TSK_Block || p->kind == TSK_ModuleBlock || p->kind == TSK_SourceFile) {
+      int found = -1;
+      if (p->statements)
+        for (int i = 0; i < p->statements->n; i++) {
+          TsNode *s = p->statements->v[i];
+          if (!bNodeHasName(s, name)) continue;
+          int st = bModuleInstanceStateCached(s);
+          if (found < 0 || st > found) found = st;
+          if (found == MI_Instantiated) return found;
+          if (s->kind == TSK_ImportEqualsDeclaration) found = MI_Instantiated;
+        }
+      if (found >= 0) return found;
+    }
+  }
+  return MI_Instantiated;
+}
+
+static int bModuleInstanceStateWorker(TsNode *n) {
+  switch (n->kind) {
+    case TSK_InterfaceDeclaration: case TSK_TypeAliasDeclaration:
+      return MI_NonInstantiated;
+    case TSK_EnumDeclaration:
+      if (bIsEnumConst(n)) return MI_ConstEnumOnly;
+      break;
+    case TSK_ImportDeclaration: case TSK_ImportEqualsDeclaration:
+      if (!bHasSyntacticModifier(n, TMF_Export)) return MI_NonInstantiated;
+      break;
+    case TSK_ExportDeclaration:
+      if (!n->moduleSpecifier && n->exportClause && n->exportClause->kind == TSK_NamedExports) {
+        int state = MI_NonInstantiated;
+        TsList *els = n->exportClause->elements;
+        for (int i = 0; els && i < els->n; i++) {
+          int st = bAliasTargetState(els->v[i]);
+          if (st > state) state = st;
+          if (state == MI_Instantiated) return state;
+        }
+        return state;
+      }
+      break;
+    case TSK_ModuleBlock: {
+      int state = MI_NonInstantiated;
+      if (n->statements)
+        for (int i = 0; i < n->statements->n; i++) {
+          int cs = bModuleInstanceStateCached(n->statements->v[i]);
+          if (cs == MI_NonInstantiated) continue;
+          if (cs == MI_ConstEnumOnly) { state = MI_ConstEnumOnly; continue; }
+          return MI_Instantiated;
+        }
+      return state;
+    }
+    case TSK_ModuleDeclaration:
+      return n->body ? bModuleInstanceStateCached(n->body) : MI_Instantiated;
+    default:
+      break;
+  }
+  return MI_Instantiated;
+}
+
+static int bModuleInstanceStateCached(TsNode *n) {
+  if (bDepth > 64) return MI_Instantiated; /* guard against alias cycles */
+  bDepth++;
+  int r = bModuleInstanceStateWorker(n);
+  bDepth--;
+  return r;
+}
+
+/* ---- container flags (getContainerFlags) ---- */
+static bool bIsObjectLiteralOrClassExpressionMethodOrAccessor(TsNode *n) {
+  return (n->kind == TSK_GetAccessor || n->kind == TSK_SetAccessor || n->kind == TSK_MethodDeclaration) && n->parent &&
+         (n->parent->kind == TSK_ObjectLiteralExpression || n->parent->kind == TSK_ClassExpression);
+}
+
+static uint32_t bContainerFlags(TsNode *node) {
+  switch (node->kind) {
+    case TSK_ClassExpression: case TSK_ClassDeclaration: case TSK_EnumDeclaration: case TSK_ObjectLiteralExpression:
+    case TSK_TypeLiteral: case TSK_JsxAttributes:
+      return CF_IsContainer;
+    case TSK_InterfaceDeclaration:
+      return CF_IsContainer | CF_IsInterface;
+    case TSK_ModuleDeclaration: case TSK_TypeAliasDeclaration: case TSK_MappedType: case TSK_IndexSignature:
+      return CF_IsContainer | CF_HasLocals;
+    case TSK_SourceFile:
+      return CF_IsContainer | CF_IsControlFlowContainer | CF_HasLocals;
+    case TSK_GetAccessor: case TSK_SetAccessor: case TSK_MethodDeclaration:
+      if (bIsObjectLiteralOrClassExpressionMethodOrAccessor(node))
+        return CF_IsContainer | CF_IsControlFlowContainer | CF_HasLocals | CF_IsFunctionLike | CF_IsObjectLiteralOrClassExpressionMethodOrAccessor;
+      /* fall through */
+    case TSK_Constructor: case TSK_FunctionDeclaration: case TSK_MethodSignature: case TSK_CallSignature:
+    case TSK_JSDocSignature: case TSK_JSDocFunctionType: case TSK_FunctionType: case TSK_ConstructSignature:
+    case TSK_ConstructorType: case TSK_ClassStaticBlockDeclaration:
+      return CF_IsContainer | CF_IsControlFlowContainer | CF_HasLocals | CF_IsFunctionLike;
+    case TSK_FunctionExpression: case TSK_ArrowFunction:
+      return CF_IsContainer | CF_IsControlFlowContainer | CF_HasLocals | CF_IsFunctionLike | CF_IsFunctionExpression;
+    case TSK_ModuleBlock:
+      return CF_IsControlFlowContainer;
+    case TSK_PropertyDeclaration:
+      return node->initializer ? CF_IsControlFlowContainer : 0;
+    case TSK_CatchClause: case TSK_ForStatement: case TSK_ForInStatement: case TSK_ForOfStatement: case TSK_CaseBlock:
+      return CF_IsBlockScopedContainer | CF_HasLocals;
+    case TSK_Block:
+      return (node->parent && (bIsFunctionLikeKind(node->parent->kind) || node->parent->kind == TSK_ClassStaticBlockDeclaration))
+                 ? 0 : (CF_IsBlockScopedContainer | CF_HasLocals);
+  }
+  return 0;
+}
+
+/* ---- children in source order (forEachChild) ---- */
+typedef struct { TsNode **v; int n, cap; } BNodeVec;
+
+static void bVecPush(BNodeVec *nv, TsNode *n) {
+  if (!n) return;
+  if (nv->n == nv->cap) {
+    nv->cap = nv->cap ? nv->cap * 2 : 16;
+    nv->v = realloc(nv->v, sizeof(TsNode *) * (size_t)nv->cap);
+    if (!nv->v) abort();
+  }
+  nv->v[nv->n++] = n;
+}
+
+static void bVecPushList(BNodeVec *nv, TsList *l) {
+  if (!l) return;
+  for (int i = 0; i < l->n; i++) bVecPush(nv, l->v[i]);
+}
+
+static void bChildrenSorted(TsNode *n, BNodeVec *nv) {
+  bVecPush(nv, n->name); bVecPush(nv, n->expression); bVecPush(nv, n->initializer); bVecPush(nv, n->type);
+  bVecPush(nv, n->body); bVecPush(nv, n->questionToken); bVecPush(nv, n->exclamationToken);
+  bVecPush(nv, n->asteriskToken); bVecPush(nv, n->dotDotDotToken); bVecPush(nv, n->literal); bVecPush(nv, n->left);
+  bVecPush(nv, n->right); bVecPush(nv, n->operatorToken); bVecPush(nv, n->condition); bVecPush(nv, n->whenTrue);
+  bVecPush(nv, n->whenFalse); bVecPush(nv, n->thenStatement); bVecPush(nv, n->elseStatement); bVecPush(nv, n->statement);
+  bVecPush(nv, n->tag); bVecPush(nv, n->tagName); bVecPush(nv, n->templateNode); bVecPush(nv, n->qualifier);
+  bVecPush(nv, n->constraint); bVecPush(nv, n->defaultType); bVecPush(nv, n->typeName); bVecPush(nv, n->argument);
+  bVecPush(nv, n->block); bVecPush(nv, n->finallyBlock); bVecPush(nv, n->catchClause); bVecPush(nv, n->variableDeclaration);
+  bVecPush(nv, n->label); bVecPush(nv, n->incrementor); bVecPush(nv, n->declaration); bVecPush(nv, n->moduleReference);
+  bVecPush(nv, n->moduleSpecifier); bVecPush(nv, n->importClause); bVecPush(nv, n->namedBindings);
+  bVecPush(nv, n->propertyName); bVecPush(nv, n->checkType); bVecPush(nv, n->extendsType); bVecPush(nv, n->trueType);
+  bVecPush(nv, n->falseType); bVecPush(nv, n->objectType); bVecPush(nv, n->indexType); bVecPush(nv, n->elementType);
+  bVecPush(nv, n->nameOrPath); bVecPush(nv, n->endOfFileToken); bVecPush(nv, n->head); bVecPush(nv, n->exportClause);
+  bVecPush(nv, n->node1); bVecPush(nv, n->node2); bVecPush(nv, n->node3); bVecPush(nv, n->node4); bVecPush(nv, n->node5);
+  bVecPush(nv, n->typeExpression); bVecPush(nv, n->readonlyToken); bVecPush(nv, n->nameType); bVecPush(nv, n->exprName);
+  bVecPush(nv, n->attributes_node); bVecPush(nv, n->typeParameter); bVecPush(nv, n->parameterName);
+  bVecPush(nv, n->assertsModifier); bVecPush(nv, n->equalsGreaterThanToken); bVecPush(nv, n->colonToken);
+  bVecPush(nv, n->questionDotToken); bVecPush(nv, n->argumentExpression); bVecPush(nv, n->operand);
+  bVecPush(nv, n->objectAssignmentInitializer); bVecPush(nv, n->equalsToken); bVecPush(nv, n->declarationList);
+  bVecPush(nv, n->caseBlock); bVecPush(nv, n->awaitModifier);
+  bVecPushList(nv, n->modifiers); bVecPushList(nv, n->typeParameters); bVecPushList(nv, n->parameters);
+  bVecPushList(nv, n->members); bVecPushList(nv, n->statements); bVecPushList(nv, n->arguments);
+  bVecPushList(nv, n->elements); bVecPushList(nv, n->properties); bVecPushList(nv, n->heritageClauses);
+  bVecPushList(nv, n->types); bVecPushList(nv, n->declarations); bVecPushList(nv, n->typeArguments);
+  bVecPushList(nv, n->clauses); bVecPushList(nv, n->spans); bVecPushList(nv, n->tokens); bVecPushList(nv, n->qualifiers);
+  bVecPushList(nv, n->assertions); bVecPushList(nv, n->attributes); bVecPushList(nv, n->expressions);
+  bVecPushList(nv, n->list1); bVecPushList(nv, n->list2);
+  /* insertion sort by pos (stable); lists are already in order, so this is linear for them */
+  for (int i = 1; i < nv->n; i++) {
+    TsNode *x = nv->v[i];
+    int j = i - 1;
+    while (j >= 0 && nv->v[j]->pos > x->pos) { nv->v[j + 1] = nv->v[j]; j--; }
+    nv->v[j + 1] = x;
+  }
+}
+
+/* ---- binding ---- */
+static void bBind(TsNode *node);
+
+static void bBindEachChild(TsNode *node) {
+  BNodeVec nv = { NULL, 0, 0 };
+  bChildrenSorted(node, &nv);
+  for (int i = 0; i < nv.n; i++) bBind(nv.v[i]);
+  free(nv.v);
+}
+
+static void bBindEachFunctionsFirst(TsList *stmts) {
+  if (!stmts) return;
+  for (int i = 0; i < stmts->n; i++)
+    if (stmts->v[i]->kind == TSK_FunctionDeclaration) bBind(stmts->v[i]);
+  for (int i = 0; i < stmts->n; i++)
+    if (stmts->v[i]->kind != TSK_FunctionDeclaration) bBind(stmts->v[i]);
+}
+
+static bool bIsUseStrictPrologueDirective(TsNode *stmt) {
+  TsNode *e = stmt->expression;
+  return e && e->textLen == 10 && memcmp(e->text, "use strict", 10) == 0;
+}
+
+static void bUpdateStrictModeStatementList(TsList *stmts) {
+  if (bInStrictMode || !stmts) return;
+  for (int i = 0; i < stmts->n; i++) {
+    TsNode *s = stmts->v[i];
+    if (!(s->kind == TSK_ExpressionStatement && s->expression && s->expression->kind == TSK_StringLiteral)) return;
+    if (bIsUseStrictPrologueDirective(s)) { bInStrictMode = true; return; }
+  }
+}
+
+static void bBindChildren(TsNode *node) {
+  switch (node->kind) {
+    case TSK_SourceFile:
+      bBindEachFunctionsFirst(node->statements);
+      bBind(node->endOfFileToken);
+      break;
+    case TSK_Block: case TSK_ModuleBlock:
+      bBindEachFunctionsFirst(node->statements);
+      break;
+    default:
+      bBindEachChild(node);
+      break;
+  }
+}
+
+static void bBindContainer(TsNode *node, uint32_t cf) {
+  TsNode *saveContainer = bContainer, *saveBlock = bBlockScopeContainer;
+  if (cf & CF_IsContainer) {
+    bContainer = bBlockScopeContainer = node;
+    if (cf & CF_HasLocals) node->locals = bTableNew();
+  } else if (cf & CF_IsBlockScopedContainer) {
+    bBlockScopeContainer = node;
+    if (cf & CF_HasLocals) node->locals = NULL;
+  }
+  bBindChildren(node);
+  bContainer = saveContainer;
+  bBlockScopeContainer = saveBlock;
+}
+
+static void bBindTypeParameter(TsNode *node) {
+  if (node->parent->kind == TSK_InferType) {
+    TsNode *ext = NULL;
+    for (TsNode *a = node->parent; a && !ext; a = a->parent)
+      if (a->parent && a->parent->kind == TSK_ConditionalType && a->parent->extendsType == a) ext = a->parent;
+    TsNode *container2 = ext ? ext->parent : NULL;
+    if (container2) {
+      if (!container2->locals) container2->locals = bTableNew();
+      bDeclareSymbol(container2->locals, NULL, node, SF_TypeParameter, EX_TypeParameterExcludes, false);
+    } else {
+      bBindAnonymousDeclaration(node, SF_TypeParameter, bGetDeclarationName(node));
+    }
+  } else {
+    bDeclareSymbolAndAddToSymbolTable(node, SF_TypeParameter, EX_TypeParameterExcludes);
+  }
+}
+
+static void bBindParameter(TsNode *node) {
+  if (bIsBindingPattern(node->name)) {
+    int idx = 0;
+    for (int i = 0; node->parent->parameters && i < node->parent->parameters->n; i++)
+      if (node->parent->parameters->v[i] == node) { idx = i; break; }
+    char buf[24];
+    int n = snprintf(buf, sizeof buf, "__%d", idx);
+    bBindAnonymousDeclaration(node, SF_FunctionScopedVariable, bnConcat(buf, n, "", 0));
+  } else {
+    bDeclareSymbolAndAddToSymbolTable(node, SF_FunctionScopedVariable, EX_ParameterExcludes);
+  }
+  if (bIsParameterPropertyDeclaration(node, node->parent)) {
+    TsNode *cls = node->parent->parent;
+    bDeclareSymbol(cls->symbol->members, cls->symbol, node,
+                   SF_Property | (node->questionToken ? SF_Optional : 0), EX_PropertyExcludes, false);
+  }
+}
+
+static void bBindVariableDeclarationOrBindingElement(TsNode *node) {
+  if (bIsBindingPattern(node->name)) return;
+  if (bIsBlockOrCatchScoped(node)) bBindBlockScopedDeclaration(node, SF_BlockScopedVariable, EX_BlockScopedVariableExcludes);
+  else if (bIsPartOfParameterDeclaration(node)) bDeclareSymbolAndAddToSymbolTable(node, SF_FunctionScopedVariable, EX_ParameterExcludes);
+  else bDeclareSymbolAndAddToSymbolTable(node, SF_FunctionScopedVariable, EX_FunctionScopedVariableExcludes);
+}
+
+static void bBindClassLikeDeclaration(TsNode *node) {
+  if (node->kind == TSK_ClassDeclaration) {
+    bBindBlockScopedDeclaration(node, SF_Class, EX_ClassExcludes);
+  } else {
+    BName bindingName = node->name ? bnEscapeText(node->name->text, node->name->textLen) : bnC("__class");
+    bBindAnonymousDeclaration(node, SF_Class, bindingName);
+  }
+  TsSymbol *symbol = node->symbol;
+  TsSymbol *prototype = bCreateSymbol(SF_Property | SF_Prototype, bnC("prototype"));
+  if (!symbol->exports) symbol->exports = bTableNew();
+  bTableSet(symbol->exports, prototype->name, prototype);
+  prototype->parent = symbol;
+}
+
+static void bBindFunctionOrConstructorType(TsNode *node) {
+  TsSymbol *symbol = bCreateSymbol(SF_Signature, bGetDeclarationName(node));
+  bAddDeclarationToSymbol(symbol, node, SF_Signature);
+  TsSymbol *typeLiteral = bCreateSymbol(SF_TypeLiteral, bnC("__type"));
+  bAddDeclarationToSymbol(typeLiteral, node, SF_TypeLiteral);
+  typeLiteral->members = bTableNew();
+  bTableSet(typeLiteral->members, symbol->name, symbol);
+}
+
+static void bBindExportAssignment(TsNode *node) {
+  if (!bContainer->symbol || !bContainer->symbol->exports) {
+    bBindAnonymousDeclaration(node, SF_Value, bGetDeclarationName(node));
+  } else {
+    uint32_t flags = bIsAliasableExpression(node->expression) ? SF_Alias : SF_Property;
+    bDeclareSymbol(bContainer->symbol->exports, bContainer->symbol, node, flags, EX_All, false);
+  }
+}
+
+static void bBindSourceFileAsExternalModule(void) {
+  char *q = ts_arena_alloc(strlen(bFileName) + 3);
+  size_t len = strlen(bFileName);
+  /* removeFileExtension: drop the last extension */
+  const char *dot = strrchr(bFileName, '.');
+  if (dot && dot > bFileName) len = (size_t)(dot - bFileName);
+  q[0] = '"';
+  memcpy(q + 1, bFileName, len);
+  q[len + 1] = '"';
+  BName name = { q, (int)len + 2 };
+  bBindAnonymousDeclaration(bFile, SF_ValueModule, name);
+}
+
+static void bBindSourceFileIfExternalModule(void) {
+  bSetExportContextFlag(bFile);
+  if (bFile->hasExternalModuleIndicator) bBindSourceFileAsExternalModule();
+}
+
+static bool bIsModuleAugmentationExternal(TsNode *node) {
+  TsNode *p = node->parent;
+  if (p->kind == TSK_SourceFile) return p->hasExternalModuleIndicator;
+  if (p->kind == TSK_ModuleBlock) {
+    TsNode *gp = p->parent, *ggp = gp ? gp->parent : NULL;
+    return gp && bIsAmbientModule(gp) && ggp && ggp->kind == TSK_SourceFile && !ggp->hasExternalModuleIndicator;
+  }
+  return false;
+}
+
+static void bDeclareModuleSymbol(TsNode *node) {
+  int state = bModuleInstanceStateCached(node);
+  bool instantiated = state != MI_NonInstantiated;
+  bDeclareSymbolAndAddToSymbolTable(node, instantiated ? SF_ValueModule : SF_NamespaceModule,
+                                    instantiated ? EX_ValueModuleExcludes : EX_NamespaceModuleExcludes);
+}
+
+static void bBindModuleDeclaration(TsNode *node) {
+  bSetExportContextFlag(node);
+  if (bIsAmbientModule(node)) {
+    if (bIsModuleAugmentationExternal(node)) bDeclareModuleSymbol(node);
+    else bDeclareSymbolAndAddToSymbolTable(node, SF_ValueModule, EX_ValueModuleExcludes);
+  } else {
+    bDeclareModuleSymbol(node);
+  }
+}
+
+static void bBindWorker(TsNode *node);
+
+static void bBind(TsNode *node) {
+  if (!node) return;
+#ifdef TS_BINDER_TRACE_VISIT
+  fprintf(stderr, "visit kind %d pos %d\n", node->kind, node->pos);
+#endif
+  node->parent = bParent;
+  bool saveStrict = bInStrictMode;
+  bBindWorker(node);
+  TsNode *saveParent = bParent;
+  if (node->kind > TSK_LastToken) {
+    bParent = node;
+    uint32_t cf = bContainerFlags(node);
+    if (cf == 0) bBindChildren(node);
+    else bBindContainer(node, cf);
+  } else {
+    if (node->kind == TSK_EndOfFileToken) bParent = node;
+  }
+  bParent = saveParent;
+  bInStrictMode = saveStrict;
+}
+
+static void bBindWorker(TsNode *node) {
+  switch (node->kind) {
+    case TSK_ClassExpression: case TSK_ClassDeclaration:
+      bInStrictMode = true;
+      bBindClassLikeDeclaration(node);
+      return;
+    case TSK_InterfaceDeclaration:
+      bBindBlockScopedDeclaration(node, SF_Interface, EX_InterfaceExcludes);
+      return;
+    case TSK_TypeAliasDeclaration:
+      bBindBlockScopedDeclaration(node, SF_TypeAlias, EX_TypeAliasExcludes);
+      return;
+    case TSK_EnumDeclaration:
+      if (bIsEnumConst(node)) bBindBlockScopedDeclaration(node, SF_ConstEnum, EX_ConstEnumExcludes);
+      else bBindBlockScopedDeclaration(node, SF_RegularEnum, EX_RegularEnumExcludes);
+      return;
+    case TSK_ModuleDeclaration:
+      bBindModuleDeclaration(node);
+      return;
+    case TSK_TypeParameter:
+      bBindTypeParameter(node);
+      return;
+    case TSK_Parameter:
+      bBindParameter(node);
+      return;
+    case TSK_VariableDeclaration: case TSK_BindingElement:
+      bBindVariableDeclarationOrBindingElement(node);
+      return;
+    case TSK_PropertyDeclaration: case TSK_PropertySignature: {
+      bool isAutoAccessor = node->kind == TSK_PropertyDeclaration && bHasSyntacticModifier(node, TMF_Accessor);
+      uint32_t includes = isAutoAccessor ? SF_Accessor : SF_Property;
+      uint32_t excludes = isAutoAccessor ? EX_AccessorExcludes : EX_PropertyExcludes;
+      bBindPropertyOrMethodOrAccessor(node, includes | (node->questionToken ? SF_Optional : 0), excludes);
+      return;
+    }
+    case TSK_PropertyAssignment: case TSK_ShorthandPropertyAssignment:
+      bBindPropertyOrMethodOrAccessor(node, SF_Property, EX_PropertyExcludes);
+      return;
+    case TSK_EnumMember:
+      bBindPropertyOrMethodOrAccessor(node, SF_EnumMember, EX_EnumMemberExcludes);
+      return;
+    case TSK_CallSignature: case TSK_ConstructSignature: case TSK_IndexSignature:
+      bDeclareSymbolAndAddToSymbolTable(node, SF_Signature, SF_None);
+      return;
+    case TSK_MethodDeclaration: case TSK_MethodSignature: {
+      bool objLiteralMethod = node->kind == TSK_MethodDeclaration && node->parent && node->parent->kind == TSK_ObjectLiteralExpression;
+      bBindPropertyOrMethodOrAccessor(node, SF_Method | (node->questionToken ? SF_Optional : 0),
+                                      objLiteralMethod ? EX_PropertyExcludes : EX_MethodExcludes);
+      return;
+    }
+    case TSK_FunctionDeclaration:
+      if (bInStrictMode) bBindBlockScopedDeclaration(node, SF_Function, EX_FunctionExcludes);
+      else bDeclareSymbolAndAddToSymbolTable(node, SF_Function, EX_FunctionExcludes);
+      return;
+    case TSK_Constructor:
+      bDeclareSymbolAndAddToSymbolTable(node, SF_Constructor, SF_None);
+      return;
+    case TSK_GetAccessor:
+      bBindPropertyOrMethodOrAccessor(node, SF_GetAccessor, EX_GetAccessorExcludes);
+      return;
+    case TSK_SetAccessor:
+      bBindPropertyOrMethodOrAccessor(node, SF_SetAccessor, EX_SetAccessorExcludes);
+      return;
+    case TSK_FunctionType: case TSK_ConstructorType:
+      bBindFunctionOrConstructorType(node);
+      return;
+    case TSK_TypeLiteral: case TSK_MappedType:
+      bBindAnonymousDeclaration(node, SF_TypeLiteral, bnC("__type"));
+      return;
+    case TSK_ObjectLiteralExpression:
+      bBindAnonymousDeclaration(node, SF_ObjectLiteral, bnC("__object"));
+      return;
+    case TSK_JsxAttributes:
+      bBindAnonymousDeclaration(node, SF_ObjectLiteral, bnC("__jsxAttributes"));
+      return;
+    case TSK_JsxAttribute:
+      bDeclareSymbolAndAddToSymbolTable(node, SF_Property, EX_PropertyExcludes);
+      return;
+    case TSK_FunctionExpression: case TSK_ArrowFunction: {
+      BName name = node->name ? bnEscapeText(node->name->text, node->name->textLen) : bnC("__function");
+      bBindAnonymousDeclaration(node, SF_Function, name);
+      return;
+    }
+    case TSK_ImportEqualsDeclaration: case TSK_NamespaceImport: case TSK_ImportSpecifier: case TSK_ExportSpecifier:
+      bDeclareSymbolAndAddToSymbolTable(node, SF_Alias, EX_AliasExcludes);
+      return;
+    case TSK_NamespaceExportDeclaration:
+      /* the diagnostic cases are skipped; the declaration is kept only where TypeScript keeps it */
+      if (bFile->hasExternalModuleIndicator && node->parent->kind == TSK_SourceFile && bFile->isDeclarationFile) {
+        if (!bFile->symbol->globalExports) bFile->symbol->globalExports = bTableNew();
+        bDeclareSymbol(bFile->symbol->globalExports, bFile->symbol, node, SF_Alias, EX_AliasExcludes, false);
+      }
+      return;
+    case TSK_ImportClause:
+      if (node->name) bDeclareSymbolAndAddToSymbolTable(node, SF_Alias, EX_AliasExcludes);
+      return;
+    case TSK_ExportDeclaration:
+      if (!bContainer->symbol || !bContainer->symbol->exports) {
+        bBindAnonymousDeclaration(node, SF_ExportStar, bGetDeclarationName(node));
+      } else if (!node->exportClause) {
+        bDeclareSymbol(bContainer->symbol->exports, bContainer->symbol, node, SF_ExportStar, SF_None, false);
+      } else if (node->exportClause->kind == TSK_NamespaceExport) {
+        bDeclareSymbol(bContainer->symbol->exports, bContainer->symbol, node->exportClause, SF_Alias, EX_AliasExcludes, false);
+      }
+      return;
+    case TSK_ExportAssignment:
+      bBindExportAssignment(node);
+      return;
+    case TSK_SourceFile:
+      bUpdateStrictModeStatementList(node->statements);
+      bBindSourceFileIfExternalModule();
+      return;
+    case TSK_Block:
+      if (!(node->parent && (bIsFunctionLikeKind(node->parent->kind) || node->parent->kind == TSK_ClassStaticBlockDeclaration)))
+        return;
+      bUpdateStrictModeStatementList(node->statements);
+      return;
+    case TSK_ModuleBlock:
+      bUpdateStrictModeStatementList(node->statements);
+      return;
+    default:
+      return;
+  }
+}
+
+/* binds a parsed source file and sets sf->binderSymbolCount (file.symbolCount in TypeScript) */
+static void tsBindSourceFile(TsNode *file, const char *fileName) {
+  bFile = file;
+  bFileName = fileName;
+  bParent = NULL;
+  bContainer = NULL;
+  bBlockScopeContainer = NULL;
+  bSymbolCount = 0;
+  bDepth = 0;
+  /* setExternalModuleIndicator: any top-level import/export statement makes the file a module */
+  bool ext = false;
+  if (file->statements)
+    for (int i = 0; i < file->statements->n && !ext; i++) {
+      TsNode *s = file->statements->v[i];
+      if (bHasSyntacticModifier(s, TMF_Export)) ext = true;
+      else if (s->kind == TSK_ImportDeclaration || s->kind == TSK_ExportAssignment || s->kind == TSK_ExportDeclaration) ext = true;
+      else if (s->kind == TSK_ImportEqualsDeclaration && s->moduleReference && s->moduleReference->kind == TSK_ExternalModuleReference) ext = true;
+    }
+  file->hasExternalModuleIndicator = ext;
+  /* bindInStrictMode: alwaysStrict (strict: true) for non-declaration files, else the module indicator */
+  bInStrictMode = file->isDeclarationFile ? ext : true;
+  bBind(file);
+  file->binderSymbolCount = bSymbolCount;
+  bFile = NULL;
+}
+
+#endif
