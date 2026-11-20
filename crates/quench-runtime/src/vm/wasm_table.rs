@@ -45,19 +45,14 @@ impl<H: Host> Vm<H> {
                 }
             );
         }
-        if let Some(Cell::WasmGc {
-            declarations,
-            ty: index,
-            ..
-        }) = self.heap.get(value)
-        {
-            return declarations.reference_subtype(
+        if let Some(record) = self.heap.wasm_gc(value) {
+            return record.declarations().reference_subtype(
                 wasmparser::RefType::new(
                     false,
-                    wasmparser::HeapType::Exact(wasmparser::UnpackedIndex::Module(*index)),
+                    wasmparser::HeapType::Exact(wasmparser::UnpackedIndex::Module(record.ty())),
                 )
                 .unwrap(),
-                declarations,
+                record.declarations(),
                 ty,
             );
         }

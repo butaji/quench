@@ -2221,7 +2221,7 @@ fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
         | Some(
             C::ArrayFromAsyncState(_) | C::AwaitState(_)
             | C::PromiseResolvingState { .. } | C::WasmElements(_) | C::WasmBits64(_) | C::WasmInstance(_)
-            | C::WasmGc { .. } | C::WasmExtern(_) | C::AccessorPair { .. } | C::WasmTag { .. }
+            | C::WasmExtern(_) | C::AccessorPair { .. } | C::WasmTag { .. }
             | C::WasmException { .. } | C::WasmV128(_) | C::BindingReference { .. }
             | C::WasmHostFunction { .. },
         ) => JsonForm::Omitted,

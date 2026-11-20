@@ -19,7 +19,7 @@ use super::object_encoding::{
     INLINE_PROPERTY_COUNT, META_OFFSET, NARROW_FORM, NARROW_RUN_TAG, OBJECT_ARRAY, OBJECT_INLINE_STORAGE,
     OCCUPANCY_WORD_BITS, PROTO_ARRAY_RECORD_BASE, PROTO_INDEX_BITS, PROTO_OBJECT_RECORD_BASE,
     OBJECT_RECORD_CAPACITY, ARRAY_RECORD_CAPACITY, RECORDS_PER_BLOCK, RecordBlock, START_MASK, VALUE_VEC_FROZEN,
-    VALUE_VEC_INTEGRITY_BITS,
+    VALUE_VEC_INTEGRITY_BITS, WASM_GC_RECORD_CAPACITY,
 };
 use super::object_extras::ObjectExtrasWords;
 
@@ -189,6 +189,27 @@ pub(crate) const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvi
     sparse_mark: super::encodings::MARK_BIT as u64,
     slots_offset: size_of::<usize>() as u64,
     slot_size: size_of::<u64>() as u64,
+};
+
+/// A Wasm GC object's record (`record_heads::WasmGcHead`): where its payload's address, length and type
+/// index sit, so compiled code reads a field's slot inline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeWasmGcLayout {
+    pub(crate) record_capacity: usize,
+    pub(crate) record_size: usize,
+    pub(crate) record_align: usize,
+    pub(crate) payload_offset: usize,
+    pub(crate) length_offset: usize,
+    pub(crate) type_offset: usize,
+}
+
+pub(crate) const NATIVE_WASM_GC_LAYOUT: NativeWasmGcLayout = NativeWasmGcLayout {
+    record_capacity: WASM_GC_RECORD_CAPACITY,
+    record_size: size_of::<super::record_heads::WasmGcHead>(),
+    record_align: align_of::<super::record_heads::WasmGcHead>(),
+    payload_offset: core::mem::offset_of!(super::record_heads::WasmGcHead, payload),
+    length_offset: core::mem::offset_of!(super::record_heads::WasmGcHead, length),
+    type_offset: core::mem::offset_of!(super::record_heads::WasmGcHead, ty),
 };
 
 #[derive(Debug)]
