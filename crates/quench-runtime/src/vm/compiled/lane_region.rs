@@ -134,6 +134,8 @@ const INLINE_EFFECT_EDGES: usize = 4;
 const INLINE_NUMBER_PROJECTIONS: usize = 4;
 /// A loop body usually indexes only a few arrays; more spill without a limit.
 const INLINE_ARRAY_VIEWS: usize = 4;
+/// A block reads the captures of a few inlined callees; more spill without a limit.
+const INLINE_CAPTURE_ADMISSIONS: usize = 4;
 /// A header and a short latch usually need only a few guarded inputs.
 const INLINE_LOOP_INPUTS: usize = 4;
 /// A jump's step proves a fact of one tested register, along one or both of its edges.
@@ -242,6 +244,9 @@ struct LocalProofs {
     numbers: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
     /// Dense array views by the tagged base they prove, until an instruction that could change an array's storage (`retains_array_views`).
     arrays: smallvec::SmallVec<[(ir::Value, super::DenseArrayView); INLINE_ARRAY_VIEWS]>,
+    /// The dense capture views (values, length) a frameless admission of an inlined callee gave, by the
+    /// callee's value: its frame's reads take them, all dominated by the one admission (`Lowering::admitted_captures`).
+    admitted_captures: smallvec::SmallVec<[(ir::Value, (ir::Value, ir::Value)); INLINE_CAPTURE_ADMISSIONS]>,
     /// Whether this block read the code's invalidation word since the last helper that may change a Stable fact's subject
     /// (run JavaScript, write a prototype, name a method): every Stable fact the code folded holds until such a helper (`Lowering::hold_stable`).
     stable: bool,
@@ -261,6 +266,12 @@ impl LocalProofs {
     pub(super) fn note_number(&mut self, bits: ir::Value, number: ir::Value) {
         if self.numbers.len() >= 4 * INLINE_NUMBER_PROJECTIONS { self.numbers.remove(0); }
         self.numbers.push((bits, number));
+    }
+
+    /// Notes the dense capture view `callee`'s admission gave; the oldest view goes once the list is full.
+    pub(super) fn note_admitted_captures(&mut self, callee: ir::Value, view: (ir::Value, ir::Value)) {
+        if self.admitted_captures.len() >= INLINE_CAPTURE_ADMISSIONS { self.admitted_captures.remove(0); }
+        self.admitted_captures.push((callee, view));
     }
 
     fn set_readable(&mut self, owner: usize, readable: bool) {
@@ -285,7 +296,7 @@ impl State {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
-            arrays: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
+            arrays: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
 
     /// The facts a jump proved along `edge` (`refinements`), each narrowing its register's type for
@@ -312,6 +323,8 @@ impl State {
         self.proofs.fields.clear();
         self.proofs.int32_projections.clear();
         self.proofs.arrays.clear();
+        // Guest code may move a callee's captures or start another admission epoch: the next read probes again.
+        self.proofs.admitted_captures.clear();
         self.proofs.headers.fill(None);
         self.proofs.readable.clear();
         self.proofs.layouts.clear();
@@ -1057,6 +1070,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.int32_projections.contains(projection))).collect();
         state.proofs.numbers = first.numbers.iter().copied().filter(|projection| rest.iter()
             .all(|other| other.numbers.contains(projection))).collect();
+        state.proofs.admitted_captures = first.admitted_captures.iter().copied().filter(|view| rest.iter()
+            .all(|other| other.admitted_captures.contains(view))).collect();
         state.proofs.arrays = first.arrays.iter().copied().filter(|view| rest.iter()
             .all(|other| other.arrays.contains(view))).collect();
         state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
@@ -2461,6 +2476,7 @@ impl Lowering<'_, '_> {
         state.join_kept_shapes(incoming);
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
         state.proofs.numbers.retain(|projection| incoming.proofs.numbers.contains(projection));
+        state.proofs.admitted_captures.retain(|view| incoming.proofs.admitted_captures.contains(view));
         state.proofs.meet_homed(&incoming.proofs.homed);
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
