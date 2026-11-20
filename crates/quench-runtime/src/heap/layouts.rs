@@ -18,7 +18,7 @@
 
 use rustc_hash::FxHashMap;
 use std::sync::Mutex;
-#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_vendor = "apple"))))]
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -33,6 +33,37 @@ pub(crate) const LAYOUT_CAPACITY: usize = 1 << 22;
 /// it only sends `malloc` to `mmap`.
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const FIXED_TABLE: usize = crate::staged::layout_offsets::LAYOUT_TABLE_BASE as usize;
+
+#[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+const FIXED_TABLE: usize = crate::staged::layout_offsets::LAYOUT_TABLE_BASE as usize;
+
+/// The table's fixed address is what compiled code reads (`staged::Table::Layouts`), so it is
+/// mapped before `main` on every target: on Apple AArch64 the constant is a 32-bit unsigned
+/// displacement a row adds, and the 32 MiB mapping lies below the image's 4 GiB base.
+#[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+extern "C" fn map_fixed_table() {
+    // SAFETY: an anonymous private mapping at the address compiled code reads; the kernel
+    // replaces whatever the hint found, and the check below aborts on any other address.
+    let mapped = unsafe {
+        libc::mmap(
+            FIXED_TABLE as *mut libc::c_void,
+            LAYOUT_CAPACITY * size_of::<u64>(),
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED,
+            -1,
+            0,
+        )
+    };
+    if mapped as usize != FIXED_TABLE {
+        eprintln!("quench: cannot map the object layout table at {FIXED_TABLE:#x}");
+        std::process::abort();
+    }
+}
+
+#[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+#[used]
+#[unsafe(link_section = "__DATA,__mod_init_func")]
+static MAP_FIXED_TABLE: extern "C" fn() = map_fixed_table;
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 extern "C" fn map_fixed_table() {
@@ -59,16 +90,16 @@ extern "C" fn map_fixed_table() {
 #[unsafe(link_section = ".init_array")]
 static MAP_FIXED_TABLE: extern "C" fn() = map_fixed_table;
 
-#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_vendor = "apple"))))]
 #[repr(C, align(4096))]
 struct Table(UnsafeCell<[u64; LAYOUT_CAPACITY]>);
 // SAFETY: an entry is written once, under `MAP`'s lock, before its id exists anywhere; every
 // read of it follows the id's publication, and no entry is written twice.
-#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_vendor = "apple"))))]
 unsafe impl Sync for Table {}
 
 // SAFETY: all-zero bits are a valid table; the zeroed static lands in .bss.
-#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_vendor = "apple"))))]
 static TABLE: Table = unsafe { std::mem::zeroed() };
 static NEXT: AtomicU32 = AtomicU32::new(1);
 static MAP: Mutex<Option<FxHashMap<u64, u32>>> = Mutex::new(None);
@@ -79,9 +110,9 @@ static CACHE: [AtomicU32; 1 << CACHE_BITS] = [const { AtomicU32::new(0) }; 1 << 
 /// The base address of the table, entry `id` at `id * 8` past it.
 #[inline(always)]
 pub(crate) fn table_base() -> *const u64 {
-    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_vendor = "apple")))]
     return FIXED_TABLE as *const u64;
-    #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+    #[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_vendor = "apple"))))]
     return TABLE.0.get().cast();
 }
 

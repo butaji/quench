@@ -404,6 +404,11 @@ pub(crate) use super::string_form;
 pub(crate) const JS_STEP_METHOD_CACHE_ATOMS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, method_cache_atoms);
 pub(crate) const JS_STEP_METHOD_CACHE_ATOM_WORDS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, method_cache_atom_words);
 pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, stores_specialized);
-/// The object layout table's fixed address (`heap::layouts::table_base`) on x86-64 Linux, the
-/// stencils' target: a row reads an entry with the address as its displacement.
+/// The object layout table's fixed address (`heap::layouts::table_base`): a row reads an entry
+/// with the address as its displacement. On x86-64 Linux a low address is in a sign-extended
+/// 32-bit displacement's reach; Apple AArch64 reserves the low 4 GiB (the image sits at 4 GiB),
+/// so the table is mapped at 8 GiB there (`MAP_FIXED` of a 32 MiB range).
+#[cfg(not(all(target_arch = "aarch64", target_vendor = "apple")))]
 pub(crate) const LAYOUT_TABLE_BASE: u64 = 0x7000_0000;
+#[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+pub(crate) const LAYOUT_TABLE_BASE: u64 = 0x2_0000_0000;
