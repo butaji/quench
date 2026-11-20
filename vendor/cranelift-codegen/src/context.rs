@@ -191,7 +191,11 @@ impl Context {
 
         self.func.dfg.resolve_all_aliases();
 
-        if opt_level != OptLevel::None {
+        // QUENCH: Cranelift 0.137's AArch64 egraph elaboration leaves effectful instructions
+        // in the graph (`egraph/elaborate.rs`'s assert) and miscompiles them, so AArch64 skips
+        // the pass until the upstream fix is picked up.
+        let egraphs = !matches!(isa.triple().architecture, target_lexicon::Architecture::Aarch64(_));
+        if opt_level != OptLevel::None && egraphs {
             self.egraph_pass(isa, ctrl_plane)?;
         }
 
