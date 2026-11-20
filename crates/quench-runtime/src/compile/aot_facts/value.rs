@@ -8,6 +8,8 @@ use crate::typed_ir::Representation;
 pub(super) enum Key {
     Global(u32),
     Slot { owner: u32, slot: u16 },
+    /// The named property `atom` of any object: every store of that name, wherever it lands.
+    Member(u32),
 }
 
 /// What a register is known to hold at a point.
@@ -19,6 +21,8 @@ pub(super) enum Fact {
     Closure(u32),
     /// The value the binding held when the register was loaded from it.
     Binding(Key),
+    /// The value of a named property `atom` read off some object (a method read before its call).
+    Member(u32),
     /// A Number held as an int32.
     Int32,
     /// A Number.
