@@ -130,12 +130,12 @@ fn relocations(data: &[u8], text: &Text, names: &[(Symbol, usize)], row: &str, (
                 let (kind, length) = (word >> RELOC_TYPE_SHIFT, word >> RELOC_LENGTH_SHIFT & RELOC_LENGTH_MASK);
                 assert!(word >> RELOC_EXTERN_SHIFT & 1 == 1, "stencil {row}: a relocation against a section");
                 let pc_relative = word >> RELOC_PCREL_SHIFT & 1 == 1;
+                let symbol = names[(word & RELOC_SYMBOL_MASK) as usize].0.name.clone();
                 let class = match (kind, pc_relative, length) {
                     (ARM64_RELOC_BRANCH26, true, _) => BRANCH26,
                     (ARM64_RELOC_UNSIGNED, false, LENGTH_8_BYTES) => ABS64,
-                    _ => panic!("stencil {row}: ARM64 relocation type {kind}, pc-relative {pc_relative}, length {length}"),
+                    _ => panic!("stencil {row}: ARM64 relocation type {kind}, pc-relative {pc_relative}, length {length}, symbol {symbol}"),
                 };
-                let symbol = names[(word & RELOC_SYMBOL_MASK) as usize].0.name.clone();
                 ObjectReloc { offset: address - start, symbol, class, addend: 0 }
             })
         })

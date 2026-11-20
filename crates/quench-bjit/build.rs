@@ -140,7 +140,9 @@ fn main() {
         fs::write(instance_file(&out, shard), part.iter().map(|(row, _)| row.as_str()).collect::<String>()).unwrap();
     }
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
-    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &VARIANTS[..1] };
+    // `VARIANTS` are x86-64 cpu levels; another target has the one baseline table, built without a
+    // `-C target-cpu` (which for an AArch64 target is not a cpu at all).
+    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &[("BASELINE", None)] };
     let sources = cache::sources_key(&rustc(), manifest, &sources::watched(manifest), &EXTRA_WATCHED);
     let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| (0..parts.len()).map(|shard| shard_job(&out, shard, *cpu, sources))).collect();
     if jobs.iter().any(|job| !job.cached()) {
@@ -165,10 +167,10 @@ fn main() {
 
 /// One macro invocation per generated row, the unit `shards::split` distributes, with its
 /// compile weight (`shards::NUMBER_WEIGHT` and the weights beside it).
-/// The base tier's numeric, heap and supernode rows are x86-64's only; every other target builds the Wasm rows alone,
-/// and its base tier falls back as a `--b-jit` without one does.
+/// A target whose rows are stencilled builds the numeric, heap and supernode rows: the row is
+/// the same staged definition on every target, and the AOT tier stitches them from this table.
 fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize)> {
-    let base: Vec<(String, usize)> = if arch == Arch::X86_64 {
+    let base: Vec<(String, usize)> = if matches!(arch, Arch::X86_64 | Arch::Aarch64) {
         let numbers = library::library().into_iter().map(|c| (format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4), shards::NUMBER_WEIGHT));
         let heap_weight = |kind: u8| match kind {
             library::INDEX_ROW | library::STORE_ROW | library::TYPED_INDEX_ROW..=library::TYPED_INDEX_LAST

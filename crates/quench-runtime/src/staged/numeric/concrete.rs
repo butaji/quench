@@ -99,7 +99,9 @@ impl NumericStage for super::super::Concrete {
     }
     #[inline(always)]
     fn int_remainder(&mut self, left: u64, right: u64) -> u64 {
-        u64::from(int32(left).wrapping_rem(int32(right)) as u32)
+        // Total, so no row carries a panic path: the row guards a zero divisor before it asks (that
+        // miss leaves), and `i32::MIN % -1` is zero, which `checked_rem` reports as none.
+        u64::from(int32(left).checked_rem(int32(right)).unwrap_or(0) as u32)
     }
     #[inline(always)]
     fn float_unary(&mut self, operation: super::super::math::FloatUnary, value: u64) -> u64 {
