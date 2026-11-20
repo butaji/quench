@@ -393,6 +393,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The lane's pure binary operation (`binary_values`), which answers a `Binary` or an
     /// `Equality` call-out a row makes where its words do not decide it (`vm_step`).
     binary: Option<(*mut (), unsafe fn(*mut (), u32, Value, Value) -> Option<Value>)>,
+    /// The lane's pure unary operation (`unary_values`), which answers a `Unary` call-out a generic
+    /// row makes where its words do not decide it (a template part's ToString of a Number).
+    unary: Option<unsafe fn(*mut (), u32, Value) -> Option<Value>>,
     /// The lane context and the fast answers of an iteration or for-in call-out (`fast_names_step`), for
     /// the row that makes one (`Decoder::Names`).
     names: Option<(*mut (), NamesStep)>,
@@ -834,7 +837,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None, entry: None, call: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None, entry: None, call: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -1267,6 +1270,11 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             let (left, right) = (Value::from_bits(left), Value::from_bits(right));
             // SAFETY: the running lane's context, live for the row's step.
             return unsafe { binary(context, operator, left, right) }.map(|value| (value.to_bits(), Boxing::Value));
+        }
+        if let (CallOut::Unary { operator, value }, Some((context, _)), Some(unary)) = (operation, self.binary, self.unary) {
+            let operand = Value::from_bits(self.read(stage, value));
+            // SAFETY: the running lane's context, live for the row's step.
+            return unsafe { unary(context, operator, operand) }.map(|value| (value.to_bits(), Boxing::Value));
         }
         match operation {
             CallOut::Decide { left, right, operator } => {
@@ -2310,8 +2318,15 @@ fn row_frame_of<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut 
         } else {
             None
         };
+        // A `Unary` row its words leave (a template part's ToString of a Number) asks the lane's pure
+        // unary (`unary_values`) before the general step; no other value row holds it.
+        let (binary, unary): (Option<(*mut (), unsafe fn(*mut (), u32, Value, Value) -> Option<Value>)>, Option<unsafe fn(*mut (), u32, Value) -> Option<Value>>) =
+            if const { OP == crate::staged::UNARY_ROW } {
+                (Some((cx.cast(), |context, operator, left, right| unsafe { super::binary_values::<H>(context.cast(), operator, left, right) })),
+                 Some(|context, operator, operand| unsafe { super::unary_values::<H>(context.cast(), operator, operand) }))
+            } else { (None, None) };
         // A `typeof` row answers a heap value's kind and a name's string in the lane context (`LaneHost`).
-        return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures, callee, reads,
+        return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures, callee, reads, binary, unary,
             ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
@@ -2322,7 +2337,9 @@ fn row_frame_of<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut 
         // leave is the VM's steady decision (`staged::step` over the comparison).
         // Its `ToPropertyKey` answers a primitive's key through the names step (`fast_names_step`).
         let names: NamesStep = fast_names_step::<H>;
-        return LaneFrame::<ACC> { binary: Some((cx.cast(), binary)), decisions: Some(Decisions::of(cx)), reads: Reads::of_jump::<H>(cx, None),
+        let unary: unsafe fn(*mut (), u32, Value) -> Option<Value> =
+            |context, operator, operand| unsafe { super::unary_values::<H>(context.cast(), operator, operand) };
+        return LaneFrame::<ACC> { binary: Some((cx.cast(), binary)), unary: Some(unary), decisions: Some(Decisions::of(cx)), reads: Reads::of_jump::<H>(cx, None),
             names: Some((cx.cast(), names)), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Literal)) } {

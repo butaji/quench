@@ -886,7 +886,7 @@ mod list_calls;
 mod loop_runs;
 mod unary_values;
 mod lane_capture_store; use lane_capture_store::{store_to_capture, store_to_environment};
-use unary_values::unary_value;
+use unary_values::{unary_value, unary_values};
 use list_calls::{apply_activation_in_lane, list_activation_in_lane, spread_native_call_in_lane};
 
 #[cfg(all(test, feature = "bench-primitives"))]
