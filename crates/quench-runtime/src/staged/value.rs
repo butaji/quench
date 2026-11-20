@@ -29,12 +29,82 @@ pub(crate) fn direct_object_id<S: Stage>(stage: &mut S, bits: S::Word) -> S::Wor
     stage.and_imm(bits, u64::from(u32::MAX))
 }
 
+/// The immediate operations a tag test is written in. A `Stage` is one (its words and conditions);
+/// a `MachineScalar` is one through `MachineTags`, whose comparisons are 0-or-1 flag words. Each tag
+/// test is written once over this, so a layout change is one definition for every stage and machine.
+pub(crate) trait TagOps {
+    type Word: Copy;
+    /// A comparison's result: a condition at a stage, a flag word at a machine.
+    type Flag: Copy;
+    fn and_imm(&mut self, a: Self::Word, imm: u64) -> Self::Word;
+    fn shr_imm(&mut self, a: Self::Word, shift: u64) -> Self::Word;
+    fn add_imm(&mut self, a: Self::Word, imm: u64) -> Self::Word;
+    fn eq_imm(&mut self, a: Self::Word, imm: u64) -> Self::Flag;
+    fn ugt_imm(&mut self, a: Self::Word, imm: u64) -> Self::Flag;
+}
+
+/// Every stage is a `TagOps` through its own immediate operations: a `u64` operand converts to the
+/// stage's `Imm` (`From<u64>`), so the stage receives the same constant it received before.
+impl<S: Stage> TagOps for S {
+    type Word = S::Word;
+    type Flag = S::Cond;
+    #[inline(always)]
+    fn and_imm(&mut self, a: S::Word, imm: u64) -> S::Word {
+        Stage::and_imm(self, a, imm)
+    }
+    #[inline(always)]
+    fn shr_imm(&mut self, a: S::Word, shift: u64) -> S::Word {
+        Stage::shr_imm(self, a, shift)
+    }
+    #[inline(always)]
+    fn add_imm(&mut self, a: S::Word, imm: u64) -> S::Word {
+        Stage::add_imm(self, a, imm)
+    }
+    #[inline(always)]
+    fn eq_imm(&mut self, a: S::Word, imm: u64) -> S::Cond {
+        Stage::eq_imm(self, a, imm)
+    }
+    #[inline(always)]
+    fn ugt_imm(&mut self, a: S::Word, imm: u64) -> S::Cond {
+        Stage::ugt_imm(self, a, imm)
+    }
+}
+
+/// A `MachineScalar` read as a `TagOps`: its words are its words, and a comparison is its flag word.
+/// The immediate is the `i64` with the same bits as the `u64` operand.
+struct MachineTags<'a, M>(&'a mut M);
+
+impl<M: MachineScalar> TagOps for MachineTags<'_, M> {
+    type Word = M::Word;
+    type Flag = M::Word;
+    #[inline(always)]
+    fn and_imm(&mut self, a: M::Word, imm: u64) -> M::Word {
+        self.0.raw_binary_imm(Binary::And, a, imm as i64)
+    }
+    #[inline(always)]
+    fn shr_imm(&mut self, a: M::Word, shift: u64) -> M::Word {
+        self.0.raw_binary_imm(Binary::ShiftRightUnsigned, a, shift as i64)
+    }
+    #[inline(always)]
+    fn add_imm(&mut self, a: M::Word, imm: u64) -> M::Word {
+        self.0.raw_binary_imm(Binary::Add, a, imm as i64)
+    }
+    #[inline(always)]
+    fn eq_imm(&mut self, a: M::Word, imm: u64) -> M::Word {
+        self.0.raw_compare_imm(Relation::Equal, a, imm as i64)
+    }
+    #[inline(always)]
+    fn ugt_imm(&mut self, a: M::Word, imm: u64) -> M::Word {
+        self.0.raw_compare_imm(Relation::UnsignedGreater, a, imm as i64)
+    }
+}
+
 /// Whether `bits` is an int32 (`Value::as_int`); an int32 has one tagged form, so two
-/// distinct int-tagged words are two distinct values.
+/// distinct int-tagged words are two distinct values. At a machine it is a flag word.
 #[inline(always)]
-pub(crate) fn is_int<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
-    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
-    stage.eq_imm(tag, ValueLayout::INT_TAG)
+pub(crate) fn is_int<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
+    let tag = ops.and_imm(bits, ValueLayout::TAG_MASK);
+    ops.eq_imm(tag, ValueLayout::INT_TAG)
 }
 
 /// Whether `bits` is a heap reference (`Value::is_heap`).
@@ -161,12 +231,13 @@ pub(crate) fn is_direct_function<S: Stage>(stage: &mut S, bits: S::Word) -> S::C
     family_is(stage, bits, ValueLayout::DIRECT_FUNCTION_TAG)
 }
 
-/// Whether `bits` is a binary64 Number: past the span of the tag fields the immediates use.
+/// Whether `bits` is a binary64 Number: past the span of the tag fields the immediates use. At a
+/// machine it is a flag word.
 #[inline(always)]
-pub(crate) fn is_double<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
-    let field = stage.shr_imm(bits, ValueLayout::TAG_SHIFT);
-    let offset = stage.add_imm(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
-    stage.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN)
+pub(crate) fn is_double<T: TagOps>(ops: &mut T, bits: T::Word) -> T::Flag {
+    let field = ops.shr_imm(bits, u64::from(ValueLayout::TAG_SHIFT));
+    let offset = ops.add_imm(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
+    ops.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN)
 }
 
 /// ToBoolean of `bits` as far as its own word decides it: `(undecided, truthy)`. A heap value
@@ -342,26 +413,11 @@ pub(crate) fn number_word<M: MachineScalar>(machine: &mut M, number: M::Word) ->
     machine.raw_select(is_nan, canonical_nan, encoded)
 }
 
-/// Whether the word `bits` is an int32 by its tag (`is_int`), as a machine flag.
-#[inline(always)]
-fn machine_is_int<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
-    let tag = machine.raw_binary_imm(Binary::And, bits, ValueLayout::TAG_MASK as i64);
-    machine.raw_compare_imm(Relation::Equal, tag, ValueLayout::INT_TAG as i64)
-}
-
-/// Whether the word `bits` is a binary64 Number by its tag field (`is_double`), as a machine flag.
-#[inline(always)]
-fn machine_is_double<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
-    let field = machine.raw_binary_imm(Binary::ShiftRightUnsigned, bits, i64::from(ValueLayout::TAG_SHIFT));
-    let offset = machine.raw_binary_imm(Binary::Add, field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg() as i64);
-    machine.raw_compare_imm(Relation::UnsignedGreater, offset, ValueLayout::TAG_FIELD_SPAN as i64)
-}
-
 /// The binary64 value of a Number the caller proved numeric, whose tagged word is `bits`: an int32
 /// converts (`int32_as_f64`), any other word is its own double.
 #[inline(always)]
 pub(crate) fn known_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
-    let integer = machine_is_int(machine, bits);
+    let integer = is_int(&mut MachineTags(&mut *machine), bits);
     let int = int32_as_f64(machine, bits);
     let double = machine.raw_unary(Unary::Bitcast(Lane::F64), bits);
     machine.raw_select(integer, int, double)
@@ -375,8 +431,8 @@ pub(crate) fn tagged_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word
     let number = machine.raw_unary(Unary::Bitcast(Lane::F64), bits);
     let ordered = machine.raw_compare(Relation::FloatEqual, number, number);
     let nan = machine.raw_compare_imm(Relation::Equal, ordered, 0);
-    let integer = machine_is_int(machine, bits);
-    let double = machine_is_double(machine, bits);
+    let integer = is_int(&mut MachineTags(&mut *machine), bits);
+    let double = is_double(&mut MachineTags(&mut *machine), bits);
     let tagged = machine.raw_binary(Binary::Or, integer, double);
     let decided = machine.raw_binary(Binary::Or, ordered, tagged);
     let integer_nan = machine.raw_binary(Binary::And, nan, integer);
