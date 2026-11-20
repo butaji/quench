@@ -41,7 +41,7 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
         &Default::default(), facts, &[], &std::collections::BTreeMap::new(), &[], None, &[])?;
     if lowered.region.native == 0 { return None; }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
-    let isa = crate::vm::jit_backend::target_isa()?;
+    let isa = crate::vm::jit_backend::ahead_lane_isa()?;
     let code = crate::vm::jit_backend::compile_function(native, &*isa, Some(crate::vm::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
     }).ok()?;
