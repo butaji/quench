@@ -744,6 +744,7 @@ typedef struct TsFlow {
   struct TsFlow *target;        /* ReduceLabel: target and antecedents */
   struct TsFlow **redAnts;
   int nRedAnts;
+  uint32_t visit;               /* checker: the walk (cFlowStamp) that last visited the node */
 } TsFlow;
 
 /* the two unreachable nodes are created once by createBinder in TypeScript, so they are not counted */
@@ -1840,6 +1841,10 @@ static void bBind(TsNode *node) {
   fprintf(stderr, "visit kind %d pos %d\n", node->kind, node->pos);
 #endif
   node->parent = bParent;
+  /* the flow node of a reference (bindWorker: identifiers in expressions, this and super; bindChildren: narrowable accesses) */
+  if (bCurFlow && (node->kind == TSK_Identifier || node->kind == TSK_ThisKeyword || node->kind == TSK_SuperKeyword)) node->flowNode = bCurFlow;
+  else if (bCurFlow && (node->kind == TSK_PropertyAccessExpression || node->kind == TSK_ElementAccessExpression) && bIsNarrowableReference(node))
+    node->flowNode = bCurFlow;
   bool saveStrict = bInStrictMode;
   bBindWorker(node);
   TsNode *saveParent = bParent;

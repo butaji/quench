@@ -60,6 +60,10 @@ struct TsNode {
   struct TsType *resolvedType; /* checker: getTypeFromTypeNode cache (links.resolvedType) */
   struct TsType *inferredReturn; /* checker: the inferred return type of a declaration (ts-relate.h) */
   uint8_t inferState;
+  struct TsFlow *flowNode;    /* binder: the flow node of an identifier, this, super or narrowable access (binder.ts flowNode) */
+  struct TsType *exprType;    /* checker: checkExpressionCached result (links.resolvedType of expressions) */
+  uint8_t exprState;          /* 0 not checked, 1 being checked, 2 done */
+  uint8_t checkState;         /* checker: checkSourceElement of a statement or declaration (0 not, 1 being, 2 done) */
   /* enums (ts-types.h): EnumDeclaration: EnumValuesComputed; EnumMember: its computed value */
   uint8_t enumValuesComputed, enumValueDone, enumValueKind;   /* kind: 0 undefined, 1 number, 2 string */
   uint8_t condState;   /* ConditionalType: being resolved (ts-conditional.h) */

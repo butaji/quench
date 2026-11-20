@@ -228,46 +228,6 @@ static TsType *cEnclosingClassType(TsNode *n) {
   return NULL;
 }
 
-/* the expression types of getReturnTypeFromBody for the ported forms; the error type when not ported */
-static TsType *cExprType(TsNode *e) {
-  if (!e) return cUnported("missing expression");
-  switch (e->kind) {
-    case TSK_ParenthesizedExpression: return cExprType(e->expression);
-    case TSK_ThisKeyword: {
-      TsType *c = cEnclosingClassType(e);
-      return c ? c : cUnported("this outside a class");
-    }
-    case TSK_NullKeyword: return cNullType;
-    case TSK_TrueKeyword: return cTrueType;
-    case TSK_FalseKeyword: return cFalseType;
-    case TSK_StringLiteral: return cLiteralType(TF_StringLiteral, e->text, e->textLen);
-    case TSK_NumericLiteral: return cLiteralType(TF_NumberLiteral, e->text, e->textLen);
-    case TSK_AsExpression: return cTypeFromNode(e->type);
-    case TSK_Identifier: {
-      TsSymbol *s = cResolveValueName(e, bnEscapeText(e->text, e->textLen));
-      if (!s) return e->textLen == 9 && memcmp(e->text, "undefined", 9) == 0 ? cUndefinedType : cUnported("unresolved value");
-      return cTypeOfSymbol(s);
-    }
-    case TSK_PropertyAccessExpression: {
-      TsType *o = cExprType(e->expression);
-      if (o == cErrorType) return o;
-      if (!(o->flags & TF_Object) || !e->name) return cUnported("property access on a non-object");
-      TsSymbol *p = cPropertyOf(o, bnEscapeText(e->name->text, e->name->textLen));
-      return p ? cTypeOfSymbol(p) : cUnported("property access: no property");
-    }
-    case TSK_CallExpression: {
-      TsType *f = cExprType(e->expression);
-      if (f == cErrorType) return f;
-      if (!(f->flags & TF_Object)) return cUnported("call of a non-object");
-      cResolveSignatures(f);
-      if (f->ncall != 1) return cUnported("call with other than one signature");
-      return cReturnTypeOf(&f->call[0]);
-    }
-    default: break;
-  }
-  return cUnported("expression type");
-}
-
 /* the return statements of a body, not those of nested functions */
 static void cCollectReturns(TsNode *n, TsNode ***out, int *cnt, int *cap) {
   if (!n) return;
@@ -353,6 +313,7 @@ static TsType *cReturnTypeOf(CSig *sig) {
     if (!cls) return cUnported("constructor without class");
     return cDeclaredTypeOfClassOrInterface(cls);
   }
+  if (d->type && d->type->kind == TSK_TypePredicate) return cBooleanType;
   if (d->type) return cTypeFromNodeM(d->type, sig->mapper);
   TsType *r = cInferReturnType(d);
   if (r == cErrorType) return r;
