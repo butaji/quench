@@ -410,8 +410,10 @@ impl<H: Host> Vm<H> {
             _ => Value::UNDEFINED,
         }).collect();
         let slot_words = self.array_of(&words);
-        let prototypes: Box<[(Value, u32)]> = Box::from(&chain[1..]);
-        self.for_in.own_keys = Some(ForInOwnKeys { shape, epoch, keys, slot_words, slots, chain: prototypes, stepped: None });
+        // The memo holds while the chain past the receiver keeps its cell (`chain_cell_to_end`).
+        let prototype = chain.get(1).map_or(Value::NULL, |&(object, _)| object);
+        self.for_in.own_keys = self.chain_cell_to_end(prototype)
+            .map(|cell| ForInOwnKeys { shape, epoch, keys, slot_words, slots, prototype, chain: cell, stepped: None });
         if provable {
             self.for_in.walked.record(keys, epoch, &chain[..1]);
         } else {
