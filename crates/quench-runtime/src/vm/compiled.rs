@@ -50,6 +50,7 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use crate::staged::js_step_head::JsStepHead;
 use crate::staged::record_heads::CallContextHead;
+use quench_bjit::call_record::return_status_pc;
 
 /// The staged operation a record decodes to, with no constants or sites resolved: what a
 /// tier's analysis asks of a record instead of naming its opcode (`Operation::decode`).
@@ -252,7 +253,7 @@ pub(super) use code_heap::{flush_retired_writers, CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
 mod direct_callee;
-pub(super) use direct_callee::{names_dead_callee, window_width, DirectCallee, DirectCandidates};
+pub(super) use direct_callee::{frames_window, names_dead_callee, window_width, DirectCallee, DirectCandidates};
 #[path = "compiled/lane_storage.rs"]
 mod lane_storage;
 mod lane_body_run;
@@ -955,7 +956,7 @@ struct LaneReceiver {
 /// Encode a proved tagged int32; widening remains the shared store's responsibility.
 fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     fallback: ir::Block, range: Option<typed_ir::IntRange>) -> ir::Value {
-    use crate::staged::store::{integer_code, integer_fits};
+    use crate::staged::narrow::{integer_code, integer_fits};
     let mut stage = object_slots::emit(builder);
     if range.is_some_and(|range| typed_ir::IntRange::packed().contains(range)) {
         #[cfg(test)] PACKED_RANGE_PROOFS.with(|count| count.set(count.get() + 1));
@@ -3488,7 +3489,7 @@ impl CompiledOsrRegion {
                     osr_lane::bind_loop::<H>(&mut dispatch, region, entry, lane_context, registers);
                     osr_lane::bind_captures::<H>(region, entry, lane_context, registers, calls, &mut captures);
                     self.stamp.set(Some(stamp));
-                    let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend), region.header);
+                    let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
                     self.parked.set(Some(dispatch));
                     run
                 }
@@ -3502,7 +3503,7 @@ impl CompiledOsrRegion {
                     // `with_function` admitted the program; it holds it for the run.
                     let Some(residual) = vm.programs.get(program) else { return RegionRun::own(LaneExit::Terminated) };
                     osr_lane::bind_frame(dispatch, &residual, vm, (program, function, lane_context), registers, false);
-                    let run = osr_lane::enter(dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend), region.header);
+                    let run = osr_lane::enter(dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
                     if self.crossing == Crossing::General && !self.made.replace(true) {
                         self.parked.set(Some(Box::new(JsStepDispatch::idle())));
                     }
@@ -3831,7 +3832,11 @@ pub(super) struct LaneMethod {
     pub(in crate::vm) realm_bound: bool,
     /// Its entry types and its activation's result type (`lane_region::TypeSummary`), where it is a
     /// whole function's body: a direct caller types the call's result with it (`DirectCallee::summary`).
-    pub(in crate::vm) summary: Option<lane_region::TypeSummary>,
+    /// Read through `summary()`, which a withdrawal ends.
+    summary: Option<lane_region::TypeSummary>,
+    /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
+    /// types no call, so its summary is not read.
+    withdrawn: std::cell::Cell<bool>,
 }
 
 impl LaneMethod {
@@ -3854,10 +3859,13 @@ impl LaneMethod {
         self.entry as usize
     }
 
-    /// Its type summary, if its lowering made one (`lane_region::TypeSummary`).
+    /// Its type summary, if its lowering made one and its entry cell has not withdrawn it (`lane_region::TypeSummary`).
     pub(in crate::vm) fn summary(&self) -> Option<&lane_region::TypeSummary> {
-        self.summary.as_ref()
+        if self.withdrawn.get() { None } else { self.summary.as_ref() }
     }
+
+    /// Ends its summary, as its entry cell withdraws it (`EntryCell::withdraw`).
+    pub(super) fn withdraw(&self) { self.withdrawn.set(true) }
 
     /// The address of its scalar entry, if it has one (`EntryCell::scalar`).
     pub(super) fn scalar_address(&self) -> Option<usize> {
@@ -9779,17 +9787,15 @@ impl<H: Host> Vm<H> {
             match exited {
                 Some((NATIVE_JS_STOPPED, _)) => Some(dispatch.outcome.take().unwrap_or_else(||
                     failure("linked native function stopped without a transition".into()))),
-                Some((status, word)) if status.checked_sub(RETURN_STATUS_BASE)
-                    .and_then(|pc| usize::try_from(pc).ok())
-                    .is_some_and(|pc| pc < instruction_count) => {
-                    let pc = (status - RETURN_STATUS_BASE) as usize;
-                    Some(JsNativeStep {
+                // The AOT completion: its status names the record that completes, its value is the word.
+                Some((status, word)) => match return_status_pc(status).map(|pc| pc as usize).filter(|&pc| pc < instruction_count) {
+                    Some(pc) => Some(JsNativeStep {
                         instruction_pc: pc,
                         next_pc: pc + 1,
                         result: Ok(StepResult::Return(Value::from_bits(word))),
-                    })
-                }
-                Some((status, word)) => Some(failure(format!("invalid linked native exit: status {status}, continuation {word}"))),
+                    }),
+                    None => Some(failure(format!("invalid linked native exit: status {status}, continuation {word}"))),
+                },
                 None => Some(failure("linked native entry failed".into())),
             }
         }).unwrap_or_else(|| Some(failure("linked native function metadata is missing".into())))
@@ -9815,7 +9821,7 @@ mod tests {
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
         let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None };
-        let encoded = crate::staged::store::narrow_form(&mut stage, value, typed_ir::Type::ANY);
+        let encoded = crate::staged::narrow::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
         builder.seal_all_blocks();
         builder.finalize(isa.frontend_config());

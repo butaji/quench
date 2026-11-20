@@ -103,6 +103,23 @@ pub(crate) fn string_char_at<S: Stage>(stage: &mut S, string: FlatString<S::Word
     character_of_unit(stage, table, unit, miss)
 }
 
+/// The unit `string_char_at` names, before the table maps it to its one-character string: the
+/// `char_at_ascii` row of `string`, leaving at `miss` where that row leaves. A comparison of the
+/// one-character string with a one-unit constant decides on the unit alone, so the string is
+/// never made (`Lowering::unit_compare`).
+#[inline(always)]
+pub(crate) fn string_unit_at<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    at_width(stage, string, |stage, width| char_at_ascii(stage, width, string.units, string.length, index, miss))
+}
+
+/// `string_unit_at` for an index the caller proves below the string's length (`char_at_ascii_within`).
+#[inline(always)]
+pub(crate) fn string_unit_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    at_width(stage, string, |stage, width| char_at_ascii_within(stage, width, string.units, index, miss))
+}
+
 /// The one-character string of the ASCII `unit` from the table at `table`, which the unit has once
 /// it is made (`leaving at miss` where it has none yet).
 #[inline(always)]

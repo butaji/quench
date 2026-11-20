@@ -120,19 +120,18 @@ impl<H: Host> Vm<H> {
         key: Value,
         value: Value,
     ) -> Result<(), JsError> {
-        let group = match kind {
-            GroupByKind::Object => {
-                if self.heap.is_symbol(key) {
-                    self.symbol_property(result, key)
-                } else {
-                    // The atom is interned once and recorded on the key, so the group-creating
-                    // path below reads it back instead of interning the key again.
-                    let Some(atom) = self.string_key_atom(key) else {
-                        unreachable!("ToPropertyKey returns a string or symbol")
-                    };
-                    self.own_property(result, atom)
-                }
+        // An Object result's string key, interned once for both the lookup and the new group.
+        let key_atom = match kind {
+            GroupByKind::Object if !self.heap.is_symbol(key) => {
+                Some(self.string_key_atom(key).expect("ToPropertyKey returns a string or symbol"))
             }
+            _ => None,
+        };
+        let group = match kind {
+            GroupByKind::Object => match key_atom {
+                Some(atom) => self.own_property(result, atom),
+                None => self.symbol_property(result, key),
+            },
             GroupByKind::Map => self.map_entry_index(result, key).map(|index| {
                 let Some(entries) = self.heap.map_entries(result) else {
                     unreachable!("groupBy owns a Map result")
@@ -150,15 +149,14 @@ impl<H: Host> Vm<H> {
                     vec![value],
                 ));
             match kind {
-                GroupByKind::Object => {
-                    if self.heap.is_symbol(key) {
-                        self.set_index(p, result, key, group)?;
-                    } else if let Some(atom) = self.string_key_atom(key) {
+                GroupByKind::Object => match key_atom {
+                    Some(atom) => {
                         self.set_property(result, atom, group)?;
-                    } else {
-                        unreachable!("ToPropertyKey returns a string or symbol");
                     }
-                }
+                    None => {
+                        self.set_index(p, result, key, group)?;
+                    }
+                },
                 GroupByKind::Map => {
                     let key_hash = self.same_value_zero_hash(key);
                     let Some(entries) = self.heap.map_entries_mut(result) else {

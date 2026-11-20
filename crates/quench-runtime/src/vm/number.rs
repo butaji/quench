@@ -449,16 +449,15 @@ pub(super) fn number_predicate(native: Native, value: Value) -> Option<bool> {
     })
 }
 
-/// Splits Rust's `{:e}` text into its coefficient and decimal exponent. This is the single home for
-/// the exponent split; both scientific formatters below read their parts through it.
-fn split_scientific(text: &str) -> (&str, i32) {
-    let (coefficient, exponent) = text.split_once('e').unwrap_or((text, "0"));
+/// The coefficient text and exponent of a `{:e}` formatted number.
+fn scientific_parts(value: &str) -> (&str, i32) {
+    let (coefficient, exponent) = value.split_once('e').unwrap_or((value, "0"));
     (coefficient, exponent.parse::<i32>().unwrap_or_default())
 }
 
 fn format_scientific(number: f64, digits: usize) -> String {
     let value = format!("{number:.digits$e}");
-    let (coefficient, exponent) = split_scientific(&value);
+    let (coefficient, exponent) = scientific_parts(&value);
     format!("{coefficient}e{exponent:+}")
 }
 
@@ -468,7 +467,7 @@ pub(super) fn number_to_decimal(number: f64) -> String {
 
 fn format_scientific_exponential(number: f64, digits: usize) -> String {
     let value = format!("{number:.digits$e}");
-    let (coefficient, exponent) = split_scientific(&value);
+    let (coefficient, exponent) = scientific_parts(&value);
     let scaled = number.abs() / 10_f64.powi(exponent - digits as i32);
     if scaled.fract() == 0.5 {
         let mut rounded = scaled.floor() + 1.0;

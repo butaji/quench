@@ -11,6 +11,21 @@ enum SetRecord {
     },
 }
 
+/// A relation result's SameValueZero index: the slots of the result list under each hash, and
+/// which slots a removal dropped (the list is compacted once, at the end).
+#[derive(Default)]
+struct SetResultIndex {
+    slots: rustc_hash::FxHashMap<u64, smallvec::SmallVec<[u32; 2]>>,
+    removed: Vec<bool>,
+}
+
+impl SetResultIndex {
+    /// The result list without the removed values, in insertion order.
+    fn kept(&self, values: Vec<Value>) -> Vec<Value> {
+        values.into_iter().zip(&self.removed).filter(|(_, removed)| !**removed).map(|(value, _)| value).collect()
+    }
+}
+
 enum SetRecordStep<T> {
     Continue(T),
     Stop(T),
@@ -60,7 +75,7 @@ impl<H: Host> Vm<H> {
         let outcome = (|| {
             self.require_brand(p, receiver, Brand::Set, "Set method")?;
             let other = self.get_set_record(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-            let mut values = crate::heap::CollectionEntries::default();
+            let mut values = Vec::new();
             let mut value_roots = Vec::new();
             let result = self.apply_set_relation(
                 p,
@@ -76,7 +91,8 @@ impl<H: Host> Vm<H> {
                     Ok(if value { Value::TRUE } else { Value::FALSE })
                 }
                 Ok(SetRelationResult::Set) => {
-                    let entries = values.into();
+                    let entries = values.into_iter().map(|value| (value, self.same_value_zero_hash(value)));
+                    let entries = crate::heap::CollectionEntries::from_hashed(entries).into();
                     let set = self.heap.alloc_set(Self::empty_object(self.set_proto), entries);
                     Ok(set)
                 }
@@ -174,9 +190,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The values of the Set `set` in insertion order, copied now, or `None` when `set` is no
-    /// Set. A walk that runs guest code walks this copy, so the Set's own mutations do not
-    /// change it. Every Set relation's copy of a Set's entries goes through here.
     fn set_snapshot(&self, set: Value) -> Option<Vec<Value>> {
         self.heap.set_entries(set).map(|entries| entries.to_vec())
     }
@@ -338,13 +351,13 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Adds `value` to a Set relation's result unless the result holds a SameValueZero-equal
-    /// value: one hash and one probe of the result's key index, the same probe Set.prototype.add
-    /// makes. `-0` is stored as `+0`. The only insertion into a result.
+    /// Appends `value` to a relation's result unless a SameValueZero-equal value is there: one
+    /// probe of the result's hash index, not a scan of the result.
     fn push_set_result(
         &mut self,
-        values: &mut crate::heap::CollectionEntries<Value>,
+        values: &mut Vec<Value>,
         roots: &mut Vec<RootId>,
+        index: &mut SetResultIndex,
         value: Value,
     ) {
         let value = if value.as_number().is_some_and(|number| number == 0.0) {
@@ -352,24 +365,25 @@ impl<H: Host> Vm<H> {
         } else {
             value
         };
-        let value_hash = self.same_value_zero_hash(value);
-        if values
-            .position(value, value_hash, |candidate| self.same_value_zero(candidate, value))
-            .is_some()
-        {
+        let hash = self.same_value_zero_hash(value);
+        let slots = index.slots.entry(hash).or_default();
+        if slots.iter().any(|&slot| self.same_value_zero(values[slot as usize], value)) {
             return;
         }
+        slots.push(values.len() as u32);
+        index.removed.push(false);
         roots.push(self.heap.root(value));
-        values.push(value, value_hash);
+        values.push(value);
     }
 
-    /// Removes the entry SameValueZero to `value` from a Set relation's result, if it has one:
-    /// one probe. A removed entry leaves a hole that the result's index skips.
-    fn remove_set_result(&self, values: &mut crate::heap::CollectionEntries<Value>, value: Value) {
-        let value_hash = self.same_value_zero_hash(value);
-        if let Some(slot) = values.position(value, value_hash, |candidate| self.same_value_zero(candidate, value)) {
-            // Compaction renumbers only registered iterators, and a result has none.
-            let _ = values.remove(slot);
+    /// Removes the SameValueZero-equal value from a relation's result, by one probe; the list
+    /// is compacted once, by `finish_set_result`.
+    fn remove_set_result(&self, values: &[Value], index: &mut SetResultIndex, value: Value) {
+        let hash = self.same_value_zero_hash(value);
+        if let Some(slots) = index.slots.get_mut(&hash)
+            && let Some(at) = slots.iter().position(|&slot| self.same_value_zero(values[slot as usize], value))
+        {
+            index.removed[slots.swap_remove(at) as usize] = true;
         }
     }
 
@@ -379,9 +393,10 @@ impl<H: Host> Vm<H> {
         native: Native,
         own: Value,
         other: &SetRecord,
-        values: &mut crate::heap::CollectionEntries<Value>,
+        values: &mut Vec<Value>,
         roots: &mut Vec<RootId>,
     ) -> Result<SetRelationResult, JsError> {
+        let mut index = SetResultIndex::default();
         let own_size = match self.heap.set_entries(own) {
             Some(entries) => entries.len() as f64,
             None => return Err(self.type_error(p, "Set method called on incompatible receiver".into())),
@@ -390,26 +405,24 @@ impl<H: Host> Vm<H> {
             Native::SetDifference if own_size <= other.size(self) => {
                 self.for_each_set_snapshot(p, own, |vm, value| {
                     if !vm.set_record_has(p, other, value)? {
-                        vm.push_set_result(values, roots, value);
+                        vm.push_set_result(values, roots, &mut index, value);
                     }
                     Ok(true)
                 })?;
             }
             Native::SetDifference => {
-                // The copy is taken before `other`'s keys() runs, as Set.prototype.difference does.
-                let current = self.set_snapshot(own).unwrap_or_default();
-                for value in current {
-                    self.push_set_result(values, roots, value);
+                for value in self.set_snapshot(own).unwrap_or_default() {
+                    self.push_set_result(values, roots, &mut index, value);
                 }
                 self.fold_set_record(p, other, |_| Ok(()), |vm, (), value| {
-                    vm.remove_set_result(values, value);
+                    vm.remove_set_result(values, &mut index, value);
                     Ok(SetRecordStep::Continue(()))
                 })?;
             }
             Native::SetIntersection if own_size <= other.size(self) => {
                 self.for_each_live_set(p, own, |vm, value| {
                     if vm.set_record_has(p, other, value)? {
-                        vm.push_set_result(values, roots, value);
+                        vm.push_set_result(values, roots, &mut index, value);
                     }
                     Ok(true)
                 })?;
@@ -417,36 +430,35 @@ impl<H: Host> Vm<H> {
             Native::SetIntersection => {
                 self.fold_set_record(p, other, |_| Ok(()), |vm, (), value| {
                     if vm.set_entry_index(own, value).is_some() {
-                        vm.push_set_result(values, roots, value);
+                        vm.push_set_result(values, roots, &mut index, value);
                     }
                     Ok(SetRecordStep::Continue(()))
                 })?;
             }
             Native::SetSymmetricDifference | Native::SetUnion => {
-                let (result, result_roots) = self.fold_set_record(
+                let (result, result_roots, result_index) = self.fold_set_record(
                     p,
                     other,
                     |vm| {
-                        let mut result = crate::heap::CollectionEntries::default();
+                        let mut result = Vec::new();
                         let mut result_roots = Vec::new();
-                        let current = vm.set_snapshot(own).unwrap_or_default();
-                        for value in current {
-                            vm.push_set_result(&mut result, &mut result_roots, value);
+                        let mut result_index = SetResultIndex::default();
+                        for value in vm.set_snapshot(own).unwrap_or_default() {
+                            vm.push_set_result(&mut result, &mut result_roots, &mut result_index, value);
                         }
-                        Ok((result, result_roots))
+                        Ok((result, result_roots, result_index))
                     },
-                    |vm, (mut result, mut result_roots), value| {
+                    |vm, (mut result, mut result_roots, mut result_index), value| {
                         let in_own = vm.set_entry_index(own, value).is_some();
                         if native == Native::SetSymmetricDifference && in_own {
-                            vm.remove_set_result(&mut result, value);
+                            vm.remove_set_result(&result, &mut result_index, value);
                         } else if !in_own {
-                            vm.push_set_result(&mut result, &mut result_roots, value);
+                            vm.push_set_result(&mut result, &mut result_roots, &mut result_index, value);
                         }
-                        Ok(SetRecordStep::Continue((result, result_roots)))
+                        Ok(SetRecordStep::Continue((result, result_roots, result_index)))
                     },
                 )?;
-                // `values` was empty: this relation's only insertion, so it takes the result.
-                *values = result;
+                values.extend(result_index.kept(result));
                 roots.extend(result_roots);
             }
             Native::SetIsDisjointFrom if own_size <= other.size(self) => {
@@ -498,6 +510,9 @@ impl<H: Host> Vm<H> {
                 return Ok(SetRelationResult::Boolean(!missing));
             }
             _ => return Err(JsError("invalid Set relation native".into())),
+        }
+        if index.removed.contains(&true) {
+            *values = index.kept(std::mem::take(values));
         }
         Ok(SetRelationResult::Set)
     }

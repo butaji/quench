@@ -40,13 +40,17 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn array_values(&self, this: Value) -> Result<Vec<Value>, JsError> {
+        Ok(self.array_value_list(this)?.collect())
+    }
+
+    /// The values of array `this` in index order, read as the caller consumes them, so a list
+    /// can be filled without an intermediate `Vec` (`array_values` collects it).
+    pub(super) fn array_value_list(&self, this: Value) -> Result<impl Iterator<Item = Value> + '_, JsError> {
         let Some(elements) = self.heap.array_elements(this) else {
             return Err(JsError("modern array method receiver is not array".into()));
         };
         let length = self.heap.sparse_length(this).unwrap_or(elements.len());
-        Ok((0..length)
-            .map(|index| self.array_value_at(this, index))
-            .collect())
+        Ok((0..length).map(move |index| self.array_value_at(this, index)))
     }
 
     pub(super) fn new_array(&mut self, values: Vec<Value>) -> Value {

@@ -784,7 +784,6 @@ impl<H: Host> Vm<H> {
                 } else {
                     None
                 };
-                // The key's hash is one fact of the key, so the probes after the callback reuse it.
                 let key_hash = self.same_value_zero_hash(key);
                 if let Some(index) = self.map_entry_index_hashed(this, key, key_hash)
                     && let Some(entries) = self.heap.map_entries(this) {
@@ -797,15 +796,16 @@ impl<H: Host> Vm<H> {
                     Native::MapGetOrInsertComputed => {
                         let callback = computed_callback.unwrap_or(Value::UNDEFINED);
                         let canonical_key = canonicalize_keyed_collection_key(key);
-                        let value = self.call_value(p, callback, Value::UNDEFINED, &[canonical_key])?;
-                        // The callback may have inserted the key, so only this arm probes again.
+                        let computed =
+                            self.call_value(p, callback, Value::UNDEFINED, &[canonical_key])?;
+                        // The callback may have inserted the key: only then is the miss stale.
                         if let Some(index) = self.map_entry_index_hashed(this, key, key_hash) {
                             if let Some(entries) = self.heap.map_entries_mut(this) {
-                                entries.set_value(index, value);
+                                entries.set_value(index, computed);
                             }
-                            return Ok(value);
+                            return Ok(computed);
                         }
-                        value
+                        computed
                     }
                     _ => unreachable!("Map get-or-insert dispatch is exhaustive"),
                 };

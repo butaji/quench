@@ -9,6 +9,7 @@ use crate::bytecode::ImmediateLayout;
 use crate::staged::array_search::{DenseNeedle, scan_dense};
 use crate::staged::region::Region;
 use crate::staged::{Domain, builtins, elements, strings};
+use crate::staged::Stage as _;
 use crate::heap::Native;
 
 /// A builtin a call runs on its staged row.
@@ -28,6 +29,8 @@ pub(super) enum Builtin {
     Includes,
     /// `Array.prototype.indexOf` of one int32 over a dense array (`element_search`).
     IndexOf,
+    /// `Array.isArray` of one value (`plain_array_argument`).
+    IsArray,
 }
 
 impl Builtin {
@@ -41,13 +44,14 @@ impl Builtin {
             Native::NumberIsInteger => Self::IsInteger,
             Native::ArrayIncludes => Self::Includes,
             Native::ArrayIndexOf => Self::IndexOf,
+            Native::ArrayIsArray => Self::IsArray,
             _ => return None,
         })
     }
 
     /// The arguments the builtin reads; a call passing another count takes the native.
     pub(super) const fn arguments(self) -> u16 {
-        match self { Self::Pop => 0, Self::CharCodeAt | Self::CharAt | Self::Push | Self::IsInteger | Self::Includes | Self::IndexOf => 1 }
+        match self { Self::Pop => 0, Self::CharCodeAt | Self::CharAt | Self::Push | Self::IsInteger | Self::Includes | Self::IndexOf | Self::IsArray => 1 }
     }
 
     /// Whether the builtin changes an array's elements.
@@ -111,7 +115,34 @@ impl Lowering<'_, '_> {
                 let position = self.element_search(state, pc, receiver, argument, exit);
                 self.set_int(state, result, position);
             }
+            Builtin::IsArray => {
+                // An ordinary array answers true; any other value leaves before the call changes anything, and the
+                // call's own step answers it (`Vm::is_array`).
+                self.plain_array_argument(state, argument, exit);
+                let holds = self.raw_const(Lane::I8, 1);
+                let boolean = self.boolean(holds);
+                self.set_boolean(state, result, boolean);
+            }
         }
+    }
+
+    /// Guards that the value in `register` is an ordinary array, one whose record holds no extras: a direct array
+    /// among the array records, with no extras in its payload word. An arguments object always holds extras (its
+    /// brand is one), so such a record is no arguments object and `Array.isArray` holds of it. Any other value leaves
+    /// at `exit`.
+    fn plain_array_argument(&mut self, state: &mut State, register: Register, exit: ir::Block) {
+        use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+        let base = self.tagged(state, register);
+        let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
+        let mut stage = super::super::object_slots::emit(&mut self.builder);
+        let direct = crate::staged::value::is_direct_array(&mut stage, base);
+        continues(stage.guard(direct, exit));
+        let present = stage.ne_imm(records, 0u32);
+        continues(stage.guard(present, exit));
+        let record = elements::array_record(&mut stage, records, base);
+        let payload = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+        let plain = crate::staged::object::plain_payload(&mut stage, payload);
+        continues(stage.guard(plain, exit));
     }
 
     /// The word of the dispatch payload at `offset`.

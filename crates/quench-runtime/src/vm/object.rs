@@ -1222,8 +1222,15 @@ impl FieldCacheSet {
         self.holds_own |= cache.holder == NO_FIELD_HOLDER;
         let key = field_cache_key(cache.receiver, cache.holder);
         if let Some(entries) = &mut self.overflow {
-            if entries.len() < FIELD_MEGAMORPHIC_LIMIT || entries.contains_key(&key) {
-                entries.insert(key, cache);
+            let room = entries.len() < FIELD_MEGAMORPHIC_LIMIT;
+            match entries.entry(key) {
+                std::collections::hash_map::Entry::Occupied(mut slot) => {
+                    slot.insert(cache);
+                }
+                std::collections::hash_map::Entry::Vacant(slot) if room => {
+                    slot.insert(cache);
+                }
+                std::collections::hash_map::Entry::Vacant(_) => {}
             }
             return;
         }
@@ -3122,7 +3129,7 @@ impl<H: Host> Vm<H> {
     /// proxy: a hit, a miss at the resolved site, or no cacheable receiver.
     #[inline(always)]
     fn object_field_cache_read(&self, cell: &Cell, atom: Atom, site: u16) -> FieldCacheRead {
-        self.receiver_field_cache_read(self.shape_property_lookup_cell(cell, atom), atom, site)
+        self.receiver_field_cache_read(self.shape_property_lookup_cell(cell, self.atom_class(atom)), atom, site)
     }
 
     /// The field cache's answer for a receiver whose shape answers the read (`None`: it
@@ -4481,7 +4488,6 @@ impl<H: Host> Vm<H> {
     /// encoding is independent of the shape/descriptor permission to write it.
     fn cached_own_writable_slot(&self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<usize> {
         if !(self.specialized && p.specialized)
-            || self.is_private_name(atom)
             || !self.field_cache_atom_eligible(atom)
             || self.method_caches_may_name(atom)
         {

@@ -184,20 +184,20 @@ impl<H: Host> Vm<H> {
     /// strings, whose text will not fit inline: a string of parts, which writes its text out
     /// when it is first read (`Heap::written_out_string`) and costs a record until then. `None`
     /// for any other parts. It is a small string (`Heap::alloc_small_string`), in a smaller
-    /// record, while that space has room. `text_bytes` is the total length of the string parts,
-    /// measured once by the caller (`ascii_text_len`); no part is measured again here.
+    /// record, while that space has room.
     #[inline(always)]
-    pub(super) fn string_of_parts(&mut self, count: usize, part: impl Fn(&Self, usize) -> Value, text_bytes: usize) -> Option<Value> {
+    pub(super) fn string_of_parts(&mut self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<Value> {
         use super::wtf16::{MAX_PARTS, MIN_PARTS, Parts};
         if !(MIN_PARTS..=MAX_PARTS).contains(&count) {
             return None;
         }
         // The string ids in order, and the Number and its place.
-        let (mut ids, mut texts, mut number) = ([0; MAX_PARTS], 0, None);
+        let (mut ids, mut texts, mut number, mut known) = ([0; MAX_PARTS], 0, None, 0);
         for index in 0..count {
             let value = part(self, index);
             match value.direct_string_index() {
                 Some(record_id) => {
+                    known += self.heap.existing_ascii_len(value)?;
                     ids[texts] = record_id;
                     texts += 1;
                 }
@@ -206,7 +206,7 @@ impl<H: Host> Vm<H> {
             }
         }
         let numbers = usize::from(number.is_some());
-        if text_bytes + numbers <= wtf16::SHORT_ASCII_CAPACITY || text_bytes >= PARTS_KNOWN_LIMIT {
+        if known + numbers <= wtf16::SHORT_ASCII_CAPACITY || known >= PARTS_KNOWN_LIMIT {
             return None;
         }
         let small = crate::heap::SmallParts::new(ids, texts, number).or_else(|| match number {
@@ -242,15 +242,10 @@ impl<H: Host> Vm<H> {
         count: usize,
         part: impl Fn(&Self, usize) -> Value,
     ) -> Result<Value, JsError> {
-        // Each string part is measured once, here. A part that is not flat ASCII text sends the
-        // concatenation to the converted join, which both joins above would refuse too.
-        let Some(text_bytes) = self.ascii_text_len(count, &part) else {
-            return self.converted_string_concat(p, count, part);
-        };
-        if let Some(string) = self.string_of_parts(count, &part, text_bytes) {
+        if let Some(string) = self.string_of_parts(count, &part) {
             return Ok(string);
         }
-        if let Some(text) = self.ascii_string_concat(count, &part, text_bytes) {
+        if let Some(text) = self.ascii_string_concat(count, &part) {
             return Ok(self.heap.alloc_string(text));
         }
         self.converted_string_concat(p, count, part)
@@ -258,23 +253,22 @@ impl<H: Host> Vm<H> {
 
     /// `string_concat` of parts a string of parts does not take, where every part converts to a
     /// string without guest code (`converts_to_string_purely`); `None` for any other part or a
-    /// result past the string length limit, which the general step makes or raises. `text_bytes`
-    /// is the string parts' total length (`ascii_text_len`), `None` when one is not flat ASCII text.
+    /// result past the string length limit, which the general step makes or raises.
     pub(super) fn pure_string_concat_apart(&mut self, p: &ResidualProgram, count: usize,
-        part: impl Fn(&Self, usize) -> Value + Copy, text_bytes: Option<usize>) -> Option<Value> {
+        part: impl Fn(&Self, usize) -> Value + Copy) -> Option<Value> {
         // Each part is read once: the reads are pure, and both passes below use the values.
         let mut values = smallvec::SmallVec::<[Value; STRING_CONCAT_INLINE_PARTS]>::with_capacity(count);
         for index in 0..count {
             values.push(part(self, index));
         }
-        self.pure_values_concat(p, &values, text_bytes)
+        self.pure_values_concat(p, &values)
     }
 
     /// `pure_string_concat_apart` of the part values `values`, already read: the ASCII join, else
     /// the converted join when every part converts to a string purely.
-    fn pure_values_concat(&mut self, p: &ResidualProgram, values: &[Value], text_bytes: Option<usize>) -> Option<Value> {
+    fn pure_values_concat(&mut self, p: &ResidualProgram, values: &[Value]) -> Option<Value> {
         let part = |_: &Self, index: usize| values[index];
-        if let Some(text) = text_bytes.and_then(|text_bytes| self.ascii_string_concat(values.len(), part, text_bytes)) {
+        if let Some(text) = self.ascii_string_concat(values.len(), part) {
             return Some(self.heap.alloc_string(text));
         }
         if !values.iter().all(|&value| self.converts_to_string_purely(value)) {
@@ -286,11 +280,7 @@ impl<H: Host> Vm<H> {
     /// `string_concat` that runs no guest code: a string of parts, or `pure_string_concat_apart`.
     pub(super) fn pure_string_concat(&mut self, p: &ResidualProgram, count: usize,
         part: impl Fn(&Self, usize) -> Value + Copy) -> Option<Value> {
-        // Each string part is measured once, for the string of parts and for the ASCII join.
-        let text_bytes = self.ascii_text_len(count, part);
-        text_bytes
-            .and_then(|text_bytes| self.string_of_parts(count, part, text_bytes))
-            .or_else(|| self.pure_string_concat_apart(p, count, part, text_bytes))
+        self.string_of_parts(count, part).or_else(|| self.pure_string_concat_apart(p, count, part))
     }
 
     /// `StringConcat` of the register `window` of frame `f`.
@@ -299,25 +289,54 @@ impl<H: Host> Vm<H> {
         self.string_concat(p, usize::from(window.count), |vm, part| vm.frames[f].registers[start + part])
     }
 
-    /// The total byte length of the string parts among the `count` parts `part` reads, each
-    /// measured once by `ascii_part_len`; `None` when one is not flat ASCII text. Numbers and the
-    /// other immediates are not measured here: `ascii_string_concat` formats each one once.
+    /// `string_concat` of parts that are numbers, booleans, null, undefined and flat ASCII
+    /// strings, short together: the total length is measured first (`ascii_part_len`), then each
+    /// part is written once straight into the result's storage (`JsString::from_ascii_filled`).
+    /// `None` for any other part, which `converted_string_concat` converts, or for a result past
+    /// `STRING_CONCAT_MAX_BYTES`.
     #[inline(always)]
-    fn ascii_text_len(&self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<usize> {
+    pub(super) fn ascii_string_concat(&self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<JsString> {
+        // A Number part is formatted here once, and its text is written from this list.
+        let mut texts =
+            smallvec::SmallVec::<[Option<crate::number_to_string::Short>; STRING_CONCAT_INLINE_PARTS]>::with_capacity(count);
         let mut length = 0;
         for index in 0..count {
             let value = part(self, index);
-            if value.direct_string_index().is_some() {
-                length += self.ascii_part_len(value)?;
+            let text = number_part_text(value);
+            length += match &text {
+                Some(text) => text.len(),
+                None => self.ascii_part_len(value)?,
+            };
+            if length > STRING_CONCAT_MAX_BYTES {
+                return None;
             }
+            texts.push(text);
         }
-        Some(length)
+        Some(JsString::from_ascii_filled(length, |out| {
+            let mut at = 0;
+            for (index, text) in texts.iter().enumerate() {
+                at = match text {
+                    Some(text) => put_text(out, at, text),
+                    None => self.write_ascii_part(part(self, index), out, at),
+                };
+            }
+            assert_eq!(at, out.len(), "the parts fill the length measured for them");
+        }))
     }
 
-    /// The byte length of the flat ASCII string part `value`, the one home of that measure; `None`
-    /// for a string that is not flat ASCII text, which the concatenation does not join.
+    /// The byte length `write_ascii_part` writes for the part `value`, which is not a Number;
+    /// `None` for a part that is not flat ASCII text, which the concatenation does not join.
     #[inline(always)]
     fn ascii_part_len(&self, value: Value) -> Option<usize> {
+        if let Some(boolean) = value.as_bool() {
+            return Some(if boolean { TRUE_TEXT.len() } else { FALSE_TEXT.len() });
+        }
+        if value.is_null() {
+            return Some(NULL_TEXT.len());
+        }
+        if value.is_undefined() {
+            return Some(UNDEFINED_TEXT.len());
+        }
         match self.heap.flat_text(value)? {
             crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes)) => Some(bytes.len()),
             crate::heap::FlatText::Record(super::wtf16::Units::Wide(_) | super::wtf16::Units::Latin1(_)) => None,
@@ -325,59 +344,19 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `string_concat` of parts that are numbers, booleans, null, undefined and flat ASCII
-    /// strings, short together. `text_bytes` is the string parts' total length (`ascii_text_len`).
-    /// Each Number or integer is formatted once, into a stack buffer kept until the write, which
-    /// copies it from there; the other parts are measured here and copied from their own text
-    /// (`JsString::from_ascii_filled`). `None` for any other part, which `converted_string_concat`
-    /// converts, or for a result past `STRING_CONCAT_MAX_BYTES`.
+    /// Writes the text of the part `value`, which is not a Number, into `out` at `at`, returning
+    /// the offset past it. The part was measured by `ascii_part_len`, so it is flat ASCII text.
     #[inline(always)]
-    pub(super) fn ascii_string_concat(&self, count: usize, part: impl Fn(&Self, usize) -> Value,
-        text_bytes: usize) -> Option<JsString> {
-        if text_bytes > STRING_CONCAT_MAX_BYTES {
-            return None;
+    fn write_ascii_part(&self, value: Value, out: &mut [std::mem::MaybeUninit<u8>], at: usize) -> usize {
+        if let Some(boolean) = value.as_bool() {
+            return put_text(out, at, if boolean { TRUE_TEXT } else { FALSE_TEXT });
         }
-        // The formatted Numbers in part order: up to `STRING_CONCAT_INLINE_PARTS` of them stay on
-        // the stack, a longer concatenation spills them as the other joins spill their parts.
-        let mut numbers = smallvec::SmallVec::<[crate::number_to_string::Short; STRING_CONCAT_INLINE_PARTS]>::new();
-        let mut length = text_bytes;
-        for index in 0..count {
-            let value = part(self, index);
-            if value.direct_string_index().is_some() {
-                continue;
-            }
-            match number_part_text(value) {
-                Some(text) => {
-                    length += text.len();
-                    numbers.push(text);
-                }
-                None => length += constant_text(value)?.len(),
-            }
-            if length > STRING_CONCAT_MAX_BYTES {
-                return None;
-            }
+        if value.is_null() {
+            return put_text(out, at, NULL_TEXT);
         }
-        Some(JsString::from_ascii_filled(length, |out| {
-            let mut at = 0;
-            let mut numbers = numbers.iter();
-            for index in 0..count {
-                let value = part(self, index);
-                at = if value.direct_string_index().is_some() {
-                    self.write_ascii_text(value, out, at)
-                } else if value.as_int().is_some() || value.as_number().is_some() {
-                    put_text(out, at, numbers.next().expect("a formatted Number per Number part"))
-                } else {
-                    put_text(out, at, constant_text(value).expect("a constant part was measured"))
-                };
-            }
-            assert_eq!(at, out.len(), "the parts fill the length measured for them");
-        }))
-    }
-
-    /// Writes the text of the flat ASCII string part `value` into `out` at `at`, returning the
-    /// offset past it. The part was measured by `ascii_part_len`, so it is flat ASCII text.
-    #[inline(always)]
-    fn write_ascii_text(&self, value: Value, out: &mut [std::mem::MaybeUninit<u8>], at: usize) -> usize {
+        if value.is_undefined() {
+            return put_text(out, at, UNDEFINED_TEXT);
+        }
         match self.heap.flat_text(value) {
             Some(crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes))) => put_text(out, at, bytes),
             Some(crate::heap::FlatText::Small(small)) => put_text(out, at, small.as_bytes()),
@@ -406,28 +385,15 @@ impl<H: Host> Vm<H> {
 /// (`JsString::copies_whole`); a longer one is a rope of its parts.
 const STRING_CONCAT_MAX_BYTES: usize = 512;
 
-/// The ASCII text of an integer or Number part, formatted once into a stack buffer: the decimal
-/// digits of an integer (with its sign), else Number::toString(10). `None` for any other part.
+/// The text of a Number part, an int32 or a double, held on the stack; `None` for any other part.
 #[inline(always)]
 fn number_part_text(value: Value) -> Option<crate::number_to_string::Short> {
     if let Some(int) = value.as_int() {
         let mut text = crate::number_to_string::Short::new();
-        crate::number_to_string::Output::extend_from_slice(&mut text, itoa::Buffer::new().format(int).as_bytes());
+        text.try_extend(itoa::Buffer::new().format(int).as_bytes()).expect("an int32's decimal text fits a Short");
         return Some(text);
     }
     value.as_number().map(number_text)
-}
-
-/// The ASCII text of a boolean, null or undefined part; `None` for any other part.
-#[inline(always)]
-fn constant_text(value: Value) -> Option<&'static [u8]> {
-    if let Some(boolean) = value.as_bool() {
-        return Some(if boolean { TRUE_TEXT } else { FALSE_TEXT });
-    }
-    if value.is_null() {
-        return Some(NULL_TEXT);
-    }
-    value.is_undefined().then_some(UNDEFINED_TEXT)
 }
 
 /// Number::toString(10) of `number` as ASCII text, held on the stack.

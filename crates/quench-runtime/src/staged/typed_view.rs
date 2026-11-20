@@ -35,7 +35,7 @@ impl ViewAccess {
 
 /// The record of the typed array `base`: `None` (leaving at `miss`) for any other value.
 #[inline(always)]
-fn view_record<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub(crate) fn view_record<S: Stage>(stage: &mut S, records: TypedRecords<S::Word>, base: S::Word, miss: S::Miss) -> Option<S::Word> {
     let legacy = value::is_legacy_slot(stage, base);
     stage.guard(legacy, miss)?;
     let slot = stage.and_imm(base, u64::from(u32::MAX));

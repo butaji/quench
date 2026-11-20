@@ -232,7 +232,7 @@ impl Relations {
 
     /// The relations after `instruction` at `pc`.
     pub(super) fn step(&mut self, model: &Model<'_>, pc: usize, instruction: WideInstruction,
-        written: &dyn Fn(WideInstruction) -> Vec<Register>, lookup: &dyn Fn(Operand) -> Option<IntRange>, numeric_store: bool) {
+        written: &dyn Fn(WideInstruction) -> super::Writes, lookup: &dyn Fn(Operand) -> Option<IntRange>, numeric_store: bool) {
         if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Move { .. })) && instruction.result_flags() == 0 {
             self.copy(instruction.result_register(), instruction.register_b());
         } else if let Some(register) = Self::decremented(instruction) {

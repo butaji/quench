@@ -1999,14 +1999,11 @@ impl<H: Host> Vm<H> {
     /// other object answer `false`. A caller that has not decided the boxed fact of `value`
     /// reads it here; one that has (`json_plain_plan`) calls `json_chain_lacks_to_json`.
     fn json_lacks_to_json(&self, value: Value, to_json: Atom) -> bool {
-        if self.boxed_primitive_data(value).is_some() {
-            return false;
-        }
-        self.json_chain_lacks_to_json(value, to_json)
+        self.boxed_primitive_data(value).is_none() && self.json_chain_lacks_to_json(value, to_json)
     }
 
-    /// `json_lacks_to_json` for a `value` already decided not to be a boxed primitive, so its
-    /// boxed fact is not read again.
+    /// `json_lacks_to_json` for an object already known not to be a boxed primitive: the chain
+    /// walk alone.
     fn json_chain_lacks_to_json(&self, value: Value, to_json: Atom) -> bool {
         let key = PropertyKey::string(to_json);
         let mut current = value;

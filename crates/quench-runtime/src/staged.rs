@@ -97,6 +97,7 @@ pub(crate) mod double_view;
 pub(crate) mod element_rows;
 pub(crate) mod typed_elements;
 pub(crate) mod typed_view;
+pub(crate) mod data_view;
 mod element_frame;
 pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;
@@ -105,7 +106,7 @@ pub(crate) mod ic;
 pub(crate) mod ic_flat;
 pub(crate) mod ic_read;
 pub(crate) mod object;
-mod narrow;
+pub(crate) mod narrow;
 pub(crate) mod store;
 pub(crate) mod slot_store;
 pub(crate) mod strings;
@@ -927,6 +928,11 @@ pub(crate) const fn row_writes_result(op: Op) -> bool {
     // store and a fill define none.
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
         return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
+    }
+    // An opcode whose A field is no result register defines none, so there is nothing for the lane
+    // to write: its row's value (a cleanup pop's 0, a store's source) must not land in register A.
+    if !matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) {
+        return true;
     }
     // A keyed read's answer is written by the lane (its record's result register, as every
     // producer writes it beside the carried value).

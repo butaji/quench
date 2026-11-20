@@ -96,7 +96,7 @@ struct RuntimeAtoms {
     /// Read by every promise resolution and species lookup.
     then: Atom,
     constructor: Atom,
-    /// ToPrimitive's method names, read on every object-to-primitive conversion.
+    /// The ToPrimitive methods, read by every ToNumber and ToString of an object.
     value_of: Atom,
     to_string: Atom,
     /// The iterator protocol's step method.
