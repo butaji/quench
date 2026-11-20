@@ -744,6 +744,10 @@ typedef struct TsFlow {
   struct TsFlow *target;        /* ReduceLabel: target and antecedents */
   struct TsFlow **redAnts;
   int nRedAnts;
+  uint32_t walkStamp;           /* checker: the flow walk (cFlowStamp) that last computed the node */
+  struct TsType *walkType;      /* checker: the flow type computed by that walk (NULL while in progress) */
+  uint8_t walkDone, walkRevisited, walkMismatch;   /* checker: loop labels: revisited while in progress */
+  struct TsType *walkSeen;      /* checker: the partial loop type that a revisit returned first */
 } TsFlow;
 
 /* the two unreachable nodes are created once by createBinder in TypeScript, so they are not counted */
@@ -1840,6 +1844,16 @@ static void bBind(TsNode *node) {
   fprintf(stderr, "visit kind %d pos %d\n", node->kind, node->pos);
 #endif
   node->parent = bParent;
+  /* the flow node of a reference (bindWorker: identifiers in expressions, this and super; bindChildren: narrowable accesses) */
+  if (bCurFlow && (node->kind == TSK_Identifier || node->kind == TSK_ThisKeyword || node->kind == TSK_SuperKeyword)) node->flowNode = bCurFlow;
+  else if (bCurFlow && (node->kind == TSK_PropertyAccessExpression || node->kind == TSK_ElementAccessExpression) && bIsNarrowableReference(node))
+    node->flowNode = bCurFlow;
+  /* bindFunctionExpression and bindPropertyOrMethodOrAccessor: the flow at which a function value is created */
+  if (bCurFlow && node->kind > TSK_LastToken &&
+      (node->kind == TSK_FunctionExpression || node->kind == TSK_ArrowFunction ||
+       ((node->kind == TSK_MethodDeclaration || node->kind == TSK_GetAccessor || node->kind == TSK_SetAccessor) &&
+        (bContainerFlags(node) & CF_IsObjectLiteralOrClassExpressionMethodOrAccessor))))
+    node->flowNode = bCurFlow;
   bool saveStrict = bInStrictMode;
   bBindWorker(node);
   TsNode *saveParent = bParent;

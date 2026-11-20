@@ -34,7 +34,44 @@ typedef struct CDiag {
 static CDiag *cDiags;
 static int cDiagCount, cDiagCap;
 
+/* a line that holds a `// @ts-ignore` or `// @ts-expect-error` comment (commentDirectiveRegExpSingleLine) */
+static bool cLineHasDirective(const char *t, int32_t s, int32_t e) {
+  for (int32_t i = s; i + 1 < e; i++) {
+    if (t[i] != '/' || t[i + 1] != '/') continue;
+    int32_t j = i + 2;
+    if (j < e && t[j] == '/') j++;
+    while (j < e && (t[j] == ' ' || t[j] == '\t')) j++;
+    if (j < e && t[j] == '@') {
+      if (e - j >= 10 && memcmp(t + j, "@ts-ignore", 10) == 0) return true;
+      if (e - j >= 16 && memcmp(t + j, "@ts-expect-error", 16) == 0) return true;
+    }
+    return false;
+  }
+  return false;
+}
+
+/* markPrecedingCommentDirectiveLine: a directive on the lines above the diagnostic's line, through blank and
+ * comment-only lines, suppresses the diagnostic */
+static bool cSuppressedByDirective(TsNode *file, int32_t start) {
+  const char *t = file->text;
+  int32_t cur = start;
+  while (cur > 0 && t[cur - 1] != '\n' && t[cur - 1] != '\r') cur--;
+  while (cur > 0) {
+    int32_t ce = cur - 1;                       /* the line break before cur: content ends before it */
+    if (ce > 0 && t[ce] == '\n' && t[ce - 1] == '\r') ce--;
+    int32_t s = ce;
+    while (s > 0 && t[s - 1] != '\n' && t[s - 1] != '\r') s--;
+    if (cLineHasDirective(t, s, ce)) return true;
+    int32_t j = s;
+    while (j < ce && (t[j] == ' ' || t[j] == '\t')) j++;
+    if (j < ce && !(t[j] == '/' && j + 1 < ce && t[j + 1] == '/')) return false;
+    cur = s;
+  }
+  return false;
+}
+
 static void cDiagAdd(TsNode *file, int32_t start, int code, char *msg) {
+  if (file && cSuppressedByDirective(file, start)) return;
   if (cDiagCount == cDiagCap) {
     cDiagCap = cDiagCap ? cDiagCap * 2 : 256;
     cDiags = realloc(cDiags, sizeof(CDiag) * (size_t)cDiagCap);

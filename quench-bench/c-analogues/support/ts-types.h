@@ -111,6 +111,8 @@ typedef struct TsType {
   /* template literal types (ts-template.h): the texts between the spans; string mapping types: the mapped type */
   CStr *tlTexts;
   struct TsType *smType;
+  /* array literal types: the clone of a type reference that carries ArrayLiteral (createArrayLiteralType) */
+  struct TsType *literalType;
 } TsType;
 
 /* erased: the type parameters are instantiated to any (getErasedSignature, or an instantiation in context), so the
@@ -194,6 +196,10 @@ static TsType *cUnported(const char *what) {
 /* ---- declared types, symbols ---- */
 static TsType *cTypeFromNode(TsNode *node);
 static TsType *cTypeOfSymbol(TsSymbol *sym);
+static TsType *cExprType(TsNode *e);                       /* ts-checker-body.h */
+static TsType *cWidenLiteralType(TsType *t);               /* ts-checker-body.h */
+static TsType *cAddUndefined(TsType *t);                  /* ts-checker-body.h */
+static TsType *cMutableLocationType(TsNode *e, TsType *t); /* ts-checker-body.h */
 static TsType *cGetTypeFromConditionalTypeNode(TsNode *n);
 static TsType *cGetTypeFromTemplateTypeNode(TsNode *n);   /* ts-template.h */
 static bool cIsGenericIndex(TsType *t);
@@ -1750,6 +1756,30 @@ static void cResolveIndexInfos(TsType *t) {
 }
 
 /* ---- types of symbols (getTypeOfSymbol) ---- */
+/* the type of an unannotated variable, property or parameter from its initializer (getWidenedTypeForVariableLikeDeclaration:
+ * a mutable location widens its fresh literal types). The symbol is marked while its initializer is checked, so a circular
+ * reference is unported. */
+static TsType *cInitializedSymbolType(TsSymbol *sym, TsNode *d, bool member) {
+  sym->type = cErrorType;
+  TsNode *init = d->initializer ? d->initializer : d->name;
+  TsType *t = cExprType(init);
+  if (t == cErrorType) return t;
+  bool readonly = (bModifierFlags(d) & TMF_Readonly) != 0;
+  if (member && readonly) return t;
+  if (!member && cIsConstVariableDecl(d)) return t;
+  return cMutableLocationType(init, t);
+}
+
+/* the declared type of a parameter (getTypeOfParameter): an annotation, with undefined when it is optional */
+static TsType *cParameterSymbolType(TsSymbol *sym, TsNode *d) {
+  (void)sym;
+  if (!d->type) return cUnported("parameter without annotation");
+  if (d->name && d->name->kind != TSK_Identifier) return cUnported("parameter with a binding pattern");
+  TsType *t = cTypeFromNode(d->type);
+  if (d->questionToken || (d->initializer && t != cErrorType)) t = cAddUndefined(t);
+  return t;
+}
+
 static TsType *cTypeOfSymbol(TsSymbol *sym) {
   if (sym == cUndefinedSymbol) return cUndefinedType; /* undefinedSymbol: undefinedWideningType */
   if (sym->instTarget) {   /* getTypeOfInstantiatedSymbol (61381) */
@@ -1758,19 +1788,26 @@ static TsType *cTypeOfSymbol(TsSymbol *sym) {
   }
   sym = cGetMergedSymbol(sym);
   if (sym->type) return sym->type;
+  if (!sym->valueDeclaration && !sym->ndecls) return cUnported("symbol without declarations");   /* intrinsic symbols such as arguments */
   TsType *t = NULL;
   if (sym->flags & SF_Alias) {
     TsSymbol *target = cResolveImportAlias(sym, 0);
     t = target ? cTypeOfSymbol(target) : cErrorType;
   } else if (sym->flags & SF_Variable) {
     TsNode *d = sym->valueDeclaration ? sym->valueDeclaration : sym->decls[0];
-    if (d->kind != TSK_VariableDeclaration) t = cUnported("variable declaration kind");
+    if (d->kind == TSK_Parameter) t = cParameterSymbolType(sym, d);
+    else if (d->kind != TSK_VariableDeclaration) t = cUnported("variable declaration kind");
     else if (d->type) t = cTypeFromNode(d->type);
     else if (cIsConstVariableDecl(d) && d->initializer && cIsSymbolCall(d->initializer)) t = cUniqueSymbolType(d);
+    else if (d->initializer && d->name && d->name->kind == TSK_Identifier) t = cInitializedSymbolType(sym, d, false);
     else t = cUnported("variable without annotation");
   } else if (sym->flags & SF_Property) {
     TsNode *d = sym->valueDeclaration ? sym->valueDeclaration : sym->decls[0];
-    if ((d->kind != TSK_PropertySignature && d->kind != TSK_PropertyDeclaration) || !d->type) t = cUnported("property without annotation");
+    if (d->kind == TSK_PropertyAssignment && d->initializer) t = cInitializedSymbolType(sym, d, true);
+    else if (d->kind == TSK_ShorthandPropertyAssignment && d->name) t = cInitializedSymbolType(sym, d, true);
+    else if (d->kind == TSK_PropertyDeclaration && !d->type && d->initializer && d->name && d->name->kind == TSK_Identifier)
+      t = cInitializedSymbolType(sym, d, true);
+    else if ((d->kind != TSK_PropertySignature && d->kind != TSK_PropertyDeclaration) || !d->type) t = cUnported("property without annotation");
     else {
       t = cTypeFromNode(d->type);
       if (d->questionToken && t != cErrorType) {
