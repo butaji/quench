@@ -9,3 +9,8 @@ sw3.js (same call, per-case counts)	compiled image	20000 fours (correct)
 hash-map.js	compiled image	SIGBUS 138
 hash-map.js	--b-jit	SIGSEGV 139
 hash-map.js	--u-jit	JS error: switch(typeof key) fell to default for type=number key=6158
+# After the int32 unary-plus fix (40f03d1e52), with the function tier re-enabled for a test:
+# ty2.js (callee does typeof) n=20245, sw4.js n=20443 s=24080297, co.js (+k callee) n=20570
+# s=26684559 — every loop gains iterations, so a loop whose body calls a function that steps
+# out still mis-resumes under the function tier; the tier stays off (054f5ef0ea). With it off
+# all four reproducers are exact (ty2 n=20000, sw4/co s=199990000, +i sums 199990000).
