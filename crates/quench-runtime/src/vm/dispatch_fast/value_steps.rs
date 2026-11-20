@@ -46,6 +46,7 @@ fn make<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, (step, instruction): (V
 pub(super) unsafe fn activation_value_step<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: WideInstruction) -> Option<u64> {
     let instruction = record.without_return();
     if let Some(status) = unsafe { activation_field_read(cx, call_pc, instruction) } { return Some(status); }
+    if let Some(status) = unsafe { activation_field_write(cx, call_pc, instruction) } { return Some(status); }
     let step = instruction.op().value_step().filter(|_| instruction.result_flags() == 0)?;
     let r = unsafe { (*cx).registers };
     let Some(values) = operand_values(cx, r, step, instruction) else { return Some(LANE_CALL_MISSED) };
@@ -78,6 +79,32 @@ unsafe fn activation_field_read<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, 
     let Some(value) = in_place_in_lane(cx, ip, |vm, code| vm.get_field_cached(code, object, atom, cache_site)) else { return Some(LANE_CALL_MISSED) };
     let after = unsafe { (*cx).registers };
     after.set(instruction.result_register(), value);
+    if after.0 == r.0 { return Some(LANE_CALL_COMPLETED); }
+    unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
+    Some(LANE_CALL_LEFT)
+}
+
+/// The named field store `instruction` at `call_pc` of the innermost activation (`SetField` off a register or
+/// `SetThisField`, `staged::Operation::SetField`), made by the interpreter's own cached store (`Vm::set_field_cached`) over the
+/// activation's registers, an add or a setter included: `LANE_CALL_COMPLETED`, `LANE_CALL_LEFT` where a setter it ran
+/// made the activations frames, `LANE_CALL_MISSED` where it raised; `None` for any other record, or a receiver that is
+/// no object (a primitive's store, an unbound `this`, is the frame step's).
+///
+/// # Safety
+/// As `activation_value_step`.
+unsafe fn activation_field_write<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, instruction: WideInstruction) -> Option<u64> {
+    if instruction.result_flags() != 0 || instruction.writes_current_this() { return None; }
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let Some(crate::staged::Operation::SetField { value, base: object, atom, site, strict }) =
+        crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code)) else { return None };
+    let r = unsafe { (*cx).registers };
+    let receiver = match object { Some(register) => r.get(register), None => r.this() };
+    if !unsafe { vm(cx) }.is_object_like(receiver) { return None; }
+    let value = r.get(value);
+    let ip = unsafe { (*cx).base.add(call_pc as usize) };
+    if in_place_in_lane(cx, ip, |vm, code| vm.set_field_cached(code, receiver, atom, value, site, strict)).is_none() { return Some(LANE_CALL_MISSED); }
+    let after = unsafe { (*cx).registers };
     if after.0 == r.0 { return Some(LANE_CALL_COMPLETED); }
     unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
     Some(LANE_CALL_LEFT)

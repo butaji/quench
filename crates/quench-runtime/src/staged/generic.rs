@@ -189,7 +189,10 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
             stage.select(apart, apart_bit, none)
         });
         let apart = stage.ne_imm(apart_word, 0u64);
-        return (stage.either(settled, apart), same);
+        // Two distinct object records (direct objects or arrays) are never strictly equal.
+        let records = records_pair(stage, [left, right]);
+        let decided = stage.either(settled, apart);
+        return (stage.either(decided, records), same);
     }
     let by_words = stage.either(identical, ints);
     let (left_nullish, right_nullish) = (nullish(stage, left), nullish(stage, right));
@@ -206,8 +209,24 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
     let settles = stage.either(other_primitive, recorded);
     let nullish_apart = stage.both(one_nullish, settles);
     let decided = stage.either(by_words, nullish_pair);
+    // Two distinct object records are loosely unequal: neither is [[IsHTMLDDA]] and no conversion runs
+    // (`Vm::word_identity_equality`); identical words are `same` already.
+    let records = records_pair(stage, [left, right]);
+    let decided = stage.either(decided, records);
     // `same` is false for a nullish side against a non-nullish word, so `equal` needs no change.
     (stage.either(decided, nullish_apart), stage.either(same, nullish_pair))
+}
+
+/// Whether both words are object records: a direct object or a direct array each.
+#[inline(always)]
+fn records_pair<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]) -> S::Cond {
+    let left_object = super::value::is_direct_object(stage, left);
+    let left_array = super::value::is_direct_array(stage, left);
+    let right_object = super::value::is_direct_object(stage, right);
+    let right_array = super::value::is_direct_array(stage, right);
+    let left_record = stage.either(left_object, left_array);
+    let right_record = stage.either(right_object, right_array);
+    stage.both(left_record, right_record)
 }
 
 /// The canonical boolean of the pair's equality, negated for `!=` and `!==`; the VM's where the

@@ -805,16 +805,18 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
 pub(super) fn body_native_call_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &super::body_forms::BodyCall, callee: Value, receiver: Value) -> u64 {
     use super::super::compiled::LANE_CALL_COMPLETED;
     let vm = unsafe { vm(cx) };
-    // A returning call's completion is its activation's, which the lane makes.
-    if call.site.returns { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::Returning); }
     let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeNotNative) };
     let native = *native;
     // SAFETY: the context's program outlives the lane run; the values are registers of the
     // running function, which the native reads before anything can move them.
     let (code, args) = unsafe { (&*(*cx).code, call.values()) };
     let Some(value) = vm.in_place_native_value(code, native, callee, receiver, &args) else {
+        // A returning call the native makes out of line is the lane's to complete.
+        if call.site.returns { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::Returning); }
         return body_native_out_in_lane(cx, call, native, (callee, receiver), &args);
     };
+    // A returning call's value completes the body: it reads the call's register, as it does a
+    // returning script call's (`Lowering::return_register`, `steps::completing`).
     note_allocation(vm);
     concrete_write_call_result(call.registers.0.expose_provenance() as u64, call.site.result, value);
     LANE_CALL_COMPLETED

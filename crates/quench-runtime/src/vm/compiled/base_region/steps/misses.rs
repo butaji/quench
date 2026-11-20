@@ -23,8 +23,9 @@ pub(in crate::vm::compiled::base_region) fn stepped_misses(run: Planned, decoded
     if helpers != LaneHelpers::Ahead || decoded.completes || layout.inlined(pc) || run.stop.is_some() { return Ok(run); }
     let record = layout.record(pc);
     let Some(instruction) = layout.span.instruction(record) else { return Ok(run) };
-    // A record the step helper does not make (an operator, a comparison jump whose row guards Number operands)
-    // is made by its opcode's generic semantic row, which branches to its jump target where it jumps.
+    // A comparison jump whose row guards Number operands (`!=` of two objects) still leaves: stepping it in place keeps
+    // the body's callers nested on the native stack, and a deep recursion (earley-boyer's rewriter) then leaves at its
+    // callee's entry instead, each such leave making every nested activation a frame.
     let stepped = steps_and_continues(instruction);
     if !stepped && (!helpers.generic_rows() || instruction.returns_from_frame()) { return Ok(run); }
     let leaves = |exit: &Exit| matches!(*exit, Exit::Spilling(at) if at == pc) || matches!(*exit, Exit::At(at) if at == record);

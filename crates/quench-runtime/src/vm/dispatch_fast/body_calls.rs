@@ -121,6 +121,7 @@ pub(in crate::vm) unsafe extern "C" fn body_call_helper<H: Host>(_vm: u64, _resi
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
+    if crate::trace::Channel::BodyLeave.on() { super::lane_body_stats::take_decline(); }
     let status = native_frames::in_innermost_frame(cx, || unsafe { body_call_in_lane(cx, call_pc) });
     // SAFETY: `context` is the running lane's.
     unsafe { refresh_body_bases::<H>(context) };
@@ -131,7 +132,8 @@ pub(in crate::vm) unsafe extern "C" fn body_call_helper<H: Host>(_vm: u64, _resi
 /// With `body-leave` tracing, names a body helper's call that did not complete in place.
 fn note_call_status<H: Host>(cx: *mut LaneContext<H>, helper: &str, call_pc: u64, status: u64) {
     if status != LANE_CALL_COMPLETED && crate::trace::Channel::BodyLeave.on() {
-        eprintln!("QUENCH_CALL_STATUS helper={helper} function={} pc={call_pc} status={status}", running_function_in_lane(cx));
+        let why = if status == LANE_CALL_MISSED { super::lane_body_stats::take_decline() } else { "" };
+        eprintln!("QUENCH_CALL_STATUS helper={helper} function={} pc={call_pc} status={status} why={why}", running_function_in_lane(cx));
     }
 }
 
@@ -181,24 +183,23 @@ fn body_script_call<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &
     let vm = unsafe { vm(cx) };
     let Some(this) = direct_call_this_in_lane(vm, target, receiver) else { return miss(vm, Miss::Receiver) };
     // SAFETY: as `call_read_in_lane`.
-    if target.entry.answered_by_read() { return unsafe { body_read_call(cx, call, target, this) }; }
+    if target.entry.answered_by_read() {
+        // SAFETY: as `call_read_in_lane`.
+        if let Some(value) = unsafe { body_read_answer(cx, call, target, this) } {
+            call.registers.set(call.site.result, value);
+            return LANE_CALL_COMPLETED;
+        }
+        // The read missed (a receiver its layout does not name): the body runs as the registers-only
+        // activation such an entry makes then (`CallEntry::activates_registers_only`), not a leave.
+        let fixed = call.argc() <= target.params.min(FIXED_ARGUMENT_COPIES);
+        let how = crate::staged::call_body::concrete_activation(target.entry.activates_registers_only(), target.forwards(), fixed, false);
+        if !how.plain { return miss(vm, Miss::CallReadAnswer); }
+        if !activation_room_in_lane(vm, target) { return miss(vm, Miss::NoActivationRoom); }
+        return body_activate_in_lane(cx, call, target, this, false, how);
+    }
     let Some(how) = call_activation_in_lane(target, call.argc()) else { return miss(vm, Miss::EntryNotActivation) };
     if how.plain && !activation_room_in_lane(vm, target) { return miss(vm, Miss::NoActivationRoom); }
     body_activate_in_lane(cx, call, target, this, false, how)
-}
-
-/// `body_script_call` of a target whose body is a read: the read's hit completes it, as the
-/// lane's own call does (`script_call_miss`), its value in the call's register, which the
-/// body reads.
-///
-/// # Safety
-/// As `call_read_in_lane`.
-#[inline(always)]
-unsafe fn body_read_call<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &ScriptCallTarget, this: Value) -> u64 {
-    // SAFETY: the caller's contract.
-    let Some(value) = (unsafe { body_read_answer(cx, call, target, this) }) else { return miss(unsafe { vm(cx) }, Miss::CallReadAnswer) };
-    call.registers.set(call.site.result, value);
-    LANE_CALL_COMPLETED
 }
 
 /// The value `target`'s read answers `call` with: memoized at the record where its layout has a
@@ -226,6 +227,7 @@ pub(in crate::vm) unsafe extern "C" fn body_construct_helper<H: Host>(_vm: u64, 
     if !crate::DYNAMIC_EXECUTION_ENABLED { return LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
     let mut moved = true;
+    if crate::trace::Channel::BodyLeave.on() { super::lane_body_stats::take_decline(); }
     let status = native_frames::in_innermost_frame(cx, || unsafe { body_construct_in_lane(cx, call_pc, &mut moved) });
     // A quick planned construction claims a free record of a block the bases already name and
     // makes no collection due, so it moves no base; anything else may have.
@@ -466,6 +468,7 @@ fn body_run_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &
         super::note_body_end_in_lane(cx, own, exit, |_| {});
         return body_returned_in_lane(cx, call, Some(value), constructs);
     }
+    if crate::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_EXIT callee={} exit={exit:?}", target.function); }
     let (resumed, feedback) = body_left_in_lane(cx, registers, own, &method, exit);
     drop(method);
     if leave_counts_in_lane(cx, exit) {
