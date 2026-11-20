@@ -406,8 +406,8 @@ static TsType *cDeclaredTypeOfTypeAlias(TsSymbol *sym) {
   if (t == cIntrinsicMarkerType) {
     /* getDeclaredTypeOfTypeAlias (61914): BuiltinIteratorReturn is undefined under strictBuiltinIteratorReturn,
      * which the project's tsconfig gets from "strict": true */
+    /* any other intrinsic alias keeps the marker as its declared type (node: type === intrinsicMarkerType) */
     if (bnEq(sym->name, bnC("BuiltinIteratorReturn"))) t = cUndefinedType;
-    else t = cUnported("intrinsic type alias");
   }
   sym->declaredType = t;
   return t;
