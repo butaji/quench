@@ -2539,6 +2539,26 @@ impl<H: Host> Vm<H> {
         self.inherited_field_indices.get(self.field_cache_index(site)) != NO_INHERITED_FIELD
     }
 
+    /// The entry tier of a single-read site, in the order the four `field_site_*` predicates
+    /// test it: an accessor, the megamorphic entries, a prototype holder, then an inherited
+    /// entry, else the primary own entry. The site's cache index is derived once, so each
+    /// table is read at the same index without re-deriving the active cache layout.
+    pub(super) fn field_site_tier(&self, site: u16) -> super::dispatch_fast::FieldSiteTier {
+        use super::dispatch_fast::FieldSiteTier;
+        let index = self.field_cache_index(site);
+        if self.accessor_field_indices.get(index) != NO_ACCESSOR_FIELD {
+            FieldSiteTier::Getter
+        } else if self.megamorphic_field_indices.get(index) != NO_MEGAMORPHIC_FIELD {
+            FieldSiteTier::Polymorphic
+        } else if self.field_caches.get(index).holder != NO_FIELD_HOLDER {
+            FieldSiteTier::Holder
+        } else if self.inherited_field_indices.get(index) != NO_INHERITED_FIELD {
+            FieldSiteTier::Inherited
+        } else {
+            FieldSiteTier::Own
+        }
+    }
+
     /// Whether a read at the site met an accessor it cached (`cached_field_getter`).
     pub(super) fn field_site_getter(&self, site: u16) -> bool {
         self.accessor_field_indices.get(self.field_cache_index(site)) != NO_ACCESSOR_FIELD
