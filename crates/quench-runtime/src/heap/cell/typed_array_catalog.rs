@@ -48,6 +48,7 @@ typed_array_kinds! {
 
 impl TypedArrayKind {
     /// The element width in bytes.
+    #[inline(always)]
     pub(crate) const fn width(self) -> usize {
         match self {
             Self::Uint8 | Self::Uint8Clamped | Self::Int8 => size_of::<u8>(),

@@ -33,18 +33,26 @@ impl<H: Host> Vm<H> {
             return Some((&function.object, InheritedReceiver::Function));
         }
         let builtin: Option<&Object> = self.heap.array(value).map(|array| &**array);
+        // A typed array inherits its methods two links up (`%TypedArray%.prototype`); its numeric
+        // names are its own elements, which `inherited_entry_answers` keeps from any entry.
         builtin
             .or_else(|| self.heap.ordinary_builtin_object(value))
+            .or_else(|| match self.heap.get(value)? {
+                cell @ Cell::TypedArray { .. } => cell.object(),
+                _ => None,
+            })
             .map(|object| (object, InheritedReceiver::Builtin))
     }
 
     /// Whether inherited entry `index` answers a receiver of `kind`: a builtin's own lookup of
-    /// a private, virtual-field or index name is not its shape's (`shape_answers`).
+    /// a private, virtual-field, index or canonical numeric name (a typed array's element) is not
+    /// its shape's (`shape_answers`).
     #[inline(always)]
     pub(super) fn inherited_entry_answers(&self, kind: InheritedReceiver, index: u32) -> bool {
         kind != InheritedReceiver::Builtin
             || self.heap.dependencies().inherited_get(index).is_some_and(|cache| {
-                !self.atom_class(cache.atom).intersects(AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD | AtomClass::ARRAY_INDEX)
+                !self.atom_class(cache.atom).intersects(AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD | AtomClass::ARRAY_INDEX
+                    | AtomClass::TYPED_ARRAY_INDEX)
             })
     }
 

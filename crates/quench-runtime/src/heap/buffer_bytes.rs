@@ -259,6 +259,7 @@ impl BufferBytes {
     }
 
     /// The bytes for writing; an owned store is unshared from other cells first.
+    #[inline]
     pub(crate) fn make_mut(&mut self) -> BufferWrite<'_> {
         bump_view_epoch();
         let store = self.unshared_store();
@@ -292,6 +293,7 @@ impl BufferBytes {
             _ => None,
         }
     }
+    #[inline]
     pub(crate) fn len(&self) -> usize {
         match &*self.0 {
             BufferStore::AtomicShared(b) => b.length().expect("shared backing length"),
@@ -383,6 +385,7 @@ pub(crate) type BufferWrite<'a> = BufferAccess<'a, &'a mut [u8]>;
 
 impl<B: std::ops::Deref<Target = [u8]>> std::ops::Deref for BufferAccess<'_, B> {
     type Target = [u8];
+    #[inline(always)]
     fn deref(&self) -> &[u8] {
         match self {
             Self::Borrowed(b) => b,
@@ -391,6 +394,7 @@ impl<B: std::ops::Deref<Target = [u8]>> std::ops::Deref for BufferAccess<'_, B> 
     }
 }
 impl std::ops::DerefMut for BufferWrite<'_> {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut [u8] {
         match self {
             Self::Borrowed(b) => b,
