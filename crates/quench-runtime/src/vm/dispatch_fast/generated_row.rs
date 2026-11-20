@@ -85,7 +85,7 @@ lane_handler! {
         }
         // The cached, private and general reads answer at their record before the staged plan runs: a
         // direct call of the lane's own read, with no erased host. A miss takes the site's miss.
-        if const { crate::vm::dispatch_fast::cached_field_site(FLAG) || crate::vm::dispatch_fast::private_field_site(FLAG) || crate::vm::dispatch_fast::general_site(FLAG) } {
+        if property && const { crate::vm::dispatch_fast::cached_field_site(FLAG) || crate::vm::dispatch_fast::private_field_site(FLAG) || crate::vm::dispatch_fast::general_site(FLAG) } {
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             // The base: `this` for a `this` site, else the register the record names.
             let receiver = if const { crate::vm::dispatch_fast::own_site_this(FLAG) } { r.this() } else { r.get(i.b) };
@@ -376,7 +376,7 @@ lane_handler! {
                 next!(script, r, following(ip), Carried::script_in(script, view))
             }
             Step::Unresolved if store => store_miss!(),
-            Step::Value(value) if const { crate::vm::dispatch_fast::returning_field_site(FLAG) } => {
+            Step::Value(value) if property && const { crate::vm::dispatch_fast::returning_field_site(FLAG) } => {
                 // A returning read's value completes its activation as a returning record does
                 // (`lane_return_value!`), so it writes no register.
                 let value = if const { crate::vm::dispatch_fast::own_site_decodes(FLAG) } { crate::value_vec::decode_staged_word(value) } else { Value::from_bits(value) };

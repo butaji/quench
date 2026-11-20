@@ -526,6 +526,7 @@ struct OperandLayout {
 }
 
 impl OperandLayout {
+    #[inline(always)]
     const fn field(self, field: InstructionField) -> FieldLayout {
         match field {
             InstructionField::A => self.a,

@@ -1923,7 +1923,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     /// The program constant a constant operand names (`Reads::word`), which the numeric stage folds.
     #[inline(always)]
     fn constant_operand(&mut self, operand: Operand) -> Option<Value> {
-        (operand.kind() == Some(crate::bytecode::OperandKind::Constant)).then(|| self.reads.word(operand)).flatten()
+        if operand.kind() == Some(crate::bytecode::OperandKind::Constant) { self.reads.word(operand) } else { None }
     }
 
     #[inline(always)]
@@ -2043,7 +2043,19 @@ impl<const OP: u16, const FLAG: u8> crate::staged::Fields for LaneFields<'_, OP,
         // A sinking read's flag (`SET_THIS_REGISTER`) is its row's store, not the read's; the
         // read decodes by its register alone.
         let a = if const { FLAG == super::SINK_SITE } { self.0.a & crate::bytecode::REGISTER_MASK } else { self.0.a };
-        WideInstruction::new(self.op(), a, self.0.b, self.0.c, imm)
+        // Both operands of a two-operand arithmetic row the view proved registers (`FLAG_REGISTERS`):
+        // their tags are the register tag, so the decode's operand kind tests fold.
+        // A `Binary` record at an operator flag (`FLAG_OPERATOR_BASE`): its operator is the flag's, and
+        // its operands registers, or a register then a constant.
+        let operator_row = const { matches!(Self::OPCODE, Op::Binary) && FLAG >= FLAG_OPERATOR_BASE };
+        let imm = if operator_row { u32::from(FLAG.wrapping_sub(FLAG_OPERATOR_BASE) / 2) } else { imm };
+        const CONSTANT_TAG: u16 = (crate::bytecode::OperandKind::Constant as u16) << 14;
+        let (b, c) = if FLAG == FLAG_REGISTERS || (operator_row && FLAG.wrapping_sub(FLAG_OPERATOR_BASE) % 2 == 0) {
+            (self.0.b & crate::bytecode::Operand::PAYLOAD_MASK, self.0.c & crate::bytecode::Operand::PAYLOAD_MASK)
+        } else if operator_row {
+            (self.0.b & crate::bytecode::Operand::PAYLOAD_MASK, (self.0.c & crate::bytecode::Operand::PAYLOAD_MASK) | CONSTANT_TAG)
+        } else { (self.0.b, self.0.c) };
+        WideInstruction::new(self.op(), a, b, c, imm)
     }
 }
 
@@ -2104,6 +2116,15 @@ pub(in crate::vm::dispatch_fast) const FLAG_KEPT_MARKER: u8 = 17;
 /// `FLAG` of a local read of a keeping activation's `arguments` binding the activation makes into an object
 /// at its last read (`KeptArguments::Passes`): the row answers that object (`kept_arguments_binding`).
 pub(in crate::vm::dispatch_fast) const FLAG_KEPT_OBJECT: u8 = 18;
+/// `FLAG` of a two-operand arithmetic record (`Binary`, `NumericAdd`, `NumericMultiply`) whose operands
+/// are both registers (`specialize_register_operands`): the row reads them without testing their tags.
+pub(in crate::vm::dispatch_fast) const FLAG_REGISTERS: u8 = 19;
+/// `FLAG` of a `Binary` record whose operator is `(FLAG - FLAG_OPERATOR_BASE) / 2` (`BinaryOperator`, up to
+/// `OPERATOR_ROWS`), its operands two registers where the rest is even, else a register then a constant
+/// (`specialize_binary_operators`): the row's operator and operand tests fold.
+pub(in crate::vm::dispatch_fast) const FLAG_OPERATOR_BASE: u8 = 200;
+/// The operators with operator rows: `BinaryOperator` 0 (`==`) through 19 (`&`).
+pub(in crate::vm::dispatch_fast) const OPERATOR_ROWS: usize = 20;
 
 /// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -2469,6 +2490,48 @@ pub(in crate::vm::dispatch_fast) const fn closure_row<H: Host, const FLAG: u8>()
 pub(in crate::vm::dispatch_fast) fn row_near<H: Host, const OP: u16>(handler: *const ()) -> Option<Handler> {
     (handler == generated_row!(H, OP, ACC_NONE, FLAG_UNREAD) as Handler as *const ())
         .then_some(generated_row!(H, OP, ACC_NONE, FLAG_SET) as Handler)
+}
+
+/// Whether opcode `op`'s row has a `FLAG_REGISTERS` form: a two-operand arithmetic row.
+pub(in crate::vm::dispatch_fast) const fn register_operands_row(op: Op) -> bool {
+    matches!(op, Op::Binary | Op::NumericAdd | Op::NumericMultiply)
+}
+
+/// Whether both operand fields of record `i` are registers (their tags are the register tag, 0).
+#[inline(always)]
+pub(in crate::vm::dispatch_fast) fn register_operands(i: &LaneInstruction) -> bool {
+    (i.b | i.c) >> 14 == 0
+}
+
+/// Opcode `OP`'s row at `FLAG_REGISTERS` for `handler`, its plain row (`FLAG_UNREAD`) at any accumulator field.
+pub(in crate::vm::dispatch_fast) fn registers_row<H: Host, const OP: u16>(handler: *const ()) -> Option<Handler> {
+    let plain: [Handler; ACC_POSITIONS] = [generated_row!(H, OP, ACC_NONE, FLAG_UNREAD), generated_row!(H, OP, ACC_A, FLAG_UNREAD),
+        generated_row!(H, OP, ACC_B, FLAG_UNREAD), generated_row!(H, OP, ACC_C, FLAG_UNREAD), generated_row!(H, OP, ACC_PAIR, FLAG_UNREAD)];
+    let registers: [Handler; ACC_POSITIONS] = [generated_row!(H, OP, ACC_NONE, FLAG_REGISTERS), generated_row!(H, OP, ACC_A, FLAG_REGISTERS),
+        generated_row!(H, OP, ACC_B, FLAG_REGISTERS), generated_row!(H, OP, ACC_C, FLAG_REGISTERS), generated_row!(H, OP, ACC_PAIR, FLAG_REGISTERS)];
+    plain.iter().position(|row| *row as *const () == handler).map(|at| registers[at])
+}
+
+/// The `Binary` row of plain record `record` at its operator flag (`FLAG_OPERATOR_BASE`): where its handler is
+/// the plain accumulator-free row, its operator has rows, and its operands are registers, or a register then a constant.
+pub(in crate::vm::dispatch_fast) fn operator_row<H: Host>(record: &LaneInstruction) -> Option<Handler> {
+    const BINARY: u16 = Op::Binary as u16;
+    macro_rules! rows { ($($k:literal)*) => { [$(generated_row!(H, BINARY, ACC_NONE, FLAG_OPERATOR_BASE + $k)),*] } }
+    let rows: [Handler; 2 * OPERATOR_ROWS] = rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29
+        30 31 32 33 34 35 36 37 38 39);
+    if record.handler != generated_row!(H, BINARY, ACC_NONE, FLAG_UNREAD) as Handler as *const () {
+        return None;
+    }
+    let operator = record.imm() as usize;
+    if operator >= OPERATOR_ROWS || record.b >> 14 != 0 {
+        return None;
+    }
+    let form = match record.c >> 14 {
+        0 => 0,
+        1 => 1,
+        _ => return None,
+    };
+    Some(rows[operator * 2 + form])
 }
 
 /// Whether `handler` is opcode `OP`'s generated row handler (`generated_row`), at any accumulator field:

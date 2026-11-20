@@ -148,7 +148,7 @@ mod site_posterior;
 #[path = "compiled/numeric_image.rs"] mod numeric_image; #[cfg(test)] pub(super) use numeric_image::compile_js_typed_numeric_region;
 pub(super) use numeric_image::NumericImage;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages; pub(in crate::vm) use ahead_images::closed_lane_image;
-pub(crate) use ahead_images::{AHEAD_BUILD_ID, ahead_program_fingerprint};
+pub(crate) use ahead_images::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX, ahead_program_fingerprint};
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;

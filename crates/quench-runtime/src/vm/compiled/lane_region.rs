@@ -3169,7 +3169,10 @@ impl Lowering<'_, '_> {
             }
             None => {
                 super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
-                if self.helpers == LaneHelpers::Ahead { UNLOWERED.with(|unlowered| unlowered.borrow_mut().insert(format!("{:?}", instruction.op()))); }
+                if self.helpers == LaneHelpers::Ahead && crate::trace::Channel::AotLanes.on() {
+                    let name = instruction.op().loads_name().then(|| self.program.atoms.get(instruction.atom_index() as usize).map(|atom| format!("({atom})"))).flatten();
+                    UNLOWERED.with(|unlowered| unlowered.borrow_mut().insert(format!("{:?}{}", instruction.op(), name.unwrap_or_default())));
+                }
                 if self.coverage.full() && (self.completion.numeric()
                     || !((matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) && plain) || instruction.returns_from_frame())) {
                     self.valid = false;
