@@ -7,9 +7,12 @@ use super::*;
 use super::lane_region::DISPATCH;
 use crate::staged::frame::{CONTEXT_BODY, CONTEXT_THIS};
 use crate::staged::{flow::FlowStage, NumericStage, Stage};
+use quench_bjit::call_record::RETURN_PC_MASK;
 
 /// The positions of the entry ABI's words the trampoline reads (`native_entry_signature`):
 /// the context is the first, the arguments pointer and the result word address the last two.
+/// The result slot holds a completion's value (`emit_body_status`) and the per-PC fallback's
+/// next PC (`emit_steps`); the trampoline's own exits store its invalid PC there.
 const ENTRY_CONTEXT: usize = 0;
 const ENTRY_ARGUMENTS: usize = 3;
 const ENTRY_RESULT: usize = 4;
@@ -91,8 +94,9 @@ fn emit_dispatch(
     emit_body_status(builder, params, blocks, payload, (status, word));
 }
 
-/// The body's status: a completion returns its record's status and value, a leave continues
-/// in the per-PC loop at its PC, and any other status (termination) is the entry's own.
+/// The body's status: a completion returns `return_status(record)` and its value in the result slot,
+/// which `LaneExit::read` decodes as a leave at that record; a leave continues in the per-PC loop at
+/// its PC, and any other status (termination) is the entry's own.
 fn emit_body_status(
     builder: &mut FunctionBuilder<'_>, params: &[ir::Value], blocks: &AheadBlocks, payload: ir::Value,
     (status, word): (ir::Value, ir::Value),
@@ -108,7 +112,7 @@ fn emit_body_status(
     stage.builder.switch_to_block(returned);
     stage.store_u64(DISPATCH, params[ENTRY_RESULT], 0, word);
     let record = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.returned_pc));
-    let record = stage.and_imm(record, u64::from(u32::MAX));
+    let record = stage.and_imm(record, u64::from(RETURN_PC_MASK));
     let wide = stage.add_imm(record, u64::from(RETURN_STATUS_BASE));
     let status = stage.narrow(wide);
     stage.ret(&[status]);

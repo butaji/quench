@@ -50,6 +50,7 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use crate::staged::js_step_head::JsStepHead;
 use crate::staged::record_heads::CallContextHead;
+use quench_bjit::call_record::return_status_pc;
 
 /// The staged operation a record decodes to, with no constants or sites resolved: what a
 /// tier's analysis asks of a record instead of naming its opcode (`Operation::decode`).
@@ -9779,17 +9780,15 @@ impl<H: Host> Vm<H> {
             match exited {
                 Some((NATIVE_JS_STOPPED, _)) => Some(dispatch.outcome.take().unwrap_or_else(||
                     failure("linked native function stopped without a transition".into()))),
-                Some((status, word)) if status.checked_sub(RETURN_STATUS_BASE)
-                    .and_then(|pc| usize::try_from(pc).ok())
-                    .is_some_and(|pc| pc < instruction_count) => {
-                    let pc = (status - RETURN_STATUS_BASE) as usize;
-                    Some(JsNativeStep {
+                // The AOT completion: its status names the record that completes, its value is the word.
+                Some((status, word)) => match return_status_pc(status).map(|pc| pc as usize).filter(|&pc| pc < instruction_count) {
+                    Some(pc) => Some(JsNativeStep {
                         instruction_pc: pc,
                         next_pc: pc + 1,
                         result: Ok(StepResult::Return(Value::from_bits(word))),
-                    })
-                }
-                Some((status, word)) => Some(failure(format!("invalid linked native exit: status {status}, continuation {word}"))),
+                    }),
+                    None => Some(failure(format!("invalid linked native exit: status {status}, continuation {word}"))),
+                },
                 None => Some(failure("linked native entry failed".into())),
             }
         }).unwrap_or_else(|| Some(failure("linked native function metadata is missing".into())))

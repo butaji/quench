@@ -2,6 +2,7 @@
 //! stub targets and runs it on a `JsStepDispatch` the test scripts, so its stop bound and its
 //! invalid-PC exit are observed without a program.
 use super::*;
+use quench_bjit::call_record::return_status;
 use std::cell::RefCell;
 
 const RECORDS: usize = 4;
@@ -96,7 +97,7 @@ fn run(start_pc: usize, stop_pc: usize) -> Run {
 fn an_unbounded_run_from_the_first_record_runs_the_body() {
     let run = run(0, JS_NO_STOP_PC);
     assert!(run.reached.body && run.reached.records.is_empty());
-    assert_eq!(run.status, RETURN_STATUS_BASE + BODY_RETURNED_PC as u32, "the body's completion returns its record's status");
+    assert_eq!(run.status, return_status(BODY_RETURNED_PC as u32), "the body's completion returns its record's status");
     assert_eq!(run.word, BODY_RESULT);
 }
 
