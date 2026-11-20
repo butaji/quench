@@ -423,7 +423,6 @@ static TsNode *parseRightSideOfDot(bool allowIdentifierNames, bool allowPrivateI
 }
 
 /* parseTemplateSpans / parseTemplateExpression / parseTemplateType / parseTemplateTypeSpans */
-static TsList *parseTemplateSpansWith(bool isTaggedTemplate, bool typeSpans);
 
 static TsNode *parseLiteralOfTemplateSpan(bool isTaggedTemplate) {
   if (token() == TSK_CloseBraceToken) {
@@ -1615,7 +1614,6 @@ static TsNode *parseUpdateExpression(void) {
   return expression;
 }
 
-static bool nextTokenIsOpenParenOrLessThanCb(void);
 
 static TsNode *parseLeftHandSideExpressionOrHigher(void) {
   int pos = getNodePos();
@@ -2843,7 +2841,6 @@ static bool canFollowContextualOfKeyword(void) {
 }
 static intptr_t cb_canFollowContextualOfKeyword(void) { return canFollowContextualOfKeyword(); }
 
-static TsNode *parseVariableDeclarationListFor(void);
 
 static TsNode *parseVariableDeclarationList(bool inForStatementInitializer) {
   int pos = getNodePos();
@@ -3350,7 +3347,6 @@ static TsNode *parseImportEqualsDeclaration(int pos, bool hasJSDoc, TsList *modi
   return withJSDoc(finishNode(node, pos, -1), hasJSDoc);
 }
 
-static bool nextTokenIsFromKeywordOrEqualsTokenCb(void);
 
 static TsNode *parseImportDeclarationOrImportEqualsDeclaration(int pos, bool hasJSDoc, TsList *modifiers) {
   parseExpected(TSK_ImportKeyword);

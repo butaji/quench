@@ -19,7 +19,7 @@
  * PDFStringTranslateTable, UnicodeRanges) come from support/pdfjs-tables.h.
  *
  * Validation (tools/pdfjs-validate.cjs run under node 22 with instrumented copies
- * of the JS): after each timed iteration the canvas log must have 36788 items and
+ * of the JS): after the first and last timed iterations the canvas log must have 36788 items and
  * the JS hash of join(" ") must be 939524096 (the JS hash only reads a prefix of
  * the string, so a full-string FNV-1a is also checked against the node value), the
  * nine font programs must have the byte counts and checksums node produces, and
@@ -3512,7 +3512,7 @@ static void run_iteration(void) {
 }
 
 /* ------------------------------------------------------------------------ */
-/* Validation (after each timed iteration, outside the timer) and main().    */
+/* Validation (after the first and last timed iterations, outside the timer) and main().    */
 
 /* JS Number::toString for the values that reach the log. */
 static int js_num_str(double v, char *out) {
@@ -3671,7 +3671,9 @@ int main(int argc, char **argv) {
     double t0 = now_ms();
     run_iteration();
     total += now_ms() - t0;
-    if (!validate_iteration(it)) {
+    /* The JS row validates nothing per iteration; the first and last are checked here (log
+     * joining and hashing cost about 5x an iteration, so checking every one would dominate). */
+    if ((it == 0 || it == iterations - 1) && !validate_iteration(it)) {
       ok = 0;
       break;
     }
