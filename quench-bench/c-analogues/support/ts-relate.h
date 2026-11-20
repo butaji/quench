@@ -133,7 +133,7 @@ static TsType *cConstraintOf(TsType *tp) {
 static TsType *cApparentType(TsType *s) {
   int idx;
   const char *name;
-  if (s->flags & (TF_String | TF_StringLiteral)) { idx = 0; name = "String"; }
+  if (s->flags & (TF_String | TF_StringLiteral | TF_TemplateLiteral | TF_StringMapping)) { idx = 0; name = "String"; }
   else if (s->flags & (TF_Number | TF_NumberLiteral | TF_Enum)) { idx = 1; name = "Number"; }
   else if (s->flags & (TF_Boolean | TF_BooleanLiteral)) { idx = 2; name = "Boolean"; }
   else if (s->flags & TF_BigInt) { idx = 3; name = "BigInt"; }
@@ -685,7 +685,7 @@ static int cIsRelatedTo(TsType *s, TsType *t, int st) {
   if (s == t) return RR_True;
   if (s == cErrorType || t == cErrorType) { cUnportedHit = true; return RR_True; }
   /* indexed access and index types: their relation rules (constraints of T[K], keyof) are not ported */
-  if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index | TF_Conditional)) { cUnported("relation of an indexed access, index or conditional type"); return RR_True; }
+  if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index | TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); return RR_True; }
   if (cIsSimpleRelated(s, t, cCurRel)) return RR_True;
   if (!cIsStructured(s) && !cIsStructured(t)) return RR_False;
   /* isPerformingCommonPropertyChecks: a weak target needs a common property */
@@ -716,7 +716,7 @@ static bool cIsRelatedWith(TsType *s, TsType *t, int rel) {
   if (rel == REL_Identity) r = cIdentical(s, t);
   else if (s == t) r = true;
   else if (cIsSimpleRelated(s, t, rel)) r = true;
-  else if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index | TF_Conditional)) { cUnported("relation of an indexed access, index or conditional type"); r = true; }
+  else if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index | TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); r = true; }
   else if (!cIsStructured(s) && !cIsStructured(t)) r = false;
   else {
     int ci = cRelFind(&cRelTab[rel], s, t, IS_None);

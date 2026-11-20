@@ -49,6 +49,8 @@ typedef struct CIndexInfo { struct TsType *keyType, *type; bool isReadonly; } CI
 /* an instantiation of a generic type by type arguments (the type's instantiations list) */
 typedef struct TsInst { struct TsType **key; int n; struct TsType *val; } TsInst;
 
+typedef struct { const char *s; int n; } CStr;
+
 typedef struct TsType {
   uint32_t flags, objectFlags;
   int32_t id;
@@ -106,6 +108,9 @@ typedef struct TsType {
   struct TsMapper *condMapper, *condCombined;
   /* mapped types (getTypeFromMappedTypeNode): the type parameter of the node and the constraint type */
   struct TsType *mapTp, *mapConstraint;
+  /* template literal types (ts-template.h): the texts between the spans; string mapping types: the mapped type */
+  CStr *tlTexts;
+  struct TsType *smType;
 } TsType;
 
 struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; };
@@ -188,6 +193,7 @@ static TsType *cUnported(const char *what) {
 static TsType *cTypeFromNode(TsNode *node);
 static TsType *cTypeOfSymbol(TsSymbol *sym);
 static TsType *cGetTypeFromConditionalTypeNode(TsNode *n);
+static TsType *cGetTypeFromTemplateTypeNode(TsNode *n);   /* ts-template.h */
 static bool cIsGenericIndex(TsType *t);
 static TsType *cConstraintOf(TsType *tp);                   /* ts-relate.h */
 static uint8_t *cVariances(TsType *tg);             /* ts-relate.h */
@@ -874,17 +880,22 @@ static bool cIsGenericObject(TsType *t) {
   return (t->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Conditional)) != 0;
 }
 
-/* isGenericIndexType: type variables, index types (and unions and intersections of them) */
+/* isGenericIndexType: type variables, index types, template literal and string mapping types (not patterns), and unions and intersections of them */
+static bool cIsPatternLiteralType(TsType *t);
 static bool cIsGenericIndex(TsType *t) {
   if (t->flags & (TF_Union | TF_Intersection)) {
     for (int i = 0; i < t->ntypes; i++) if (cIsGenericIndex(t->types[i])) return true;
     return false;
   }
+  if (t->flags & (TF_TemplateLiteral | TF_StringMapping)) return !cIsPatternLiteralType(t);
   return (t->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Index | TF_Conditional)) != 0;
 }
 
 /* ts-conditional.h: conditional types (after the generic checks they use) */
 #include "ts-conditional.h"
+
+/* ts-template.h: template literal and string mapping types (after the conditional types they use) */
+#include "ts-template.h"
 
 /* getIndexTypeForGenericType: the deferred keyof of a type variable, one per type */
 static TsType *cIndexTypeForGeneric(TsType *t) {
@@ -1084,6 +1095,7 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
       return fl == TF_Union ? cGetUnionType(members, cnt) : cGetIntersectionType(members, cnt);
     }
     case TSK_ConditionalType: return cGetTypeFromConditionalTypeNode(n);
+    case TSK_TemplateLiteralType: return cGetTypeFromTemplateTypeNode(n);
     case TSK_InferType: return cTypeOfTypeParameter(cGetMergedSymbol(n->typeParameter->symbol));   /* getTypeFromInferTypeNode */
     case TSK_MappedType: {
       /* getTypeFromMappedTypeNode: the object, its type parameter, then the constraint (eagerly, as TypeScript does) */

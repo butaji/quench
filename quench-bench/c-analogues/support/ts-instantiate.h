@@ -68,6 +68,8 @@ static TsMapper *cCombineMappers(TsMapper *m1, TsMapper *m2) {
 static TsType *cInstantiate(TsType *t, TsMapper *m);
 static TsType *cGetConditionalTypeInstantiation(TsType *t, TsMapper *m);   /* ts-conditional.h */
 static TsType **cInferTypeParamsOf(TsNode *n, int *count);
+static TsType *cGetTemplateLiteralType(CStr *texts, TsType **types, int n);   /* ts-template.h */
+static TsType *cGetStringMappingType(TsSymbol *sym, TsType *type);          /* ts-template.h */
 
 /* getMappedType (67771) */
 static TsType *cGetMappedType(TsType *t, TsMapper *m) {
@@ -101,7 +103,7 @@ static bool cCouldContain(TsType *t) {
     }
   } else if (t->flags & (TF_Union | TF_Intersection)) {
     for (int i = 0; i < t->ntypes && !r; i++) r = cCouldContain(t->types[i]);
-  } else if (t->flags & (TF_IndexedAccess | TF_Index | TF_Conditional)) {
+  } else if (t->flags & (TF_IndexedAccess | TF_Index | TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) {
     r = true;   /* instantiable types */
   }
   t->couldContain = r ? 1 : 2;
@@ -593,6 +595,13 @@ static TsType *cInstantiateWorker(TsType *t, TsMapper *m) {
   }
   if (t->flags & TF_Index) return cGetIndexType(cInstantiate(t->ixOf, m));
   if (t->flags & TF_Conditional) return cGetConditionalTypeInstantiation(t, cCombineMappers(t->condMapper, m));
+  /* instantiateTypeWorker: the template literal of the instantiated types, the string mapping of the instantiated type */
+  if (t->flags & TF_TemplateLiteral) {
+    bool changed = false;
+    TsType **nt = cInstantiateList(t->types, t->ntypes, m, &changed);
+    return cGetTemplateLiteralType(t->tlTexts, nt, t->ntypes);
+  }
+  if (t->flags & TF_StringMapping) return cGetStringMappingType(t->symbol, cInstantiate(t->smType, m));
   return cUnported("instantiation of a type kind outside the subset");
 }
 
