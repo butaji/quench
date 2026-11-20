@@ -453,10 +453,6 @@ static TsType *cRestArrayAt(CParams *cp, TsMapper *m) {
 static bool cCompareSignaturesRelated(CSig *src, CSig *tgt) {
   if (src->decl == tgt->decl && src->mapper == tgt->mapper) return true;
   TsNode *ds = src->decl, *dt = tgt->decl;
-  if ((ds->typeParameters && ds->typeParameters->n) || (dt->typeParameters && dt->typeParameters->n)) {
-    cUnported("generic signature relation");
-    return true;
-  }
   CParams ps, pt;
   if (!cSplitParams(ds, &ps) || !cSplitParams(dt, &pt)) { cUnported("too many parameters"); return true; }
   /* sourceHasMoreParameters: the source needs more arguments than the target has */
@@ -497,16 +493,133 @@ static bool cCompareSignaturesRelated(CSig *src, CSig *tgt) {
   return cIsRelatedTo(sr, tr, IS_None) != RR_False;
 }
 
-/* signaturesRelatedTo (68500s): every target signature needs a related source signature */
+/* the type parameters of a signature declaration (the declared types of its type parameters) */
+static TsType **cSigTypeParams(TsNode *d, int *n) {
+  *n = d->typeParameters ? d->typeParameters->n : 0;
+  TsType **tps = ts_arena_alloc(sizeof(TsType *) * (size_t)(*n ? *n : 1));
+  for (int i = 0; i < *n; i++) tps[i] = cTypeOfTypeParameter(cGetMergedSymbol(d->typeParameters->v[i]->symbol));
+  return tps;
+}
+
+static bool cSigIsGeneric(CSig *sig) { return !sig->erased && sig->decl->typeParameters && sig->decl->typeParameters->n > 0; }
+
+/* getErasedSignature (cached per signature): the type parameters instantiated to any */
+typedef struct { TsNode *decl; TsMapper *mapper; CSig res; } CEraseEnt;
+static CEraseEnt *cEraseList;
+static int cEraseN, cEraseCap;
+static CSig cErasedSignature(CSig *sig) {
+  if (!cSigIsGeneric(sig)) return *sig;
+  for (int i = 0; i < cEraseN; i++)
+    if (cEraseList[i].decl == sig->decl && cEraseList[i].mapper == sig->mapper) return cEraseList[i].res;
+  int n;
+  TsType **tps = cSigTypeParams(sig->decl, &n);
+  TsType **anys = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
+  for (int i = 0; i < n; i++) anys[i] = cAnyType;
+  CSig r = *sig;
+  r.mapper = cCombineMappers(sig->mapper, cCreateTypeMapper(tps, anys, n));
+  r.erased = true;
+  if (cEraseN == cEraseCap) {
+    cEraseCap = cEraseCap ? cEraseCap * 2 : 16;
+    cEraseList = realloc(cEraseList, sizeof(CEraseEnt) * (size_t)cEraseCap);
+    if (!cEraseList) abort();
+  }
+  cEraseList[cEraseN].decl = sig->decl;
+  cEraseList[cEraseN].mapper = sig->mapper;
+  cEraseList[cEraseN].res = r;
+  cEraseN++;
+  return r;
+}
+
+/* instantiateSignatureInContextOf without an inference context (compareSignaturesRelated): the source's type
+ * parameters are inferred from the target's parameter types, then (when none of them has a parameter candidate)
+ * from its return type; getInferredType gives the common supertype of the candidates (subtype relation), or
+ * unknown; the constraint replaces a type that is not related to it. The subset: no literal, null or undefined
+ * candidates, no this, rest or default type parameters, no constraint that mentions type parameters. Returns
+ * false when the subset does not cover the signatures. */
+static bool cSigInContextOf(CSig *src, CSig *tgt, CSig *out) {
+  int n;
+  TsType **tps = cSigTypeParams(src->decl, &n);
+  CParams ps, pt;
+  if (!cSplitParams(src->decl, &ps) || !cSplitParams(tgt->decl, &pt)) { (void)cUnported("too many parameters"); return false; }
+  if (ps.thisParam || pt.thisParam || ps.rest || pt.rest) { (void)cUnported("signature inference with this or rest parameters"); return false; }
+  int before = cUnportedCount;
+  TsType ***cand = ts_arena_zalloc(sizeof(TsType **) * (size_t)(n ? n : 1)), ***cand2 = ts_arena_zalloc(sizeof(TsType **) * (size_t)(n ? n : 1));
+  int *cn = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1)), *cc = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1));
+  int *cn2 = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1)), *cc2 = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1));
+  int np = ps.n < pt.n ? ps.n : pt.n;
+  for (int i = 0; i < np; i++) {
+    bool okS, okT;
+    TsType *tt = cParamTypeAt(&pt, i, &okT, tgt->mapper);
+    TsType *st = cParamTypeAt(&ps, i, &okS, src->mapper);
+    if (!okS || !okT) continue;
+    if (tt == cErrorType || st == cErrorType) return false;
+    cInferTypes(tps, n, cand, cn, cc, tt, st);
+  }
+  TsType *tr = cReturnTypeOf(tgt), *sr = cReturnTypeOf(src);
+  if (tr == cErrorType || sr == cErrorType) return false;
+  cInferTypes(tps, n, cand2, cn2, cc2, tr, sr);
+  if (cUnportedCount != before) return false;
+  TsType **args = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  for (int k = 0; k < n; k++) {
+    TsType **cs = cn[k] ? cand[k] : cand2[k];
+    int nc = cn[k] ? cn[k] : cn2[k];
+    TsType *inferred;
+    if (nc) {
+      for (int i = 0; i < nc; i++) {
+        if (cs[i]->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BooleanLiteral | TF_BigIntLiteral | TF_Null | TF_Undefined)) {
+          (void)cUnported("signature inference from a literal, null or undefined candidate");
+          return false;
+        }
+      }
+      TsType *s = cs[0];
+      for (int i = 1; i < nc; i++) s = cIsRelatedWith(s, cs[i], REL_Subtype) ? cs[i] : s;   /* getCommonSupertype */
+      inferred = s;
+    } else {
+      if (cTypeParamDefaultNode(tps[k])) { (void)cUnported("signature inference with a default type parameter"); return false; }
+      inferred = cUnknownType;
+    }
+    TsType *c = cConstraintOf(tps[k]);
+    if (c) {
+      if (cCouldContain(c)) { (void)cUnported("signature inference with a constraint of type parameters"); return false; }
+      if (cIsRelatedTo(inferred, c, IS_None) == RR_False) inferred = c;
+    }
+    args[k] = inferred;
+  }
+  out->decl = src->decl;
+  out->isConstruct = src->isConstruct;
+  out->thisType = src->thisType;
+  out->mapper = cCombineMappers(src->mapper, cCreateTypeMapper(tps, args, n));
+  out->erased = true;
+  return true;
+}
+
+/* compareSignaturesRelated with a generic source: the source is instantiated in the context of the target */
+static bool cCompareSignaturesInContext(CSig *src, CSig *tgt) {
+  if (src->decl == tgt->decl && src->mapper == tgt->mapper) return true;
+  if (cSigIsGeneric(src)) {
+    CSig inst;
+    if (!cSigInContextOf(src, tgt, &inst)) return true;   /* not ported: the relation holds (conservative) */
+    return cCompareSignaturesRelated(&inst, tgt);
+  }
+  return cCompareSignaturesRelated(src, tgt);
+}
+
+/* signaturesRelatedTo (68500s): every target signature needs a related source signature; with one signature on
+ * each side the generic signatures are compared as they are, with several they are erased (eraseGenerics) */
 static int cSignaturesRelated(TsType *s, TsType *t, bool isConstruct) {
   cResolveSignatures(s);
   cResolveSignatures(t);
   int ns = isConstruct ? s->nconstruct : s->ncall, nt = isConstruct ? t->nconstruct : t->ncall;
   CSig *ss = isConstruct ? s->construct : s->call, *ts = isConstruct ? t->construct : t->call;
   if (nt == 0) return RR_True;
+  bool erase = !(ns == 1 && nt == 1);
   for (int j = 0; j < nt; j++) {
     bool hit = false;
-    for (int i = 0; i < ns && !hit; i++) hit = cCompareSignaturesRelated(&ss[i], &ts[j]);
+    for (int i = 0; i < ns && !hit; i++) {
+      if (!erase) { hit = cCompareSignaturesInContext(&ss[i], &ts[j]); continue; }
+      CSig a = cErasedSignature(&ss[i]), b = cErasedSignature(&ts[j]);
+      hit = cCompareSignaturesInContext(&a, &b);
+    }
     if (!hit) return RR_False;
   }
   return RR_True;

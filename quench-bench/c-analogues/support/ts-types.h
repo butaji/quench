@@ -113,7 +113,9 @@ typedef struct TsType {
   struct TsType *smType;
 } TsType;
 
-struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; };
+/* erased: the type parameters are instantiated to any (getErasedSignature, or an instantiation in context), so the
+ * signature has none of its own */
+struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; bool erased; };
 
 /* createType counts (typeCount) */
 static int cTypeCount;
@@ -1673,16 +1675,16 @@ static void cResolveSignatures(TsType *t) {
     cResolveSignatures(t->target);
     t->ncall = t->target->ncall;
     t->nconstruct = t->target->nconstruct;
-    t->call = ts_arena_alloc(sizeof(CSig) * (size_t)(t->ncall ? t->ncall : 1));
+    t->call = ts_arena_zalloc(sizeof(CSig) * (size_t)(t->ncall ? t->ncall : 1));
     for (int i = 0; i < t->ncall; i++) { t->call[i] = t->target->call[i]; t->call[i].mapper = t->mapper; }
-    t->construct = ts_arena_alloc(sizeof(CSig) * (size_t)(t->nconstruct ? t->nconstruct : 1));
+    t->construct = ts_arena_zalloc(sizeof(CSig) * (size_t)(t->nconstruct ? t->nconstruct : 1));
     for (int i = 0; i < t->nconstruct; i++) { t->construct[i] = t->target->construct[i]; t->construct[i].mapper = t->mapper; }
     return;
   }
   TsSymbol *callSym = NULL, *newSym = NULL;
   if (t->typeNode && (t->typeNode->kind == TSK_FunctionType || t->typeNode->kind == TSK_ConstructorType)) {
     bool ctor = t->typeNode->kind == TSK_ConstructorType;
-    t->call = ts_arena_alloc(sizeof(CSig));
+    t->call = ts_arena_zalloc(sizeof(CSig));
     t->call[0].decl = t->typeNode;
     t->call[0].isConstruct = ctor;
     t->call[0].mapper = t->sigMapper;
@@ -1694,7 +1696,7 @@ static void cResolveSignatures(TsType *t) {
   }
   if (t->objectFlags & OF_Anonymous && t->symbol && (t->symbol->flags & (SF_Method | SF_Function))) {
     TsSymbol *s = t->symbol;
-    t->call = ts_arena_alloc(sizeof(CSig) * (size_t)(s->ndecls ? s->ndecls : 1));
+    t->call = ts_arena_zalloc(sizeof(CSig) * (size_t)(s->ndecls ? s->ndecls : 1));
     t->ncall = 0;
     for (int d = 0; d < s->ndecls; d++) {
       t->call[t->ncall].decl = s->decls[d];
@@ -1709,7 +1711,7 @@ static void cResolveSignatures(TsType *t) {
     newSym = bTableGet(t->members, bnC("__new"));
   }
   if (callSym) {
-    t->call = ts_arena_alloc(sizeof(CSig) * (size_t)callSym->ndecls);
+    t->call = ts_arena_zalloc(sizeof(CSig) * (size_t)callSym->ndecls);
     for (int d = 0; d < callSym->ndecls; d++) {
       t->call[t->ncall].decl = callSym->decls[d];
       t->call[t->ncall].isConstruct = false;
@@ -1718,7 +1720,7 @@ static void cResolveSignatures(TsType *t) {
     }
   }
   if (newSym) {
-    t->construct = ts_arena_alloc(sizeof(CSig) * (size_t)newSym->ndecls);
+    t->construct = ts_arena_zalloc(sizeof(CSig) * (size_t)newSym->ndecls);
     for (int d = 0; d < newSym->ndecls; d++) {
       t->construct[t->nconstruct].decl = newSym->decls[d];
       t->construct[t->nconstruct].isConstruct = true;
