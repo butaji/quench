@@ -3831,7 +3831,11 @@ pub(super) struct LaneMethod {
     pub(in crate::vm) realm_bound: bool,
     /// Its entry types and its activation's result type (`lane_region::TypeSummary`), where it is a
     /// whole function's body: a direct caller types the call's result with it (`DirectCallee::summary`).
-    pub(in crate::vm) summary: Option<lane_region::TypeSummary>,
+    /// Read through `summary()`, which a withdrawal ends.
+    summary: Option<lane_region::TypeSummary>,
+    /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
+    /// types no call, so its summary is not read.
+    withdrawn: std::cell::Cell<bool>,
 }
 
 impl LaneMethod {
@@ -3854,10 +3858,13 @@ impl LaneMethod {
         self.entry as usize
     }
 
-    /// Its type summary, if its lowering made one (`lane_region::TypeSummary`).
+    /// Its type summary, if its lowering made one and its entry cell has not withdrawn it (`lane_region::TypeSummary`).
     pub(in crate::vm) fn summary(&self) -> Option<&lane_region::TypeSummary> {
-        self.summary.as_ref()
+        if self.withdrawn.get() { None } else { self.summary.as_ref() }
     }
+
+    /// Ends its summary, as its entry cell withdraws it (`EntryCell::withdraw`).
+    pub(super) fn withdraw(&self) { self.withdrawn.set(true) }
 
     /// The address of its scalar entry, if it has one (`EntryCell::scalar`).
     pub(super) fn scalar_address(&self) -> Option<usize> {

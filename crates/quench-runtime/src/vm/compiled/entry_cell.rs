@@ -140,6 +140,12 @@ impl EntryCell {
     /// Writes the unpublished state: the stub entry and scalar entry, no rows or proofs, and no
     /// recovery space or body. A new cell and a withdrawn one are both in this state.
     fn unpublish(&self) {
+        // The body the cell held no longer types its callers' calls (`LaneMethod::summary`).
+        if self.body.get() != 0 {
+            // SAFETY: a published cell's `body` is `Rc::as_ptr` of a body its view pins (`publish`), and the word is
+            // zeroed when that body retires (`PublishedCode::retire`), so a nonzero word names a live body.
+            unsafe { (*(self.body.get() as *const LaneMethod)).withdraw() }
+        }
         self.entry.set(Self::stub());
         self.rows.set(0);
         self.proven.set(0);
