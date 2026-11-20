@@ -2843,18 +2843,22 @@ static TsType *cNewType2(TsNode *e) {
 
 /* the element type of an array literal: the subtype-reduced union of the widened elements */
 static TsType *cArrayLiteralType(TsNode *e) {
-  if (!e->elements || e->elements->n == 0) return cUnported("empty array literal (evolving array)");
-  int n = e->elements->n;
-  TsType **ts = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
-  for (int i = 0; i < n; i++) {
-    TsNode *el = e->elements->v[i];
-    if (el->kind == TSK_SpreadElement) return cUnported("spread in an array literal");
-    if (el->kind == TSK_OmittedExpression) { ts[i] = cUndefinedType; continue; }
-    TsType *t = cMutableLocationType(el, cExprType(el));
-    if (t == cErrorType) return t;
-    ts[i] = t;
+  int n = e->elements ? e->elements->n : 0;
+  /* checkArrayLiteral: an empty literal has the element implicitNeverType under strictNullChecks, which the port takes as never
+   * (the evolving array of an auto-typed variable is a different type and is not ported) */
+  TsType *elem = cNeverType;
+  if (n > 0) {
+    TsType **ts = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
+    for (int i = 0; i < n; i++) {
+      TsNode *el = e->elements->v[i];
+      if (el->kind == TSK_SpreadElement) return cUnported("spread in an array literal");
+      if (el->kind == TSK_OmittedExpression) { ts[i] = cUndefinedType; continue; }
+      TsType *t = cMutableLocationType(el, cExprType(el));
+      if (t == cErrorType) return t;
+      ts[i] = t;
+    }
+    elem = n == 1 ? ts[0] : cUnionWithSubtypesRemoved(ts, n);
   }
-  TsType *elem = n == 1 ? ts[0] : cUnionWithSubtypesRemoved(ts, n);
   if (elem == cErrorType) return elem;
   TsSymbol *arr = bTableGet(cGlobals, bnC("Array"));
   if (!arr) return cUnported("no global Array");
