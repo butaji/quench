@@ -2498,7 +2498,8 @@ impl Lowering<'_, '_> {
         written: &dyn Fn(WideInstruction) -> Vec<Register>) -> Type {
         let native_calls = self.native_calls;
         let mut defined: Vec<Option<Type>> = vec![None; instructions.len()];
-        self.facts.for_each_definition(instructions, leaders, &self.program.constants, written, native_calls, |pc, register, ty| {
+        self.facts.for_each_definition(instructions, leaders, &self.program.constants, written, native_calls,
+            0..=instructions.len().saturating_sub(1), |pc, register, ty| {
             if register == instructions[pc].result_register() { defined[pc] = Some(ty); }
         });
         let mut returned = Type::NEVER;
