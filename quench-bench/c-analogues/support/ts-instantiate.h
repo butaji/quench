@@ -96,8 +96,10 @@ static bool cCouldContain(TsType *t) {
     if (t->objectFlags & OF_Reference) {
       for (int i = 0; i < t->nargs && !r; i++) r = cCouldContain(t->args[i]);
     } else if (t->objectFlags & OF_Anonymous) {
+      /* an empty type literal ({}) mentions no type parameter */
+      bool emptyLiteral = t->typeNode && t->typeNode->kind == TSK_TypeLiteral && t->typeNode->members && t->typeNode->members->n == 0;
       r = t->symbol && (t->symbol->flags & (SF_Function | SF_Method | SF_Class | SF_TypeLiteral | SF_ObjectLiteral)) &&
-          t->symbol->ndecls > 0;
+          t->symbol->ndecls > 0 && !emptyLiteral;
     } else if (t->objectFlags & OF_Mapped) {
       r = true;   /* a mapped type may refer to the type parameters of its declaration */
     }
