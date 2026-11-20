@@ -3121,6 +3121,15 @@ static bool cMentionsTypeParam(TsType *t, TsType *tp, bool *unp) {
     for (int i = 0; i < t->ntypes; i++) if (cMentionsTypeParam(t->types[i], tp, unp)) return true;
     return false;
   }
+  if (t->flags & TF_Conditional) {
+    /* the check and extends types and the branches of a conditional type (its branches under its mapper) */
+    TsType *br[2] = { cCondBranch(t, true), cCondBranch(t, false) };
+    if (br[0] == cErrorType || br[1] == cErrorType) { *unp = true; return false; }
+    if (cMentionsTypeParam(t->condCheck, tp, unp) || cMentionsTypeParam(t->condExtends, tp, unp)) return true;
+    if (*unp) return false;
+    return cMentionsTypeParam(br[0], tp, unp) || cMentionsTypeParam(br[1], tp, unp);
+  }
+  if (t->flags & TF_IndexedAccess) return cMentionsTypeParam(t->iaObj, tp, unp) || cMentionsTypeParam(t->iaIdx, tp, unp);
   if ((t->flags & TF_Object) && (t->objectFlags & OF_Reference)) {
     for (int i = 0; i < t->nargs; i++) if (cMentionsTypeParam(t->args[i], tp, unp)) return true;
     return false;
