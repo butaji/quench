@@ -38,6 +38,14 @@ impl Heap {
         self.string_records.live_base()
     }
 
+    /// The fixed base of the Wasm GC record range once it has been reserved (`NATIVE_WASM_GC_LAYOUT`
+    /// gives a record's payload words, the record's stride is `size_of::<WasmGcRecord>()`). Native code
+    /// combines it with a live, rooted direct Wasm GC Value's record ID; the base never moves once reserved.
+    #[inline(always)]
+    pub(crate) fn wasm_gc_record_base(&self) -> Option<*const WasmGcRecord> {
+        self.wasm_gc_records.base_ptr()
+    }
+
     /// The table of one-unit ASCII strings by unit (`ascii_unit_strings`), `UNDEFINED` for a
     /// unit with no string yet: where native code reads `charAt`'s result. A collection
     /// empties it, so a reader takes the base again after any safepoint.

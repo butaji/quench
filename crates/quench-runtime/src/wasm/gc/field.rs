@@ -120,3 +120,14 @@ impl GcField {
         }
     }
 }
+
+/// The `c` operand of a struct read when the lowering cannot carry the field's payload offset in it
+/// (the offset does not fit): the read finds the field by its index instead.
+pub(crate) const NO_STATIC_OFFSET: u16 = u16::MAX;
+
+/// The static payload offset a struct read's `c` operand carries (`FieldLayout::StaticOffset`), or
+/// `None` for `NO_STATIC_OFFSET`.
+#[inline(always)]
+pub(crate) fn static_offset(operand: u16) -> Option<u32> {
+    (operand != NO_STATIC_OFFSET).then_some(u32::from(operand))
+}

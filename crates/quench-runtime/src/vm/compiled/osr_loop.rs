@@ -836,6 +836,13 @@ pub(super) fn inlined_returning(instruction: WideInstruction) -> bool {
         && instruction.defined_register().is_some()
 }
 
+/// The ops an inlined callee's instructions may be: those `admit` lowers, its `Return`, and
+/// none that names its function's own state (captures, frame, calls).
+fn inlinable(op: Op) -> bool {
+    op.traits().has(crate::bytecode::Traits::INLINABLE)
+}
+
+
 /// `instruction` with each register `register` renames, a `this` field base made the
 /// `this` register, and a jump target `target` renames; `None` for a field it cannot
 /// rename, or a register with flags.
@@ -1384,8 +1391,8 @@ impl LoopEntry {
     /// reads as a value even if the callee's and the unit's liveness ever disagreed; only inlining
     /// regions ask for the window, and `scratch_value` reads no word past `Inlining::window`.
     pub(super) fn scratch_address(&mut self, width: usize) -> usize {
-        let width = width.min(self.scratch.len());
-        self.scratch[..width].fill(std::mem::MaybeUninit::new(Value::UNDEFINED.to_bits()));
+        let filled = width.min(self.scratch.len());
+        self.scratch[..filled].fill(std::mem::MaybeUninit::new(Value::UNDEFINED.to_bits()));
         self.scratch.as_mut_ptr().addr()
     }
 

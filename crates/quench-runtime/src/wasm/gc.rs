@@ -4,7 +4,7 @@ use wasmparser::{FieldType, StorageType};
 
 mod field;
 mod layout;
-pub(crate) use field::{GcField, GcFieldValue};
+pub(crate) use field::{GcField, GcFieldValue, NO_STATIC_OFFSET, static_offset};
 pub(crate) use layout::ObjectLayout;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -561,6 +561,18 @@ impl Lowering<'_> {
         Ok(())
     }
 
+    /// The `c` operand of a struct read of field `field` of the struct type `index`: the field's
+    /// payload offset in the declared layout, or `NO_STATIC_OFFSET` where it does not fit the operand.
+    fn static_field_offset(&self, index: u32, field: u32) -> u16 {
+        self.signatures
+            .declarations
+            .layout(index)
+            .and_then(|layout| layout.offset(field as usize))
+            .and_then(|offset| u16::try_from(offset).ok())
+            .filter(|&offset| offset != NO_STATIC_OFFSET)
+            .unwrap_or(NO_STATIC_OFFSET)
+    }
+
     fn struct_field(
         &mut self,
         access: GcFieldAccess,
@@ -601,8 +613,10 @@ impl Lowering<'_> {
                 None => (self.push()?, reference),
             };
             // Subtype prefixes keep packed types, so the storage holds for every live object.
+            // A read carries the field's static offset in `c` (a write's `c` is unused, so 0).
+            let offset = if access == GcFieldAccess::Write { 0 } else { self.static_field_offset(index, field) };
             let field = GcField::new(field, declaration.element_type).ok_or_else(|| Diagnostic::unsupported(self.name, "invalid Wasm struct field"))?;
-            self.emit(GcStep::field_step(Aggregate::Struct, access).op(), a, b, 0, field.tag())?;
+            self.emit(GcStep::field_step(Aggregate::Struct, access).op(), a, b, offset, field.tag())?;
         }
         Ok(())
     }
