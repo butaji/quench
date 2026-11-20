@@ -28,7 +28,7 @@
 static jmp_buf *WSL_HANDLERS[64];
 static int WSL_NH;
 static char WSL_ERR_CLASS[32];
-static char WSL_ERR_MSG[512];
+static char WSL_ERR_MSG[16384];   /* a type error can list every overload that failed */
 static int WSL_ERR_SYNTAX;
 
 /* Raises an error. Syntax errors can be caught by backtracking scopes; the rest cannot. */
@@ -400,7 +400,7 @@ static void parse_type_arguments(Parser *P, AstList *out) {
 static Ast *parse_term(Parser *P) {
   Tok t;
   if (tok_present(t = TRY(P, "null"))) {
-    return ast_new(A_NULLLITERAL, t.index);
+    return lit_expr_new(A_NULLLITERAL, t.index);
   }
   if (tok_present(t = try_consume_kind(P, "identifier"))) {
     Ast *a = ast_new(A_VARIABLEREF, t.index);
@@ -413,7 +413,7 @@ static Ast *parse_term(Parser *P) {
     long long v = 0;
     for (int i = 0; i < t.len; i++) { v = v * 10 + (t.text[i] - '0'); if (v > 0x7fffffffLL * 10) v = 0x7fffffffLL * 10; }
     if (!canonical || v > 0x7fffffffLL) P_FAIL_FMT(P, "Integer literal is not an integer: %.*s", t.len, t.text);
-    Ast *a = ast_new(A_INTLITERAL, t.index);
+    Ast *a = lit_expr_new(A_INTLITERAL, t.index);
     a->u.intLit.value = v;
     return a;
   }
@@ -423,7 +423,7 @@ static Ast *parse_term(Parser *P) {
     long long v = 0;
     for (int i = 0; i < digits; i++) { v = v * 10 + (t.text[i] - '0'); if (v > 0xffffffffLL * 10) v = 0xffffffffLL * 10; }
     if (!canonical || v > 0xffffffffLL) P_FAIL_FMT(P, "Integer literal is not 32-bit unsigned integer: %.*s", t.len, t.text);
-    Ast *a = ast_new(A_UINTLITERAL, t.index);
+    Ast *a = lit_expr_new(A_UINTLITERAL, t.index);
     a->u.intLit.value = v;
     return a;
   }
@@ -445,7 +445,7 @@ static Ast *parse_term(Parser *P) {
       }
       unsigned long long limit = isInt ? 0x7fffffffULL : 0xffffffffULL;
       if (!canonical || v > limit) P_FAIL_FMT(P, "Hex integer literal is not an integer: %.*s", h.len, h.text);
-      Ast *a = ast_new(isInt ? A_INTLITERAL : A_UINTLITERAL, h.index);
+      Ast *a = lit_expr_new(isInt ? A_INTLITERAL : A_UINTLITERAL, h.index);
       a->u.intLit.value = (long long)v;
       return a;
     }
@@ -458,11 +458,11 @@ static Ast *parse_term(Parser *P) {
     char *text = arena_strndup(t.text, n);
     double value = strtod(text, NULL);
     if (d) {
-      Ast *a = ast_new(A_DOUBLELITERAL, t.index);
+      Ast *a = lit_expr_new(A_DOUBLELITERAL, t.index);
       a->u.fltLit.value = value;
       return a;
     }
-    Ast *a = ast_new(A_FLOATLITERAL, t.index);
+    Ast *a = lit_expr_new(A_FLOATLITERAL, t.index);
     a->u.fltLit.value = (double)(float)value;
     return a;
   }
@@ -496,14 +496,13 @@ static Ast *mk_dot(int origin, Ast *base, const char *field) {
   a->u.dot.fieldName = field;
   return a;
 }
-static Ast *mk_var_ref(int origin, const char *name, int anon) {
+/* A variable reference; an anon ref (1 old, 2 new value of a read-modify-write) names the
+ * read-modify-write's own anonymous variable, which the caller passes. */
+static Ast *mk_var_ref(int origin, const char *name, int anon, Ast *var) {
   Ast *a = ast_new(A_VARIABLEREF, origin);
   a->u.varRef.name = name;
   a->u.varRef.anon = anon;
-  if (anon) {
-    /* VariableRef.wrap(anonVar): an old or new value of a read-modify-write, bound at creation */
-    a->u.varRef.variable = ast_new(A_ANONVAR, origin);
-  }
+  a->u.varRef.variable = var;
   return a;
 }
 static const char *tok_string(Tok t) { return arena_strndup(t.text, t.len); }
@@ -661,18 +660,24 @@ static Ast *emit_increment(Tok token, Ast *old, Ast *extraArg) {
   if (extraArg) list_push(&c->u.call.argumentList, extraArg);
   return c;
 }
-static Ast *finish_post_increment(Tok token, Ast *left) {
+/* ReadModifyWriteExpression(token, left): its old and new value variables are the targets of its anon refs */
+static Ast *new_rmw(Tok token, Ast *left) {
   Ast *rmw = ast_new(A_RMW, token.index);
   rmw->u.rmw.lValue = left;
-  rmw->u.rmw.newValueExp = emit_increment(token, mk_var_ref(token.index, "anonVar", 1), NULL);
-  rmw->u.rmw.resultExp = mk_var_ref(token.index, "anonVar", 1);
+  rmw->u.rmw.oldVar = ast_new(A_ANONVAR, token.index);
+  rmw->u.rmw.newVar = ast_new(A_ANONVAR, token.index);
+  return rmw;
+}
+static Ast *finish_post_increment(Tok token, Ast *left) {
+  Ast *rmw = new_rmw(token, left);
+  rmw->u.rmw.newValueExp = emit_increment(token, mk_var_ref(token.index, "anonVar", 1, rmw->u.rmw.oldVar), NULL);
+  rmw->u.rmw.resultExp = mk_var_ref(token.index, "anonVar", 1, rmw->u.rmw.oldVar);
   return rmw;
 }
 static Ast *finish_pre_increment(Tok token, Ast *left, Ast *extraArg) {
-  Ast *rmw = ast_new(A_RMW, token.index);
-  rmw->u.rmw.lValue = left;
-  rmw->u.rmw.newValueExp = emit_increment(token, mk_var_ref(token.index, "anonVar", 1), extraArg);
-  rmw->u.rmw.resultExp = mk_var_ref(token.index, "anonVar", 2);
+  Ast *rmw = new_rmw(token, left);
+  rmw->u.rmw.newValueExp = emit_increment(token, mk_var_ref(token.index, "anonVar", 1, rmw->u.rmw.oldVar), extraArg);
+  rmw->u.rmw.resultExp = mk_var_ref(token.index, "anonVar", 2, rmw->u.rmw.newVar);
   return rmw;
 }
 

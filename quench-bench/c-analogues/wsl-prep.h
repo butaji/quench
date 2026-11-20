@@ -315,7 +315,9 @@ static void program_removed(Program *out, const Program *in) {
   }
 }
 
-/* ---- ConstexprFolder: unary minus on a literal becomes the negated literal ---- */
+/* ---- ConstexprFolder: unary minus on a literal becomes the negated literal ----
+ * The JS negConstexpr getter (CreateLiteral.js) drops the origin argument, so the folded literal has
+ * no origin (origin -1, traced as "-"). */
 static void fold_visit(Ast *n);
 static void fold_child(void *cx, Ast *c) { (void)cx; fold_visit(c); }
 
@@ -325,8 +327,9 @@ static Ast *unify_node(Ast *n) {
 }
 
 static Ast *lit_new(AstTag tag, int origin, int native) {
-  Ast *a = ast_new(tag, origin);
+  Ast *a = lit_expr_new(tag, origin);
   a->native = native;
+  a->type->native = native;
   return a;
 }
 
@@ -338,11 +341,11 @@ static void fold_visit(Ast *n) {
   Ast *neg = NULL;
   switch (arg->tag) {
   case A_INTLITERAL:   /* (-value) | 0 */
-    neg = lit_new(A_INTLITERAL, n->origin, n->native);
+    neg = lit_new(A_INTLITERAL, -1, n->native);
     neg->u.intLit.value = (long long)(int32_t)(uint32_t)(-arg->u.intLit.value);
     break;
   case A_UINTLITERAL:  /* (-value) >>> 0 */
-    neg = lit_new(A_UINTLITERAL, n->origin, n->native);
+    neg = lit_new(A_UINTLITERAL, -1, n->native);
     neg->u.intLit.value = (long long)(uint32_t)(-arg->u.intLit.value);
     break;
   case A_FLOATLITERAL:
@@ -352,7 +355,7 @@ static void fold_visit(Ast *n) {
       fprintf(stderr, "fold: non-integral negated literal %g\n", v);
       exit(6);
     }
-    neg = lit_new(A_INTLITERAL, n->origin, n->native);
+    neg = lit_new(A_INTLITERAL, -1, n->native);
     neg->u.intLit.value = (long long)v;
     break;
   }

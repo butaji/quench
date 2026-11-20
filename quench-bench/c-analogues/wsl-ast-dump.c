@@ -14,7 +14,14 @@
 #include "wsl-clone.h"
 #include "wsl-prep.h"
 #include "wsl-names.h"
+#include "wsl-types.h"
 #include "wsl-synth.h"
+#include "wsl-check.h"
+#include "wsl-props.h"
+#include "wsl-inline.h"
+#include "wsl-visit.h"
+#include "wsl-inliner.h"
+#include "wsl-eval.h"
 
 static uint32_t fnv_bytes(uint32_t h, const char *s, size_t n) {
   for (size_t i = 0; i < n; i++) {
@@ -119,6 +126,17 @@ static void bench_parse(int iterations) {
  * parses a doPrep input into the clone and reduces it with programWithUnnecessaryThingsRemoved),
  * then folds constexprs. The standard library is parsed once and kept below the arena mark. */
 static int STAGE = 0;
+static int UNIFY_MODE = 0;   /* --unify (1): the pairwise unification harness; --resolve (2): the overload harness */
+static int PROPS_MODE = 0;   /* --props: check, the literal check and resolveProperties, then the stage-6 dump */
+static int POST_MODE = 0;    /* --post: check, then the post-check passes; status lines only */
+static int CHECK_MODE = 0;   /* --check: the checker on the stage-6 state, with its expression trace */
+static int VISIT_MODE = 0;   /* --visit: the post-check state, the instances, then the Visitor.js traversal trace (wsl-visit.h) */
+static int INSTANTIATE_MODE = 0;   /* --instantiate: the post-check state, then the instances of inline()'s first loop */
+static int INLINE_MODE = 0;   /* --inline: inline() on the post-check state, then the instances with their EPtrs and the buffers */
+static int EVAL_MODE = 0;   /* --eval: inline(), then the evaluator on each non-generic function without parameters */
+static int EBUF_MODE = 0;   /* --ebuf: LateChecker, the layout and EBufferBuilder of each instance, then the EBuffers */
+static int LAYOUT_MODE = 0;   /* --layout: LateChecker and the layout of each instance, then the layout log */
+static int LATE_MODE = 0;   /* --late: the post-check state, then LateChecker's traversal trace of each instance (wsl-late.h) */
 static Program STD_PROG, PREP_IN, PREP_OUT;
 static size_t STD_MARK;
 
@@ -137,8 +155,22 @@ static void std_parse_once(void) {
   STD_MARK = arena_mark();
 }
 
+/* The instance table in the order of the JS funcInstantiator's _instances Map, each as a header and its tree */
+static void instance_dump(Buf *b) {
+  int k = 0;
+  for (int f = 0; f < FI_NF; f++) {
+    for (int i = 0; i < FI_N; i++) {
+      if (FI_TAB[i].func != FI_FUNCS[f]) continue;
+      buf_fmt(b, "instance %d %s %d\n", k++, ast_class_name(FI_TAB[i].func), FI_TAB[i].nt);
+      dump_node(b, FI_TAB[i].inst, 1);
+      buf_str(b, "\n");
+    }
+  }
+}
+
 static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t statuscap) {
   arena_reset_to(STD_MARK);
+  fi_reset();
   /* a throw unwinds the recursion stacks without popping them */
   RC_N = 0;
   TDR_N = 0;
@@ -154,6 +186,8 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
   CUR_ORIGIN = i == 0 ? "/internal/stdlib" : "/internal/test";
   CUR_TEXT = in->text;
   CUR_LEN = in->len;
+  ORIGIN_TEXT = in->text;
+  ORIGIN_LEN = in->len;
   CUR_LINEOFF = i == 0 ? 27 : 0;
   CUR_NATIVE = i == 0;
   if (i == 0) {
@@ -166,6 +200,7 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
   fold_program(&PREP_OUT);
   if (STAGE >= 2) {
     NameCtx *global = program_global_ctx(&PREP_OUT);
+    PROG_GLOBAL_NC = global;
     names_types(&PREP_OUT, global);
     names_protocols(&PREP_OUT, global);
     if (STAGE >= 3) {
@@ -187,7 +222,73 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
     if (STAGE >= 5) resolve_typedefs_in_functions(&PREP_OUT);
     if (STAGE >= 6) flatten_protocol_extends(&PREP_OUT);
   }
+  if (INSTANTIATE_MODE || VISIT_MODE) {
+    check_program(&PREP_OUT);
+    post_check_passes(&PREP_OUT);
+    fi_instantiate_top(&PREP_OUT);
+    WSL_NH = 0;
+    if (VISIT_MODE) return visit_trace(b, &PREP_OUT);
+    instance_dump(b);
+    long nodes = -1;   /* the row's dump has no trailing newline: its lines are the newlines but the last */
+    for (size_t c = 0; c < b->n; c++) if (b->s[c] == '\n') nodes++;
+    return nodes;
+  }
+  if (LATE_MODE) {
+    check_program(&PREP_OUT);
+    post_check_passes(&PREP_OUT);
+    return late_trace(b, &PREP_OUT);
+  }
+  if (LAYOUT_MODE) {
+    check_program(&PREP_OUT);
+    post_check_passes(&PREP_OUT);
+    layout_run(b, &PREP_OUT);
+    return 0;
+  }
+  if (EBUF_MODE) {
+    check_program(&PREP_OUT);
+    post_check_passes(&PREP_OUT);
+    ebuf_pass(b, &PREP_OUT);
+    return 0;
+  }
+  if (INLINE_MODE) {
+    check_program(&PREP_OUT);
+    post_check_passes(&PREP_OUT);
+    EBUF_COUNT = 0;
+    EBUF_NALL = 0;
+    inline_program(&PREP_OUT);
+    inline_dump(b);
+    return 0;
+  }
+  if (EVAL_MODE) {
+    check_program(&PREP_OUT);
+    post_check_passes(&PREP_OUT);
+    EBUF_COUNT = 0;
+    EBUF_NALL = 0;
+    inline_program(&PREP_OUT);
+    eval_dump(b, &PREP_OUT);
+    return 0;
+  }
+  if (PROPS_MODE) {
+    check_program(&PREP_OUT);
+    for (int k = 0; k < PREP_OUT.statements.n; k++) littype_visit(PREP_OUT.statements.v[k]);
+    resolve_properties(&PREP_OUT);
+  }
+  if (CHECK_MODE) {
+    check_program(&PREP_OUT);
+    if (POST_MODE) post_check_passes(&PREP_OUT);
+    WSL_NH = 0;
+    return 0;
+  }
   WSL_NH = 0;
+  if (UNIFY_MODE) {
+    if (UNIFY_MODE == 2) resolve_harness(&PREP_OUT, b);
+    else if (UNIFY_MODE == 3) literal_harness(&PREP_OUT, b);
+    else if (UNIFY_MODE == 4) intrinsics_harness(&PREP_OUT, b);
+    else if (UNIFY_MODE == 5) reasons_harness_all(&PREP_OUT, b);
+    else unify_harness(&PREP_OUT, b);
+    WSL_NH = 0;
+    return 0;
+  }
   buf_str(b, "program\n");
   for (int k = 0; k < PREP_OUT.statements.n; k++) dump_node(b, PREP_OUT.statements.v[k], 1);
   long nodes = -1;
@@ -201,12 +302,28 @@ int main(int argc, char **argv) {
   int benchIterations = 0;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--stage") == 0 && i + 1 < argc) STAGE = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--unify") == 0) UNIFY_MODE = 1;
+    else if (strcmp(argv[i], "--resolve") == 0) UNIFY_MODE = 2;
+    else if (strcmp(argv[i], "--literal") == 0) UNIFY_MODE = 3;
+    else if (strcmp(argv[i], "--intrinsics") == 0) UNIFY_MODE = 4;
+    else if (strcmp(argv[i], "--reasons") == 0) UNIFY_MODE = 5;
     else if (strcmp(argv[i], "--clone") == 0) CLONE_FLAG = 1;
+    else if (strcmp(argv[i], "--check") == 0) CHECK_MODE = 1;
+    else if (strcmp(argv[i], "--post") == 0) { CHECK_MODE = 1; POST_MODE = 1; }
+    else if (strcmp(argv[i], "--props") == 0) { PROPS_MODE = 1; DUMP_NO_ROLES = 1; }
+    else if (strcmp(argv[i], "--instantiate") == 0) { INSTANTIATE_MODE = 1; DUMP_NO_ROLES = 1; }
+    else if (strcmp(argv[i], "--visit") == 0) { VISIT_MODE = 1; DUMP_NO_ROLES = 1; }
+    else if (strcmp(argv[i], "--late") == 0) { LATE_MODE = 1; DUMP_NO_ROLES = 1; }
+    else if (strcmp(argv[i], "--layout") == 0) { LAYOUT_MODE = 1; DUMP_NO_ROLES = 1; }
+    else if (strcmp(argv[i], "--ebuf") == 0) { EBUF_MODE = 1; DUMP_NO_ROLES = 1; }
+    else if (strcmp(argv[i], "--inline") == 0) { INLINE_MODE = 1; DUMP_NO_ROLES = 1; }
+    else if (strcmp(argv[i], "--eval") == 0) { EVAL_MODE = 1; DUMP_NO_ROLES = 1; }
     else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
     else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc) benchIterations = atoi(argv[++i]);
     else root = argv[i];
   }
   collect_inputs(root);
+  if (CHECK_MODE || LATE_MODE || LAYOUT_MODE || EBUF_MODE || INLINE_MODE || EVAL_MODE) STAGE = 6;
   REFS_ON = STAGE >= 2;
   if (STAGE >= 1) std_parse_once();
   if (benchIterations > 0) {
@@ -218,16 +335,44 @@ int main(int argc, char **argv) {
   int ok = 0, nerr = 0;
   long totalNodes = 0;
   Buf dumpOut = {0};
+  for (int i = 0; CHECK_MODE && i < NINPUTS; i++) {
+    /* --check (as tools/wsl-ast-dump.cjs --check): the input line, then the trace of a checked input */
+    const Input *in = &INPUTS[i];
+    if (i > 0 && in->native) continue;
+    char status[16400] = "ok";
+    Buf b = {0};
+    CHK_TRACE.n = 0;
+    prepare_one(i, in, &b, status, sizeof status);
+    printf("input %d %s %s\n", i, i == 0 ? "stdlib" : "doPrep", status);
+    if (!POST_MODE && CHK_TRACE.n && strcmp(status, "ok") == 0) {
+      CHK_TRACE.s[CHK_TRACE.n - 1] = 0;   /* the trace's last newline: console.log supplies it */
+      printf("%s\n", CHK_TRACE.s);
+    }
+  }
+  if (CHECK_MODE) return 0;
+  for (int i = 0; (LATE_MODE || LAYOUT_MODE || EBUF_MODE || INLINE_MODE || EVAL_MODE) && i < NINPUTS; i++) {
+    /* --late (as tools/wsl-ast-dump.cjs --late): the input line, then the LateChecker trace (kept up to an error) */
+    const Input *in = &INPUTS[i];
+    if (i > 0 && in->native) continue;
+    char status[16400] = "ok";
+    Buf b = {0};
+    prepare_one(i, in, &b, status, sizeof status);
+    printf("input %d %s %s\n", i, i == 0 ? "stdlib" : "doPrep", status);
+    if (b.n) printf("%s\n", b.s);
+    free(b.s);
+  }
+  if (LATE_MODE || LAYOUT_MODE || EBUF_MODE || INLINE_MODE || EVAL_MODE) return 0;
   for (int i = 0; i < NINPUTS; i++) {
     const Input *in = &INPUTS[i];
     const char *kind = i == 0 ? "stdlib" : in->native ? "doLex" : "doPrep";
-    char status[700] = "ok";
+    char status[16384] = "ok";
     Buf b = {0};
     long nodes = 0;
     if (STAGE == 0) arena_reset();
     if (i > 0 && in->native) {
       /* doLex: the token list (no "program" line) */
-      int count = dump_lex_input(in, &b, status, sizeof status);
+      /* --instantiate skips the doLex inputs, as tools/wsl-ast-dump.cjs does (an empty dump) */
+      int count = INSTANTIATE_MODE || VISIT_MODE ? 0 : dump_lex_input(in, &b, status, sizeof status);
       nodes = count;
       if (strcmp(status, "ok") != 0) { b.n = 0; nodes = 0; }
     } else if (STAGE >= 1) {
@@ -236,6 +381,12 @@ int main(int argc, char **argv) {
     } else {
       nodes = parse_one(i, in, &b, status, sizeof status);
       if (nodes < 0) { b.n = 0; nodes = 0; }
+    }
+    if (UNIFY_MODE) {
+      /* the harness text for each input (doLex inputs have none) */
+      if (!(i > 0 && in->native)) fwrite(b.s, 1, b.n, stdout);
+      free(b.s);
+      continue;
     }
     /* the dump text has no trailing newline; the reference hashes it without one */
     size_t dlen = b.n && b.s[b.n - 1] == '\n' ? b.n - 1 : b.n;
@@ -248,7 +399,7 @@ int main(int argc, char **argv) {
     if (i == dumpAt && b.s) { dumpOut = b; dumpOut.s[dlen] = 0; dumpOut.n = dlen; }
     else free(b.s);
   }
-  printf("summary inputs %d ok %d errors %d nodes %ld hash %08x\n", NINPUTS, ok, nerr, totalNodes, all);
+  if (!UNIFY_MODE) printf("summary inputs %d ok %d errors %d nodes %ld hash %08x\n", NINPUTS, ok, nerr, totalNodes, all);
   if (dumpOut.s) printf("%s\n", dumpOut.s);
   return 0;
 }

@@ -20,21 +20,47 @@ typedef enum {
   A_COMMA, A_NULLLITERAL, A_BOOLLITERAL, A_VARIABLEREF, A_CALL, A_DOT, A_INDEX,
   A_DEREF, A_MAKEPTR, A_MAKEARRAYREF, A_LOGICALNOT, A_LOGICAL, A_ASSIGN, A_RMW,
   A_INTLITERAL, A_UINTLITERAL, A_FLOATLITERAL, A_DOUBLELITERAL,
-  A_IDENTITY, A_ENUMLITERAL, A_ANONVAR
+  A_IDENTITY, A_ENUMLITERAL, A_ANONVAR,
+  /* literal types (GenericLiteralType and NullType): the type of a literal expression, see lit_type_new */
+  A_INTLITERALTYPE, A_UINTLITERALTYPE, A_FLOATLITERALTYPE, A_DOUBLELITERALTYPE, A_NULLTYPE,
+  /* ConvertPtrToArrayRefExpression (made by the checker for @ on a pointer; becomes the expression) */
+  A_CONVERTPTR,
+  /* instances (FuncInstantiator.getUnique, wsl-inline.h): NativeFuncInstance; FunctionLikeBlock (the inliner) */
+  A_NATIVEFUNCINST, A_FUNCTIONLIKEBLOCK
 } AstTag;
 
 typedef struct Ast Ast;
+typedef struct EPtrV EPtrV;
 typedef struct { Ast **v; int n, cap; } AstList;
+
+/* The checker's results for a property access (PropertyAccessExpression fields, wsl-check.h). lv is
+ * isLValue (1 or 0). The overload calls and result types are NULL when unresolved; errGet, errAnd and
+ * errSet are the messages of the failed attempts. */
+typedef struct {
+  Ast *baseType, *resGet, *resAnd, *callGet, *callAnd, *callSet;
+  const char *errGet, *errAnd, *errSet;
+  int lv;
+  const char *lvReason, *addrSpace;
+} PropChk;
 
 struct Ast {
   AstTag tag;
   int origin;                 /* index of the origin token in the source, -1 if none */
   int native;                 /* 1 if the origin kind is "native" (the standard library), else 0 */
+  Ast *type;                  /* Value.type of a literal expression: its literal type node (NULL otherwise) */
+  int64_t size; int hasSize;      /* StructType.size, set by the layout (wsl-layout.h); hasSize 0 is undefined */
+  int64_t offset; int hasOffset;  /* Field.offset, set by the layout */
+  EPtrV *ePtr;                    /* ePtr (wsl-ebuf.h): a parameter, variable, anonymous variable or box; FuncDef and CallExpression use ePtrAux */
+  EPtrV *ePtrAux;                 /* returnEPtr (FuncDef) or resultEPtr (CallExpression) */
   union {
     /* FuncDef, NativeFunc, ProtocolFuncDecl */
     struct { const char *name; int isCast; const char *shaderType; int isRestricted;
              Ast *returnType; AstList typeParameters; AstList parameters; Ast *body;
-             int hasOv; AstList *ov; Ast *protocolDecl; } func;   /* ov: possibleOverloads (ProtocolFuncDecl), live; protocolDecl: ProtocolFuncDecl.protocolDecl */
+             int hasOv; AstList *ov; Ast *protocolDecl;   /* ov: possibleOverloads (ProtocolFuncDecl), live; protocolDecl: ProtocolFuncDecl.protocolDecl */
+             Ast *orig; Ast *uninstRet; int inlined;   /* orig: the generic function of an instance; uninstRet: uninstantiatedReturnType; inlined: Func.inlined */
+             Ast *implStruct; const char *implField;   /* a synthesized struct accessor (SynthesizeStructAccessors): its struct and field */
+             Ast *implType;   /* implType: an instance's implementationData.type (the struct instance of its type arguments) */
+             int implHas; int64_t implOffset, implStructSize, implFieldSize; } func;   /* implOffset..: the accessor's layout data (didLayoutStructsInImplementationData) */
     /* TypeRef */
     struct { const char *name; AstList typeArguments; Ast *type; } typeRef;   /* type: resolved target */
     /* PtrType, ArrayRefType */
@@ -79,41 +105,48 @@ struct Ast {
     struct { int value; } boolLit;
     /* VariableRef; anon: 0 named, 1 old value of a ReadModifyWrite, 2 new value */
     struct { const char *name; int anon; Ast *variable; } varRef;
-    /* CallExpression */
+    /* CallExpression; func, resultType, argTypes, actualTA: the checker's results (wsl-check.h) */
     struct { const char *name; AstList typeArguments; AstList argumentList;
-             int hasOv; AstList *ov; int isCast; Ast *returnType; } call;
-    /* DotExpression */
+             int hasOv; AstList *ov; int isCast; Ast *returnType;
+             Ast *func; Ast *resultType; AstList argTypes; AstList actualTA;
+             Ast *nfi; AstList instTA; } call;   /* nfi: nativeFuncInstance; instTA: instantiatedActualTypeArguments */
+    /* DotExpression, IndexExpression: the checker's results are in pc (PropChk, wsl-check.h) */
     struct { const char *fieldName; Ast *base;
-             int hasGet, hasSet, hasAnd; AstList *getOv, *setOv, *andOv; } dot;
-    /* IndexExpression */
+             int hasGet, hasSet, hasAnd; AstList *getOv, *setOv, *andOv; PropChk pc; } dot;
     struct { Ast *base; Ast *index;
-             int hasGet, hasSet, hasAnd; AstList *getOv, *setOv, *andOv; } index;
-    /* DereferenceExpression */
-    struct { Ast *ptr; } deref;
-    /* MakePtrExpression, MakeArrayRefExpression */
-    struct { Ast *lValue; } lvalueRef;
+             int hasGet, hasSet, hasAnd; AstList *getOv, *setOv, *andOv; PropChk pc; } index;
+    /* DereferenceExpression; addrSpace is set by the checker */
+    struct { Ast *ptr; const char *addrSpace; } deref;
+    /* MakePtrExpression, MakeArrayRefExpression (numElements: set by the checker), ConvertPtrToArrayRefExpression */
+    struct { Ast *lValue; Ast *numElements; } lvalueRef;
     /* LogicalNot */
     struct { Ast *operand; } notExpr;
     /* LogicalExpression */
     struct { const char *text; Ast *left; Ast *right; } logical;
     /* Assignment */
     struct { Ast *lhs; Ast *rhs; } assign;
-    /* ReadModifyWriteExpression */
-    struct { Ast *lValue; Ast *newValueExp; Ast *resultExp; } rmw;
+    /* ReadModifyWriteExpression: oldVar and newVar are the anonymous variables its anon refs share */
+    struct { Ast *lValue; Ast *newValueExp; Ast *resultExp; Ast *oldVar, *newVar; } rmw;
     /* IdentityExpression (a rewritten node): target */
     struct { Ast *target; } identity;
     /* EnumLiteral */
     struct { Ast *member; } enumLit;
-    /* IntLiteral, UintLiteral */
-    struct { long long value; Ast *preferred; } intLit;   /* preferred: GenericLiteralType.preferredType */
+    /* IntLiteral, UintLiteral. isDbl: the JS value is a double (a FloatLiteral or DoubleLiteral copied as an
+     * IntLiteral by Rewriter.visitGenericLiteral, a FIXME there); then dbl holds it and value is unused. */
+    struct { long long value; double dbl; int isDbl; Ast *preferred; } intLit;   /* preferred: GenericLiteralType.preferredType */
     /* FloatLiteral, DoubleLiteral: value is the double (float literals are rounded to float) */
     struct { double value; Ast *preferred; } fltLit;
+    /* FunctionLikeBlock (the inliner's replacement of a call; ePtrAux is its returnEPtr) */
+    struct { Ast *returnType; AstList argumentList; AstList parameters; Ast *body; } fblock;
+    /* literal types: the literal expression whose type this is (its value and preferredType are read from it) */
+    struct { Ast *owner; } litType;
   } u;
 };
 
 /* ---- arena ---- */
 typedef struct { char *base; size_t used, cap; } Arena;
 static Arena AST_ARENA;
+static const char *js_num(double v);   /* wsl-strings.h: Number::toString */
 static void *arena_alloc(size_t n) {
   n = (n + 15) & ~(size_t)15;
   if (!AST_ARENA.base || AST_ARENA.used + n > AST_ARENA.cap) {
@@ -157,6 +190,31 @@ static Ast *ast_new(AstTag tag, int origin) {
   a->tag = tag;
   a->origin = origin;
   a->native = AST_ORIGIN_NATIVE;
+  return a;
+}
+
+/* A literal expression's literal type (GenericLiteralType / NullType). The JS constructor makes it with
+ * the literal; here the literal makes it with ast_new. Its value and preferredType are the owner's. */
+/* the kinds lit_type_new makes: the four GenericLiteralTypes and NullType */
+static int is_lit_type_tag(AstTag t) {
+  return t == A_INTLITERALTYPE || t == A_UINTLITERALTYPE || t == A_FLOATLITERALTYPE || t == A_DOUBLELITERALTYPE || t == A_NULLTYPE;
+}
+static Ast *lit_type_new(AstTag kind, Ast *owner) {
+  if (!is_lit_type_tag(kind)) { fprintf(stderr, "lit_type_new: not a literal type\n"); abort(); }
+  Ast *t = ast_new(kind, owner->origin);
+  t->native = owner->native;
+  t->u.litType.owner = owner;
+  return t;
+}
+
+/* A literal expression of tag `tag` with its type (NullLiteral or one of the four GenericLiterals). */
+static Ast *lit_expr_new(AstTag tag, int origin) {
+  Ast *a = ast_new(tag, origin);
+  AstTag kind = tag == A_NULLLITERAL ? A_NULLTYPE
+              : tag == A_INTLITERAL ? A_INTLITERALTYPE
+              : tag == A_UINTLITERAL ? A_UINTLITERALTYPE
+              : tag == A_FLOATLITERAL ? A_FLOATLITERALTYPE : A_DOUBLELITERALTYPE;
+  a->type = lit_type_new(kind, a);
   return a;
 }
 
@@ -221,6 +279,8 @@ static void buf_ref_list(Buf *b, const char *label, const AstList *l, int has) {
   buf_str(b, "]\"");
 }
 static const Ast *pref_type(const Ast *p) { return p ? p->u.typeRef.type : NULL; }
+static int EBUF_DUMP = 0;   /* --ebuf: the EPtrs of the nodes are printed after their scalars */
+static const char *eptr_str(const EPtrV *p);
 /* End of a node's own scalars: the reference scalars (if any), then the line break. */
 static void end_scalars(Buf *b, const Ast *n) {
   if (REFS_ON) {
@@ -249,9 +309,14 @@ static void end_scalars(Buf *b, const Ast *n) {
     default: break;
     }
   }
+  if (EBUF_DUMP) {
+    if (n->ePtr) buf_scalar_str(b, "ePtr", eptr_str(n->ePtr));
+    if (n->ePtrAux) buf_scalar_str(b, n->tag == A_CALL ? "resultEPtr" : "returnEPtr", eptr_str(n->ePtrAux));
+  }
   buf_str(b, "\n");
 }
 
+static int DUMP_NO_ROLES = 0;   /* --props: no old/new role on a reference (the JS dump finds the role only in a read-modify-write it still holds) */
 static void dump_node(Buf *b, const Ast *n, int depth);
 static void dump_child(Buf *b, const Ast *n, int depth) {
   if (!n) { buf_indent(b, depth); buf_str(b, "-\n"); return; }
@@ -317,6 +382,14 @@ static const char *ast_class_name(const Ast *n) {
   case A_IDENTITY: return "IdentityExpression";
   case A_ENUMLITERAL: return "EnumLiteral";
   case A_ANONVAR: return "AnonymousVariable";
+  case A_CONVERTPTR: return "ConvertPtrToArrayRefExpression";
+  case A_NATIVEFUNCINST: return "NativeFuncInstance";
+  case A_FUNCTIONLIKEBLOCK: return "FunctionLikeBlock";
+  case A_INTLITERALTYPE: return "IntLiteralType";
+  case A_UINTLITERALTYPE: return "UintLiteralType";
+  case A_FLOATLITERALTYPE: return "FloatLiteralType";
+  case A_DOUBLELITERALTYPE: return "DoubleLiteralType";
+  case A_NULLTYPE: return "NullType";
   }
   return "?";
 }
@@ -329,10 +402,11 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
   case A_FUNCDEF:
   case A_NATIVEFUNC:
   case A_PROTOCOLFUNCDECL:
+  case A_NATIVEFUNCINST:
     buf_scalar_str(b, "name", n->u.func.name);
     buf_scalar_bool(b, "isCast", n->u.func.isCast);
     buf_scalar_str(b, "shaderType", n->u.func.shaderType);
-    if (n->tag != A_PROTOCOLFUNCDECL) buf_scalar_bool(b, "isRestricted", n->u.func.isRestricted);
+    if (n->tag == A_FUNCDEF || n->tag == A_NATIVEFUNC) buf_scalar_bool(b, "isRestricted", n->u.func.isRestricted);
     end_scalars(b, n);
     dump_child(b, n->u.func.returnType, depth + 1);
     dump_list(b, &n->u.func.typeParameters, depth + 1);
@@ -469,7 +543,7 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
     return;
   case A_VARIABLEREF:
     buf_scalar_str(b, "name", n->u.varRef.name);
-    if (n->u.varRef.anon) buf_scalar_str(b, "anon", n->u.varRef.anon == 1 ? "old" : "new");
+    if (n->u.varRef.anon && !DUMP_NO_ROLES) buf_scalar_str(b, "anon", n->u.varRef.anon == 1 ? "old" : "new");
     else buf_str(b, " anon=-");
     end_scalars(b, n);
     return;
@@ -495,6 +569,7 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
     dump_child(b, n->u.deref.ptr, depth + 1);
     return;
   case A_MAKEPTR:
+  case A_CONVERTPTR:
   case A_MAKEARRAYREF:
     end_scalars(b, n);
     dump_child(b, n->u.lvalueRef.lValue, depth + 1);
@@ -521,8 +596,20 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
   case A_ENUMLITERAL:
     end_scalars(b, n);
     return;
+  case A_FUNCTIONLIKEBLOCK:
+    end_scalars(b, n);
+    dump_child(b, n->u.fblock.returnType, depth + 1);
+    dump_list(b, &n->u.fblock.argumentList, depth + 1);
+    dump_list(b, &n->u.fblock.parameters, depth + 1);
+    dump_child(b, n->u.fblock.body, depth + 1);
+    return;
   case A_ANONVAR:
+    end_scalars(b, n);   /* a node line with no scalars; the references to it are named "anonVar" */
     return;   /* an AnonymousVariable is only ever a reference target */
+  case A_INTLITERALTYPE: case A_UINTLITERALTYPE: case A_FLOATLITERALTYPE: case A_DOUBLELITERALTYPE:
+  case A_NULLTYPE:
+    fprintf(stderr, "literal types are not parse output; the dump does not print them\n");
+    exit(9);
   case A_RMW:
     end_scalars(b, n);
     dump_child(b, n->u.rmw.lValue, depth + 1);
@@ -531,7 +618,8 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
     return;
   case A_INTLITERAL:
     buf_scalar_str(b, "kind", "int");
-    buf_fmt(b, " value=%lld", n->u.intLit.value);
+    if (n->u.intLit.isDbl) buf_fmt(b, " value=%s", js_num(n->u.intLit.dbl));
+    else buf_fmt(b, " value=%lld", n->u.intLit.value);
     end_scalars(b, n);
     return;
   case A_UINTLITERAL:

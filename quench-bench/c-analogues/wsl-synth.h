@@ -124,7 +124,15 @@ static Ast *rw(const Rw *r, Ast *n) {
   case A_DOUBLELITERAL: {
     /* Rewriter.visitGenericLiteral: always an IntLiteral with the same value; the preferred type is cloned */
     Ast *t = mk_from(A_INTLITERAL, n);
-    double v = (n->tag == A_INTLITERAL || n->tag == A_UINTLITERAL) ? (double)n->u.intLit.value : n->u.fltLit.value;
+    /* Rewriter.visitGenericLiteralType: the source's literal type, its committed type visited too (AutoWrapper
+     * returns the literal type as it is) */
+    if (r->aw) t->type = n->type;
+    else if (is_lit_type_tag(n->type->tag)) {
+      t->type = lit_type_new(n->type->tag, t);
+      if (n->type->type) t->type->type = rw(r, n->type->type);
+    } else t->type = rw(r, n->type);   /* a typeref-wrapped literal (withType): an ordinary type */
+    double v = (n->tag == A_INTLITERAL || n->tag == A_UINTLITERAL)
+                   ? (n->u.intLit.isDbl ? n->u.intLit.dbl : (double)n->u.intLit.value) : n->u.fltLit.value;
     if (v != (double)(long long)v) fatal_unsupported("non-integral literal in a type", n);
     t->u.intLit.value = (long long)v;
     t->u.intLit.preferred = rw_plain(literal_preferred(n));
@@ -163,7 +171,16 @@ static Ast *rw(const Rw *r, Ast *n) {
   case A_PROTOCOLDECL:
   case A_FUNCDEF:
   case A_NATIVEFUNC:
-    return n;   /* the Rewriter returns these as they are */
+  case A_INTLITERALTYPE: case A_UINTLITERALTYPE: case A_FLOATLITERALTYPE: case A_DOUBLELITERALTYPE:
+  case A_NULLTYPE:
+    return n;   /* the Rewriter returns these as they are (AutoWrapper: the literal and null types) */
+  case A_BOOLLITERAL:
+    return n;
+  case A_ENUMLITERAL: {   /* Rewriter.visitEnumLiteral: a new EnumLiteral of the same member */
+    Ast *t = mk_from(A_ENUMLITERAL, n);
+    t->u.enumLit.member = n->u.enumLit.member;
+    return t;
+  }
   default:
     fatal_unsupported("Rewriter", n);
   }
@@ -309,6 +326,13 @@ static Ast *field_type(const Ast *st, const Ast *field, const AstList *tps) {
   return rw(&r, field->u.named.type);
 }
 
+/* setupImplementationData: the accessor's struct and field (the instance's type is made in fi_get_unique) */
+static Ast *synth_accessor(Ast *st, const char *fname, Ast *f) {
+  f->u.func.implStruct = st;
+  f->u.func.implField = fname;
+  return f;
+}
+
 static void synth_struct_accessors(Program *p, NameCtx *global, int count) {
   static const char *spaces[] = {"thread", "threadgroup", "device", "constant"};
   for (int s = 0; s < count; s++) {
@@ -323,14 +347,14 @@ static void synth_struct_accessors(Program *p, NameCtx *global, int count) {
       Ast *ret = field_type(st, field, &tps);
       AstList params = {0};
       list_push(&params, mk_param(field, struct_typeref(st, &tps)));
-      add_synth(p, global, mk_native(field, concat3("operator.", fname, ""), ret, &tps, &params));
+      add_synth(p, global, synth_accessor(st, fname, mk_native(field, concat3("operator.", fname, ""), ret, &tps, &params)));
       /* the setter: operator.field= */
       tp_rewrite_list(&st->u.structType.typeParameters, &tps);
       AstList setParams = {0};
       Ast *setRet = struct_typeref(st, &tps);
       list_push(&setParams, mk_param(field, struct_typeref(st, &tps)));
       list_push(&setParams, mk_param(field, field_type(st, field, &tps)));
-      add_synth(p, global, mk_native(field, concat3("operator.", fname, "="), setRet, &tps, &setParams));
+      add_synth(p, global, synth_accessor(st, fname, mk_native(field, concat3("operator.", fname, "="), setRet, &tps, &setParams)));
       /* the anders: operator&.field, once per address space */
       for (int k = 0; k < 4; k++) {
         tp_rewrite_list(&st->u.structType.typeParameters, &tps);
@@ -342,7 +366,7 @@ static void synth_struct_accessors(Program *p, NameCtx *global, int count) {
         ptrParam->u.ref.addressSpace = spaces[k];
         ptrParam->u.ref.elementType = struct_typeref(st, &tps);
         list_push(&andParams, mk_param(field, ptrParam));
-        add_synth(p, global, mk_native(field, concat3("operator&.", fname, ""), ptrRet, &tps, &andParams));
+        add_synth(p, global, synth_accessor(st, fname, mk_native(field, concat3("operator&.", fname, ""), ptrRet, &tps, &andParams)));
       }
     }
   }
