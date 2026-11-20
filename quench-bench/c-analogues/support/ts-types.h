@@ -39,7 +39,7 @@ enum {
 };
 
 /* ObjectFlags (TypeScript 5.9.2) */
-enum { OF_Class = 1, OF_Interface = 2, OF_Reference = 4, OF_Anonymous = 16, OF_Instantiated = 64, OF_ObjectLiteral = 128 };
+enum { OF_Class = 1, OF_Interface = 2, OF_Reference = 4, OF_Tuple = 8, OF_Anonymous = 16, OF_Instantiated = 64, OF_ObjectLiteral = 128 };
 
 typedef struct CSig CSig;
 typedef struct CIndexInfo { struct TsType *keyType, *type; bool isReadonly; } CIndexInfo;
@@ -82,6 +82,11 @@ typedef struct TsType {
   int ncall, nconstruct;
   CIndexInfo *index;
   int nindex;
+  /* relations (ts-relate.h): variances of a generic type, the constraint of a type parameter */
+  uint8_t *variances;
+  uint8_t varState;
+  struct TsType *tpConstraint;
+  uint8_t tpConstState;
 } TsType;
 
 struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; };
@@ -253,14 +258,80 @@ static TsNode *cTypeParamDefaultNode(TsType *tp) {
   return NULL;
 }
 
+/* the type of an enum member used as a type (a literal type of the enum; its value is not computed) */
+static TsType *cEnumMemberType(TsSymbol *m) {
+  m = cGetMergedSymbol(m);
+  if (m->declaredType) return m->declaredType;
+  TsNode *d = m->decls[0];
+  uint32_t fl = (d->initializer && d->initializer->kind == TSK_StringLiteral) ? TF_StringLiteral : TF_NumberLiteral;
+  TsType *t = cNewType(fl | TF_EnumLiteral);
+  t->symbol = m;
+  m->declaredType = t;
+  return t;
+}
+
+/* the type arguments of a reference to a generic declaration: the given ones, then the defaults (fillMissing) */
+static TsType **cTypeArgsOfReference(TsType **params, int ntp, TsNode *ref, int *nout) {
+  int na = ref->typeArguments ? ref->typeArguments->n : 0;
+  if (na > ntp) return NULL;
+  TsType **args = ts_arena_alloc(sizeof(TsType *) * (size_t)(ntp ? ntp : 1));
+  for (int i = 0; i < na; i++) {
+    args[i] = cTypeFromNode(ref->typeArguments->v[i]);
+    if (args[i] == cErrorType) return NULL;
+  }
+  for (int i = na; i < ntp; i++) {
+    TsNode *dn = cTypeParamDefaultNode(params[i]);
+    if (!dn) return NULL;
+    TsType *def = cTypeFromNode(dn);
+    if (def == cErrorType) return NULL;
+    if (i > 0) def = cInstantiate(def, cCreateTypeMapper(params, args, i));
+    args[i] = def;
+  }
+  *nout = ntp;
+  return args;
+}
+
+/* getDeclaredTypeOfTypeAlias for a generic alias, instantiated per type arguments (getTypeAliasInstantiation):
+ * the body is the declared body under a mapper from the parameters to the arguments. The instantiations are
+ * kept on a holder type of the alias. */
+static TsType *cGenericAliasReference(TsSymbol *sym, TsNode *ref) {
+  TsNode *ad = sym->decls[0];
+  int ntp = ad->typeParameters->n;
+  if (!sym->aliasHolder) {
+    TsType *h = cNewType(TF_Any);
+    h->typeParams = ts_arena_alloc(sizeof(TsType *) * (size_t)ntp);
+    h->ntypeParams = 0;
+    for (int i = 0; i < ntp; i++) {
+      TsNode *tpn = ad->typeParameters->v[i];
+      h->typeParams[h->ntypeParams++] = cTypeOfTypeParameter(cGetMergedSymbol(tpn->symbol));
+    }
+    sym->aliasHolder = h;
+  }
+  TsType *h = sym->aliasHolder;
+  int n;
+  TsType **args = cTypeArgsOfReference(h->typeParams, ntp, ref, &n);
+  if (!args) return cUnported("generic alias arguments");
+  TsInst *e = cInstFind(h, args, n);
+  if (e) return e->val;
+  TsType *body = cTypeFromNode(ad->type);
+  TsType *r = body == cErrorType ? body : cInstantiate(body, cCreateTypeMapper(h->typeParams, args, n));
+  cInstAdd(h, args, n, r);
+  return r;
+}
+
 /* a type reference to a symbol with type arguments */
 static TsType *cTypeFromSymbolReference(TsSymbol *s, TsNode *ref) {
   s = cGetMergedSymbol(s);
   if (s->flags & SF_TypeAlias) {
-    if (ref->typeArguments && ref->typeArguments->n) return cUnported("generic alias reference");
-    if (cGetMergedSymbol(s)->decls[0]->typeParameters && cGetMergedSymbol(s)->decls[0]->typeParameters->n) return cUnported("generic alias");
-    return cDeclaredTypeOfTypeAlias(s);
+    TsNode *ad = cGetMergedSymbol(s)->decls[0];
+    int ntp = ad->typeParameters ? ad->typeParameters->n : 0;
+    if (ntp == 0) {
+      if (ref->typeArguments && ref->typeArguments->n) return cUnported("type arguments of a non-generic alias");
+      return cDeclaredTypeOfTypeAlias(s);
+    }
+    return cGenericAliasReference(cGetMergedSymbol(s), ref);
   }
+  if (s->flags & SF_EnumMember) return cEnumMemberType(s);
   if (s->flags & (SF_Class | SF_Interface)) {
     TsType *d = cDeclaredTypeOfClassOrInterface(s);
     int na = ref->typeArguments ? ref->typeArguments->n : 0;
@@ -286,12 +357,29 @@ static TsType *cTypeFromSymbolReference(TsSymbol *s, TsNode *ref) {
   return cUnported("type reference kind");
 }
 
-/* the symbol a TypeReference names (type meaning), following import aliases */
-static TsSymbol *cSymbolOfTypeName(TsNode *loc, TsNode *name) {
-  if (name->kind != TSK_Identifier) return NULL;
-  TsSymbol *s = cResolveTypeName(loc, bnEscapeText(name->text, name->textLen));
+/* the symbol of an entity name (resolveEntityName): an identifier with the meaning, or a qualified name whose
+ * left side is a namespace and whose right side is one of its exports. Import aliases are followed. */
+static TsSymbol *cEntityNameSymbol(TsNode *loc, TsNode *name, uint32_t meaning) {
+  TsSymbol *s;
+  if (name->kind == TSK_Identifier) {
+    s = cResolveNameMeaning(loc, bnEscapeText(name->text, name->textLen), meaning);
+  } else if (name->kind == TSK_QualifiedName || name->kind == TSK_PropertyAccessExpression) {
+    TsNode *left = name->kind == TSK_QualifiedName ? name->left : name->expression;
+    TsNode *right = name->kind == TSK_QualifiedName ? name->right : name->name;
+    TsSymbol *ls = cEntityNameSymbol(loc, left, SF_Namespace | SF_Alias);
+    if (!ls) return NULL;
+    ls = cGetMergedSymbol(ls);
+    if (!ls->exports || !right) return NULL;
+    s = bTableGet(ls->exports, bnEscapeText(right->text, right->textLen));
+  } else return NULL;
   if (s && (s->flags & SF_Alias)) s = cResolveImportAlias(s, 0);
   return s;
+}
+
+/* the symbol a TypeReference names (type meaning), following import aliases */
+static TsSymbol *cSymbolOfTypeName(TsNode *loc, TsNode *name) {
+  if (name->kind != TSK_Identifier && name->kind != TSK_QualifiedName) return NULL;
+  return cEntityNameSymbol(loc, name, SF_TypeMeaning);
 }
 
 /* globalArrayType: the generic Array interface of the global scripts */
@@ -348,6 +436,7 @@ static TsType *cUniqueSymbolType(TsNode *decl) {
 }
 
 static TsType *cTypeFromNodeWorker(TsNode *n);
+static TsType *cTupleReference(TsType **elems, int n);
 
 /* getTypeFromTypeNode (67684): the type of a type node, cached on the node (links.resolvedType) */
 static TsType *cTypeFromNode(TsNode *n) {
@@ -399,6 +488,19 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
       }
       return fl == TF_Union ? cGetUnionType(members, cnt) : cGetIntersectionType(members, cnt);
     }
+    case TSK_TupleType: {
+      /* the element types of a tuple of plain types (named, optional and rest members are not ported) */
+      int cnt = n->elements ? n->elements->n : 0;
+      TsType **el = ts_arena_alloc(sizeof(TsType *) * (size_t)(cnt ? cnt : 1));
+      for (int i = 0; i < cnt; i++) {
+        TsNode *e = n->elements->v[i];
+        if (e->kind == TSK_NamedTupleMember || e->kind == TSK_OptionalType || e->kind == TSK_RestType)
+          return cUnported("tuple member kind");
+        el[i] = cTypeFromNode(e);
+        if (el[i] == cErrorType) return cErrorType;
+      }
+      return cTupleReference(el, cnt);
+    }
     case TSK_ArrayType: {
       /* createArrayType: Array<T>, a reference to the global generic interface */
       TsType *el = cTypeFromNode(n->elementType);
@@ -429,6 +531,11 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
     }
     case TSK_TypeReference: {
       TsSymbol *s = cSymbolOfTypeName(n, n->typeName);
+      if (!s && n->typeName && n->typeName->kind == TSK_QualifiedName) {
+        /* an enum member (SyntaxKind.EqualsToken) is a type meaning of the enum's exports */
+        TsSymbol *m = cEntityNameSymbol(n, n->typeName, SF_EnumMember);
+        if (m && (m->flags & SF_EnumMember)) return cEnumMemberType(m);
+      }
       if (!s) return cUnported("unresolved type name");
       return cTypeFromSymbolReference(s, n);
     }
@@ -444,6 +551,43 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
     default: break;
   }
   return cUnported("type node kind");
+}
+
+/* tuple targets by arity (createTupleTargetType): the target has one type parameter per element and its base
+ * type is Array<T0 | T1 | ...>, so the members of a tuple are those of the array; element properties are not
+ * ported */
+static TsType *cTupleTargets[16];
+static TsType *cTupleTarget(int arity) {
+  if (arity < 16 && cTupleTargets[arity]) return cTupleTargets[arity];
+  TsType *tg = cNewType(TF_Object);
+  tg->objectFlags = OF_Tuple | OF_Interface;
+  TsSymbol *sym = cCreateSymbol(SF_TypeLiteral, bnC("__tuple"));
+  tg->symbol = sym;
+  tg->typeParams = ts_arena_alloc(sizeof(TsType *) * (size_t)(arity ? arity : 1));
+  tg->ntypeParams = arity;
+  for (int i = 0; i < arity; i++) {
+    char *nm = ts_arena_alloc(16);
+    int k = snprintf(nm, 16, "T%d", i);
+    TsSymbol *ps = cCreateSymbol(SF_TypeParameter, (BName){ nm, k });
+    TsType *p = cNewType(TF_TypeParameter);
+    p->symbol = ps;
+    tg->typeParams[i] = p;
+  }
+  TsType *elem = cNeverType;
+  if (arity) elem = cGetUnionType(tg->typeParams, arity);
+  tg->bases = ts_arena_alloc(sizeof(TsType *));
+  tg->bases[0] = cTypeReference(cGlobalArrayDeclared(), &elem, 1);
+  tg->nbases = 1;
+  tg->basesDone = true;
+  if (arity < 16) cTupleTargets[arity] = tg;
+  return tg;
+}
+
+static TsType *cTupleReference(TsType **elems, int n) {
+  TsType *tg = cTupleTarget(n);
+  TsType *r = cTypeReference(tg, elems, n);
+  r->objectFlags |= OF_Tuple;
+  return r;
 }
 
 /* ---- members ---- */
@@ -560,6 +704,11 @@ static TsType *cBaseFromConstructSignatures(TsSymbol *vs) {
 static TsSymbol *cBaseSymbol(TsNode *loc, TsNode *expr) {
   if (expr->kind == TSK_Identifier) return cSymbolOfTypeName(loc, expr);
   if (expr->kind == TSK_PropertyAccessExpression && expr->expression && expr->expression->kind == TSK_Identifier &&
+      expr->expression->textLen != 10 && cEntityNameSymbol(loc, expr->expression, SF_Namespace | SF_Alias)) {
+    /* a namespace-qualified base (JsTyping.TypingResolutionHost) */
+    return cEntityNameSymbol(loc, expr, SF_TypeMeaning);
+  }
+  if (expr->kind == TSK_PropertyAccessExpression && expr->expression && expr->expression->kind == TSK_Identifier &&
       expr->expression->textLen == 10 && memcmp(expr->expression->text, "globalThis", 10) == 0 && expr->name &&
       cResolveValueName(loc, bnC("globalThis")) == cGlobalThisSymbol) {
     TsSymbol *g = bTableGet(cGlobals, bnEscapeText(expr->name->text, expr->name->textLen));
@@ -655,6 +804,7 @@ static void cResolveMembers(TsType *t) {
     cResolveObjectMembers(t, t, NULL);
     return;
   }
+  if (t->symbol && (t->symbol->flags & SF_Class)) { t->members = t->symbol->exports; return; }
   t->members = t->symbol ? t->symbol->members : NULL;
 }
 
@@ -788,7 +938,7 @@ static TsType *cTypeOfSymbol(TsSymbol *sym) {
     else t = cUnported("variable without annotation");
   } else if (sym->flags & SF_Property) {
     TsNode *d = sym->valueDeclaration ? sym->valueDeclaration : sym->decls[0];
-    if (d->kind != TSK_PropertySignature || !d->type) t = cUnported("property without annotation");
+    if ((d->kind != TSK_PropertySignature && d->kind != TSK_PropertyDeclaration) || !d->type) t = cUnported("property without annotation");
     else {
       t = cTypeFromNode(d->type);
       if (d->questionToken && t != cErrorType) {
@@ -801,6 +951,25 @@ static TsType *cTypeOfSymbol(TsSymbol *sym) {
         t = u;
       }
     }
+  } else if (sym->flags & SF_Accessor) {
+    /* the type of an accessor: the return type of the getter, else the parameter type of the setter */
+    TsNode *typed = NULL;
+    for (int d = 0; d < sym->ndecls && !typed; d++)
+      if (sym->decls[d]->kind == TSK_GetAccessor && sym->decls[d]->type) typed = sym->decls[d];
+    for (int d = 0; d < sym->ndecls && !typed; d++)
+      if (sym->decls[d]->kind == TSK_SetAccessor && sym->decls[d]->parameters && sym->decls[d]->parameters->n) {
+        TsNode *p = sym->decls[d]->parameters->v[0];
+        if (p->type) { typed = p; }
+      }
+    if (!typed) t = cUnported("accessor without a type");
+    else if (typed->kind == TSK_Parameter) t = cTypeFromNode(typed->type);
+    else t = cTypeFromNode(typed->type);
+  } else if (sym->flags & SF_Class) {
+    /* the constructor type of a class (getTypeOfFuncClassEnumModule): its static members and prototype */
+    TsType *a = cNewType(TF_Object);
+    a->objectFlags = OF_Anonymous;
+    a->symbol = sym;
+    t = a;
   } else if (sym->flags & (SF_Method | SF_Function)) {
     /* an anonymous object type with the signatures of the declarations */
     TsType *a = cNewType(TF_Object);
@@ -1032,6 +1201,7 @@ static void cResetTypeCaches(void) {
   cInstDepth = 0;
   cActiveN = 0;
   memset(cUnionTab, 0, sizeof cUnionTab);
+  memset(cTupleTargets, 0, sizeof cTupleTargets);
   memset(cInterTab, 0, sizeof cInterTab);
 }
 

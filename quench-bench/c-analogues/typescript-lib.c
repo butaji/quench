@@ -47,6 +47,8 @@
 #include "support/ts-checker-names.h"
 #include "support/ts-checker-decls.h"
 #include "support/ts-checker-vars.h"
+#include "support/ts-relate.h"
+#include "support/ts-checker-class.h"
 #include "support/ts-checker-expected.h"
 
 #define FAIL(...)                  \
@@ -325,11 +327,13 @@ static void cPrintMembersOf(TsNode *n) {
 
 static void runChecker(void) {
   cResetTypeCaches();
+  cResetRelationCaches();
   cDiagCount = 0;
   cNDupPairs = 0;
   cFiles = programFiles;
   cFileCount = EXPECTED_PROGRAM_FILES;
   cCreateIntrinsicTypes();
+  cInitRelations();
   cInitializeGlobals(programFiles, EXPECTED_PROGRAM_FILES);
   cCreateGlobalThisType();
   cReportAmalgamatedDuplicates();
@@ -338,6 +342,7 @@ static void runChecker(void) {
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckDeclaresObjectType);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckVariableLike);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cResolveDeclaredMembersOf);
+  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckClassBase);
 }
 
 int main(int argc, char **argv) {

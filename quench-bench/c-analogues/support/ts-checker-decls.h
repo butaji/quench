@@ -20,6 +20,7 @@
 #define SF_TypeMeaning 788968u /* SymbolFlags.Type */
 
 /* ---- type-meaning name resolution (resolveName with Type meaning, value-less part) ---- */
+static TsSymbol *cResolveNameMeaning(TsNode *loc, BName name, uint32_t meaning);
 static TsSymbol *cResolveTypeName(TsNode *loc, BName name);
 
 /* resolveAlias for an import specifier: the exported symbol of the module, or NULL when unresolved */
@@ -40,11 +41,14 @@ static TsSymbol *cResolveImportAlias(TsSymbol *alias, int depth) {
   return cGetMergedSymbol(s);
 }
 
-static TsSymbol *cResolveTypeName(TsNode *loc, BName name) {
+static TsSymbol *cResolveTypeName(TsNode *loc, BName name) { return cResolveNameMeaning(loc, name, SF_TypeMeaning); }
+
+/* resolveName with the meaning mask: type names, or namespace names for the left side of a qualified name */
+static TsSymbol *cResolveNameMeaning(TsNode *loc, BName name, uint32_t meaning) {
   for (TsNode *n = loc; n; n = n->parent) {
     if (n->locals && !(n->kind == TSK_SourceFile && !n->hasExternalModuleIndicator)) {
       TsSymbol *s = bTableGet(n->locals, name);
-      if (s && (s->flags & (SF_TypeMeaning | SF_Alias))) return s;
+      if (s && (s->flags & (meaning | SF_Alias))) return s;
     }
     switch (n->kind) {
       case TSK_SourceFile:
@@ -55,7 +59,7 @@ static TsSymbol *cResolveTypeName(TsNode *loc, BName name) {
         TsSymbol *ms = cGetMergedSymbol(n->symbol);
         if (ms && ms->exports) {
           TsSymbol *s = bTableGet(ms->exports, name);
-          if (s && (s->flags & (SF_TypeMeaning | SF_Alias))) return s;
+          if (s && (s->flags & (meaning | SF_Alias))) return s;
         }
         break;
       }
@@ -63,7 +67,7 @@ static TsSymbol *cResolveTypeName(TsNode *loc, BName name) {
         TsSymbol *ms = cGetMergedSymbol(n->symbol);
         if (ms && ms->members) {
           TsSymbol *s = bTableGet(ms->members, name);
-          if (s && (s->flags & SF_TypeMeaning)) return s;
+          if (s && (s->flags & meaning)) return s;
         }
         break;
       }
@@ -73,7 +77,7 @@ static TsSymbol *cResolveTypeName(TsNode *loc, BName name) {
 globals:
   {
     TsSymbol *s = bTableGet(cGlobals, name);
-    if (s && (s->flags & (SF_TypeMeaning | SF_Alias))) return s;
+    if (s && (s->flags & (meaning | SF_Alias))) return s;
   }
   return NULL;
 }

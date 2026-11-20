@@ -58,6 +58,8 @@ struct TsNode {
   int32_t binderFlowCount;    /* SourceFile: flow nodes created by the binder */
   const char *fileName;       /* SourceFile: program file name */
   struct TsType *resolvedType; /* checker: getTypeFromTypeNode cache (links.resolvedType) */
+  struct TsType *inferredReturn; /* checker: the inferred return type of a declaration (ts-relate.h) */
+  uint8_t inferState;
 };
 
 /* ---- arena ---- */
