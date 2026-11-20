@@ -140,7 +140,6 @@ typedef struct {
   bool startInit;        /* the reference is initialized at the start of its container (parameter, assigned, ...) */
   bool jump;             /* a const reference continues at the creation flow of each function value between it and its declaration */
   TsNode *flowContainer; /* the container the walk ends at (checkIdentifier's flowContainer) */
-  bool declaredAtStart;  /* an outer mutable variable (let or var): its flow start is its declared type, whatever the union */
   TsType *initial;       /* initialType of the walk (the declared type, or its optional type when not assumed initialized) */
   int depth;             /* flowDepth of the walk */
   int sharedStart;       /* the shared flow memo of this walk starts here (sharedFlowStart) */
@@ -176,16 +175,10 @@ static bool cAssignContains(TsNode *target, CFlowRef *r) {
   return false;
 }
 
-static bool cOuterNarrowingSafe(TsType *d) {
-  if (d->flags & TF_Union) return false;
-  return (d->flags & (TF_Object | TF_String | TF_Number | TF_BigInt | TF_ESSymbol | TF_UniqueESSymbol | TF_NonPrimitive |
-                      TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral | TF_Undefined | TF_Null | TF_Void)) != 0;
-}
-
-/* the type of a reference at the start of its container (getTypeAtFlowNode, FlowStart) */
+/* the type of a reference at the start of its container (getTypeAtFlowNode, FlowStart): initialType. An outer variable is
+ * assumed initialized, so its initial type is its declared type; a variable of the container needs startInit. */
 static TsType *cFlowStartType(CFlowRef *r) {
-  if (r->jump) return r->startInit ? r->declared : cUnported("reference used before its assignment");
-  if (r->outer) return (r->declaredAtStart || cOuterNarrowingSafe(r->declared)) ? r->declared : cUnported("narrowing of an outer reference");
+  if (r->outer) return r->declared;
   return r->startInit ? r->declared : cUnported("reference used before its assignment");
 }
 
@@ -1373,6 +1366,143 @@ static CFT cFlowAt(TsFlow *flow, CFlowRef *r) {
   }
 }
 
+/* ---- assignment targets and the last assignment of a variable (checker.ts 5.9.2) ---- */
+enum { AK_None = 0, AK_Definite = 1, AK_Compound = 2 };
+#define CMAX_ASSIGN_POS INT64_MAX / 4
+
+/* getAssignmentTarget: the assignment, update or for-in/of statement that writes the identifier, else NULL */
+static TsNode *cAssignmentTarget(TsNode *node) {
+  TsNode *parent = node->parent;
+  for (;;) {
+    switch (parent->kind) {
+      case TSK_BinaryExpression:
+        return isAssignmentOperator(parent->operatorToken->kind) && parent->left == node ? parent : NULL;
+      case TSK_PrefixUnaryExpression: case TSK_PostfixUnaryExpression:
+        return (parent->extra == TSK_PlusPlusToken || parent->extra == TSK_MinusMinusToken) ? parent : NULL;
+      case TSK_ForInStatement: case TSK_ForOfStatement:
+        return parent->initializer == node ? parent : NULL;
+      case TSK_ParenthesizedExpression: case TSK_ArrayLiteralExpression: case TSK_SpreadElement: case TSK_NonNullExpression:
+        node = parent;
+        break;
+      case TSK_SpreadAssignment:
+        node = parent->parent;
+        break;
+      case TSK_ShorthandPropertyAssignment:
+        if (parent->name != node) return NULL;
+        node = parent->parent;
+        break;
+      case TSK_PropertyAssignment:
+        if (parent->name == node) return NULL;
+        node = parent->parent;
+        break;
+      default:
+        return NULL;
+    }
+    parent = node->parent;
+  }
+}
+
+/* getAssignmentTargetKind: definite for `=`, the logical assignments, and for-in/of; compound for the other operators and ++ or -- */
+static int cAssignmentTargetKind(TsNode *id) {
+  TsNode *t = cAssignmentTarget(id);
+  if (!t) return AK_None;
+  switch (t->kind) {
+    case TSK_BinaryExpression: {
+      int op = t->operatorToken->kind;
+      return (op == TSK_EqualsToken || op == TSK_BarBarEqualsToken || op == TSK_AmpersandAmpersandEqualsToken ||
+              op == TSK_QuestionQuestionEqualsToken) ? AK_Definite : AK_Compound;
+    }
+    case TSK_PrefixUnaryExpression: case TSK_PostfixUnaryExpression: return AK_Compound;
+    case TSK_ForInStatement: case TSK_ForOfStatement: return AK_Definite;
+    default: return AK_None;
+  }
+}
+
+static bool cIsFunctionOrSourceFile(TsNode *n) { return cIsFunctionLikeKind(n->kind) || n->kind == TSK_SourceFile; }
+/* findAncestor (isFunctionOrSourceFile), the node itself included */
+static TsNode *cFunctionOrSourceOf(TsNode *n) {
+  for (; n; n = n->parent) if (cIsFunctionOrSourceFile(n)) return n;
+  return NULL;
+}
+
+/* getRootDeclaration */
+static TsNode *cRootDeclaration(TsNode *d) {
+  while (d->kind == TSK_BindingElement && d->parent && d->parent->parent) d = d->parent->parent;
+  return d;
+}
+
+/* isParameterOrMutableLocalVariable: a parameter, a catch variable, or a let variable that is not exported or global */
+static bool cIsParamOrMutableLocal(TsSymbol *s) {
+  TsNode *vd = s->valueDeclaration;
+  if (!vd) return false;
+  TsNode *d = cRootDeclaration(vd);
+  if (d->kind == TSK_Parameter) return true;
+  if (d->kind != TSK_VariableDeclaration || !d->parent) return false;
+  if (d->parent->kind == TSK_CatchClause) return true;
+  if (!(d->parent->flags & TNF_Let)) return false;
+  if (bCombinedFlags(d, true) & TMF_Export) return false;
+  if (d->parent->parent && d->parent->parent->kind == TSK_VariableStatement && d->parent->parent->parent &&
+      d->parent->parent->parent->kind == TSK_SourceFile)
+    return false;
+  return true;
+}
+
+/* extendAssignmentPosition: the end of the statement that holds the assignment, when it is inside the declaration's container */
+static int64_t cExtendAssignPos(TsNode *n, TsNode *decl) {
+  int64_t pos = n->pos;
+  for (TsNode *x = n; x && x->pos > decl->pos; x = x->parent) {
+    switch (x->kind) {
+      case TSK_VariableStatement: case TSK_ExpressionStatement: case TSK_IfStatement: case TSK_DoStatement:
+      case TSK_WhileStatement: case TSK_ForStatement: case TSK_ForInStatement: case TSK_ForOfStatement:
+      case TSK_WithStatement: case TSK_SwitchStatement: case TSK_TryStatement: case TSK_ClassDeclaration:
+        pos = x->end;
+        break;
+      default: break;
+    }
+  }
+  return pos;
+}
+
+/* markNodeAssignments: the last assignment position of each parameter or mutable local written under the node. An assignment
+ * from a nested function, or a definite one, gives a negative or maximal position (the sign is kept as in TypeScript). */
+static void cMarkNodeAssignments(TsNode *n) {
+  if (n->kind == TSK_InterfaceDeclaration || n->kind == TSK_TypeAliasDeclaration || n->kind == TSK_EnumDeclaration) return;
+  if (n->kind == TSK_Identifier) {
+    int tk = cAssignmentTargetKind(n);
+    if (tk == AK_None) return;
+    TsSymbol *s = cResolveValueName(n, bnEscapeText(n->text, n->textLen));
+    if (!s || !cIsParamOrMutableLocal(s)) return;
+    bool def = tk == AK_Definite || (s->lastAssignSet && s->lastAssignPos < 0);
+    if (!s->lastAssignSet || llabs(s->lastAssignPos) != CMAX_ASSIGN_POS) {
+      TsNode *refF = cFunctionOrSourceOf(n), *declF = cFunctionOrSourceOf(s->valueDeclaration);
+      s->lastAssignPos = refF == declF ? cExtendAssignPos(n, s->valueDeclaration) : CMAX_ASSIGN_POS;
+      s->lastAssignSet = true;
+    }
+    if (def && s->lastAssignPos > 0) s->lastAssignPos = -s->lastAssignPos;
+    return;
+  }
+  BNodeVec kids = { NULL, 0, 0 };
+  bChildrenSorted(n, &kids);
+  for (int i = 0; i < kids.n; i++) cMarkNodeAssignments(kids.v[i]);
+  free(kids.v);
+}
+
+/* isPastLastAssignment: the location is after every assignment to the variable in its container (the container's assignments
+ * are marked once, unless an enclosing one was marked already) */
+static bool cIsPastLastAssignment(TsSymbol *s, TsNode *loc) {
+  TsNode *fn = cFunctionOrSourceOf(s->valueDeclaration);
+  if (!fn) return false;
+  if (!fn->assignMarked) {
+    fn->assignMarked = 1;
+    bool marked = false;
+    for (TsNode *p = fn->parent; p && !marked; p = p->parent)
+      if (cIsFunctionOrSourceFile(p) && p->assignMarked) marked = true;
+    if (!marked) cMarkNodeAssignments(fn);
+  }
+  if (!s->lastAssignSet || s->lastAssignPos == 0) return true;
+  return llabs(s->lastAssignPos) < loc->pos;
+}
+
 /* getFlowTypeOfReference: the declared type when no narrowing applies, else the narrowed type (ported forms only). The
  * unreachable result and a non-null reference that is never not undefined give the declared type. */
 static TsType *cFlowTypeOfReference(TsNode *ref, CFlowRef *r) {
@@ -1435,27 +1565,25 @@ static TsType *cIdentifierType(TsNode *e) {
     TsType *c = cConstraintOf(d);
     if (c && (c->flags & TF_Union)) return cUnported("reference of a type parameter with a union constraint");
   }
-  /* checkIdentifier: a const variable of an enclosing container is narrowed through the function values that
-   * create the reference (the flow container moves up past function expressions, arrows and object-literal methods) */
-  bool jump = false;
-  TsNode *flowC = NULL;
+  /* checkIdentifier: the flow container moves up past the function expressions, arrows and object-literal methods that
+   * create the reference, for a const variable, and for a parameter or mutable local past its last assignment. The walk
+   * then continues at the creation flow of those function values (jump). */
   TsNode *decl = cFirstDeclOf(s);
-  if (outer && decl && decl->kind == TSK_VariableDeclaration && decl->parent && decl->parent->kind == TSK_VariableDeclarationList &&
-      (decl->parent->flags & 7u) == TNF_Const) {
+  TsNode *ownC = cFlowContainerOf(e);
+  TsNode *flowC = ownC;
+  if (outer && decl) {
     TsNode *declC = cFlowContainerOf(decl);
-    flowC = cFlowContainerOf(e);
+    bool isConst = decl->kind == TSK_VariableDeclaration && decl->parent && decl->parent->kind == TSK_VariableDeclarationList &&
+                   (decl->parent->flags & 7u) == TNF_Const;
     while (flowC && flowC != declC &&
            (flowC->kind == TSK_FunctionExpression || flowC->kind == TSK_ArrowFunction ||
             ((flowC->kind == TSK_MethodDeclaration || flowC->kind == TSK_GetAccessor || flowC->kind == TSK_SetAccessor) &&
-             (bContainerFlags(flowC) & CF_IsObjectLiteralOrClassExpressionMethodOrAccessor))))
+             (bContainerFlags(flowC) & CF_IsObjectLiteralOrClassExpressionMethodOrAccessor))) &&
+           (isConst || (cIsParamOrMutableLocal(s) && cIsPastLastAssignment(s, e))))
       flowC = cFlowContainerOf(flowC);
-    jump = flowC != NULL;
   }
-  /* a let or var of an enclosing function is not narrowed through the function value that creates the reference
-   * (isConstantVariable is false): the walk of the reference's own function starts at the declared type */
-  bool mutableOuter = outer && !jump && decl && decl->kind == TSK_VariableDeclaration && decl->parent &&
-                      decl->parent->kind == TSK_VariableDeclarationList && (decl->parent->flags & 7u) != TNF_Const;
-  CFlowRef r = { e, e->text, e->textLen, d, false, outer, startInit, jump, flowC, mutableOuter };
+  bool jump = flowC != ownC;
+  CFlowRef r = { e, e->text, e->textLen, d, false, outer, startInit, jump, flowC };
   return cFlowTypeOfReference(e, &r);
 }
 
