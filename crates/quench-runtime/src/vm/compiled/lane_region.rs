@@ -489,14 +489,12 @@ pub(super) struct LoweredRegion {
     pub(super) exits: ExitTable,
 }
 
-/// What a published lane body assumes of its arguments and what its activation returns natively,
-/// so a direct caller types the call's result with it (`call_results`). The parameters are the
-/// entry types the body's entry guards admit (`ANY` where the body guards none); the result is the
-/// join of the types its own activation returns, from the facts at each return. A value a leave
-/// returns to the caller is not in the result: the caller guards the result at its completion.
+/// What a published lane body's activation returns natively, so a direct caller types the call's
+/// result with it (`call_results`): the join of the types its own activation returns, from the facts
+/// at each return. A value a leave returns to the caller is not in the result: the caller guards the
+/// result at its completion.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::vm) struct TypeSummary {
-    pub(in crate::vm) params: Vec<Type>,
     pub(in crate::vm) result: Type,
 }
 
@@ -2202,15 +2200,7 @@ pub(super) fn lower(
         lowering.proving_entry = false;
         lowering.goto(target, &[]);
     }
-    // The parameters' entry types, as the entry block guards them (`entry_conform` conforms each live
-    // register to the entry's fact): a summary's arguments (`TypeSummary::params`).
-    let summary_params = (completion == Completion::Body && matches!(coverage, Coverage::Prefix)).then(|| {
-        let types = lowering.facts.at(entry_pc).unwrap_or(&[]);
-        (0..usize::from(function.params)).map(|register| match types.get(register) {
-            Some(ty) if lowering.is_live(entry_pc, register as Register) => *ty,
-            _ => Type::ANY,
-        }).collect::<Vec<Type>>()
-    });
+    let summarized = completion == Completion::Body && matches!(coverage, Coverage::Prefix);
     let mut census = clif_census::Census::new();
     let emitted = |lowering: &Lowering<'_, '_>| lowering.builder.func.dfg.num_insts();
     let mut mark = emitted(&lowering);
@@ -2311,7 +2301,7 @@ pub(super) fn lower(
         return None;
     }
     let number_result = numeric.then(|| lowering.finish_number_returns());
-    let summary = summary_params.map(|params| TypeSummary { params, result: lowering.returned_type(&instructions, &leaders, &writes) });
+    let summary = summarized.then(|| TypeSummary { result: lowering.returned_type(&instructions, &leaders, &writes) });
     let native_count = lowering.native;
     let hoists_arrays = !lowering.loop_arrays.is_empty();
     let mut polls = std::mem::take(&mut lowering.polls);
