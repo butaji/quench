@@ -87,6 +87,10 @@ pub struct CallRecord {
     /// (`native_table`) names. Written by the binding of an image's proven call (`BoundCalls::bind`) and read by the
     /// AOT lane body's native call (`call_frames::push_native`); a JIT plan's record leaves it zero.
     pub descriptor: u64,
+    /// The callee's closure environment (`CONTEXT_ENV`) and captures pointer (`CONTEXT_CAPTURE`): the
+    /// interpreter reads both from a linked body frame's window (`ScriptCallTarget::env`, `capture`).
+    pub env: u64,
+    pub capture: u64,
 }
 
 /// Two cache lines: the record is aligned to one.

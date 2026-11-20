@@ -2321,6 +2321,13 @@ const TARGET_READS_IMPLICIT: u8 = 16;
 const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 32;
 
 impl ScriptCallTarget {
+    /// The closure environment and captures pointer its activation's window holds
+    /// (`CONTEXT_ENV`, `CONTEXT_CAPTURE`): a direct call row writes them (`CallRecord::env`, `capture`).
+    #[inline(always)]
+    pub(in crate::vm) fn context_words(&self) -> (u64, u64) {
+        (self.env.to_bits(), self.capture.expose_provenance() as u64)
+    }
+
     /// `new` may activate it too (`Vm::inline_constructible`).
     #[inline(always)]
     fn constructs(&self) -> bool {
@@ -10620,6 +10627,18 @@ use lane_plain_activation;
 
 mod leaf_calls;
 use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, materialize_running_leaf_in_lane, leaf_call_handler};
+
+/// Makes the running leaf, if one runs in `registers`, the activation its call would have pushed, before a lane
+/// body runs in it whose direct calls push windows at the lane stack's values' top: a leaf's window lies at that
+/// top without moving it (`script_call_leaf_miss`), so the first callee's window would be the leaf's own and its
+/// arguments overwrite the leaf's registers (a recursive `f(d - 1)` read `d` as its callee's under `--b-jit`).
+pub(in crate::vm) fn settle_leaf_before_direct_calls<H: Host>(lane_context: *mut (), registers: *mut Value) {
+    let cx = lane_context.cast::<LaneContext<H>>();
+    // SAFETY: a lane body's context is the running lane's, which nothing else accesses.
+    if !cx.is_null() && unsafe { (*cx).registers.0 } == registers {
+        materialize_running_leaf_in_lane(cx);
+    }
+}
 
 /// Make the running leaf (`LaneContext::leaf`) the activation its call would have pushed
 /// (`enter_window_in_lane`), before anything observes activations: their materialization
