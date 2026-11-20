@@ -537,6 +537,7 @@ impl OperandLayout {
 }
 
 impl ResultLayout {
+    #[inline(always)]
     pub(crate) const fn allowed_flags(self) -> Register {
         match self {
             Self::Register => NO_RESULT_FLAGS,
@@ -630,10 +631,12 @@ impl ImmediateLayout {
         imm & Self::LANE_CALL_RESULT_AWAITED_FLAG != 0
     }
 
+    #[inline(always)]
     pub(crate) const fn direct_eval(imm: u32) -> bool {
         imm & Self::DIRECT_EVAL_FLAG != 0
     }
 
+    #[inline(always)]
     pub(crate) const fn parameter_eval(imm: u32) -> bool {
         imm & Self::PARAMETER_EVAL_FLAG != 0
     }
