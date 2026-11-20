@@ -19,6 +19,7 @@ mod enums;
 mod fields;
 mod imports;
 mod names;
+mod namespace_ast;
 mod signatures;
 pub(super) use imports::{elide as elide_type_only_imports, type_only_imports};
 pub(super) use admit::admit;
@@ -677,6 +678,29 @@ mod tests {
             "1 2 0 R 2 deep 0 7",
             "5 3 x,y,extra,w",
         ]);
+    }
+
+    #[test]
+    fn namespaces_nest_merge_and_export_as_typescript_defines_them() {
+        let lines = run_typescript(r#"
+            function make() { namespace L { export const v = 3; } return L.v; }
+            namespace Outer { export namespace Inner { export const x = 4; } }
+            namespace Outer { export const y = Outer.Inner.x + 1; }
+            namespace P.Q { export const r = "r"; const hidden = 1; export function s() { return hidden + 1; } }
+            console.log([make(), Outer.Inner.x, Outer.y, P.Q.r, P.Q.s()].join(" "));
+        "#);
+        assert_eq!(lines, ["3 4 5 r 2"]);
+    }
+
+    #[test]
+    fn exported_namespaces_publish_on_their_module_binding() {
+        let source = "export namespace Util { export const twice = (x: number) => x * 2; }\nconsole.log(Util.twice(4));";
+        let program = Engine::specialize_typescript_module(source, "exported-namespace.mts").unwrap();
+        let host = TestHost::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime.execute(&program).unwrap();
+        assert_eq!(&*view.lines(), &["8"]);
     }
 
     #[test]

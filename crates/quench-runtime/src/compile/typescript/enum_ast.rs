@@ -10,6 +10,7 @@ use oxc_span::Span;
 
 use super::admit::Export;
 use super::enums::{self, Computed, Member, Value};
+use super::namespace_ast;
 
 /// The statements of enum `name`. `first`: the name's first declaration; `lexical`: the
 /// enclosing list's generated bindings are `let`; `values`: the runtime initializers in
@@ -58,10 +59,6 @@ impl<'a> Emit<'a> {
         Expression::new_identifier(self.span, self.text(name), &self.ast)
     }
 
-    fn identifier_target(&self, name: &str) -> AssignmentTarget<'a> {
-        AssignmentTarget::new_assignment_target_identifier(self.span, self.text(name), &self.ast)
-    }
-
     fn string(&self, value: &str) -> Expression<'a> {
         Expression::new_string_literal(self.span, self.text(value), Some(self.text(&enums::quote(value)).into()), &self.ast)
     }
@@ -103,10 +100,6 @@ impl<'a> Emit<'a> {
         Expression::new_assignment_expression(self.span, AssignmentOperator::Assign, left, right, &self.ast)
     }
 
-    fn logical_or(&self, left: Expression<'a>, right: Expression<'a>) -> Expression<'a> {
-        Expression::new_logical_expression(self.span, left, LogicalOperator::Or, right, &self.ast)
-    }
-
     fn statement(&self, expression: Expression<'a>) -> Statement<'a> {
         Statement::new_expression_statement(self.span, expression, &self.ast)
     }
@@ -119,18 +112,9 @@ impl<'a> Emit<'a> {
         AssignmentTarget::new_computed_member_expression(self.span, object, self.string(member), false, &self.ast)
     }
 
-    fn static_member(&self, object: Expression<'a>, property: &str) -> Expression<'a> {
-        let property = IdentifierName::new(self.span, self.text(property), &self.ast);
-        Expression::new_static_member_expression(self.span, object, property, false, &self.ast)
-    }
-
     fn static_target(&self, object: Expression<'a>, property: &str) -> AssignmentTarget<'a> {
         let property = IdentifierName::new(self.span, self.text(property), &self.ast);
         AssignmentTarget::new_static_member_expression(self.span, object, property, false, &self.ast)
-    }
-
-    fn empty_object(&self) -> Expression<'a> {
-        Expression::new_object_expression(self.span, ArenaVec::<ObjectPropertyKind<'a>>::new_in(&self.allocator), &self.ast)
     }
 
     fn declarator(&self, name: &str, init: Option<Expression<'a>>) -> VariableDeclarator<'a> {
@@ -183,37 +167,14 @@ impl<'a> Emit<'a> {
 
     /// `var E; E || (E = {});` then one statement per member, as tsc's emit.
     fn incremental(&self, name: &str, members: &[(String, Member)], values: Vec<Expression<'a>>, first: bool, how: Export<'_>, kind: VariableDeclarationKind) -> Vec<Statement<'a>> {
-        let mut statements = Vec::with_capacity(members.len() + 2);
-        if first {
-            statements.push(match how {
-                Export::Module => self.export(self.declaration(VariableDeclarationKind::Var, name, None)),
-                _ => self.declare(kind, name, None),
-            });
-        }
-        statements.push(self.statement(self.namespace_object(name, how)));
+        let mut statements = namespace_ast::head(self.allocator, self.span, name, first, how, kind);
+        statements.reserve(members.len());
         let mut values: Vec<Option<Expression<'a>>> = values.into_iter().map(Some).collect();
         for (member, value) in members {
             let expression = self.member_assignment(name, member, value, &mut values);
             statements.push(self.statement(expression));
         }
         statements
-    }
-
-    /// `E || (E = {})`, or `E = P.E || (P.E = {})` for a namespace's member.
-    fn namespace_object(&self, name: &str, how: Export<'_>) -> Expression<'a> {
-        let created = match how {
-            Export::Namespace(parent) => self.assign(self.static_target(self.identifier(parent), name), self.empty_object()),
-            _ => self.assign(self.identifier_target(name), self.empty_object()),
-        };
-        let existing = match how {
-            Export::Namespace(parent) => self.static_member(self.identifier(parent), name),
-            _ => self.identifier(name),
-        };
-        let object = self.logical_or(existing, self.parenthesized(created));
-        match how {
-            Export::Namespace(_) => self.assign(self.identifier_target(name), object),
-            _ => object,
-        }
     }
 
     /// The expression that defines one member: `E["A"] = "x"` for a string, and for a

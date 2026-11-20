@@ -16,6 +16,7 @@
 use super::enum_ast;
 use super::enum_folding;
 use super::enums::{self, Computed, Member, Value};
+use super::namespace_ast;
 use oxc_allocator::{Allocator, Box as ArenaBox, TakeIn, Vec as ArenaVec};
 use oxc_ast::ast::*;
 use oxc_ast_visit::{VisitMut, walk_mut};
@@ -215,8 +216,8 @@ impl<'a> Admit<'a, '_> {
                 match (how, export) {
                     (Export::Namespace(namespace), _) => {
                         let mut produced = vec![(Statement::from(declaration), false)];
-                        let published: String = bindings.iter().map(|name| format!("{namespace}.{name} = {name}; ")).collect();
-                        produced.extend(self.javascript(&published, span).into_iter().map(|statement| (statement, true)));
+                        let published = namespace_ast::publish(self.allocator, span, namespace, &bindings);
+                        produced.extend(published.into_iter().map(|statement| (statement, true)));
                         produced
                     }
                     (_, Some(mut export)) => {
@@ -464,24 +465,6 @@ impl<'a> VisitMut<'a> for Qualify<'_, 'a> {
     }
 }
 
-/// `var N; ` before the first declaration of a merged name (`export var N; ` from a module).
-fn declaration_prefix(name: &str, first: bool, how: Export<'_>, keyword: &str) -> String {
-    match (first, how) {
-        (false, _) => String::new(),
-        (true, Export::Module) => format!("export var {name}; "),
-        (true, _) => format!("{keyword} {name}; "),
-    }
-}
-
-/// The object a merged declaration fills: the existing one or a new one, published on
-/// the parent namespace.
-fn namespace_object(name: &str, how: Export<'_>) -> String {
-    match how {
-        Export::Namespace(parent) => format!("{name} = {parent}.{name} || ({parent}.{name} = {{}})"),
-        _ => format!("{name} || ({name} = {{}})"),
-    }
-}
-
 impl<'a> Admit<'a, '_> {
     /// `namespace A.B { … }`: the namespace objects, then the body as a block in which
     /// each export is published on its object after its declaration.
@@ -498,28 +481,15 @@ impl<'a> Admit<'a, '_> {
             }
         };
         let first = seen.insert(names[0].clone());
-        let head = format!("{}{};", declaration_prefix(&names[0], first, how, self.keyword()), namespace_object(&names[0], how));
-        let mut produced: Vec<Produced<'a>> = self.javascript(&head, span).into_iter().map(|statement| (statement, true)).collect();
+        let kind = if self.lexical { VariableDeclarationKind::Let } else { VariableDeclarationKind::Var };
+        let mut produced: Vec<Produced<'a>> = namespace_ast::head(self.allocator, span, &names[0], first, how, kind)
+            .into_iter().map(|statement| (statement, true)).collect();
         let innermost = names.last().cloned().unwrap_or_default();
         let lexical = std::mem::replace(&mut self.lexical, true);
         let statements = self.statements(block.unbox().body, Some(&innermost));
         self.lexical = lexical;
-        let mut inner = self.block(statements, span);
-        for pair in names.windows(2).rev() {
-            let object = format!("let {1} = {0}.{1} || ({0}.{1} = {{}});", pair[0], pair[1]);
-            let mut statements = self.javascript(&object, span);
-            statements.push(inner);
-            inner = self.block(statements, span);
-        }
-        produced.push((inner, true));
+        produced.push((namespace_ast::body(self.allocator, span, &names, statements), true));
         produced
-    }
-
-    fn block(&self, statements: ArenaVec<'a, Statement<'a>>, span: Span) -> Statement<'a> {
-        let mut generated = self.javascript("{}", span);
-        let Some(Statement::BlockStatement(mut block)) = generated.pop() else { unreachable!("a block") };
-        block.body = statements;
-        Statement::BlockStatement(block)
     }
 }
 
