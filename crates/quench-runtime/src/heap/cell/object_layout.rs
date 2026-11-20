@@ -1,4 +1,8 @@
 //! The object record's header words, prototype links and storage positions.
+// Raw-pointer field access predates `dangerous_implicit_autorefs`; the sites are reads and
+// writes of `Copy` fields of a live record, and converting them to `addr_of!` is its own
+// change (TOD-1202). Nothing here is a new allow: the lint did not exist when they landed.
+#![allow(dangerous_implicit_autorefs)]
 
 use super::*;
 

@@ -1,4 +1,11 @@
 #![deny(warnings)]
+// DEBT (arm64 AOT port, TOD-1202): the merged v2-aot tip leaves the b-jit call-record and lane
+// surface of the compiled tiers unreachable on aarch64 -- `staged/call.rs`'s record words, the
+// staged row dispatch (`dispatch_fast/lane_frame/staged_ops.rs`) and `staged/meaning_*` are
+// entered only from the x86-64 paths today. Until those paths are ported this crate builds with
+// the dead-code lint off; every other lint stays an error, and this line goes away as the port
+// lands. Nothing here changes what a program computes: unreachable code, not unchecked code.
+#![allow(dead_code)]
 #![feature(rust_preserve_none_cc)]
 // Lane handlers dispatch their successor with `become`, so every dispatch is a sibling jump
 // whatever the handler body keeps on its stack (`vm::dispatch_fast`).

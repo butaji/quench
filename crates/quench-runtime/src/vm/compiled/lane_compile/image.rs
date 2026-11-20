@@ -4,7 +4,7 @@
 use super::*;
 
 /// The code of a lane body, and where its scalar entry lies in it.
-pub(super) struct LaneImage {
+pub(crate) struct LaneImage {
     pub(super) code: Vec<u8>,
     pub(super) scalar: Option<usize>,
 }

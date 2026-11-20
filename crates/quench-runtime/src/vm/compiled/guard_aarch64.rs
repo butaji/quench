@@ -1,4 +1,8 @@
 //! arm64 Darwin and Linux native-entry recovery. Only owned guard/poll faults are ours.
+// Raw-pointer field access through the fault record; the fields are live `Copy` words, and
+// converting them to `addr_of!` waits on the same change as the other raw-pointer sites
+// (TOD-1202).
+#![allow(dangerous_implicit_autorefs)]
 use super::{ACTIVE_CONTEXT, CallContext, GuardSupport, TERMINATED_STATUS, WasmEntry, trap_status};
 use std::sync::OnceLock;
 

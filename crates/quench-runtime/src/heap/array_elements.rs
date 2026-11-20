@@ -10,6 +10,10 @@
 //! copies it to an allocation of its own (`make_mut`), as does the collection its array
 //! survives (`ArrayElements::leave_nursery`), so every young run's owner is a young array
 //! record its sweep shows.
+// Raw-pointer field access predates `dangerous_implicit_autorefs`; the sites are reads and
+// writes of `Copy` fields of a live record, and converting them to `addr_of!` is its own
+// change (TOD-1202). Nothing here is a new allow: the lint did not exist when they landed.
+#![allow(dangerous_implicit_autorefs)]
 use crate::staged::record_heads::ArrayHeaderHead;
 use super::growth::{GrowthPolicy, grown_capacity};
 use crate::value::Value;

@@ -7,7 +7,7 @@ use super::*;
 use super::super::program_store::lane_publication::LaneKey;
 
 type LaneCode = Result<image::LaneImage, super::jit_backend::NativeCompileRejection>;
-#[path = "lane_compile/image.rs"] mod image;
+#[path = "lane_compile/image.rs"] pub(crate) mod image;
 
 /// A lowered lane body: the method it becomes once its code exists.
 pub(super) struct LanePlan {
