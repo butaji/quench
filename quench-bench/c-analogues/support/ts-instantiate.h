@@ -87,6 +87,9 @@ static TsType *cGetMappedType(TsType *t, TsMapper *m) {
 }
 
 /* couldContainTypeVariables (72810): cached on the type (0 not computed, 1 yes, 2 no) */
+static void cResolveSignatures(TsType *t);   /* ts-types.h */
+static void cResolveIndexInfos(TsType *t);
+static int cPropertiesOf(TsType *t, TsSymbol ***out);
 static bool cCouldContain(TsType *t) {
   if (t->couldContain) return t->couldContain == 1;
   bool r = false;
@@ -96,10 +99,23 @@ static bool cCouldContain(TsType *t) {
     if (t->objectFlags & OF_Reference) {
       for (int i = 0; i < t->nargs && !r; i++) r = cCouldContain(t->args[i]);
     } else if (t->objectFlags & OF_Anonymous) {
-      /* an empty type literal ({}) mentions no type parameter */
-      bool emptyLiteral = t->typeNode && t->typeNode->kind == TSK_TypeLiteral && t->typeNode->members && t->typeNode->members->n == 0;
-      r = t->symbol && (t->symbol->flags & (SF_Function | SF_Method | SF_Class | SF_TypeLiteral | SF_ObjectLiteral)) &&
-          t->symbol->ndecls > 0 && !emptyLiteral;
+      if (t->typeNode && t->typeNode->kind == TSK_TypeLiteral && t->symbol && (t->symbol->flags & SF_TypeLiteral)) {
+        /* a type literal mentions a type parameter through its signatures, properties or index signatures. Assumed
+         * false while it is looked at, so a type literal that refers to itself is not walked again */
+        t->couldContain = 2;
+        cResolveSignatures(t);
+        if (t->ncall || t->nconstruct) r = true;
+        TsSymbol **props;
+        int np = r ? 0 : cPropertiesOf(t, &props);
+        for (int k = 0; k < np && !r; k++) r = cCouldContain(cTypeOfSymbol(props[k]));
+        if (!r) {
+          cResolveIndexInfos(t);
+          for (int k = 0; k < t->nindex && !r; k++) r = cCouldContain(t->index[k].keyType) || cCouldContain(t->index[k].type);
+        }
+      } else {
+        r = t->symbol && (t->symbol->flags & (SF_Function | SF_Method | SF_Class | SF_TypeLiteral | SF_ObjectLiteral)) &&
+            t->symbol->ndecls > 0;
+      }
     } else if (t->objectFlags & OF_Mapped) {
       r = true;   /* a mapped type may refer to the type parameters of its declaration */
     }
