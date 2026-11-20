@@ -3325,17 +3325,39 @@ script_handler! {
     }
 }
 
+/// `operator_row`'s operand forms: any operands (`binary_operation`); two registers; a register and a
+/// constant on the right; a register and an int32 constant on the right; an int32 constant with any
+/// other operand (`int32_binary_operation` for the two int32 forms).
+pub(in crate::vm::dispatch_fast) const OPERANDS_ANY: u8 = 0;
+pub(in crate::vm::dispatch_fast) const OPERANDS_REGISTERS: u8 = 1;
+pub(in crate::vm::dispatch_fast) const OPERANDS_REGISTER_CONSTANT: u8 = 2;
+pub(in crate::vm::dispatch_fast) const OPERANDS_REGISTER_INT32: u8 = 3;
+pub(in crate::vm::dispatch_fast) const OPERANDS_INT32: u8 = 4;
+
 script_handler! {
     /// The lane handler of a plain `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
     /// value) whose accumulator field is `ACC`: `generated_row`'s row with the operator a parameter of the
-    /// instantiation rather than a field the row decodes and dispatches on. Where `INT32` (an operand is an
-    /// int32 constant) the operation is `numeric::int32_binary_operation`'s, else `numeric::binary_operation`'s,
-    /// over the record's own operands. Any step but a value hands the record to its generated row for good
-    /// (`requicken`), which decides every operand pair.
-    pub(super) fn operator_row<OP: u16, ACC: u8, OPERATOR: u8, INT32: bool>(cx, r, ip, i, view) {
+    /// instantiation rather than a field the row decodes and dispatches on. `FORM` (`OPERANDS_*`) states
+    /// the operand kinds the view proved, so the row's operand tests fold, and whether an operand is an
+    /// int32 constant, where the operation is `numeric::int32_binary_operation`'s, else
+    /// `numeric::binary_operation`'s, over the record's own operands. Any step but a value hands the
+    /// record to its generated row for good (`requicken`), which decides every operand pair.
+    pub(super) fn operator_row<OP: u16, ACC: u8, OPERATOR: u8, FORM: u8>(cx, r, ip, i, view) {
         let generic: Handler = generated_row!(H, OP, ACC, FLAG_UNREAD);
+        // SAFETY: `specialize_plain_operators` chose `FORM` from the record's own operand kinds.
+        unsafe {
+            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 } {
+                std::hint::assert_unchecked(Operand(i.b).kind() == Some(crate::bytecode::OperandKind::Register));
+            }
+            if const { FORM == OPERANDS_REGISTERS } {
+                std::hint::assert_unchecked(Operand(i.c).kind() == Some(crate::bytecode::OperandKind::Register));
+            }
+            if const { FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 } {
+                std::hint::assert_unchecked(Operand(i.c).kind() == Some(crate::bytecode::OperandKind::Constant));
+            }
+        }
         let (left, right) = (Operand(i.b), Operand(i.c));
-        let number = if INT32 {
+        let number = if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_INT32 } {
             crate::staged::numeric::int32_binary_operation(OPERATOR as u32, i.a, left, right)
         } else {
             crate::staged::numeric::binary_operation(OPERATOR as u32, i.a, left, right)
