@@ -94,36 +94,21 @@ static void cCondOuterAndFilter(TsNode *n, CondRoot *r) {
 
 static TsType *cGetConditionalType(CondRoot *root, TsMapper *mapper);
 
-/* inferTypes for the infer type parameters of a conditional type (the subset described above): a type variable
- * of the list takes the source as a candidate; a reference of the same generic type infers its covariant type
- * arguments; anything else that could contain an infer type parameter is not ported */
-static void cInferTypes(TsType **params, int n, TsType ***cand, int *cn, int *cc, TsType *source, TsType *target) {
-  if (!cCouldContain(target)) return;
-  if (target->flags & TF_TypeParameter) {
-    int k = -1;
-    for (int i = 0; i < n && k < 0; i++) if (params[i] == target) k = i;
-    if (k < 0) return;
-    for (int i = 0; i < cn[k]; i++) if (cand[k][i] == source) return;
-    if (cn[k] == cc[k]) {
-      cc[k] = cc[k] ? cc[k] * 2 : 4;
-      TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)cc[k]);
-      if (cn[k]) memcpy(v, cand[k], sizeof(TsType *) * (size_t)cn[k]);
-      cand[k] = v;
-    }
-    cand[k][cn[k]++] = source;
-    return;
-  }
-  if ((target->flags & TF_Object) && (target->objectFlags & OF_Reference) && (source->flags & TF_Object) &&
-      (source->objectFlags & OF_Reference) && source->target == target->target) {
-    uint8_t *v = cVariances(target->target);
-    for (int i = 0; i < target->nargs; i++) {
-      if ((v[i] & 3) != VF_Covariant) return (void)cUnported("inference through a non-covariant type argument");
-      cInferTypes(params, n, cand, cn, cc, source->args[i], target->args[i]);
-    }
-    return;
-  }
-  (void)cUnported("inference into a type outside the subset");
-}
+/* inferTypes (checker.ts, 5.9.2): the candidates of the type parameters of one inference. Candidates of the best
+ * (lowest) priority are kept: 0 direct, 1 naked type variable, 128 return type (the definitions are in ts-relate.h
+ * with the signature relations, which hold the helpers they need). */
+typedef struct CInfer {
+  TsType **params;
+  int n;
+  TsType ***cand; int *cn, *cc;   /* covariant candidates */
+  TsType ***con; int *ctn, *ctc;  /* contravariant candidates */
+  int *prio;                       /* priority of the candidates of each parameter, -1 when none */
+  int priority;                    /* the priority of the inference in progress */
+  bool contravariant;
+  int hits;                        /* candidates added at the current priority (the matched check of unions) */
+} CInfer;
+static void cInferInit(CInfer *c, TsType **params, int n);
+static void cInferFrom(CInfer *c, TsType *source, TsType *target);
 
 /* canTailRecurse: a conditional type of a branch whose root is the new root, with the mapper of its outer
  * type parameters (undistributed unions only) */
@@ -162,16 +147,14 @@ static TsType *cGetConditionalType(CondRoot *root, TsMapper *mapper) {
     TsMapper *combined = NULL;
     if (root->ninfer) {
       /* createInferenceContext and inferTypes (the checkType is the source, the extendsType the target) */
-      TsType ***cand = ts_arena_alloc(sizeof(TsType **) * (size_t)root->ninfer);
-      int *cn = ts_arena_alloc(sizeof(int) * (size_t)root->ninfer);
-      int *cc = ts_arena_alloc(sizeof(int) * (size_t)root->ninfer);
-      for (int i = 0; i < root->ninfer; i++) { cand[i] = NULL; cn[i] = 0; cc[i] = 0; }
-      if (!checkDeferred) cInferTypes(root->inferParams, root->ninfer, cand, cn, cc, checkType, extendsType);
-      /* getInferredType without a signature: the union of the candidates (one candidate here), unknown without any */
+      CInfer ci;
+      cInferInit(&ci, root->inferParams, root->ninfer);
+      if (!checkDeferred) cInferFrom(&ci, checkType, extendsType);
+      /* getInferredType without a signature: the one candidate, unknown without any */
       TsType **inferred = ts_arena_alloc(sizeof(TsType *) * (size_t)root->ninfer);
       for (int i = 0; i < root->ninfer; i++) {
-        if (cn[i] == 0) inferred[i] = cUnknownType;
-        else if (cn[i] == 1) inferred[i] = cand[i][0];
+        if (ci.cn[i] == 0 && ci.ctn[i] == 0) inferred[i] = cUnknownType;
+        else if (ci.cn[i] == 1) inferred[i] = ci.cand[i][0];
         else return cUnported("several inference candidates of a conditional type");
       }
       TsMapper *ctx = cCreateTypeMapper(root->inferParams, inferred, root->ninfer);

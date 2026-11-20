@@ -497,10 +497,282 @@ static CSig cErasedSignature(CSig *sig) {
   return r;
 }
 
+/* ---- inferTypes (checker.ts, 5.9.2) for the signature and conditional inferences ----
+ * Ported: the identical and closely matched members of unions and intersections, the naked type variable of a
+ * union target, references of one generic type (variances: contravariant arguments flip the direction),
+ * indexed access pairs, source unions, the properties and call or construct signatures of object types (the
+ * parameters contravariantly under strictFunctionTypes, the return types covariantly). Other shapes that could
+ * hold type variables (index, conditional, template literal, string mapping, mapped types, rest parameters,
+ * generic signatures, index signatures) are not ported and mark the request unported. */
+static void cInferInit(CInfer *c, TsType **params, int n) {
+  c->params = params;
+  c->n = n;
+  c->cand = ts_arena_zalloc(sizeof(TsType **) * (size_t)(n ? n : 1));
+  c->con = ts_arena_zalloc(sizeof(TsType **) * (size_t)(n ? n : 1));
+  c->cn = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1));
+  c->cc = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1));
+  c->ctn = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1));
+  c->ctc = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1));
+  c->prio = ts_arena_alloc(sizeof(int) * (size_t)(n ? n : 1));
+  for (int i = 0; i < n; i++) c->prio[i] = -1;
+  c->priority = 0;
+  c->contravariant = false;
+  c->hits = 0;
+}
+
+static int cInferIndexOf(CInfer *c, TsType *t) {
+  if (!(t->flags & TF_TypeParameter)) return -1;
+  for (int i = 0; i < c->n; i++) if (c->params[i] == t) return i;
+  return -1;
+}
+
+static void cInferPush(TsType ***arr, int *cnt, int *cap, TsType *v) {
+  if (*cnt == *cap) {
+    int nc = *cap ? *cap * 2 : 4;
+    TsType **nv = ts_arena_alloc(sizeof(TsType *) * (size_t)nc);
+    if (*cnt) memcpy(nv, *arr, sizeof(TsType *) * (size_t)*cnt);
+    *arr = nv;
+    *cap = nc;
+  }
+  (*arr)[(*cnt)++] = v;
+}
+
+/* the candidate of a type variable (inferFromTypes, the TypeVariable branch): only candidates of the lowest
+ * priority are kept, and a contravariant inference adds contravariant candidates */
+static void cInferAddCandidate(CInfer *c, int k, TsType *source) {
+  if (c->prio[k] < 0 || c->priority < c->prio[k]) {
+    c->cn[k] = 0;
+    c->ctn[k] = 0;
+    c->prio[k] = c->priority;
+  }
+  if (c->priority != c->prio[k]) return;
+  c->hits++;
+  if (c->contravariant) {
+    for (int i = 0; i < c->ctn[k]; i++) if (c->con[k][i] == source) return;
+    cInferPush(&c->con[k], &c->ctn[k], &c->ctc[k], source);
+  } else {
+    for (int i = 0; i < c->cn[k]; i++) if (c->cand[k][i] == source) return;
+    cInferPush(&c->cand[k], &c->cn[k], &c->cc[k], source);
+  }
+}
+
+static void cInferWithPriority(CInfer *c, TsType *source, TsType *target, int p) {
+  int save = c->priority;
+  c->priority |= p;
+  cInferFrom(c, source, target);
+  c->priority = save;
+}
+
+/* inferFromContravariantTypes under strictFunctionTypes (the project's tsconfig is strict) */
+static void cInferContra(CInfer *c, TsType *source, TsType *target) {
+  c->contravariant = !c->contravariant;
+  cInferFrom(c, source, target);
+  c->contravariant = !c->contravariant;
+}
+
+/* isTypeOrBaseIdenticalTo and isTypeCloselyMatchedBy (the matches of inferFromMatchingTypes) */
+static bool cInferMatches(TsType *s, TsType *t, bool closely) {
+  if (closely) return (s->flags & TF_Object) && (t->flags & TF_Object) && s->symbol && s->symbol == t->symbol;
+  if (cIdentical(s, t)) return true;
+  return ((t->flags & TF_String) && (s->flags & TF_StringLiteral)) || ((t->flags & TF_Number) && (s->flags & TF_NumberLiteral));
+}
+
+/* inferFromMatchingTypes: infers from each matching pair, then returns the unmatched members of both lists */
+static void cInferMatching(CInfer *c, TsType ***srcs, int *ns, TsType ***tgts, int *nt, bool closely) {
+  bool *sm = ts_arena_zalloc(sizeof(bool) * (size_t)(*ns ? *ns : 1));
+  bool *tm = ts_arena_zalloc(sizeof(bool) * (size_t)(*nt ? *nt : 1));
+  for (int ti = 0; ti < *nt; ti++)
+    for (int si = 0; si < *ns; si++)
+      if (cInferMatches((*srcs)[si], (*tgts)[ti], closely)) {
+        cInferFrom(c, (*srcs)[si], (*tgts)[ti]);
+        sm[si] = true;
+        tm[ti] = true;
+      }
+  TsType **ks = ts_arena_alloc(sizeof(TsType *) * (size_t)(*ns ? *ns : 1));
+  TsType **kt = ts_arena_alloc(sizeof(TsType *) * (size_t)(*nt ? *nt : 1));
+  int cs = 0, ct = 0;
+  for (int i = 0; i < *ns; i++) if (!sm[i]) ks[cs++] = (*srcs)[i];
+  for (int i = 0; i < *nt; i++) if (!tm[i]) kt[ct++] = (*tgts)[i];
+  *srcs = ks; *ns = cs; *tgts = kt; *nt = ct;
+}
+
+/* inferToMultipleTypes: a union target with one naked type variable takes the members that inferred nothing */
+static void cInferToMultiple(CInfer *c, TsType *source, TsType *target) {
+  int typeVarCount = 0;
+  if (target->flags & TF_Union) {
+    TsType *naked = NULL;
+    TsType **sources = (source->flags & TF_Union) ? source->types : &source;
+    int ns = (source->flags & TF_Union) ? source->ntypes : 1;
+    bool *matched = ts_arena_zalloc(sizeof(bool) * (size_t)(ns ? ns : 1));
+    for (int ti = 0; ti < target->ntypes; ti++) {
+      TsType *t = target->types[ti];
+      if (cInferIndexOf(c, t) >= 0) {
+        naked = t;
+        typeVarCount++;
+      } else {
+        for (int i = 0; i < ns; i++) {
+          int h0 = c->hits;
+          cInferFrom(c, sources[i], t);
+          if (c->hits != h0) matched[i] = true;
+        }
+      }
+    }
+    if (typeVarCount == 0) return;
+    if (typeVarCount == 1) {
+      TsType **unmatched = ts_arena_alloc(sizeof(TsType *) * (size_t)(ns ? ns : 1));
+      int nu = 0;
+      for (int i = 0; i < ns; i++) if (!matched[i]) unmatched[nu++] = sources[i];
+      if (nu) {
+        cInferFrom(c, cGetUnionType(unmatched, nu), naked);
+        return;
+      }
+    }
+  } else {
+    for (int ti = 0; ti < target->ntypes; ti++) {
+      TsType *t = target->types[ti];
+      if (cInferIndexOf(c, t) >= 0) typeVarCount++;
+      else cInferFrom(c, source, t);
+    }
+  }
+  if (target->flags & TF_Intersection ? typeVarCount == 1 : typeVarCount > 0) {
+    for (int ti = 0; ti < target->ntypes; ti++)
+      if (cInferIndexOf(c, target->types[ti]) >= 0) cInferWithPriority(c, source, target->types[ti], 1);
+  }
+}
+
+/* inferFromTypeArguments: the arguments of a reference, contravariant ones with the flipped direction */
+static void cInferTypeArguments(CInfer *c, TsType *source, TsType *target) {
+  uint8_t *v = cVariances(target->target);
+  int count = source->nargs < target->nargs ? source->nargs : target->nargs;
+  for (int i = 0; i < count; i++) {
+    uint8_t vi = v ? (i < target->target->ntypeParams ? v[i] : VF_Covariant) : VF_Covariant;
+    if ((vi & 3) == VF_Contravariant) cInferContra(c, source->args[i], target->args[i]);
+    else cInferFrom(c, source->args[i], target->args[i]);
+  }
+}
+
+/* inferFromSignature: the parameters (contravariantly) and the return types of a non-generic source against the
+ * erased target signature */
+static bool cInferSignature(CInfer *c, CSig *src, CSig *tgt) {
+  if (cSigIsGeneric(src)) return false;   /* getBaseSignature of a generic source: not ported */
+  CSig tg = cErasedSignature(tgt);
+  CParams ps, pt;
+  if (!cSplitParams(src->decl, &ps) || !cSplitParams(tg.decl, &pt)) return false;
+  if (ps.thisParam || pt.thisParam || ps.rest || pt.rest) return false;
+  int np = ps.n < pt.n ? ps.n : pt.n;
+  for (int i = 0; i < np; i++) {
+    bool okS, okT;
+    TsType *st = cParamTypeAt(&ps, i, &okS, src->mapper);
+    TsType *tt = cParamTypeAt(&pt, i, &okT, tg.mapper);
+    if (!okS || !okT) continue;
+    cInferContra(c, tt, st);
+  }
+  cInferFrom(c, cReturnTypeOf(src), cReturnTypeOf(&tg));
+  return true;
+}
+
+/* inferFromObjectTypes: the properties of the target that the source has, then the signatures */
+static void cInferObjects(CInfer *c, TsType *source, TsType *target) {
+  TsSymbol **tp;
+  int nt = cPropertiesOf(target, &tp);
+  for (int i = 0; i < nt; i++) {
+    TsSymbol *sp = cPropertyOf(source, tp[i]->name);
+    if (sp) cInferFrom(c, cTypeOfSymbol(sp), cTypeOfSymbol(tp[i]));
+  }
+  for (int kind = 0; kind < 2; kind++) {
+    cResolveSignatures(source);
+    cResolveSignatures(target);
+    int ns = kind ? source->nconstruct : source->ncall, nn = kind ? target->nconstruct : target->ncall;
+    CSig *ss = kind ? source->construct : source->call, *ts = kind ? target->construct : target->call;
+    int len = ns < nn ? ns : nn;
+    for (int i = 0; i < len; i++)
+      if (!cInferSignature(c, &ss[ns - len + i], &ts[nn - len + i])) cUnported("inference from a generic or rest signature");
+  }
+  cResolveIndexInfos(target);
+  if (target->nindex) cUnported("inference into an index signature");
+}
+
+static void cInferFrom(CInfer *c, TsType *source, TsType *target) {
+  if (!cCouldContain(target)) return;
+  if (source == target && (source->flags & (TF_Union | TF_Intersection))) {
+    for (int i = 0; i < source->ntypes; i++) cInferFrom(c, source->types[i], source->types[i]);
+    return;
+  }
+  if (target->flags & TF_Union) {
+    TsType **srcs = (source->flags & TF_Union) ? source->types : &source;
+    int ns = (source->flags & TF_Union) ? source->ntypes : 1;
+    TsType **tgts = target->types;
+    int nt = target->ntypes;
+    /* the source list is copied: the matching works on its own lists */
+    TsType **sc = ts_arena_alloc(sizeof(TsType *) * (size_t)(ns ? ns : 1));
+    memcpy(sc, srcs, sizeof(TsType *) * (size_t)ns);
+    TsType **tc = ts_arena_alloc(sizeof(TsType *) * (size_t)(nt ? nt : 1));
+    memcpy(tc, tgts, sizeof(TsType *) * (size_t)nt);
+    cInferMatching(c, &sc, &ns, &tc, &nt, false);
+    cInferMatching(c, &sc, &ns, &tc, &nt, true);
+    if (nt == 0) return;
+    target = cGetUnionType(tc, nt);
+    if (ns == 0) {
+      cInferWithPriority(c, source, target, 1);
+      return;
+    }
+    source = cGetUnionType(sc, ns);
+  } else if (target->flags & TF_Intersection) {
+    bool allObjects = true;
+    for (int i = 0; i < target->ntypes; i++) allObjects = allObjects && (target->types[i]->flags & TF_Object);
+    if (!allObjects && !(source->flags & TF_Union)) {
+      TsType **sc = ts_arena_alloc(sizeof(TsType *) * (size_t)((source->flags & TF_Intersection) ? source->ntypes : 1));
+      int ns = (source->flags & TF_Intersection) ? source->ntypes : 1;
+      if (source->flags & TF_Intersection) memcpy(sc, source->types, sizeof(TsType *) * (size_t)ns);
+      else sc[0] = source;
+      TsType **tc = ts_arena_alloc(sizeof(TsType *) * (size_t)(target->ntypes ? target->ntypes : 1));
+      memcpy(tc, target->types, sizeof(TsType *) * (size_t)target->ntypes);
+      int nt = target->ntypes;
+      cInferMatching(c, &sc, &ns, &tc, &nt, false);
+      if (ns == 0 || nt == 0) return;
+      source = cGetIntersectionType(sc, ns);
+      target = cGetIntersectionType(tc, nt);
+    }
+  }
+  if (target->flags & TF_TypeParameter) {
+    int k = cInferIndexOf(c, target);
+    if (k >= 0) cInferAddCandidate(c, k, source);
+    return;
+  }
+  if ((target->flags & TF_Object) && (target->objectFlags & OF_Reference) && (source->flags & TF_Object) &&
+      (source->objectFlags & OF_Reference) && source->target == target->target) {
+    cInferTypeArguments(c, source, target);
+    return;
+  }
+  if ((source->flags & TF_IndexedAccess) && (target->flags & TF_IndexedAccess)) {
+    cInferFrom(c, source->iaObj, target->iaObj);
+    cInferFrom(c, source->iaIdx, target->iaIdx);
+    return;
+  }
+  if (target->flags & (TF_Union | TF_Intersection)) {
+    cInferToMultiple(c, source, target);
+    return;
+  }
+  if (source->flags & TF_Union) {
+    for (int i = 0; i < source->ntypes; i++) cInferFrom(c, source->types[i], target);
+    return;
+  }
+  if (target->flags & TF_IndexedAccess) return;   /* the simplified forms of T[K] are not ported; nothing to infer */
+  if (target->flags & (TF_Index | TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) {
+    cUnported("inference into an index, conditional, template literal or string mapping type");
+    return;
+  }
+  if (target->flags & TF_Object) {
+    if (!(source->flags & TF_Object)) source = cApparentType(source);
+    if (source && (source->flags & TF_Object)) cInferObjects(c, source, target);
+  }
+}
+
 /* instantiateSignatureInContextOf without an inference context (compareSignaturesRelated): the source's type
- * parameters are inferred from the target's parameter types, then (when none of them has a parameter candidate)
- * from its return type; getInferredType gives the common supertype of the candidates (subtype relation), or
- * unknown; the constraint replaces a type that is not related to it. The subset: no literal, null or undefined
+ * parameters are inferred from the target's parameter types (priority 0) and return type (ReturnType priority),
+ * with the candidates of the lowest priority kept; a covariant inference is the common supertype of the
+ * candidates (subtype relation), a contravariant one their common subtype, and an unused parameter is unknown.
+ * The constraint replaces a type that is not related to it. The subset: no literal, null or undefined
  * candidates, no this, rest or default type parameters, no constraint that mentions type parameters. Returns
  * false when the subset does not cover the signatures. */
 static bool cSigInContextOf(CSig *src, CSig *tgt, CSig *out) {
@@ -510,9 +782,8 @@ static bool cSigInContextOf(CSig *src, CSig *tgt, CSig *out) {
   if (!cSplitParams(src->decl, &ps) || !cSplitParams(tgt->decl, &pt)) { (void)cUnported("too many parameters"); return false; }
   if (ps.thisParam || pt.thisParam || ps.rest || pt.rest) { (void)cUnported("signature inference with this or rest parameters"); return false; }
   int before = cUnportedCount;
-  TsType ***cand = ts_arena_zalloc(sizeof(TsType **) * (size_t)(n ? n : 1)), ***cand2 = ts_arena_zalloc(sizeof(TsType **) * (size_t)(n ? n : 1));
-  int *cn = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1)), *cc = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1));
-  int *cn2 = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1)), *cc2 = ts_arena_zalloc(sizeof(int) * (size_t)(n ? n : 1));
+  CInfer ci;
+  cInferInit(&ci, tps, n);
   int np = ps.n < pt.n ? ps.n : pt.n;
   for (int i = 0; i < np; i++) {
     bool okS, okT;
@@ -520,18 +791,20 @@ static bool cSigInContextOf(CSig *src, CSig *tgt, CSig *out) {
     TsType *st = cParamTypeAt(&ps, i, &okS, src->mapper);
     if (!okS || !okT) continue;
     if (tt == cErrorType || st == cErrorType) return false;
-    cInferTypes(tps, n, cand, cn, cc, tt, st);
+    cInferFrom(&ci, tt, st);
   }
   TsType *tr = cReturnTypeOf(tgt), *sr = cReturnTypeOf(src);
   if (tr == cErrorType || sr == cErrorType) return false;
-  cInferTypes(tps, n, cand2, cn2, cc2, tr, sr);
+  ci.priority = 128;   /* InferencePriority.ReturnType */
+  cInferFrom(&ci, tr, sr);
+  ci.priority = 0;
   if (cUnportedCount != before) return false;
   TsType **args = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
   for (int k = 0; k < n; k++) {
-    TsType **cs = cn[k] ? cand[k] : cand2[k];
-    int nc = cn[k] ? cn[k] : cn2[k];
     TsType *inferred;
-    if (nc) {
+    if (ci.cn[k]) {
+      TsType **cs = ci.cand[k];
+      int nc = ci.cn[k];
       for (int i = 0; i < nc; i++) {
         if (cs[i]->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BooleanLiteral | TF_BigIntLiteral | TF_Null | TF_Undefined)) {
           (void)cUnported("signature inference from a literal, null or undefined candidate");
@@ -540,6 +813,11 @@ static bool cSigInContextOf(CSig *src, CSig *tgt, CSig *out) {
       }
       TsType *s = cs[0];
       for (int i = 1; i < nc; i++) s = cIsRelatedWith(s, cs[i], REL_Subtype) ? cs[i] : s;   /* getCommonSupertype */
+      inferred = s;
+    } else if (ci.ctn[k]) {
+      TsType **cs = ci.con[k];
+      TsType *s = cs[0];
+      for (int i = 1; i < ci.ctn[k]; i++) s = cIsRelatedWith(cs[i], s, REL_Subtype) ? cs[i] : s;   /* getCommonSubtype */
       inferred = s;
     } else {
       if (cTypeParamDefaultNode(tps[k])) { (void)cUnported("signature inference with a default type parameter"); return false; }

@@ -111,7 +111,7 @@ const relClass = [
   "    constructor(name) { super(); this.relName = name; }",
   "    set(key, value) {",
   "      const I = globalThis.__TSI;",
-  "      if (I && I.traceOn && I.iface && this.relName === 'assignableRelation' && !this.has(key)) I.pairs.push({ iface: I.iface, key });",
+  "      if (I && I.traceOn && I.iface && this.relName === 'assignableRelation' && !this.has(key)) I.pairs.push({ iface: I.iface, key, stack: I.stack.slice(-10).join(' > ') });",
   "      return super.set(key, value);",
   "    }",
   "  }",
@@ -179,12 +179,13 @@ console.log(`checkInterfaceDeclaration calls ${I.ifaceLog.length}; table in ${pa
 if (traceIface) {
   const out = [];
   // keys of plain pairs are "source,target" type ids (optionally "*" or ":flags"); reference keys are not decoded
-  for (const { iface, key } of I.pairs) {
+  for (const { iface, key, stack: pairStack } of I.pairs) {
     if (iface !== traceIface) continue;
     const m = /^\*?(\d+),(\d+)/.exec(key);
     if (!m) { out.push(`(reference key) ${key}`); continue; }
     const s = I.byId[m[1]], t = I.byId[m[2]];
-    out.push(`${checker.typeToString(s).slice(0, 120)}  =>  ${checker.typeToString(t).slice(0, 120)}`);
+    const stack = process.env.TRACE_STACK ? `   [${pairStack}]` : "";
+    out.push(`${checker.typeToString(s).slice(0, 120)}  =>  ${checker.typeToString(t).slice(0, 120)}${stack}`);
   }
   const file = path.join(outDir, `trace-${traceIface}.txt`);
   fs.writeFileSync(file, out.join("\n") + "\n");

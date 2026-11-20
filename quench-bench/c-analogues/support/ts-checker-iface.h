@@ -321,4 +321,33 @@ static void cCheckHeritageArgs(TsNode *n) {
   }
 }
 
+/* checkTypePredicate (88840s): the type of a predicate `x is T` must be assignable to the type of its parameter
+ * (2677 at the type node). A `this` predicate and an asserts predicate without a type are not checked here. */
+static void cCheckTypePredicateNode(TsNode *n) {
+  if (n->kind != TSK_TypePredicate || !n->type || !n->parent || n->parent->type != n || !n->parameterName) return;
+  TsNode *fn = n->parent;
+  switch (fn->kind) {
+    case TSK_FunctionDeclaration: case TSK_FunctionExpression: case TSK_ArrowFunction: case TSK_MethodDeclaration:
+    case TSK_Constructor: case TSK_GetAccessor: case TSK_SetAccessor: case TSK_FunctionType: case TSK_ConstructorType:
+    case TSK_MethodSignature: case TSK_CallSignature: case TSK_ConstructSignature:
+      break;
+    default:
+      return;
+  }
+  if (n->parameterName->kind != TSK_Identifier || !fn->parameters) return;
+  TsNode *param = NULL;
+  for (int i = 0; i < fn->parameters->n && !param; i++) {
+    TsNode *p = fn->parameters->v[i];
+    if (p->name && p->name->kind == TSK_Identifier && p->name->textLen == n->parameterName->textLen &&
+        memcmp(p->name->text, n->parameterName->text, (size_t)p->name->textLen) == 0)
+      param = p;
+  }
+  if (!param || !param->symbol) return;
+  TsType *predType = cTypeFromNode(n->type);
+  if (predType == cErrorType) return;
+  TsType *paramType = cTypeOfSymbol(cGetMergedSymbol(param->symbol));
+  if (paramType == cErrorType) return;
+  cCheckTypeRelatedTo(predType, paramType, REL_Assignable, n->type, 2677);
+}
+
 #endif
