@@ -11,7 +11,7 @@
 //! function never writes, which hold the fact at every row.
 
 use super::*;
-use super::super::declared_checks::{entry_checks, ARRAY, BASE_TESTED, EntryCheck, OBJECT_PLAIN};
+use super::super::declared_checks::{entry_checks, ARRAY, BASE_TESTED, EntryCheck, OBJECT_PLAIN, STRING};
 use super::super::lane_region::scalar::parameter_register;
 use crate::bytecode::{Function, Operand};
 use crate::staged::{DecodeContext, Operation};
@@ -29,11 +29,13 @@ const _: () = {
     assert!(language(ValueType::Undefined) == bits::UNDEFINED && language(ValueType::Null) == bits::NULL);
     assert!(language(ValueType::Boolean) == bits::BOOLEAN && language(ValueType::Number) == bits::NUMBER);
     assert!(language(ValueType::Object) == bits::OBJECT && language(ValueType::Function) == bits::FUNCTION);
+    assert!(language(ValueType::String) == bits::STRING);
     assert!(bits::ARRAY & bits::OBJECT_PLAIN == 0 && bits::ARRAY & (bits::OBJECT | bits::FUNCTION) == 0);
     assert!(bits::OBJECT_PLAIN & (bits::OBJECT | bits::FUNCTION) == 0);
     use crate::staged::value::language as tier;
     assert!(tier::UNDEFINED == bits::UNDEFINED && tier::NULL == bits::NULL && tier::BOOLEAN == bits::BOOLEAN);
     assert!(tier::NUMBER == bits::NUMBER && tier::OBJECT == bits::OBJECT && tier::FUNCTION == bits::FUNCTION);
+    assert!(tier::STRING == bits::STRING);
     assert!(tier::ARRAY == bits::ARRAY && tier::OBJECT_PLAIN == bits::OBJECT_PLAIN);
 };
 
@@ -47,14 +49,13 @@ pub(in crate::vm::compiled) enum DeclaredFact {
 
 impl DeclaredFact {
     /// The fact `check` gives where this tier's entry test decides it; None for a check this tier does not
-    /// emit yet. A direct string has no tag test here (it needs a heap read), so a String gets none.
+    /// decide by a tag. A string is the direct string family word, one tag test (`tag_languages`).
     pub(in crate::vm::compiled) fn of(check: EntryCheck) -> Option<Self> {
         match check {
             EntryCheck::Number => Some(Self::Number),
+            EntryCheck::String => Some(Self::Languages(STRING)),
             EntryCheck::Array => Some(Self::Languages(ARRAY)),
             EntryCheck::PlainObject => Some(Self::Languages(OBJECT_PLAIN)),
-            // not emitted by this tier yet: a string is a heap word this tier has no tag row for
-            EntryCheck::String => None,
             EntryCheck::Languages(languages) => (languages & !BASE_TESTED == 0).then_some(Self::Languages(languages)),
         }
     }
@@ -101,9 +102,10 @@ pub(super) fn seen(function: &Function, ending: Ending, seen: &[Type]) -> Vec<Ty
 /// register's frame slot word and continues only where its language type is one of `languages`
 /// as its tag alone decides it: a Number (int32 or double word), `true`/`false`, `null`,
 /// `undefined` (the hole is no `undefined`), a direct object family word
-/// (`Value::is_direct_object_family`) or a direct function word (`Value::direct_function_index`).
-/// Any other word, a heap-decided object or function included, fails the entry with
-/// `LaneExit::Entry` before any row runs, as a Number guard's failure does (`Leaves::open`).
+/// (`Value::is_direct_object_family`), a direct function word (`Value::direct_function_index`) or a
+/// direct string word (`Value::direct_string_index`). Any other word, a heap-decided object or function
+/// included, fails the entry with `LaneExit::Entry` before any row runs, as a Number guard's failure does
+/// (`Leaves::open`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct EntryGuard {
     pub(super) register: Register,
@@ -190,7 +192,7 @@ fn guard_languages(function: &Function, register: Register) -> Option<u16> {
 
 /// The truth every value of a language set `languages` has, where the set decides it: `null` and
 /// `undefined` are falsy, a direct object or function is truthy (`Languages` admits no other word). A
-/// set holding a Number or a Boolean may be either, so it has no constant truth.
+/// set holding a Number, a Boolean or a string may be either, so it has no constant truth.
 fn constant_truth(languages: u16) -> Option<bool> {
     const FALSY: u16 = language(ValueType::Null) | language(ValueType::Undefined);
     const TRUTHY: u16 = language(ValueType::Object) | language(ValueType::Function) | ARRAY | OBJECT_PLAIN;
@@ -272,7 +274,8 @@ mod tests {
     fn tag_decided_sets_are_tested_at_entry() {
         for set in [language(ValueType::Boolean), language(ValueType::Null) | language(ValueType::Undefined),
             language(ValueType::Object), language(ValueType::Function), language(ValueType::Number) | language(ValueType::Undefined),
-            ARRAY, OBJECT_PLAIN, ARRAY | OBJECT_PLAIN | language(ValueType::Undefined)] {
+            ARRAY, OBJECT_PLAIN, ARRAY | OBJECT_PLAIN | language(ValueType::Undefined),
+            language(ValueType::String), language(ValueType::String) | language(ValueType::Undefined)] {
             assert_eq!(fact(set), Some(DeclaredFact::Languages(set)));
         }
     }
@@ -280,9 +283,8 @@ mod tests {
     #[test]
     fn sets_a_tag_does_not_decide_get_no_check() {
         assert_eq!(fact(u16::MAX), None);
-        assert_eq!(fact(language(ValueType::String)), None);
-        assert_eq!(fact(language(ValueType::String) | language(ValueType::Undefined)), None);
         assert_eq!(fact(language(ValueType::Number) | language(ValueType::BigInt)), None);
+        assert_eq!(fact(language(ValueType::Symbol)), None);
         assert_eq!(fact(0), None);
     }
 

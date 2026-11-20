@@ -27,6 +27,8 @@ pub mod language {
     pub const NULL: u16 = 1 << 1;
     pub const BOOLEAN: u16 = 1 << 2;
     pub const NUMBER: u16 = 1 << 3;
+    /// A direct string word (`DIRECT_STRING_TAG`): every string is one, so the tag decides it.
+    pub const STRING: u16 = 1 << 4;
     pub const OBJECT: u16 = 1 << 7;
     pub const FUNCTION: u16 = 1 << 8;
     /// A direct array word (`DIRECT_ARRAY_TAG` exactly). Its `OBJECT` bit is also set, as every direct
