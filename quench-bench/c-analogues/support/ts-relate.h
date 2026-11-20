@@ -1501,8 +1501,9 @@ static TsType *cNormalizeType(TsType *t) {
 }
 
 static int cIsRelatedTo(TsType *s, TsType *t, int st) {
-  s = cNormalizeType(s);
-  t = cNormalizeType(t);
+  /* getNormalizedType: a fresh literal relates as its regular type; unions and intersections are reduced */
+  s = cNormalizeType(cRegularType(s));
+  t = cNormalizeType(cRegularType(t));
   if (s == t) return RR_True;
   if (s == cErrorType || t == cErrorType) { cUnportedHit = true; return RR_True; }
   if ((s->flags | t->flags) & (TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); return RR_True; }
