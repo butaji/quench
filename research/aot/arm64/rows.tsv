@@ -2,16 +2,41 @@
 # constructs Benchmark and runs Benchmark#runIteration `iterations` times between two
 # performance.now() readings, printed with console.log. Node and Bun run the same file.
 # aot_ms is the printed loop time of `quench compile --dynamic-source` output; c_ms is the
-# analogue's default run from c-analogues.tsv (seconds there). Host: Apple M4, macOS, arm64.
+# analogue's default run from c-analogues.tsv. Host: Apple M4, macOS, arm64.
 row	iterations	aot_ms	node_ms	bun_ms	c_ms	aot_over_c	node_over_c	bun_over_c	status
-Basic	120	8146.270	209.264	167.574	510	15.97	0.41	0.33	ok
-js-tokens	120	9236.006	1051.716	534.714	450	20.52	2.34	1.19	ok
-ML	60	-	-	-	210	-	-	-	aot-crash
-crypto	120	-	-	-	320	-	-	-	aot-crash
-navier-stokes	120	-	-	-	400	-	-	-	aot-crash
-hash-map	120	-	-	-	440	-	-	-	aot-crash
-richards	120	-	-	-	400	-	-	-	aot-crash
-deltablue	120	-	-	-	310	-	-	-	aot-crash
-json-parse-inspector	20	-	-	-	210	-	-	-	compile-failed
-json-stringify-inspector	20	-	-	-	210	-	-	-	compile-failed
+Basic	120	8187.301	214.261	180.168	510	16.05	0.42	0.35	ok
+ML	60	-	-	-	210	-	-	-	exit-139
+UniPoker	120	10024.639	482.076	278.848	900	11.14	0.54	0.31	ok
+ai-astar	120	9220.239	371.103	293.092	580	15.90	0.64	0.51	ok
+air	120	4713.921	258.552	200.211	-	-	-	-	ok
+async-fs	80	1.895	1.677	0.572	250	0.01	0.01	0.00	ok
+bigint-noble-ed25519	120	-	-	-	490	-	-	-	compile-failed
+box2d	120	-	-	-	350	-	-	-	exit-139
+cdjs	120	-	-	-	-	-	-	-	exit-1
+crypto	120	-	-	-	320	-	-	-	exit-139
+deltablue	120	3231.166	90.315	154.570	310	10.42	0.29	0.50	ok
+doxbee-async	120	949.980	390.949	72.481	580	1.64	0.67	0.12	ok
+doxbee-promise	120	1973.070	536.084	148.119	560	3.52	0.96	0.26	ok
+earley-boyer	120	-	-	-	370	-	-	-	compile-failed
+gaussian-blur	120	2935.947	527.827	466.988	590	4.98	0.89	0.79	ok
+gbemu	120	-	-	-	500	-	-	-	exit-139
+hash-map	120	-	-	-	440	-	-	-	exit-138
+js-tokens	120	9097.409	1080.539	525.369	450	20.22	2.40	1.17	ok
+json-parse-inspector	120	-	-	-	210	-	-	-	compile-failed
+json-stringify-inspector	120	-	-	-	210	-	-	-	compile-failed
+lazy-collections	120	37288.689	1466.563	563.441	600	62.15	2.44	0.94	ok
+navier-stokes	120	-	-	-	400	-	-	-	exit-139
+proxy-mobx	120	-	-	-	260	-	-	-	compile-failed
+proxy-vue	120	-	-	-	240	-	-	-	compile-failed
+raytrace	120	29971.016	568.952	357.942	320	93.66	1.78	1.12	ok
+raytrace-private-class-fields	120	52958.926	748.061	404.521	310	170.84	2.41	1.30	ok
+raytrace-public-class-fields	120	30435.859	617.317	364.684	320	95.11	1.93	1.14	ok
+regexp-octane	120	-	-	-	7850	-	-	-	exit-1
+richards	120	-	-	-	400	-	-	-	exit-138
+splay	120	-	-	-	2990	-	-	-	exit-139
+stanford-crypto-aes	120	-	-	-	370	-	-	-	compile-failed
+stanford-crypto-pbkdf2	120	-	-	-	300	-	-	-	compile-failed
+stanford-crypto-sha256	120	-	-	-	300	-	-	-	compile-failed
+sunspider	120	-	-	-	13730	-	-	-	compile-failed
+sync-fs	80	17529.967	461.753	354.849	280	62.61	1.65	1.27	ok
 validatorjs	120	-	-	-	220	-	-	-	compile-failed
