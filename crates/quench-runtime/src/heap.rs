@@ -133,7 +133,7 @@ mod dense_growth;
 pub(crate) use dense_growth::dense_write_gap_limit;
 mod store_gate;
 mod typed_view;
-pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NativeView};
+pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NO_KIND, NativeView};
 use typed_view::TypedViewTable;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 pub(crate) use array_elements::NARROW_LEN;
@@ -1419,9 +1419,9 @@ impl Heap {
         self.alloc_slotted(cell, track_young)
     }
 
-    /// `cell` in a legacy slot; a typed array also joins the table native code reads its views from.
+    /// `cell` in a legacy slot; a typed array or a DataView also joins the table native code reads its views from.
     fn alloc_slotted(&mut self, cell: Cell, track_young: bool) -> Value {
-        let typed = matches!(cell, Cell::TypedArray { .. });
+        let typed = matches!(cell, Cell::TypedArray { .. } | Cell::DataView { .. });
         let value = self.alloc_in_slot(cell, track_young);
         if typed {
             self.register_typed_view(value);
@@ -1429,11 +1429,12 @@ impl Heap {
         value
     }
 
-    /// Names the record of the typed array just allocated at `value` in the table native code reads.
+    /// Names the record of the typed array or DataView just allocated at `value` in the table native code reads.
     fn register_typed_view(&mut self, value: Value) {
         let Some(index) = value.legacy_heap_index() else { return };
-        if let Some(Cell::TypedArray { object, .. }) = self.slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut()) {
-            self.typed_views.register(index, &mut object.native);
+        match self.slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut()) {
+            Some(Cell::TypedArray { object, .. } | Cell::DataView { object, .. }) => self.typed_views.register(index, &mut object.native),
+            _ => {}
         }
     }
 

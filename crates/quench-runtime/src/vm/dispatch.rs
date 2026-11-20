@@ -904,7 +904,7 @@ impl<H: Host> Vm<H> {
                 match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
                     RowRun::Done(_) => Ok(StepResult::Continue),
                     RowRun::Stop(stop) => stop,
-                    RowRun::Declined => unreachable!("the interpreter frame answers every literal row"),
+                    RowRun::Declined => unreachable!("the interpreter frame answers every literal row: {:?}", i.op()),
                 }
             }
             // A call-out row the interpreter's stage answers in place (`staged_value_step`).

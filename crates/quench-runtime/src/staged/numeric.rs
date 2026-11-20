@@ -363,6 +363,7 @@ fn imul<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 ) -> Step<S::Word, F::Control> {
     let Some((left, right)) = operands(stage, frame, left, right, Domain::Int32) else { return Step::Unresolved };
     let result = super::math::multiply(stage, left, right);
+    let result = frame.int_result(stage, result);
     let fact = frame.int_fact();
     frame.write(stage, destination, result, fact);
     Step::Value(result)
