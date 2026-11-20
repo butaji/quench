@@ -554,6 +554,7 @@ fn bitwise_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 /// operator). `None` for any other operator (equality, `in`, `instanceof`): the VM's. The operator
 /// tables are the operations' own (`NumberArithmetic::from_operator` and its siblings).
 #[cfg(not(stencil_build))]
+#[inline(always)]
 pub(crate) fn binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
     if let Some(operation) = NumberArithmetic::from_operator(operator) {
         return Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Float64,
@@ -721,7 +722,11 @@ fn float_operation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 /// both operands are constants that need none.
 #[inline(always)]
 fn both_tests<S: NumericStage>(stage: &mut S, tests: [Option<S::Cond>; 2]) -> Option<S::Cond> {
-    tests.into_iter().flatten().reduce(|a, b| stage.both(a, b))
+    match tests {
+        [Some(a), Some(b)] => Some(stage.both(a, b)),
+        [Some(a), None] | [None, Some(a)] => Some(a),
+        [None, None] => None,
+    }
 }
 
 /// `left % right` in `domain`. An int32 remainder is an int32 except at a zero divisor (NaN)
