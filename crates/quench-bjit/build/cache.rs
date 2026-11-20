@@ -15,26 +15,32 @@ use std::{
 /// FNV-1a over 128 bits: a stable hash (the standard library's is not promised across releases), wide enough that
 /// two different inputs never share a key in practice.
 #[derive(Clone, Copy)]
-struct Fnv(u128);
+pub struct Fnv(u128);
+
+impl Default for Fnv {
+    fn default() -> Self {
+        Self(Self::OFFSET)
+    }
+}
 
 impl Fnv {
     const OFFSET: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
     const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
 
-    fn new() -> Self {
-        Self(Self::OFFSET)
-    }
-
-    fn bytes(&mut self, bytes: &[u8]) {
+    pub fn bytes(&mut self, bytes: &[u8]) {
         for byte in bytes {
             self.0 = (self.0 ^ u128::from(*byte)).wrapping_mul(Self::PRIME);
         }
     }
 
     /// `bytes` with its length first, so the concatenation of two fields is not ambiguous.
-    fn field(&mut self, bytes: &[u8]) {
+    pub fn field(&mut self, bytes: &[u8]) {
         self.bytes(&(bytes.len() as u64).to_le_bytes());
         self.bytes(bytes);
+    }
+
+    pub fn finish(self) -> u128 {
+        self.0
     }
 }
 
@@ -42,7 +48,7 @@ impl Fnv {
 /// `#[path]` graph, files and directories; a directory's files are themselves in it) and `extra`, relative to
 /// `crate_dir`.
 pub fn sources_key(rustc: &Path, crate_dir: &Path, watched: &BTreeSet<PathBuf>, extra: &[&str]) -> u128 {
-    let mut hash = Fnv::new();
+    let mut hash = Fnv::default();
     hash.field(rustc.as_os_str().as_encoded_bytes());
     let version = Command::new(rustc).arg("-vV").output().map(|output| output.stdout).unwrap_or_default();
     hash.field(&version);

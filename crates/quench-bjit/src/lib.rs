@@ -14,6 +14,16 @@ pub mod patch;
 #[cfg(test)]
 #[path = "../stencils/shards.rs"]
 mod shards;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../build/cache.rs"]
+mod cache;
+#[cfg(test)]
+#[path = "../build/ir_text.rs"]
+mod ir_text;
+#[cfg(test)]
+#[path = "../build/ir_hash.rs"]
+mod ir_hash;
 pub mod numeric;
 pub mod call;
 pub mod call_record;

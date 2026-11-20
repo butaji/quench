@@ -60,6 +60,16 @@ mod wasm_kinds;
 mod wasm_library;
 #[path = "build/transfer.rs"]
 mod transfer;
+#[path = "build/ir_hash.rs"]
+mod ir_hash;
+#[path = "build/ir_text.rs"]
+mod ir_text;
+#[path = "build/jobs.rs"]
+mod jobs;
+#[path = "build/row_cache.rs"]
+mod row_cache;
+#[path = "build/variant.rs"]
+mod variant;
 
 use bytes::{ObjectReloc, ObjectRow};
 use class::{EXIT as EXIT_BASE, MOVW, MOVW_GROUPS, NEXT, TAKEN, is_successor};
@@ -68,8 +78,6 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::atomic::{AtomicUsize, Ordering},
-    thread,
 };
 use transfer::{Arch, check_call, check_no_return, check_transfer, check_value_field};
 
@@ -169,41 +177,15 @@ fn main() {
         return;
     };
     let instances = instances(&listed, arch);
-    // The fixed rows' shard first, then each family's rows split on their own, so no shard mixes two families.
-    let mut parts: Vec<(Family, &[(String, usize, Family)])> = vec![(Family::Fixed, &[][..])];
-    for family in [Family::Js, Family::Wasm] {
-        let start = instances.iter().position(|row| row.2 == family);
-        let Some(start) = start else { continue };
-        let end = instances.iter().rposition(|row| row.2 == family).unwrap() + 1;
-        assert!(instances[start..end].iter().all(|row| row.2 == family), "the {family:?} rows are contiguous");
-        parts.extend(shards::split(&instances[start..end], |(_, weight, _)| *weight).into_iter().map(|part| (family, part)));
-    }
+    let parts = parts_of(&instances);
     for (shard, (_, part)) in parts.iter().enumerate() {
         fs::write(instance_file(&out, shard), part.iter().map(|(row, _, _)| row.as_str()).collect::<String>()).unwrap();
     }
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
-    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 && builds_v3(&out) { &VARIANTS } else { &VARIANTS[..1] };
-    // Each family's sources as rustc reads them, from the first instance file of the family; the fixed shard's (every
-    // module) are the rerun triggers. `EXTRA_WATCHED` reruns the script but is not in a key: the supernode list and
-    // the opcode table reach a shard only through its instance file, and the flags file through its arguments.
-    let first = |family: Family| parts.iter().position(|(of, _)| *of == family);
-    let mut keys = Vec::new();
-    for family in Family::ALL {
-        let Some(shard) = first(family) else { continue };
-        let watched = stencil_sources(&out, family, shard).unwrap_or_else(|| sources::watched(manifest));
-        if family == Family::Fixed {
-            watch(&watched);
-        }
-        keys.push((family, cache::sources_key(&rustc(), manifest, &watched, &[])));
-    }
-    let key_of = |family: Family| keys.iter().find(|(of, _)| *of == family).map(|(_, key)| *key).expect("a family key");
-    let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| parts.iter().enumerate().map(|(shard, (family, _))| shard_job(&out, shard, *family, *cpu, key_of(*family))).collect::<Vec<_>>()).collect();
-    for family in Family::ALL {
-        if jobs.iter().any(|job| job.family == family && !job.cached()) {
-            type_check(&out, family, first(family).expect("a shard of the family"));
-        }
-    }
-    let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&jobs, (arch, read), *cpu))).collect();
+    let variants: &[(&str, Option<&'static str>)] = if arch == Arch::X86_64 && builds_v3(&out) { &VARIANTS } else { &VARIANTS[..1] };
+    let keys = family_keys(&out, manifest, &parts);
+    let plan = variant::Plan { out: &out, parts: &parts, instances: &instances, keys: &keys };
+    let built: Vec<(&str, (Rows, Counts))> = variants.iter().map(|(name, cpu)| (*name, variant::table(&plan, *cpu, (arch, read)))).collect();
     // `rows.rs` builds the Wasm entry and leave routines on every target but Apple AArch64, so each listed routine is a row there.
     if env::var("CARGO_CFG_TARGET_VENDOR").unwrap_or_default() != "apple" {
         for (name, (rows, _)) in &built {
@@ -218,6 +200,37 @@ fn main() {
         tables += &library_source(name, *counts, rows);
     }
     fs::write(&table, tables).unwrap();
+}
+
+/// A generated row's instance: its macro invocation, its compile weight and its family.
+type Instance = (String, usize, Family);
+
+/// The shards of the build: the fixed rows' first, then each family's rows split on their own, so no shard mixes two
+/// families.
+fn parts_of(instances: &[Instance]) -> Vec<(Family, &[Instance])> {
+    let mut parts: Vec<(Family, &[Instance])> = vec![(Family::Fixed, &[][..])];
+    for family in [Family::Js, Family::Wasm] {
+        let Some(start) = instances.iter().position(|row| row.2 == family) else { continue };
+        let end = instances.iter().rposition(|row| row.2 == family).unwrap() + 1;
+        assert!(instances[start..end].iter().all(|row| row.2 == family), "the {family:?} rows are contiguous");
+        parts.extend(shards::split(&instances[start..end], |(_, weight, _)| *weight).into_iter().map(|part| (family, part)));
+    }
+    parts
+}
+
+/// Each family's sources key (`cache::sources_key`), over the family's stencil sources as rustc reads them. The fixed
+/// family's are the build script's rerun triggers.
+fn family_keys(out: &Path, manifest: &Path, parts: &[(Family, &[Instance])]) -> Vec<(Family, u128)> {
+    let mut keys = Vec::new();
+    for family in Family::ALL {
+        let Some(shard) = parts.iter().position(|(of, _)| *of == family) else { continue };
+        let watched = stencil_sources(out, family, shard).unwrap_or_else(|| sources::watched(manifest));
+        if family == Family::Fixed {
+            watch(&watched);
+        }
+        keys.push((family, cache::sources_key(&rustc(), manifest, &watched, &[])));
+    }
+    keys
 }
 
 /// One macro invocation per generated row, the unit `shards::split` distributes, with its
@@ -271,25 +284,6 @@ fn rustc() -> PathBuf {
     env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from)
 }
 
-/// One shard compile for one cpu: its rustc command, its object, and the key of everything the object is made from
-/// (`cache`), kept beside the object so a rerun whose inputs are unchanged skips rustc.
-struct Shard {
-    cpu: Option<&'static str>,
-    family: Family,
-    args: Vec<std::ffi::OsString>,
-    envs: [(&'static str, PathBuf); 2],
-    object: PathBuf,
-    key_file: PathBuf,
-    key: String,
-}
-
-impl Shard {
-    /// Whether the object on disk was built from exactly these inputs.
-    fn cached(&self) -> bool {
-        self.object.is_file() && fs::read_to_string(&self.key_file).is_ok_and(|key| key == self.key)
-    }
-}
-
 /// The arguments of every shard compile beyond its instances and output: the target, the flags file's flags, and
 /// the stencil cfgs.
 fn base_args() -> Vec<String> {
@@ -297,26 +291,6 @@ fn base_args() -> Vec<String> {
     args.extend(rustc_flags());
     args.extend(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--check-cfg", "cfg(stencil_family, values(\"js\", \"wasm\"))", "--cfg", "stencil_build"].map(String::from));
     args
-}
-
-fn shard_job(out: &Path, shard: usize, family: Family, cpu: Option<&'static str>, sources: u128) -> Shard {
-    let name = cpu.unwrap_or("native");
-    let object = out.join(format!("rows_{name}_{shard}.o"));
-    let mut args = base_args();
-    if let Some(cpu) = cpu {
-        args.extend(["-C".to_string(), format!("target-cpu={cpu}")]);
-    }
-    debug_assert_eq!(shard == FIXED_ROWS_SHARD, family == Family::Fixed);
-    args.extend(family.args());
-    let instances = instance_file(out, shard);
-    let key = cache::shard_key(sources, &args, &[&instances, &call_rows_file(out)]);
-    // Not `-C incremental`: rustc's incremental mode partitions and inlines differently (with one codegen unit
-    // or 16, and with `-Z inline-mir=yes`), so 116 of 303 sampled rows came out changed and 61 kept relocations
-    // that are not holes. A shard is reused whole, by its key, or compiled whole.
-    let mut args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
-    args.extend(["-o".into(), object.clone().into(), SOURCE.into()]);
-    let envs = [(INSTANCES_VAR, instances), (CALL_ROWS_VAR, call_rows_file(out))];
-    Shard { cpu, family, args, envs, key_file: object.with_extension("key"), object, key }
 }
 
 /// Environment variable that builds the V3 library in a profile other than `release` (any non-empty value).
@@ -362,63 +336,19 @@ fn stencil_sources(out: &Path, family: Family, shard: usize) -> Option<std::coll
     Some(files)
 }
 
-/// Type-checks the stencil source under `family`'s cfgs once (`--emit=metadata`, the instances of its shard
-/// `shard`) before any shard's codegen, so a source error, or a module a family leaves out that its rows need,
-/// fails the build in about a minute rather than after the first shard objects.
-fn type_check(out: &Path, family: Family, shard: usize) {
-    let mut command = Command::new(rustc());
-    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args());
-    command.args(["--emit=metadata", "-o"]).arg(out.join(format!("rows_check_{}.rmeta", family.name())));
-    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out)).arg(SOURCE).status().expect("run rustc");
-    assert!(status.success(), "rustc failed to type-check {SOURCE} for the {family:?} rows");
+/// One row of the table: its name and table entry, and whether `checks` counts it as keeping a stack frame, or as
+/// not ending its hot path in the continuation jump.
+struct Stencil {
+    name: String,
+    line: String,
+    framed: bool,
+    unchained: bool,
 }
 
-/// Compiles every shard of `jobs` for `cpu` whose object is not cached (at most `shards::workers` rustc processes at
-/// once), reads each object's rows, and merges them into the sorted library with its counts.
-fn compile_shards(jobs: &[Shard], (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>) -> (Rows, Counts) {
-    let jobs: Vec<&Shard> = jobs.iter().filter(|job| job.cpu == cpu).collect();
-    // `QUENCH_STENCIL_WORKERS` caps the rustc processes on a box whose memory, not its cores, bounds them.
-    let parallelism = env::var("QUENCH_STENCIL_WORKERS").ok().and_then(|jobs| jobs.parse().ok())
-        .unwrap_or_else(|| thread::available_parallelism().map_or(1, std::num::NonZero::get));
-    let next = AtomicUsize::new(0);
-    let built: Vec<(Rows, Counts)> = thread::scope(|scope| {
-        let workers: Vec<_> = (0..shards::workers(jobs.len(), parallelism))
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut done = Vec::new();
-                    loop {
-                        let shard = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(job) = jobs.get(shard) else { return done };
-                        compile(job, shard);
-                        done.push(stencil_rows(arch, read(&fs::read(&job.object).unwrap())));
-                    }
-                })
-            })
-            .collect();
-        workers.into_iter().flat_map(|worker| worker.join().expect("a shard worker")).collect()
-    });
-    let counts = built.iter().fold(Counts::default(), |sum, (_, c)| Counts { framed: sum.framed + c.framed, unchained: sum.unchained + c.unchained });
-    (shards::merge(built.into_iter().map(|(rows, _)| rows)), counts)
-}
-
-/// Builds one shard's object unless its key says the object on disk is already this one. The key is written only
-/// after rustc succeeds; the rows' checks run on every read, cached or not.
-fn compile(job: &Shard, shard: usize) {
-    if job.cached() {
-        return;
-    }
-    let _ = fs::remove_file(&job.key_file);
-    let status = Command::new(rustc()).args(&job.args).envs(job.envs.iter().map(|(name, path)| (*name, path))).status().expect("run rustc");
-    assert!(status.success(), "rustc failed on {SOURCE} (shard {shard})");
-    fs::write(&job.key_file, &job.key).unwrap();
-}
-
-/// The rows of one shard's object as (name, table entry), each checked, laid out hot part first where the
-/// target's layout pass handles the row (`layout`), with what `checks` counted.
-fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> (Rows, Counts) {
-    let mut counts = Counts::default();
-    let rows = rows
-        .iter()
+/// The rows of one shard's object as table entries, each checked and laid out hot part first where the target's
+/// layout pass handles the row (`layout`).
+fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> Vec<Stencil> {
+    rows.iter()
         .map(|row| {
             check_no_return(arch, &row.name, &row.code);
             check_call(arch, &row.name, &row.code);
@@ -426,12 +356,14 @@ fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> (Rows, Counts) {
             let is_row = arch == Arch::X86_64 && checks::is_row(&row.name);
             let laid = if is_row { layout::reorder(&row.code, &relocs) } else { None };
             let (code, relocs, hot_len) = laid.map_or((row.code.clone(), relocs, row.code.len()), |l| (l.code, l.relocs, l.hot_len));
-            counts.framed += usize::from(is_row && checks::has_stack_frame(&code));
-            counts.unchained += usize::from(is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs));
-            (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name))
+            Stencil {
+                name: row.name.clone(),
+                line: format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name),
+                framed: is_row && checks::has_stack_frame(&code),
+                unchained: is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs),
+            }
         })
-        .collect();
-    (rows, counts)
+        .collect()
 }
 
 /// The static `RawLibrary` named `table`: its rows and what `checks` counted over them.
