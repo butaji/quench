@@ -2086,6 +2086,36 @@ static TsNode *cCandFn;
 static TsType *cCandType;
 
 static bool cIsInitializedDeclParam(TsNode *p);
+
+/* isTupleLikeType of a contextual type: a tuple, an object with a "0" property, or a union with such a member (someType) */
+static bool cIsTupleLikeContext(TsType *ac) {
+  if (ac->flags & TF_Union) {
+    for (int i = 0; i < ac->ntypes; i++) if (cIsTupleLikeContext(ac->types[i])) return true;
+    return false;
+  }
+  if (!(ac->flags & TF_Object)) return false;
+  return cIsTupleType(ac) || cPropertyOf(ac, bnC("0")) != NULL;
+}
+
+/* getContextualTypeForElementExpression of an array context: any gives any, an array the type of its number index, and a
+ * union the element context of its one object member once undefined and null are dropped (several members are not ported) */
+static TsType *cArrayElementContext(TsType *ac) {
+  if (ac->flags & TF_Any) return ac;
+  if (ac->flags & TF_Union) {
+    TsType *one = NULL;
+    for (int i = 0; i < ac->ntypes; i++) {
+      if (ac->types[i]->flags & (TF_Undefined | TF_Null)) continue;
+      if (one) return cUnported("contextual element of a union of several arrays");
+      one = ac->types[i];
+    }
+    return one ? cArrayElementContext(one) : NULL;
+  }
+  if (!(ac->flags & TF_Object)) return cUnported("contextual element of a non-object");
+  cResolveIndexInfos(ac);
+  for (int i = 0; i < ac->nindex; i++) if (ac->index[i].keyType == cNumberType) return ac->index[i].type;
+  return cUnported("contextual element without a number index");
+}
+
 static TsType *cContextualType(TsNode *e) {
   if (cCandFn && e == cCandFn) return cCandType;
   TsNode *c = e, *p = e->parent;
@@ -2183,10 +2213,14 @@ static TsType *cContextualType(TsNode *e) {
     case TSK_ArrayLiteralExpression: {
       TsType *ac = cContextualType(p);
       if (ac == NULL || ac == cErrorType) return ac;
-      if (!(ac->flags & TF_Object) || cIsTupleType(ac)) return cUnported("contextual element of a tuple or non-object");
-      cResolveIndexInfos(ac);
-      for (int i = 0; i < ac->nindex; i++) if (ac->index[i].keyType == cNumberType) return ac->index[i].type;
-      return cUnported("contextual element without a number index");
+      if (cIsTupleLikeContext(ac)) {
+        if (!cIsTupleType(ac)) return cUnported("contextual element of a tuple-like context");
+        /* getContextualTypeForElementExpression of a tuple: the element type at the index (none beyond the arity) */
+        int idx = 0;
+        while (idx < p->elements->n && p->elements->v[idx] != c) idx++;
+        return idx < ac->nargs ? ac->args[idx] : NULL;
+      }
+      return cArrayElementContext(ac);
     }
     case TSK_ConditionalExpression:
       if (p->condition == c) return NULL;
@@ -3320,6 +3354,20 @@ static TsType *cNewType2(TsNode *e) {
   return cCallSignatureType(e, f, true);
 }
 
+/* createArrayLiteralType: the ArrayLiteral clone of a reference (cloneTypeReference), one per reference */
+static TsType *cArrayLiteralOf(TsType *ref) {
+  if (!ref->literalType) {
+    TsType *c = cNewType(ref->flags);
+    c->symbol = ref->symbol;
+    c->objectFlags = ref->objectFlags | OF_ArrayLiteral;
+    c->target = ref->target;
+    c->args = ref->args;
+    c->nargs = ref->nargs;
+    ref->literalType = c;
+  }
+  return ref->literalType;
+}
+
 /* the element type of an array literal: the subtype-reduced union of the widened elements */
 static TsType *cArrayLiteralType(TsNode *e) {
   int n = e->elements ? e->elements->n : 0;
@@ -3342,18 +3390,23 @@ static TsType *cArrayLiteralType(TsNode *e) {
   TsSymbol *arr = bTableGet(cGlobals, bnC("Array"));
   if (!arr) return cUnported("no global Array");
   TsType *target = cDeclaredTypeOfClassOrInterface(arr);
-  TsType *ref = cTypeReference(target, &elem, 1);
-  if (!ref->literalType) {
-    /* cloneTypeReference: the same target and arguments, a type of its own that carries ArrayLiteral */
-    TsType *c = cNewType(ref->flags);
-    c->symbol = ref->symbol;
-    c->objectFlags = ref->objectFlags | OF_ArrayLiteral;
-    c->target = ref->target;
-    c->args = ref->args;
-    c->nargs = ref->nargs;
-    ref->literalType = c;
+  return cArrayLiteralOf(cTypeReference(target, &elem, 1));
+}
+
+/* checkArrayLiteral with a tuple contextual type (createArrayLiteralType over createTupleType of the elements): each element is
+ * widened for a mutable location, as in the array case. Spread and omitted elements are not ported. */
+static TsType *cTupleArrayLiteralType(TsNode *e) {
+  int n = e->elements ? e->elements->n : 0;
+  if (n >= 16) return cUnported("tuple literal of 16 or more elements");   /* cTupleTarget caches the targets below 16 */
+  TsType **ts = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  for (int i = 0; i < n; i++) {
+    TsNode *el = e->elements->v[i];
+    if (el->kind == TSK_SpreadElement || el->kind == TSK_OmittedExpression) return cUnported("spread or omitted element of a tuple literal");
+    TsType *t = cMutableLocationType(el, cExprType(el));
+    if (t == cErrorType) return t;
+    ts[i] = t;
   }
-  return ref->literalType;
+  return cArrayLiteralOf(cTupleReference(ts, n));
 }
 
 /* the type of an object literal without a contextual type (createObjectLiteralType over the literal's symbol) */
@@ -3719,7 +3772,7 @@ static TsType *cExprWorker(TsNode *e) {
     case TSK_ArrayLiteralExpression: {
       TsType *ac = cContextualType(e);
       if (ac == cErrorType) return ac;
-      if (ac != NULL && ((ac->flags & TF_Object) == 0 || cIsTupleType(ac))) return cUnported("array literal of a tuple or non-object context");
+      if (ac != NULL && cIsTupleLikeContext(ac)) return cTupleArrayLiteralType(e);
       return cArrayLiteralType(e);
     }
     case TSK_ObjectLiteralExpression: {
