@@ -63,7 +63,7 @@ pub(crate) struct FunctionFacts<'a> {
     function: u32,
 }
 
-impl FunctionFacts<'_> {
+impl<'a> FunctionFacts<'a> {
     /// The function the plain call at `pc` always calls.
     pub(crate) fn call_target(&self, pc: u32) -> Option<u32> {
         self.facts.call_targets.get(&(self.function, pc)).copied()
@@ -75,12 +75,12 @@ impl FunctionFacts<'_> {
     }
 
     /// Per register, the Number representation it always holds.
-    pub(crate) fn numbers(&self) -> Option<&[Option<Representation>]> {
+    pub(crate) fn numbers(&self) -> Option<&'a [Option<Representation>]> {
         self.facts.numbers.get(&self.function).map(|numbers| &**numbers)
     }
 
     /// The fields a `new` of this function stores on its object, in order (atom numbers).
-    pub(crate) fn constructor_shape(&self) -> Option<&[u32]> {
+    pub(crate) fn constructor_shape(&self) -> Option<&'a [u32]> {
         self.facts.constructor_shapes.get(&self.function).map(|fields| &**fields)
     }
 }

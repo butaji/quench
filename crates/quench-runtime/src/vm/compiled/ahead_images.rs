@@ -3,6 +3,7 @@
 //! (`aot_image::live::install`), and reads and writes the file (`aot_image::file`). A recording
 //! bundles the images of one run into one file.
 use super::*;
+use std::collections::BTreeMap;
 use crate::vm::jit_backend::relocatable_code::RelocatableCode;
 use crate::vm::aot_image::{LaneImage, base::{BaseImage, NO_ENTRY}, symbols::{Symbol, SymbolTable}};
 use crate::compile::aot_facts::AotFacts;

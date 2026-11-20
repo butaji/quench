@@ -160,7 +160,7 @@ pub(in crate::vm::compiled::base_region) fn lowering(instruction: WideInstructio
 
 /// The step of an instruction no row takes: the leave to the interpreter, or in an AOT body (`LaneHelpers::Ahead`,
 /// where no helper address exists) the generic semantic row, which never leaves.
-pub(super) fn unplaced(helpers: LaneHelpers) -> Step {
+pub(in crate::vm::compiled::base_region) fn unplaced(helpers: LaneHelpers) -> Step {
     if matches!(helpers, LaneHelpers::Ahead) { Step::Generic } else { Step::Leave }
 }
 
