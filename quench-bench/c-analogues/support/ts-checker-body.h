@@ -744,6 +744,8 @@ static TsType *cAccessReferenceFlow(TsNode *e, TsType *declared, bool startInit)
 
 /* ---- contextual types (getContextualType): NULL when there is none, the error type when it is not ported ---- */
 static TsType *cContextualReturnOf(TsNode *fn);
+static TsType *cAssignmentTargetType(TsNode *left);
+static TsType *cApparentOf(TsType *o);
 static TsType *cGenericCallFnArgContext(CSig *sig, int idx);
 static TsType *cContextualType(TsNode *e) {
   TsNode *c = e, *p = e->parent;
@@ -828,6 +830,21 @@ static TsType *cContextualType(TsNode *e) {
     case TSK_ConditionalExpression:
       if (p->condition == c) return NULL;
       return cContextualType(p);
+    case TSK_BinaryExpression: {
+      /* getContextualTypeForAssignmentDeclaration of `target = value` in a TypeScript file: the type of the target, unless the
+       * target is a property declaration with neither a type nor an initializer */
+      if (p->operatorToken->kind != TSK_EqualsToken || p->right != c) return cUnported("contextual type");
+      TsNode *l = cSkipParens(p->left);
+      if (l->kind == TSK_Identifier) return cAssignmentTargetType(l);
+      if (l->kind != TSK_PropertyAccessExpression || !l->name || l->name->kind != TSK_Identifier) return cUnported("contextual type");
+      TsType *lt = cAssignmentTargetType(l);
+      if (lt == cErrorType) return lt;
+      TsType *o = cApparentOf(cExprType(l->expression));
+      TsSymbol *ps = o != cErrorType && (o->flags & TF_Object) ? cPropertyOf(o, bnEscapeText(l->name->text, l->name->textLen)) : NULL;
+      TsNode *decl = ps && ps->valueDeclaration ? ps->valueDeclaration : NULL;
+      if (decl && decl->kind == TSK_PropertyDeclaration && !decl->type && !decl->initializer) return NULL;
+      return lt;
+    }
     default: break;
   }
   return cUnported("contextual type");
