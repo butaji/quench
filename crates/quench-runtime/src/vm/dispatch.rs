@@ -679,7 +679,7 @@ impl<H: Host> Vm<H> {
     /// Runs `operation`, decoded from `i` at resume PC `pc`, as its staged row on the running frame
     /// `f` (`InterpreterFrame::step_row`). A taken jump sets `pc`, and a back-edge jump publishes its
     /// PC and checks for a due collection.
-    #[inline(always)]
+    #[inline(never)]
     fn run_row(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool,
         operation: crate::staged::Operation<u64, ()>) -> RowRun {
         use crate::staged::{Edge, Operation};
