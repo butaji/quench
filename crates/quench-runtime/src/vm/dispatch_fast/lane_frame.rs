@@ -173,7 +173,10 @@ impl Decisions {
             records: |context| unsafe { vm(context.cast::<LaneContext<H>>()) }.heap.object_record_base().map(|base| base as u64),
             instance: |context, value, constructor| {
                 let machine = unsafe { vm(context.cast::<LaneContext<H>>()) };
-                machine.record_instanceof(value, constructor).or_else(|| machine.ordinary_instanceof(value, constructor))
+                // The proof is recorded here as well as read (`proved_instanceof`): the lane decides
+                // every steady `instanceof`, so no other path would record it.
+                machine.record_instanceof(value, constructor).or_else(|| machine.proved_instanceof(value, constructor))
+                    .or_else(|| machine.ordinary_instanceof(value, constructor))
             } }
     }
 }
@@ -1011,6 +1014,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
 
 /// The operands and operator of a binary call-out the lane's pure binary answers: a `Binary`, or an
 /// `Equality` as the operator of its strictness and negation.
+#[inline(always)]
 fn binary_call(operation: CallOut) -> Option<(Operand, Operand, u32)> {
     match operation {
         CallOut::Binary { left, right, operator } => Some((left, right, operator)),
@@ -1277,7 +1281,11 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             CallOut::Protocol { .. } | CallOut::ForInNext { .. } | CallOut::PropertyKey { .. } => {
                 let (context, step) = self.names?;
                 let operands = operation.operands().fixed;
-                let operands = operands.map(|operand| operand.and_then(|operand| self.operand_word(stage, operand)).map(Value::from_bits));
+                // Element by element, not `<[_; 2]>::map`, whose closure left out of line takes the
+                // frame's address and keeps every field of the frame in memory on each row entry.
+                let first = match operands[0] { Some(operand) => self.operand_word(stage, operand).map(Value::from_bits), None => None };
+                let second = match operands[1] { Some(operand) => self.operand_word(stage, operand).map(Value::from_bits), None => None };
+                let operands = [first, second];
                 // SAFETY: the running lane's context, live for the row's step.
                 unsafe { step(context, operation, operands) }.map(|value| (value.to_bits(), Boxing::Value))
             }
