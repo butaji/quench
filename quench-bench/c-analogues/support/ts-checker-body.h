@@ -2018,6 +2018,7 @@ static TsType *cGenericCallFnArgContext(CSig *sig, int idx);
 static TsNode *cCandFn;
 static TsType *cCandType;
 
+static bool cIsInitializedDeclParam(TsNode *p);
 static TsType *cContextualType(TsNode *e) {
   if (cCandFn && e == cCandFn) return cCandType;
   TsNode *c = e, *p = e->parent;
@@ -2027,6 +2028,11 @@ static TsType *cContextualType(TsNode *e) {
     case TSK_VariableDeclaration:
       if (p->initializer != c) return cUnported("contextual type of a declaration name");
       return p->type ? cTypeFromNode(p->type) : NULL;
+    case TSK_Parameter:
+      /* getContextualTypeForInitializerExpression: a parameter of a function that is not contextually typed has none */
+      if (p->initializer != c) return cUnported("contextual type of a parameter name");
+      if (cIsInitializedDeclParam(p)) return NULL;
+      return cUnported("contextual type");
     case TSK_PropertyDeclaration:
       if (p->initializer != c) return cUnported("contextual type of a property");
       return p->type ? cTypeFromNode(p->type) : NULL;
@@ -2191,9 +2197,29 @@ static bool cIsUntypedDeclParam(TsNode *p) {
 /* getContextuallyTypedParameterType and assignContextualParameterTypes: an unannotated parameter of a function expression or
  * arrow has the type at its position in the contextual signature. Parameters with an initializer, optional or rest
  * parameters, binding patterns and the parameters of other functions (implicit any) are not ported. */
+/* a parameter without annotation and with an initializer, of a function declaration or of a method that is not an object
+ * literal member: it has no contextual type (getContextuallyTypedParameterType is undefined), so its type is the widened
+ * type of the initializer (getTypeForVariableLikeDeclaration) */
+static bool cIsInitializedDeclParam(TsNode *p) {
+  TsNode *fn = p->parent;
+  if (!fn || p->type || !p->initializer || p->questionToken || p->dotDotDotToken) return false;
+  if (!p->name || p->name->kind != TSK_Identifier || (p->name->textLen == 4 && memcmp(p->name->text, "this", 4) == 0)) return false;
+  if (fn->kind != TSK_FunctionDeclaration && fn->kind != TSK_MethodDeclaration) return false;
+  return !(fn->parent && fn->parent->kind == TSK_ObjectLiteralExpression);
+}
+
 static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
   (void)sym;
   if (cIsUntypedDeclParam(d)) return cAnyType;
+  if (cIsInitializedDeclParam(d)) {
+    /* getTypeOfParameter: the initializer's widened type, with undefined (the parameter is optional) */
+    if (d->inferState == 1) return cUnported("circular parameter type");
+    d->inferState = 1;
+    TsType *t = cExprType(d->initializer);
+    if (t != cErrorType) t = cAddUndefined(cMutableLocationType(d->initializer, t));
+    d->inferState = 0;
+    return t;
+  }
   TsNode *fn = d->parent;
   if (!fn || (fn->kind != TSK_FunctionExpression && fn->kind != TSK_ArrowFunction)) return cUnported("parameter without annotation");
   if (d->initializer || d->questionToken || d->dotDotDotToken || !d->name || d->name->kind != TSK_Identifier)

@@ -1856,6 +1856,7 @@ static TsType *cInitializedSymbolType(TsSymbol *sym, TsNode *d, bool member) {
 /* the declared type of a parameter (getTypeOfParameter): an annotation, with undefined when it is optional */
 static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d);   /* ts-checker-body.h: contextual parameter types */
 static bool cIsUntypedDeclParam(TsNode *p);                       /* ts-checker-body.h */
+static bool cIsInitializedDeclParam(TsNode *p);                   /* ts-checker-body.h */
 static TsType *cBindingElementType(TsSymbol *sym, TsNode *d);     /* ts-checker-body.h: destructured variables */
 static TsType *cParameterSymbolType(TsSymbol *sym, TsNode *d) {
   if (!d->type) return cUnannotatedParamType(sym, d);
@@ -2059,6 +2060,11 @@ static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
   if (!p->type && p->parent && (p->parent->kind == TSK_FunctionExpression || p->parent->kind == TSK_ArrowFunction)) {
     /* an unannotated parameter of a function expression or arrow: the type of its symbol (the contextual type) */
     if (!p->symbol) return cUnported("parameter without annotation");
+    TsType *ct = cTypeOfSymbol(p->symbol);
+    return m && ct != cErrorType ? cInstantiate(ct, m) : ct;
+  }
+  if (!p->type && p->symbol && cIsInitializedDeclParam(p)) {
+    /* a parameter of a function declaration or method with an initializer: its symbol type (getTypeOfParameter) */
     TsType *ct = cTypeOfSymbol(p->symbol);
     return m && ct != cErrorType ? cInstantiate(ct, m) : ct;
   }
