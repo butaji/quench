@@ -3795,6 +3795,10 @@ static TsType *cExprWorker(TsNode *e) {
         bool err = false;
         CSig *cs = cContextualSignature(e, &err);
         if (err || !cs) return cUnported("function expression with a contextual type");
+        /* assignContextualParameterTypes: the parameters take their types in this check, while the contextual signature is the
+         * one of the candidate (a request made later has no context, and a refusal would be cached on the symbol) */
+        if (e->parameters) for (int i = 0; i < e->parameters->n; i++)
+          if (!e->parameters->v[i]->type && e->parameters->v[i]->symbol) (void)cTypeOfSymbol(e->parameters->v[i]->symbol);
         if (!e->type) {
           TsType *cr = cReturnTypeOf(cs);
           if (cr == cErrorType) return cr;
