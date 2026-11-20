@@ -169,6 +169,12 @@ pub(in crate::vm) fn register_int_value(builder: &mut FunctionBuilder<'_>, regis
     int
 }
 
+/// The binary64 view a test already proved of tagged `bits` in this block (`LocalProofs::numbers`), if any.
+pub(in crate::vm) fn known_number(builder: &FunctionBuilder<'_>, state: &State, bits: ir::Value) -> Option<ir::Value> {
+    let bits = builder.func.dfg.resolve_aliases(bits);
+    state.proofs.numbers.iter().find(|(source, _)| *source == bits).map(|(_, number)| *number)
+}
+
 /// `register`'s binary64 value, proving Number where the fact does not.
 pub(in crate::vm) fn register_number_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
@@ -197,7 +203,7 @@ pub(in crate::vm) fn register_number_value(builder: &mut FunctionBuilder<'_>, re
         Representation::Tagged => {
             let bits = register_tagged(builder, registers, state, register);
             let bits = builder.func.dfg.resolve_aliases(bits);
-            let known = state.proofs.numbers.iter().find(|(source, _)| *source == bits).map(|(_, number)| *number);
+            let known = known_number(builder, state, bits);
             let number = if let Some(number) = known { number } else if fact.ty.is_subtype(Type::NUMBER) {
                 emit_known_number(builder, bits)
             } else {

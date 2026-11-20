@@ -5,7 +5,7 @@ use crate::vm::compiled::regions;
 #[path = "frame_call_out.rs"] pub(super) mod call_out;
 #[path = "frame_truthiness.rs"] mod truthiness;
 #[path = "frame_operands.rs"] mod operands;
-pub(in crate::vm) use operands::{held_long, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_number_value};
+pub(in crate::vm) use operands::{held_long, known_number, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_number_value};
 use truthiness::register_truthiness;
 
 /// The lane's register file.

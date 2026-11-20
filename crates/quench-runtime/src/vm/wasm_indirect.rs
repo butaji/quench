@@ -127,9 +127,8 @@ impl<H: Host> Vm<H> {
             targets: elements.targets(),
             related: &mut related,
         };
-        let reference =
+        let (reference, row) =
             indirect_target(&mut stage, index, expected).map_err(JsError::wasm_trap_error)?;
-        let row = elements.targets()[index as usize];
         failure.map_or(Ok((Value::from_bits(reference), row)), Err)
     }
 }

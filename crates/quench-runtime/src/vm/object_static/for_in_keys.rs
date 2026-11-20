@@ -39,8 +39,8 @@ impl ForInMemo {
 /// array of that shape's own enumerable keys, with the shape and the collection epoch. In
 /// the same epoch (which no reused handle or compacted shape shares), any receiver with that
 /// shape and no side descriptors has exactly these keys, each an own enumerable property, so
-/// a later loop over such a receiver whose prototypes are still the ones listed, each of its
-/// listed shape, reuses the array (`Vm::listed_for_in_keys`), and a step of a loop walking it
+/// a later loop over such a receiver whose prototype is still the one listed, with the chain
+/// from it still holding its cell, reuses the array (`Vm::listed_for_in_keys`), and a step of a loop walking it
 /// over such a receiver needs no lookup (`Vm::for_in_snapshot_current`). No script reaches
 /// the array, so loops share it.
 struct ForInOwnKeys {
@@ -52,8 +52,12 @@ struct ForInOwnKeys {
     slot_words: Value,
     /// Each key's atom and slot in `shape`, in snapshot order.
     slots: EnumerableSlots,
-    /// The receiver's prototypes when listed, each with its shape: none had an enumerable key.
-    chain: Box<[(Value, u32)]>,
+    /// The receiver's prototype when listed.
+    prototype: Value,
+    /// The cell of the chain from `prototype` to its end (`Vm::chain_cell_to_end`), made when
+    /// listed: it holds while no link changes its layout or dies, so each of them still has
+    /// the shape it had then, with no side descriptors and no enumerable key.
+    chain: crate::heap::ChainCell,
     /// The key the last step over a receiver of `shape` yielded, with its snapshot index: a
     /// read of that key from such a receiver is a slot read (`Vm::enumerated_key_get`), as
     /// V8 loads a property with an enumerated key.
@@ -260,21 +264,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// The memo's snapshot (`ForInOwnKeys`) for `receiver`: a shape-keyed object of its shape
-    /// whose prototypes are the ones listed, each still of its listed shape, in the same
-    /// epoch. None of them has an enumerable key then, as when listed.
+    /// whose prototype is the one listed, with the chain from it still holding its cell, in the
+    /// same epoch. None of the prototypes has an enumerable key then, as when listed.
     pub(in crate::vm) fn listed_for_in_keys(&self, receiver: Value) -> Option<Value> {
         let listed = self.for_in.own_keys.as_ref()?;
         let data = self.shape_keyed_object(receiver)?;
         let keys = listed.keys(data.shape(), self.heap.collection_epoch())?;
-        let mut prototype = data.proto();
-        for &(walked, shape) in &listed.chain {
-            let data = self.object_data(prototype).filter(|_| prototype == walked)?;
-            if data.shape() != shape || data.has_side_descriptors() {
-                return None;
-            }
-            prototype = data.proto();
-        }
-        prototype.is_null().then_some(keys)
+        (data.proto() == listed.prototype && listed.chain.holds()).then_some(keys)
     }
 
     /// `shape_for_in_keys` of a receiver none of whose prototypes has an enumerable string
@@ -285,16 +281,15 @@ impl<H: Host> Vm<H> {
     /// walk.
     pub(super) fn list_own_for_in_keys(&mut self, receiver: Value) -> Option<Value> {
         let slots = self.shape_enumerable_slots(receiver)?;
-        let mut chain = Vec::new();
-        let mut prototype = self.object_data(receiver)?.proto();
-        while !prototype.is_null() {
-            if !self.shape_enumerable_slots(prototype)?.is_empty() {
+        let prototype = self.object_data(receiver)?.proto();
+        let mut link = prototype;
+        while !link.is_null() {
+            if !self.shape_enumerable_slots(link)?.is_empty() {
                 return None;
             }
-            let data = self.object_data(prototype)?;
-            chain.push((prototype, data.shape()));
-            prototype = data.proto();
+            link = self.object_data(link)?.proto();
         }
+        let chain = self.chain_cell_to_end(prototype)?;
         let (shape, epoch) = (self.object_data(receiver)?.shape(), self.heap.collection_epoch());
         let keys: Vec<Value> = slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect();
         let keys = self.array_of(&keys);
@@ -305,7 +300,7 @@ impl<H: Host> Vm<H> {
             _ => Value::UNDEFINED,
         }).collect();
         let slot_words = self.array_of(&words);
-        self.for_in.own_keys = Some(ForInOwnKeys { shape, epoch, keys, slot_words, slots, chain: chain.into(), stepped: None });
+        self.for_in.own_keys = Some(ForInOwnKeys { shape, epoch, keys, slot_words, slots, prototype, chain, stepped: None });
         Some(keys)
     }
 

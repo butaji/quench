@@ -6331,7 +6331,8 @@ const RETURNING_FORM: usize = OWN_FORMS.len() + 50;
 const RETURNING_BASE: u8 = own_site(false, RETURNING_FORM);
 pub(super) const fn returning_site(this: bool, leaf: u8) -> u8 { own_site(this, RETURNING_FORM) + 2 * leaf }
 pub(super) const fn returning_field_site(site: u8) -> bool { site >= RETURNING_BASE }
-pub(super) const fn returning_leaf(site: u8) -> u8 { (site - RETURNING_BASE) / 2 }
+/// Saturating: a const branch for a site of another family still instantiates the call.
+pub(super) const fn returning_leaf(site: u8) -> u8 { site.saturating_sub(RETURNING_BASE) / 2 }
 
 /// Whether `handler` is the returning own-field row of no leaf form, at `this` or a register
 /// (`returning_site`): the leaf call's reads recognise it as the own read it is.
@@ -6959,7 +6960,7 @@ fn length_read<H: Host>(vm: &mut Vm<H>, receiver: Value) -> Option<Value> {
 /// The cache tier a single-read `GetField` site's entries call for, to which a miss of its
 /// single-entry handler moves the record (`row_get_field_miss`, `row_returning_field_miss`).
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum FieldSiteTier {
+pub(super) enum FieldSiteTier {
     /// A nested read whose steps hit primary own entries, or an array's own `length`
     /// (`lane_nested_value`).
     Nested,
@@ -6992,16 +6993,10 @@ fn field_site_tier_in_lane<H: Host>(
                 })
         });
         if nested_own { FieldSiteTier::Nested } else { FieldSiteTier::General }
-    } else if vm.field_site_getter(i.c) {
-        FieldSiteTier::Getter
-    } else if vm.field_site_polymorphic(i.c) {
-        FieldSiteTier::Polymorphic
-    } else if vm.field_site_holder(i.c) {
-        FieldSiteTier::Holder
-    } else if vm.field_site_inherited(i.c) {
-        FieldSiteTier::Inherited
     } else {
-        FieldSiteTier::Own
+        // The entry tiers come from one cache index (`Vm::field_site_tier`), not one lookup per
+        // predicate, since a held or inherited local read classifies its site on every read.
+        vm.field_site_tier(i.c)
     }
 }
 
@@ -17914,7 +17909,7 @@ const TABLE_SLOTS: usize = Op::COUNT.next_multiple_of(TABLE_ROW as usize);
 const TABLE_ROW: u16 = 16;
 const TABLE_ROWS: usize = TABLE_SLOTS / TABLE_ROW as usize;
 // `lane_table` lists one generated row per sixteen opcodes.
-const _: () = assert!(TABLE_ROWS == 18, "add a `table_row!` to `lane_table` per sixteen new opcodes");
+const _: () = assert!(TABLE_ROWS == 19, "add a `table_row!` to `lane_table` per sixteen new opcodes");
 
 macro_rules! table_row {
     ($h:ty, $backward:literal, $acc:expr, $row:literal) => {
@@ -17976,6 +17971,7 @@ macro_rules! lane_table {
             table_row!($h, $backward, $acc, 15),
             table_row!($h, $backward, $acc, 16),
             table_row!($h, $backward, $acc, 17),
+            table_row!($h, $backward, $acc, 18),
         ])
     };
 }
