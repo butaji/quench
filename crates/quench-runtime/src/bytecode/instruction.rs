@@ -302,13 +302,13 @@ macro_rules! layout_accessors {
                 }
             }
 
-            #[allow(dead_code)] #[inline]
+            #[allow(dead_code)] #[inline(always)]
             pub(crate) fn direct_eval(self) -> bool {
                 debug_assert!(self.op().is_call_with_eval_flags());
                 ImmediateLayout::direct_eval(self.imm())
             }
 
-            #[allow(dead_code)] #[inline]
+            #[allow(dead_code)] #[inline(always)]
             pub(crate) fn parameter_eval(self) -> bool {
                 debug_assert!(self.op().is_call_with_eval_flags());
                 ImmediateLayout::parameter_eval(self.imm())
