@@ -4335,7 +4335,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{protocol_row, protocol_handler, returning_row, returning_operator_row, protocol_family, is_row, jump_row, row_jump, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{protocol_row, protocol_handler, returning_row, returning_operator_row, operator_row, protocol_family, is_row, jump_row, row_jump, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 mod capture_append;
@@ -18857,6 +18857,10 @@ fn derive_lane_view<'live, H: Host>(
             }
         }
     }
+    // Last, so the fusions above and the accumulator check see each record's generated row.
+    if !wasm {
+        specialize_plain_operators::<H>(&decoded, constants, &mut records);
+    }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
@@ -19126,6 +19130,45 @@ fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants
     for (pc, &instruction) in decoded.iter().enumerate() {
         if records[pc].handler == returning_binary {
             specialize_returning_operator::<H>(instruction, constants, &mut records[pc]);
+        }
+    }
+}
+
+/// Gives each plain `Binary` record of an arithmetic operator that still runs its generated row, at
+/// any accumulator field, that operator's `operator_row`: the operator becomes a parameter of the
+/// instantiation, so the row neither decodes nor dispatches on it (179 against 64 instructions for an
+/// int32 add). A record with an int32 constant operand takes the int32 form. Its misses go back to the
+/// generated row, so every operand pair stays decided by the one staged row.
+fn specialize_plain_operators<H: Host>(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction]) {
+    use crate::bytecode::OperandKind::Constant;
+    macro_rules! row_at {
+        ($acc:expr) => {
+            generated_row!(H, crate::staged::BINARY_ROW, $acc, FLAG_UNREAD) as Handler as *const ()
+        };
+    }
+    let plain = [row_at!(ACC_NONE), row_at!(ACC_B), row_at!(ACC_C)];
+    for (pc, &instruction) in decoded.iter().enumerate() {
+        let Some(acc) = plain.iter().position(|row| *row == records[pc].handler) else { continue };
+        if instruction.result_flags() != 0 || instruction.numeric_local_target().is_some() {
+            continue;
+        }
+        let int32_constant = |operand: crate::bytecode::Operand| operand.kind() == Some(Constant)
+            && constants.get(usize::from(operand.payload())).is_some_and(|constant| constant.as_int().is_some());
+        let int32 = int32_constant(instruction.operand_b()) || int32_constant(instruction.operand_c());
+        macro_rules! pick {
+            ($op:expr) => {
+                match (acc, int32) {
+                    (0, true) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, true> as Handler,
+                    (0, false) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, false> as Handler,
+                    (1, true) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_B, { $op as u8 }, true> as Handler,
+                    (1, false) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_B, { $op as u8 }, false> as Handler,
+                    (_, true) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_C, { $op as u8 }, true> as Handler,
+                    (_, false) => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, ACC_C, { $op as u8 }, false> as Handler,
+                }
+            };
+        }
+        if let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) {
+            records[pc].handler = handler as *const ();
         }
     }
 }
