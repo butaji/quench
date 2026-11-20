@@ -294,11 +294,23 @@ static void js_lex(JsContext *P) {
   int tt = TK_EOF;
   size_t e = i + 1;
 #define TOK(len, t) do { tt = (t); e = i + (len); } while (0)
-  if (js_ident_start(c)) {
+  if (js_ident_start(c) || (c == '\\' && c1 == 'u')) {
+    /* identifier; \uXXXX escapes are kept in the token text (a name such as a\u00e9roport) */
     e = i;
-    while (e < n && js_ident_part(s[e])) e++;
-    if (e < n && (s[e] == '\\' || s[e] >= 0x80)) js_fail(P, "unicode escapes or non-ASCII identifiers are not supported");
+    for (;;) {
+      if (e < n && js_ident_part(s[e])) e++;
+      else if (e + 5 < n && s[e] == '\\' && s[e + 1] == 'u' && isxdigit(s[e + 2]) && isxdigit(s[e + 3]) &&
+               isxdigit(s[e + 4]) && isxdigit(s[e + 5])) e += 6;
+      else break;
+    }
+    if (e < n && (s[e] == '\\' || s[e] >= 0x80)) js_fail(P, "unsupported identifier escape or non-ASCII identifier");
     tt = js_keyword(P->src + i, e - i);
+  } else if (c == '#' && js_ident_start(c1)) {
+    /* private name (#x): lexed as a name token that keeps its '#', so class members and this.#x
+     * parse as ordinary member names; the node is not a PrivateName as in Babel */
+    e = i + 1;
+    while (e < n && js_ident_part(s[e])) e++;
+    tt = TK_NAME;
   } else if (c >= '0' && c <= '9') {
     js_scan_number(P, i, &tt, &e);
   } else if (c == '.' && c1 >= '0' && c1 <= '9') {
