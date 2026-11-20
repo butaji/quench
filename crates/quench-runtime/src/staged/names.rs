@@ -161,10 +161,13 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             calling(stage, frame, CallOut::GlobalLexicalStore { source, declaration, site, initialize }, None),
         Operation::LoadName { destination, atom, site, receiver, proof } =>
             load_name(stage, frame, (destination, receiver), (atom, site), proof),
-        // A frame's in-place rest read answers the value; its runner defines the destination, as
-        // for every names row's value (`generated_row`).
-        Operation::Protocol { step: Protocol::RestView { get, fixed, .. }, destination: Some(_), operands }
-            if let Some((value, _)) = frame.rest_view(stage, get, fixed, operands[0]) => Step::Value(value),
+        // A frame's in-place rest read answers the value, which the row defines as every other
+        // names row defines its own (`row_writes_result` holds for `RestLength` and `RestGet`).
+        Operation::Protocol { step: Protocol::RestView { get, fixed, .. }, destination: Some(destination), operands }
+            if let Some((value, fact)) = frame.rest_view(stage, get, fixed, operands[0]) => {
+                frame.write(stage, destination, value, fact);
+                Step::Value(value)
+            }
         Operation::Protocol { step, destination, operands } =>
             calling(stage, frame, CallOut::Protocol { step, operands }, destination),
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
