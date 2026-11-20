@@ -746,7 +746,7 @@ static TsType *cContextualType(TsNode *e) {
       CParams ps;
       if (!cSplitParams(sig->decl, &ps) || ps.thisParam) return cUnported("contextual type of a call with a this parameter");
       bool ok;
-      TsType *pt = cParamTypeAt(&ps, idx, &ok, sig->mapper);
+      TsType *pt = cSigParamType(sig, &ps, idx, &ok);
       return ok ? pt : NULL;
     }
     case TSK_PropertyAssignment: {
@@ -968,7 +968,7 @@ static TsType *cTypeofUnion(void) {
 static bool cArgsApplicable(CParams *ps, TsType **at, int na, CSig *sig, int rel) {
   for (int i = 0; i < na; i++) {
     bool ok;
-    TsType *pt = cParamTypeAt(ps, i, &ok, sig->mapper);
+    TsType *pt = cSigParamType(sig, ps, i, &ok);
     if (!ok || pt == cErrorType || at[i] == cErrorType) continue;
     if (!cIsRelatedWith(at[i], pt, rel)) return false;
   }
