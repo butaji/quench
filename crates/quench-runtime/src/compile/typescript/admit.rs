@@ -109,17 +109,6 @@ impl<'a> Admit<'a, '_> {
         program.body
     }
 
-    fn javascript_expression(&self, text: &str, span: Span) -> Expression<'a> {
-        let mut statements = self.javascript(&format!("({text});"), span);
-        match statements.first_mut() {
-            Some(Statement::ExpressionStatement(statement)) => match statement.expression.take_in(&self.allocator) {
-                Expression::ParenthesizedExpression(mut inner) => inner.expression.take_in(&self.allocator),
-                expression => expression,
-            },
-            _ => unreachable!("an expression statement"),
-        }
-    }
-
     /// Admit a statement list (of a namespace body when `namespace` names it).
     fn statements(&mut self, input: ArenaVec<'a, Statement<'a>>, namespace: Option<&str>) -> ArenaVec<'a, Statement<'a>> {
         let mut seen = FxHashSet::default();

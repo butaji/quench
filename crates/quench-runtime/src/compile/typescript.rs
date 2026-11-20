@@ -862,6 +862,27 @@ design:returntype:make:Service,design:paramtypes:make:,design:type:make:Function
     }
 
     #[test]
+    fn decorators_in_a_namespace_apply_members_then_the_class() {
+        // A namespace's exported class is published on its object after its decorations; a
+        // method's parameter decorators apply before its method decorators; an accessor and a
+        // static field are decorated by key, instance members before statics, then the class.
+        let source = r#"
+const log: string[] = [];
+function track(name: string) { return (target: any, key?: any, desc?: any) => { log.push(name + ":" + String(key)); }; }
+function cls(name: string) { return (target: any) => { log.push(name + ":class"); }; }
+namespace N {
+    @cls("K") export class K {
+        @track("m") m(@track("p") a: number) {}
+        @track("acc") accessor v = 1;
+        @track("f") static s = 1;
+    }
+}
+console.log(log.join(","), typeof N.K, N.K.name);
+"#;
+        assert_eq!(run_typescript(source), vec!["p:m,m:m,acc:v,f:s,K:class function K".to_owned()]);
+    }
+
+    #[test]
     fn decorators_without_a_static_key_still_need_a_runtime_meaning() {
         for source in ["const Box = @sealed class {}", "class Box { @log [key]() {} }", "class Box { @log #hidden() {} }"] {
             assert!(Engine::specialize_typescript(source, "decorated.cts").is_err(), "{source}");
