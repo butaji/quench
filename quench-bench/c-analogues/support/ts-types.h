@@ -1784,6 +1784,11 @@ static void cResolveSignatures(TsType *t) {
     t->call = ts_arena_zalloc(sizeof(CSig) * (size_t)(s->ndecls ? s->ndecls : 1));
     t->ncall = 0;
     for (int d = 0; d < s->ndecls; d++) {
+      /* getSignaturesOfSymbol: the implementation of an overloaded function (a body right after a declaration of the same kind
+       * and parent) is not a signature */
+      if (d > 0 && s->decls[d]->body && s->decls[d]->parent == s->decls[d - 1]->parent &&
+          s->decls[d]->kind == s->decls[d - 1]->kind && s->decls[d]->pos == s->decls[d - 1]->end)
+        continue;
       t->call[t->ncall].decl = s->decls[d];
       t->call[t->ncall].isConstruct = false;
       t->call[t->ncall].mapper = t->sigMapper;

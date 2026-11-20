@@ -1966,6 +1966,17 @@ static int cGenericKind(TsType *t) {
 
 static TsType *cContextualType(TsNode *e);   /* below: getContextualType */
 
+/* a call or new expression whose callee has a generic candidate (chooseOverload creates an inference context for it) */
+static bool cCallHasGenericCandidate(TsNode *p) {
+  TsType *f = cExprType(p->expression);
+  if (f == cErrorType || !(f->flags & TF_Object)) return false;
+  cResolveSignatures(f);
+  int ns = p->kind == TSK_NewExpression ? f->nconstruct : f->ncall;
+  CSig *sigs = p->kind == TSK_NewExpression ? f->construct : f->call;
+  for (int i = 0; i < ns; i++) if (sigs[i].decl->typeParameters && sigs[i].decl->typeParameters->n) return true;
+  return false;
+}
+
 /* getNarrowableTypeForReference (76095): the constraint of a type parameter with a union constraint replaces it when the
  * reference is in a constraint position (a property access, a call or new callee, an element access object whose argument
  * is not a generic index) or has a contextual type that is not generic. Returns 1 to substitute, 0 not, -1 not ported. */
@@ -1981,6 +1992,9 @@ static int cSubstituteConstraintFor(TsNode *e) {
     if (gk < 0) return -1;
     if (gk == 0) return 1;
   }
+  /* an argument checked while its generic call is being resolved is checked in an inference context (checkMode Inferential),
+   * which never substitutes the constraint */
+  if ((p->kind == TSK_CallExpression || p->kind == TSK_NewExpression) && p->exprState == 1 && cCallHasGenericCandidate(p)) return 0;
   TsType *cx = cContextualType(e);
   if (cx == cErrorType) return -1;
   if (!cx) return 0;
@@ -2116,23 +2130,29 @@ static TsType *cContextualType(TsNode *e) {
       cResolveSignatures(f);
       int ns = p->kind == TSK_NewExpression ? f->nconstruct : f->ncall;
       CSig *sigs = p->kind == TSK_NewExpression ? f->construct : f->call;
-      if (ns > 1) {
-        /* the parameter of the chosen signature is only known after the overload is resolved: an argument whose type does not
-         * depend on its contextual type has none (an identifier, a literal, a property access) */
-        TsNode *ca = cSkipParens(c);
-        switch (ca->kind) {
-          case TSK_Identifier: case TSK_NumericLiteral: case TSK_StringLiteral: case TSK_NoSubstitutionTemplateLiteral:
-          case TSK_NullKeyword: case TSK_TrueKeyword: case TSK_FalseKeyword: case TSK_PropertyAccessExpression:
-            return NULL;
-          default: return cUnported("contextual type of a call with several signatures");
+      CSig *sig;
+      if (p->resolvedSig) {
+        /* getContextualTypeForArgumentAtIndex: the parameter of the resolved signature of the call (links.resolvedSignature) */
+        sig = p->resolvedSig;
+      } else {
+        if (ns > 1) {
+          /* the parameter of the chosen signature is only known after the overload is resolved: an argument whose type does not
+           * depend on its contextual type has none (an identifier, a literal, a property access) */
+          TsNode *ca = cSkipParens(c);
+          switch (ca->kind) {
+            case TSK_Identifier: case TSK_NumericLiteral: case TSK_StringLiteral: case TSK_NoSubstitutionTemplateLiteral:
+            case TSK_NullKeyword: case TSK_TrueKeyword: case TSK_FalseKeyword: case TSK_PropertyAccessExpression:
+              return NULL;
+            default: return cUnported("contextual type of a call with several signatures");
+          }
         }
-      }
-      if (ns != 1) return cUnported("contextual type of a call with several signatures");
-      CSig *sig = &sigs[0];
-      if (sig->decl->typeParameters && sig->decl->typeParameters->n) {
-        TsNode *ca = cSkipParens(c);
-        if (ca->kind != TSK_ArrowFunction) return cUnported("contextual type of a generic call");
-        return cGenericCallFnArgContext(sig, idx);
+        if (ns != 1) return cUnported("contextual type of a call with several signatures");
+        sig = &sigs[0];
+        if (sig->decl->typeParameters && sig->decl->typeParameters->n) {
+          TsNode *ca = cSkipParens(c);
+          if (ca->kind != TSK_ArrowFunction) return cUnported("contextual type of a generic call");
+          return cGenericCallFnArgContext(sig, idx);
+        }
       }
       CParams ps;
       if (!cSplitParams(sig->decl, &ps) || ps.thisParam) return cUnported("contextual type of a call with a this parameter");
@@ -3269,6 +3289,7 @@ static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
     }
   }
   if (chosen < 0) return cUnported("no applicable signature");
+  e->resolvedSig = chosenSig;   /* links.resolvedSignature (getContextualTypeForArgumentAtIndex reads it) */
   TsType *rt = cReturnTypeOf(chosenSig);
   /* checkCallExpression: Symbol() and Symbol.for() give the unique symbol of the declaration they initialize */
   if (!isNew && rt != cErrorType && (rt->flags & (TF_ESSymbol | TF_UniqueESSymbol)) && cIsSymbolCall(e)) {
