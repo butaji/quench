@@ -435,10 +435,16 @@ static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r
   if (t == cErrorType || !cMentionsText(c, r->text, r->len)) return t;
   if (c->kind == TSK_PrefixUnaryExpression && c->extra == TSK_ExclamationToken) return cNarrowByCondition(c->operand, !truthy, t, r);
   if (cMatchesRefTree(c, r)) return cTruthiness(t, truthy);
+  if (c->kind == TSK_NonNullExpression || c->kind == TSK_SatisfiesExpression) return cNarrowByCondition(c->expression, truthy, t, r);
   if (c->kind == TSK_BinaryExpression) {
     int op = c->operatorToken->kind;
     bool isEq = op == TSK_EqualsEqualsEqualsToken || op == TSK_EqualsEqualsToken;
     bool isNe = op == TSK_ExclamationEqualsEqualsToken || op == TSK_ExclamationEqualsToken;
+    /* narrowTypeByBinaryExpression: the operators other than the equalities, instanceof and in do not narrow */
+    if (!isEq && !isNe && op != TSK_InstanceOfKeyword && op != TSK_InKeyword) {
+      if (op == TSK_EqualsToken) return cUnported("assignment condition");
+      return t;
+    }
     if (isEq || isNe) {
       TsNode *l = cSkipParens(c->left), *rt = cSkipParens(c->right);
       bool doubleEq = op == TSK_EqualsEqualsToken || op == TSK_ExclamationEqualsToken;
@@ -488,7 +494,9 @@ static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r
   if (c->kind == TSK_PropertyAccessExpression || c->kind == TSK_ElementAccessExpression) {
     if (cIsMemberOfRef(c, r)) return (t->flags & TF_Union) ? cUnported("discriminant truthiness") : t;
   }
-  return cUnported("condition that mentions the reference");
+  /* narrowType: any other kind of condition leaves the type as it is (an identifier may be an aliased condition: not ported) */
+  if (c->kind == TSK_Identifier) return cUnported("condition that mentions the reference");
+  return t;
 }
 
 /* getAssignmentReducedType: the members of the declared union that the assigned type may be assigned to */
