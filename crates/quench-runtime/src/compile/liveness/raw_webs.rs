@@ -416,10 +416,12 @@ fn webs(
 
 /// Switches each op of the Wasm function `function` whose wide web is raw to its raw form
 /// (`raw_form`). `constant_neutral` and `returns_wide` are as `raw_webs`'. A function past the
-/// liveness budget or the root-map width keeps every op boxed.
-pub(crate) fn use_raw_forms(function: &mut Function, constant_neutral: &dyn Fn(usize) -> bool, returns_wide: bool) {
+/// liveness budget or the root-map width keeps every op boxed. Returns the live sets it solved,
+/// which are the live sets of the function as it stands after the switch: a raw form has its
+/// boxed op's transfers and control flow, so only the opcodes change. `None` where it solved none.
+pub(crate) fn use_raw_forms(function: &mut Function, constant_neutral: &dyn Fn(usize) -> bool, returns_wide: bool) -> Option<Vec<RegisterSet>> {
     let no_method_sites: &[MethodSite] = &[];
-    let Some(transfers) = super::transfers(function, no_method_sites, &[], &[]) else { return };
+    let transfers = super::transfers(function, no_method_sites, &[], &[])?;
     let live = super::solve::analyze_wide(function, &transfers, &Successors::of_code(function));
     let webs = raw_webs(function, &live, &transfers, constant_neutral, returns_wide);
     for (pc, raw) in webs.raw_ops.iter().enumerate() {
@@ -435,6 +437,7 @@ pub(crate) fn use_raw_forms(function: &mut Function, constant_neutral: &dyn Fn(u
             function.code[pc].set_op(raw_op);
         }
     }
+    Some(live)
 }
 
 #[cfg(test)]

@@ -2093,11 +2093,6 @@ impl RegisterRoots {
         Self { covered, entry_live, solved: std::cell::RefCell::new(None) }
     }
 
-    /// Covered, every register live at entry below `entry_live`.
-    pub(crate) fn with_entry_live(covered: bool, entry_live: u16) -> Self {
-        Self { covered, entry_live: std::cell::OnceCell::from(entry_live), solved: std::cell::RefCell::new(None) }
-    }
-
     /// Covered, every register live at entry below `entry_live`, with the masks `solved` that
     /// derived it kept for the first mask ask (see `solved`).
     pub(crate) fn with_solved(entry_live: u16, solved: Option<crate::compile::liveness::RegisterMasks>) -> Self {
