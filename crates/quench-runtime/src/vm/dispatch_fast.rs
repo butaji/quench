@@ -4564,6 +4564,9 @@ lane_handler! {
     #[inline(never)]
     fn general_step_in_lane<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
+        // A running leaf has no activation, and the frame is its caller's: it becomes the
+        // activation its call would have pushed, whose step runs beside the activations.
+        materialize_running_leaf_in_lane(cx);
         if vm.lane_stack.has_frames() {
             resume!(cx, step_beside_activations_in_lane(cx, r, ip));
         }
