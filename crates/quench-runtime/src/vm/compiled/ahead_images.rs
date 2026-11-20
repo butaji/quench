@@ -42,24 +42,35 @@ fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u3
 /// default budget); `None` where a frame it inlines would leave by making the callee's activation,
 /// which no base body continues (`leave_targets`).
 fn unit_of(program: &ResidualProgram, function: u32, facts: &AotFacts) -> Option<lane_unit::Unit> {
-    let body = program.function_get(function as usize)?;
-    let unit = lane_unit::unit(program, function, body, &|caller, pc| closed_targets(program, facts, (caller, pc)), &|callee| program.function_get(callee as usize))?;
-    unit.frames.iter().all(|frame| frame.recovery == lane_unit::CallRecovery::RestartCall).then_some(unit)
+    unit_or_refusal(program, function, facts).ok()
+}
+
+/// `unit_of`, or why there is none.
+fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -> Result<lane_unit::Unit, &'static str> {
+    let body = program.function_get(function as usize).ok_or("no such function")?;
+    let unit = lane_unit::unit(program, function, body, &|caller, pc| closed_targets(program, facts, (caller, pc)), &|callee| program.function_get(callee as usize))
+        .ok_or("no lane unit")?;
+    if !unit.frames.iter().all(|frame| frame.recovery == lane_unit::CallRecovery::RestartCall) { return Err("an inlined frame does not restart"); }
+    Ok(unit)
 }
 
 /// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
 /// it polls for faults; `None` where it gives no native record.
 fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &crate::vm::global_facts::GlobalReads))
-    -> Option<(RelocatableCode, bool)> {
+    -> Result<(RelocatableCode, bool), &'static str> {
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
-        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[])?;
-    if lowered.region.native == 0 { return None; }
+        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[]).ok_or("the lane lowering declines")?;
+    if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
-    let isa = crate::vm::jit_backend::ahead_lane_isa()?;
+    let isa = crate::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;
     let code = crate::vm::jit_backend::compile_function(native, &*isa, Some(crate::vm::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
-    }).ok()?;
-    Some((code, lowered.region.fault_poll))
+    }).map_err(|rejection| match rejection {
+        NativeCompileRejection::CodeSizeBudget => "code past the lane body budget",
+        NativeCompileRejection::Relocations => "a relocation the image cannot name",
+        _ => "Cranelift rejects the code",
+    })?;
+    Ok((code, lowered.region.fault_poll))
 }
 
 /// The lane body of `function` for an AOT image under the closed-world `facts`, its leaves
@@ -72,8 +83,10 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
 /// the poll's offset, so the base body runs such a function.
 pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, frozen): (&AotFacts, &ClosedFrozen),
     (base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable,
-) -> Option<LaneImage> {
-    let unit = unit_of(program, function, facts)?;
+) -> Result<LaneImage, &'static str> {
+    let unit = unit_or_refusal(program, function, facts)?;
+    // A VM installs no lane body that inlines a frame (`ahead_lane_method`): its leaves inside one have no store list.
+    if !unit.frames.is_empty() { return Err("inlines a call (not installable)"); }
     let targets = leave_targets(&unit, function, base, symbols);
     let proven = proven_calls(program, &unit, function, calls, symbols);
     let plans = constructions::construct_plans(program, &unit, function, facts, symbols);
@@ -82,7 +95,8 @@ pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32,
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { targets: &targets, calls: &proven }), closed: Some(facts),
         frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of), ..VmFacts::STATIC };
     let (code, fault_poll) = lowered_code(program, &unit, function, (facts, &global_reads))?;
-    (!fault_poll).then_some(LaneImage { code, fault_poll: None })
+    if fault_poll { return Err("polls for faults"); }
+    Ok(LaneImage { code, fault_poll: None })
 }
 
 /// By unit PC, the caller calls the closed world proves that the base body planned a record for
@@ -243,10 +257,11 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn install_ahead_body(&mut self, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
         if entry.is_some() || !generic.is_empty() { return None; }
         let images = self.programs.ahead_images(self.active_program, program)?;
-        let method = match self.ahead_lane_method(program, &images, function) {
-            Some(method) => method,
-            None => Self::ahead_base_method(program, &images, function)?,
+        let (method, kind) = match self.ahead_lane_method(program, &images, function) {
+            Some(method) => (method, "lane"),
+            None => (Self::ahead_base_method(program, &images, function)?, "base"),
         };
+        if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: install function {function}: {kind} body"); }
         let published = self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())?;
         let linked_live: &LiveImage = images.linked.as_ref()?;
         for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, &mut self.heap); }

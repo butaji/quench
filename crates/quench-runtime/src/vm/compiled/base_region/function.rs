@@ -259,7 +259,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
     let reached = reachable(&span, &stitched.rows)?;
-    if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) {
+    // An image body covers every function of its program: one whose first record leaves runs it in the lane's interpreter.
+    if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) && helpers != LaneHelpers::Ahead {
         return Err("first instruction leaves".to_string());
     }
     let mut rows: Vec<Decoded> = stitched.rows.into_iter().enumerate()
@@ -299,7 +300,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     for (row, (int_a, int_b)) in decoded.iter_mut().zip(ints) {
         (row.int_a, row.int_b) = (int_a, int_b);
     }
-    let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities().collect();
+    let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities(region.header as usize..=region.backedge as usize).collect();
     identities.sort_unstable();
     identities.dedup();
     // The entry guards hold the pinned int32 and double webs live at the header (`entry_rows`, which every entry runs), so
@@ -318,7 +319,11 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached.contains(*k) && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.count() - exits;
-    let bare = realm.is_none() && decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls() && !row.step.is_some_and(Step::reads_payload));
+    // A bare run binds no window header (`stencil_run::run_bare`), so a body that reads the captures word
+    // (`CONTEXT_BODY`: a capture read of any row, or an entry identity test of a captured callee) is no bare one.
+    let reads_captures = !layout.identities.is_empty() || !region.captures.is_empty() || !region.stored_captures.is_empty();
+    let bare = realm.is_none() && !reads_captures
+        && decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls() && !row.step.is_some_and(Step::reads_payload));
     let records = planned.iter_mut().flat_map(|row| std::mem::take(&mut row.owned)).collect();
     let atoms = held_atoms(&decoded);
     // A class-typed parameter's prototype shape joins the holders the body subscribes to, so a value change there retires it.

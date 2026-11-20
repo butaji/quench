@@ -89,7 +89,7 @@ pub(super) fn leaves(layout: &Layout, row: &Decoded) -> bool {
 /// `LaneHelpers::Ahead`, every reached row that is a `Step::Generic`, would leave (`leaves`) or guards
 /// (`Step::Guard`, whose miss is that row); elsewhere the rows that leave, where the interpreter runs them.
 pub(super) fn generic_records(layout: &Layout, decoded: &[Decoded], reached: &Bits, helpers: LaneHelpers) -> Box<[u32]> {
-    let ahead = matches!(helpers, LaneHelpers::Ahead);
+    let ahead = helpers.generic_rows();
     let generic = |row: &Decoded| match row.step {
         Some(Step::Generic | Step::Guard(_)) => ahead,
         _ if ahead => leaves(layout, row),

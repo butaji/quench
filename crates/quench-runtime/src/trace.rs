@@ -116,6 +116,8 @@ setting! {
         LoopKernel = "loop-kernel",
         /// Every run of a lane body that ends anywhere but its completion: function and exit.
         BodyLeave = "body-leave",
+        /// Each AOT image compile: how many functions got a lane body, and why each other did not.
+        AotLanes = "aot-lanes",
     }
 }
 

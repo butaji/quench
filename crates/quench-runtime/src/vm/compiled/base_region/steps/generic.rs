@@ -67,7 +67,7 @@ impl Semantic {
 /// The slow arm of a guard (`Step::Guard`) under `LaneHelpers::Ahead`: the record's generic row, as an
 /// image body never leaves; none elsewhere, where the guard's miss leaves for the interpreter.
 pub(in crate::vm::compiled::base_region) fn ahead_miss(decoded: &Decoded, layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Option<Planned>, String> {
-    if !matches!(helpers, LaneHelpers::Ahead) {
+    if !helpers.generic_rows() {
         return Ok(None);
     }
     generic_row(layout, decoded, pc, Semantic::of(layout, pc)?).map(Some)

@@ -124,6 +124,10 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
     let functions = (0..program.function_count() as u32)
         .map(|id| lower_function(program, (facts, &frozen), target, id, (&mut symbols, &mut sites)))
         .collect::<Result<Vec<_>, String>>()?;
+    if crate::trace::Channel::AotLanes.on() {
+        let lanes = functions.iter().filter(|function| function.lane.is_some()).count();
+        eprintln!("aot-lanes: {} {lanes} of {} functions have a lane body", program.source_name, functions.len());
+    }
     let symbols::Finished { shapes, heap_values, atoms, labels, operands, calls } = symbols.finish();
     let calls = calls.into_iter().map(|site| sites.get(&site).copied().ok_or("a body names a call record no base body planned"))
         .collect::<Result<Vec<_>, _>>()?;
