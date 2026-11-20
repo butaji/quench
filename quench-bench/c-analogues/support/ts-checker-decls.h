@@ -50,18 +50,23 @@ static TsSymbol *cResolveTypeName(TsNode *loc, BName name) {
       case TSK_SourceFile:
         if (!n->hasExternalModuleIndicator) goto globals;
         /* fall through */
-      case TSK_ModuleDeclaration:
-        if (n->symbol && n->symbol->exports) {
-          TsSymbol *s = bTableGet(n->symbol->exports, name);
+      case TSK_ModuleDeclaration: {
+        /* getSymbolOfDeclaration: the merged symbol (declarations of the namespace in other files) */
+        TsSymbol *ms = cGetMergedSymbol(n->symbol);
+        if (ms && ms->exports) {
+          TsSymbol *s = bTableGet(ms->exports, name);
           if (s && (s->flags & (SF_TypeMeaning | SF_Alias))) return s;
         }
         break;
-      case TSK_ClassDeclaration: case TSK_ClassExpression: case TSK_InterfaceDeclaration:
-        if (n->symbol && n->symbol->members) {
-          TsSymbol *s = bTableGet(n->symbol->members, name);
+      }
+      case TSK_ClassDeclaration: case TSK_ClassExpression: case TSK_InterfaceDeclaration: {
+        TsSymbol *ms = cGetMergedSymbol(n->symbol);
+        if (ms && ms->members) {
+          TsSymbol *s = bTableGet(ms->members, name);
           if (s && (s->flags & SF_TypeMeaning)) return s;
         }
         break;
+      }
       default: break;
     }
   }

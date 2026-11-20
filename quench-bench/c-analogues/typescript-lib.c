@@ -15,11 +15,15 @@
  *     diagnostics, symbol count after init matches node's 56307), module resolution (classic),
  *     name resolution with 2304/2580, import/export member errors, duplicate index signatures (2374),
  *     redeclared variables and properties (2403/2717/2687), and the identity relation with its cache
- *     (support/ts-types.h). 45 of the 54 node diagnostics match; the other 9 need class heritage checks
- *     and base-member instantiation (mapset.ts). NOT PORTED: expression and statement checking
- *     (checkSourceFile bodies), generic instantiation beyond references, assignability, emit. The
- *     counts of types, instantiations and relation cache entries therefore stay far below node's; the
- *     run prints them next to node's numbers and fails validation.
+ *     (support/ts-types.h). Late-bound well-known symbol members (Symbol.iterator, unique symbols) and
+ *     generic instantiation (support/ts-instantiate.h: type mappers, type references with defaults,
+ *     anonymous types, unions and intersections, cached instantiations) are ported, and base types
+ *     are resolved through instantiation, so inherited members of Map, MapIterator and the esnext
+ *     Iterator match node (--members). 45 of the 54 node diagnostics match; the other 9 (mapset.ts,
+ *     2416/2322) need assignability. NOT PORTED: expression and statement checking (checkSourceFile
+ *     bodies), this types, indexed access, conditional, mapped and template types, tuples, literal
+ *     reduction, assignability, emit. The counts of types, instantiations and relation cache entries
+ *     therefore stay far below node's; the run prints them next to node's numbers and fails validation.
  * The benchmark reads files.json (the file name to text map) before the timed region, as the JS
  * harness preloads it, and each iteration parses all 118 files from memory with a fresh node arena.
  * Expected counts are the node 5.9.2 reference in support/ts-immer-expected.h. Each file must match,
@@ -289,6 +293,36 @@ static void cResolveDeclaredMembersOf(TsNode *n) {
   }
 }
 
+/* --members: the value members of every class and interface (declared type, inherited members
+ * included), one line each, as tools/typescript-lib-members-validate.mjs prints them. Late-bound names
+ * are printed with their symbol id replaced by '*'. */
+static int cMemberNameCmp(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
+
+static void cPrintMembersOf(TsNode *n) {
+  if (!((n->kind == TSK_ClassDeclaration || n->kind == TSK_InterfaceDeclaration) && n->symbol && n->name)) return;
+  TsSymbol *m = cGetMergedSymbol(n->symbol);
+  if (m->decls[0] != n) return;   /* one line per merged symbol */
+  TsType *t = cDeclaredTypeOfClassOrInterface(m);
+  TsSymbol **props;
+  int np = cPropertiesOf(t, &props);
+  char **names = ts_arena_alloc(sizeof(char *) * (size_t)(np ? np : 1));
+  int nn = 0;
+  for (int i = 0; i < np; i++) {
+    char *buf = ts_arena_alloc((size_t)props[i]->name.n + 1);
+    memcpy(buf, props[i]->name.s, (size_t)props[i]->name.n);
+    buf[props[i]->name.n] = 0;
+    if (strncmp(buf, "__@", 3) == 0) {
+      char *at = strrchr(buf, '@');
+      if (at && at[1]) { at[1] = '*'; at[2] = 0; }
+    }
+    names[nn++] = buf;
+  }
+  qsort(names, (size_t)nn, sizeof(char *), cMemberNameCmp);
+  printf("%s %.*s %d", cSourceFileOf(n)->fileName, n->name->textLen, n->name->text, nn);
+  for (int i = 0; i < nn; i++) printf(" %s", names[i]);
+  printf("\n");
+}
+
 static void runChecker(void) {
   cResetTypeCaches();
   cDiagCount = 0;
@@ -313,6 +347,13 @@ int main(int argc, char **argv) {
   snprintf(path, sizeof path, "%s/TypeScript/src/gen/immer-tiny/files.json", root);
   loadFilesJson(path);
   if (sourceCount != EXPECTED_FILE_COUNT) FAIL("expected %d files, found %d", EXPECTED_FILE_COUNT, sourceCount);
+  if (argc > 3 && strcmp(argv[3], "--members") == 0) {   /* the member dump only (no timing, no validation) */
+    long a, b, c, d;
+    parseProgram(0, &a, &b, &c, &d);
+    runChecker();
+    for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cPrintMembersOf);
+    return 0;
+  }
 
   long sumNodes = 0, sumIdents = 0, sumSymbols = 0, sumFlows = 0;
   int bad = parseProgram(1, &sumNodes, &sumIdents, &sumSymbols, &sumFlows);
@@ -331,6 +372,7 @@ int main(int argc, char **argv) {
     elapsed += now_ms() - start;
   }
   printf("typescript-lib %d iterations %.3f ms\n", iterations, elapsed);
+
   printf("validated: %d files match node (nodeCount, identifierCount, binder symbolCount and flow node count); sum nodes %ld "
          "identifiers %ld symbols %ld flow nodes %ld\n",
          sourceCount, sumNodes, sumIdents, sumSymbols, sumFlows);

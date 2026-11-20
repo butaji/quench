@@ -315,9 +315,26 @@ static uint32_t cSymbolId(TsSymbol *s) {
 /* getESSymbolLikeTypeForNode / createUniqueESSymbolType: `unique symbol` on a readonly property
  * signature (the form used by lib.es2015.symbol.d.ts). The escaped name is "__@<name>@<id>" and is
  * kept in text, which is what late binding uses as the member name (getPropertyNameFromType). */
+/* isVarConst with an identifier name in a variable statement (isValidESSymbolDeclaration, 66800) */
+static bool cIsConstVariableDecl(TsNode *d) {
+  return d->kind == TSK_VariableDeclaration && d->name && d->name->kind == TSK_Identifier && d->parent &&
+         d->parent->kind == TSK_VariableDeclarationList && (d->parent->flags & 7u) == TNF_Const;
+}
+
+/* isSymbolOrSymbolForCall (66780): Symbol(...) or Symbol.for(...) of the global Symbol */
+static bool cIsSymbolCall(TsNode *e) {
+  if (e->kind != TSK_CallExpression || !e->expression) return false;
+  TsNode *left = e->expression;
+  if (left->kind == TSK_PropertyAccessExpression && left->name && left->name->textLen == 3 &&
+      memcmp(left->name->text, "for", 3) == 0)
+    left = left->expression;
+  if (!left || left->kind != TSK_Identifier || left->textLen != 6 || memcmp(left->text, "Symbol", 6) != 0) return false;
+  return cResolveValueName(left, bnC("Symbol")) == bTableGet(cGlobals, bnC("Symbol"));
+}
+
 static TsType *cUniqueSymbolType(TsNode *decl) {
-  if (decl->kind != TSK_PropertySignature || !(bModifierFlags(decl) & TMF_Readonly) || !decl->symbol)
-    return cUnported("unique symbol placement");
+  bool valid = (decl->kind == TSK_PropertySignature && (bModifierFlags(decl) & TMF_Readonly)) || cIsConstVariableDecl(decl);
+  if (!valid || !decl->symbol) return cUnported("unique symbol placement");
   TsSymbol *sym = cGetMergedSymbol(decl->symbol);
   if (sym->uniqueType) return sym->uniqueType;
   TsType *t = cNewType(TF_UniqueESSymbol);
@@ -519,6 +536,38 @@ static TsSymTable *cDeclaredMembers(TsType *d) {
   return d->declMembers;
 }
 
+/* the base type of `class C extends V` without type arguments when V is a value (getBaseConstructorType,
+ * 64.. : the construct signatures of V whose type parameters all have defaults give the instance type) */
+static void cResolveSignatures(TsType *t);
+
+static TsType *cBaseFromConstructSignatures(TsSymbol *vs) {
+  TsType *vt = cTypeOfSymbol(vs);
+  if (vt == cErrorType || !(vt->flags & TF_Object)) return cUnported("base constructor type");
+  cResolveSignatures(vt);
+  for (int i = 0; i < vt->nconstruct; i++) {
+    TsNode *d = vt->construct[i].decl;
+    bool generic = false;
+    for (int k = 0; d->typeParameters && k < d->typeParameters->n; k++)
+      if (!d->typeParameters->v[k]->defaultType) generic = true;
+    if (generic) continue;
+    if (!d->type) return cUnported("construct signature without return type");
+    return cTypeFromNodeM(d->type, vt->construct[i].mapper);
+  }
+  return cUnported("base constructor without type arguments");
+}
+
+/* the symbol of an extends clause expression: an identifier (type meaning), or globalThis.Name */
+static TsSymbol *cBaseSymbol(TsNode *loc, TsNode *expr) {
+  if (expr->kind == TSK_Identifier) return cSymbolOfTypeName(loc, expr);
+  if (expr->kind == TSK_PropertyAccessExpression && expr->expression && expr->expression->kind == TSK_Identifier &&
+      expr->expression->textLen == 10 && memcmp(expr->expression->text, "globalThis", 10) == 0 && expr->name &&
+      cResolveValueName(loc, bnC("globalThis")) == cGlobalThisSymbol) {
+    TsSymbol *g = bTableGet(cGlobals, bnEscapeText(expr->name->text, expr->name->textLen));
+    return g && (g->flags & (SF_TypeMeaning | SF_Alias)) ? g : NULL;
+  }
+  return NULL;
+}
+
 /* getBaseTypes (61714) for interfaces and classes: the types named by the extends clauses */
 static void cResolveBaseTypes(TsType *d) {
   if (d->basesDone) return;
@@ -534,10 +583,17 @@ static void cResolveBaseTypes(TsType *d) {
       for (int e = 0; hc->types && e < hc->types->n; e++) {
         TsNode *ewta = hc->types->v[e];
         TsNode *expr = ewta->expression;
-        if (!expr || expr->kind != TSK_Identifier) { cUnported("base type expression"); continue; }
-        TsSymbol *bs = cSymbolOfTypeName(dn, expr);
-        if (!bs) { cUnported("unresolved base"); continue; }
-        TsType *bt = cTypeFromSymbolReference(bs, ewta);
+        if (!expr) { cUnported("base type expression"); continue; }
+        TsType *bt;
+        TsSymbol *vs = (dn->kind == TSK_ClassDeclaration || dn->kind == TSK_ClassExpression) && expr->kind == TSK_Identifier &&
+                       !ewta->typeArguments ? cResolveValueName(dn, bnEscapeText(expr->text, expr->textLen)) : NULL;
+        if (vs && !(vs->flags & SF_Class)) {
+          bt = cBaseFromConstructSignatures(vs);   /* a value such as Map (MapConstructor) */
+        } else {
+          TsSymbol *bs = cBaseSymbol(dn, expr);
+          if (!bs) { cUnported("unresolved base"); continue; }
+          bt = cTypeFromSymbolReference(bs, ewta);
+        }
         if (bt == cErrorType) continue;
         if (nf == 64) { cUnported("too many base types"); continue; }
         found[nf++] = bt;
@@ -726,8 +782,10 @@ static TsType *cTypeOfSymbol(TsSymbol *sym) {
     t = target ? cTypeOfSymbol(target) : cErrorType;
   } else if (sym->flags & SF_Variable) {
     TsNode *d = sym->valueDeclaration ? sym->valueDeclaration : sym->decls[0];
-    if (d->kind != TSK_VariableDeclaration || !d->type || d->initializer) t = cUnported("variable without annotation");
-    else t = cTypeFromNode(d->type);
+    if (d->kind != TSK_VariableDeclaration) t = cUnported("variable declaration kind");
+    else if (d->type) t = cTypeFromNode(d->type);
+    else if (cIsConstVariableDecl(d) && d->initializer && cIsSymbolCall(d->initializer)) t = cUniqueSymbolType(d);
+    else t = cUnported("variable without annotation");
   } else if (sym->flags & SF_Property) {
     TsNode *d = sym->valueDeclaration ? sym->valueDeclaration : sym->decls[0];
     if (d->kind != TSK_PropertySignature || !d->type) t = cUnported("property without annotation");

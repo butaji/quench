@@ -313,7 +313,7 @@ static TsSymbol *cResolveValueName(TsNode *loc, BName name) {
         if (!n->hasExternalModuleIndicator) goto globals;
         /* fall through */
       case TSK_ModuleDeclaration: {
-        TsSymbol *ms = n->symbol;
+        TsSymbol *ms = cGetMergedSymbol(n->symbol);
         if (ms && ms->exports) {
           TsSymbol *s = bTableGet(ms->exports, name);
           if (s && (s->flags & SF_ModuleMember)) return s;
@@ -321,8 +321,8 @@ static TsSymbol *cResolveValueName(TsNode *loc, BName name) {
         break;
       }
       case TSK_EnumDeclaration:
-        if (n->symbol && n->symbol->exports) {
-          TsSymbol *s = bTableGet(n->symbol->exports, name);
+        if (cGetMergedSymbol(n->symbol) && cGetMergedSymbol(n->symbol)->exports) {
+          TsSymbol *s = bTableGet(cGetMergedSymbol(n->symbol)->exports, name);
           if (s && (s->flags & SF_EnumMember)) return s;
         }
         break;
