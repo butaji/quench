@@ -362,7 +362,8 @@ fn imul<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand,
 ) -> Step<S::Word, F::Control> {
     let Some((left, right)) = operands(stage, frame, left, right, Domain::Int32) else { return Step::Unresolved };
-    let result = super::math::multiply(stage, left, right);
+    let product = super::math::multiply(stage, left, right);
+    let result = frame.int_result(stage, product);
     let fact = frame.int_fact();
     frame.write(stage, destination, result, fact);
     Step::Value(result)
@@ -392,9 +393,12 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             };
             match operation {
                 NumberUnary::Plus => {
+                    // The operand's int32 word defines the destination as any int32 result does
+                    // (`int_result`): a frame of tagged registers boxes it.
                     let fact = frame.int_fact();
-                    frame.write(stage, destination, value, fact);
-                    Step::Value(value)
+                    let result = frame.int_result(stage, value);
+                    frame.write(stage, destination, result, fact);
+                    Step::Value(result)
                 }
                 NumberUnary::Negate => {
                     // `-0` is no int32: a zero operand leaves, as `i32::MIN`'s overflow does; the VM's negation takes both.
