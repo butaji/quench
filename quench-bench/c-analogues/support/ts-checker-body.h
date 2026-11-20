@@ -1130,43 +1130,95 @@ static TsType *cAssignmentExpr(TsNode *e) {
   return rt;
 }
 
-/* the facts of a type for the logical operators: can it be falsy, can it be truthy (getTypeFacts for the ported members) */
-static void cTypeTruthFacts(TsType *t, bool *canFalsy, bool *canTruthy, bool *nullish) {
-  *canFalsy = *canTruthy = *nullish = false;
-  int n = (t->flags & TF_Union) ? t->ntypes : 1;
-  for (int i = 0; i < n; i++) {
-    TsType *m = (t->flags & TF_Union) ? t->types[i] : t;
-    uint32_t f = m->flags;
-    if (f & (TF_Undefined | TF_Null | TF_Void)) { *canFalsy = true; *nullish = true; }
-    else if (f & (TF_Object | TF_NonPrimitive)) *canTruthy = true;
-    else if (f & TF_BooleanLiteral) { if (m == cTrueType) *canTruthy = true; else *canFalsy = true; }
-    else if (f & (TF_StringLiteral | TF_NumberLiteral)) {
-      bool falsy = (f & TF_StringLiteral) ? m->textLen == 0 : (m->litNum == 0 || m->litNum != m->litNum);
-      if (falsy) *canFalsy = true; else *canTruthy = true;
-    } else { *canFalsy = true; *canTruthy = true; }
-  }
+/* hasTypeFacts (getTypeFacts of a union is the union of its members' facts); *ok is false when a member is not ported */
+static bool cHasTypeFacts(TsType *t, uint32_t facts, bool *ok) {
+  uint32_t f = cTypeFacts(t, ok);
+  return (f & facts) != 0;
 }
 
-/* checkBinaryLikeExpression for && || ??: the result when the left type cannot be falsy (or cannot be nullish), and when
- * it is always falsy (or always nullish); the mixed cases are unported */
+/* getDefinitelyFalsyPartOfType for one member: the member when it is definitely falsy, its falsy literal for string,
+ * number and boolean types, never otherwise; bigint and enum members are not ported */
+static TsType *cDefinitelyFalsyPart(TsType *m) {
+  uint32_t f = m->flags;
+  if (f & (TF_BigInt | TF_BigIntLiteral | TF_Enum | TF_EnumLiteral)) return cUnported("definitely falsy part of a bigint or enum");
+  if (f & TF_String) return cLiteralType(TF_StringLiteral, "", 0);
+  if (f & TF_Number) {
+    TsType *z = cLiteralType(TF_NumberLiteral, "0", 1);
+    z->litNum = 0;
+    return z;
+  }
+  if (m == cFalseType) return m;
+  if (f & (TF_Void | TF_Undefined | TF_Null | TF_Any | TF_Unknown)) return m;
+  if ((f & TF_StringLiteral) && m->textLen == 0) return m;
+  if ((f & TF_NumberLiteral) && m->litNum == 0) return m;
+  return cNeverType;
+}
+
+/* extractDefinitelyFalsyTypes (mapType with literal reduction) */
+static TsType *cExtractDefinitelyFalsy(TsType *t) {
+  if (t == cErrorType) return t;
+  int n = cMemberCount(t);
+  TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  for (int i = 0; i < n; i++) {
+    v[i] = cDefinitelyFalsyPart(cMemberAt(t, i));
+    if (v[i] == cErrorType) return cErrorType;
+  }
+  return n == 1 ? v[0] : cGetUnionType(v, n);
+}
+
+/* getNonNullableType under strictNullChecks (getAdjustedTypeWithFacts with NEUndefinedOrNull, for the ported members) */
+static TsType *cNonNullableType(TsType *t) {
+  if (t == cErrorType) return t;
+  if (t->flags & (TF_Any | TF_Unknown)) return cUnported("non-nullable any or unknown");
+  return cTypeWithFacts(t, TFC_NEUndefinedOrNull);
+}
+
+/* getUnionType(types, UnionReduction.Subtype) of the members of two types, sorted by id as the type set is */
+static TsType *cSubtypeUnionOfTwo(TsType *a, TsType *b) {
+  int na = cMemberCount(a), nb = cMemberCount(b);
+  if (a == cNeverType) na = 0;
+  if (b == cNeverType) nb = 0;
+  TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)(na + nb + 1));
+  int n = 0;
+  for (int i = 0; i < na; i++) v[n++] = cMemberAt(a, i);
+  for (int i = 0; i < nb; i++) v[n++] = cMemberAt(b, i);
+  for (int i = 1; i < n; i++) {
+    TsType *x = v[i];
+    int j = i - 1;
+    while (j >= 0 && v[j]->id > x->id) { v[j + 1] = v[j]; j--; }
+    v[j + 1] = x;
+  }
+  return n == 0 ? cNeverType : cUnionWithSubtypesRemoved(v, n);
+}
+
+/* checkBinaryLikeExpressionWorker for && || ??, under strictNullChecks (lines 84487 and after of TypeScript 5.9.2) */
 static TsType *cLogicalResult(int op, TsType *l, TsType *r) {
-  bool canFalsy, canTruthy, nullish;
-  cTypeTruthFacts(l, &canFalsy, &canTruthy, &nullish);
-  bool onlyNullish = canFalsy && !canTruthy && nullish;
+  bool ok = true, has;
   if (op == TSK_AmpersandAmpersandToken) {
-    if (!canFalsy && canTruthy) return r;
-    if (!canTruthy && canFalsy) return l;
-    return cUnported("&& of a mixed type");
+    has = cHasTypeFacts(l, TFC_Truthy, &ok);
+    if (!ok) return cUnported("&& of a type that is not ported");
+    if (!has) return l;
+    TsType *falsy = cExtractDefinitelyFalsy(l);
+    if (falsy == cErrorType) return falsy;
+    return cGetUnionType((TsType *[]){ falsy, r }, 2);
   }
   if (op == TSK_BarBarToken) {
-    if (!canFalsy) return l;
-    if (onlyNullish) return r;
-    return cUnported("|| of a mixed type");
+    has = cHasTypeFacts(l, TFC_Falsy, &ok);
+    if (!ok) return cUnported("|| of a type that is not ported");
+    if (!has) return l;
+    TsType *a = cTypeWithFacts(l, TFC_Truthy);
+    if (a == cErrorType) return a;
+    a = cNonNullableType(a);
+    if (a == cErrorType) return a;
+    return cSubtypeUnionOfTwo(a, r);
   }
   /* ?? */
-  if (!nullish) return l;
-  if (onlyNullish) return r;
-  return cUnported("?? of a mixed type");
+  has = cHasTypeFacts(l, TFC_EQUndefinedOrNull, &ok);
+  if (!ok) return cUnported("?? of a type that is not ported");
+  if (!has) return l;
+  TsType *a = cNonNullableType(l);
+  if (a == cErrorType) return a;
+  return cSubtypeUnionOfTwo(a, r);
 }
 
 static TsType *cBinaryType(TsNode *e) {
