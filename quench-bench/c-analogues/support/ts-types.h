@@ -1088,6 +1088,25 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
         cFreshLiteral(r);
         return r;
       }
+      /* a negative numeric literal (checkPrefixUnaryExpression: the fresh literal of -value, one object) */
+      if (l->kind == TSK_PrefixUnaryExpression && l->extra == TSK_MinusToken && l->operand && l->operand->kind == TSK_NumericLiteral) {
+        const char *digits = l->operand->text;
+        int dn = l->operand->textLen;
+        if (cHasEscapeOrNonAscii(digits, dn) || memchr(digits, '_', (size_t)dn)) return cUnported("negative literal type value");
+        TsType *r = cLiteralType(TF_NumberLiteral, cArenaCat("-", 1, digits, dn), dn + 1);
+        r->litNum = -cNumericLiteralValue(digits, dn);
+        cFreshLiteral(r);
+        return r;
+      }
+      /* a bigint literal (getBigIntLiteralType of the base 10 digits; decimal digits without separators only) */
+      if (l->kind == TSK_BigIntLiteral) {
+        int bn = l->textLen;
+        if (bn < 2 || l->text[bn - 1] != 'n' || (bn > 2 && l->text[0] == '0') || memchr(l->text, '_', (size_t)bn)) return cUnported("bigint literal type value");
+        for (int i = 0; i < bn - 1; i++) if (l->text[i] < '0' || l->text[i] > '9') return cUnported("bigint literal type value");
+        TsType *r = cLiteralType(TF_BigIntLiteral, l->text, bn - 1);
+        cFreshLiteral(r);
+        return r;
+      }
       return cUnported("literal type value");
     }
     case TSK_UnionType: case TSK_IntersectionType: {
