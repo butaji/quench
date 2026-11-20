@@ -153,10 +153,6 @@ pub(crate) fn tag_languages<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
     let boolean = stage.eq_imm(unflagged, crate::Value::FALSE.to_bits());
     let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
     let undefined = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
-    let plain = family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG);
-    let array = family_is(stage, bits, ValueLayout::DIRECT_ARRAY_TAG);
-    let function = family_is(stage, bits, ValueLayout::DIRECT_FUNCTION_TAG);
-    let string = is_direct_string(stage, bits);
     let classes = [(number, language::NUMBER), (boolean, language::BOOLEAN), (null, language::NULL), (undefined, language::UNDEFINED),
         (object, language::OBJECT), (plain, language::OBJECT_PLAIN), (array, language::ARRAY), (function, language::FUNCTION),
         (string, language::STRING)];
