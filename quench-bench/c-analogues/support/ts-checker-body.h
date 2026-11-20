@@ -3085,12 +3085,14 @@ static TsType *cExprTypeWithContext(TsNode *arg, TsType *ptype) {
 }
 
 /* an argument whose type can depend on the contextual type, which is the parameter type of the candidate in an overloaded
- * call (getContextualType of a call argument with several signatures): everything but the expressions that never do */
+ * call (getContextualType of a call argument with several signatures): everything but the expressions that never do (an
+ * element access and a non-null assertion take their type from their operands) */
 static bool cArgNeedsContext(TsNode *a) {
   TsNode *c = cSkipParens(a);
   switch (c->kind) {
     case TSK_Identifier: case TSK_NumericLiteral: case TSK_StringLiteral: case TSK_NoSubstitutionTemplateLiteral:
     case TSK_NullKeyword: case TSK_TrueKeyword: case TSK_FalseKeyword: case TSK_PropertyAccessExpression:
+    case TSK_ElementAccessExpression: case TSK_NonNullExpression:
       return false;
     default: return true;
   }
