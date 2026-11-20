@@ -140,7 +140,6 @@ typedef struct {
   bool startInit;        /* the reference is initialized at the start of its container (parameter, assigned, ...) */
   bool jump;             /* a const reference continues at the creation flow of each function value between it and its declaration */
   TsNode *flowContainer; /* the container the walk ends at (checkIdentifier's flowContainer) */
-  bool declaredAtStart;  /* an outer mutable variable (let or var): its flow start is its declared type, whatever the union */
   TsType *initial;       /* initialType of the walk (the declared type, or its optional type when not assumed initialized) */
   int depth;             /* flowDepth of the walk */
   int sharedStart;       /* the shared flow memo of this walk starts here (sharedFlowStart) */
@@ -176,17 +175,11 @@ static bool cAssignContains(TsNode *target, CFlowRef *r) {
   return false;
 }
 
-static bool cOuterNarrowingSafe(TsType *d) {
-  if (d->flags & TF_Union) return false;
-  return (d->flags & (TF_Object | TF_String | TF_Number | TF_BigInt | TF_ESSymbol | TF_UniqueESSymbol | TF_NonPrimitive |
-                      TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral | TF_Undefined | TF_Null | TF_Void)) != 0;
-}
-
-/* the type of a reference at the start of its container (getTypeAtFlowNode, FlowStart) */
+/* the type of a reference at the start of its container (getTypeAtFlowNode, FlowStart): initialType. An outer variable is
+ * assumed initialized, so its initial type is its declared type; a variable of the container needs startInit. */
 static TsType *cFlowStartType(CFlowRef *r) {
-  if (r->jump) return r->startInit ? r->declared : cUnported("reference used before its assignment");
-  if (r->outer) return (r->declaredAtStart || cOuterNarrowingSafe(r->declared)) ? r->declared : cUnported("narrowing of an outer reference");
-  return r->startInit ? r->declared : cUnported("reference used before its assignment");
+  if (r->outer) return r->declared;
+  return r->startInit ? r->declared : r->initial;   /* an uninitialized reference starts at its optional type (getOptionalType) */
 }
 
 static bool cMatchesRefTree(TsNode *n, CFlowRef *r) { return cSameChain(n, r->node); }
@@ -384,21 +377,6 @@ static TsType *cNarrowByTypeof(TsNode *typeofExpr, TsNode *lit, bool truthy, TsT
   return cTypeWithFacts(t, cTypeofNeFacts(lit->text, lit->textLen));
 }
 
-/* the callee of a call has a type predicate or an assertion signature (narrowing by a call); *known is false when the
- * callee type is not ported */
-static bool cCalleeHasPredicate(TsNode *call, bool *known) {
-  *known = false;
-  TsType *f = cExprType(call->expression);
-  if (f == cErrorType || !(f->flags & TF_Object)) return false;
-  cResolveSignatures(f);
-  *known = true;
-  for (int i = 0; i < f->ncall; i++) {
-    TsNode *d = f->call[i].decl;
-    if (d && d->type && d->type->kind == TSK_TypePredicate) return true;
-  }
-  return false;
-}
-
 /* getNarrowedType (75764) with checkDerived false, as type predicates use it. Assuming the predicate holds, each member of
  * the candidate narrows the members of the type that are strict subtypes or subtypes of it; a type that is related to no
  * member is replaced by the candidate, the type or the intersection. When it is false, the members that are subsets of the
@@ -508,7 +486,13 @@ static TsType *cNarrowByPredicate(TsNode *c, bool truthy, TsType *t, CFlowRef *r
         memcmp(pn->text, pred->parameterName->text, (size_t)pn->textLen) == 0) idx = k;
   }
   if (idx < 0 || !c->arguments || idx >= c->arguments->n) return cUnported("narrowing by a call");
-  if (!cMatchesRefTree(cSkipParens(c->arguments->v[idx]), r)) return cUnported("narrowing by a call");
+  /* narrowTypeByTypePredicate: an argument that is not the reference leaves the type, unless it is a discriminant of a union
+   * (not ported) */
+  TsNode *arg = c->arguments->v[idx];
+  if (!cMatchesRefTree(cSkipParens(arg), r)) {
+    if ((t->flags & TF_Union) && cAssignContains(arg, r)) return cUnported("discriminant narrowing by a predicate");
+    return t;
+  }
   TsType *cand = cTypeFromNode(pred->type);
   if (cand == cErrorType || (cand->flags & (TF_Any | TF_Unknown))) return cUnported("narrowing by a call");
   if (t == cErrorType) return t;
@@ -779,6 +763,22 @@ static bool cHasKeyPropertyCandidate(TsType *t) {
   return objs >= 10;
 }
 
+enum { CE_None = 0, CE_Sig, CE_Unported };
+static int cGetEffects(TsNode *call, TsNode **decl);   /* the effects signature of a call, below */
+
+/* hasMatchingArgument: an argument is the reference or contains it (x.y for x), or the callee's object is */
+static bool cHasMatchingArgument(TsNode *call, CFlowRef *r) {
+  if (call->arguments)
+    for (int i = 0; i < call->arguments->n; i++) {
+      TsNode *a = call->arguments->v[i];
+      if (cMatchesRefTree(cSkipParens(a), r) || cAssignContains(a, r)) return true;
+    }
+  TsNode *ce = call->expression;
+  if (ce->kind == TSK_PropertyAccessExpression && (cMatchesRefTree(cSkipParens(ce->expression), r) || cAssignContains(ce->expression, r)))
+    return true;
+  return false;
+}
+
 /* the flow type of a reference narrowed by a condition (narrowType): the reference is matched directly, through `!`,
  * by equality with undefined or null, by a typeof comparison, and by calls whose arguments include it (without a type
  * predicate). Discriminants, instanceof, in, literal equality and type predicates are not ported. A condition that does
@@ -855,15 +855,21 @@ static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r
       return t;
     }
   }
-  if (c->kind == TSK_CallExpression && c->arguments) {
-    bool argMentions = false;
-    for (int i = 0; i < c->arguments->n; i++) if (cMentionsText(c->arguments->v[i], r->text, r->len)) argMentions = true;
-    if (!argMentions) return t;
-    bool known;
-    bool pred = cCalleeHasPredicate(c, &known);
-    if (known && !pred) return t;
-    if (known && pred) return cNarrowByPredicate(c, truthy, t, r);
-    return cUnported("narrowing by a call");
+  if (c->kind == TSK_CallExpression) {
+    /* narrowTypeByCallExpression: a call that has the reference as an argument (or as the object of its callee) narrows by
+     * the type predicate of its effects signature (an identifier predicate; a this predicate is not ported). A false
+     * optional call has no effects signature. */
+    if (!cHasMatchingArgument(c, r)) return t;
+    if (!truthy && bIsOptionalChain(c)) return t;
+    if (cExprType(c->expression) == cErrorType) return cUnported("narrowing by a call of an unported callee");
+    TsNode *d = NULL;
+    int k = cGetEffects(c, &d);
+    if (k == CE_None) return t;
+    if (k == CE_Unported) return cUnported("narrowing by a call");
+    TsNode *p = d->type;
+    if (p->kind != TSK_TypePredicate || p->assertsModifier) return t;
+    if (!p->parameterName || p->parameterName->kind != TSK_Identifier) return cUnported("narrowing by a this predicate");
+    return cNarrowByPredicate(c, truthy, t, r);
   }
   if (c->kind == TSK_PropertyAccessExpression || c->kind == TSK_ElementAccessExpression) {
     bool unp = false;
@@ -903,16 +909,49 @@ static TsType *cAssignmentReduced(TsType *declared, TsType *assigned) {
   return cIsRelatedWith(assigned, reduced, REL_Assignable) ? reduced : declared;
 }
 
-/* the type assigned by an assignment flow node (getAssignedType): the initializer, the right side, or number for ++ and -- */
+/* checkRightHandSideOfForOf, ported for an Array<T> and for a string (other iterables are not ported) */
+static TsType *cForOfElementType(TsNode *stmt) {
+  TsType *t = cExprType(stmt->expression);
+  if (t == cErrorType) return t;
+  if ((t->flags & TF_Object) && (t->objectFlags & OF_Reference) && t->target == cGlobalArrayDeclared() && t->nargs == 1)
+    return t->args[0];
+  if (t->flags & (TF_String | TF_StringLiteral)) return cStringType;
+  return cUnported("for-of over an unported iterable");
+}
+
+/* the type assigned by an assignment flow node (getAssignedType, or getInitialType of a declaration): the initializer, the
+ * right side of =, ||=, &&= or ??=, the element of a for-in (string) or for-of, and the binding element of a pattern. Compound
+ * assignments are not here: cFlowAssignment takes them from the flow before. Destructuring defaults and elements are not ported. */
 static TsType *cAssignedType(TsNode *n) {
   switch (n->kind) {
-    case TSK_VariableDeclaration:
-      if (!n->initializer || (n->name && n->name->kind != TSK_Identifier)) return cUnported("assignment of a pattern");
-      return cExprType(n->initializer);
-    case TSK_BinaryExpression:
-      if (n->operatorToken->kind != TSK_EqualsToken) return cUnported("compound assignment");
-      return cExprType(n->right);
-    case TSK_PrefixUnaryExpression: case TSK_PostfixUnaryExpression: return cNumberType;
+    case TSK_VariableDeclaration: {
+      if (n->name && n->name->kind != TSK_Identifier) return cUnported("assignment of a pattern");
+      if (n->initializer) return cExprType(n->initializer);
+      TsNode *stmt = n->parent ? n->parent->parent : NULL;
+      if (stmt && stmt->kind == TSK_ForInStatement) return cStringType;
+      if (stmt && stmt->kind == TSK_ForOfStatement) return cForOfElementType(stmt);
+      return cUnported("declaration without an initializer");
+    }
+    case TSK_BindingElement:
+      if (!n->symbol) return cUnported("binding element without a symbol");
+      return cBindingElementType(n->symbol, n);
+    case TSK_Identifier: {
+      TsNode *p = n->parent;
+      switch (p->kind) {
+        case TSK_BinaryExpression: {
+          int op = p->operatorToken->kind;
+          if (!(op == TSK_EqualsToken || op == TSK_BarBarEqualsToken || op == TSK_AmpersandAmpersandEqualsToken ||
+                op == TSK_QuestionQuestionEqualsToken))
+            return cUnported("compound assignment");
+          if (p->parent->kind == TSK_ArrayLiteralExpression || p->parent->kind == TSK_PropertyAssignment)
+            return cUnported("destructuring default assignment");
+          return cExprType(p->right);
+        }
+        case TSK_ForInStatement: return cStringType;
+        case TSK_ForOfStatement: return cForOfElementType(p);
+        default: return cUnported("assignment of a destructuring element");
+      }
+    }
     default: return cUnported("assignment of another kind");
   }
 }
@@ -1139,7 +1178,6 @@ static int cAssertParamIndex(TsNode *d, TsNode *pred) {
 /* the effects signature of a call (getEffectsSignature): none, the single declared signature, or a case not ported (several
  * signatures with a predicate or a never return, a generic one, a union or other callee type). The callee is the expression
  * type (node uses the dotted name in an expression statement). An error or any callee has no effect. */
-enum { CE_None = 0, CE_Sig, CE_Unported };
 static int cGetEffects(TsNode *call, TsNode **decl) {
   *decl = NULL;
   if (call->kind != TSK_CallExpression || call->expression->kind == TSK_SuperKeyword) return CE_None;
@@ -1226,6 +1264,151 @@ static bool cIsReachableFlow(TsFlow *flow, bool noCacheCheck) {
   }
 }
 
+/* ---- switch clauses (checker.ts 5.9.2: getSwitchClauseTypes, narrowTypeBySwitchOn*) ---- */
+/* getSwitchClauseTypes: the regular type of each case expression (never for the default clause) */
+static TsType **cSwitchClauseTypes(TsNode *sw) {
+  TsList *cl = sw->caseBlock->clauses;
+  int n = cl ? cl->n : 0;
+  TsType **st = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  for (int i = 0; i < n; i++) {
+    TsNode *c = cl->v[i];
+    st[i] = c->kind == TSK_CaseClause ? cRegularType(cExprType(c->expression)) : cNeverType;
+  }
+  return st;
+}
+/* the index of the first default clause, or -1 */
+static int cSwitchDefaultIndex(TsNode *sw) {
+  TsList *cl = sw->caseBlock->clauses;
+  for (int i = 0; cl && i < cl->n; i++) if (cl->v[i]->kind == TSK_DefaultClause) return i;
+  return -1;
+}
+/* getSwitchClauseTypeOfWitnesses: the text of each case (its first occurrence, not empty), or NULL when a case is not a string
+ * literal. The witnesses are the case nodes; NULL entries have no witness. */
+static TsNode **cSwitchTypeofWitnesses(TsNode *sw, int *nOut) {
+  TsList *cl = sw->caseBlock->clauses;
+  int n = cl ? cl->n : 0;
+  *nOut = n;
+  for (int i = 0; i < n; i++) {
+    TsNode *c = cl->v[i];
+    if (c->kind == TSK_CaseClause && !bIsStringLiteralLike(c->expression)) return NULL;
+  }
+  TsNode **w = ts_arena_alloc(sizeof(TsNode *) * (size_t)(n ? n : 1));
+  for (int i = 0; i < n; i++) {
+    TsNode *c = cl->v[i];
+    w[i] = NULL;
+    if (c->kind != TSK_CaseClause || c->expression->textLen == 0) continue;
+    bool dup = false;
+    for (int j = 0; j < i && !dup; j++)
+      dup = w[j] && w[j]->textLen == c->expression->textLen && memcmp(w[j]->text, c->expression->text, (size_t)w[j]->textLen) == 0;
+    if (!dup) w[i] = c->expression;
+  }
+  return w;
+}
+/* getNotEqualFactsFromTypeofSwitch: the not-equal facts of the witnesses outside [start, end) */
+static uint32_t cNotEqualFactsFromTypeof(int start, int end, TsNode **w, int n) {
+  uint32_t f = 0;
+  for (int i = 0; i < n; i++)
+    if ((i < start || i >= end) && w[i]) f |= cTypeofNeFacts(w[i]->text, w[i]->textLen);
+  return f;
+}
+/* filterType (t => getTypeFacts(t, mask) === mask) */
+static TsType *cFilterFactsEq(TsType *t, uint32_t mask) {
+  if (t == cErrorType) return t;
+  int n = cMemberCount(t);
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  int k = 0;
+  bool changed = false;
+  for (int i = 0; i < n; i++) {
+    TsType *m = cMemberAt(t, i);
+    bool ok = true;
+    uint32_t mf = cTypeFacts(m, &ok);
+    if (!ok) return cUnported("typeof switch of a type that is not ported");
+    if ((mf & mask) == mask) kept[k++] = m; else changed = true;
+  }
+  if (!changed) return t;
+  if (k == 0) return cNeverType;
+  return k == 1 ? kept[0] : cGetUnionType(kept, k);
+}
+/* narrowTypeBySwitchOnDiscriminant: the members comparable with the case types, and for a default clause the members that
+ * are not one of the case types */
+static TsType *cSwitchOnDiscriminant(TsType *t, TsNode *sw, int start, int end) {
+  if (t == cErrorType) return t;
+  TsType **st = cSwitchClauseTypes(sw);
+  int nAll = sw->caseBlock->clauses ? sw->caseBlock->clauses->n : 0;
+  if (nAll == 0) return t;
+  TsType **ct = st + start;
+  int cn = end - start;
+  bool hasDefault = start == end;
+  for (int i = 0; i < cn; i++) if (ct[i] == cNeverType) hasDefault = true;
+  if ((t->flags & TF_Unknown) && !hasDefault) return cUnported("switch narrowing of unknown without a default");
+  TsType *disc = cGetUnionType(ct, cn);
+  TsType *caseType;
+  if (disc->flags & TF_Never) caseType = cNeverType;
+  else {
+    int n = cMemberCount(t);
+    TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+    int k = 0;
+    for (int i = 0; i < n; i++) if (cAreTypesComparable(disc, cMemberAt(t, i))) kept[k++] = cMemberAt(t, i);
+    TsType *filtered = k == 0 ? cNeverType : (k == 1 ? kept[0] : cGetUnionType(kept, k));
+    caseType = cReplacePrimitivesWithLiterals(filtered, disc);
+  }
+  if (!hasDefault) return caseType;
+  int n = cMemberCount(t);
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  int k = 0;
+  for (int i = 0; i < n; i++) {
+    TsType *m = cMemberAt(t, i);
+    bool inSwitch = false;
+    if (cIsUnitType(m)) {
+      TsType *rm = cRegularType(m);
+      for (int j = 0; j < nAll && !inSwitch; j++) inSwitch = st[j] == rm;
+    }
+    if (!inSwitch) kept[k++] = m;
+  }
+  TsType *defType = k == 0 ? cNeverType : (k == 1 ? kept[0] : cGetUnionType(kept, k));
+  if (caseType->flags & TF_Never) return defType;
+  TsType *pair[2] = { caseType, defType };
+  return cGetUnionType(pair, 2);
+}
+
+/* narrowTypeBySwitchOnTypeOf: the typeof names of the clauses (a default clause keeps the operand's types that are not
+ * excluded by the other names) */
+static TsType *cSwitchOnTypeOf(TsType *t, TsNode *sw, int start, int end) {
+  if (t == cErrorType) return t;
+  int n;
+  TsNode **w = cSwitchTypeofWitnesses(sw, &n);
+  if (!w) return t;
+  int defIdx = cSwitchDefaultIndex(sw);
+  bool hasDefault = start == end || (defIdx >= start && defIdx < end);
+  if (hasDefault) return cFilterFactsEq(t, cNotEqualFactsFromTypeof(start, end, w, n));
+  TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(end - start > 0 ? end - start : 1));
+  for (int i = start; i < end; i++)
+    parts[i - start] = w[i] ? cNarrowByTypeName(t, w[i]->text, w[i]->textLen) : cNeverType;
+  return cGetUnionType(parts, end - start);
+}
+
+/* narrowTypeBySwitchOnTrue: each case expression narrows the reference as a condition that is false before the clauses of
+ * the flow, and as true for the clauses of the flow (or as false for the clauses after them when there is a default) */
+static TsType *cSwitchOnTrue(TsType *t, TsNode *sw, int start, int end, CFlowRef *r) {
+  TsList *cl = sw->caseBlock->clauses;
+  int n = cl ? cl->n : 0;
+  int defIdx = cSwitchDefaultIndex(sw);
+  bool hasDefault = start == end || (defIdx >= start && defIdx < end);
+  for (int i = 0; i < start; i++)
+    if (cl->v[i]->kind == TSK_CaseClause) t = cNarrowByCondition(cl->v[i]->expression, false, t, r);
+  if (hasDefault) {
+    for (int i = end; i < n; i++)
+      if (cl->v[i]->kind == TSK_CaseClause) t = cNarrowByCondition(cl->v[i]->expression, false, t, r);
+    return t;
+  }
+  TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(end - start));
+  for (int i = start; i < end; i++) {
+    TsNode *c = cl->v[i];
+    parts[i - start] = c->kind == TSK_CaseClause ? cNarrowByCondition(c->expression, true, t, r) : cNeverType;
+  }
+  return cGetUnionType(parts, end - start);
+}
+
 /* isExhaustiveSwitchStatement for the switches whose operand is a literal type (computeExhaustiveSwitchStatement); a switch on
  * typeof is not ported and is not exhaustive here */
 static bool cIsLiteralTypeFlow(TsType *t) {
@@ -1239,7 +1422,26 @@ static bool cIsLiteralTypeFlow(TsType *t) {
 }
 static bool cIsExhaustiveSwitch(TsNode *sw) {
   TsNode *e = sw->expression;
-  if (e->kind == TSK_TypeOfExpression) { (void)cUnported("exhaustive switch on typeof"); return false; }
+  if (e->kind == TSK_TypeOfExpression) {
+    /* computeExhaustiveSwitchStatement for typeof: every typeof name that the operand may have is a case */
+    int n;
+    TsNode **w = cSwitchTypeofWitnesses(sw, &n);
+    if (!w) return false;
+    TsType *operand = cExprType(e->expression);
+    if (operand == cErrorType) return false;
+    TsType *oc = cBaseConstraintOf(operand);
+    if (!oc) oc = operand;
+    uint32_t nef = cNotEqualFactsFromTypeof(0, 0, w, n);
+    if (oc->flags & (TF_Any | TF_Unknown)) return (556800u & nef) == 556800u;   /* AllTypeofNE */
+    int m = cMemberCount(oc);
+    for (int i = 0; i < m; i++) {
+      bool ok = true;
+      uint32_t mf = cTypeFacts(cMemberAt(oc, i), &ok);
+      if (!ok) { (void)cUnported("exhaustive typeof switch of a type that is not ported"); return false; }
+      if ((mf & nef) == nef) return false;
+    }
+    return true;
+  }
   TsType *t = cExprType(e);
   if (t == cErrorType) return false;
   TsType *bc = cBaseConstraintOf(t);
@@ -1308,6 +1510,11 @@ static bool cArgsMention(TsNode *call, CFlowRef *r) {
   return false;
 }
 
+enum { AK_None = 0, AK_Definite = 1, AK_Compound = 2 };
+static TsNode *cAssignmentTarget(TsNode *node);
+static int cAssignmentTargetKind(TsNode *id);
+static TsType *cBaseOfLiteral(TsType *t, bool *unp);
+static bool cIsInCompoundLikeAssignment(TsNode *id);
 /* getTypeAtFlowAssignment: the reference assigned here (its declared type, or the assigned type reduced by it), the
  * reference's container assigned (the declared type), or no effect (false). An assignment in unreachable code is never. */
 static bool cFlowAssignment(TsFlow *flow, CFlowRef *r, CFT *out) {
@@ -1315,9 +1522,20 @@ static bool cFlowAssignment(TsFlow *flow, CFlowRef *r, CFT *out) {
   TsType *declared = r->declared;
   if (tg && cAssignMatches(tg, r)) {
     if (!cIsReachableFlow(flow, false)) { *out = cFT(cUnreachableNeverType); return true; }
-    if (r->nonUnion) { *out = cFT(declared); return true; }
+    if (cAssignmentTargetKind(flow->node) == AK_Compound) {
+      /* a compound assignment (x += v, x++) is the base literal type of the flow before it */
+      CFT prev = cFlowAt(flow->ante, r);
+      bool unp = false;
+      TsType *base = cBaseOfLiteral(prev.t, &unp);
+      *out = unp ? cFT(cUnported("compound assignment of a bigint or enum literal")) : cCreateFlowType(base, prev.inc);
+      return true;
+    }
+    bool unp = false;
+    TsType *t = cIsInCompoundLikeAssignment(flow->node) ? cBaseOfLiteral(declared, &unp) : declared;
+    if (unp) { *out = cFT(cUnported("assignment to a bigint or enum literal type")); return true; }
+    if (!(t->flags & TF_Union)) { *out = cFT(t); return true; }
     TsType *assigned = cAssignedType(flow->node);
-    *out = cFT(assigned == cErrorType ? assigned : cAssignmentReduced(declared, assigned));
+    *out = cFT(assigned == cErrorType ? assigned : cAssignmentReduced(t, assigned));
     return true;
   }
   /* containsMatchingReference (x.y = v for the reference x): the declared type, whatever it is (getTypeAtFlowAssignment) */
@@ -1365,13 +1583,22 @@ static CFT cFlowCondition(TsFlow *flow, CFlowRef *r) {
   return cCreateFlowType(n, ft.inc);
 }
 
-/* getTypeAtSwitchClause: the antecedent, narrowed by the switch (the narrowing of a switch that mentions the reference is not
- * ported) */
+/* getTypeAtSwitchClause: the antecedent, narrowed by the switch when the switch operand is the reference (its discriminant), the
+ * typeof of the reference, or `true`. A switch on a property of the reference (a discriminant property) is not ported. */
 static CFT cFlowSwitchClause(TsFlow *flow, CFlowRef *r) {
   CFT ft = cFlowAt(flow->ante, r);
-  if (ft.t == cErrorType) return ft;
-  if (cMentionsText(flow->node->expression, r->text, r->len)) return cFT(cUnported("switch narrowing"));
-  return ft;
+  TsType *t = ft.t;
+  if (t == cErrorType) return ft;
+  TsNode *sw = flow->node;
+  TsNode *expr = cSkipParens(sw->expression);
+  int start = flow->clauseStart, end = flow->clauseEnd;
+  TsType *n = t;
+  if (cMatchesRefTree(expr, r)) n = cSwitchOnDiscriminant(t, sw, start, end);
+  else if (expr->kind == TSK_TypeOfExpression && cMatchesRefTree(cSkipParens(expr->expression), r)) n = cSwitchOnTypeOf(t, sw, start, end);
+  else if (expr->kind == TSK_TrueKeyword) n = cSwitchOnTrue(t, sw, start, end, r);
+  else if (cMentionsText(sw->expression, r->text, r->len)) return cFT(cUnported("switch narrowing of a discriminant property"));
+  if (n == t) return ft;
+  return cCreateFlowType(n, ft.inc);
 }
 
 /* getTypeAtFlowBranchLabel: the union of the antecedent types (subtype reduction when one is not a subset of the initial type).
@@ -1519,6 +1746,151 @@ static CFT cFlowAt(TsFlow *flow, CFlowRef *r) {
   }
 }
 
+/* ---- assignment targets and the last assignment of a variable (checker.ts 5.9.2) ---- */
+#define CMAX_ASSIGN_POS INT64_MAX / 4
+
+/* getAssignmentTarget: the assignment, update or for-in/of statement that writes the identifier, else NULL */
+static TsNode *cAssignmentTarget(TsNode *node) {
+  TsNode *parent = node->parent;
+  for (;;) {
+    switch (parent->kind) {
+      case TSK_BinaryExpression:
+        return isAssignmentOperator(parent->operatorToken->kind) && parent->left == node ? parent : NULL;
+      case TSK_PrefixUnaryExpression: case TSK_PostfixUnaryExpression:
+        return (parent->extra == TSK_PlusPlusToken || parent->extra == TSK_MinusMinusToken) ? parent : NULL;
+      case TSK_ForInStatement: case TSK_ForOfStatement:
+        return parent->initializer == node ? parent : NULL;
+      case TSK_ParenthesizedExpression: case TSK_ArrayLiteralExpression: case TSK_SpreadElement: case TSK_NonNullExpression:
+        node = parent;
+        break;
+      case TSK_SpreadAssignment:
+        node = parent->parent;
+        break;
+      case TSK_ShorthandPropertyAssignment:
+        if (parent->name != node) return NULL;
+        node = parent->parent;
+        break;
+      case TSK_PropertyAssignment:
+        if (parent->name == node) return NULL;
+        node = parent->parent;
+        break;
+      default:
+        return NULL;
+    }
+    parent = node->parent;
+  }
+}
+
+/* isInCompoundLikeAssignment: the identifier is the target of `x = a + b` (a shift, additive, multiplicative or exponent
+ * operator on the right), whose declared type is widened to its base literal types */
+static bool cIsInCompoundLikeAssignment(TsNode *id) {
+  TsNode *t = cAssignmentTarget(id);
+  if (!t || t->kind != TSK_BinaryExpression || t->operatorToken->kind != TSK_EqualsToken) return false;
+  TsNode *right = cSkipParens(t->right);
+  return right->kind == TSK_BinaryExpression && getBinaryOperatorPrecedence(right->operatorToken->kind) >= OP_Shift;
+}
+
+/* getAssignmentTargetKind: definite for `=`, the logical assignments, and for-in/of; compound for the other operators and ++ or -- */
+static int cAssignmentTargetKind(TsNode *id) {
+  TsNode *t = cAssignmentTarget(id);
+  if (!t) return AK_None;
+  switch (t->kind) {
+    case TSK_BinaryExpression: {
+      int op = t->operatorToken->kind;
+      return (op == TSK_EqualsToken || op == TSK_BarBarEqualsToken || op == TSK_AmpersandAmpersandEqualsToken ||
+              op == TSK_QuestionQuestionEqualsToken) ? AK_Definite : AK_Compound;
+    }
+    case TSK_PrefixUnaryExpression: case TSK_PostfixUnaryExpression: return AK_Compound;
+    case TSK_ForInStatement: case TSK_ForOfStatement: return AK_Definite;
+    default: return AK_None;
+  }
+}
+
+static bool cIsFunctionOrSourceFile(TsNode *n) { return cIsFunctionLikeKind(n->kind) || n->kind == TSK_SourceFile; }
+/* findAncestor (isFunctionOrSourceFile), the node itself included */
+static TsNode *cFunctionOrSourceOf(TsNode *n) {
+  for (; n; n = n->parent) if (cIsFunctionOrSourceFile(n)) return n;
+  return NULL;
+}
+
+/* getRootDeclaration */
+static TsNode *cRootDeclaration(TsNode *d) {
+  while (d->kind == TSK_BindingElement && d->parent && d->parent->parent) d = d->parent->parent;
+  return d;
+}
+
+/* isParameterOrMutableLocalVariable: a parameter, a catch variable, or a let variable that is not exported or global */
+static bool cIsParamOrMutableLocal(TsSymbol *s) {
+  TsNode *vd = s->valueDeclaration;
+  if (!vd) return false;
+  TsNode *d = cRootDeclaration(vd);
+  if (d->kind == TSK_Parameter) return true;
+  if (d->kind != TSK_VariableDeclaration || !d->parent) return false;
+  if (d->parent->kind == TSK_CatchClause) return true;
+  if (!(d->parent->flags & TNF_Let)) return false;
+  if (bCombinedFlags(d, true) & TMF_Export) return false;
+  if (d->parent->parent && d->parent->parent->kind == TSK_VariableStatement && d->parent->parent->parent &&
+      d->parent->parent->parent->kind == TSK_SourceFile)
+    return false;
+  return true;
+}
+
+/* extendAssignmentPosition: the end of the statement that holds the assignment, when it is inside the declaration's container */
+static int64_t cExtendAssignPos(TsNode *n, TsNode *decl) {
+  int64_t pos = n->pos;
+  for (TsNode *x = n; x && x->pos > decl->pos; x = x->parent) {
+    switch (x->kind) {
+      case TSK_VariableStatement: case TSK_ExpressionStatement: case TSK_IfStatement: case TSK_DoStatement:
+      case TSK_WhileStatement: case TSK_ForStatement: case TSK_ForInStatement: case TSK_ForOfStatement:
+      case TSK_WithStatement: case TSK_SwitchStatement: case TSK_TryStatement: case TSK_ClassDeclaration:
+        pos = x->end;
+        break;
+      default: break;
+    }
+  }
+  return pos;
+}
+
+/* markNodeAssignments: the last assignment position of each parameter or mutable local written under the node. An assignment
+ * from a nested function, or a definite one, gives a negative or maximal position (the sign is kept as in TypeScript). */
+static void cMarkNodeAssignments(TsNode *n) {
+  if (n->kind == TSK_InterfaceDeclaration || n->kind == TSK_TypeAliasDeclaration || n->kind == TSK_EnumDeclaration) return;
+  if (n->kind == TSK_Identifier) {
+    int tk = cAssignmentTargetKind(n);
+    if (tk == AK_None) return;
+    TsSymbol *s = cResolveValueName(n, bnEscapeText(n->text, n->textLen));
+    if (!s || !cIsParamOrMutableLocal(s)) return;
+    bool def = tk == AK_Definite || (s->lastAssignSet && s->lastAssignPos < 0);
+    if (!s->lastAssignSet || llabs(s->lastAssignPos) != CMAX_ASSIGN_POS) {
+      TsNode *refF = cFunctionOrSourceOf(n), *declF = cFunctionOrSourceOf(s->valueDeclaration);
+      s->lastAssignPos = refF == declF ? cExtendAssignPos(n, s->valueDeclaration) : CMAX_ASSIGN_POS;
+      s->lastAssignSet = true;
+    }
+    if (def && s->lastAssignPos > 0) s->lastAssignPos = -s->lastAssignPos;
+    return;
+  }
+  BNodeVec kids = { NULL, 0, 0 };
+  bChildrenSorted(n, &kids);
+  for (int i = 0; i < kids.n; i++) cMarkNodeAssignments(kids.v[i]);
+  free(kids.v);
+}
+
+/* isPastLastAssignment: the location is after every assignment to the variable in its container (the container's assignments
+ * are marked once, unless an enclosing one was marked already) */
+static bool cIsPastLastAssignment(TsSymbol *s, TsNode *loc) {
+  TsNode *fn = cFunctionOrSourceOf(s->valueDeclaration);
+  if (!fn) return false;
+  if (!fn->assignMarked) {
+    fn->assignMarked = 1;
+    bool marked = false;
+    for (TsNode *p = fn->parent; p && !marked; p = p->parent)
+      if (cIsFunctionOrSourceFile(p) && p->assignMarked) marked = true;
+    if (!marked) cMarkNodeAssignments(fn);
+  }
+  if (!s->lastAssignSet || s->lastAssignPos == 0) return true;
+  return llabs(s->lastAssignPos) < loc->pos;
+}
+
 /* getFlowTypeOfReference: the declared type when no narrowing applies, else the narrowed type (ported forms only). The
  * unreachable result and a non-null reference that is never not undefined give the declared type. */
 static TsType *cFlowTypeOfReference(TsNode *ref, CFlowRef *r) {
@@ -1564,6 +1936,13 @@ static TsType *cReferenceDeclaredType(TsNode *ref, TsSymbol *s, bool *outer, boo
   return d;
 }
 
+/* containsUndefinedType */
+static bool cContainsUndefinedType(TsType *t) {
+  if (t->flags & TF_Undefined) return true;
+  if (t->flags & TF_Union) for (int i = 0; i < t->ntypes; i++) if (t->types[i]->flags & TF_Undefined) return true;
+  return false;
+}
+
 /* the type of an identifier reference (checkIdentifier): the flow type of a variable, else the type of the symbol */
 static TsType *cIdentifierType(TsNode *e) {
   BName nm = bnEscapeText(e->text, e->textLen);
@@ -1581,28 +1960,33 @@ static TsType *cIdentifierType(TsNode *e) {
     TsType *c = cConstraintOf(d);
     if (c && (c->flags & TF_Union)) return cUnported("reference of a type parameter with a union constraint");
   }
-  /* checkIdentifier: a const variable of an enclosing container is narrowed through the function values that
-   * create the reference (the flow container moves up past function expressions, arrows and object-literal methods) */
-  bool jump = false;
-  TsNode *flowC = NULL;
+  /* checkIdentifier: the flow container moves up past the function expressions, arrows and object-literal methods that
+   * create the reference, for a const variable, and for a parameter or mutable local past its last assignment. The walk
+   * then continues at the creation flow of those function values (jump). */
   TsNode *decl = cFirstDeclOf(s);
-  if (outer && decl && decl->kind == TSK_VariableDeclaration && decl->parent && decl->parent->kind == TSK_VariableDeclarationList &&
-      (decl->parent->flags & 7u) == TNF_Const) {
+  TsNode *ownC = cFlowContainerOf(e);
+  TsNode *flowC = ownC;
+  if (outer && decl) {
     TsNode *declC = cFlowContainerOf(decl);
-    flowC = cFlowContainerOf(e);
+    bool isConst = decl->kind == TSK_VariableDeclaration && decl->parent && decl->parent->kind == TSK_VariableDeclarationList &&
+                   (decl->parent->flags & 7u) == TNF_Const;
     while (flowC && flowC != declC &&
            (flowC->kind == TSK_FunctionExpression || flowC->kind == TSK_ArrowFunction ||
             ((flowC->kind == TSK_MethodDeclaration || flowC->kind == TSK_GetAccessor || flowC->kind == TSK_SetAccessor) &&
-             (bContainerFlags(flowC) & CF_IsObjectLiteralOrClassExpressionMethodOrAccessor))))
+             (bContainerFlags(flowC) & CF_IsObjectLiteralOrClassExpressionMethodOrAccessor))) &&
+           (isConst || (cIsParamOrMutableLocal(s) && cIsPastLastAssignment(s, e))))
       flowC = cFlowContainerOf(flowC);
-    jump = flowC != NULL;
   }
-  /* a let or var of an enclosing function is not narrowed through the function value that creates the reference
-   * (isConstantVariable is false): the walk of the reference's own function starts at the declared type */
-  bool mutableOuter = outer && !jump && decl && decl->kind == TSK_VariableDeclaration && decl->parent &&
-                      decl->parent->kind == TSK_VariableDeclarationList && (decl->parent->flags & 7u) != TNF_Const;
-  CFlowRef r = { e, e->text, e->textLen, d, false, outer, startInit, jump, flowC, mutableOuter };
-  return cFlowTypeOfReference(e, &r);
+  bool jump = flowC != ownC;
+  CFlowRef r = { e, e->text, e->textLen, d, false, outer, startInit, jump, flowC };
+  TsType *ft = cFlowTypeOfReference(e, &r);
+  /* checkIdentifier: a reference that is not assumed initialized and whose flow type has undefined that its declared type
+   * has not is an error (2454), and it has its declared type */
+  if (!startInit && ft != cErrorType && cContainsUndefinedType(ft) && !cContainsUndefinedType(d)) {
+    cDiagAdd(cSourceFileOf(e), cNodeStart(e), 2454, NULL);
+    return d;
+  }
+  return ft;
 }
 
 /* the type of a property access or element access reference, narrowed by the flow (the declared type of the member) */
@@ -2629,18 +3013,22 @@ static TsType *cNewType2(TsNode *e) {
 
 /* the element type of an array literal: the subtype-reduced union of the widened elements */
 static TsType *cArrayLiteralType(TsNode *e) {
-  if (!e->elements || e->elements->n == 0) return cUnported("empty array literal (evolving array)");
-  int n = e->elements->n;
-  TsType **ts = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
-  for (int i = 0; i < n; i++) {
-    TsNode *el = e->elements->v[i];
-    if (el->kind == TSK_SpreadElement) return cUnported("spread in an array literal");
-    if (el->kind == TSK_OmittedExpression) { ts[i] = cUndefinedType; continue; }
-    TsType *t = cMutableLocationType(el, cExprType(el));
-    if (t == cErrorType) return t;
-    ts[i] = t;
+  int n = e->elements ? e->elements->n : 0;
+  /* checkArrayLiteral: an empty literal has the element implicitNeverType under strictNullChecks, which the port takes as never
+   * (the evolving array of an auto-typed variable is a different type and is not ported) */
+  TsType *elem = cNeverType;
+  if (n > 0) {
+    TsType **ts = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
+    for (int i = 0; i < n; i++) {
+      TsNode *el = e->elements->v[i];
+      if (el->kind == TSK_SpreadElement) return cUnported("spread in an array literal");
+      if (el->kind == TSK_OmittedExpression) { ts[i] = cUndefinedType; continue; }
+      TsType *t = cMutableLocationType(el, cExprType(el));
+      if (t == cErrorType) return t;
+      ts[i] = t;
+    }
+    elem = n == 1 ? ts[0] : cUnionWithSubtypesRemoved(ts, n);
   }
-  TsType *elem = n == 1 ? ts[0] : cUnionWithSubtypesRemoved(ts, n);
   if (elem == cErrorType) return elem;
   TsSymbol *arr = bTableGet(cGlobals, bnC("Array"));
   if (!arr) return cUnported("no global Array");
