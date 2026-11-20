@@ -21,6 +21,7 @@ use crate::bytecode::{FieldBase, FieldLookup, Operand};
 use crate::typed_ir::Type;
 
 mod concrete;
+mod word_ops;
 pub(crate) mod numeric;
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
 pub(crate) mod layout_offsets;

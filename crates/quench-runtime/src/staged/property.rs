@@ -512,20 +512,8 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
             let shape = ic::shape_word(stage, &at);
             arms(stage, list, Reached { shape: Some(shape), ..at }, records, miss)
         }
-        FieldPlan::Inherited { shape, constants, proof } => {
-            let at = frame.receiver_record(stage, owner, object, readable, miss)?;
-            match proof {
-                PrototypeProof::Watched { holder } => {
-                    guard_receiver_shape(stage, frame, (owner, !readable), &at, shape, miss)?;
-                    frame.hold_prototype(stage, holder, miss)?;
-                    ic::run(stage, &[IcOp::PrototypeConstants(constants)], Reached::bare(at.record), None, miss)
-                }
-                PrototypeProof::Linked { expected_link } => {
-                    let &[(_, value)] = constants else { return None };
-                    super::entry::held_constant(stage, at.record, (shape, expected_link), value, miss)
-                }
-            }
-        }
+        FieldPlan::Inherited { shape, constants, proof } =>
+            inherited(stage, frame, (owner, readable), object, (shape, constants, proof), miss),
         FieldPlan::Readable(inner) => read_with(stage, frame, (owner, true), object, *inner, miss),
         FieldPlan::Probed { fast, atom, site } => frame.probed(stage, owner, object, (atom, site), miss,
             #[inline(always)] |stage, frame, miss| read_with(stage, frame, (owner, readable), object, *fast, miss)),
@@ -544,8 +532,28 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     }
 }
 
+/// A prototype-held read (`FieldPlan::Inherited`) of `owner`'s `object`: the receiver's exact shape and the
+/// holder its proof names, then the constant the holder held.
+#[inline(always)]
+fn inherited<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool), object: S::Word,
+    (shape, constants, proof): (u32, &[(u32, u64)], PrototypeProof), miss: S::Miss) -> Option<S::Word> {
+    let at = frame.receiver_record(stage, owner, object, readable, miss)?;
+    match proof {
+        PrototypeProof::Watched { holder } => {
+            guard_receiver_shape(stage, frame, (owner, !readable), &at, shape, miss)?;
+            frame.hold_prototype(stage, holder, miss)?;
+            ic::run(stage, &[IcOp::PrototypeConstants(constants)], Reached::bare(at.record), None, miss)
+        }
+        PrototypeProof::Linked { expected_link } => {
+            let &[(_, value)] = constants else { return None };
+            super::entry::held_constant(stage, at.record, (shape, expected_link), value, miss)
+        }
+    }
+}
+
 /// Continues where `owner`'s object has exact shape `shape`: a proof the frame holds emits
 /// nothing, else the guard is made and recorded. `direct` where the receiver is a direct object.
+#[inline(always)]
 pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
     at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<()> {
     if frame.proven_shape(stage, owner) == Some(shape) { return Some(()); }
@@ -572,12 +580,13 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
     match rest {
         [IcOp::LoadSlot { slot, form, storage_len, rep }] =>
             kept_slot(stage, frame, (owner, *shape), &at, (*slot, *form, *storage_len, *rep), miss),
-        _ => ic::run(stage, rest, at, records, miss),
+        _ => ic::run_unrolled(stage, rest, at, records, miss),
     }
 }
 
 /// The first of `plans` whose shape set holds the record's shape reads it; the last is
 /// the guard of the whole.
+#[inline(always)]
 fn arms<S: Stage>(stage: &mut S, plans: &[Arm<'_>], at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
     miss: S::Miss) -> Option<S::Word> {
     let (arm, rest) = plans.split_first()?;
@@ -593,6 +602,7 @@ fn arms<S: Stage>(stage: &mut S, plans: &[Arm<'_>], at: Reached<S::Word, S::Cond
 
 /// A nested lookup: each link reads from the previous link's value, the first from `owner`'s
 /// object and the rest from objects no register names.
+#[inline(always)]
 fn chain<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, first: (Owner, bool), base: S::Word,
     links: &[FieldPlan<'_>], miss: S::Miss) -> Option<S::Word> {
     let mut object = base;
@@ -643,6 +653,10 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
         let at = frame.receiver_record(stage, owner, object, false, miss)?;
         let records = frame.object_records(stage);
         return run_owned(stage, frame, (owner, true), ops, (at, records), miss);
+    }
+    // A prototype-held read, the other plan a row's holes name, inline too: only nested plans recurse.
+    if let FieldPlan::Inherited { shape, constants, proof } = plan {
+        return inherited(stage, frame, (owner, false), object, (shape, constants, proof), miss);
     }
     read_with(stage, frame, (owner, false), object, plan, miss)
 }

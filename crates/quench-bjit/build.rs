@@ -137,7 +137,8 @@ fn main() {
     }
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
     let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &VARIANTS[..1] };
-    let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&out, parts.len(), (arch, read), *cpu))).collect();
+    let sources = sources_digest(manifest);
+    let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&out, parts.len(), (arch, read), *cpu, sources))).collect();
     // `rows.rs` builds the Wasm entry and leave routines on every target but Apple AArch64, so each listed routine is a row there.
     if env::var("CARGO_CFG_TARGET_VENDOR").unwrap_or_default() != "apple" {
         for (name, (rows, _)) in &built {
@@ -190,10 +191,11 @@ type Rows = Vec<(String, String)>;
 
 /// Compiles every shard for `cpu` (at most `shards::workers` rustc processes at once), reads each
 /// object's rows, and merges them into the sorted library with its counts.
-fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>) -> (Rows, Counts) {
+fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>, sources: u64) -> (Rows, Counts) {
     // `QUENCH_STENCIL_WORKERS` caps the rustc processes on a box whose memory, not its cores, bounds them.
+    // Unset, one worker per core that the box's available memory holds a shard's rustc for (`SHARD_MEMORY`).
     let parallelism = env::var("QUENCH_STENCIL_WORKERS").ok().and_then(|jobs| jobs.parse().ok())
-        .unwrap_or_else(|| thread::available_parallelism().map_or(1, std::num::NonZero::get));
+        .unwrap_or_else(|| thread::available_parallelism().map_or(1, std::num::NonZero::get).min(memory_workers()));
     let next = AtomicUsize::new(0);
     let built: Vec<(Rows, Counts)> = thread::scope(|scope| {
         let workers: Vec<_> = (0..shards::workers(count, parallelism))
@@ -205,15 +207,79 @@ fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Ve
                         if shard >= count {
                             return done;
                         }
-                        done.push(stencil_rows(arch, read(&fs::read(compile(out, shard, cpu)).unwrap())));
+                        // A shard of heap rows takes the most memory: one compiles at a time (`HEAVY_SHARD`).
+                        let rows = fs::read_to_string(instance_file(out, shard)).unwrap_or_default();
+                        let cached = cached_object(out, shard, cpu, sources, &rows);
+                        let object = if cached.exists() {
+                            cached
+                        } else {
+                            let heavy = rows.contains("heap_row!");
+                            let guard = heavy.then(|| HEAVY_SHARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+                            let object = compile(out, shard, cpu);
+                            drop(guard);
+                            keep_object(&object, &cached);
+                            object
+                        };
+                        done.push(stencil_rows(arch, read(&fs::read(object).unwrap())));
                     }
                 })
             })
             .collect();
         workers.into_iter().flat_map(|worker| worker.join().expect("a shard worker")).collect()
     });
+    // Every shard is checked before the build fails, so one run names every row that breaks a check.
+    let failed = FAILED_ROWS.lock().unwrap();
+    assert!(failed.is_empty(), "{} stencil rows fail their checks:\n{}", failed.len(), failed.join("\n"));
+    drop(failed);
     let counts = built.iter().fold(Counts::default(), |sum, (_, c)| Counts { framed: sum.framed + c.framed, unchained: sum.unchained + c.unchained });
     (shards::merge(built.into_iter().map(|(rows, _)| rows)), counts)
+}
+
+/// The digest of every stencil source (`sources::watched`), the flags file and the opcode catalog,
+/// by content: the part of a shard object's key that every shard shares.
+fn sources_digest(manifest: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut files: Vec<PathBuf> = sources::watched(manifest).into_iter().filter(|path| path.is_file()).collect();
+    files.push(manifest.join(RUSTC_FLAGS_FILE));
+    files.push(manifest.join("../quench-runtime/src/bytecode.rs"));
+    files.push(manifest.join("supernodes.txt"));
+    files.sort();
+    for file in files {
+        file.hash(&mut hasher);
+        fs::read(&file).unwrap_or_default().hash(&mut hasher);
+    }
+    env::var("RUSTC").unwrap_or_default().hash(&mut hasher);
+    env::var("TARGET").unwrap_or_default().hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Where the object of `shard` (its instance text `rows`) is kept once built: a store outside
+/// `OUT_DIR`, keyed by the sources, the CPU and the rows, so a rerun with the same inputs (one that
+/// timed out, or one whose crate hash moved for an edit no stencil reads) copies the object instead
+/// of recompiling it. Sound because a shard object is a function of exactly those inputs: rustc,
+/// the target and the flags are in `sources`, and `fixed_rows` follows the shard index, which is keyed too.
+/// `QUENCH_STENCIL_CACHE` names the store; unset, it is `stencil-cache` beside the build's `target` profile dirs.
+fn cached_object(out: &Path, shard: usize, cpu: Option<&str>, sources: u64, rows: &str) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (sources, cpu, shard == FIXED_ROWS_SHARD, rows).hash(&mut hasher);
+    let store = env::var_os("QUENCH_STENCIL_CACHE").map(PathBuf::from).unwrap_or_else(|| {
+        // OUT_DIR is target/<profile>/build/<crate-hash>/out.
+        out.ancestors().nth(4).unwrap_or(out).join("stencil-cache")
+    });
+    store.join(format!("{:016x}.o", hasher.finish()))
+}
+
+/// Keeps a copy of the built `object` at `cached`, written whole before it is named, so a run cut
+/// off midway leaves no partial object under a key.
+fn keep_object(object: &Path, cached: &Path) {
+    let Some(store) = cached.parent() else { return };
+    if fs::create_dir_all(store).is_err() { return; }
+    let partial = cached.with_extension(format!("{}.part", std::process::id()));
+    if fs::copy(object, &partial).is_ok() {
+        let _ = fs::rename(&partial, cached);
+    }
 }
 
 fn compile(out: &Path, shard: usize, cpu: Option<&str>) -> PathBuf {
@@ -238,19 +304,47 @@ fn stencil_rows(arch: Arch, rows: Vec<ObjectRow>) -> (Rows, Counts) {
     let mut counts = Counts::default();
     let rows = rows
         .iter()
-        .map(|row| {
-            check_no_return(arch, &row.name, &row.code);
-            check_call(arch, &row.name, &row.code);
-            let relocs = relocations(arch, row);
-            let is_row = arch == Arch::X86_64 && checks::is_row(&row.name);
-            let laid = if is_row { layout::reorder(&row.code, &relocs) } else { None };
-            let (code, relocs, hot_len) = laid.map_or((row.code.clone(), relocs, row.code.len()), |l| (l.code, l.relocs, l.hot_len));
-            counts.framed += usize::from(is_row && checks::has_stack_frame(&code));
-            counts.unchained += usize::from(is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs));
-            (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name))
+        .filter_map(|row| {
+            // A row that fails a check is recorded (`FAILED_ROWS`) and the shard goes on with the next.
+            let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| checked_row(arch, row, &mut counts)));
+            checked.map_err(|failure| {
+                let message = failure.downcast_ref::<String>().cloned()
+                    .or_else(|| failure.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                    .unwrap_or_else(|| format!("stencil {}: a check failed", row.name));
+                FAILED_ROWS.lock().unwrap().push(message);
+            }).ok()
         })
         .collect();
     (rows, counts)
+}
+
+/// Held while a shard of heap rows compiles, so two never run together (`compile_shards`).
+static HEAVY_SHARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The rows that failed a check, across every shard (`stencil_rows`).
+static FAILED_ROWS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// What one shard's rustc may reach, in bytes: the workers the box's memory holds (`memory_workers`).
+const SHARD_MEMORY: u64 = 5 << 30;
+
+/// How many shard rustc processes the box's available memory holds, at least one.
+fn memory_workers() -> usize {
+    let available = fs::read_to_string("/proc/meminfo").ok().and_then(|info| info.lines()
+        .find_map(|line| line.strip_prefix("MemAvailable:")?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()));
+    available.map_or(usize::MAX, |kib| usize::try_from((kib << 10) / SHARD_MEMORY).unwrap_or(usize::MAX).max(1))
+}
+
+/// One row as (name, table entry), checked; adds to `counts` what `checks` counted.
+fn checked_row(arch: Arch, row: &ObjectRow, counts: &mut Counts) -> (String, String) {
+    check_no_return(arch, &row.name, &row.code);
+    check_call(arch, &row.name, &row.code);
+    let relocs = relocations(arch, row);
+    let is_row = arch == Arch::X86_64 && checks::is_row(&row.name);
+    let laid = if is_row { layout::reorder(&row.code, &relocs) } else { None };
+    let (code, relocs, hot_len) = laid.map_or((row.code.clone(), relocs, row.code.len()), |l| (l.code, l.relocs, l.hot_len));
+    counts.framed += usize::from(is_row && checks::has_stack_frame(&code));
+    counts.unchained += usize::from(is_row && !checks::ends_in_continuation(&code[..hot_len], &relocs));
+    (row.name.clone(), format!("    RawStencil {{ name: {:?}, code: &{code:?}, hot_len: {hot_len}, relocs: &{relocs:?} }},\n", row.name))
 }
 
 /// The static `RawLibrary` named `table`: its rows and what `checks` counted over them.

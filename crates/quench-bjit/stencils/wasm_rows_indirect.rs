@@ -91,7 +91,7 @@ pub(crate) unsafe fn call_indirect(mut s: S) -> Out {
 /// Every case but the fast one: the VM resolves the element, checks it (null, uninitialized, a
 /// related signature or a mismatch trap there) and calls it, then the staged protocol
 /// (`call_reference`). Out of line: the cold path of the row.
-#[inline(never)]
+#[inline(always)]
 unsafe fn slow(mut s: S, (table, index): (usize, u64), (signature, site): (u32, u32), (window, destination): (usize, usize)) -> Out {
     unsafe {
         let callout = *((s.ctx + CONTEXT_CALL_REFERENCE_AT) as *const usize);

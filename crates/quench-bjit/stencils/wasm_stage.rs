@@ -40,6 +40,7 @@ impl WasmSimd for StencilSimd {
     }
 
     /// The kernel's bits, the scalar in their low word.
+    #[inline(always)]
     fn scalar_kernel(&mut self, selector: u32, left: u128, right: Option<u128>) -> u64 {
         kernel_bits(selector, left, right) as u64
     }

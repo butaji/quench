@@ -13,10 +13,11 @@ use super::{Owner, PropertyFrame};
 /// (inline, extras, narrow) are all clear in that form, proves both, as the interpreter's formed
 /// read does (`object::formed_own_layout`); the frame keeps the shape and the run. Only a direct
 /// object's record keeps those bits current: a function's record is read through `kept_slot`.
+#[inline(always)]
 pub(super) fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct, shape): (Owner, bool, u32),
     at: &Reached<S::Word, S::Cond>, (slot, rep, storage_len): (u16, Representation, usize), miss: S::Miss) -> Option<S::Word> {
     // The word the receiver's header read, where it read one.
-    let word = at.auxiliary.unwrap_or_else(|| super::super::object::header_u32(stage, super::super::region::Region::ShapeWord.mutable(), at.record,
+    let word = at.auxiliary.unwrap_or_else(#[inline(always)] || super::super::object::header_u32(stage, super::super::region::Region::ShapeWord.mutable(), at.record,
         crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset));
     let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(word, shape) };
     stage.guard(same, miss)?;
@@ -29,6 +30,7 @@ pub(super) fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &
 
 /// The value at `slot` of `owner`'s object of exact `shape`, through the layout the frame kept
 /// where it covers the slot, else the one this read proves and keeps.
+#[inline(always)]
 pub(super) fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, shape): (Owner, u32),
     at: &Reached<S::Word, S::Cond>, (slot, form, storage_len, rep): (u16, Form, usize, Representation), miss: S::Miss) -> Option<S::Word> {
     let layout = match frame.kept_layout(owner, shape).filter(|layout| usize::from(slot) < layout.storage_len) {

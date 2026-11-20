@@ -1,4 +1,5 @@
 #[path = "../../quench-runtime/src/staged/stage.rs"] mod stage;
+#[path = "../../quench-runtime/src/staged/word_ops.rs"] pub(crate) mod word_ops;
 pub(crate) use stage::{StagedRecordSpace, Stage, Table, word_bytes, word_offset, Passed};
 pub(crate) type Concrete = crate::stage::StencilStage;
 #[path = "../../quench-runtime/src/staged/region.rs"] pub(crate) mod region;

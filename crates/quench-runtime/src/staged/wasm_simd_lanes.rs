@@ -65,7 +65,18 @@ fn lane_as(bits: u64, width: u32, sign: bool) -> i64 {
 /// All ones in a `width`-bit lane where `holds`, zero where not.
 #[inline(always)]
 fn when(holds: bool, width: u32) -> u64 {
-    if holds { mask64(width) } else { 0 }
+    let mask = if holds { mask64(width) } else { 0 };
+    // In a stencil the lane's mask passes through a register opaquely: LLVM would otherwise merge the
+    // lanes' masks into one byte shuffle whose control vector lives in a constant pool, which a stencil
+    // cannot reach. The empty template changes no bit, so the lane's value is the same.
+    #[cfg(stencil_build)]
+    let mask = {
+        let mut mask = mask;
+        // SAFETY: an empty template; the value passes through a register unchanged.
+        unsafe { core::arch::asm!("/* {0} */", inout(reg) mask, options(pure, nomem, nostack, preserves_flags)) };
+        mask
+    };
+    mask
 }
 
 /// `value` clamped to the `width`-bit lane's range (signed or unsigned), as the lane's bits.
@@ -381,7 +392,7 @@ fn float_pseudo(left: u128, right: u128, float: Float, comparison: FloatBinary) 
 /// Each lane's unary float operator.
 #[inline(always)]
 fn float_unary(bits: u128, float: Float, operator: FloatUnary) -> u128 {
-    each(bits, float_width(float), |x| ConcreteWasm.operate_float_unary(operator, float, x))
+    each(bits, float_width(float), #[inline(always)] |x| ConcreteWasm.operate_float_unary(operator, float, x))
 }
 
 /// Each source lane (`source` bits wide) converted by the scalar rule into a `result`-bit lane; the
