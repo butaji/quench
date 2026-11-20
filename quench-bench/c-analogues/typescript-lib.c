@@ -41,6 +41,8 @@
  *   Relations (the assignable overshoot of the interface base checks is fixed): optional types go through the
  *   union cache (addOptionality), isRelatedTo's rules for a type parameter and its constraint, skipCaching and the
  *   primitive union lookup, indexed access with no property or index signature is unknown when instantiated,
+ *   keyof and T[K] relate as structuredTypeRelatedToWorker does (targets through their constraints, sources through
+ *   the constraint of T[K]); a late-bound member name is a keyof member of its unique symbol type;
  *   and signature inference is the inferTypes subset of support/ts-relate.h (candidates by priority, unions,
  *   references with contravariant arguments, properties and signatures). Declaration checks added: type predicates
  *   (2677), template literal types (2322), mapped type constraints (2322) and indexed access index types (2536).
@@ -50,7 +52,8 @@
  *   of lazy resolution, so the totals are the comparison that matters.
  *   Still behind node: subtype and strictSubtype pairs (body checks: array literal and return type reduction,
  *   variable initializers), overload consistency of functions (checkFunctionOrConstructorSymbol), enum and module
- *   declaration checks, the relation of keyof types and generic indexed access (unported, few requests).
+ *   declaration checks, static and class index constraints, and checkTypeOperator and conditional type checks
+ *   (no relation pairs in the corpus, but not ported). Unported requests remain in body checks (634 of them).
  * The benchmark reads files.json (the file name to text map) before the timed region, as the JS
  * harness preloads it, and each iteration parses all 118 files from memory with a fresh node arena.
  * Expected counts are the node 5.9.2 reference in support/ts-immer-expected.h. Each file must match,
