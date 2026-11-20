@@ -1756,7 +1756,11 @@ static void cResolveMembers(TsType *t) {
     cResolveObjectMembers(t, t, NULL, NULL, 0);
     return;
   }
-  if (t->symbol && (t->symbol->flags & SF_Class)) { t->members = t->symbol->exports; return; }
+  /* resolveAnonymousTypeMembers: the exports of a class, an enum, a value module (and a function merged with one) */
+  if (t->symbol && (t->symbol->flags & (SF_Class | SF_Enum | SF_ValueModule | SF_Function | SF_Method))) {
+    t->members = t->symbol->exports ? t->symbol->exports : t->symbol->members;
+    return;
+  }
   t->members = t->symbol ? t->symbol->members : NULL;
 }
 
@@ -2267,6 +2271,15 @@ static TsType *cTypeOfSymbol(TsSymbol *sym) {
     t = a;
   } else if (sym->flags & (SF_Method | SF_Function)) {
     /* an anonymous object type with the signatures of the declarations */
+    TsType *a = cNewType(TF_Object);
+    a->objectFlags = OF_Anonymous;
+    a->symbol = sym;
+    t = a;
+  } else if (sym->flags & SF_EnumMember) {
+    /* getTypeOfEnumMember: the enum literal type of the member */
+    t = cEnumMemberType(sym);
+  } else if (sym->flags & (SF_Enum | SF_ValueModule)) {
+    /* getTypeOfFuncClassEnumModule: the anonymous object type of an enum or a value module, whose members are its exports */
     TsType *a = cNewType(TF_Object);
     a->objectFlags = OF_Anonymous;
     a->symbol = sym;
