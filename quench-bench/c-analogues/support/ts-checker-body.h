@@ -599,7 +599,8 @@ static TsType *cFlowWalkNode(TsFlow *f, CFlowRef *r) {
       if (assigned == cErrorType) return assigned;
       return cAssignmentReduced(declared, assigned);
     }
-    if (tg && cAssignContains(tg, r)) return r->nonUnion ? declared : cUnported("assignment to a member of a union");
+    /* containsMatchingReference (x.y = v for the reference x): the declared type, whatever it is (getTypeAtFlowAssignment) */
+    if (tg && cAssignContains(tg, r)) return declared;
     if (tg && tg->kind != TSK_Identifier && tg->kind != TSK_PropertyAccessExpression && tg->kind != TSK_ElementAccessExpression &&
         cMentionsText(tg, r->text, r->len))
       return cUnported("destructuring assignment of the reference");
