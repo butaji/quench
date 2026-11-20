@@ -212,6 +212,7 @@ pub(in crate::vm::dispatch_fast) struct AwaitSource {
 
 impl AwaitSource {
     /// The conversion of a lane context of host `H`.
+    #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn of<H: Host>() -> Self {
         Self {
             object_like: |context, value| unsafe { vm(context.cast::<LaneContext<H>>()) }.is_object_like(value),

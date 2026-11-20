@@ -609,8 +609,10 @@ pub(super) fn relation_holds<S: NumericStage, F: NumericFrame<S>>(stage: &mut S,
 #[inline(always)]
 fn relation_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     (left, right): (Operand, Operand), relation: NumberRelation) -> Option<S::Cond> {
-    let Some(((left_int, left_test), (right_int, right_test))) =
-        fast_int(stage, frame, left).zip(fast_int(stage, frame, right))
+    // Both operands are read, as `Option::zip` would, but in place: `zip` is an out-of-line call in a
+    // non-inlining build.
+    let (Some((left_int, left_test)), Some((right_int, right_test))) =
+        (fast_int(stage, frame, left), fast_int(stage, frame, right))
     else {
         return relation_float(stage, frame, (left, right), relation);
     };
@@ -778,8 +780,10 @@ fn remainder<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 #[inline(always)]
 fn remainder_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand) -> Option<S::Word> {
-    let Some(((left_int, left_test), (right_int, right_test))) =
-        fast_int(stage, frame, left).zip(fast_int(stage, frame, right))
+    // Both operands are read, as `Option::zip` would, but in place: `zip` is an out-of-line call in a
+    // non-inlining build.
+    let (Some((left_int, left_test)), Some((right_int, right_test))) =
+        (fast_int(stage, frame, left), fast_int(stage, frame, right))
     else {
         return remainder_float(stage, frame, left, right);
     };

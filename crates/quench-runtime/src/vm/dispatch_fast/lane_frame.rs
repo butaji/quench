@@ -130,6 +130,7 @@ struct CaptureStores {
 
 impl CaptureStores {
     /// The stores of the running lane's `cx` (`store_to_capture`).
+    #[inline(always)]
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { context: cx.cast(), store: |context, depth, slot, value| store_to_capture(context.cast::<LaneContext<H>>(), depth, slot, value) }
     }
@@ -165,6 +166,7 @@ struct Decisions {
 
 impl Decisions {
     /// The decisions of the running lane's `cx`.
+    #[inline(always)]
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { context: cx.cast(), decide: |context, operator, left, right|
             super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right),
