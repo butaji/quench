@@ -65,6 +65,8 @@ static TsMapper *cCombineMappers(TsMapper *m1, TsMapper *m2) {
 }
 
 static TsType *cInstantiate(TsType *t, TsMapper *m);
+static TsType *cGetConditionalTypeInstantiation(TsType *t, TsMapper *m);   /* ts-conditional.h */
+static TsType **cInferTypeParamsOf(TsNode *n, int *count);
 
 /* getMappedType (67771) */
 static TsType *cGetMappedType(TsType *t, TsMapper *m) {
@@ -98,7 +100,7 @@ static bool cCouldContain(TsType *t) {
     }
   } else if (t->flags & (TF_Union | TF_Intersection)) {
     for (int i = 0; i < t->ntypes && !r; i++) r = cCouldContain(t->types[i]);
-  } else if (t->flags & (TF_IndexedAccess | TF_Index)) {
+  } else if (t->flags & (TF_IndexedAccess | TF_Index | TF_Conditional)) {
     r = true;   /* instantiable types */
   }
   t->couldContain = r ? 1 : 2;
@@ -245,9 +247,28 @@ static TsType **cOuterTypeParamsOf(TsNode *node, bool includeThis, int *count) {
         *count = cnt;
         return v;
       }
-      case TSK_MappedType: case TSK_ConditionalType:
-        cUnported("outer type parameters of a mapped or conditional type");
-        break;
+      case TSK_MappedType: {
+        /* getOuterTypeParameters: the outer ones, then the type parameter of the mapped type */
+        int n = 0;
+        TsType **outer = cOuterTypeParamsOf(p, includeThis, &n);
+        TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)(n + 1));
+        if (n) memcpy(v, outer, sizeof(TsType *) * (size_t)n);
+        v[n] = cTypeOfTypeParameter(cGetMergedSymbol(p->typeParameter->symbol));
+        *count = n + 1;
+        return v;
+      }
+      case TSK_ConditionalType: {
+        /* concatenate (outer, infer type parameters) */
+        int n = 0, ni = 0;
+        TsType **outer = cOuterTypeParamsOf(p, includeThis, &n);
+        TsType **ip = cInferTypeParamsOf(p, &ni);
+        *count = n + ni;
+        if (!*count) return NULL;
+        TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)*count);
+        if (n) memcpy(v, outer, sizeof(TsType *) * (size_t)n);
+        if (ni) memcpy(v + n, ip, sizeof(TsType *) * (size_t)ni);
+        return v;
+      }
       default: break;
     }
   }
@@ -542,6 +563,7 @@ static TsType *cInstantiateWorker(TsType *t, TsMapper *m) {
     return cGetIndexedAccessType(o, ix);
   }
   if (t->flags & TF_Index) return cGetIndexType(cInstantiate(t->ixOf, m));
+  if (t->flags & TF_Conditional) return cGetConditionalTypeInstantiation(t, cCombineMappers(t->condMapper, m));
   return cUnported("instantiation of a type kind outside the subset");
 }
 

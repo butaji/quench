@@ -26,13 +26,7 @@
 
 #include "ts-types.h"
 
-enum { REL_Identity = 0, REL_Subtype, REL_StrictSubtype, REL_Assignable, REL_Count };
-/* Ternary (False < Maybe < True, so And is min and Or is max) */
-enum { RR_False = 0, RR_Maybe = 1, RR_True = 2 };
-/* IntersectionState */
-enum { IS_None = 0, IS_Source = 1, IS_Target = 2 };
-/* VarianceFlags */
-enum { VF_Covariant = 1, VF_Contravariant = 2, VF_Bivariant = 3, VF_Independent = 4 };
+/* the relation enums (REL_, RR_, IS_, VF_) are declared in ts-types.h, before the conditional types use them */
 
 typedef struct { TsType *s, *t; uint8_t st; uint8_t ok; } CRelEnt;
 typedef struct { CRelEnt *e; int n, cap; int32_t *slot; int slotCap; } CRelTab;
@@ -691,7 +685,7 @@ static int cIsRelatedTo(TsType *s, TsType *t, int st) {
   if (s == t) return RR_True;
   if (s == cErrorType || t == cErrorType) { cUnportedHit = true; return RR_True; }
   /* indexed access and index types: their relation rules (constraints of T[K], keyof) are not ported */
-  if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index)) { cUnported("relation of an indexed access or index type"); return RR_True; }
+  if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index | TF_Conditional)) { cUnported("relation of an indexed access, index or conditional type"); return RR_True; }
   if (cIsSimpleRelated(s, t, cCurRel)) return RR_True;
   if (!cIsStructured(s) && !cIsStructured(t)) return RR_False;
   /* isPerformingCommonPropertyChecks: a weak target needs a common property */
@@ -722,7 +716,7 @@ static bool cIsRelatedWith(TsType *s, TsType *t, int rel) {
   if (rel == REL_Identity) r = cIdentical(s, t);
   else if (s == t) r = true;
   else if (cIsSimpleRelated(s, t, rel)) r = true;
-  else if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index)) { cUnported("relation of an indexed access or index type"); r = true; }
+  else if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index | TF_Conditional)) { cUnported("relation of an indexed access, index or conditional type"); r = true; }
   else if (!cIsStructured(s) && !cIsStructured(t)) r = false;
   else {
     int ci = cRelFind(&cRelTab[rel], s, t, IS_None);

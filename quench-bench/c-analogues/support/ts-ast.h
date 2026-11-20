@@ -62,6 +62,7 @@ struct TsNode {
   uint8_t inferState;
   /* enums (ts-types.h): EnumDeclaration: EnumValuesComputed; EnumMember: its computed value */
   uint8_t enumValuesComputed, enumValueDone, enumValueKind;   /* kind: 0 undefined, 1 number, 2 string */
+  uint8_t condState;   /* ConditionalType: being resolved (ts-conditional.h) */
   double enumValueNum;
   const char *enumValueStr;
   int32_t enumValueLen;

@@ -36,7 +36,8 @@ enum {
   TF_StringLiteral = 128, TF_NumberLiteral = 256, TF_BooleanLiteral = 512, TF_EnumLiteral = 1024,
   TF_BigIntLiteral = 2048, TF_ESSymbol = 4096, TF_UniqueESSymbol = 8192, TF_Void = 16384, TF_Undefined = 32768,
   TF_Null = 65536, TF_Never = 131072, TF_TypeParameter = 262144, TF_Object = 524288, TF_Union = 1048576,
-  TF_Intersection = 2097152, TF_Index = 4194304, TF_IndexedAccess = 8388608, TF_NonPrimitive = 67108864
+  TF_Intersection = 2097152, TF_Index = 4194304, TF_IndexedAccess = 8388608, TF_NonPrimitive = 67108864,
+  TF_Conditional = 16777216, TF_TemplateLiteral = 134217728, TF_StringMapping = 268435456
 };
 
 /* ObjectFlags (TypeScript 5.9.2) */
@@ -99,6 +100,10 @@ typedef struct TsType {
    * number literal (its text is the source slice). Enum types and their literals use the same fields. */
   struct TsType *litRegular, *litFresh;
   double litNum;
+  /* conditional types (ts-conditional.h): the root of the node, and the instantiated check and extends types */
+  struct CondRoot *root;
+  struct TsType *condCheck, *condExtends;
+  struct TsMapper *condMapper, *condCombined;
 } TsType;
 
 struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; };
@@ -157,6 +162,14 @@ static void cCreateIntrinsicTypes(void) {
   cIntrinsicMarkerType = cIntrinsic(TF_Any);
 }
 
+enum { REL_Identity = 0, REL_Subtype, REL_StrictSubtype, REL_Assignable, REL_Count };
+/* Ternary (False < Maybe < True, so And is min and Or is max) */
+enum { RR_False = 0, RR_Maybe = 1, RR_True = 2 };
+/* IntersectionState */
+enum { IS_None = 0, IS_Source = 1, IS_Target = 2 };
+/* VarianceFlags */
+enum { VF_Covariant = 1, VF_Contravariant = 2, VF_Bivariant = 3, VF_Independent = 4 };
+
 /* ---- unported marker ---- */
 static TsType *cUnported(const char *what) {
   cUnportedHit = true;
@@ -172,6 +185,9 @@ static TsType *cUnported(const char *what) {
 /* ---- declared types, symbols ---- */
 static TsType *cTypeFromNode(TsNode *node);
 static TsType *cTypeOfSymbol(TsSymbol *sym);
+static TsType *cGetTypeFromConditionalTypeNode(TsNode *n);
+static uint8_t *cVariances(TsType *tg);             /* ts-relate.h */
+static bool cIsRelatedWith(TsType *s, TsType *t, int rel);   /* ts-relate.h */
 static bool cIsSignatureName(BName n);
 
 /* the type of a type parameter symbol (createTypeParameter, cached on the symbol) */
@@ -836,7 +852,7 @@ static bool cIsGenericObject(TsType *t) {
     if (t->objectFlags & OF_Mapped) cUnported("generic check of a mapped type");
     return false;
   }
-  return (t->flags & (TF_TypeParameter | TF_IndexedAccess)) != 0;
+  return (t->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Conditional)) != 0;
 }
 
 /* isGenericIndexType: type variables, index types (and unions and intersections of them) */
@@ -845,8 +861,11 @@ static bool cIsGenericIndex(TsType *t) {
     for (int i = 0; i < t->ntypes; i++) if (cIsGenericIndex(t->types[i])) return true;
     return false;
   }
-  return (t->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Index)) != 0;
+  return (t->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Index | TF_Conditional)) != 0;
 }
+
+/* ts-conditional.h: conditional types (after the generic checks they use) */
+#include "ts-conditional.h"
 
 /* getIndexTypeForGenericType: the deferred keyof of a type variable, one per type */
 static TsType *cIndexTypeForGeneric(TsType *t) {
@@ -1039,6 +1058,8 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
       }
       return fl == TF_Union ? cGetUnionType(members, cnt) : cGetIntersectionType(members, cnt);
     }
+    case TSK_ConditionalType: return cGetTypeFromConditionalTypeNode(n);
+    case TSK_InferType: return cTypeOfTypeParameter(cGetMergedSymbol(n->typeParameter->symbol));   /* getTypeFromInferTypeNode */
     case TSK_MappedType: {
       /* a mapped type object (resolveMappedTypeMembers): its members come from the literal keys of the constraint */
       TsType *t = cNewType(TF_Object);

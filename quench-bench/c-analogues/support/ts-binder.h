@@ -1718,7 +1718,7 @@ static void bBindTypeParameter(TsNode *node) {
     TsNode *ext = NULL;
     for (TsNode *a = node->parent; a && !ext; a = a->parent)
       if (a->parent && a->parent->kind == TSK_ConditionalType && a->parent->extendsType == a) ext = a->parent;
-    TsNode *container2 = ext ? ext->parent : NULL;
+    TsNode *container2 = ext;   /* getInferTypeContainer: the conditional type whose extends type holds the infer */
     if (container2) {
       if (!container2->locals) container2->locals = bTableNew();
       bDeclareSymbol(container2->locals, NULL, node, SF_TypeParameter, EX_TypeParameterExcludes, false);
