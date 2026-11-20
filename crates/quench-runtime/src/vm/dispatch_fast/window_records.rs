@@ -41,7 +41,7 @@ pub(super) fn window_record(function: &Function, instruction: WideInstruction) -
 pub(super) fn window_local_handler<H: Host>(function: &Function, op: Op, own: usize, scoped: bool) -> Option<Handler> {
     // A clone is its generated row, which clones the window's environment (`CallOut::CloneEnv`).
     if op as u16 == crate::staged::CLONE_ENV_ROW {
-        return Some(generated_row::<H, { crate::staged::CLONE_ENV_ROW }, ACC_NONE, FLAG_UNREAD> as Handler);
+        return Some(generated_row!(H, crate::staged::CLONE_ENV_ROW, ACC_NONE, FLAG_UNREAD) as Handler);
     }
     if crate::staged::makes_closure(op) {
         return Some(if scoped { super::lane_frame::closure_row::<H, { super::lane_frame::FLAG_SCOPE }>() } else { super::lane_frame::closure_row::<H, { super::lane_frame::FLAG_WINDOW_CLOSURE }>() });
@@ -69,11 +69,11 @@ pub(super) fn window_local_handler<H: Host>(function: &Function, op: Op, own: us
     }
     let row = crate::staged::local_access_row(op)?;
     Some(match row {
-        crate::staged::LOCAL_LOAD_ROW => generated_row::<H, { crate::staged::LOCAL_LOAD_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
-        crate::staged::LOAD_LOCAL_PLAIN_ROW => generated_row::<H, { crate::staged::LOAD_LOCAL_PLAIN_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
-        crate::staged::LOCAL_STORE_ROW => generated_row::<H, { crate::staged::LOCAL_STORE_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
-        crate::staged::STORE_LOCAL_PLAIN_ROW => generated_row::<H, { crate::staged::STORE_LOCAL_PLAIN_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
-        crate::staged::LOCAL_INITIALIZE_ROW => generated_row::<H, { crate::staged::LOCAL_INITIALIZE_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
+        crate::staged::LOCAL_LOAD_ROW => generated_row!(H, crate::staged::LOCAL_LOAD_ROW, ACC_NONE, FLAG_WINDOW) as Handler,
+        crate::staged::LOAD_LOCAL_PLAIN_ROW => generated_row!(H, crate::staged::LOAD_LOCAL_PLAIN_ROW, ACC_NONE, FLAG_WINDOW) as Handler,
+        crate::staged::LOCAL_STORE_ROW => generated_row!(H, crate::staged::LOCAL_STORE_ROW, ACC_NONE, FLAG_WINDOW) as Handler,
+        crate::staged::STORE_LOCAL_PLAIN_ROW => generated_row!(H, crate::staged::STORE_LOCAL_PLAIN_ROW, ACC_NONE, FLAG_WINDOW) as Handler,
+        crate::staged::LOCAL_INITIALIZE_ROW => generated_row!(H, crate::staged::LOCAL_INITIALIZE_ROW, ACC_NONE, FLAG_WINDOW) as Handler,
         _ => return None,
     })
 }
