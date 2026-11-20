@@ -905,6 +905,7 @@ mod indexed_compositions;
 pub(super) mod lane_body_stats;
 mod body_calls;
 mod body_forms;
+mod proven_callees;
 pub(super) use body_calls::{body_call_helper, body_construct_helper};
 #[path = "lane_leaves.rs"]
 mod lane_leaves;
@@ -2605,7 +2606,7 @@ struct ForwardedResolution {
 }
 
 /// Fields a `ConstructPlan` names; an initializer storing more keeps running its adds.
-const CONSTRUCT_PLAN_FIELDS: usize = 8;
+pub(in crate::vm) const CONSTRUCT_PLAN_FIELDS: usize = 8;
 // A plan's values fill a receiver's inline slots (`ConstructPlan::allocate`).
 const _: () = assert!(INLINE_PROPERTY_COUNT <= CONSTRUCT_PLAN_FIELDS);
 // `ConstructPlan::defaulted` holds a bit per field.

@@ -113,9 +113,18 @@ pub(super) struct Planned {
     pub(super) owned: Vec<Box<quench_bjit::call_record::CallRecord>>,
     /// Reached only through a fast row's miss (`steps::behind`): laid out after the hot rows.
     pub(super) cold: bool,
-    /// The hole that names a symbol the loader resolves, and the symbol (`CallPart::symbol`).
-    pub(super) symbolic: Option<(u8, crate::vm::aot_image::Symbol)>,
+    /// The holes that name a symbol the loader resolves, each with its symbol (`CallPart::symbols`).
+    pub(super) symbolic: Symbolic,
 }
+
+/// The most holes of one row that name symbols: the generic row's semantic entry and operand record.
+pub(super) const SYMBOLIC_HOLES: usize = 2;
+
+/// The holes of a row whose run-time address is a symbol the loader resolves, each with its symbol.
+pub(super) type Symbolic = [Option<(u8, crate::vm::aot_image::Symbol)>; SYMBOLIC_HOLES];
+
+/// A row that names no symbol.
+pub(super) const NO_SYMBOLS: Symbolic = [None; SYMBOLIC_HOLES];
 
 impl Planned {
     /// The run with the rows `before` laid out ahead of it at the same PC: the parts the run names by
@@ -135,7 +144,7 @@ impl Planned {
     }
 
     pub(super) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
-        Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false, symbolic: None }
+        Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false, symbolic: NO_SYMBOLS }
     }
 }
 

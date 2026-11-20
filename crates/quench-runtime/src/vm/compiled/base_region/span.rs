@@ -52,6 +52,11 @@ impl<'a> Span<'a> {
         self.live.is_live(pc, register)
     }
 
+    /// The function's instruction at caller PC `record`.
+    pub(super) fn instruction(&self, record: u32) -> Option<WideInstruction> {
+        self.region.instructions().get(record as usize).copied()
+    }
+
     pub(super) fn number_registers(&self) -> &[Register] {
         self.region.number_registers()
     }
