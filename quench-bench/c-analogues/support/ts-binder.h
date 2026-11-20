@@ -71,6 +71,8 @@ typedef struct TsSymbol {
   TsNode *valueDeclaration;
   struct TsSymbol *mergedInto;   /* recordMergedSymbol: the symbol this one was merged into */
   struct TsType *declaredType, *type;
+  int64_t lastAssignPos;         /* checker: lastAssignmentPos (negative: a definite assignment); valid when lastAssignSet */
+  bool lastAssignSet;
   struct TsType *aliasHolder;    /* generic type aliases: the holder of their instantiations (ts-types.h) */
   struct TsType *uniqueType;     /* the unique symbol type of a const or readonly property symbol */
   struct TsSymbol *instTarget;   /* instantiated symbols: the symbol instantiated (instantiateSymbol) */
