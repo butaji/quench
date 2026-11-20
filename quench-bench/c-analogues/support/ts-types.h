@@ -56,6 +56,7 @@ typedef struct TsType {
   uint32_t flags, objectFlags;
   int32_t id;
   TsSymbol *symbol;              /* the symbol of an object type, the alias of a union, the param of a type parameter */
+  TsSymbol *aliasSymbol;         /* the type alias of a union that is the body of a non-generic alias (getUnionType aliasSymbol) */
   /* object types */
   TsSymTable *members;           /* resolved members (own and inherited); property, signature and index symbols */
   bool resolved;
@@ -354,6 +355,20 @@ static TsType *cDeclaredTypeOfTypeAlias(TsSymbol *sym) {
   cAliasStack[cAliasDepth++] = sym;
   TsType *t = cTypeFromNode(d->type);
   cAliasDepth--;
+  /* getTypeFromUnionTypeNode: the union of an alias body has the alias (a union type of its own, not the interned union of
+   * the same members). A generic alias keeps its type arguments, which are not ported. */
+  if (t != cErrorType && (t->flags & TF_Union) && t->ntypes >= 2 && !(d->typeParameters && d->typeParameters->n)) {
+    TsNode *b = d->type;
+    while (b->kind == TSK_ParenthesizedType) b = b->type;
+    if (b->kind == TSK_UnionType) {
+      TsType *c = cNewType(TF_Union);
+      c->types = t->types;
+      c->ntypes = t->ntypes;
+      c->objectFlags = t->objectFlags;
+      c->aliasSymbol = sym;
+      t = c;
+    }
+  }
   if (t == cIntrinsicMarkerType) {
     /* getDeclaredTypeOfTypeAlias (61914): BuiltinIteratorReturn is undefined under strictBuiltinIteratorReturn,
      * which the project's tsconfig gets from "strict": true */
