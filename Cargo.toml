@@ -117,6 +117,14 @@ inherits = "experiment"
 opt-level = 1
 lto = "off"
 
+# Correctness smoke and fold checks: `experiment` without crate-local ThinLTO. With ThinLTO an edit
+# anywhere in quench-runtime regenerated all 256 units of the `quench` crate, where Vm<NodeHost> is
+# monomorphized (17 min at -j1, 800 s of it `quench` codegen); without it incremental reuses the
+# units the edit does not reach. Measurements stay on `experiment` and the stencil build.
+[profile.smoke]
+inherits = "experiment"
+lto = "off"
+
 # Native SDK consumers link optimized machine-code archive members directly.
 # This keeps whole-image LLVM optimization out of repeated SDK consumer links.
 [profile.native-support]

@@ -142,6 +142,9 @@ fn raw_string_end(b: &[u8], i: usize) -> Option<usize> {
 /// One outermost function body: the function's name, whether it is a `const fn`, and the tokens of its body.
 struct Body<'t, 'a> {
     name: &'a str,
+    /// Whether the function is the file's own item (no enclosing `impl`, `trait`, `mod` or macro braces): its
+    /// symbol path then ends in the file's module and its name (`changed_items`).
+    free: bool,
     is_const: bool,
     tokens: &'t [Token<'a>],
     /// The function's codegen hints (`HINTS`), in order.
@@ -250,10 +253,15 @@ fn split<'t, 'a>(tokens: &'t [Token<'a>]) -> (Vec<&'t Token<'a>>, Vec<Body<'t, '
             close += 1;
         }
         let close = close.min(tokens.len() - 1);
+        let free = outline.iter().fold(0i32, |depth, token| match token {
+            Token::Punct(b'{') => depth + 1,
+            Token::Punct(b'}') => depth - 1,
+            _ => depth,
+        }) == 0;
         outline.extend(&tokens[i..open]);
         outline.push(&Token::Punct(b'{'));
         outline.push(&Token::Punct(b'}'));
-        bodies.push(Body { name, is_const, tokens: &tokens[open..=close], hints: std::mem::take(&mut hints) });
+        bodies.push(Body { name, free, is_const, tokens: &tokens[open..=close], hints: std::mem::take(&mut hints) });
         i = close + 1;
     }
     (outline, bodies)
@@ -261,7 +269,13 @@ fn split<'t, 'a>(tokens: &'t [Token<'a>]) -> (Vec<&'t Token<'a>>, Vec<Body<'t, '
 
 /// What an edit from `old` to `new` changed: `Some` of the names of the functions whose bodies differ (empty where
 /// only comments or whitespace did), `None` for a structural edit.
+#[cfg(test)]
 pub fn changed_functions(old: &str, new: &str) -> Option<BTreeSet<String>> {
+    changed_items(old, new).map(|items| items.into_iter().map(|(name, _)| name).collect())
+}
+
+/// `changed_functions` with each name's freedom (`Body::free`): `true` for a function that is the file's own item.
+pub fn changed_items(old: &str, new: &str) -> Option<BTreeSet<(String, bool)>> {
     let (old_tokens, new_tokens) = (tokens(old), tokens(new));
     let (old_outline, old_bodies) = split(&old_tokens);
     let (new_outline, new_bodies) = split(&new_tokens);
@@ -277,10 +291,10 @@ pub fn changed_functions(old: &str, new: &str) -> Option<BTreeSet<String>> {
             if was.is_const || now.is_const {
                 return None;
             }
-            names.insert(now.name.to_string());
+            names.insert((now.name.to_string(), now.free));
         }
         if was.hints != now.hints {
-            names.insert(now.name.to_string());
+            names.insert((now.name.to_string(), now.free));
         }
     }
     Some(names)
@@ -298,6 +312,12 @@ mod tests {
         assert_eq!(changed_functions(BASE, &edited), Some(BTreeSet::from(["alpha".to_string()])));
         let method = BASE.replace("'}'", "'{'");
         assert_eq!(changed_functions(BASE, &method), Some(BTreeSet::from(["gamma".to_string()])));
+    }
+
+    #[test]
+    fn items_tell_free_functions_from_methods() {
+        let edited = BASE.replace("x + 1", "x + 2").replace("'}'", "'{'");
+        assert_eq!(changed_items(BASE, &edited), Some(BTreeSet::from([("alpha".to_string(), true), ("gamma".to_string(), false)])));
     }
 
     #[test]
