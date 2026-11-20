@@ -12,7 +12,7 @@
 use crate::bytecode::JsDenotation;
 use super::*;
 use super::super::facts::{self, Model, Observed, ObservedRead, Point, Seeds, Text};
-use super::loop_versions::{Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
+use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
 
 /// The facts one analysis proves, by unit PC.
 pub(super) struct IntRanges {
@@ -28,6 +28,9 @@ pub(super) struct IntRanges {
     /// The relations of registers holding no Number that a loop's entry decides once
     /// (`Lowering::hoist_decisions`), by PC (ascending).
     decisions: Vec<Decision>,
+    /// The registers a loop's entry proves int32 once, against which its int32 counter is ordered
+    /// (`Lowering::hoist_bounds`), by loop (ascending).
+    bounds: Vec<Bound>,
     /// The products of a counter a loop's entry holds and advances (`Lowering::start_inductions`).
     inductions: Vec<Induction>,
     /// The arithmetic whose result leaves int32 within `IntRange::WORD`, by PC (ascending), with its range.
@@ -48,7 +51,7 @@ impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
             string_bounds: CompoundBitSet::with_capacity(instructions),
-            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions),
+            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), bounds: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions),
             non_negative_dividend: CompoundBitSet::with_capacity(instructions), nonzero_divisor: CompoundBitSet::with_capacity(instructions),
             numeric_stores: CompoundBitSet::with_capacity(instructions) }
     }
@@ -97,6 +100,9 @@ impl IntRanges {
 
     /// The relations decided once at a loop's entry, by PC.
     pub(super) fn decisions(&self) -> &[Decision] { &self.decisions }
+
+    /// The registers the loops' entries prove int32 once (`Lowering::hoist_bounds`).
+    pub(super) fn bounds(&self) -> &[Bound] { &self.bounds }
 
     /// The products an entry holds and advances.
     pub(super) fn inductions(&self) -> &[Induction] { &self.inductions }
@@ -217,6 +223,21 @@ impl Lowering<'_, '_> {
             if divisor.min > 0 || divisor.max < 0 { proved.nonzero_divisor.insert(pc); }
         }
         if self.decidable(instruction, point) { seen.decisions.push(pc); }
+        if let Some(register) = self.int_bound(instruction, point) { seen.bounds.push((pc, register)); }
+    }
+
+    /// The register a relation jump at `instruction` orders against an int32 counter, where no int32
+    /// proves it at the point (a Number or tagged bound): its loop's entry may prove it int32 once
+    /// (`Lowering::hoist_bounds`), so the comparison is an int32 one in the loop.
+    fn int_bound(&self, instruction: WideInstruction, point: &Point) -> Option<Register> {
+        use crate::staged::{Comparison, Operation};
+        let Some(Operation::<(), ()>::CompareJump { comparison: Comparison::Relation { .. }, left, right, .. }) =
+            Operation::decode(instruction, crate::staged::DecodeContext::EMPTY) else { return None };
+        let int32 = |register: Register| point.int_range(register).is_some_and(|range| range.fits_int32());
+        let int = |operand: Operand| operand.register_index().map_or_else(|| self.int32_constant(operand).is_some(), int32);
+        let bound = |operand: Operand, counter: Operand| operand.register_index()
+            .filter(|&register| !int32(register) && int(counter));
+        bound(left, right).or_else(|| bound(right, left))
     }
 
     /// The string and index register of the read at `pc` that reads a string's units at an index: a
@@ -260,6 +281,7 @@ impl Lowering<'_, '_> {
     fn prove_loops(&self, proved: &mut IntRanges, model: &Model<'_>, nest: Nest<'_>, seen: &Seen) {
         proved.hoisted = self.plan_hoists(nest, &seen.hoistable);
         proved.decisions = self.plan_decisions(nest, &seen.decisions);
+        proved.bounds = self.plan_bounds(nest, &seen.bounds);
         let hoists = proved.hoisted.clone();
         let nest = Nest { hoists: &hoists, ..nest };
         for shape in &seen.shapes {
@@ -276,4 +298,6 @@ struct Seen {
     shapes: Vec<Shape>,
     hoistable: Vec<usize>,
     decisions: Vec<usize>,
+    /// The relation jumps' PCs with the register each orders against an int32 counter (`int_bound`).
+    bounds: Vec<(usize, Register)>,
 }
