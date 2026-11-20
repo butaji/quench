@@ -661,18 +661,18 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
 /// The property operations of `step`: the word each produces, or `Unresolved` where the
 /// frame holds no plan or callout for it.
 #[inline(always)]
-pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub(super) fn property_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let word = match operation {
         // A read its plan leaves is the VM's named read, where the frame takes it (`CallOut::LoadField`).
-        Operation::GetField { base, lookup, destination } => match get_field(stage, frame, base, lookup, miss) {
+        Operation::GetField { base, lookup, destination } => if const { super::op_kind::admits(KIND, &[super::op_kind::GET_FIELD]) } { match get_field(stage, frame, base, lookup, miss) {
             Some(word) => Some(word),
             None => return super::callout::loading(stage, frame, super::CallOut::LoadField { lookup }, destination),
-        },
+        } } else { unreachable!() },
         // A store its plan leaves is the VM's named store, where the frame takes it (`CallOut::StoreField`). A store
         // to `this` has no base register: the VM takes `this` where the frame holds it (`Frame::this_value`).
-        Operation::SetField { value, base, atom, site, strict } => match super::property_write::set_field(stage, frame, (value, base), (atom, site), miss) {
+        Operation::SetField { value, base, atom, site, strict } => if const { super::op_kind::admits(KIND, &[super::op_kind::SET_FIELD]) } { match super::property_write::set_field(stage, frame, (value, base), (atom, site), miss) {
             Some(word) => Some(word),
             None => match base {
                 Some(object) => super::callout::storing(stage, frame,
@@ -680,13 +680,20 @@ pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
                 None => frame.this_value(stage).and_then(|_| super::callout::storing(stage, frame,
                     super::CallOut::StoreField { object: None, value, atom, site, strict })),
             },
-        },
+        } } else { unreachable!() },
         Operation::StoreField { base, value, fact, atom, site } =>
-            super::property_write::store_word(stage, frame, base, (value, fact), (atom, site), miss),
-        Operation::FieldGetHost { object, atom, site } => frame.field_probe(stage, Owner::Temporary, object, atom, site, miss),
-        Operation::FieldAdd { object, atom, site, value } => frame.field_add(stage, object, atom, site, value, miss).map(|()| value),
-        Operation::IndexGetHost { base, key } => frame.index_get_host(stage, base, key, miss),
-        _ => None,
+            if const { super::op_kind::admits(KIND, &[super::op_kind::STORE_FIELD]) } { super::property_write::store_word(stage, frame, base, (value, fact), (atom, site), miss) } else { unreachable!() },
+        Operation::FieldGetHost { object, atom, site } => if const { super::op_kind::admits(KIND, &[super::op_kind::FIELD_GET_HOST]) } { frame.field_probe(stage, Owner::Temporary, object, atom, site, miss) } else { unreachable!() },
+        Operation::FieldAdd { object, atom, site, value } => if const { super::op_kind::admits(KIND, &[super::op_kind::FIELD_ADD]) } { frame.field_add(stage, object, atom, site, value, miss).map(|()| value) } else { unreachable!() },
+        Operation::IndexGetHost { base, key } => if const { super::op_kind::admits(KIND, &[super::op_kind::INDEX_GET_HOST]) } { frame.index_get_host(stage, base, key, miss) } else { unreachable!() },
+        _ => if const { super::op_kind::outside(KIND, &[super::op_kind::GET_FIELD, super::op_kind::SET_FIELD, super::op_kind::STORE_FIELD, super::op_kind::FIELD_GET_HOST, super::op_kind::FIELD_ADD, super::op_kind::INDEX_GET_HOST]) } { None } else { unreachable!() },
     };
     word.map_or(Step::Unresolved, Step::Value)
+}
+
+/// `property_step_of` for any operation.
+#[inline(always)]
+pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    property_step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }

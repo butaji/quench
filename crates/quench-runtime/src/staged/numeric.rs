@@ -205,32 +205,64 @@ fn constant_int32(_number: f64) -> i32 { 0 }
 #[inline(always)]
 pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: NumberOperation) -> Step<S::Word, F::Control> {
+    step_of::<{ kind::ANY }, S, F>(stage, frame, operation)
+}
+
+/// The `NumberOperation` variants as numbers, for `step_of`'s compile-time choice of arm: `ANY` runs every arm.
+pub(crate) mod kind {
+    pub(crate) const ANY: u8 = 0;
+    pub(crate) const ARITHMETIC: u8 = 1;
+    pub(crate) const RELATION: u8 = 2;
+    pub(crate) const RELATION_VALUE: u8 = 3;
+    pub(crate) const BITWISE: u8 = 4;
+    pub(crate) const REMAINDER: u8 = 5;
+    pub(crate) const INC_DEC: u8 = 6;
+    pub(crate) const BITWISE_NOT: u8 = 7;
+    pub(crate) const TO_NUMERIC: u8 = 8;
+    pub(crate) const UNARY: u8 = 9;
+    pub(crate) const MATH: u8 = 10;
+    pub(crate) const EXTREME: u8 = 11;
+    pub(crate) const IMUL: u8 = 12;
+    pub(crate) const INT_CASE: u8 = 13;
+}
+
+/// `step` where the caller knows the operation's variant `KIND` (`kind`) at compile time: every other arm is
+/// unresolved in a `const` test, which rustc drops before code generation, so a stencil row instantiates only its
+/// own arm. `kind::ANY` is `step`.
+#[inline(always)]
+pub(crate) fn step_of<const KIND: u8, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: NumberOperation) -> Step<S::Word, F::Control> {
     #[cfg(not(stencil_build))]
     let general = if frame.general_operators() { general_binary(&operation) } else { None };
     #[cfg(stencil_build)]
     let general: Option<(super::CallOut, Option<Register>)> = None;
     let step = match operation {
         NumberOperation::Arithmetic { destination, left, right, operation, domain, overflow, zero } =>
-            arithmetic(stage, frame, destination, left, right, operation, domain, (overflow, zero)),
+            if const { KIND == kind::ANY || KIND == kind::ARITHMETIC } { arithmetic(stage, frame, destination, left, right, operation, domain, (overflow, zero)) } else { Step::Unresolved },
         NumberOperation::Relation { left, right, relation, domain } =>
-            self::relation(stage, frame, left, right, relation, domain),
+            if const { KIND == kind::ANY || KIND == kind::RELATION } { self::relation(stage, frame, left, right, relation, domain) } else { Step::Unresolved },
         NumberOperation::RelationValue { destination, left, right, relation, domain } =>
-            relation_value(stage, frame, destination, left, right, relation, domain),
+            if const { KIND == kind::ANY || KIND == kind::RELATION_VALUE } { relation_value(stage, frame, destination, left, right, relation, domain) } else { Step::Unresolved },
         NumberOperation::Bitwise { destination, left, right, operation } =>
-            bitwise_value(stage, frame, destination, left, right, operation),
+            if const { KIND == kind::ANY || KIND == kind::BITWISE } { bitwise_value(stage, frame, destination, left, right, operation) } else { Step::Unresolved },
         NumberOperation::Remainder { destination, left, right, domain, zero, divisor_nonzero } =>
-            remainder(stage, frame, destination, left, right, domain, (zero, divisor_nonzero)),
+            if const { KIND == kind::ANY || KIND == kind::REMAINDER } { remainder(stage, frame, destination, left, right, domain, (zero, divisor_nonzero)) } else { Step::Unresolved },
         NumberOperation::IncDec { destination, source, decrement, overflow } =>
-            increment(stage, frame, destination, source, decrement, overflow),
-        NumberOperation::BitwiseNot { destination, source } => bitwise_not(stage, frame, destination, source),
-        NumberOperation::ToNumeric { destination, source } => to_numeric(stage, frame, destination, source),
+            if const { KIND == kind::ANY || KIND == kind::INC_DEC } { increment(stage, frame, destination, source, decrement, overflow) } else { Step::Unresolved },
+        NumberOperation::BitwiseNot { destination, source } =>
+            if const { KIND == kind::ANY || KIND == kind::BITWISE_NOT } { bitwise_not(stage, frame, destination, source) } else { Step::Unresolved },
+        NumberOperation::ToNumeric { destination, source } =>
+            if const { KIND == kind::ANY || KIND == kind::TO_NUMERIC } { to_numeric(stage, frame, destination, source) } else { Step::Unresolved },
         NumberOperation::Unary { destination, source, operation, domain } =>
-            unary(stage, frame, destination, source, operation, domain),
-        NumberOperation::Math { destination, source, operation } => math(stage, frame, destination, source, operation),
-        NumberOperation::Extreme { destination, left, right, maximum } => extreme(stage, frame, destination, (left, right), maximum),
-        NumberOperation::Imul { destination, left, right } => imul(stage, frame, destination, left, right),
+            if const { KIND == kind::ANY || KIND == kind::UNARY } { unary(stage, frame, destination, source, operation, domain) } else { Step::Unresolved },
+        NumberOperation::Math { destination, source, operation } =>
+            if const { KIND == kind::ANY || KIND == kind::MATH } { math(stage, frame, destination, source, operation) } else { Step::Unresolved },
+        NumberOperation::Extreme { destination, left, right, maximum } =>
+            if const { KIND == kind::ANY || KIND == kind::EXTREME } { extreme(stage, frame, destination, (left, right), maximum) } else { Step::Unresolved },
+        NumberOperation::Imul { destination, left, right } =>
+            if const { KIND == kind::ANY || KIND == kind::IMUL } { imul(stage, frame, destination, left, right) } else { Step::Unresolved },
         NumberOperation::IntCase { destination, source, minimum, maximum, count } =>
-            int_case(stage, frame, destination, source, (minimum, maximum), count),
+            if const { KIND == kind::ANY || KIND == kind::INT_CASE } { int_case(stage, frame, destination, source, (minimum, maximum), count) } else { Step::Unresolved },
     };
     match (general, step) {
         (Some((call, destination)), Step::Unresolved) => super::callout::calling(stage, frame, call, destination),

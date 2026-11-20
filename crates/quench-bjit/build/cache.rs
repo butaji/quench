@@ -42,6 +42,12 @@ impl Fnv {
 /// `#[path]` graph, files and directories; a directory's files are themselves in it) and `extra`, relative to
 /// `crate_dir`.
 pub fn sources_key(rustc: &Path, crate_dir: &Path, watched: &BTreeSet<PathBuf>, extra: &[&str]) -> u128 {
+    sources_key_of(rustc, crate_dir, watched, extra, |file| fs::read(file).unwrap_or_else(|e| panic!("read {}: {e}", file.display())))
+}
+
+/// `sources_key` with each file's content from `read` (a snapshot's, where the files are what they were), for the
+/// files that exist now.
+pub fn sources_key_of(rustc: &Path, crate_dir: &Path, watched: &BTreeSet<PathBuf>, extra: &[&str], read: impl Fn(&Path) -> Vec<u8>) -> u128 {
     let mut hash = Fnv::new();
     hash.field(rustc.as_os_str().as_encoded_bytes());
     let version = Command::new(rustc).arg("-vV").output().map(|output| output.stdout).unwrap_or_default();
@@ -50,7 +56,7 @@ pub fn sources_key(rustc: &Path, crate_dir: &Path, watched: &BTreeSet<PathBuf>, 
     let files: BTreeSet<PathBuf> = watched.iter().cloned().chain(extra.iter().map(|path| crate_dir.join(path))).filter(|path| path.is_file()).collect();
     for file in files {
         hash.field(file.strip_prefix(crate_dir).unwrap_or(&file).as_os_str().as_encoded_bytes());
-        hash.field(&fs::read(&file).unwrap_or_else(|e| panic!("read {}: {e}", file.display())));
+        hash.field(&read(&file));
     }
     hash.0
 }
