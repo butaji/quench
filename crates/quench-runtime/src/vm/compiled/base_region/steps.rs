@@ -54,13 +54,14 @@
 
 use super::*;
 use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
+use super::callees::name_records;
 use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::Traits;
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
 mod lowering;
-pub(super) use lowering::{calls_in_place, decode_step, lowering, STEP_WRITES};
+pub(super) use lowering::{calls_in_place, decode_step, lowering, unplaced, STEP_WRITES};
 
 /// How the b-jit runs an instruction no row takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,7 +137,7 @@ impl Planned {
     /// The row of a chain part, its exits and no rows of its own; a part's successor is a part of
     /// the chain it belongs to.
     fn of_part(part: CallPart) -> Self {
-        Self { branch: part.taken.map(Branch::Part), exits: part.exits, symbolic: part.symbol, ..Self::single(part.stencil, part.holes, None, None) }
+        Self { branch: part.taken.map(Branch::Part), exits: part.exits, symbolic: part.symbols, ..Self::single(part.stencil, part.holes, None, None) }
     }
 }
 
@@ -162,10 +163,10 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::Allocate => plan_helper(layout, pc, decoded, (LaneHelper::AllocateStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
-        Step::Generic => Err("generic row: planned with its semantic entries by `generic::generic_row`".into()),
+        Step::Generic => generic_row(layout, decoded, pc, Semantic::of(layout, pc)?),
         Step::Switch => Err("switch: planned as a compare tree (plan_row)".into()),
         Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
-        Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
+        Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, ahead_miss(decoded, layout, pc, helpers)?, helpers),
         Step::Return => {
             let register = match decoded.a {
                 Some(Source::Register(register)) => register,
@@ -344,12 +345,12 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     // The holders the chain's reads answer through: the body subscribes to them, so a change of their values retires it.
     layout.holders.borrow_mut().extend(chain.iter().map(|read| read.holder));
     let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads, proven_args, read, chain, builtin: layout.builtin(shape.call_pc) };
-    let CallChain { parts, records: record, choice } = call_plan::plan_call(&plan)?;
+    let CallChain { mut parts, records: record, choice } = call_plan::plan_call(&plan)?;
+    // An image's direct rows name the site's record (`name_records`).
+    if helpers == LaneHelpers::Ahead { name_records(&mut parts, &record, crate::vm::aot_image::Symbol::CallRecord { function: layout.id, pc: shape.call_pc }); }
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     #[cfg(test)]
-    if choice == Choice::Direct {
-        super::note_fast(shape.op);
-    }
+    if choice == Choice::Direct { super::note_fast(shape.op); }
     chained(parts, spills.len(), record)
 }
 
@@ -358,6 +359,7 @@ mod branches;
 use branches::{branching, jump_to};
 #[path = "steps/generic.rs"]
 mod generic;
+pub(super) use generic::{Semantic, ahead_miss, generic_row};
 
 #[cfg(test)]
 mod tests;

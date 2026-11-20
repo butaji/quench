@@ -162,6 +162,8 @@ pub(super) fn leave_chain(spills: &[(Place, Register)], copies: &[(Register, Reg
 /// What the linker needs of the region: its span, the registers live at a row, and the entry
 /// loads.
 pub(super) struct Layout<'a> {
+    /// The index of the function the code is of, in its program.
+    pub(super) id: u32,
     pub(super) span: Span<'a>,
     pub(super) homes: Homes,
     pub(super) webs: Webs,
@@ -381,9 +383,9 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<Linked, Strin
         .chain(std::iter::repeat_with(Vec::new).take(proven.as_ref().map_or(0, Proven::len)))
         .collect();
     debug_assert_eq!(exits.len(), rows.len());
-    let mut symbols = vec![None; g];
+    let mut symbols = vec![NO_SYMBOLS; g];
     symbols.extend(body.iter().map(|row| row.symbolic));
-    symbols.resize(rows.len(), None);
+    symbols.resize(rows.len(), NO_SYMBOLS);
     let (code, offsets, thunk, sites) = place_rows(layout.ending, &rows, (&exits, &routines), &jumps, proven_row, &symbols)?;
     let pcs = layout.entries.iter().filter(|&&(_, row)| !planned[row as usize].stencil.code.is_empty() || !planned[row as usize].pre.is_empty());
     let entries: Vec<(u32, usize)> = pcs.map(|&(pc, row)| (pc, offsets[g + starts[row as usize]])).collect();

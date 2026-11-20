@@ -149,6 +149,7 @@ fn body_call<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall) -> u64 {
     let Some(target) = body_call_target_in_lane(cx, vm, callee, call.link()) else {
         return super::native_calls::body_native_call_in_lane(cx, call, callee, receiver);
     };
+    super::proven_callees::rebind_body_call(cx, vm, call.argc(), target);
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
     body_script_call(cx, call, unsafe { &*target }, receiver)
 }

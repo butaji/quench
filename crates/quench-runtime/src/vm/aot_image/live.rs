@@ -1,15 +1,21 @@
 //! The live linker: an `AotImage` placed in this process's executable memory. Every base and lane
 //! body sits in one code block whose layout fixes every address before any code is linked, so a
 //! base PC leave resolves to its final address. Every other symbol resolves now: helpers,
-//! semantic entries, atoms, the invalidation word, heap values and shapes (`symbols::resolve_recipe`).
+//! semantic entries, operand records (the image's table, kept with the code), atoms, the
+//! invalidation word, heap values and shapes (`symbols::resolve_recipe`), and the records of the
+//! calls the closed world proves (`BoundCalls`, kept with the code).
 //! A function's entry is its lane body where it has one, else its base body.
 //!
 //! Owner: one pipeline.
 
 use super::{AotImage, base::NO_ENTRY, symbols::{self, Symbol, SymbolTable}};
 use crate::code_dependencies::Invalidation;
+use crate::folded_roots::FoldedRoots;
 use crate::vm::Vm;
+use super::bound::BoundCalls;
 use crate::vm::compiled::{CodeMemory, LaneHelper};
+use quench_bjit::call_record::CallRecord;
+use std::cell::UnsafeCell;
 use crate::vm::jit_backend::relocatable_code::RelocatableCode;
 use crate::Host;
 
@@ -20,8 +26,15 @@ const CODE_ALIGNMENT: usize = 16;
 pub(crate) struct LiveImage {
     /// Every base and lane body, placed once; the addresses below point into it.
     _code: CodeMemory,
-    /// The word the code's invalidation points read; it lives as long as the code.
-    _invalidation: Invalidation,
+    /// The image's one invalidation word, which every body's invalidation points read; it lives
+    /// as long as the code, and every lane body published from the image retires through it
+    /// (`Vm::install_ahead_body`), so a broken fact of any one stops every fold.
+    pub(crate) invalidation: Invalidation,
+    /// The operand records the generic rows pass their semantic entries; they live as long as the code.
+    operands: Box<[[u64; 2]]>,
+    /// The records the direct rows of proven calls read in place, and their bindings; they live as
+    /// long as the code.
+    pub(crate) calls: BoundCalls,
     /// Each function's entry: its lane body where it has one, else its base body.
     pub(crate) entries: Box<[usize]>,
     /// Each function's base body.
@@ -37,26 +50,51 @@ struct Layout {
     length: usize,
 }
 
+/// The addresses symbols resolve to that the image's own data fixes: each function's base body,
+/// the invalidation word, the operand table and the call records.
+struct Places<'a> {
+    bases: &'a [u64],
+    invalidation: usize,
+    operands: &'a [[u64; 2]],
+    calls: &'a [UnsafeCell<CallRecord>],
+}
+
 /// Links `image` into `vm`: its code placed, every symbol resolved.
 pub(crate) fn install<H: Host>(image: &AotImage, vm: &mut Vm<H>) -> Result<LiveImage, String> {
     let layout = layout(image);
     let invalidation = Invalidation::default();
-    let word = invalidation.address();
-    let code = CodeMemory::assemble(layout.length, |pointer, out| place(image, vm, &layout, pointer.addr(), word, out))?;
+    let operands: Box<[[u64; 2]]> = image.operands.iter().map(|record| record.words).collect();
+    let calls = BoundCalls::of(image);
+    let mut linked = vec![false; image.functions.len()];
+    let code = CodeMemory::assemble(layout.length, |pointer, out| {
+        let bases: Box<[u64]> = layout.bases.iter().map(|at| (pointer.addr() + at) as u64).collect();
+        let places = Places { bases: &bases, invalidation: invalidation.address(), operands: &operands, calls: calls.records() };
+        place(image, vm, &layout, (pointer.addr(), &places), (out, linked.as_mut_slice()))
+    })?;
     let start = code.pointer().addr();
     let bases: Box<[usize]> = layout.bases.iter().map(|at| start + at).collect();
-    let lanes: Box<[Option<usize>]> = layout.lanes.iter().map(|lane| lane.map(|at| start + at)).collect();
+    let lanes: Box<[Option<usize>]> = layout.lanes.iter().zip(&linked)
+        .map(|(lane, linked)| lane.filter(|_| *linked).map(|at| start + at)).collect();
     let entries = bases.iter().zip(lanes.iter()).map(|(base, lane)| lane.unwrap_or(*base)).collect();
-    Ok(LiveImage { _code: code, _invalidation: invalidation, entries, bases, lanes })
+    Ok(LiveImage { _code: code, invalidation, operands, calls, entries, bases, lanes })
 }
 
 /// The lane body of `function` linked against `live`, at address 0 for a copy into a new body
-/// (`LanePlan::finish`); `None` where the function has no lane body or a symbol does not link.
-pub(crate) fn link_lane<H: Host>(image: &AotImage, vm: &mut Vm<H>, live: &LiveImage, function: u32) -> Option<Vec<u8>> {
+/// (`LanePlan::finish`), with the heap values it names (`HeapValueRecipe::Global`, `PrototypeOf`, `ClosureOf`),
+/// which its publication keeps alive (`PublishedCode::hold_roots`): a collected object's id is
+/// reused, and the code would take the next object for it. `None` where the function has no lane
+/// body or a symbol does not link.
+pub(crate) fn link_lane<H: Host>(image: &AotImage, vm: &mut Vm<H>, live: &LiveImage, function: u32) -> Option<(Vec<u8>, FoldedRoots)> {
     let lane = image.functions.get(function as usize)?.lane.as_ref()?;
-    let word = live._invalidation.address();
     let bases: Box<[u64]> = live.bases.iter().map(|base| *base as u64).collect();
-    lane.code.link(0, |namespace, key| resolve(image, vm, &bases, word, namespace, key)).ok()
+    let places = Places { bases: &bases, invalidation: live.invalidation.address(), operands: &live.operands, calls: live.calls.records() };
+    let mut roots = FoldedRoots::default();
+    let code = lane.code.link(0, |namespace, key| {
+        let word = resolve(image, vm, &places, namespace, key)?;
+        if let Some(Symbol::HeapValue(_)) = SymbolTable::decode(image, namespace, key) { roots.embed_heap_identity(crate::Value::from_bits(word)); }
+        Some(word)
+    }).ok()?;
+    Some((code, roots.settled()))
 }
 
 /// The offsets of every body, each aligned, and the block's length.
@@ -72,14 +110,18 @@ fn layout(image: &AotImage) -> Layout {
     Layout { bases, lanes, length }
 }
 
-/// Links every body of `image` into `out`, the block that starts at `start` with `invalidation`.
-fn place<H: Host>(image: &AotImage, vm: &mut Vm<H>, layout: &Layout, start: usize, invalidation: usize, out: &mut [u8]) -> Result<(), String> {
-    let bases: Box<[u64]> = layout.bases.iter().map(|at| (start + at) as u64).collect();
-    let mut address = |namespace: u32, key: u32| resolve(image, vm, &bases, invalidation, namespace, key);
+/// Links every body of `image` into `out`, the block that starts at `start`, its symbols at
+/// `places`, and marks in `linked` each lane body that linked. A base body names only symbols the
+/// image fixes at load, so one that does not link fails the image; a lane body may name what the
+/// program makes as it runs (`HeapValueRecipe::PrototypeOf`, a callee's entry cell), which
+/// resolves when it is published (`link_lane`), so one that does not link yet is left unplaced.
+fn place<H: Host>(image: &AotImage, vm: &mut Vm<H>, layout: &Layout, (start, places): (usize, &Places<'_>),
+    (out, linked): (&mut [u8], &mut [bool])) -> Result<(), String> {
+    let mut address = |namespace: u32, key: u32| resolve(image, vm, places, namespace, key);
     for (function, body) in image.functions.iter().enumerate() {
         link_into(out, start, layout.bases[function], &body.base.code, &mut address)?;
         if let (Some(lane), Some(at)) = (&body.lane, layout.lanes[function]) {
-            link_into(out, start, at, &lane.code, &mut address)?;
+            linked[function] = link_into(out, start, at, &lane.code, &mut address).is_ok();
         }
     }
     Ok(())
@@ -93,14 +135,16 @@ fn link_into(out: &mut [u8], start: usize, at: usize, code: &RelocatableCode, re
 }
 
 /// The address of symbol `(namespace, key)` in this process, or `None` where it resolves to none yet.
-fn resolve<H: Host>(image: &AotImage, vm: &mut Vm<H>, bases: &[u64], invalidation: usize, namespace: u32, key: u32) -> Option<u64> {
-    let symbol = SymbolTable::decode(&image.labels, namespace, key)?;
+fn resolve<H: Host>(image: &AotImage, vm: &mut Vm<H>, places: &Places<'_>, namespace: u32, key: u32) -> Option<u64> {
+    let symbol = SymbolTable::decode(image, namespace, key)?;
     match symbol {
         Symbol::Helper(helper) => LaneHelper::addresses::<H>().get(helper as usize).map(|address| *address as usize as u64),
         Symbol::SemanticEntry(op) => semantic_entry::<H>(op),
+        Symbol::Operands { .. } => places.operands.get(key as usize).map(|record| record.as_ptr().addr() as u64),
+        Symbol::CallRecord { .. } => places.calls.get(key as usize).map(|record| record.get().addr() as u64),
         Symbol::Atom(atom) => Some(u64::from(vm.intern_atom(image.atoms.get(atom as usize)?))),
-        Symbol::Invalidation => Some(invalidation as u64),
-        Symbol::BasePc { function, pc } => base_pc(image, bases, function, pc),
+        Symbol::Invalidation => Some(places.invalidation as u64),
+        Symbol::BasePc { function, pc } => base_pc(image, places.bases, function, pc),
         Symbol::HeapValue(_) | Symbol::Shape(_) => symbols::resolve_recipe(symbol, image, vm),
         Symbol::EntryCell(_) | Symbol::Descriptor(_) | Symbol::CaptureWords(_) | Symbol::ConstantPool(_) => None,
     }
@@ -123,3 +167,4 @@ fn base_pc(image: &AotImage, bases: &[u64], function: u32, pc: u32) -> Option<u6
     if offset == NO_ENTRY { return None; }
     bases.get(function as usize).map(|base| base + u64::from(offset))
 }
+

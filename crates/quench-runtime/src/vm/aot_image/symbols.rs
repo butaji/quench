@@ -1,7 +1,8 @@
 //! The image's symbol space: every run-time address its code names. It extends
 //! `lane_region::relocs::RelocKind` (classes A and B: entry cells, descriptors, capture words,
 //! the invalidation word, helpers, the constant pool, atoms) with the base body's PC entries,
-//! the semantic entries of the generic row, and classes C and D: heap values and shapes, which
+//! the semantic entries and operand records of the generic row, the call records of the calls the
+//! closed world proves (`Symbol::CallRecord`), and classes C and D: heap values and shapes, which
 //! the loader builds from recipes in the VM that runs the image. A symbol is
 //! `(namespace, key)`, the pair `RelocatableCode` relocations carry: the namespace is the
 //! `RelocKind` discriminant for classes A to D, and the key is the symbol's number.
@@ -21,6 +22,10 @@ use std::hash::Hash;
 const SEMANTIC_ENTRY_NAMESPACE: u32 = RelocKind::Shape as u32 + 1;
 /// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list.
 const BASE_PC_NAMESPACE: u32 = SEMANTIC_ENTRY_NAMESPACE + 1;
+/// The namespace of `Symbol::Operands`, whose key is its record in the image's operand table.
+pub(crate) const OPERANDS_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
+/// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
+pub(crate) const CALL_RECORD_NAMESPACE: u32 = OPERANDS_NAMESPACE + 1;
 
 /// The attribute bits of a `ShapeRecipe` field, as `DataAttributes` reads them.
 pub(crate) const ATTRIBUTE_WRITABLE: u8 = 1 << 0;
@@ -41,6 +46,12 @@ pub(crate) enum Symbol {
     SemanticEntry(u16),
     /// The base body of `function` entered at record `pc` (a lane leave's continuation).
     BasePc { function: u32, pc: u32 },
+    /// The operand record (`NativeJsOperands`) of record `pc` of `function`, which its generic row
+    /// passes its semantic entry: data the linker places (`AotImage::operands`).
+    Operands { function: u32, pc: u32 },
+    /// The record (`CallRecord`) the direct call of record `pc` of `function` reads, a call the closed
+    /// world proves (`AotFacts::call_target`): data the linker places and binds (`AotImage::calls`).
+    CallRecord { function: u32, pc: u32 },
     /// Class C: heap value number `key` of `AotImage::heap_values`.
     HeapValue(u32),
     /// Class D: shape number `key` of `AotImage::shapes`.
@@ -58,6 +69,9 @@ pub(crate) enum HeapValueRecipe {
     Constant(u32),
     /// The `prototype` object of function `function`'s closure in the root activation.
     PrototypeOf(u32),
+    /// Function `function`'s closure, where the running program made exactly one: the callee a
+    /// construction the closed world proves (`AotFacts::construct_target`) guards by identity.
+    ClosureOf(u32),
 }
 
 /// How the loader builds a shape the code folded: the prototype it has and its own fields in
@@ -99,17 +113,37 @@ pub(crate) struct SymbolTable {
     heap_values: Interned<HeapValueRecipe>,
     atoms: Vec<Box<str>>,
     labels: Interned<(u32, u32)>,
+    operands: Interned<(u32, u32)>,
+    calls: Interned<(u32, u32)>,
+}
+
+/// The tables `SymbolTable::finish` leaves: shapes, heap values, atom texts, base PC labels,
+/// operand sites and call sites, each by key.
+pub(crate) struct Finished {
+    pub(crate) shapes: Vec<ShapeRecipe>,
+    pub(crate) heap_values: Vec<HeapValueRecipe>,
+    pub(crate) atoms: Vec<Box<str>>,
+    pub(crate) labels: Vec<(u32, u32)>,
+    pub(crate) operands: Vec<(u32, u32)>,
+    pub(crate) calls: Vec<(u32, u32)>,
 }
 
 impl SymbolTable {
-    pub(crate) fn new(_program: &ResidualProgram) -> Self {
-        Self { shapes: Interned::default(), heap_values: Interned::default(), atoms: Vec::new(), labels: Interned::default() }
+    /// The table of `program`'s image: its atom texts by program atom number, the key `Symbol::Atom`
+    /// and a recipe's field name carry (atom numbers are per VM, texts are not).
+    pub(crate) fn new(program: &ResidualProgram) -> Self {
+        let atoms = program.atoms.iter().map(Box::<str>::from).collect();
+        Self { shapes: Interned::default(), heap_values: Interned::default(), atoms, labels: Interned::default(), operands: Interned::default(),
+            calls: Interned::default() }
     }
 
-    /// The `(namespace, key)` pair code emits for `symbol`; a base PC's key is its interned label.
+    /// The `(namespace, key)` pair code emits for `symbol`; a base PC's key is its interned label,
+    /// an operand record's its site in the operand table, a call record's its site in the call table.
     pub(crate) fn intern(&mut self, symbol: Symbol) -> (u32, u32) {
         match symbol {
             Symbol::BasePc { function, pc } => (BASE_PC_NAMESPACE, self.labels.key((function, pc))),
+            Symbol::Operands { function, pc } => (OPERANDS_NAMESPACE, self.operands.key((function, pc))),
+            Symbol::CallRecord { function, pc } => (CALL_RECORD_NAMESPACE, self.calls.key((function, pc))),
             other => (other.namespace(), other.key()),
         }
     }
@@ -122,18 +156,21 @@ impl SymbolTable {
         Symbol::Shape(self.shapes.key(recipe))
     }
 
-    /// The symbol `(namespace, key)` names, the inverse of `intern`; `labels` is the image's label list.
-    pub(crate) fn decode(labels: &[(u32, u32)], namespace: u32, key: u32) -> Option<Symbol> {
+    /// The symbol `(namespace, key)` names in `image`, the inverse of `intern`.
+    pub(crate) fn decode(image: &AotImage, namespace: u32, key: u32) -> Option<Symbol> {
         match namespace {
-            BASE_PC_NAMESPACE => labels.get(key as usize).map(|&(function, pc)| Symbol::BasePc { function, pc }),
+            BASE_PC_NAMESPACE => image.labels.get(key as usize).map(|&(function, pc)| Symbol::BasePc { function, pc }),
+            OPERANDS_NAMESPACE => image.operands.get(key as usize).map(|record| Symbol::Operands { function: record.function, pc: record.pc }),
+            CALL_RECORD_NAMESPACE => image.calls.get(key as usize).map(|call| Symbol::CallRecord { function: call.function, pc: call.pc }),
             SEMANTIC_ENTRY_NAMESPACE => u16::try_from(key).ok().map(Symbol::SemanticEntry),
             _ => KEYED.iter().find(|(kind, _)| *kind == namespace).map(|(_, make)| make(key)),
         }
     }
 
-    /// The recipe tables and the label list the image carries: shapes, heap values, atom texts, labels.
-    pub(crate) fn finish(self) -> (Vec<ShapeRecipe>, Vec<HeapValueRecipe>, Vec<Box<str>>, Vec<(u32, u32)>) {
-        (self.shapes.values, self.heap_values.values, self.atoms, self.labels.values)
+    /// The recipe tables, the label list, the operand sites and the call sites the image carries.
+    pub(crate) fn finish(self) -> Finished {
+        Finished { shapes: self.shapes.values, heap_values: self.heap_values.values, atoms: self.atoms, labels: self.labels.values,
+            operands: self.operands.values, calls: self.calls.values }
     }
 }
 
@@ -169,6 +206,8 @@ impl Symbol {
             Self::Shape(_) => RelocKind::Shape as u32,
             Self::SemanticEntry(_) => SEMANTIC_ENTRY_NAMESPACE,
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
+            Self::Operands { .. } => OPERANDS_NAMESPACE,
+            Self::CallRecord { .. } => CALL_RECORD_NAMESPACE,
         }
     }
 
@@ -179,14 +218,17 @@ impl Symbol {
                 | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) => key,
             Self::Invalidation => 0,
             Self::SemanticEntry(op) => u32::from(op),
-            Self::BasePc { .. } => unreachable!("a base PC is keyed by its label"),
+            Self::BasePc { .. } | Self::Operands { .. } | Self::CallRecord { .. } =>
+                unreachable!("a base PC, an operand record or a call record is keyed by its site (`intern`)"),
         }
     }
 }
 
 /// The word of the heap value or shape `symbol` names, built in `vm` from `image`'s recipes: the
 /// word a live lowering would embed (a heap value's bits, a shape's id). `None` for any other
-/// symbol, and for a recipe `vm` cannot build from the image alone (`Constant`, `PrototypeOf`).
+/// symbol, for a recipe `vm` cannot build from the image alone (`Constant`), and for one the
+/// running program has not made yet (`PrototypeOf` before the root activation creates the
+/// closure): a lane body that names one links when it is published (`live::link_lane`).
 pub(crate) fn resolve_recipe<H: Host>(symbol: Symbol, image: &AotImage, vm: &mut Vm<H>) -> Option<u64> {
     match symbol {
         Symbol::HeapValue(key) => Some(heap_value(image, vm, key)?.to_bits()),
@@ -204,8 +246,26 @@ fn heap_value<H: Host>(image: &AotImage, vm: &mut Vm<H>, key: u32) -> Option<Val
             let globals = vm.realm.globals;
             vm.own_property(globals, atom)
         }
-        HeapValueRecipe::Constant(_) | HeapValueRecipe::PrototypeOf(_) => None,
+        HeapValueRecipe::PrototypeOf(function) => prototype_of(vm, function),
+        HeapValueRecipe::ClosureOf(function) => closure_of(vm, function),
+        HeapValueRecipe::Constant(_) => None,
     }
+}
+
+/// Function `function`'s closure in the running program, where the program made exactly one (a
+/// top-level function, recorded as `Vm::cached_functions` finds it): with several, no one closure
+/// is the function's, so the recipe resolves to none.
+fn closure_of<H: Host>(vm: &Vm<H>, function: u32) -> Option<Value> {
+    let mut closures = vm.cached_functions(vm.active_program, function);
+    let closure = closures.next()?;
+    closures.next().is_none().then_some(closure)
+}
+
+/// The own `prototype` of function `function`'s one closure (`closure_of`), an object.
+fn prototype_of<H: Host>(vm: &mut Vm<H>, function: u32) -> Option<Value> {
+    let closure = closure_of(vm, function)?;
+    let atom = vm.prototype_atom();
+    vm.own_property(closure, atom).filter(|prototype| prototype.is_heap())
 }
 
 /// The shape of shape recipe `key`: the empty object of its prototype, then each field added

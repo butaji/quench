@@ -85,20 +85,56 @@ pub(in crate::vm) fn frozen_fields(program: &ResidualProgram) -> FrozenValues {
 pub(in crate::vm) fn frozen_global_reads(program: &ResidualProgram, function: &Function,
     globals: &FrozenValues,
 ) -> crate::vm::global_facts::GlobalReads {
-    let frozen = |atom: Atom| globals.get(&atom).map(|&value|
-        crate::vm::global_facts::GlobalRead::Frozen { value, ty: crate::typed_ir::Type::immediate(value) });
     function.code.iter().enumerate().filter_map(|(pc, &packed)| {
-        let instruction = function.widened(packed);
-        let read = if instruction.op().loads_name() {
-            frozen(instruction.atom_index())
-        } else if matches!(crate::vm::compiled::decoded_completed(instruction),
-            Some(crate::staged::Operation::LoadCapture { .. } | crate::staged::Operation::StoreCapture { .. })) {
-            capture_binding_atom(program, function, instruction).and_then(frozen)
-        } else {
-            None
-        };
-        read.map(|read| (pc, read))
+        frozen_read(program, function, function.widened(packed), globals).map(|read| (pc, read))
     }).collect()
+}
+
+/// `frozen_global_reads` over a lane unit, by unit PC: each instruction read in the function
+/// its origin names (the caller's, or an inlined frame's callee).
+pub(in crate::vm) fn frozen_unit_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, function: u32,
+    globals: &FrozenValues,
+) -> crate::vm::global_facts::GlobalReads {
+    unit.instructions.iter().enumerate().filter_map(|(pc, &instruction)| {
+        let owner = match *unit.origins.get(pc)? {
+            super::lane_unit::Origin::Caller(_) => function,
+            super::lane_unit::Origin::Inlined { frame, .. } => unit.frames.get(frame)?.target.function,
+        };
+        let read = frozen_read(program, program.function_get(owner as usize)?, instruction, globals)?;
+        Some((pc, read))
+    }).collect()
+}
+
+/// The frozen read `instruction` of `function` makes: a by-name load or a capture access of a
+/// global `globals` holds, with its whole-program value.
+fn frozen_read(program: &ResidualProgram, function: &Function, instruction: WideInstruction,
+    globals: &FrozenValues,
+) -> Option<crate::vm::global_facts::GlobalRead> {
+    let atom = if instruction.op().loads_name() {
+        instruction.atom_index()
+    } else if matches!(crate::vm::compiled::decoded_completed(instruction),
+        Some(crate::staged::Operation::LoadCapture { .. } | crate::staged::Operation::StoreCapture { .. })) {
+        capture_binding_atom(program, function, instruction)?
+    } else {
+        return None;
+    };
+    globals.get(&atom).map(|&value| crate::vm::global_facts::GlobalRead::Frozen { value, ty: crate::typed_ir::Type::immediate(value) })
+}
+
+/// The whole-program values a closed image's lane bodies fold, each checked at its read site
+/// (`Division`-independent: a frozen value's binding time is Static, `staged::division`):
+/// derived once per image, read by every function's lowering.
+pub(in crate::vm) struct ClosedFrozen {
+    /// The globals the program writes once with an immediate (`frozen_globals`).
+    pub(in crate::vm) globals: FrozenValues,
+    /// The prototype fields the program writes once with an immediate (`frozen_fields`).
+    pub(in crate::vm) fields: FrozenValues,
+}
+
+impl ClosedFrozen {
+    pub(in crate::vm) fn of(program: &ResidualProgram) -> Self {
+        Self { globals: frozen_globals(program), fields: frozen_fields(program) }
+    }
 }
 
 /// The atom a capture read names: the local atom of the slot its environment closes over.
