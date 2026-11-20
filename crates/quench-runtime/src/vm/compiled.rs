@@ -268,7 +268,7 @@ mod constructions;
 mod function_binding;
 use function_binding::{admitted_function_binding_in_lane, function_binding_in_lane};
 mod general_store;
-pub(super) use frameless::Frameless;
+pub(super) use frameless::CalleeAdmissions;
 use direct_call::direct_call;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
 mod guard_aarch64;

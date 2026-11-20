@@ -44,7 +44,7 @@ struct CallEntry {
 
 /// The per-VM storage of the callee admission cache.
 #[derive(Default)]
-pub(crate) struct Frameless {
+pub(crate) struct CalleeAdmissions {
     /// The cache, made when native code first binds it (`bind`): a VM that runs no native body keeps
     /// none, and one that does commits only the pages its admissions reach (`zeroed_boxed_slice`).
     cache: std::sync::OnceLock<Box<[CallEntry]>>,
@@ -71,7 +71,7 @@ unsafe fn zeroed_boxed_slice<T>(len: usize) -> Box<[T]> {
     unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(base, len)) }
 }
 
-impl Frameless {
+impl CalleeAdmissions {
     fn cache(&self) -> &[CallEntry] {
         self.cache.get_or_init(|| {
             // SAFETY: `CallEntry` is a struct of `u64` words, whose all-zero bytes are its default.

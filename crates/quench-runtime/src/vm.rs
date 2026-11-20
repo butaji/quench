@@ -2359,7 +2359,7 @@ pub(crate) struct Vm<H> {
     bound_parts_layout: std::cell::Cell<Option<(u32, [u16; 3])>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     construct_targets: Box<[ConstructTarget; CALL_TARGET_CACHE_SIZE]>,
-    frameless: compiled::Frameless,
+    frameless: compiled::CalleeAdmissions,
     field_caches: site_table::CacheSiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
