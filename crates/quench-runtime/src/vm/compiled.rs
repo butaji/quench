@@ -5198,8 +5198,9 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
     arguments: *const u64,
     result: *mut u64,
 ) -> i64 {
-    // Keep the opcode static through the shared exception/continuation boundary,
-    // so specialization resolves the operation and its guards in this body.
+    // The opcode resolves its operation statically; the boundary around the step is the same for
+    // every opcode, so one body per host runs it (`js_semantic_callout_with`): one copy per opcode was
+    // 290 instances of ~6 KB that every edit to a helper it inlines compiled again.
     let operation = const {
         if SINGLE_OPERATION {
             match Op::from_index(OPCODE) {
@@ -5213,6 +5214,20 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             None
         }
     };
+    // SAFETY: forwarded from this callout's contract.
+    unsafe { js_semantic_callout_with::<H, SINGLE_OPERATION>(operation, context, function, arguments, result) }
+}
+
+/// `js_semantic_callout`'s body, with the operation its opcode resolved (`None` for the dynamic entry).
+#[cfg(feature = "native-execution")]
+#[inline(never)]
+unsafe fn js_semantic_callout_with<H: Host, const SINGLE_OPERATION: bool>(
+    operation: Option<StaticJsOperation<H>>,
+    context: *mut CallContext,
+    function: u64,
+    arguments: *const u64,
+    result: *mut u64,
+) -> i64 {
     // The shared trampoline marks its active context while native code runs.
     // Clear it while Rust semantics and any host or guest helper run, so a
     // fault there is never mistaken for a generated-code fault.

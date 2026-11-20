@@ -173,7 +173,7 @@ mod guard;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, step_out_of_line, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
+pub(crate) use steps::{step, step_of, step_out_of_line, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
 pub(crate) mod effects;
 pub(crate) mod function_plan;
 pub(crate) mod region;
