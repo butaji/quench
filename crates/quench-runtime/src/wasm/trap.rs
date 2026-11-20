@@ -32,7 +32,8 @@ pub enum WasmTrap {
 
 /// The traps compiled code raises, in status order: a trap's status is its position plus one
 /// (zero is a return), the same for the u-jit's code and the b-jit's stencils.
-pub(crate) const COMPILED_TRAPS: [WasmTrap; 9] = [
+/// Every trap is listed: a compiled GC, table or exception rule raises its own trap like any other.
+pub(crate) const COMPILED_TRAPS: [WasmTrap; 24] = [
     WasmTrap::Unreachable,
     WasmTrap::OutOfBoundsMemory,
     WasmTrap::IntegerDivideByZero,
@@ -42,6 +43,21 @@ pub(crate) const COMPILED_TRAPS: [WasmTrap; 9] = [
     WasmTrap::UndefinedElement,
     WasmTrap::UninitializedElement,
     WasmTrap::IndirectCallTypeMismatch,
+    WasmTrap::UnalignedAtomic,
+    WasmTrap::WaitOnUnsharedMemory,
+    WasmTrap::TooManyWaiters,
+    WasmTrap::OutOfBoundsTable,
+    WasmTrap::OutOfBoundsArray,
+    WasmTrap::NullReference,
+    WasmTrap::NullFunctionReference,
+    WasmTrap::NullI31Reference,
+    WasmTrap::NullStructReference,
+    WasmTrap::NullArrayReference,
+    WasmTrap::NullExceptionReference,
+    WasmTrap::NullDescriptorReference,
+    WasmTrap::ArrayTooLarge,
+    WasmTrap::CastFailure,
+    WasmTrap::DescriptorCastFailure,
 ];
 
 impl WasmTrap {
