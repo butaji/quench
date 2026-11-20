@@ -2254,15 +2254,9 @@ static TsType *cContextualType(TsNode *e) {
  * small for it (getContextualCallSignature with isAritySmaller). A union, an intersection or a context without signatures,
  * several signatures, a this parameter, a generic signature and every context not ported set *err (NULL with *err set),
  * and a NULL result without *err means there is no contextual type at all. */
-static CSig *cContextualSignature(TsNode *fn, bool *err) {
-  *err = false;
-  TsType *ctx = cContextualType(fn);
-  if (ctx == NULL) return NULL;
-  if (ctx == cErrorType) { *err = true; return NULL; }
-  if (ctx->flags & TF_Any) return NULL;   /* getContextualCallSignature of any: no call signatures, so no contextual signature */
-  if (!(ctx->flags & TF_Object)) { *err = true; return NULL; }
-  cResolveSignatures(ctx);
-  if (ctx->ncall == 0) { *err = true; return NULL; }
+/* getContextualCallSignature of an object type: the one call signature that is not too small for the function (isAritySmaller);
+ * none (NULL without *err) when no call signature is applicable, several or a generic or this one are not ported */
+static CSig *cContextualCallSignatureOf(TsNode *fn, TsType *ctx, bool *err) {
   /* isAritySmaller: the target parameters before the first optional, initialized or rest one (a this parameter is not counted) */
   TsList *pl = fn->parameters;
   int target = 0;
@@ -2278,9 +2272,48 @@ static CSig *cContextualSignature(TsNode *fn, bool *err) {
     applicable++;
     pick = s;
   }
+  if (applicable == 0) return NULL;
   if (applicable != 1) { *err = true; return NULL; }
   if (pick->decl->typeParameters && pick->decl->typeParameters->n) { *err = true; return NULL; }
   return pick;
+}
+
+/* getContextualSignature of a function expression or arrow: the one call signature of its contextual type that is not too
+ * small for it. An object type with call signatures gives its own (getContextualCallSignature); a union gives the one
+ * signature of its members that have call signatures (members without any, and undefined, null and the primitives, have
+ * none). Several signatures (getIntersectedSignatures and createUnionSignature), a generic, a this parameter and every
+ * context not ported set *err (NULL with *err); a NULL result without *err means there is no contextual signature. */
+static CSig *cContextualSignature(TsNode *fn, bool *err) {
+  *err = false;
+  TsType *ctx = cContextualType(fn);
+  if (ctx == NULL) return NULL;
+  if (ctx == cErrorType) { *err = true; return NULL; }
+  if (ctx->flags & TF_Any) return NULL;   /* getContextualCallSignature of any: no call signatures, so no contextual signature */
+  if (ctx->flags & TF_Union) {
+    CSig *found = NULL;
+    int nfound = 0;
+    for (int i = 0; i < ctx->ntypes; i++) {
+      TsType *m = ctx->types[i];
+      if (!(m->flags & TF_Object)) {
+        /* a primitive or unit member has no call signatures (its apparent type has none) */
+        if (m->flags & (TF_Union | TF_Intersection | TF_TypeParameter | TF_Index | TF_IndexedAccess | TF_Conditional |
+                        TF_TemplateLiteral | TF_StringMapping | TF_NonPrimitive)) { *err = true; return NULL; }
+        continue;
+      }
+      cResolveSignatures(m);
+      if (m->ncall == 0) continue;
+      bool e2 = false;
+      CSig *s = cContextualCallSignatureOf(fn, m, &e2);
+      if (e2) { *err = true; return NULL; }
+      if (s) { found = s; nfound++; }
+    }
+    if (nfound > 1) { *err = true; return NULL; }   /* createUnionSignature (or no signature when the members differ) */
+    return found;
+  }
+  if (!(ctx->flags & TF_Object)) { *err = true; return NULL; }
+  cResolveSignatures(ctx);
+  if (ctx->ncall == 0) { *err = true; return NULL; }
+  return cContextualCallSignatureOf(fn, ctx, err);
 }
 
 /* getContextualReturnType: the return annotation, else the return type of the contextual signature (function expressions and
