@@ -228,9 +228,12 @@ impl Callees {
         self.stable.iter().flatten().filter_map(|held| Held::global(*held))
     }
 
-    /// The captured identities the body's direct rows rely on (`Held::Captured`): its entry checks each once.
-    pub(in crate::vm::compiled) fn captured_identities(&self) -> impl Iterator<Item = (u16, u64)> + '_ {
-        self.stable.iter().flatten().filter_map(|held| match *held {
+    /// The captured identities the body's direct rows rely on (`Held::Captured`) at the call sites in `pcs` (the
+    /// span its code covers): its entry checks each once. A site outside it is no row of the body's: a loop region
+    /// of a function that calls a captured callee before its loop (`c(row); for (..) {}`) entered with no captures
+    /// word bound (it calls nothing, `osr_lane::bind_captures`) and its entry test read `undefined` as the view.
+    pub(in crate::vm::compiled) fn captured_identities(&self, pcs: std::ops::RangeInclusive<usize>) -> impl Iterator<Item = (u16, u64)> + '_ {
+        self.stable.iter().enumerate().filter(move |(pc, _)| pcs.contains(pc)).filter_map(|(_, held)| held.as_ref()).filter_map(|held| match *held {
             Held::Captured { slot, callee } => Some((slot, callee)),
             Held::Global(_) => None,
         })

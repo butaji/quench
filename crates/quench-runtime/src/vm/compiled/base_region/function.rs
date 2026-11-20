@@ -300,7 +300,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     for (row, (int_a, int_b)) in decoded.iter_mut().zip(ints) {
         (row.int_a, row.int_b) = (int_a, int_b);
     }
-    let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities().collect();
+    let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities(region.header as usize..=region.backedge as usize).collect();
     identities.sort_unstable();
     identities.dedup();
     // The entry guards hold the pinned int32 and double webs live at the header (`entry_rows`, which every entry runs), so
