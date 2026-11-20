@@ -763,16 +763,49 @@ static TsType *cAssignmentReduced(TsType *declared, TsType *assigned) {
   return cIsRelatedWith(assigned, reduced, REL_Assignable) ? reduced : declared;
 }
 
-/* the type assigned by an assignment flow node (getAssignedType): the initializer, the right side, or number for ++ and -- */
+/* checkRightHandSideOfForOf, ported for an Array<T> and for a string (other iterables are not ported) */
+static TsType *cForOfElementType(TsNode *stmt) {
+  TsType *t = cExprType(stmt->expression);
+  if (t == cErrorType) return t;
+  if ((t->flags & TF_Object) && (t->objectFlags & OF_Reference) && t->target == cGlobalArrayDeclared() && t->nargs == 1)
+    return t->args[0];
+  if (t->flags & (TF_String | TF_StringLiteral)) return cStringType;
+  return cUnported("for-of over an unported iterable");
+}
+
+/* the type assigned by an assignment flow node (getAssignedType, or getInitialType of a declaration): the initializer, the
+ * right side of =, ||=, &&= or ??=, the element of a for-in (string) or for-of, and the binding element of a pattern. Compound
+ * assignments are not here: cFlowAssignment takes them from the flow before. Destructuring defaults and elements are not ported. */
 static TsType *cAssignedType(TsNode *n) {
   switch (n->kind) {
-    case TSK_VariableDeclaration:
-      if (!n->initializer || (n->name && n->name->kind != TSK_Identifier)) return cUnported("assignment of a pattern");
-      return cExprType(n->initializer);
-    case TSK_BinaryExpression:
-      if (n->operatorToken->kind != TSK_EqualsToken) return cUnported("compound assignment");
-      return cExprType(n->right);
-    case TSK_PrefixUnaryExpression: case TSK_PostfixUnaryExpression: return cNumberType;
+    case TSK_VariableDeclaration: {
+      if (n->name && n->name->kind != TSK_Identifier) return cUnported("assignment of a pattern");
+      if (n->initializer) return cExprType(n->initializer);
+      TsNode *stmt = n->parent ? n->parent->parent : NULL;
+      if (stmt && stmt->kind == TSK_ForInStatement) return cStringType;
+      if (stmt && stmt->kind == TSK_ForOfStatement) return cForOfElementType(stmt);
+      return cUnported("declaration without an initializer");
+    }
+    case TSK_BindingElement:
+      if (!n->symbol) return cUnported("binding element without a symbol");
+      return cBindingElementType(n->symbol, n);
+    case TSK_Identifier: {
+      TsNode *p = n->parent;
+      switch (p->kind) {
+        case TSK_BinaryExpression: {
+          int op = p->operatorToken->kind;
+          if (!(op == TSK_EqualsToken || op == TSK_BarBarEqualsToken || op == TSK_AmpersandAmpersandEqualsToken ||
+                op == TSK_QuestionQuestionEqualsToken))
+            return cUnported("compound assignment");
+          if (p->parent->kind == TSK_ArrayLiteralExpression || p->parent->kind == TSK_PropertyAssignment)
+            return cUnported("destructuring default assignment");
+          return cExprType(p->right);
+        }
+        case TSK_ForInStatement: return cStringType;
+        case TSK_ForOfStatement: return cForOfElementType(p);
+        default: return cUnported("assignment of a destructuring element");
+      }
+    }
     default: return cUnported("assignment of another kind");
   }
 }
@@ -1331,6 +1364,11 @@ static bool cArgsMention(TsNode *call, CFlowRef *r) {
   return false;
 }
 
+enum { AK_None = 0, AK_Definite = 1, AK_Compound = 2 };
+static TsNode *cAssignmentTarget(TsNode *node);
+static int cAssignmentTargetKind(TsNode *id);
+static TsType *cBaseOfLiteral(TsType *t, bool *unp);
+static bool cIsInCompoundLikeAssignment(TsNode *id);
 /* getTypeAtFlowAssignment: the reference assigned here (its declared type, or the assigned type reduced by it), the
  * reference's container assigned (the declared type), or no effect (false). An assignment in unreachable code is never. */
 static bool cFlowAssignment(TsFlow *flow, CFlowRef *r, CFT *out) {
@@ -1338,9 +1376,20 @@ static bool cFlowAssignment(TsFlow *flow, CFlowRef *r, CFT *out) {
   TsType *declared = r->declared;
   if (tg && cAssignMatches(tg, r)) {
     if (!cIsReachableFlow(flow, false)) { *out = cFT(cUnreachableNeverType); return true; }
-    if (r->nonUnion) { *out = cFT(declared); return true; }
+    if (cAssignmentTargetKind(flow->node) == AK_Compound) {
+      /* a compound assignment (x += v, x++) is the base literal type of the flow before it */
+      CFT prev = cFlowAt(flow->ante, r);
+      bool unp = false;
+      TsType *base = cBaseOfLiteral(prev.t, &unp);
+      *out = unp ? cFT(cUnported("compound assignment of a bigint or enum literal")) : cCreateFlowType(base, prev.inc);
+      return true;
+    }
+    bool unp = false;
+    TsType *t = cIsInCompoundLikeAssignment(flow->node) ? cBaseOfLiteral(declared, &unp) : declared;
+    if (unp) { *out = cFT(cUnported("assignment to a bigint or enum literal type")); return true; }
+    if (!(t->flags & TF_Union)) { *out = cFT(t); return true; }
     TsType *assigned = cAssignedType(flow->node);
-    *out = cFT(assigned == cErrorType ? assigned : cAssignmentReduced(declared, assigned));
+    *out = cFT(assigned == cErrorType ? assigned : cAssignmentReduced(t, assigned));
     return true;
   }
   /* containsMatchingReference (x.y = v for the reference x): the declared type, whatever it is (getTypeAtFlowAssignment) */
@@ -1552,7 +1601,6 @@ static CFT cFlowAt(TsFlow *flow, CFlowRef *r) {
 }
 
 /* ---- assignment targets and the last assignment of a variable (checker.ts 5.9.2) ---- */
-enum { AK_None = 0, AK_Definite = 1, AK_Compound = 2 };
 #define CMAX_ASSIGN_POS INT64_MAX / 4
 
 /* getAssignmentTarget: the assignment, update or for-in/of statement that writes the identifier, else NULL */
@@ -1585,6 +1633,15 @@ static TsNode *cAssignmentTarget(TsNode *node) {
     }
     parent = node->parent;
   }
+}
+
+/* isInCompoundLikeAssignment: the identifier is the target of `x = a + b` (a shift, additive, multiplicative or exponent
+ * operator on the right), whose declared type is widened to its base literal types */
+static bool cIsInCompoundLikeAssignment(TsNode *id) {
+  TsNode *t = cAssignmentTarget(id);
+  if (!t || t->kind != TSK_BinaryExpression || t->operatorToken->kind != TSK_EqualsToken) return false;
+  TsNode *right = cSkipParens(t->right);
+  return right->kind == TSK_BinaryExpression && getBinaryOperatorPrecedence(right->operatorToken->kind) >= OP_Shift;
 }
 
 /* getAssignmentTargetKind: definite for `=`, the logical assignments, and for-in/of; compound for the other operators and ++ or -- */
