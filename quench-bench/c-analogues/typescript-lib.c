@@ -470,6 +470,8 @@ static void cPrintIfaceCounts(void) {
 
 static void (*cIfaceStage)(TsNode *) = cCheckInterfaceDecl;
 
+static int cBodyInst;   /* instantiations made by the body checks (cCheckBodies) of the last run */
+
 static void runChecker(void) {
   cResetTypeCaches();
   cResetTemplateTypes();
@@ -498,7 +500,9 @@ static void runChecker(void) {
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckExpressionNode);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckDeclTypeNodes);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckDeclarationTypes);
+  int instBeforeBodies = cInstTotal;
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cCheckBodies(programFiles[i]);
+  cBodyInst = cInstTotal - instBeforeBodies;
 }
 
 int main(int argc, char **argv) {
@@ -560,6 +564,7 @@ int main(int argc, char **argv) {
   printf("relation caches: assignable %d (node %d), identity %d (node %d), subtype %d (node %d), strictSubtype %d (node %d)\n",
          cRelTab[REL_Assignable].n, EXPECTED_REL_ASSIGNABLE, cIdentityCacheCount, EXPECTED_REL_IDENTITY,
          cRelTab[REL_Subtype].n, EXPECTED_REL_SUBTYPE, cRelTab[REL_StrictSubtype].n, EXPECTED_REL_STRICT_SUBTYPE);
+  printf("body instantiations: %d (node about 3300)\n", cBodyInst);
   printf("relation overflows (depth or maybe stack limits): %d\n", cRelOverflows);
   if (diagBad) printf("validation FAILED: %d diagnostics differ from node\n", diagBad);
   else printf("validation ok\n");
