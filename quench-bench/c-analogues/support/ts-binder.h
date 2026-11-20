@@ -79,6 +79,9 @@ typedef struct TsSymbol {
   struct TsMapper *instMapper;   /* instantiated symbols: the mapper */
   uint32_t checkFlags;
   uint32_t checkId;              /* getSymbolId: assigned on first use, used in unique symbol names */
+  struct TsType *deferParent;    /* deferred union or intersection property (DeferredType): the containing type */
+  struct TsType **deferTypes;    /* ... and the member property types */
+  int nDeferTypes;
 } TsSymbol;
 
 typedef struct TsSymEntry { BName key; TsSymbol *sym; } TsSymEntry;

@@ -2337,68 +2337,8 @@ static TsType *cApparentOf(TsType *o) {
   return o;
 }
 
-/* getUnionOrIntersectionProperty of a union (createUnionOrIntersectionProperty, cached per union type): the property of a union of
- * object types. Every member must be an object with the property, which is not private or protected (not ported: a missing
- * property is an error or an index signature). The same symbol in every member is that symbol, and so are the instantiations of
- * one symbol with the same type; otherwise a synthetic property whose type is the union of the member property types (literal
- * reduction only). The instantiations that node merges through a generic declaration are not ported. NULL when not ported. */
-static TsSymbol *cUnionProperty(TsType *u, BName name) {
-  if (!u->unionProps) u->unionProps = bTableNew();
-  TsSymbol *cached = bTableGet(u->unionProps, name);
-  if (cached) return cached;
-  TsSymbol *single = NULL;
-  TsSymbol **set = NULL;
-  int nset = 0;
-  bool merged = false;   /* mergedInstantiations: instances of one generic declaration with the same type */
-  for (int i = 0; i < u->ntypes; i++) {
-    TsType *m = u->types[i];
-    if (!(m->flags & TF_Object)) return NULL;
-    TsSymbol *p = cPropertyOf(m, name);
-    if (!p || (!p->valueDeclaration && !p->ndecls)) return NULL;
-    TsNode *d = p->valueDeclaration ? p->valueDeclaration : p->decls[0];
-    if (bModifierFlags(d) & (TMF_Private | TMF_Protected)) return NULL;
-    /* an accessor may have a write type other than its read type (not ported) */
-    if (d->kind == TSK_GetAccessor || d->kind == TSK_SetAccessor) return NULL;
-    if (!single) { single = p; continue; }
-    if (p == single) continue;
-    TsSymbol *ta = single->instTarget ? single->instTarget : single, *tb = p->instTarget ? p->instTarget : p;
-    if (ta == tb && cTypeOfSymbol(p) == cTypeOfSymbol(single) && ((p->flags ^ single->flags) & SF_Optional) == 0) {
-      /* the same property of the same declaration with the same type (compareProperties on the identical types) */
-      TsNode *owner = single->parent && single->parent->valueDeclaration ? single->parent->valueDeclaration : NULL;
-      merged = owner && owner->typeParameters && owner->typeParameters->n;
-      continue;
-    }
-    if (!set) { set = ts_arena_alloc(sizeof(TsSymbol *) * (size_t)u->ntypes); set[nset++] = single; }
-    bool seen = false;
-    for (int k = 0; k < nset; k++) if (set[k] == p) seen = true;
-    if (!seen) set[nset++] = p;
-  }
-  if (!single) return NULL;
-  TsSymbol *result = single;
-  if (!set && merged) {
-    /* the clone of createUnionOrIntersectionProperty: a transient symbol of the same type whose parent is the declaring
-     * symbol of the declaration (createSymbolWithType) */
-    TsNode *vd = single->valueDeclaration;
-    result = cCreateSymbol(single->flags, name);
-    result->decls = single->decls;
-    result->ndecls = single->ndecls;
-    result->declCap = single->declCap;
-    result->valueDeclaration = vd;
-    result->parent = vd && vd->symbol ? vd->symbol->parent : NULL;
-    result->type = cTypeOfSymbol(single);
-  } else if (set) {
-    TsType **pts = ts_arena_alloc(sizeof(TsType *) * (size_t)nset);
-    for (int k = 0; k < nset; k++) {
-      pts[k] = cTypeOfSymbol(set[k]);
-      if (pts[k] == cErrorType) return NULL;
-    }
-    result = cCreateSymbol(SF_Property, name);
-    result->type = cGetUnionType(pts, nset);
-    if (result->type == cErrorType) return NULL;
-  }
-  bTableSet(u->unionProps, name, result);
-  return result;
-}
+/* getUnionOrIntersectionProperty of a union (ts-types.h): the property every member has, NULL when none */
+static TsSymbol *cUnionProperty(TsType *u, BName name) { return cGetPropertyOfUnionOrIntersection(u, name); }
 
 /* a property of an object type, or the error type */
 static TsType *cMemberType(TsType *o, TsSymbol *p, TsNode *e) {

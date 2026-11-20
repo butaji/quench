@@ -80,7 +80,10 @@ typedef struct TsType {
   uint8_t couldContain;          /* couldContainTypeVariables: 0 not computed, 1 yes, 2 no */
   struct TsMapper *sigMapper;    /* the mapper of the signatures and index infos of this type */
   TsSymTable *declMembers;       /* declared members of an interface, class or type literal (own and late) */
-  TsSymTable *unionProps;        /* union types: the properties of the members (getUnionOrIntersectionProperty, cUnionProperty) */
+  TsSymTable *unionProps;        /* union and intersection types: the propertyCache (getUnionOrIntersectionProperty) */
+  TsSymbol **resolvedProps;      /* union and intersection types: resolvedProperties (getPropertiesOfUnionOrIntersectionType) */
+  int nResolvedProps;
+  bool resolvedPropsDone;
   /* union and intersection */
   struct TsType **types;
   int ntypes;
@@ -927,6 +930,8 @@ static TsType *cThisTypeOfNode(TsNode *n) {
 /* ---- indexed access and index types (getIndexedAccessType 67063, getIndexType 64940) ---- */
 static void cResolveIndexInfos(TsType *t);
 static int cPropertiesOf(TsType *t, TsSymbol ***out);
+static TsSymbol *cGetPropertyOfUnionOrIntersection(TsType *t, BName name);   /* union properties (before cTypeOfSymbol) */
+static int cPropertiesOfUnionOrIntersection(TsType *t, TsSymbol ***out);
 static BName cLiteralKey(TsType *l);
 static TsSymbol *cPropertyOf(TsType *t, BName name);
 static CHEnt *cIndexedTab[1024];
@@ -1714,6 +1719,7 @@ static void cResolveMembers(TsType *t) {
 
 /* getPropertiesOfObjectType: the property symbols in member order (signatures excluded) */
 static int cPropertiesOf(TsType *t, TsSymbol ***out) {
+  if (t->flags & (TF_Union | TF_Intersection)) return cPropertiesOfUnionOrIntersection(t, out);
   cResolveMembers(t);
   int n = 0;
   if (!t->members) { *out = NULL; return 0; }
@@ -1729,6 +1735,7 @@ static int cPropertiesOf(TsType *t, TsSymbol ***out) {
 }
 
 static TsSymbol *cPropertyOf(TsType *t, BName name) {
+  if (t->flags & (TF_Union | TF_Intersection)) return cGetPropertyOfUnionOrIntersection(t, name);
   cResolveMembers(t);
   if (!t->members) return NULL;
   TsSymbol *s = bTableGet(t->members, name);
@@ -1870,10 +1877,296 @@ static TsType *cParameterSymbolType(TsSymbol *sym, TsNode *d) {
   return t;
 }
 
+/* ---- union and intersection properties (createUnionOrIntersectionProperty 63588, getUnionOrIntersectionProperty
+ * 63737, getPropertiesOfUnionOrIntersectionType 63213). A property of a union or intersection is the single
+ * member property when every member has the same one (no symbol); otherwise a synthetic symbol, cached per type
+ * (propertyCache), whose type is the union or intersection of the member property types (deferred to the first
+ * getTypeOfSymbol when there are more than two). ---- */
+enum { CK_Instantiated = 1, CK_SyntheticProperty = 2, CK_SyntheticMethod = 4, CK_Readonly = 8, CK_ReadPartial = 16,
+       CK_WritePartial = 32, CK_HasNonUniformType = 64, CK_HasLiteralType = 128, CK_ContainsPublic = 256,
+       CK_ContainsProtected = 512, CK_ContainsPrivate = 1024, CK_ContainsStatic = 2048, CK_DeferredType = 65536,
+       CK_HasNeverType = 131072 };
+#define CK_Partial (CK_ReadPartial | CK_WritePartial)
+#define SF_ClassMemberFlags 106500u   /* ClassMember: Method | Accessor | Property */
+
+static TsType *cApparentType(TsType *s);   /* ts-relate.h: the apparent type of a primitive (NULL for other types) */
+
+/* getDeclarationModifierFlagsFromSymbol (accessibility and readonly bits; a synthetic symbol has its own) */
+static uint32_t cSymModifierFlags(TsSymbol *s) {
+  if (s->valueDeclaration) return bModifierFlags(s->valueDeclaration);
+  if (s->checkFlags & (CK_SyntheticProperty | CK_SyntheticMethod)) {
+    uint32_t access = (s->checkFlags & CK_ContainsPrivate) ? TMF_Private : (s->checkFlags & CK_ContainsPublic) ? TMF_Public : TMF_Protected;
+    return access;
+  }
+  return 0;
+}
+
+/* getTargetSymbol: the symbol an instantiated symbol instantiates (a symbol itself otherwise) */
+static TsSymbol *cSymTargetOrSelf(TsSymbol *s) { return s->instTarget ? s->instTarget : s; }
+
+/* isReadonlySymbol (the checks the union properties need) */
+static bool cSymIsReadonly(TsSymbol *s) {
+  if (s->checkFlags & CK_Readonly) return true;
+  if ((s->flags & SF_Property) && (cSymModifierFlags(s) & TMF_Readonly)) return true;
+  if ((s->flags & SF_Accessor) && !(s->flags & SF_SetAccessor)) return true;
+  for (int i = 0; i < s->ndecls; i++)
+    if (cIsConstVariableDecl(s->decls[i]) && (s->flags & SF_Variable)) return true;
+  return false;
+}
+
+/* isPrototypeProperty: a method, or a synthetic method */
+static bool cIsPrototypeProperty(TsSymbol *s) { return (s->flags & SF_Method) || (s->checkFlags & CK_SyntheticMethod); }
+
+/* compareProperties2 with the identity comparison of the types (the isInstantiation test of the union property) */
+static bool cSameProperty(TsSymbol *a, TsSymbol *b) {
+  if (a == b) return true;
+  uint32_t accA = cSymModifierFlags(a) & (TMF_Private | TMF_Protected), accB = cSymModifierFlags(b) & (TMF_Private | TMF_Protected);
+  if (accA != accB) return false;
+  if (accA) {
+    if (cSymTargetOrSelf(a) != cSymTargetOrSelf(b)) return false;
+  } else if ((a->flags & SF_Optional) != (b->flags & SF_Optional)) {
+    return false;
+  }
+  if (cSymIsReadonly(a) != cSymIsReadonly(b)) return false;
+  return cTypeOfSymbol(a) == cTypeOfSymbol(b);
+}
+
+/* getLocalTypeParametersOfClassOrInterfaceOrTypeAlias is not empty: a declaration of the symbol has type parameters */
+static bool cHasLocalTypeParams(TsSymbol *s) {
+  for (int i = 0; i < s->ndecls; i++) {
+    TsNode *d = s->decls[i];
+    if ((d->kind == TSK_ClassDeclaration || d->kind == TSK_ClassExpression || d->kind == TSK_InterfaceDeclaration ||
+         d->kind == TSK_TypeAliasDeclaration) && d->typeParameters && d->typeParameters->n)
+      return true;
+  }
+  return false;
+}
+
+/* the members of a union or intersection, as getPropertyOfType and getPropertiesOfType see them */
+static TsSymbol *cPropertyOfMember(TsType *t, BName name);
+static int cPropertiesOfMember(TsType *t, TsSymbol ***out);
+static TsSymbol *cGetPropertyOfUnionOrIntersection(TsType *t, BName name);
+
+/* the applicable index info of a property name (getApplicableIndexInfoForName, the string index): NULL when none;
+ * not ported when the name is numeric-like, where the number index may apply too */
+static CIndexInfo *cIndexInfoForName(TsType *o, BName name, bool *unp) {
+  cResolveIndexInfos(o);
+  *unp = false;
+  CIndexInfo *hit = NULL;
+  for (int i = 0; i < o->nindex; i++) {
+    CIndexInfo *ii = &o->index[i];
+    if (ii->keyType == cStringType) { if (!hit) hit = ii; }
+    else if (ii->keyType == cNumberType && name.n > 0 && name.s[0] >= '0' && name.s[0] <= '9') *unp = true;
+  }
+  return hit;
+}
+
+/* createUnionOrIntersectionProperty (node 63588): a new symbol unless the members agree on one property symbol */
+static TsSymbol *cCreateUnionOrIntersectionProperty(TsType *ct, BName name) {
+  bool isUnion = (ct->flags & TF_Union) != 0;
+  uint32_t propFlags = 0, syntheticFlag = CK_SyntheticMethod, checkFlags = isUnion ? 0 : CK_Readonly;
+  uint32_t optionalFlag = 0;
+  bool haveOptional = false, mergedInstantiations = false;
+  TsSymbol *singleProp = NULL;
+  TsSymbol **propSet = NULL;
+  int nprop = 0;
+  TsType **indexTypes = NULL;
+  int nindex = 0;
+  for (int i = 0; i < ct->ntypes; i++) {
+    TsType *cur = ct->types[i];
+    TsType *type = (cur->flags & TF_Object) || (cur->flags & (TF_Union | TF_Intersection)) ? cur : cApparentType(cur);
+    if (!type) { (void)cUnported("union property of a member without apparent type"); return NULL; }
+    if (type == cErrorType || (type->flags & TF_Never)) continue;
+    TsSymbol *prop = cPropertyOfMember(type, name);
+    uint32_t modifiers = prop ? cSymModifierFlags(prop) : 0;
+    if (prop) {
+      if (prop->flags & SF_ClassMemberFlags) {
+        if (!haveOptional) { haveOptional = true; optionalFlag = isUnion ? 0 : SF_Optional; }
+        if (isUnion) optionalFlag |= prop->flags & SF_Optional;
+        else optionalFlag &= prop->flags;
+      }
+      if (!singleProp) {
+        singleProp = prop;
+        propFlags = (prop->flags & SF_Accessor) ? (prop->flags & SF_Accessor) : SF_Property;
+      } else if (prop != singleProp) {
+        bool isInstantiation = cSymTargetOrSelf(prop) == cSymTargetOrSelf(singleProp);
+        if (isInstantiation && cSameProperty(singleProp, prop)) {
+          mergedInstantiations = singleProp->parent && cHasLocalTypeParams(singleProp->parent);
+        } else {
+          if (!propSet) { propSet = ts_arena_alloc(sizeof(TsSymbol *) * (size_t)(ct->ntypes + 1)); propSet[nprop++] = singleProp; }
+          bool seen = false;
+          for (int k = 0; k < nprop && !seen; k++) seen = propSet[k] == prop;
+          if (!seen) propSet[nprop++] = prop;
+        }
+        if ((propFlags & SF_Accessor) && (prop->flags & SF_Accessor) != (propFlags & SF_Accessor))
+          propFlags = (propFlags & ~SF_Accessor) | SF_Property;
+      }
+      if (isUnion && cSymIsReadonly(prop)) checkFlags |= CK_Readonly;
+      else if (!isUnion && !cSymIsReadonly(prop)) checkFlags &= ~CK_Readonly;
+      checkFlags |= ((modifiers & (TMF_Private | TMF_Protected)) ? 0 : CK_ContainsPublic) |
+                    ((modifiers & TMF_Protected) ? CK_ContainsProtected : 0) | ((modifiers & TMF_Private) ? CK_ContainsPrivate : 0);
+      if (!cIsPrototypeProperty(prop)) syntheticFlag = CK_SyntheticProperty;
+    } else if (isUnion) {
+      if (type->flags & TF_Object) {
+        bool unp;
+        BName nm = name;
+        CIndexInfo *ii = cIndexInfoForName(type, nm, &unp);
+        if (unp) { (void)cUnported("union property with a numeric name"); return NULL; }
+        if (ii) {
+          propFlags = (propFlags & ~SF_Accessor) | SF_Property;
+          checkFlags |= CK_WritePartial | (ii->isReadonly ? CK_Readonly : 0);
+          if (type->objectFlags & OF_Tuple) { (void)cUnported("union property of a tuple index"); return NULL; }
+          if (!indexTypes) indexTypes = ts_arena_alloc(sizeof(TsType *) * (size_t)(ct->ntypes + 1));
+          indexTypes[nindex++] = ii->type;
+        } else if (type->objectFlags & OF_ObjectLiteral) {
+          checkFlags |= CK_WritePartial;
+          if (!indexTypes) indexTypes = ts_arena_alloc(sizeof(TsType *) * (size_t)(ct->ntypes + 1));
+          indexTypes[nindex++] = cUndefinedType;
+        } else {
+          checkFlags |= CK_ReadPartial;
+        }
+      } else {
+        checkFlags |= CK_ReadPartial;
+      }
+    }
+  }
+  if (!singleProp) return NULL;
+  /* the union of partial properties with private or protected members needs their common declarations */
+  if (isUnion && (propSet || (checkFlags & CK_Partial)) && (checkFlags & (CK_ContainsPrivate | CK_ContainsProtected))) {
+    bool commonOk = true;
+    if (propSet) for (int k = 0; k < nprop; k++) if (propSet[k]->ndecls == 0 && !propSet[k]->valueDeclaration) commonOk = false;
+    if (!(propSet && commonOk)) return NULL;
+  }
+  if (!propSet && !(checkFlags & CK_ReadPartial) && !nindex) {
+    if (!mergedInstantiations) return singleProp;
+    /* createSymbolWithType (the clone of the single declaration, its parent the declaring symbol of the declaration) */
+    TsNode *vd = singleProp->valueDeclaration;
+    TsSymbol *clone = cCreateSymbol(singleProp->flags, name);
+    clone->checkFlags = singleProp->checkFlags & CK_Readonly;
+    clone->decls = singleProp->decls;
+    clone->ndecls = singleProp->ndecls;
+    clone->declCap = singleProp->ndecls;
+    clone->valueDeclaration = vd;
+    clone->parent = vd && vd->symbol ? vd->symbol->parent : NULL;
+    clone->type = singleProp->type;
+    return clone;
+  }
+  TsSymbol **props = propSet ? propSet : &singleProp;
+  int np = propSet ? nprop : 1;
+  TsNode *firstVD = NULL;
+  bool nonUniformVD = false;
+  TsType **propTypes = ts_arena_alloc(sizeof(TsType *) * (size_t)(np + nindex + 1));
+  int nt = 0;
+  TsType *firstType = NULL;
+  for (int k = 0; k < np; k++) {
+    TsSymbol *prop = props[k];
+    if (prop->flags & SF_Accessor) { (void)cUnported("accessor in a union property"); return NULL; }
+    if (!firstVD) firstVD = prop->valueDeclaration;
+    else if (prop->valueDeclaration && prop->valueDeclaration != firstVD) nonUniformVD = true;
+    TsType *type = cTypeOfSymbol(prop);
+    if (!firstType) firstType = type;
+    if (type != firstType) checkFlags |= CK_HasNonUniformType;
+    if (type->flags & (TF_BooleanLiteral | TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral | TF_UniqueESSymbol)) checkFlags |= CK_HasLiteralType;
+    if (type->flags & TF_Never) checkFlags |= CK_HasNeverType;
+    propTypes[nt++] = type;
+  }
+  for (int k = 0; k < nindex; k++) propTypes[nt++] = indexTypes[k];
+  TsSymbol *result = cCreateSymbol(propFlags | (haveOptional ? optionalFlag : 0), name);
+  result->checkFlags = syntheticFlag | checkFlags;
+  if (!nonUniformVD && firstVD) {
+    result->valueDeclaration = firstVD;
+    if (firstVD->symbol && firstVD->symbol->parent) result->parent = firstVD->symbol->parent;
+  }
+  /* the declarations of the members */
+  int nd = 0;
+  for (int k = 0; k < np; k++) nd += props[k]->ndecls;
+  result->decls = ts_arena_alloc(sizeof(TsNode *) * (size_t)(nd ? nd : 1));
+  for (int k = 0; k < np; k++)
+    for (int d = 0; d < props[k]->ndecls; d++) result->decls[result->ndecls++] = props[k]->decls[d];
+  result->declCap = result->ndecls;
+  if (nt > 2) {
+    /* a deferred type (DeferredType): the union or intersection of the constituents at the first getTypeOfSymbol */
+    result->checkFlags |= CK_DeferredType;
+    result->deferParent = ct;
+    result->deferTypes = propTypes;
+    result->nDeferTypes = nt;
+  } else {
+    result->type = isUnion ? cGetUnionType(propTypes, nt) : cGetIntersectionType(propTypes, nt);
+  }
+  return result;
+}
+
+/* getUnionOrIntersectionProperty (63737): the property cached per union or intersection (propertyCache), NULL when
+ * the members do not have it (the cache keeps the partial ones, which the caller filters) */
+static TsSymbol *cGetUnionOrIntersectionProperty(TsType *t, BName name) {
+  if (!t->unionProps) t->unionProps = bTableNew();
+  TsSymbol *p = bTableGet(t->unionProps, name);
+  if (p) return p;
+  p = cCreateUnionOrIntersectionProperty(t, name);
+  if (p) bTableSet(t->unionProps, name, p);
+  return p;
+}
+
+/* getPropertyOfUnionOrIntersectionType: a property every member has (ReadPartial ones are missing) */
+static TsSymbol *cGetPropertyOfUnionOrIntersection(TsType *t, BName name) {
+  TsSymbol *p = cGetUnionOrIntersectionProperty(t, name);
+  return p && !(p->checkFlags & CK_ReadPartial) ? p : NULL;
+}
+
+/* getPropertiesOfUnionOrIntersectionType (63213): the properties of the members, in the order of the first member
+ * that has them (cached as resolvedProperties); a union stops after a member without index signatures */
+static int cPropertiesOfUnionOrIntersection(TsType *t, TsSymbol ***out) {
+  if (!t->resolvedPropsDone) {
+    TsSymTable *members = bTableNew();
+    bool isUnion = (t->flags & TF_Union) != 0;
+    for (int i = 0; i < t->ntypes; i++) {
+      TsType *cur = t->types[i];
+      TsSymbol **props;
+      int np = cPropertiesOfMember(cur, &props);
+      for (int k = 0; k < np; k++) {
+        if (bTableGet(members, props[k]->name)) continue;
+        TsSymbol *combined = cGetPropertyOfUnionOrIntersection(t, props[k]->name);
+        if (combined) bTableSet(members, props[k]->name, combined);
+      }
+      if (isUnion) {
+        TsType *ap = (cur->flags & TF_Object) || (cur->flags & (TF_Union | TF_Intersection)) ? cur : cApparentType(cur);
+        if (ap && (ap->flags & TF_Object)) { cResolveIndexInfos(ap); if (ap->nindex == 0) break; }
+      }
+    }
+    t->resolvedProps = ts_arena_alloc(sizeof(TsSymbol *) * (size_t)(members->n ? members->n : 1));
+    t->nResolvedProps = 0;
+    for (int i = 0; i < members->n; i++) t->resolvedProps[t->nResolvedProps++] = members->e[i].sym;
+    t->resolvedPropsDone = true;
+  }
+  *out = t->resolvedProps;
+  return t->nResolvedProps;
+}
+
+/* the property symbols of a member of a union or intersection (getPropertiesOfType of the member) */
+static int cPropertiesOfMember(TsType *t, TsSymbol ***out) {
+  if (t->flags & (TF_Union | TF_Intersection)) return cPropertiesOfUnionOrIntersection(t, out);
+  if (t->flags & TF_Object) return cPropertiesOf(t, out);
+  TsType *a = cApparentType(t);
+  if (!a) { *out = NULL; return 0; }
+  return cPropertiesOf(a, out);
+}
+
+/* getPropertyOfType of a member of a union or intersection */
+static TsSymbol *cPropertyOfMember(TsType *t, BName name) {
+  if (t->flags & (TF_Union | TF_Intersection)) return cGetPropertyOfUnionOrIntersection(t, name);
+  if (t->flags & TF_Object) return cPropertyOf(t, name);
+  TsType *a = cApparentType(t);
+  return a ? cPropertyOf(a, name) : NULL;
+}
+
 static TsType *cTypeOfSymbol(TsSymbol *sym) {
   if (sym == cUndefinedSymbol) return cUndefinedType; /* undefinedSymbol: undefinedWideningType */
   if (sym->instTarget) {   /* getTypeOfInstantiatedSymbol (61381) */
     if (!sym->type) sym->type = cInstantiate(cTypeOfSymbol(sym->instTarget), sym->instMapper);
+    return sym->type;
+  }
+  if (sym->checkFlags & CK_DeferredType) {   /* getTypeOfSymbolWithDeferredType: the union or intersection of the member types */
+    if (!sym->type) sym->type = sym->deferParent->flags & TF_Union ? cGetUnionType(sym->deferTypes, sym->nDeferTypes) : cGetIntersectionType(sym->deferTypes, sym->nDeferTypes);
     return sym->type;
   }
   sym = cGetMergedSymbol(sym);
