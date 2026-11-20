@@ -233,6 +233,7 @@ fn raw_through_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut 
 
 /// The first of `arms` whose shape the record `at` has stores; the last arm's shape is the
 /// guard of the whole.
+#[inline(always)]
 fn arm_switch<S: Stage>(stage: &mut S, (at, object): (&Reached<S::Word, S::Cond>, S::Word), arms: &[StoreArm],
     value: Stored<S::Word>, miss: S::Miss) -> Option<()> {
     let (arm, rest) = arms.split_first()?;
