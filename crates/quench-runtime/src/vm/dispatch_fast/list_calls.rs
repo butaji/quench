@@ -165,7 +165,7 @@ pub(super) fn spread_set_native_call_in_lane<H: Host>(
     if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
-    let args = vm.heap.set_entries(list)?.to_vec();
+    let args: smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]> = vm.heap.set_entries(list)?.iter().collect();
     let value = native_value_in_lane(cx, ip, i, native, callee, receiver, &args);
     Some(native_complete_in_lane(cx, ip, i, value))
 }

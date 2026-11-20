@@ -14,9 +14,10 @@
 use super::{lane_unit, LaneExit, LoopRegion};
 use crate::value::Value;
 use quench_bjit::call_record::{return_status_pc, LaneStatus};
+use std::collections::HashMap;
 
 /// What a leave is, which a leave word holds in its top two bits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u64)]
 pub(super) enum ExitKind {
     /// At a caller PC.
@@ -155,23 +156,24 @@ impl LoopRegion {
 }
 
 /// Where a live value is when its leave happens.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Source {
     /// An inlined callee's register, which the leave stores to this slot of the entry's
     /// scratch window (`BodyRunContext::scratch`).
     Scratch(u16),
 }
 
-/// A value live across a leave: its unit register and where the leave stores it. Every live
+/// A value a leave stores: its unit register and where the leave stores it. Every stored
 /// value is stored tagged, so no representation is recorded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct LiveValue {
     pub(super) slot: u16,
     pub(super) source: Source,
 }
 
-/// What a leave is and the values it stores that its caller's registers do not already hold.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// What a leave is and the values it stores (`Lowering::inlined_stores`, the emitter's own
+/// query, which a leave inside an inlined frame stores and no other).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct ExitSig {
     pub(super) kind: ExitKind,
     pub(super) live: Box<[LiveValue]>,
@@ -198,18 +200,19 @@ pub(in crate::vm) struct ExitTable {
 }
 
 impl ExitTable {
-    /// The table of the places `unit`'s PCs leave at.
-    pub(super) fn of_unit(unit: &lane_unit::Unit) -> Self {
+    /// The table of the places `unit`'s PCs leave at. `stored` is the emitter's store set of a
+    /// leave at an inlined PC (`unit_pc`, its `frame`), so the table records what the leave writes.
+    pub(super) fn of_unit(unit: &lane_unit::Unit, stored: impl Fn(usize, usize) -> Vec<LiveValue>) -> Self {
         let mut table = Self::default();
-        let mut frame_sigs: Vec<Option<usize>> = vec![None; unit.frames.len()];
+        let mut known: HashMap<ExitSig, usize> = HashMap::new();
         for (unit_pc, origin) in unit.origins.iter().enumerate() {
             let (exit, sig) = match *origin {
-                lane_unit::Origin::Caller(pc) => (LaneExit::At(pc as usize), table.intern(ExitSig { kind: ExitKind::At, live: Box::default() })),
+                lane_unit::Origin::Caller(pc) => (LaneExit::At(pc as usize), ExitSig { kind: ExitKind::At, live: Box::default() }),
                 lane_unit::Origin::Inlined { frame, pc } => {
-                    let sig = *frame_sigs[frame].get_or_insert_with(|| table.intern(Self::inlined_sig(unit, frame)));
-                    (LaneExit::Inlined { frame, pc }, sig)
+                    (LaneExit::Inlined { frame, pc }, ExitSig { kind: ExitKind::Inlined, live: stored(unit_pc, frame).into_boxed_slice() })
                 }
             };
+            let sig = table.intern(&mut known, sig);
             table.add(exit, sig, unit_pc);
         }
         table.sigs.shrink_to_fit();
@@ -217,20 +220,11 @@ impl ExitTable {
         table
     }
 
-    /// The sig of a leave inside `frame`: every register of its chain's frames, stored tagged.
-    fn inlined_sig(unit: &lane_unit::Unit, frame: usize) -> ExitSig {
-        let live = unit.chain(frame).into_iter().flat_map(|index| {
-            let inlined = unit.frames[index];
-            inlined.base..inlined.base + inlined.registers
-        }).map(|register| LiveValue { slot: register, source: Source::Scratch(register - unit.caller_registers) });
-        ExitSig { kind: ExitKind::Inlined, live: live.collect() }
-    }
-
-    fn intern(&mut self, sig: ExitSig) -> usize {
-        self.sigs.iter().position(|known| *known == sig).unwrap_or_else(|| {
-            self.sigs.push(sig);
-            self.sigs.len() - 1
-        })
+    fn intern(&mut self, known: &mut HashMap<ExitSig, usize>, sig: ExitSig) -> usize {
+        if let Some(&index) = known.get(&sig) { return index; }
+        self.sigs.push(sig.clone());
+        known.insert(sig, self.sigs.len() - 1);
+        self.sigs.len() - 1
     }
 
     /// Adds the leave `exit` unless an earlier unit PC already leaves there.

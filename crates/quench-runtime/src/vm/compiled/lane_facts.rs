@@ -4,9 +4,10 @@
 use super::*;
 use std::collections::BTreeMap;
 
-/// The unit PCs of a previous body's leaves: the specialization's feedback.
+/// The unit PCs of a previous body's leaves: the specialization's feedback. Only the table's
+/// places are read here, so no leave's stored values are asked for.
 pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<usize> {
-    let exits = ExitTable::of_unit(unit);
+    let exits = ExitTable::of_unit(unit, |_, _| Vec::new());
     generic.iter().filter_map(|exit| exits.site(*exit).map(|site| site.unit_pc as usize)).collect()
 }
 
@@ -62,7 +63,7 @@ pub(super) fn numeric_callee(program: &ResidualProgram, function: u32) -> bool {
 /// function does.
 pub(super) fn numeric_restartable(program: &ResidualProgram, function: u32) -> bool {
     program.function_get(function as usize).is_some_and(|body|
-        lane_region::restartable_numeric_function(program, body, &body.instructions().collect::<Vec<_>>()))
+        lane_region::restartable_numeric_function(program, body, body.instructions()))
 }
 
 /// `targets`, each once, in first-seen order.
@@ -109,14 +110,13 @@ pub(super) fn recursion_cycle(program: &ResidualProgram, function: u32, targets:
     };
     // The call graph out of `function`, as far as `RECURSION_DEPTH` calls.
     let mut edges: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
-    let mut frontier = vec![function];
+    let mut frontier = std::collections::BTreeSet::from([function]);
     for _ in 0..RECURSION_DEPTH {
-        let mut next = Vec::new();
+        let mut next = std::collections::BTreeSet::new();
         for caller in frontier {
-            if edges.contains_key(&caller) { continue; }
-            let out = callees(caller);
-            next.extend(out.iter().copied().filter(|callee| !edges.contains_key(callee)));
-            edges.insert(caller, out);
+            let std::collections::btree_map::Entry::Vacant(slot) = edges.entry(caller) else { continue };
+            let out = slot.insert(callees(caller));
+            next.extend(out.iter().copied());
         }
         frontier = next;
     }

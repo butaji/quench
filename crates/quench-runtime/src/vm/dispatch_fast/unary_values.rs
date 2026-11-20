@@ -15,19 +15,18 @@ pub(super) unsafe fn unary_value<H: Host>(
 ) -> Option<Value> {
     let operator = i.imm();
     let operand = r.get(i.b);
-    // ToString of a value whose ToString runs nothing is the value itself, decided first.
     let vm = unsafe { vm(cx) };
-    let pure = vm.converts_to_string_purely(operand);
-    if matches!(operator, crate::bytecode::UNARY_TO_STRING_PRIMITIVE | crate::bytecode::UNARY_ADD_OPERAND_STRING) && pure {
-        return Some(operand);
-    }
     // A Number operand of a Number operator (negation, plus, increments): its result made
     // here, where `Vm::unary` would be a call (Box2D's `-x` on doubles).
     if let Some(number) = operand.as_number()
-        && super::super::operations::NumberUnary::from_operator(operator).is_some()
         && let Some(result) = super::super::operations::number_unary_result(operator, number)
     {
         return Some(Value::number(result));
+    }
+    // ToString of a value whose ToString runs nothing is the value itself, decided first.
+    let pure = vm.converts_to_string_purely(operand);
+    if matches!(operator, crate::bytecode::UNARY_TO_STRING_PRIMITIVE | crate::bytecode::UNARY_ADD_OPERAND_STRING) && pure {
+        return Some(operand);
     }
     if let Some(answer) = unary_query(vm, operator, operand) {
         return Some(answer);

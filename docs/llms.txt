@@ -1,0 +1,34 @@
+# Quench
+
+> JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables.
+
+Quench runs TypeScript, JavaScript and WebAssembly with Node-compatible APIs. Its engine is entirely Rust: OXC parser, register-bytecode interpreter, b-jit (copy-and-patch JIT), u-jit (Cranelift JIT) and an AOT compiler that produces native executables. All tiers derive from one shared definition of each opcode. MIT licensed. Early: no packaged releases, build from source with Cargo, Linux.
+
+Key measured facts (interpreter only in every engine: quench --no-jit, node --jitless, Bun with BUN_JSC_useJIT=0; one 4-core Linux machine):
+- V8-v7, 14 Nov 2026: Quench scores 1.49x to 2.57x the faster of Node and Bun on all 8 benchmarks; peak memory 0.28x to 0.55x of the smaller on 7 of 8 (splay 1.07x).
+- JetStream 3, 17 Nov 2026, 56 tests all three finish: score 34.3 (Node 39.7, Bun 32.2); peak memory 28.5 MB (Node 110.1 MB, Bun 47.7 MB).
+- Test262: 53,353 passing, 0 failing, 53 waived (Node-identical failures, still counted as failures). WebAssembly spec: 67,124 of 67,124.
+- Weak spots: cold code loading, async/promises, proxies; JIT tiers not yet competitive; no AOT speed numbers published; Deno not measured.
+
+## Docs
+- [Home](https://quench.run/): overview, install, FAQ
+- [Benchmarks](https://quench.run/benchmarks/): dated V8-v7 and JetStream 3 tables with method and weak spots
+- [Install and build](https://github.com/butaji/quench#quick-start): git clone, cargo build --release -p quench-node (add --features aot for AOT)
+- [README](https://github.com/butaji/quench/blob/v2-merged/README.md)
+
+## Answers
+- [JavaScript runtime written in Rust](https://quench.run/fastest-javascript-runtime-in-rust/)
+- [Node.js alternative with low memory](https://quench.run/low-memory-nodejs-alternative/)
+- [Compile JavaScript/TypeScript to a native executable](https://quench.run/compile-javascript-to-native-executable/)
+- [Test262 compliant JavaScript engine](https://quench.run/test262-compliant-javascript-engine/)
+
+## Blog
+- [Where Quench stands: JetStream 3 with the JIT off](https://quench.run/blog/where-quench-stands/)
+- [One interpreter, four outputs](https://quench.run/blog/one-interpreter-four-outputs/)
+- [AOT without a second compiler](https://quench.run/blog/aot-without-a-second-compiler/)
+- [Test262 and the skip list](https://quench.run/blog/test262-and-the-skip-list/)
+- [All posts](https://quench.run/blog/)
+
+## Optional
+- [Full text for LLMs](https://quench.run/llms-full.txt)
+- [Source code](https://github.com/butaji/quench)

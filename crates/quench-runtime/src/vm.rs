@@ -96,6 +96,9 @@ struct RuntimeAtoms {
     /// Read by every promise resolution and species lookup.
     then: Atom,
     constructor: Atom,
+    /// The ToPrimitive methods, read by every ToNumber and ToString of an object.
+    value_of: Atom,
+    to_string: Atom,
     /// The iterator protocol's step method.
     next: Atom,
     /// Canonical key for named function-info lookup; paired with length_atom.
@@ -3487,6 +3490,8 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
             then: self.intern_atom("then"),
             constructor: self.intern_atom("constructor"),
+            value_of: self.intern_atom("valueOf"),
+            to_string: self.intern_atom("toString"),
             next: self.intern_atom("next"),
             name: self.intern_atom("name"),
             empty: self.intern_atom(""),

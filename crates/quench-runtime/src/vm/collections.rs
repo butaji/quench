@@ -773,7 +773,8 @@ impl<H: Host> Vm<H> {
                 } else {
                     None
                 };
-                if let Some(index) = self.map_entry_index(this, key)
+                let key_hash = self.same_value_zero_hash(key);
+                if let Some(index) = self.map_entry_index_hashed(this, key, key_hash)
                     && let Some(entries) = self.heap.map_entries(this) {
                         return Ok(entries.value_at(index));
                     }
@@ -784,26 +785,22 @@ impl<H: Host> Vm<H> {
                         let canonical_key = canonicalize_keyed_collection_key(key);
                         let computed =
                             self.call_value(p, callback, Value::UNDEFINED, &[canonical_key])?;
-                        if let Some(index) = self.map_entry_index(this, key)
-                            && let Some(entries) = self.heap.map_entries_mut(this) {
+                        // The callback may have inserted the key: only then is the miss stale.
+                        if let Some(index) = self.map_entry_index_hashed(this, key, key_hash) {
+                            if let Some(entries) = self.heap.map_entries_mut(this) {
                                 entries.set_value(index, computed);
                             }
+                            return Ok(computed);
+                        }
                         computed
                     }
                     _ => unreachable!("Map get-or-insert dispatch is exhaustive"),
                 };
-                let key_hash = self.same_value_zero_hash(key);
-                if let Some(index) = self.map_entry_index(this, key) {
-                    if let Some(entries) = self.heap.map_entries_mut(this) {
-                        entries.set_value(index, value);
+                self.heap.grow_collection_payload(this, |storage| {
+                    if let CollectionStorage::Map(entries) = storage {
+                        entries.push((key, value), key_hash);
                     }
-                } else {
-                    self.heap.grow_collection_payload(this, |storage| {
-                        if let CollectionStorage::Map(entries) = storage {
-                            entries.push((key, value), key_hash);
-                        }
-                    });
-                }
+                });
                 Ok(value)
             }
             Native::MapGroupBy => self.group_by(p, args, GroupByKind::Map),

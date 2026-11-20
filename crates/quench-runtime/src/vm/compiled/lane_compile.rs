@@ -287,6 +287,8 @@ struct TakenFacts {
     global_reads: crate::vm::global_facts::GlobalReads,
     frame_captures: Vec<(usize, usize)>,
     left_at: Vec<usize>,
+    /// Which direct callees had a summary to type their calls' results by (`DirectCallee::summary`), in `LanePlan::direct`'s order.
+    callee_summaries: Vec<bool>,
 }
 
 /// What a pending body's compile came to.
@@ -392,7 +394,7 @@ impl<H: Host> Vm<H> {
     /// it inlines is admitted.
     fn plan_unit_in_lane(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         trips: &dyn Fn(u32, u32) -> Option<u64>, generic: &[LaneExit], budget: usize) -> Option<lane_unit::Unit> {
-        let body = program.function_get(function as usize)?;
+        let Some(body) = program.function_get(function as usize) else { refuse(self, Refusal::NoUnit); return None; };
         let valid = std::cell::Cell::new(true);
         let unit = lane_unit::with_trips(program, function, body, (budget, self.programs.tiers().lane_body.max_inlined_instructions),
             &|caller, pc| self.bindings_in_lane(program, function, generic, targets, &valid, caller, pc), trips,
@@ -582,7 +584,6 @@ impl<H: Host> Vm<H> {
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
-        if entry.is_none() && !called && !recursive && !amortizes_entry(tiers, &unit, function, &direct) { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short); }
         // A recurrent compile (no observed entries to price) still repays only where one entry of
         // its unit, inlined callees included, saves more than the entry costs.
         if entry.is_none() && observed.is_none() && looped.is_none() && !recursive && !super::lane_facts::entry_repays(tiers, &unit, function, &direct) { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short); }
@@ -597,7 +598,8 @@ impl<H: Host> Vm<H> {
         let construct = |function: u32, pc: u32| self.construct_plan_of(targets, function, pc);
         let job = self.lowering_job(LoweringProgram::Detached(program.detached(&functions)), function, &unit, &fields,
             global_reads.clone(), direct_sites, captures, invalidation.address(), (entry_at, entry_left, &left_at), arrays, &construct);
-        let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), left_at };
+        let callee_summaries = direct.iter().map(|callee| callee.summary().is_some()).collect();
+        let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), left_at, callee_summaries };
         let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
             function, osr: entry.is_some(), unit: unit.instructions.len(), ir: 0, key: key.3,
@@ -709,7 +711,9 @@ impl<H: Host> Vm<H> {
         // it, so a hint that moved since only leaves: the fields compare without it.
         let unformed = |fields: &[Option<Vec<NativeFieldLoad>>]| fields.iter()
             .map(|loads| loads.as_ref().map(|loads| loads.iter().map(|load| NativeFieldLoad { formed: None, ..*load }).collect::<Vec<_>>())).collect::<Vec<_>>();
-        FactTables::of(self, plan.function, &plan.unit, &plan.fields, &taken.global_reads, &construct) == taken.tables
+        // A callee whose summary a withdrawal ended since the plan took it types a result the code no longer may.
+        plan.direct.iter().map(|callee| callee.summary().is_some()).eq(taken.callee_summaries.iter().copied())
+            && FactTables::of(self, plan.function, &plan.unit, &plan.fields, &taken.global_reads, &construct) == taken.tables
             && self.global_reads_in_lane(program, plan.function, &plan.unit) == taken.global_reads
             && unformed(&self.unit_fields_in_lane(program, &plan.unit, &taken.left_at, None)) == unformed(&plan.fields)
             && plan.unit.frames.iter().map(|frame| frame.target.identity().map_or((0, 0), |callee| self.callee_capture_slots(callee)))
@@ -802,11 +806,11 @@ impl LanePlan {
             dependencies, stable, invalidation: self.invalidation, _code: memory, entry, scalar, proven, rows: None, recovery_space,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
-            names_shapes, exits: ExitTable::of_unit(&self.unit), inlined: self.unit.frames,
+            names_shapes, exits: std::mem::take(&mut self.lowered.region.exits), inlined: self.unit.frames,
             scratch_width, caller_registers, frame_reach: 0,
             amortizes, direct: self.direct, closed: self.closed,
             framed: false, _records: Vec::new(), constructors: Box::default(), realm_bound: false,
-            summary: self.lowered.region.summary.take(),
+            summary: self.lowered.region.summary.take(), withdrawn: Default::default(),
         })
     }
 }

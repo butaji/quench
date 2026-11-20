@@ -49,6 +49,7 @@ mod int_ranges_tests;
 mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
 #[path = "lane_region/builtin_calls.rs"] mod builtin_calls;
+#[path = "lane_region/data_view_calls.rs"] mod data_view_calls;
 pub(in crate::vm) use native_calls::{inlines_in_loop, native_method_call};
 #[path = "lane_region/stable.rs"]
 mod stable;
@@ -133,6 +134,8 @@ const INLINE_EFFECT_EDGES: usize = 4;
 const INLINE_NUMBER_PROJECTIONS: usize = 4;
 /// A loop body usually indexes only a few arrays; more spill without a limit.
 const INLINE_ARRAY_VIEWS: usize = 4;
+/// A block reads the captures of a few inlined callees; more spill without a limit.
+const INLINE_CAPTURE_ADMISSIONS: usize = 4;
 /// A header and a short latch usually need only a few guarded inputs.
 const INLINE_LOOP_INPUTS: usize = 4;
 /// A jump's step proves a fact of one tested register, along one or both of its edges.
@@ -241,6 +244,9 @@ struct LocalProofs {
     numbers: smallvec::SmallVec<[(ir::Value, ir::Value); INLINE_NUMBER_PROJECTIONS]>,
     /// Dense array views by the tagged base they prove, until an instruction that could change an array's storage (`retains_array_views`).
     arrays: smallvec::SmallVec<[(ir::Value, super::DenseArrayView); INLINE_ARRAY_VIEWS]>,
+    /// The dense capture views (values, length) a frameless admission of an inlined callee gave, by the
+    /// callee's value: its frame's reads take them, all dominated by the one admission (`Lowering::admitted_captures`).
+    admitted_captures: smallvec::SmallVec<[(ir::Value, (ir::Value, ir::Value)); INLINE_CAPTURE_ADMISSIONS]>,
     /// Whether this block read the code's invalidation word since the last helper that may change a Stable fact's subject
     /// (run JavaScript, write a prototype, name a method): every Stable fact the code folded holds until such a helper (`Lowering::hold_stable`).
     stable: bool,
@@ -260,6 +266,12 @@ impl LocalProofs {
     pub(super) fn note_number(&mut self, bits: ir::Value, number: ir::Value) {
         if self.numbers.len() >= 4 * INLINE_NUMBER_PROJECTIONS { self.numbers.remove(0); }
         self.numbers.push((bits, number));
+    }
+
+    /// Notes the dense capture view `callee`'s admission gave; the oldest view goes once the list is full.
+    pub(super) fn note_admitted_captures(&mut self, callee: ir::Value, view: (ir::Value, ir::Value)) {
+        if self.admitted_captures.len() >= INLINE_CAPTURE_ADMISSIONS { self.admitted_captures.remove(0); }
+        self.admitted_captures.push((callee, view));
     }
 
     fn set_readable(&mut self, owner: usize, readable: bool) {
@@ -284,7 +296,7 @@ impl State {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
-            arrays: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
+            arrays: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
 
     /// The facts a jump proved along `edge` (`refinements`), each narrowing its register's type for
@@ -311,6 +323,8 @@ impl State {
         self.proofs.fields.clear();
         self.proofs.int32_projections.clear();
         self.proofs.arrays.clear();
+        // Guest code may move a callee's captures or start another admission epoch: the next read probes again.
+        self.proofs.admitted_captures.clear();
         self.proofs.headers.fill(None);
         self.proofs.readable.clear();
         self.proofs.layouts.clear();
@@ -471,6 +485,8 @@ pub(super) struct LoweredRegion {
     pub(super) entry_types: Box<[Type]>,
     /// The body's type summary (`TypeSummary`), where it is a whole function's body.
     pub(super) summary: Option<TypeSummary>,
+    /// The leaves the code takes, with the values each stores (`ExitTable::of_unit`, the emitter's own store sets).
+    pub(super) exits: ExitTable,
 }
 
 /// What a published lane body assumes of its arguments and what its activation returns natively,
@@ -487,7 +503,7 @@ pub(in crate::vm) struct TypeSummary {
 impl Default for LoweredRegion {
     /// A region that lowered nothing (`LoweredLane`'s default): an empty function.
     fn default() -> Self {
-        Self { number_result: None, function: ir::Function::new(), native: 0, fault_poll: false, hoists_arrays: false, stable: StableFacts::default(), summary: None, entry_types: Box::default() }
+        Self { number_result: None, function: ir::Function::new(), native: 0, fault_poll: false, hoists_arrays: false, stable: StableFacts::default(), summary: None, entry_types: Box::default(), exits: ExitTable::default() }
     }
 }
 
@@ -654,6 +670,9 @@ struct Lowering<'a, 'f> {
     loop_strings: Vec<LoopString>,
     /// The variables each held string's facts live in, by register (`loop_strings`).
     string_vars: BTreeMap<Register, StringVariables>,
+    /// The unit a string element read left for the comparison at the next PC, which compares it
+    /// as a unit and never makes the one-character string (`Lowering::unit_compare`).
+    pending_unit: Option<PendingUnit>,
     /// The shapes loops proved of their invariant receivers on their entering edges (`loop_receivers`).
     loop_shapes: Vec<loop_receivers::LoopShape>,
     /// Whether no operation of the unit may move an array's backing or the array record table
@@ -812,12 +831,12 @@ impl ElementViews {
 }
 
 pub(super) fn restartable_numeric_function(program: &ResidualProgram, function: &crate::bytecode::Function,
-    instructions: &[WideInstruction]) -> bool {
+    instructions: impl IntoIterator<Item = WideInstruction>) -> bool {
     super::super::js_compiled::function_candidate(function, program) && numeric_instructions(program, instructions)
 }
 
-fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstruction]) -> bool {
-    instructions.iter().all(|instruction| numeric_instruction(program, *instruction))
+fn numeric_instructions(program: &ResidualProgram, instructions: impl IntoIterator<Item = WideInstruction>) -> bool {
+    instructions.into_iter().all(|instruction| numeric_instruction(program, instruction))
 }
 
 fn numeric_instruction(program: &ResidualProgram, instruction: WideInstruction) -> bool {
@@ -861,7 +880,7 @@ pub(super) fn cold_block(builder: &mut FunctionBuilder<'_>) -> ir::Block {
 }
 
 /// The registers an instruction writes, by its operand layouts.
-pub(super) fn writes(instruction: WideInstruction) -> Vec<Register> {
+pub(super) fn writes(instruction: WideInstruction) -> super::facts::Writes {
     instruction.written_registers().collect()
 }
 
@@ -1051,6 +1070,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.int32_projections.contains(projection))).collect();
         state.proofs.numbers = first.numbers.iter().copied().filter(|projection| rest.iter()
             .all(|other| other.numbers.contains(projection))).collect();
+        state.proofs.admitted_captures = first.admitted_captures.iter().copied().filter(|view| rest.iter()
+            .all(|other| other.admitted_captures.contains(view))).collect();
         state.proofs.arrays = first.arrays.iter().copied().filter(|view| rest.iter()
             .all(|other| other.arrays.contains(view))).collect();
         state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
@@ -1226,6 +1247,29 @@ impl<'a, 'f> Lowering<'a, 'f> {
         })
     }
 
+    /// The unit's block leaders (`leaders`), made once for the unit.
+    fn unit_leaders(&self) -> &CompoundBitSet {
+        self.unit_leaders.get_or_init(|| std::rc::Rc::new(leaders(&self.unit.instructions)))
+    }
+
+    /// The one-unit string constant `operand` names, for a strict comparison that decides on its unit
+    /// (`Lowering::unit_compare`).
+    fn one_unit_constant(&self, operand: Operand) -> Option<u16> {
+        if operand.kind()? != OperandKind::Constant { return None; }
+        match self.program.constants.get(usize::from(operand.payload()))? {
+            crate::bytecode::Constant::String(text) => {
+                let mut units = text.encode_utf16();
+                let unit = units.next()?;
+                units.next().is_none().then_some(unit)
+            }
+            crate::bytecode::Constant::StringUnits(units) => match units[..] {
+                [unit] => Some(unit),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Whether unit `register` is live at unit `pc`. Without unit masks: the frame that owns
     /// it is in the chain of frames `pc` runs in, and its function's masks keep it live at
     /// the frame's own PC there (the PC itself for the innermost, its call's for each frame
@@ -1285,6 +1329,18 @@ impl<'a, 'f> Lowering<'a, 'f> {
             _ => false,
         }
     }
+}
+
+/// A string element read whose unit its next instruction compares with a one-unit constant
+/// (`Lowering::unit_compare`): the register the read would define, the unit it read, and the
+/// constant unit and sense of the comparison.
+#[derive(Clone, Copy)]
+struct PendingUnit {
+    pc: usize,
+    register: Register,
+    unit: ir::Value,
+    constant: u16,
+    negated: bool,
 }
 
 /// The PCs that begin basic blocks: the entry, every jump target and every instruction
@@ -1939,7 +1995,7 @@ pub(super) fn lower(
         prototype_clear: BTreeMap::new(),
         int_only: BTreeSet::new(),
         construct_ready: Vec::new(),
-        loop_arrays: Vec::new(), loop_strings: Vec::new(), string_vars: BTreeMap::new(), loop_shapes: Vec::new(), arrays_fixed: false,
+        loop_arrays: Vec::new(), loop_strings: Vec::new(), string_vars: BTreeMap::new(), pending_unit: None, loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
         views,
         entry_bounds,
@@ -2227,6 +2283,7 @@ pub(super) fn lower(
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Leaves, now - mark); mark = now; }
     lowering.fill_call_out_stop();
     lowering.fill_exits();
+    let exits = ExitTable::of_unit(unit, |pc, frame| lowering.inlined_stores(pc, frame));
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Exits, now - mark); mark = now; }
     lowering.builder.switch_to_block(stop);
     let word = lowering.builder.block_params(stop)[0];
@@ -2267,7 +2324,7 @@ pub(super) fn lower(
     let decided = known_branches::decide(&mut native);
     if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
     if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
-    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable, summary, entry_types: proven_types })
+    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable, summary, entry_types: proven_types, exits })
 }
 
 impl Lowering<'_, '_> {
@@ -2419,6 +2476,7 @@ impl Lowering<'_, '_> {
         state.join_kept_shapes(incoming);
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
         state.proofs.numbers.retain(|projection| incoming.proofs.numbers.contains(projection));
+        state.proofs.admitted_captures.retain(|view| incoming.proofs.admitted_captures.contains(view));
         state.proofs.meet_homed(&incoming.proofs.homed);
         for (index, incoming) in incoming.values.iter().copied().enumerate() {
             let current = state.values[index];
@@ -2495,10 +2553,10 @@ impl Lowering<'_, '_> {
     /// value its `Return` names, typed before it, or the result an operator flagged to return defines,
     /// typed after it. A return the facts do not type joins `ANY`; a body that never returns natively is `ANY`.
     fn returned_type(&self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
-        written: &dyn Fn(WideInstruction) -> Vec<Register>) -> Type {
+        written: &dyn Fn(WideInstruction) -> super::facts::Writes) -> Type {
         let native_calls = self.native_calls;
         let mut defined: Vec<Option<Type>> = vec![None; instructions.len()];
-        self.facts.for_each_definition(instructions, leaders, &self.program.constants, written, native_calls, |pc, register, ty| {
+        self.facts.for_each_definition(instructions, leaders, &self.program.constants, written, native_calls, 0..=instructions.len().saturating_sub(1), |pc, register, ty| {
             if register == instructions[pc].result_register() { defined[pc] = Some(ty); }
         });
         let mut returned = Type::NEVER;
@@ -2627,7 +2685,7 @@ impl Lowering<'_, '_> {
                 if let Some(frame) = self.unit.markers.iter().position(|marker| *marker == pc) {
                     let call = self.unit.frames[frame];
                     let body = self.program.function(call.target.function as usize);
-                    let numeric = restartable_numeric_function(self.program, body, &body.instructions().collect::<Vec<_>>());
+                    let numeric = restartable_numeric_function(self.program, body, body.instructions());
                     if !(call.recovery == super::lane_unit::CallRecovery::RestartCall && numeric)
                         && let Some(root) = aliases[usize::from(call.receiver)] {
                         let recovery = ReceiverRecovery::for_body(body);
@@ -3395,12 +3453,11 @@ impl Lowering<'_, '_> {
         self.branch_if(ints, (join, &[unequal_ints]), (decoded, &[]));
         self.builder.switch_to_block(decoded);
         self.builder.set_cold_block(numbers);
-        let is_number = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
+        let is_number = |builder: &mut FunctionBuilder<'_>, bits: ir::Value, int: ir::Value| {
             let double = crate::staged::value::is_double(&mut emit(builder), bits);
-            let int = is_int_tagged(builder, bits);
             emit(builder).raw_binary(Binary::Or, double, int)
         };
-        let (left_number, right_number) = (is_number(&mut self.builder, left), is_number(&mut self.builder, right));
+        let (left_number, right_number) = (is_number(&mut self.builder, left, left_int), is_number(&mut self.builder, right, right_int));
         let both = self.raw_binary(Binary::And, left_number, right_number);
         self.branch_if(both, (numbers, &[]), (others, &[]));
         self.builder.switch_to_block(numbers);
@@ -3544,7 +3601,7 @@ impl Lowering<'_, '_> {
                 || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some()));
         let callee = self.program.function(inlined.target.function as usize);
         let numeric = inlined.recovery == super::lane_unit::CallRecovery::RestartCall
-            && restartable_numeric_function(self.program, callee, &callee.instructions().collect::<Vec<_>>());
+            && restartable_numeric_function(self.program, callee, callee.instructions());
         if !admitted && !numeric {
             let admitted = self.receiver_recovery(receiver, ReceiverRecovery::for_body(callee));
             emit_js_guard(&mut self.builder, admitted, exit);
@@ -3865,7 +3922,7 @@ impl Lowering<'_, '_> {
         if self.unit.markers.iter().zip(&self.unit.frames).any(|(pc, frame)|
             (header..=back).contains(pc) && frame.alternative.is_some()) { return; }
         let mut candidates: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
-        self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls,
+        self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls, header..=back,
             |pc, register, ty| {
                 let index = usize::from(register);
                 if (header..=back).contains(&pc) && register < self.unit.caller_registers
@@ -3882,7 +3939,7 @@ impl Lowering<'_, '_> {
         // definition keeps a Number is carried as a double, as C carries its `double` sum: the
         // entering edge proves it once, and the loop neither boxes nor tests it.
         let mut numbers: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
-        self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls,
+        self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls, header..=back,
             |pc, register, _| {
                 let index = usize::from(register);
                 let entered = self.int_entries.iter().any(|(entry, _)| *entry == register) || self.number_entries.contains(&register);
