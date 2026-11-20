@@ -774,6 +774,48 @@ static TsType *cAssignedType(TsNode *n) {
 /* the flow type of a reference at a flow node (getTypeAtFlowNode) */
 static TsType *cFlowWalkType(TsFlow *f, CFlowRef *r);
 
+/* narrowTypeByAssertion (75001): the argument of an assertion function narrowed as a condition that holds. `a && b` narrows
+ * by a and then by b, `a || b` is the union of both, and `false` makes the flow unreachable (not ported). */
+static TsType *cNarrowByAssertionExpr(TsNode *e, TsType *t, CFlowRef *r) {
+  TsNode *n = cSkipParens(e);
+  if (n->kind == TSK_FalseKeyword) return cUnported("assertion of false");
+  if (n->kind == TSK_BinaryExpression && n->operatorToken->kind == TSK_AmpersandAmpersandToken)
+    return cNarrowByAssertionExpr(n->right, cNarrowByAssertionExpr(n->left, t, r), r);
+  if (n->kind == TSK_BinaryExpression && n->operatorToken->kind == TSK_BarBarToken) {
+    TsType *a = cNarrowByAssertionExpr(n->left, t, r);
+    TsType *b = cNarrowByAssertionExpr(n->right, t, r);
+    if (a == cErrorType || b == cErrorType) return cErrorType;
+    TsType *pair[2] = { a, b };
+    return cGetUnionType(pair, 2);
+  }
+  return cNarrowByCondition(n, true, t, r);
+}
+
+/* getTypeAtFlowCall (5.9.2): a call whose single signature has an assertion predicate narrows the reference when the
+ * predicate's argument is the reference (`asserts x is T` by the predicate type, `asserts x` by the argument's condition).
+ * Assertions of this, overloaded callees, and never-returning calls are not ported. */
+static TsType *cAssertionCallNarrowing(TsNode *call, TsNode *d, TsType *t, CFlowRef *r) {
+  TsNode *pred = d->type;
+  if (!pred || pred->kind != TSK_TypePredicate || !pred->assertsModifier) return t;   /* a plain predicate has no flow effect */
+  if (!pred->parameterName || pred->parameterName->kind != TSK_Identifier) return cUnported("assertion of this");
+  CParams ps;
+  if (!cSplitParams(d, &ps) || ps.thisParam || ps.rest) return cUnported("assertion call of a rest or this parameter");
+  int idx = -1;
+  for (int k = 0; k < ps.n; k++) {
+    TsNode *pn = ps.params[k]->name;
+    if (pn && pn->kind == TSK_Identifier && pn->textLen == pred->parameterName->textLen &&
+        memcmp(pn->text, pred->parameterName->text, (size_t)pn->textLen) == 0) idx = k;
+  }
+  if (idx < 0 || !call->arguments || idx >= call->arguments->n) return cUnported("assertion call without its argument");
+  TsNode *arg = call->arguments->v[idx];
+  if (!pred->type) return cNarrowByAssertionExpr(arg, t, r);
+  if (!cMatchesRefTree(cSkipParens(arg), r)) return cMentionsText(arg, r->text, r->len) ? cUnported("assertion of another reference") : t;
+  TsType *cand = cTypeFromNode(pred->type);
+  if (cand == cErrorType || (cand->flags & (TF_Any | TF_Unknown))) return cUnported("assertion to any or unknown");
+  if (t == cErrorType) return t;
+  return cGetNarrowedType(t, cand, true);
+}
+
 static TsType *cFlowWalkNode(TsFlow *f, CFlowRef *r) {
   uint32_t fl = f->flags;
   TsType *declared = r->declared;
@@ -861,8 +903,19 @@ static TsType *cFlowWalkNode(TsFlow *f, CFlowRef *r) {
     if (!argMentions) return t;
     bool known;
     bool pred = cCalleeHasPredicate(f->node, &known);
-    if (known && !pred) return t;
-    return cUnported("assertion call narrowing");
+    if (!known) return cUnported("assertion call narrowing");
+    /* the single call signature of the callee (getEffectsSignature); several signatures are not ported */
+    TsType *ft = cExprType(f->node->expression);
+    if (!pred) {
+      /* a callee with one signature that is declared never returns makes the flow unreachable (not ported) */
+      if (ft->ncall == 1 && ft->call[0].decl && ft->call[0].decl->type && ft->call[0].decl->type->kind == TSK_NeverKeyword)
+        return cUnported("never-returning call");
+      return t;
+    }
+    if (ft->ncall != 1) return cUnported("assertion call of an overloaded callee");
+    TsNode *d = ft->call[0].decl;
+    if (!d) return cUnported("assertion call without a declaration");
+    return cAssertionCallNarrowing(f->node, d, t, r);
   }
   return cFlowWalkType(f->ante, r);
 }
