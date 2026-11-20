@@ -269,7 +269,7 @@ macro_rules! catalog {
     /// is the declared set. A hit continues at NEXT; a miss leaves through EXIT0 with nothing written.
     DECLARED_ROW: uses(Unread, Unread, Unread, Never) = Heap::Declared,
     /// A captured declaration's entry test (`base_region::link::entry_rows`): the depth-0 capture at the slot of hole 0
-    /// holds exactly the word of hole 1 (the callee the body calls by identity). A hit continues at NEXT; a miss leaves
+    /// (byte offset in hole 1) holds exactly the word of hole 2 (the callee the body calls by identity). A hit continues at NEXT; a miss leaves
     /// through EXIT0 with nothing written.
     CAPTURE_IDENTITY_ROW: uses(Unread, Unread, Unread, Never) = Heap::CaptureIdentity,
     /// A class-typed parameter's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a direct

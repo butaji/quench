@@ -117,15 +117,16 @@ fn identity_row(s: S) -> Out {
     guard_row::<{ op_kind::GUARD_IDENTITY }>(s, guard)
 }
 
-/// A captured declaration's entry test (`base_region::link::entry_rows`): the depth-0 capture at the slot of hole 0 of
-/// the activation's captures (the window's `CONTEXT_BODY` word, written by the call that enters it) holds exactly the
-/// word of hole 1, else the entry leaves with nothing written.
+/// A captured declaration's entry test (`base_region::link::entry_rows`): the depth-0 capture at the slot of holes 0
+/// (bound) and 1 (byte offset) of the activation's captures (the window's `CONTEXT_BODY` word, written by the call that
+/// enters it) holds exactly the word of hole 2, else the entry leaves with nothing written. The slot read takes its two
+/// site holes from hole 0 on (`environment::slot_address`), so the expected word is past them.
 #[inline(always)]
 fn capture_identity_row(s: S) -> Out {
     let captures = context_word(s.frame, CONTEXT_BODY);
     let mut stage = StencilStage::from_hole(0);
     let held = environment::dense_capture(&mut stage, capture_values(captures), capture_len(captures), hole::<0>() as u16, ())
-        .is_some_and(|word| word == hole64::<HOLE_A>());
+        .is_some_and(|word| word == hole64::<HOLE_B>());
     if held { Out::Next(s) } else { Out::Exit(s) }
 }
 

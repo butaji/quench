@@ -125,7 +125,7 @@ pub(in super::super) fn entry_rows(layout: &Layout, entered: &[usize], at: usize
     }
     let identity = HeapRow { heap: Heap::CaptureIdentity, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     for (slot, callee) in &layout.identities {
-        rows.push(EntryRow { stencil: base_rows::stencil(identity)?, holes: padded_holes([u64::from(*slot), *callee, 0]), declared: true, number: None, int32: None, unbox: None });
+        rows.push(EntryRow { stencil: base_rows::stencil(identity)?, holes: padded_holes([u64::from(*slot), u64::from(*slot) * SLOT, *callee]), declared: true, number: None, int32: None, unbox: None });
     }
     let (mut numbers, rest): (Vec<EntryRow>, Vec<EntryRow>) = rows.into_iter().partition(EntryRow::guards);
     numbers.extend(rest);
