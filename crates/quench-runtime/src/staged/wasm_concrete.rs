@@ -70,7 +70,6 @@ macro_rules! integer_width {
         }
 
         #[inline(always)]
-        #[inline(always)]
         fn $unary(operator: Unary, value: $signed) -> $signed {
             match operator {
                 Unary::EqualZero => <$signed>::from(value == 0),
