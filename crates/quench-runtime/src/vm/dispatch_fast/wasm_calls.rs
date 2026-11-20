@@ -3,7 +3,7 @@
 //! (`LaneCall`) and the lane's own steps.
 use super::*;
 use crate::staged::machine::{Machine, MachineStage};
-use crate::staged::wasm_activation::{self as activation, CallTarget, NativeCall, WasmActivation, push_frame};
+use crate::staged::wasm_activation::{self as activation, CallTarget, NativeCall, WasmActivation};
 use super::lane_stack_growth::LaneStackFull;
 use crate::vm::JsError;
 

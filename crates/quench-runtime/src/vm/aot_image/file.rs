@@ -30,6 +30,11 @@ pub(crate) fn to_bytes(image: &AotImage) -> Vec<u8> {
     out.extend(image.build_id.to_le_bytes());
     out.extend(image.fingerprint.to_le_bytes());
     put_recipes(&mut out, image);
+    put_count(&mut out, image.labels.len());
+    for (function, pc) in &image.labels {
+        out.extend(function.to_le_bytes());
+        out.extend(pc.to_le_bytes());
+    }
     put_count(&mut out, image.functions.len());
     for function in &image.functions {
         put_function(&mut out, function);
@@ -46,9 +51,10 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
     }
     let fingerprint = words.quad()?;
     let (shapes, heap_values, atoms) = read_recipes(&mut words)?;
+    let labels = (0..words.half()?).map(|_| Ok((words.half()?, words.half()?))).collect::<Result<_, String>>()?;
     let count = words.half()?;
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
-    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms })
+    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels })
 }
 
 /// The recipe tables and atom texts of `image` as they are in the file, for an object's data

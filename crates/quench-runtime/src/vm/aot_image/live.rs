@@ -94,7 +94,7 @@ fn link_into(out: &mut [u8], start: usize, at: usize, code: &RelocatableCode, re
 
 /// The address of symbol `(namespace, key)` in this process, or `None` where it resolves to none yet.
 fn resolve<H: Host>(image: &AotImage, vm: &mut Vm<H>, bases: &[u64], invalidation: usize, namespace: u32, key: u32) -> Option<u64> {
-    let symbol = SymbolTable::decode(namespace, key)?;
+    let symbol = SymbolTable::decode(&image.labels, namespace, key)?;
     match symbol {
         Symbol::Helper(helper) => LaneHelper::addresses::<H>().get(helper as usize).map(|address| *address as usize as u64),
         Symbol::SemanticEntry(op) => semantic_entry::<H>(op),

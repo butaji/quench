@@ -11,7 +11,8 @@
 //
 // A stencil names nothing in the runtime except the frame words of `staged/frame.rs` and the entry
 // cell of `staged/call.rs`, which both builds compile.
-#![allow(dead_code)]
+// The re-exports are the stencils' names (`crate::layout::*`), which the runtime does not read.
+#![allow(dead_code, unused_imports)]
 
 pub(crate) use crate::staged::frame::{ACTIVATION_BYTES, ACTIVATION_KIND_OFFSET, CONTEXT_WORDS as FRAME_CONTEXT_WORDS};
 use super::object_encoding::{

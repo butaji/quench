@@ -1,7 +1,7 @@
 //! The stencil layout numbers (`staged/layout_offsets.rs`, shared with the stencils by `#[path]`) checked against the
 //! runtime's own layouts: each is a `const` check against the runtime's `offset_of!`, `size_of` or layout const.
 
-use super::super::{CallContext, JsStepDispatch};
+use super::super::JsStepDispatch;
 use crate::staged::layout_offsets as L;
 use std::mem::offset_of;
 

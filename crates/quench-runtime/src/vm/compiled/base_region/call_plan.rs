@@ -45,7 +45,7 @@ use chain::chained_reads;
 use super::{Exit, SLOT};
 use super::super::direct_callee::DirectCallee;
 use super::super::{LaneHelper, LaneHelpers};
-use crate::bytecode::{Class, ImmediateLayout, Register, WideInstruction};
+use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
 use crate::staged::frame::{ARGC_SHIFT, BODY_FLAG, PLAIN_FLAG};
 use quench_bjit::call::{self, CallRow, ThisRow};
@@ -142,7 +142,7 @@ pub(super) struct CallShape {
 impl CallShape {
     pub(super) fn of(call_pc: u32, instruction: WideInstruction, form: CallForm) -> Self {
         let imm = instruction.imm();
-        let (result, returning, op) = (instruction.result_register(), instruction.returns_from_frame(), instruction.op());
+        let (result, returning) = (instruction.result_register(), instruction.returns_from_frame());
         match form {
             CallForm::Plain => Self {
                 call_pc,

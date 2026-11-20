@@ -15,7 +15,6 @@ use quench_bjit::Stencil;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use quench_bjit::numeric::library::TYPED_KINDS;
 
 /// The heap catalog's macro (`quench-bjit/stencils/row_catalog.rs`, exported by the lib) and its heap row names
 /// (`row_names.rs`, the lib's copy); `heap_code_of!` reads each row's catalog line.

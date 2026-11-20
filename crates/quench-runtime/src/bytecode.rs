@@ -327,6 +327,7 @@ impl ImmediateRole {
             | Self::ClosureFunctionIndex
             | Self::ArrayLength
             | Self::AtomIndex
+            | Self::GlobalLexicalIndex
             | Self::FunctionNamePrefix
             | Self::PropertyDefinitionMode
             | Self::BooleanFlag

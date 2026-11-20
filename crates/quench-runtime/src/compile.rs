@@ -1,6 +1,6 @@
 use crate::bytecode::{
     Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, FunctionSlot, Instr,
-    LexicalBindingKind, MethodSite, ReceiverPath, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
+    LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
     ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, REGISTER_MOVE, RETURN_OP, Register,
     ResidualProgram, SET_THIS_REGISTER, Superinstruction, Traits, WideInstruction, the_op,
 };

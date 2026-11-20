@@ -1,9 +1,8 @@
 use super::*;
-use crate::bytecode::index;
 use crate::staged::frame_arm::FrameArm;
 mod loop_stack;
 mod interpreter_frame;
-pub(super) use interpreter_frame::{InterpreterFrame, RowRun, runs_row};
+pub(super) use interpreter_frame::{InterpreterFrame, RowRun};
 mod materialized_stops;
 
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.

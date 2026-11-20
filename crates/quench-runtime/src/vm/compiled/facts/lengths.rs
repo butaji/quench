@@ -6,7 +6,7 @@
 use super::run::{Model, Point, TypedAccess};
 use crate::bytecode::{FieldLookup, Operand, Register, ResidualProgram, WideInstruction};
 use super::super::meaning_compiled::is_numeric_binary;
-use crate::staged::{DecodeContext, NumberOperation, Operation};
+use crate::staged::{NumberOperation, Operation};
 use crate::typed_ir::{IntRange, Type};
 use crate::compile::liveness::RegisterSet;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};

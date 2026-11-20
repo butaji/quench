@@ -111,7 +111,7 @@ mod exit_protocol;
 mod entry_protocol;
 mod region_lend;
 pub(super) use exit_protocol::{ExitTable, RegionRun};
-mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; pub(in crate::vm) use base_body::{ImageBody, image_body}; mod base_rows; mod stencil_run; use stencil_run::Crossing;
+mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; pub(in crate::vm) use base_body::image_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_facts::bind_callees as bind_region_callees;
 pub(super) use lane_region::ElementViews;
@@ -148,7 +148,6 @@ pub(super) use numeric_image::NumericImage;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages; pub(in crate::vm) use ahead_images::closed_lane_image;
 pub(crate) use ahead_images::{AHEAD_BUILD_ID, ahead_program_fingerprint};
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
-pub(super) use lane_body_abi::body_signature_in_lane;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
 #[path = "compiled/tier_model.rs"] mod tier_model;
@@ -272,7 +271,6 @@ use direct_call::direct_call;
 mod guard_aarch64;
 mod eager;
 mod frozen;
-pub(super) use frozen::{frozen_fields, frozen_global_reads, frozen_globals};
 pub(super) use eager::compile_eager_native;
 #[cfg(unix)]
 #[path = "compiled/fault_handler.rs"]

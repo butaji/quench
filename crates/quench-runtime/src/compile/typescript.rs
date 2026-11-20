@@ -81,10 +81,6 @@ fn languages(ty: &TSType<'_>, names: &TypeNames<'_>, depth: u8) -> u16 {
         TSType::TSNullKeyword(_) => language_bit(V::Null),
         TSType::TSObjectKeyword(_) => language_bit(V::Object) | language_bit(V::Function),
         TSType::TSArrayType(_) | TSType::TSTupleType(_) => bits::ARRAY,
-        TSType::TSTypeReference(reference) => match &reference.type_name {
-            TSTypeName::IdentifierReference(name) if matches!(name.name.as_str(), "Array" | "ReadonlyArray") => bits::ARRAY,
-            _ => DECLARED_ANY,
-        },
         TSType::TSTypeOperatorType(operator) if matches!(operator.operator, TSTypeOperatorOperator::Readonly) =>
             declared_language(&operator.type_annotation),
         // A literal of properties and methods is a plain object's type. A call or construct signature
@@ -135,7 +131,8 @@ fn builtin_languages(name: &str) -> u16 {
     use crate::ValueType as V;
     match name {
         "Function" => language_bit(V::Function),
-        "Array" | "ReadonlyArray" | "Map" | "Set" | "WeakMap" | "WeakSet" | "Date" | "RegExp" | "Promise"
+        "Array" | "ReadonlyArray" => bits::ARRAY,
+        "Map" | "Set" | "WeakMap" | "WeakSet" | "Date" | "RegExp" | "Promise"
         | "Error" | "Uint8Array" | "Uint8ClampedArray" | "Uint16Array" | "Int16Array" | "Uint32Array"
         | "Int32Array" | "Float32Array" | "Float64Array" | "ArrayBuffer" | "DataView" => language_bit(V::Object),
         _ => DECLARED_ANY,
