@@ -695,7 +695,904 @@ static void bUpdateStrictModeStatementList(TsList *stmts) {
   }
 }
 
+static bool bIsDestructuringAssignmentNode(TsNode *n) {
+  return n->kind == TSK_BinaryExpression && n->operatorToken->kind == TSK_EqualsToken &&
+         (n->left->kind == TSK_ObjectLiteralExpression || n->left->kind == TSK_ArrayLiteralExpression);
+}
+/* ---- control flow (binder.ts flow part): flow nodes are counted, the graph is built as in TypeScript ---- */
+enum {
+  FF_Unreachable = 1, FF_Start = 2, FF_BranchLabel = 4, FF_LoopLabel = 8, FF_Assignment = 16,
+  FF_TrueCondition = 32, FF_FalseCondition = 64, FF_SwitchClause = 128, FF_ArrayMutation = 256, FF_Call = 512,
+  FF_ReduceLabel = 1024, FF_Referenced = 2048, FF_Shared = 4096
+};
+
+typedef struct TsFlow {
+  uint32_t flags;
+  TsNode *node;
+  struct TsFlow *ante;          /* antecedent of a non-label flow node */
+  struct TsFlow **labelAnts;    /* antecedent list of a label (BranchLabel / LoopLabel) */
+  int nLabelAnts, capLabelAnts;
+  struct TsFlow *target;        /* ReduceLabel: target and antecedents */
+  struct TsFlow **redAnts;
+  int nRedAnts;
+} TsFlow;
+
+/* the two unreachable nodes are created once by createBinder in TypeScript, so they are not counted */
+static TsFlow bUnreachableFlowObj = { FF_Unreachable, NULL, NULL, NULL, 0, 0, NULL, NULL, 0 };
+static TsFlow bReportedUnreachableFlowObj = { FF_Unreachable, NULL, NULL, NULL, 0, 0, NULL, NULL, 0 };
+#define bUnreachableFlow (&bUnreachableFlowObj)
+#define bReportedUnreachableFlow (&bReportedUnreachableFlowObj)
+
+typedef struct BActiveLabel { struct BActiveLabel *next; BName name; TsFlow *breakTarget, *continueTarget; bool referenced; } BActiveLabel;
+
+static int32_t bFlowCount;
+static TsFlow *bCurFlow;
+static TsFlow *bBreakTarget, *bContinueTarget, *bReturnTarget, *bTrueTarget, *bFalseTarget, *bExceptionTarget, *bPreSwitchCaseFlow;
+static BActiveLabel *bActiveLabels;
+static bool bHasExplicitReturn, bInReturnPosition, bHasFlowEffects, bInAssignmentPattern;
+
+static TsFlow *bNewFlow(uint32_t flags, TsNode *node, TsFlow *ante) {
+  bFlowCount++;
+#ifdef TS_BINDER_DEBUG_FLOW
+  fprintf(stderr, "F %u %d %d\n", flags, node ? node->kind : -1, node ? node->pos : -1);
+#endif
+  TsFlow *f = ts_arena_zalloc(sizeof(TsFlow));
+  f->flags = flags;
+  f->node = node;
+  f->ante = ante;
+  return f;
+}
+static TsFlow *bBranchLabel(void) { return bNewFlow(FF_BranchLabel, NULL, NULL); }
+static TsFlow *bLoopLabel(void) { return bNewFlow(FF_LoopLabel, NULL, NULL); }
+static void bSetReferenced(TsFlow *f) { f->flags |= (f->flags & FF_Referenced) ? FF_Shared : FF_Referenced; }
+
+static bool bLabelContains(TsFlow *label, TsFlow *f) {
+  for (int i = 0; i < label->nLabelAnts; i++) if (label->labelAnts[i] == f) return true;
+  return false;
+}
+static void bAddAntecedent(TsFlow *label, TsFlow *ante) {
+  if (!(ante->flags & FF_Unreachable) && !bLabelContains(label, ante)) {
+    if (label->nLabelAnts == label->capLabelAnts) {
+      label->capLabelAnts = label->capLabelAnts ? label->capLabelAnts * 2 : 4;
+      TsFlow **v = ts_arena_alloc(sizeof(TsFlow *) * (size_t)label->capLabelAnts);
+      if (label->nLabelAnts) memcpy(v, label->labelAnts, sizeof(TsFlow *) * (size_t)label->nLabelAnts);
+      label->labelAnts = v;
+    }
+    label->labelAnts[label->nLabelAnts++] = ante;
+    bSetReferenced(ante);
+  }
+}
+static TsFlow *bFinishLabel(TsFlow *flow) {
+  if (flow->nLabelAnts == 0) return bUnreachableFlow;
+  if (flow->nLabelAnts == 1) return flow->labelAnts[0];
+  return flow;
+}
+static TsFlow *bReduceLabel(TsFlow *target, TsFlow **ants, int n, TsFlow *ante) {
+  TsFlow *f = bNewFlow(FF_ReduceLabel, NULL, ante);
+  f->target = target;
+  f->redAnts = ants;
+  f->nRedAnts = n;
+  return f;
+}
+static TsFlow *bFlowCondition(uint32_t flags, TsFlow *ante, TsNode *expr);
+static TsFlow *bFlowSwitchClause(TsFlow *ante, TsNode *sw, int s, int e) {
+  bSetReferenced(ante);
+  return bNewFlow(FF_SwitchClause, sw, ante);
+}
+static TsFlow *bFlowMutation(uint32_t flags, TsFlow *ante, TsNode *node) {
+  bSetReferenced(ante);
+  bHasFlowEffects = true;
+  TsFlow *result = bNewFlow(flags, node, ante);
+  if (bExceptionTarget) bAddAntecedent(bExceptionTarget, result);
+  return result;
+}
+static TsFlow *bFlowCall(TsFlow *ante, TsNode *node) {
+  bSetReferenced(ante);
+  bHasFlowEffects = true;
+  return bNewFlow(FF_Call, node, ante);
+}
+
+/* ---- predicates (typescript.js utilities) ---- */
+static bool bIsStringLiteralLike(TsNode *n) { return n && (n->kind == TSK_StringLiteral || n->kind == TSK_NoSubstitutionTemplateLiteral); }
+static bool bIsOptionalChain(TsNode *n) {
+  if (!(n->flags & TNF_OptionalChain)) return false;
+  int k = n->kind;
+  return k == TSK_PropertyAccessExpression || k == TSK_ElementAccessExpression || k == TSK_CallExpression || k == TSK_NonNullExpression;
+}
+static bool bIsOptionalChainRoot(TsNode *n) { return bIsOptionalChain(n) && n->kind != TSK_NonNullExpression && n->questionDotToken; }
+static bool bIsExpressionOfOptionalChainRoot(TsNode *n) { return bIsOptionalChainRoot(n->parent) && n->parent->expression == n; }
+static bool bIsOutermostOptionalChain(TsNode *n) {
+  return !bIsOptionalChain(n->parent) || bIsOptionalChainRoot(n->parent) || n != n->parent->expression;
+}
+static bool bIsNullishCoalesce(TsNode *n) { return n->kind == TSK_BinaryExpression && n->operatorToken->kind == TSK_QuestionQuestionToken; }
+static bool bIsLogicalOrCoalescingBinaryOperator(int t) {
+  return t == TSK_AmpersandAmpersandToken || t == TSK_BarBarToken || t == TSK_QuestionQuestionToken;
+}
+static bool bIsLogicalOrCoalescingAssignmentOperator(int t) {
+  return t == TSK_BarBarEqualsToken || t == TSK_AmpersandAmpersandEqualsToken || t == TSK_QuestionQuestionEqualsToken;
+}
+static bool bIsLogicalOrCoalescingBinaryExpression(TsNode *n) {
+  return n->kind == TSK_BinaryExpression && bIsLogicalOrCoalescingBinaryOperator(n->operatorToken->kind);
+}
+static bool bIsLogicalOrCoalescingAssignmentExpression(TsNode *n) {
+  return n->kind == TSK_BinaryExpression && bIsLogicalOrCoalescingAssignmentOperator(n->operatorToken->kind);
+}
+static bool bIsAssignmentOperatorKind(int t) { return t >= TSK_EqualsToken && t <= TSK_CaretEqualsToken; }
+static bool bIsDottedName(TsNode *n) {
+  return n->kind == TSK_Identifier || n->kind == TSK_ThisKeyword || n->kind == TSK_SuperKeyword || n->kind == TSK_MetaProperty ||
+         (n->kind == TSK_PropertyAccessExpression && bIsDottedName(n->expression)) ||
+         (n->kind == TSK_ParenthesizedExpression && bIsDottedName(n->expression));
+}
+static bool bIsLogicalExpression(TsNode *n) {
+  for (;;) {
+    if (n->kind == TSK_ParenthesizedExpression) n = n->expression;
+    else if (n->kind == TSK_PrefixUnaryExpression && n->extra == TSK_ExclamationToken) n = n->operand;
+    else return bIsLogicalOrCoalescingBinaryExpression(n);
+  }
+}
+static bool bIsLogicalAssignmentExpression(TsNode *n) { return bIsLogicalOrCoalescingAssignmentExpression(bSkipParentheses(n)); }
+static bool bIsStatementCondition(TsNode *n) {
+  TsNode *p = n->parent;
+  switch (p->kind) {
+    case TSK_IfStatement: case TSK_WhileStatement: case TSK_DoStatement: return p->expression == n;
+    case TSK_ForStatement: case TSK_ConditionalExpression: return p->condition == n;
+  }
+  return false;
+}
+static bool bIsTopLevelLogicalExpression(TsNode *n) {
+  while (n->parent->kind == TSK_ParenthesizedExpression || (n->parent->kind == TSK_PrefixUnaryExpression && n->parent->extra == TSK_ExclamationToken))
+    n = n->parent;
+  return !bIsStatementCondition(n) && !bIsLogicalExpression(n->parent) && !(bIsOptionalChain(n->parent) && n->parent->expression == n);
+}
+static bool bIsNarrowableReference(TsNode *n);
+static bool bIsLeftHandSideKind(int k) {
+  switch (k) {
+    case TSK_PropertyAccessExpression: case TSK_ElementAccessExpression: case TSK_NewExpression: case TSK_CallExpression:
+    case TSK_TaggedTemplateExpression: case TSK_ArrayLiteralExpression: case TSK_ParenthesizedExpression:
+    case TSK_ObjectLiteralExpression: case TSK_ClassExpression: case TSK_FunctionExpression: case TSK_Identifier:
+    case TSK_RegularExpressionLiteral: case TSK_NumericLiteral: case TSK_BigIntLiteral: case TSK_StringLiteral:
+    case TSK_NoSubstitutionTemplateLiteral: case TSK_TemplateExpression: case TSK_FalseKeyword: case TSK_NullKeyword:
+    case TSK_ThisKeyword: case TSK_TrueKeyword: case TSK_SuperKeyword: case TSK_NonNullExpression: case TSK_MetaProperty:
+    case TSK_ImportKeyword:
+      return true;
+  }
+  return false;
+}
+static bool bIsNarrowableReference(TsNode *n) {
+  switch (n->kind) {
+    case TSK_Identifier: case TSK_ThisKeyword: case TSK_SuperKeyword: case TSK_MetaProperty: return true;
+    case TSK_PropertyAccessExpression: case TSK_ParenthesizedExpression: case TSK_NonNullExpression:
+      return bIsNarrowableReference(n->expression);
+    case TSK_ElementAccessExpression:
+      return (bIsStringLiteralLike(n->argumentExpression) || n->argumentExpression->kind == TSK_NumericLiteral ||
+              bIsEntityNameExpression(n->argumentExpression)) && bIsNarrowableReference(n->expression);
+    case TSK_BinaryExpression:
+      return (n->operatorToken->kind == TSK_CommaToken && bIsNarrowableReference(n->right)) ||
+             (bIsAssignmentOperatorKind(n->operatorToken->kind) && bIsLeftHandSideKind(bSkipParentheses(n->left)->kind));
+  }
+  return false;
+}
+static bool bContainsNarrowableReference(TsNode *n);
+static bool bIsNarrowingExpression(TsNode *n);
+static bool bIsNarrowableOperand(TsNode *n) {
+  if (n->kind == TSK_ParenthesizedExpression) return bIsNarrowableOperand(n->expression);
+  if (n->kind == TSK_BinaryExpression) {
+    if (n->operatorToken->kind == TSK_EqualsToken) return bIsNarrowableOperand(n->left);
+    if (n->operatorToken->kind == TSK_CommaToken) return bIsNarrowableOperand(n->right);
+  }
+  return bContainsNarrowableReference(n);
+}
+static bool bContainsNarrowableReference(TsNode *n) {
+  return bIsNarrowableReference(n) || (bIsOptionalChain(n) && bContainsNarrowableReference(n->expression));
+}
+static bool bHasNarrowableArgument(TsNode *n) {
+  if (n->arguments)
+    for (int i = 0; i < n->arguments->n; i++)
+      if (bContainsNarrowableReference(n->arguments->v[i])) return true;
+  if (n->expression->kind == TSK_PropertyAccessExpression && bContainsNarrowableReference(n->expression->expression)) return true;
+  return false;
+}
+static bool bIsNarrowingTypeofOperands(TsNode *e1, TsNode *e2) {
+  return e1->kind == TSK_TypeOfExpression && bIsNarrowableOperand(e1->expression) && bIsStringLiteralLike(e2);
+}
+static bool bIsNarrowingBinaryExpression(TsNode *n) {
+  switch (n->operatorToken->kind) {
+    case TSK_EqualsToken: case TSK_BarBarEqualsToken: case TSK_AmpersandAmpersandEqualsToken: case TSK_QuestionQuestionEqualsToken:
+      return bContainsNarrowableReference(n->left);
+    case TSK_EqualsEqualsToken: case TSK_ExclamationEqualsToken: case TSK_EqualsEqualsEqualsToken: case TSK_ExclamationEqualsEqualsToken: {
+      TsNode *l = bSkipParentheses(n->left), *r = bSkipParentheses(n->right);
+      return bIsNarrowableOperand(l) || bIsNarrowableOperand(r) || bIsNarrowingTypeofOperands(r, l) || bIsNarrowingTypeofOperands(l, r) ||
+             ((r->kind == TSK_TrueKeyword || r->kind == TSK_FalseKeyword) && bIsNarrowingExpression(l)) ||
+             ((l->kind == TSK_TrueKeyword || l->kind == TSK_FalseKeyword) && bIsNarrowingExpression(r));
+    }
+    case TSK_InstanceOfKeyword: return bIsNarrowableOperand(n->left);
+    case TSK_InKeyword: return bIsNarrowingExpression(n->right);
+    case TSK_CommaToken: return bIsNarrowingExpression(n->right);
+  }
+  return false;
+}
+static bool bIsNarrowingExpression(TsNode *n) {
+  switch (n->kind) {
+    case TSK_Identifier: case TSK_ThisKeyword: return true;
+    case TSK_PropertyAccessExpression: case TSK_ElementAccessExpression: return bContainsNarrowableReference(n);
+    case TSK_CallExpression: return bHasNarrowableArgument(n);
+    case TSK_ParenthesizedExpression:
+      return bIsNarrowingExpression(n->expression);
+    case TSK_NonNullExpression: return bIsNarrowingExpression(n->expression);
+    case TSK_BinaryExpression: return bIsNarrowingBinaryExpression(n);
+    case TSK_PrefixUnaryExpression: return n->extra == TSK_ExclamationToken && bIsNarrowingExpression(n->operand);
+    case TSK_TypeOfExpression: return bIsNarrowingExpression(n->expression);
+  }
+  return false;
+}
+
+/* getAssignmentTarget: the assignment, update or for-in/of statement that writes node, if any */
+static TsNode *bGetAssignmentTarget(TsNode *node) {
+  TsNode *p = node->parent;
+  for (;;) {
+    switch (p->kind) {
+      case TSK_BinaryExpression:
+        return bIsAssignmentOperatorKind(p->operatorToken->kind) && p->left == node ? p : NULL;
+      case TSK_PrefixUnaryExpression: case TSK_PostfixUnaryExpression:
+        return (p->extra == TSK_PlusPlusToken || p->extra == TSK_MinusMinusToken) ? p : NULL;
+      case TSK_ForInStatement: case TSK_ForOfStatement:
+        return p->initializer == node ? p : NULL;
+      case TSK_ParenthesizedExpression: case TSK_ArrayLiteralExpression: case TSK_SpreadElement: case TSK_NonNullExpression:
+        node = p;
+        break;
+      case TSK_SpreadAssignment:
+        node = p->parent;
+        break;
+      case TSK_ShorthandPropertyAssignment:
+        if (p->name != node) return NULL;
+        node = p->parent;
+        break;
+      case TSK_PropertyAssignment:
+        if (p->name == node) return NULL;
+        node = p->parent;
+        break;
+      default:
+        return NULL;
+    }
+    p = node->parent;
+  }
+}
+static bool bIsAssignmentTarget(TsNode *n) { return bGetAssignmentTarget(n) != NULL; }
+
+static bool bIsStatementButNotDeclarationKind(int k) {
+  switch (k) {
+    case TSK_BreakStatement: case TSK_ContinueStatement: case TSK_DebuggerStatement: case TSK_DoStatement:
+    case TSK_ExpressionStatement: case TSK_EmptyStatement: case TSK_ForInStatement: case TSK_ForOfStatement:
+    case TSK_ForStatement: case TSK_IfStatement: case TSK_LabeledStatement: case TSK_ReturnStatement:
+    case TSK_SwitchStatement: case TSK_ThrowStatement: case TSK_TryStatement: case TSK_VariableStatement:
+    case TSK_WhileStatement: case TSK_WithStatement: case TSK_NotEmittedStatement:
+      return true;
+  }
+  return false;
+}
+
+/* checkUnreachable: reports (not counted) and moves the flow to the reported node when code is unreachable */
+static bool bCheckUnreachable(TsNode *node) {
+  if (!(bCurFlow->flags & FF_Unreachable)) return false;
+  if (bCurFlow == bUnreachableFlow) {
+    bool reportError = (bIsStatementButNotDeclarationKind(node->kind) && node->kind != TSK_EmptyStatement) ||
+                       node->kind == TSK_ClassDeclaration ||
+                       (node->kind == TSK_EnumDeclaration && !bIsEnumConst(node)) ||
+                       (node->kind == TSK_ModuleDeclaration && bModuleInstanceStateCached(node) == MI_Instantiated);
+    if (reportError) bCurFlow = bReportedUnreachableFlow;
+  }
+  return true;
+}
+
+static TsFlow *bFlowCondition(uint32_t flags, TsFlow *ante, TsNode *expr) {
+  if (ante->flags & FF_Unreachable) return ante;
+  if (!expr) return (flags & FF_TrueCondition) ? ante : bUnreachableFlow;
+  if (((expr->kind == TSK_TrueKeyword && (flags & FF_FalseCondition)) || (expr->kind == TSK_FalseKeyword && (flags & FF_TrueCondition))) &&
+      !bIsExpressionOfOptionalChainRoot(expr) && !bIsNullishCoalesce(expr->parent))
+    return bUnreachableFlow;
+  if (!bIsNarrowingExpression(expr)) return ante;
+  bSetReferenced(ante);
+  return bNewFlow(flags, expr, ante);
+}
+
+/* ---- binding of the flow graph ---- */
+static void bBindAssignmentTargetFlow(TsNode *node);
+static void bBindCondition(TsNode *node, TsFlow *trueT, TsFlow *falseT);
+static void bDoWithConditional(void (*action)(TsNode *), TsNode *node, TsFlow *trueT, TsFlow *falseT);
+static bool bBindChildrenFlowDispatch(TsNode *node);
+static void bBindEachStatements(TsList *l);
+
+static void bBindCondWrap(TsNode *node) { bBind(node); }
+
+static void bDoWithConditional(void (*action)(TsNode *), TsNode *node, TsFlow *trueT, TsFlow *falseT) {
+  TsFlow *savedT = bTrueTarget, *savedF = bFalseTarget;
+  bTrueTarget = trueT;
+  bFalseTarget = falseT;
+  action(node);
+  bTrueTarget = savedT;
+  bFalseTarget = savedF;
+}
+
+static void bBindCondition(TsNode *node, TsFlow *trueT, TsFlow *falseT) {
+  bDoWithConditional(bBindCondWrap, node, trueT, falseT);
+  if (!node || (!bIsLogicalAssignmentExpression(node) && !bIsLogicalExpression(node) &&
+                !(bIsOptionalChain(node) && bIsOutermostOptionalChain(node)))) {
+    bAddAntecedent(trueT, bFlowCondition(FF_TrueCondition, bCurFlow, node));
+    bAddAntecedent(falseT, bFlowCondition(FF_FalseCondition, bCurFlow, node));
+  }
+}
+
+static void bBindIterative(TsNode *node, TsFlow *breakT, TsFlow *contT) {
+  TsFlow *sb = bBreakTarget, *sc = bContinueTarget;
+  bBreakTarget = breakT;
+  bContinueTarget = contT;
+  bBind(node);
+  bBreakTarget = sb;
+  bContinueTarget = sc;
+}
+
+static TsFlow *bSetContinueTarget(TsNode *node, TsFlow *target) {
+  BActiveLabel *label = bActiveLabels;
+  while (label && node->parent->kind == TSK_LabeledStatement) {
+    label->continueTarget = target;
+    label = label->next;
+    node = node->parent;
+  }
+  return target;
+}
+
+static void bBindWhile(TsNode *node) {
+  TsFlow *preWhile = bSetContinueTarget(node, bLoopLabel());
+  TsFlow *preBody = bBranchLabel();
+  TsFlow *postWhile = bBranchLabel();
+  bAddAntecedent(preWhile, bCurFlow);
+  bCurFlow = preWhile;
+  bBindCondition(node->expression, preBody, postWhile);
+  bCurFlow = bFinishLabel(preBody);
+  bBindIterative(node->statement, postWhile, preWhile);
+  bAddAntecedent(preWhile, bCurFlow);
+  bCurFlow = bFinishLabel(postWhile);
+}
+
+static void bBindDo(TsNode *node) {
+  TsFlow *preDo = bLoopLabel();
+  TsFlow *preCond = bSetContinueTarget(node, bBranchLabel());
+  TsFlow *postDo = bBranchLabel();
+  bAddAntecedent(preDo, bCurFlow);
+  bCurFlow = preDo;
+  bBindIterative(node->statement, postDo, preCond);
+  bAddAntecedent(preCond, bCurFlow);
+  bCurFlow = bFinishLabel(preCond);
+  bBindCondition(node->expression, preDo, postDo);
+  bCurFlow = bFinishLabel(postDo);
+}
+
+static void bBindFor(TsNode *node) {
+  TsFlow *preLoop = bSetContinueTarget(node, bLoopLabel());
+  TsFlow *preBody = bBranchLabel();
+  TsFlow *preInc = bBranchLabel();
+  TsFlow *postLoop = bBranchLabel();
+  bBind(node->initializer);
+  bAddAntecedent(preLoop, bCurFlow);
+  bCurFlow = preLoop;
+  bBindCondition(node->condition, preBody, postLoop);
+  bCurFlow = bFinishLabel(preBody);
+  bBindIterative(node->statement, postLoop, preInc);
+  bAddAntecedent(preInc, bCurFlow);
+  bCurFlow = bFinishLabel(preInc);
+  bBind(node->incrementor);
+  bAddAntecedent(preLoop, bCurFlow);
+  bCurFlow = bFinishLabel(postLoop);
+}
+
+static void bBindForInOf(TsNode *node) {
+  TsFlow *preLoop = bSetContinueTarget(node, bLoopLabel());
+  TsFlow *postLoop = bBranchLabel();
+  bBind(node->expression);
+  bAddAntecedent(preLoop, bCurFlow);
+  bCurFlow = preLoop;
+  if (node->kind == TSK_ForOfStatement) bBind(node->awaitModifier);
+  bAddAntecedent(postLoop, bCurFlow);
+  bBind(node->initializer);
+  if (node->initializer->kind != TSK_VariableDeclarationList) bBindAssignmentTargetFlow(node->initializer);
+  bBindIterative(node->statement, postLoop, preLoop);
+  bAddAntecedent(preLoop, bCurFlow);
+  bCurFlow = bFinishLabel(postLoop);
+}
+
+static void bBindIf(TsNode *node) {
+  TsFlow *thenL = bBranchLabel(), *elseL = bBranchLabel(), *postIf = bBranchLabel();
+  bBindCondition(node->expression, thenL, elseL);
+  bCurFlow = bFinishLabel(thenL);
+  bBind(node->thenStatement);
+  bAddAntecedent(postIf, bCurFlow);
+  bCurFlow = bFinishLabel(elseL);
+  bBind(node->elseStatement);
+  bAddAntecedent(postIf, bCurFlow);
+  bCurFlow = bFinishLabel(postIf);
+}
+
+static void bBindReturnOrThrow(TsNode *node) {
+  bool savedIn = bInReturnPosition;
+  bInReturnPosition = true;
+  bBind(node->expression);
+  bInReturnPosition = savedIn;
+  if (node->kind == TSK_ReturnStatement) {
+    bHasExplicitReturn = true;
+    if (bReturnTarget) bAddAntecedent(bReturnTarget, bCurFlow);
+  }
+  bCurFlow = bUnreachableFlow;
+  bHasFlowEffects = true;
+}
+
+static BActiveLabel *bFindActiveLabel(const char *s, int n) {
+  for (BActiveLabel *l = bActiveLabels; l; l = l->next)
+    if (l->name.n == n && memcmp(l->name.s, s, (size_t)n) == 0) return l;
+  return NULL;
+}
+
+static void bBindBreakOrContinueFlow(TsNode *node, TsFlow *breakT, TsFlow *contT) {
+  TsFlow *flowLabel = node->kind == TSK_BreakStatement ? breakT : contT;
+  if (flowLabel) {
+    bAddAntecedent(flowLabel, bCurFlow);
+    bCurFlow = bUnreachableFlow;
+    bHasFlowEffects = true;
+  }
+}
+
+static void bBindBreakOrContinue(TsNode *node) {
+  bBind(node->label);
+  if (node->label) {
+    BActiveLabel *active = bFindActiveLabel(node->label->text, node->label->textLen);
+    if (active) {
+      active->referenced = true;
+      bBindBreakOrContinueFlow(node, active->breakTarget, active->continueTarget);
+    }
+  } else {
+    bBindBreakOrContinueFlow(node, bBreakTarget, bContinueTarget);
+  }
+}
+
+static TsFlow **bConcat(TsFlow *a, TsFlow *b, int *n) {
+  int na = a ? a->nLabelAnts : 0, nb = b ? b->nLabelAnts : 0;
+  *n = na + nb;
+  if (*n == 0) return NULL;
+  TsFlow **v = ts_arena_alloc(sizeof(TsFlow *) * (size_t)*n);
+  if (na) memcpy(v, a->labelAnts, sizeof(TsFlow *) * (size_t)na);
+  if (nb) memcpy(v + na, b->labelAnts, sizeof(TsFlow *) * (size_t)nb);
+  return v;
+}
+
+static void bBindTry(TsNode *node) {
+  TsFlow *saveReturn = bReturnTarget, *saveExc = bExceptionTarget;
+  TsFlow *normalExit = bBranchLabel();
+  TsFlow *returnLabel = bBranchLabel();
+  TsFlow *exceptionLabel = bBranchLabel();
+  if (node->finallyBlock) bReturnTarget = returnLabel;
+  bAddAntecedent(exceptionLabel, bCurFlow);
+  bExceptionTarget = exceptionLabel;
+  bBind(node->block);
+  bAddAntecedent(normalExit, bCurFlow);
+  if (node->catchClause) {
+    bCurFlow = bFinishLabel(exceptionLabel);
+    exceptionLabel = bBranchLabel();
+    bAddAntecedent(exceptionLabel, bCurFlow);
+    bExceptionTarget = exceptionLabel;
+    bBind(node->catchClause);
+    bAddAntecedent(normalExit, bCurFlow);
+  }
+  bReturnTarget = saveReturn;
+  bExceptionTarget = saveExc;
+  if (node->finallyBlock) {
+    TsFlow *finallyLabel = bBranchLabel();
+    /* concatenate(normalExit, exception, return) */
+    /* concatenate of the antecedent lists; the temporary holder is not a flow node */
+    int n1 = 0, n3 = 0;
+    TsFlow **c1 = bConcat(normalExit, exceptionLabel, &n1);
+    TsFlow tmp;
+    memset(&tmp, 0, sizeof tmp);
+    tmp.labelAnts = c1;
+    tmp.nLabelAnts = n1;
+    TsFlow **c2 = bConcat(&tmp, returnLabel, &n3);
+    finallyLabel->labelAnts = c2;
+    finallyLabel->nLabelAnts = n3;
+    bCurFlow = finallyLabel;
+    bBind(node->finallyBlock);
+    if (bCurFlow->flags & FF_Unreachable) {
+      bCurFlow = bUnreachableFlow;
+    } else {
+      if (bReturnTarget && returnLabel->nLabelAnts) {
+        bAddAntecedent(bReturnTarget, bReduceLabel(finallyLabel, returnLabel->labelAnts, returnLabel->nLabelAnts, bCurFlow));
+      }
+      if (bExceptionTarget && exceptionLabel->nLabelAnts) {
+        bAddAntecedent(bExceptionTarget, bReduceLabel(finallyLabel, exceptionLabel->labelAnts, exceptionLabel->nLabelAnts, bCurFlow));
+      }
+      bCurFlow = normalExit->nLabelAnts ? bReduceLabel(finallyLabel, normalExit->labelAnts, normalExit->nLabelAnts, bCurFlow)
+                                        : bUnreachableFlow;
+    }
+  } else {
+    bCurFlow = bFinishLabel(normalExit);
+  }
+}
+
+static void bBindSwitch(TsNode *node) {
+  TsFlow *post = bBranchLabel();
+  bBind(node->expression);
+  TsFlow *saveBreak = bBreakTarget, *savePre = bPreSwitchCaseFlow;
+  bBreakTarget = post;
+  bPreSwitchCaseFlow = bCurFlow;
+  bBind(node->caseBlock);
+  bAddAntecedent(post, bCurFlow);
+  bool hasDefault = false;
+  TsList *cl = node->caseBlock->clauses;
+  for (int i = 0; cl && i < cl->n; i++) if (cl->v[i]->kind == TSK_DefaultClause) hasDefault = true;
+  if (!hasDefault) bAddAntecedent(post, bFlowSwitchClause(bPreSwitchCaseFlow, node, 0, 0));
+  bBreakTarget = saveBreak;
+  bPreSwitchCaseFlow = savePre;
+  bCurFlow = bFinishLabel(post);
+}
+
+static void bBindCaseBlock(TsNode *node) {
+  TsList *clauses = node->clauses;
+  bool isNarrowingSwitch = node->parent->expression->kind == TSK_TrueKeyword || bIsNarrowingExpression(node->parent->expression);
+  TsFlow *fallthrough = bUnreachableFlow;
+  for (int i = 0; i < clauses->n; i++) {
+    int clauseStart = i;
+    while (clauses->v[i]->statements->n == 0 && i + 1 < clauses->n) {
+      if (fallthrough == bUnreachableFlow) bCurFlow = bPreSwitchCaseFlow;
+      bBind(clauses->v[i]);
+      i++;
+    }
+    TsFlow *preCase = bBranchLabel();
+    bAddAntecedent(preCase, isNarrowingSwitch ? bFlowSwitchClause(bPreSwitchCaseFlow, node->parent, clauseStart, i + 1) : bPreSwitchCaseFlow);
+    bAddAntecedent(preCase, fallthrough);
+    bCurFlow = bFinishLabel(preCase);
+    TsNode *clause = clauses->v[i];
+    bBind(clause);
+    fallthrough = bCurFlow;
+  }
+}
+
+static void bBindCaseClause(TsNode *node) {
+  TsFlow *saveCur = bCurFlow;
+  bCurFlow = bPreSwitchCaseFlow;
+  bBind(node->expression);
+  bCurFlow = saveCur;
+  bBindEachStatements(node->statements);
+}
+
+static void bMaybeBindExpressionFlowIfCall(TsNode *node) {
+  if (node->kind == TSK_CallExpression) {
+    if (node->expression->kind != TSK_SuperKeyword && bIsDottedName(node->expression)) bCurFlow = bFlowCall(bCurFlow, node);
+  }
+}
+
+static void bBindLabeled(TsNode *node) {
+  TsFlow *postStmt = bBranchLabel();
+  BActiveLabel *lab = ts_arena_zalloc(sizeof(BActiveLabel));
+  lab->next = bActiveLabels;
+  lab->name.s = node->label->text;
+  lab->name.n = node->label->textLen;
+  lab->breakTarget = postStmt;
+  bActiveLabels = lab;
+  bBind(node->label);
+  bBind(node->statement);
+  bActiveLabels = bActiveLabels->next;
+  bAddAntecedent(postStmt, bCurFlow);
+  bCurFlow = bFinishLabel(postStmt);
+}
+
+static void bBindDestructuringTargetFlow(TsNode *node) {
+  if (node->kind == TSK_BinaryExpression && node->operatorToken->kind == TSK_EqualsToken) bBindAssignmentTargetFlow(node->left);
+  else bBindAssignmentTargetFlow(node);
+}
+
+static void bBindAssignmentTargetFlow(TsNode *node) {
+  if (bIsNarrowableReference(node)) {
+    bCurFlow = bFlowMutation(FF_Assignment, bCurFlow, node);
+  } else if (node->kind == TSK_ArrayLiteralExpression) {
+    for (int i = 0; node->elements && i < node->elements->n; i++) {
+      TsNode *e = node->elements->v[i];
+      if (e->kind == TSK_SpreadElement) bBindAssignmentTargetFlow(e->expression);
+      else bBindDestructuringTargetFlow(e);
+    }
+  } else if (node->kind == TSK_ObjectLiteralExpression) {
+    for (int i = 0; node->properties && i < node->properties->n; i++) {
+      TsNode *p = node->properties->v[i];
+      if (p->kind == TSK_PropertyAssignment) bBindDestructuringTargetFlow(p->initializer);
+      else if (p->kind == TSK_ShorthandPropertyAssignment) bBindAssignmentTargetFlow(p->name);
+      else if (p->kind == TSK_SpreadAssignment) bBindAssignmentTargetFlow(p->expression);
+    }
+  }
+}
+
+static void bBindLogicalLike(TsNode *node, TsFlow *trueT, TsFlow *falseT) {
+  TsFlow *preRight = bBranchLabel();
+  int op = node->operatorToken->kind;
+  if (op == TSK_AmpersandAmpersandToken || op == TSK_AmpersandAmpersandEqualsToken) bBindCondition(node->left, preRight, falseT);
+  else bBindCondition(node->left, trueT, preRight);
+  bCurFlow = bFinishLabel(preRight);
+  bBind(node->operatorToken);
+  if (bIsLogicalOrCoalescingAssignmentOperator(op)) {
+    bDoWithConditional(bBind, node->right, trueT, falseT);
+    bBindAssignmentTargetFlow(node->left);
+    bAddAntecedent(trueT, bFlowCondition(FF_TrueCondition, bCurFlow, node));
+    bAddAntecedent(falseT, bFlowCondition(FF_FalseCondition, bCurFlow, node));
+  } else {
+    bBindCondition(node->right, trueT, falseT);
+  }
+}
+
+static void bBindEachStatements(TsList *l) {
+  for (int i = 0; l && i < l->n; i++) bBind(l->v[i]);
+}
+
+static void bBindBinaryFlow(TsNode *node);
+
+/* the binary-expression trampoline of binder.ts, written as the equivalent recursion */
+static void bMaybeBind2(TsNode *n) {
+  if (n && n->kind == TSK_BinaryExpression && !bIsDestructuringAssignmentNode(n)) {
+    /* the trampoline's onEnter: set the parent, bind the node's parts with it as parent, restore */
+    n->parent = bParent;
+    TsNode *saveParent = bParent;
+    bParent = n;
+    bBindBinaryFlow(n);
+    bParent = saveParent;
+    return;
+  }
+  bBind(n);
+}
+
+static void bBindBinaryFlow(TsNode *node) {
+  bool skip = false;
+  int op = node->operatorToken->kind;
+  if (bIsLogicalOrCoalescingBinaryOperator(op) || bIsLogicalOrCoalescingAssignmentOperator(op)) {
+    if (bIsTopLevelLogicalExpression(node)) {
+      TsFlow *post = bBranchLabel();
+      TsFlow *saveCur = bCurFlow;
+      bool saveHas = bHasFlowEffects;
+      bHasFlowEffects = false;
+      bBindLogicalLike(node, post, post);
+      bCurFlow = bHasFlowEffects ? bFinishLabel(post) : saveCur;
+      if (!bHasFlowEffects) bHasFlowEffects = saveHas;
+    } else {
+      bBindLogicalLike(node, bTrueTarget, bFalseTarget);
+    }
+    skip = true;
+  }
+  if (!skip) {
+    bMaybeBind2(node->left);
+    if (op == TSK_CommaToken) bMaybeBindExpressionFlowIfCall(node->left);
+    bBind(node->operatorToken);
+    bMaybeBind2(node->right);
+    if (op == TSK_CommaToken) bMaybeBindExpressionFlowIfCall(node->right);
+    if (bIsAssignmentOperatorKind(op) && !bIsAssignmentTarget(node)) {
+      bBindAssignmentTargetFlow(node->left);
+      if (op == TSK_EqualsToken && node->left->kind == TSK_ElementAccessExpression) {
+        if (bIsNarrowableOperand(node->left->expression)) bCurFlow = bFlowMutation(FF_ArrayMutation, bCurFlow, node);
+      }
+    }
+  }
+}
+
+static void bBindDestructuringAssignmentFlow(TsNode *node) {
+  if (bInAssignmentPattern) {
+    bInAssignmentPattern = false;
+    bBind(node->operatorToken);
+    bBind(node->right);
+    bInAssignmentPattern = true;
+    bBind(node->left);
+  } else {
+    bInAssignmentPattern = true;
+    bBind(node->left);
+    bInAssignmentPattern = false;
+    bBind(node->operatorToken);
+    bBind(node->right);
+  }
+  bBindAssignmentTargetFlow(node->left);
+}
+
+static void bBindPrefixUnaryFlow(TsNode *node) {
+  if (node->extra == TSK_ExclamationToken) {
+    TsFlow *saveTrue = bTrueTarget;
+    bTrueTarget = bFalseTarget;
+    bFalseTarget = saveTrue;
+    bBindEachChild(node);
+    bFalseTarget = bTrueTarget;
+    bTrueTarget = saveTrue;
+  } else {
+    bBindEachChild(node);
+    if (node->extra == TSK_PlusPlusToken || node->extra == TSK_MinusMinusToken) bBindAssignmentTargetFlow(node->operand);
+  }
+}
+
+static void bBindPostfixUnaryFlow(TsNode *node) {
+  bBindEachChild(node);
+  if (node->extra == TSK_PlusPlusToken || node->extra == TSK_MinusMinusToken) bBindAssignmentTargetFlow(node->operand);
+}
+
+static void bBindDeleteFlow(TsNode *node) {
+  bBindEachChild(node);
+  if (node->expression->kind == TSK_PropertyAccessExpression) bBindAssignmentTargetFlow(node->expression);
+}
+
+static void bBindConditionalFlow(TsNode *node) {
+  TsFlow *trueL = bBranchLabel(), *falseL = bBranchLabel(), *postL = bBranchLabel();
+  TsFlow *saveCur = bCurFlow;
+  bool saveHas = bHasFlowEffects;
+  bHasFlowEffects = false;
+  bBindCondition(node->condition, trueL, falseL);
+  bCurFlow = bFinishLabel(trueL);
+  bBind(node->questionToken);
+  bBind(node->whenTrue);
+  bAddAntecedent(postL, bCurFlow);
+  bCurFlow = bFinishLabel(falseL);
+  bBind(node->colonToken);
+  bBind(node->whenFalse);
+  bAddAntecedent(postL, bCurFlow);
+  bCurFlow = bHasFlowEffects ? bFinishLabel(postL) : saveCur;
+  if (!bHasFlowEffects) bHasFlowEffects = saveHas;
+}
+
+static void bBindInitializedVariable(TsNode *node) {
+  TsNode *name = node->kind != TSK_OmittedExpression ? node->name : NULL;
+  if (bIsBindingPattern(name)) {
+    for (int i = 0; name->elements && i < name->elements->n; i++) bBindInitializedVariable(name->elements->v[i]);
+  } else {
+    bCurFlow = bFlowMutation(FF_Assignment, bCurFlow, node);
+  }
+}
+
+static void bBindVariableDeclarationFlow(TsNode *node) {
+  bBindEachChild(node);
+  if (node->initializer || node->parent->parent->kind == TSK_ForInStatement || node->parent->parent->kind == TSK_ForOfStatement)
+    bBindInitializedVariable(node);
+}
+
+static void bBindInitializer(TsNode *node) {
+  if (!node) return;
+  TsFlow *entry = bCurFlow;
+  bBind(node);
+  if (entry == bUnreachableFlow || entry == bCurFlow) return;
+  TsFlow *exit = bBranchLabel();
+  bAddAntecedent(exit, entry);
+  bAddAntecedent(exit, bCurFlow);
+  bCurFlow = bFinishLabel(exit);
+}
+
+static void bBindBindingElementFlow(TsNode *node) {
+  bBind(node->dotDotDotToken);
+  bBind(node->propertyName);
+  bBindInitializer(node->initializer);
+  bBind(node->name);
+}
+
+static void bBindParameterFlow(TsNode *node) {
+  bBindEachStatements(node->modifiers);
+  bBind(node->dotDotDotToken);
+  bBind(node->questionToken);
+  bBind(node->type);
+  bBindInitializer(node->initializer);
+  bBind(node->name);
+}
+
+static void bBindOptionalExpression(TsNode *node, TsFlow *trueT, TsFlow *falseT) {
+  bDoWithConditional(bBind, node, trueT, falseT);
+  if (!bIsOptionalChain(node) || bIsOutermostOptionalChain(node)) {
+    bAddAntecedent(trueT, bFlowCondition(FF_TrueCondition, bCurFlow, node));
+    bAddAntecedent(falseT, bFlowCondition(FF_FalseCondition, bCurFlow, node));
+  }
+}
+
+static void bBindOptionalChainRest(TsNode *node) {
+  switch (node->kind) {
+    case TSK_PropertyAccessExpression:
+      bBind(node->questionDotToken);
+      bBind(node->name);
+      break;
+    case TSK_ElementAccessExpression:
+      bBind(node->questionDotToken);
+      bBind(node->argumentExpression);
+      break;
+    case TSK_CallExpression:
+      bBind(node->questionDotToken);
+      bBindEachStatements(node->typeArguments);
+      bBindEachStatements(node->arguments);
+      break;
+  }
+}
+
+static void bBindOptionalChain(TsNode *node, TsFlow *trueT, TsFlow *falseT) {
+  TsFlow *preChain = bIsOptionalChainRoot(node) ? bBranchLabel() : NULL;
+  bBindOptionalExpression(node->expression, preChain ? preChain : trueT, falseT);
+  if (preChain) bCurFlow = bFinishLabel(preChain);
+  bDoWithConditional(bBindOptionalChainRest, node, trueT, falseT);
+  if (bIsOutermostOptionalChain(node)) {
+    bAddAntecedent(trueT, bFlowCondition(FF_TrueCondition, bCurFlow, node));
+    bAddAntecedent(falseT, bFlowCondition(FF_FalseCondition, bCurFlow, node));
+  }
+}
+
+static void bBindOptionalChainFlow(TsNode *node) {
+  if (bIsTopLevelLogicalExpression(node)) {
+    TsFlow *post = bBranchLabel();
+    TsFlow *saveCur = bCurFlow;
+    bool saveHas = bHasFlowEffects;
+    bBindOptionalChain(node, post, post);
+    bCurFlow = bHasFlowEffects ? bFinishLabel(post) : saveCur;
+    if (!bHasFlowEffects) bHasFlowEffects = saveHas;
+  } else {
+    bBindOptionalChain(node, bTrueTarget, bFalseTarget);
+  }
+}
+
+static void bBindAccessOrNonNullFlow(TsNode *node) {
+  if (bIsOptionalChain(node)) bBindOptionalChainFlow(node);
+  else bBindEachChild(node);
+}
+
+static void bBindCallFlow(TsNode *node) {
+  if (bIsOptionalChain(node)) {
+    bBindOptionalChainFlow(node);
+  } else {
+    TsNode *expr = bSkipParentheses(node->expression);
+    if (expr->kind == TSK_FunctionExpression || expr->kind == TSK_ArrowFunction) {
+      bBindEachStatements(node->typeArguments);
+      bBindEachStatements(node->arguments);
+      bBind(node->expression);
+    } else {
+      bBindEachChild(node);
+      if (node->expression->kind == TSK_SuperKeyword) bCurFlow = bFlowCall(bCurFlow, node);
+    }
+  }
+  if (node->expression->kind == TSK_PropertyAccessExpression) {
+    TsNode *pa = node->expression;
+    if (pa->name->kind == TSK_Identifier && bIsNarrowableOperand(pa->expression) &&
+        ((pa->name->textLen == 4 && memcmp(pa->name->text, "push", 4) == 0) ||
+         (pa->name->textLen == 7 && memcmp(pa->name->text, "unshift", 7) == 0)))
+      bCurFlow = bFlowMutation(FF_ArrayMutation, bCurFlow, node);
+  }
+}
+
+/* the statement, expression and declaration dispatch of bindChildren (flow part) */
+static bool bBindChildrenFlowDispatch(TsNode *node) {
+  switch (node->kind) {
+    case TSK_WhileStatement: bBindWhile(node); return true;
+    case TSK_DoStatement: bBindDo(node); return true;
+    case TSK_ForStatement: bBindFor(node); return true;
+    case TSK_ForInStatement: case TSK_ForOfStatement: bBindForInOf(node); return true;
+    case TSK_IfStatement: bBindIf(node); return true;
+    case TSK_ReturnStatement: case TSK_ThrowStatement: bBindReturnOrThrow(node); return true;
+    case TSK_BreakStatement: case TSK_ContinueStatement: bBindBreakOrContinue(node); return true;
+    case TSK_TryStatement: bBindTry(node); return true;
+    case TSK_SwitchStatement: bBindSwitch(node); return true;
+    case TSK_CaseBlock: bBindCaseBlock(node); return true;
+    case TSK_CaseClause: bBindCaseClause(node); return true;
+    case TSK_ExpressionStatement: bBind(node->expression); bMaybeBindExpressionFlowIfCall(node->expression); return true;
+    case TSK_LabeledStatement: bBindLabeled(node); return true;
+    case TSK_PrefixUnaryExpression: bBindPrefixUnaryFlow(node); return true;
+    case TSK_PostfixUnaryExpression: bBindPostfixUnaryFlow(node); return true;
+    case TSK_BinaryExpression: bBindBinaryFlow(node); return true;
+    case TSK_DeleteExpression: bBindDeleteFlow(node); return true;
+    case TSK_ConditionalExpression: bBindConditionalFlow(node); return true;
+    case TSK_VariableDeclaration: bBindVariableDeclarationFlow(node); return true;
+    case TSK_PropertyAccessExpression: case TSK_ElementAccessExpression: bBindAccessOrNonNullFlow(node); return true;
+    case TSK_CallExpression: bBindCallFlow(node); return true;
+    case TSK_NonNullExpression: bBindAccessOrNonNullFlow(node); return true;
+    case TSK_BindingElement: bBindBindingElementFlow(node); return true;
+    case TSK_Parameter: bBindParameterFlow(node); return true;
+    default: return false;
+  }
+}
+
 static void bBindChildren(TsNode *node) {
+  bool saveIAP = bInAssignmentPattern;
+  bInAssignmentPattern = false;
+  if (bCheckUnreachable(node)) {
+    bBindEachChild(node);
+    bInAssignmentPattern = saveIAP;
+    return;
+  }
   switch (node->kind) {
     case TSK_SourceFile:
       bBindEachFunctionsFirst(node->statements);
@@ -704,14 +1601,38 @@ static void bBindChildren(TsNode *node) {
     case TSK_Block: case TSK_ModuleBlock:
       bBindEachFunctionsFirst(node->statements);
       break;
-    default:
+    case TSK_BinaryExpression:
+      if (bIsDestructuringAssignmentNode(node)) {
+        bInAssignmentPattern = saveIAP;
+        bBindDestructuringAssignmentFlow(node);
+        return;
+      }
+      bBindBinaryFlow(node);
+      break;
+    case TSK_ObjectLiteralExpression: case TSK_ArrayLiteralExpression: case TSK_PropertyAssignment: case TSK_SpreadElement:
+      bInAssignmentPattern = saveIAP;
       bBindEachChild(node);
       break;
+    default:
+      if (!bBindChildrenFlowDispatch(node)) bBindEachChild(node);
+      break;
   }
+  bInAssignmentPattern = saveIAP;
+}
+
+static TsNode *bImmediatelyInvoked(TsNode *func) {
+  if (func->kind == TSK_FunctionExpression || func->kind == TSK_ArrowFunction) {
+    TsNode *prev = func, *parent = func->parent;
+    while (parent->kind == TSK_ParenthesizedExpression) { prev = parent; parent = parent->parent; }
+    if (parent->kind == TSK_CallExpression && parent->expression == prev) return parent;
+  }
+  return NULL;
 }
 
 static void bBindContainer(TsNode *node, uint32_t cf) {
   TsNode *saveContainer = bContainer, *saveBlock = bBlockScopeContainer;
+  bool savedInReturn = bInReturnPosition;
+  if (node->kind == TSK_ArrowFunction && node->body->kind != TSK_Block) bInReturnPosition = true;
   if (cf & CF_IsContainer) {
     bContainer = bBlockScopeContainer = node;
     if (cf & CF_HasLocals) node->locals = bTableNew();
@@ -719,7 +1640,39 @@ static void bBindContainer(TsNode *node, uint32_t cf) {
     bBlockScopeContainer = node;
     if (cf & CF_HasLocals) node->locals = NULL;
   }
-  bBindChildren(node);
+  if (cf & CF_IsControlFlowContainer) {
+    TsFlow *saveCur = bCurFlow, *saveBreak = bBreakTarget, *saveContinue = bContinueTarget, *saveReturn = bReturnTarget;
+    TsFlow *saveExc = bExceptionTarget;
+    BActiveLabel *saveActive = bActiveLabels;
+    bool saveHasExplicitReturn = bHasExplicitReturn;
+    bool isIIFE = ((cf & CF_IsFunctionExpression) && !(bModifierFlags(node) & TMF_Async) && !node->asteriskToken &&
+                   bImmediatelyInvoked(node) != NULL) || node->kind == TSK_ClassStaticBlockDeclaration;
+    if (!isIIFE) {
+      bCurFlow = bNewFlow(FF_Start, NULL, NULL);
+      if (cf & (CF_IsFunctionExpression | CF_IsObjectLiteralOrClassExpressionMethodOrAccessor)) bCurFlow->node = node;
+    }
+    bReturnTarget = (isIIFE || node->kind == TSK_Constructor) ? bBranchLabel() : NULL;
+    bExceptionTarget = NULL;
+    bBreakTarget = NULL;
+    bContinueTarget = NULL;
+    bActiveLabels = NULL;
+    bHasExplicitReturn = false;
+    bBindChildren(node);
+    if (bReturnTarget) {
+      bAddAntecedent(bReturnTarget, bCurFlow);
+      bCurFlow = bFinishLabel(bReturnTarget);
+    }
+    if (!isIIFE) bCurFlow = saveCur;
+    bBreakTarget = saveBreak;
+    bContinueTarget = saveContinue;
+    bReturnTarget = saveReturn;
+    bExceptionTarget = saveExc;
+    bActiveLabels = saveActive;
+    bHasExplicitReturn = saveHasExplicitReturn;
+  } else {
+    bBindChildren(node);
+  }
+  bInReturnPosition = savedInReturn;
   bContainer = saveContainer;
   bBlockScopeContainer = saveBlock;
 }
@@ -1012,8 +1965,14 @@ static void tsBindSourceFile(TsNode *file, const char *fileName) {
   file->hasExternalModuleIndicator = ext;
   /* bindInStrictMode: alwaysStrict (strict: true) for non-declaration files, else the module indicator */
   bInStrictMode = file->isDeclarationFile ? ext : true;
+  bFlowCount = 0;
+  bCurFlow = NULL;
+  bBreakTarget = bContinueTarget = bReturnTarget = bTrueTarget = bFalseTarget = bExceptionTarget = bPreSwitchCaseFlow = NULL;
+  bActiveLabels = NULL;
+  bHasFlowEffects = bInAssignmentPattern = bInReturnPosition = bHasExplicitReturn = false;
   bBind(file);
   file->binderSymbolCount = bSymbolCount;
+  file->binderFlowCount = bFlowCount;
   bFile = NULL;
 }
 

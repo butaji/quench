@@ -55,6 +55,7 @@ struct TsNode {
   struct TsSymTable *locals;
   bool hasExternalModuleIndicator, isDeclarationFile;
   int32_t binderSymbolCount;  /* SourceFile: file.symbolCount set by the binder */
+  int32_t binderFlowCount;    /* SourceFile: flow nodes created by the binder */
 };
 
 /* ---- arena ---- */

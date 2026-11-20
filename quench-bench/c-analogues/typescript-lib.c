@@ -11,7 +11,7 @@
  *     createProgram uses, and the per-file nodeCount and identifierCount are compared with node's.
  *   - Stage 2, symbols: the binder's symbol part (support/ts-binder.h). Each parsed file is bound and
  *     its symbolCount (file.symbolCount in TypeScript) is compared with node's.
- *   - Stage 2, flow nodes: NOT PORTED. The control-flow graph (createFlowNode) is not built.
+ *   - Stage 2, flow nodes: the control-flow graph of binder.ts, counted per file (createFlowNode calls).
  * The benchmark reads files.json (the file name to text map) before the timed region, as the JS
  * harness preloads it, and each iteration parses all 118 files from memory with a fresh node arena.
  * Expected counts are the node 5.9.2 reference in support/ts-immer-expected.h. Each file must match,
@@ -178,11 +178,12 @@ static void loadFilesJson(const char *path) {
 
 /* Parses and binds every file once; with verify set, compares each file with node and returns the
  * number of files that differ. */
-static int parseAllAndCheck(int verify, long *sumNodes, long *sumIdents, long *sumSymbols) {
+static int parseAllAndCheck(int verify, long *sumNodes, long *sumIdents, long *sumSymbols, long *sumFlows) {
   int bad = 0;
   *sumNodes = 0;
   *sumIdents = 0;
   *sumSymbols = 0;
+  *sumFlows = 0;
   for (int i = 0; i < sourceCount; i++) {
     ts_arena_reset();
     TsNode *sf = parseSourceFile(sources[i].name, sources[i].text, sources[i].len, sources[i].kind, 0);
@@ -190,6 +191,7 @@ static int parseAllAndCheck(int verify, long *sumNodes, long *sumIdents, long *s
     *sumNodes += P.nodeCount;
     *sumIdents += P.identifierCount;
     *sumSymbols += sf->binderSymbolCount;
+    *sumFlows += sf->binderFlowCount;
     if (!verify) continue;
     const ExpectedFile *e = NULL;
     for (int k = 0; k < EXPECTED_FILE_COUNT; k++)
@@ -207,6 +209,10 @@ static int parseAllAndCheck(int verify, long *sumNodes, long *sumIdents, long *s
       printf("BINDER MISMATCH %s symbols %d (node %ld)\n", sources[i].name, sf->binderSymbolCount, b ? b->symbols : -1L);
       bad++;
     }
+    if (b && sf->binderFlowCount != b->flows) {
+      printf("FLOW MISMATCH %s flows %d (node %ld)\n", sources[i].name, sf->binderFlowCount, b->flows);
+      bad++;
+    }
   }
   return bad;
 }
@@ -219,19 +225,19 @@ int main(int argc, char **argv) {
   loadFilesJson(path);
   if (sourceCount != EXPECTED_FILE_COUNT) FAIL("expected %d files, found %d", EXPECTED_FILE_COUNT, sourceCount);
 
-  long sumNodes = 0, sumIdents = 0, sumSymbols = 0;
-  int bad = parseAllAndCheck(1, &sumNodes, &sumIdents, &sumSymbols);
+  long sumNodes = 0, sumIdents = 0, sumSymbols = 0, sumFlows = 0;
+  int bad = parseAllAndCheck(1, &sumNodes, &sumIdents, &sumSymbols, &sumFlows);
   if (bad) FAIL("%d files differ from node", bad);
 
   double elapsed = 0;
   for (int it = 0; it < iterations; it++) {
     double start = now_ms();
-    parseAllAndCheck(0, &sumNodes, &sumIdents, &sumSymbols);
+    parseAllAndCheck(0, &sumNodes, &sumIdents, &sumSymbols, &sumFlows);
     elapsed += now_ms() - start;
   }
   printf("typescript-lib %d iterations %.3f ms\n", iterations, elapsed);
-  printf("validated: %d files match node (nodeCount, identifierCount, binder symbolCount); sum nodes %ld "
-         "identifiers %ld symbols %ld; flow nodes and checker not yet ported\n",
-         sourceCount, sumNodes, sumIdents, sumSymbols);
+  printf("validated: %d files match node (nodeCount, identifierCount, binder symbolCount and flow node count); sum nodes %ld "
+         "identifiers %ld symbols %ld flow nodes %ld; checker not yet ported\n",
+         sourceCount, sumNodes, sumIdents, sumSymbols, sumFlows);
   return 0;
 }
