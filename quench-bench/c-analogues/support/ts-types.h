@@ -416,6 +416,17 @@ static TsType *cGlobalArrayDeclared(void) {
   return cGlobalArrayType;
 }
 
+/* globalReadonlyArrayType: the generic ReadonlyArray interface of the global scripts */
+static TsType *cGlobalReadonlyArrayType;
+static TsType *cGlobalReadonlyArrayDeclared(void) {
+  if (!cGlobalReadonlyArrayType) {
+    TsSymbol *a = bTableGet(cGlobals, bnC("ReadonlyArray"));
+    if (!a) abort();
+    cGlobalReadonlyArrayType = cDeclaredTypeOfClassOrInterface(a);
+  }
+  return cGlobalReadonlyArrayType;
+}
+
 /* getSymbolId: symbols get their ids on first use (nextSymbolId) */
 static uint32_t cNextSymbolId = 1;
 static uint32_t cSymbolId(TsSymbol *s) {
@@ -690,6 +701,17 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
         /* getTypeFromTypeOperatorNode: keyof T is getIndexType of the operand */
         TsType *o = cTypeFromNode(n->type);
         return o == cErrorType ? cErrorType : cGetIndexType(o);
+      }
+      if (n->extra == TSK_ReadonlyKeyword) {
+        /* getTypeFromTypeOperatorNode: readonly T[] is ReadonlyArray<T> (the array's element type, referenced
+         * without deferral as the Array case does); readonly tuples are not ported */
+        if (n->type && n->type->kind == TSK_ArrayType) {
+          TsType *el = cTypeFromNode(n->type->elementType);
+          if (el == cErrorType) return cErrorType;
+          return cTypeReference(cGlobalReadonlyArrayDeclared(), &el, 1);
+        }
+        if (!n->type || n->type->kind == TSK_TupleType) return cUnported("readonly tuple");
+        return cTypeFromNode(n->type);
       }
       if (n->extra != TSK_UniqueKeyword) return cUnported("type operator");
       if (!n->type || n->type->kind != TSK_SymbolKeyword) return cUnported("unique operand");
@@ -1608,6 +1630,7 @@ static void cResetTypeCaches(void) {
   cIdN = 0;
   cLitN = 0;
   cGlobalArrayType = NULL;
+  cGlobalReadonlyArrayType = NULL;
   cNextSymbolId = 1;
   cUnportedCount = 0;
   cIdentityCacheCount = 0;
