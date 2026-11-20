@@ -122,6 +122,9 @@ typedef struct TsType {
 /* erased: the type parameters are instantiated to any (getErasedSignature, or an instantiation in context), so the
  * signature has none of its own */
 struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; bool erased; TsType **ptc; };   /* ptc: the instantiated parameter types of this signature instance (cSigParamType) */
+/* getSignatureInstantiation: the instances of a declared generic signature, one per type argument list (cached) */
+typedef struct CSigInst { TsNode *decl; TsType **args; int n; CSig sig; struct CSigInst *next; } CSigInst;
+static CSigInst *cSigInstTab[1024];
 
 /* createType counts (typeCount) */
 static int cTypeCount;
@@ -2187,6 +2190,7 @@ static void cResetTypeCaches(void) {
   memset(cTupleTargets, 0, sizeof cTupleTargets);
   memset(cInterTab, 0, sizeof cInterTab);
   memset(cIndexedTab, 0, sizeof cIndexedTab);
+  memset(cSigInstTab, 0, sizeof cSigInstTab);
 }
 
 /* isTypeIdenticalTo: the entry point used by the checks */

@@ -975,6 +975,246 @@ static bool cArgsApplicable(CParams *ps, TsType **at, int na, CSig *sig, int rel
   return true;
 }
 
+/* ---- generic calls (resolveCall with inferTypeArguments and getSignatureInstantiation, TypeScript 5.9.2) ----
+ * Ported subset: a call without type arguments and without a contextual type, whose arguments are not context
+ * sensitive (their types come without a contextual type, see cContextualType), and whose generic candidates have no
+ * this or rest parameter, no default type parameter, no const modifier, and constraints that do not mention type
+ * parameters and are not primitive. Candidates keep the candidate order of chooseOverload; the inference of each
+ * candidate runs again for each relation, as chooseOverload does. */
+
+static const uint32_t cPrimitiveFlagMask = TF_String | TF_Number | TF_BigInt | TF_Boolean | TF_Enum | TF_StringLiteral |
+  TF_NumberLiteral | TF_BooleanLiteral | TF_BigIntLiteral | TF_EnumLiteral | TF_ESSymbol | TF_UniqueESSymbol | TF_Void |
+  TF_Undefined | TF_Null | TF_Index | TF_TemplateLiteral | TF_StringMapping;
+
+/* maybeTypeOfKind(type, Primitive | Index | TemplateLiteral | StringMapping) */
+static bool cMaybePrimitive(TsType *t, bool *unp) {
+  if (t->flags & TF_Conditional) { *unp = true; return false; }
+  if (t->flags & cPrimitiveFlagMask) return true;
+  if (t->flags & (TF_Union | TF_Intersection)) {
+    for (int i = 0; i < t->ntypes; i++) if (cMaybePrimitive(t->types[i], unp)) return true;
+  }
+  return false;
+}
+
+/* the generic signature instance of a declared signature for type arguments (getSignatureInstantiation, cached) */
+static CSig *cGetSignatureInstance(CSig *base, TsType **args, int n) {
+  uint32_t h = 2166136261u ^ (uint32_t)((uintptr_t)base->decl >> 4);
+  for (int i = 0; i < n; i++) h = (h ^ (uint32_t)args[i]->id) * 16777619u;
+  for (CSigInst *e = cSigInstTab[h & 1023]; e; e = e->next) {
+    if (e->decl != base->decl || e->n != n) continue;
+    bool same = true;
+    for (int i = 0; i < n && same; i++) same = e->args[i] == args[i];
+    if (same) return &e->sig;
+  }
+  CSigInst *e = ts_arena_alloc(sizeof(CSigInst));
+  e->decl = base->decl;
+  e->args = cCopyTypes(args, n);
+  e->n = n;
+  int ntp;
+  TsType **tps = cSigTypeParams(base->decl, &ntp);
+  e->sig.decl = base->decl;
+  e->sig.isConstruct = base->isConstruct;
+  e->sig.thisType = base->thisType;
+  e->sig.mapper = cCreateTypeMapper(tps, args, n);
+  e->sig.erased = true;
+  e->sig.ptc = NULL;
+  e->next = cSigInstTab[h & 1023];
+  cSigInstTab[h & 1023] = e;
+  return &e->sig;
+}
+
+/* isTypeParameterAtTopLevel for the unions and intersections of a parameter type (a conditional is unported) */
+static bool cTypeParamAtTop(TsType *t, TsType *tp, bool *unp) {
+  if (t == tp) return true;
+  if (t->flags & TF_Conditional) { *unp = true; return false; }
+  if (t->flags & (TF_Union | TF_Intersection)) {
+    for (int i = 0; i < t->ntypes; i++) if (cTypeParamAtTop(t->types[i], tp, unp)) return true;
+  }
+  return false;
+}
+
+/* whether a type mentions a type parameter (the shapes that are not ported are unported) */
+static bool cMentionsTypeParam(TsType *t, TsType *tp, bool *unp) {
+  if (!cCouldContain(t)) return false;
+  if (t == tp) return true;
+  if (t->flags & (TF_Union | TF_Intersection)) {
+    for (int i = 0; i < t->ntypes; i++) if (cMentionsTypeParam(t->types[i], tp, unp)) return true;
+    return false;
+  }
+  if ((t->flags & TF_Object) && (t->objectFlags & OF_Reference)) {
+    for (int i = 0; i < t->nargs; i++) if (cMentionsTypeParam(t->args[i], tp, unp)) return true;
+    return false;
+  }
+  *unp = true;
+  return false;
+}
+
+/* a type parameter with a const modifier (isConstTypeVariable) */
+static bool cTypeParamIsConst(TsType *tp) {
+  if (!tp->symbol) return false;
+  for (int d = 0; d < tp->symbol->ndecls; d++)
+    if (tp->symbol->decls[d]->kind == TSK_TypeParameter && (bModifierFlags(tp->symbol->decls[d]) & TMF_Const)) return true;
+  return false;
+}
+
+/* getBaseTypeOfLiteralType for the literal types that are ported (bigint and enum literals are unported) */
+static TsType *cBaseOfLiteral(TsType *t, bool *unp) {
+  if (t->flags & (TF_BigIntLiteral | TF_EnumLiteral)) { *unp = true; return t; }
+  if (t->flags & TF_StringLiteral) return cStringType;
+  if (t->flags & TF_NumberLiteral) return cNumberType;
+  if (t->flags & TF_BooleanLiteral) return cBooleanType;
+  if (t->flags & TF_Union) {
+    TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)(t->ntypes ? t->ntypes : 1));
+    bool same = true;
+    for (int i = 0; i < t->ntypes; i++) {
+      v[i] = cBaseOfLiteral(t->types[i], unp);
+      same = same && v[i] == t->types[i];
+    }
+    return same ? t : cGetUnionType(v, t->ntypes);
+  }
+  return t;
+}
+
+/* literalTypesWithSameBaseType */
+static bool cLiteralTypesWithSameBase(TsType **types, int n, bool *unp) {
+  TsType *common = NULL;
+  for (int i = 0; i < n; i++) {
+    TsType *t = types[i];
+    if (t->flags & TF_Never) continue;
+    TsType *base = cBaseOfLiteral(t, unp);
+    if (!common) common = base;
+    if (base == t || base != common) return false;
+  }
+  return true;
+}
+
+/* getSingleCommonSupertype: the strict supertype candidate, else the subtype one */
+static TsType *cSingleCommonSupertype(TsType **types, int n) {
+  TsType *cand = types[0];
+  for (int i = 1; i < n; i++) if (cIsRelatedWith(cand, types[i], REL_StrictSubtype)) cand = types[i];
+  bool all = true;
+  for (int i = 0; i < n && all; i++) all = types[i] == cand || cIsRelatedWith(types[i], cand, REL_StrictSubtype);
+  if (all) return cand;
+  TsType *sup = types[0];
+  for (int i = 1; i < n; i++) if (cIsRelatedWith(sup, types[i], REL_Subtype)) sup = types[i];
+  return sup;
+}
+
+/* getCommonSupertype under strictNullChecks (the nullable members are set aside and added back with getNullableType) */
+static TsType *cCommonSupertype(TsType **types, int n) {
+  if (n == 1) return types[0];
+  bool unp = false;
+  TsType **prim = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
+  bool changed = false;
+  uint32_t combined = 0;
+  for (int i = 0; i < n; i++) {
+    TsType *t = types[i];
+    if (t->flags & TF_Union) for (int k = 0; k < t->ntypes; k++) combined |= t->types[k]->flags;
+    else combined |= t->flags;
+    if (t->flags & TF_Union) {
+      TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)(t->ntypes ? t->ntypes : 1));
+      int m = 0;
+      for (int k = 0; k < t->ntypes; k++) if (!(t->types[k]->flags & (TF_Undefined | TF_Null))) v[m++] = t->types[k];
+      prim[i] = m == t->ntypes ? t : (m == 0 ? cNeverType : (m == 1 ? v[0] : cGetUnionType(v, m)));
+    } else {
+      prim[i] = (t->flags & (TF_Undefined | TF_Null)) ? cNeverType : t;
+    }
+    if (prim[i] != t) changed = true;
+  }
+  TsType *sup = cLiteralTypesWithSameBase(prim, n, &unp) ? cGetUnionType(prim, n) : cSingleCommonSupertype(prim, n);
+  if (unp) return cUnported("common supertype of a bigint or enum literal");
+  if (!changed) return sup;
+  uint32_t missing = (combined & (TF_Undefined | TF_Null)) & ~sup->flags;
+  if (!missing) return sup;
+  TsType *v[3] = { sup, NULL, NULL };
+  int k = 1;
+  if (missing & TF_Undefined) v[k++] = cUndefinedType;
+  if (missing & TF_Null) v[k++] = cNullType;
+  return cGetUnionType(v, k);
+}
+
+/* inferTypeArguments and getInferredTypes for a call without a contextual type and with context-insensitive arguments
+ * (the subset of the header comment). The arguments are the types of the arguments (cExprType). Returns false when the
+ * subset does not cover the call; the reason is then reported as unported. */
+static bool cInferCallTypeArgs(CSig *sig, TsType **at, int na, TsType **args) {
+  int n;
+  TsType **tps = cSigTypeParams(sig->decl, &n);
+  CParams ps;
+  if (!cSplitParams(sig->decl, &ps)) { cUnported("too many parameters"); return false; }
+  if (ps.thisParam || ps.rest) { cUnported("generic call with a this or rest parameter"); return false; }
+  for (int k = 0; k < n; k++) {
+    if (cTypeParamDefaultNode(tps[k])) { cUnported("generic call with a default type parameter"); return false; }
+    if (cTypeParamIsConst(tps[k])) { cUnported("generic call with a const type parameter"); return false; }
+    TsType *c = cConstraintOf(tps[k]);
+    if (c) {
+      bool unp = false;
+      if (cCouldContain(c)) { cUnported("generic call with a constraint of type parameters"); return false; }
+      if (cMaybePrimitive(c, &unp) || unp) { cUnported("generic call with a primitive constraint"); return false; }
+    }
+  }
+  int before = cUnportedCount;
+  CInfer ci;
+  cInferInit(&ci, tps, n);
+  bool *notTop = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));
+  for (int i = 0; i < na; i++) {
+    bool ok;
+    TsType *pt = cSigParamType(sig, &ps, i, &ok);
+    if (!ok || pt == cErrorType || at[i] == cErrorType) { cUnported("generic call with an unported argument or parameter"); return false; }
+    if (!cCouldContain(pt)) continue;
+    bool unp = false;
+    for (int k = 0; k < n; k++) {
+      if (cMentionsTypeParam(pt, tps[k], &unp) && !cTypeParamAtTop(pt, tps[k], &unp)) notTop[k] = true;
+    }
+    if (unp) { cUnported("generic call with a parameter of an unported shape"); return false; }
+    /* checkExpressionWithContextualType keeps a literal argument regular when its parameter has a literal of its kind */
+    if ((at[i]->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BooleanLiteral)) && !(pt->flags & TF_TypeParameter) &&
+        cLiteralOfContext(at[i], pt)) { cUnported("literal argument of a literal parameter type"); return false; }
+    cInferFrom(&ci, at[i], pt);
+  }
+  if (cUnportedCount != before) return false;
+  TsType *ret = NULL;
+  for (int k = 0; k < n; k++) {
+    TsType *inferred;
+    if (ci.prio[k] >= 0 && (ci.prio[k] & 416)) { cUnported("inference with a combining priority"); return false; }
+    if (ci.ctn[k]) { cUnported("contravariant candidates of a generic call"); return false; }
+    TsType *c = cConstraintOf(tps[k]);
+    if (ci.cn[k] == 0) {
+      /* no candidate: the constraint, else unknown (getInferredType) */
+      inferred = c ? c : cUnknownType;
+    } else {
+      TsType **cs = ci.cand[k];
+      int nc = ci.cn[k];
+      for (int i = 0; i < nc; i++) {
+        TsType *t = cs[i];
+        if (t->flags & TF_Union) {
+          for (int m = 0; m < t->ntypes; m++) if (t->types[m]->flags & TF_Object && (t->types[m]->objectFlags & (OF_ObjectLiteral | OF_ArrayLiteral))) { cUnported("object or array literal candidate"); return false; }
+        } else if ((t->flags & TF_Object) && (t->objectFlags & (OF_ObjectLiteral | OF_ArrayLiteral))) {
+          cUnported("object or array literal candidate");
+          return false;
+        }
+      }
+      /* getCovariantInference: the literal types widen unless the parameter is at the top level of the return type */
+      if (!ret) {
+        if (sig->decl->type && sig->decl->type->kind == TSK_TypePredicate) { cUnported("generic call with a type predicate"); return false; }
+        ret = cReturnTypeOf(sig);
+        if (ret == cErrorType) return false;
+      }
+      bool unp = false;
+      bool atTop = cTypeParamAtTop(ret, tps[k], &unp);
+      if (unp) { cUnported("generic call with a conditional return type"); return false; }
+      bool widen = !notTop[k] && !atTop;
+      TsType **base = ts_arena_alloc(sizeof(TsType *) * (size_t)nc);
+      for (int i = 0; i < nc; i++) base[i] = widen ? cWidenLiteralType(cs[i]) : cs[i];
+      for (int i = 0; i < nc; i++) if (base[i] == cErrorType) return false;
+      inferred = cCommonSupertype(base, nc);
+      if (inferred == cErrorType) return false;
+    }
+    if (c && !cIsRelatedWith(inferred, c, REL_Assignable)) inferred = c;
+    args[k] = inferred;
+  }
+  return true;
+}
+
 /* the type of a call or new expression of non-generic signatures (resolveCall: chooseOverload with the subtype
  * relation first when there are several candidates, then the assignable relation). The first applicable candidate
  * gives the return type. Generic candidates, this parameters, spread arguments and no applicable candidate are not
@@ -998,26 +1238,42 @@ static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
   for (int i = 0; i < na; i++) at[i] = cExprType(e->arguments->v[i]);
   CParams *pss = ts_arena_alloc(sizeof(CParams) * (size_t)ns);
   bool *arityOk = ts_arena_alloc(sizeof(bool) * (size_t)ns);
+  bool *generic = ts_arena_zalloc(sizeof(bool) * (size_t)ns);
+  bool anyGeneric = false;
   for (int c = 0; c < ns; c++) {
     CSig *sig = &sigs[c];
-    if (sig->decl->typeParameters && sig->decl->typeParameters->n) return cUnported("call of a generic signature");
+    generic[c] = sig->decl->typeParameters && sig->decl->typeParameters->n > 0;
     if (!cSplitParams(sig->decl, &pss[c])) return cUnported("too many parameters");
     if (pss[c].thisParam) return cUnported("call of a signature with a this parameter");
+    if (generic[c] && pss[c].rest) return cUnported("call of a generic signature with a rest parameter");
+    anyGeneric = anyGeneric || generic[c];
     int mx = pss[c].rest ? 1 << 30 : pss[c].n;
     arityOk[c] = na >= pss[c].min && na <= mx;
   }
+  /* the return type inference from a contextual type is not ported */
+  if (anyGeneric && cContextualType(e) != NULL) return cUnported("contextual type of a generic call");
   /* the candidate that is applicable first (in declaration order, among those of the right arity) */
   int chosen = -1;
+  CSig *chosenSig = NULL;
   for (int pass = 0; pass < 2 && chosen < 0; pass++) {
     if (pass == 0 && ns == 1) continue;   /* a single candidate is checked with the assignable relation only */
     int rel = pass == 0 ? REL_Subtype : REL_Assignable;
     for (int c = 0; c < ns && chosen < 0; c++) {
       if (!arityOk[c]) continue;
-      if (cArgsApplicable(&pss[c], at, na, &sigs[c], rel)) chosen = c;
+      if (!generic[c]) {
+        if (cArgsApplicable(&pss[c], at, na, &sigs[c], rel)) { chosen = c; chosenSig = &sigs[c]; }
+        continue;
+      }
+      /* chooseOverload: inferTypeArguments, then the instance is checked (getSignatureApplicabilityError) */
+      int ntp = sigs[c].decl->typeParameters->n;
+      TsType **targs = ts_arena_alloc(sizeof(TsType *) * (size_t)ntp);
+      if (!cInferCallTypeArgs(&sigs[c], at, na, targs)) return cErrorType;
+      CSig *inst = cGetSignatureInstance(&sigs[c], targs, ntp);
+      if (cArgsApplicable(&pss[c], at, na, inst, rel)) { chosen = c; chosenSig = inst; }
     }
   }
   if (chosen < 0) return cUnported("no applicable signature");
-  TsType *rt = cReturnTypeOf(&sigs[chosen]);
+  TsType *rt = cReturnTypeOf(chosenSig);
   /* checkCallExpression: Symbol() and Symbol.for() give the unique symbol of the declaration they initialize */
   if (!isNew && rt != cErrorType && (rt->flags & (TF_ESSymbol | TF_UniqueESSymbol)) && cIsSymbolCall(e)) {
     TsNode *p = e->parent;
