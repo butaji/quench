@@ -120,6 +120,9 @@ pub(in crate::vm) unsafe extern "C" fn body_call_helper<H: Host>(_vm: u64, _resi
     // Static regions recover ordinary calls through their linked semantic operation.
     // Binding this JIT-only helper to a miss removes its interpreter closure entirely.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return LANE_CALL_MISSED; }
+    // An ahead body runs from its entry trampoline, with no lane run to call in: it leaves at
+    // the record, which the entry's per-PC fallback executes (as `body_general_step`).
+    if context == 0 { return LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
     let status = native_frames::in_innermost_frame(cx, || unsafe { body_call_in_lane(cx, call_pc) });
     // SAFETY: `context` is the running lane's.

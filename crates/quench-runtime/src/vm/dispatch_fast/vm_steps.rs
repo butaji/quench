@@ -216,6 +216,9 @@ unsafe fn owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: 
 /// # Safety
 /// As `body_general_step_record`.
 pub(in crate::vm) unsafe extern "C" fn body_general_step<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
+    // An ahead body runs from its entry trampoline, with no lane run to step in: it leaves at
+    // the record, which the entry's per-PC fallback executes (as `vm_operation_step`).
+    if context == 0 { return super::super::compiled::LANE_CALL_MISSED; }
     // SAFETY: the caller's contract.
     let status = unsafe { lane_body_step_record::<H>(vm, residual, context, call_pc) };
     unsafe { refresh_body_bases::<H>(context) };
@@ -231,6 +234,8 @@ pub(in crate::vm) unsafe extern "C" fn body_general_step<H: Host>(vm: u64, resid
 /// # Safety
 /// As `lane_body_step`, and `first` and `imm` are the packed words of the record at `call_pc`.
 pub(in crate::vm) unsafe extern "C" fn lane_body_step_packed<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64, first: u64, imm: u64) -> u64 {
+    // As `body_general_step`: an ahead body has no lane run, so the record is the interpreter's.
+    if context == 0 { return super::super::compiled::LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
     // SAFETY: the caller's contract.
     if let Some(status) = unsafe { family_helpers::direct::<H>(cx, first, imm) } {

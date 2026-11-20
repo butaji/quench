@@ -9719,8 +9719,12 @@ impl<H: Host> Vm<H> {
             let exited = run_js_native_entry(entry, vm as *mut Self, program,
                 (dispatch as *mut JsStepDispatch).cast(), interrupt, poll_page);
             match exited {
+                // A linked entry that stops with no outcome could not run a record itself (a
+                // helper with no lane run, an ahead body's miss). The image carries one entry per
+                // function, not a resume address per record, so the frame cannot yet continue
+                // natively there.
                 Some((NATIVE_JS_STOPPED, _)) => Some(dispatch.outcome.take().unwrap_or_else(||
-                    failure("linked native function stopped without a transition".into()))),
+                    failure("linked native function stopped at a record it cannot resume".into()))),
                 Some((status, word)) if status.checked_sub(RETURN_STATUS_BASE)
                     .and_then(|pc| usize::try_from(pc).ok())
                     .is_some_and(|pc| pc < instruction_count) => {

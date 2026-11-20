@@ -121,7 +121,10 @@ impl Lowering<'_, '_> {
         // multi-value return fails to allocate). A leave is the cold path either way.
         let call = self.builder.ins().call_indirect(signature, target, &[self.context, this, captures, self.registers_base]);
         let results: Vec<_> = self.builder.inst_results(call).to_vec();
-        self.builder.ins().return_(&results);
+        // A body's rows leave (word, status) and its entry thunk swaps them on the way out
+        // (`stencils/entry.rs`); this leave enters a record directly, so it swaps them here into
+        // the body ABI's (status, word).
+        self.builder.ins().return_(&[results[1], results[0]]);
     }
 
     /// The `(namespace, key)` of the base body's entry the leave at `pc` continues at.
