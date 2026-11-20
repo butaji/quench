@@ -1085,6 +1085,151 @@ static bool cIsReachableFlow(TsFlow *flow, bool noCacheCheck) {
   }
 }
 
+/* ---- switch clauses (checker.ts 5.9.2: getSwitchClauseTypes, narrowTypeBySwitchOn*) ---- */
+/* getSwitchClauseTypes: the regular type of each case expression (never for the default clause) */
+static TsType **cSwitchClauseTypes(TsNode *sw) {
+  TsList *cl = sw->caseBlock->clauses;
+  int n = cl ? cl->n : 0;
+  TsType **st = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  for (int i = 0; i < n; i++) {
+    TsNode *c = cl->v[i];
+    st[i] = c->kind == TSK_CaseClause ? cRegularType(cExprType(c->expression)) : cNeverType;
+  }
+  return st;
+}
+/* the index of the first default clause, or -1 */
+static int cSwitchDefaultIndex(TsNode *sw) {
+  TsList *cl = sw->caseBlock->clauses;
+  for (int i = 0; cl && i < cl->n; i++) if (cl->v[i]->kind == TSK_DefaultClause) return i;
+  return -1;
+}
+/* getSwitchClauseTypeOfWitnesses: the text of each case (its first occurrence, not empty), or NULL when a case is not a string
+ * literal. The witnesses are the case nodes; NULL entries have no witness. */
+static TsNode **cSwitchTypeofWitnesses(TsNode *sw, int *nOut) {
+  TsList *cl = sw->caseBlock->clauses;
+  int n = cl ? cl->n : 0;
+  *nOut = n;
+  for (int i = 0; i < n; i++) {
+    TsNode *c = cl->v[i];
+    if (c->kind == TSK_CaseClause && !bIsStringLiteralLike(c->expression)) return NULL;
+  }
+  TsNode **w = ts_arena_alloc(sizeof(TsNode *) * (size_t)(n ? n : 1));
+  for (int i = 0; i < n; i++) {
+    TsNode *c = cl->v[i];
+    w[i] = NULL;
+    if (c->kind != TSK_CaseClause || c->expression->textLen == 0) continue;
+    bool dup = false;
+    for (int j = 0; j < i && !dup; j++)
+      dup = w[j] && w[j]->textLen == c->expression->textLen && memcmp(w[j]->text, c->expression->text, (size_t)w[j]->textLen) == 0;
+    if (!dup) w[i] = c->expression;
+  }
+  return w;
+}
+/* getNotEqualFactsFromTypeofSwitch: the not-equal facts of the witnesses outside [start, end) */
+static uint32_t cNotEqualFactsFromTypeof(int start, int end, TsNode **w, int n) {
+  uint32_t f = 0;
+  for (int i = 0; i < n; i++)
+    if ((i < start || i >= end) && w[i]) f |= cTypeofNeFacts(w[i]->text, w[i]->textLen);
+  return f;
+}
+/* filterType (t => getTypeFacts(t, mask) === mask) */
+static TsType *cFilterFactsEq(TsType *t, uint32_t mask) {
+  if (t == cErrorType) return t;
+  int n = cMemberCount(t);
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  int k = 0;
+  bool changed = false;
+  for (int i = 0; i < n; i++) {
+    TsType *m = cMemberAt(t, i);
+    bool ok = true;
+    uint32_t mf = cTypeFacts(m, &ok);
+    if (!ok) return cUnported("typeof switch of a type that is not ported");
+    if ((mf & mask) == mask) kept[k++] = m; else changed = true;
+  }
+  if (!changed) return t;
+  if (k == 0) return cNeverType;
+  return k == 1 ? kept[0] : cGetUnionType(kept, k);
+}
+/* narrowTypeBySwitchOnDiscriminant: the members comparable with the case types, and for a default clause the members that
+ * are not one of the case types */
+static TsType *cSwitchOnDiscriminant(TsType *t, TsNode *sw, int start, int end) {
+  if (t == cErrorType) return t;
+  TsType **st = cSwitchClauseTypes(sw);
+  int nAll = sw->caseBlock->clauses ? sw->caseBlock->clauses->n : 0;
+  if (nAll == 0) return t;
+  TsType **ct = st + start;
+  int cn = end - start;
+  bool hasDefault = start == end;
+  for (int i = 0; i < cn; i++) if (ct[i] == cNeverType) hasDefault = true;
+  if ((t->flags & TF_Unknown) && !hasDefault) return cUnported("switch narrowing of unknown without a default");
+  TsType *disc = cGetUnionType(ct, cn);
+  TsType *caseType;
+  if (disc->flags & TF_Never) caseType = cNeverType;
+  else {
+    int n = cMemberCount(t);
+    TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+    int k = 0;
+    for (int i = 0; i < n; i++) if (cAreTypesComparable(disc, cMemberAt(t, i))) kept[k++] = cMemberAt(t, i);
+    TsType *filtered = k == 0 ? cNeverType : (k == 1 ? kept[0] : cGetUnionType(kept, k));
+    caseType = cReplacePrimitivesWithLiterals(filtered, disc);
+  }
+  if (!hasDefault) return caseType;
+  int n = cMemberCount(t);
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  int k = 0;
+  for (int i = 0; i < n; i++) {
+    TsType *m = cMemberAt(t, i);
+    bool inSwitch = false;
+    if (cIsUnitType(m)) {
+      TsType *rm = cRegularType(m);
+      for (int j = 0; j < nAll && !inSwitch; j++) inSwitch = st[j] == rm;
+    }
+    if (!inSwitch) kept[k++] = m;
+  }
+  TsType *defType = k == 0 ? cNeverType : (k == 1 ? kept[0] : cGetUnionType(kept, k));
+  if (caseType->flags & TF_Never) return defType;
+  TsType *pair[2] = { caseType, defType };
+  return cGetUnionType(pair, 2);
+}
+
+/* narrowTypeBySwitchOnTypeOf: the typeof names of the clauses (a default clause keeps the operand's types that are not
+ * excluded by the other names) */
+static TsType *cSwitchOnTypeOf(TsType *t, TsNode *sw, int start, int end) {
+  if (t == cErrorType) return t;
+  int n;
+  TsNode **w = cSwitchTypeofWitnesses(sw, &n);
+  if (!w) return t;
+  int defIdx = cSwitchDefaultIndex(sw);
+  bool hasDefault = start == end || (defIdx >= start && defIdx < end);
+  if (hasDefault) return cFilterFactsEq(t, cNotEqualFactsFromTypeof(start, end, w, n));
+  TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(end - start > 0 ? end - start : 1));
+  for (int i = start; i < end; i++)
+    parts[i - start] = w[i] ? cNarrowByTypeName(t, w[i]->text, w[i]->textLen) : cNeverType;
+  return cGetUnionType(parts, end - start);
+}
+
+/* narrowTypeBySwitchOnTrue: each case expression narrows the reference as a condition that is false before the clauses of
+ * the flow, and as true for the clauses of the flow (or as false for the clauses after them when there is a default) */
+static TsType *cSwitchOnTrue(TsType *t, TsNode *sw, int start, int end, CFlowRef *r) {
+  TsList *cl = sw->caseBlock->clauses;
+  int n = cl ? cl->n : 0;
+  int defIdx = cSwitchDefaultIndex(sw);
+  bool hasDefault = start == end || (defIdx >= start && defIdx < end);
+  for (int i = 0; i < start; i++)
+    if (cl->v[i]->kind == TSK_CaseClause) t = cNarrowByCondition(cl->v[i]->expression, false, t, r);
+  if (hasDefault) {
+    for (int i = end; i < n; i++)
+      if (cl->v[i]->kind == TSK_CaseClause) t = cNarrowByCondition(cl->v[i]->expression, false, t, r);
+    return t;
+  }
+  TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(end - start));
+  for (int i = start; i < end; i++) {
+    TsNode *c = cl->v[i];
+    parts[i - start] = c->kind == TSK_CaseClause ? cNarrowByCondition(c->expression, true, t, r) : cNeverType;
+  }
+  return cGetUnionType(parts, end - start);
+}
+
 /* isExhaustiveSwitchStatement for the switches whose operand is a literal type (computeExhaustiveSwitchStatement); a switch on
  * typeof is not ported and is not exhaustive here */
 static bool cIsLiteralTypeFlow(TsType *t) {
@@ -1098,7 +1243,26 @@ static bool cIsLiteralTypeFlow(TsType *t) {
 }
 static bool cIsExhaustiveSwitch(TsNode *sw) {
   TsNode *e = sw->expression;
-  if (e->kind == TSK_TypeOfExpression) { (void)cUnported("exhaustive switch on typeof"); return false; }
+  if (e->kind == TSK_TypeOfExpression) {
+    /* computeExhaustiveSwitchStatement for typeof: every typeof name that the operand may have is a case */
+    int n;
+    TsNode **w = cSwitchTypeofWitnesses(sw, &n);
+    if (!w) return false;
+    TsType *operand = cExprType(e->expression);
+    if (operand == cErrorType) return false;
+    TsType *oc = cBaseConstraintOf(operand);
+    if (!oc) oc = operand;
+    uint32_t nef = cNotEqualFactsFromTypeof(0, 0, w, n);
+    if (oc->flags & (TF_Any | TF_Unknown)) return (556800u & nef) == 556800u;   /* AllTypeofNE */
+    int m = cMemberCount(oc);
+    for (int i = 0; i < m; i++) {
+      bool ok = true;
+      uint32_t mf = cTypeFacts(cMemberAt(oc, i), &ok);
+      if (!ok) { (void)cUnported("exhaustive typeof switch of a type that is not ported"); return false; }
+      if ((mf & nef) == nef) return false;
+    }
+    return true;
+  }
   TsType *t = cExprType(e);
   if (t == cErrorType) return false;
   TsType *bc = cBaseConstraintOf(t);
@@ -1224,13 +1388,22 @@ static CFT cFlowCondition(TsFlow *flow, CFlowRef *r) {
   return cCreateFlowType(n, ft.inc);
 }
 
-/* getTypeAtSwitchClause: the antecedent, narrowed by the switch (the narrowing of a switch that mentions the reference is not
- * ported) */
+/* getTypeAtSwitchClause: the antecedent, narrowed by the switch when the switch operand is the reference (its discriminant), the
+ * typeof of the reference, or `true`. A switch on a property of the reference (a discriminant property) is not ported. */
 static CFT cFlowSwitchClause(TsFlow *flow, CFlowRef *r) {
   CFT ft = cFlowAt(flow->ante, r);
-  if (ft.t == cErrorType) return ft;
-  if (cMentionsText(flow->node->expression, r->text, r->len)) return cFT(cUnported("switch narrowing"));
-  return ft;
+  TsType *t = ft.t;
+  if (t == cErrorType) return ft;
+  TsNode *sw = flow->node;
+  TsNode *expr = cSkipParens(sw->expression);
+  int start = flow->clauseStart, end = flow->clauseEnd;
+  TsType *n = t;
+  if (cMatchesRefTree(expr, r)) n = cSwitchOnDiscriminant(t, sw, start, end);
+  else if (expr->kind == TSK_TypeOfExpression && cMatchesRefTree(cSkipParens(expr->expression), r)) n = cSwitchOnTypeOf(t, sw, start, end);
+  else if (expr->kind == TSK_TrueKeyword) n = cSwitchOnTrue(t, sw, start, end, r);
+  else if (cMentionsText(sw->expression, r->text, r->len)) return cFT(cUnported("switch narrowing of a discriminant property"));
+  if (n == t) return ft;
+  return cCreateFlowType(n, ft.inc);
 }
 
 /* getTypeAtFlowBranchLabel: the union of the antecedent types (subtype reduction when one is not a subset of the initial type).
