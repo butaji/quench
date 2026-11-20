@@ -105,6 +105,7 @@ typedef struct CInfer {
   int *prio;                       /* priority of the candidates of each parameter, -1 when none */
   int priority;                    /* the priority of the inference in progress */
   bool contravariant;
+  bool bivariant;                  /* inferFromSignature of a method: the parameters are covariant candidates */
   int hits;                        /* candidates added at the current priority (the matched check of unions) */
   TsType **visS, **visT; int nvis, capvis;   /* the pairs of object types being inferred (invokeOnce: a cycle ends) */
 } CInfer;

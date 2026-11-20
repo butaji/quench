@@ -649,6 +649,7 @@ static void cInferInit(CInfer *c, TsType **params, int n) {
   c->priority = 0;
   c->visS = c->visT = NULL; c->nvis = c->capvis = 0;
   c->contravariant = false;
+  c->bivariant = false;
   c->hits = 0;
 }
 
@@ -679,7 +680,7 @@ static void cInferAddCandidate(CInfer *c, int k, TsType *source) {
   }
   if (c->priority != c->prio[k]) return;
   c->hits++;
-  if (c->contravariant) {
+  if (c->contravariant && !c->bivariant) {   /* inferFromTypes: bivariant (method) parameters are covariant candidates */
     for (int i = 0; i < c->ctn[k]; i++) if (c->con[k][i] == source) return;
     cInferPush(&c->con[k], &c->ctn[k], &c->ctc[k], source);
   } else {
@@ -785,6 +786,72 @@ static void cInferTypeArguments(CInfer *c, TsType *source, TsType *target) {
 
 /* inferFromSignature: the parameters (contravariantly) and the return types of a non-generic source against the
  * erased target signature */
+/* the element type of a rest parameter of array type (createArrayType's Array<T>): a readonly or other array is not ported */
+static TsType *cRestElementOf(TsType *t, bool *ok) {
+  if ((t->flags & TF_Object) && (t->objectFlags & OF_Reference) && t->target == cGlobalArrayDeclared() && t->nargs == 1) return t->args[0];
+  *ok = false;
+  return cErrorType;
+}
+
+/* getEffectiveRestType of a signature: the array type of its rest parameter (any gives any[]). A tuple rest type and an
+ * unannotated rest parameter are not ported (*ok false). NULL without a rest parameter. */
+static TsType *cSigEffectiveRest(CSig *sig, CParams *cp, bool *ok) {
+  *ok = true;
+  if (!cp->rest) return NULL;
+  if (!cp->rest->type) { *ok = false; return NULL; }
+  TsType *t = cTypeFromNodeM(cp->rest->type, sig->mapper);
+  if (t == cErrorType || cIsTupleType(t)) { *ok = false; return NULL; }
+  if (t->flags & TF_Any) return cTypeReference(cGlobalArrayDeclared(), &cAnyType, 1);
+  return t;
+}
+
+/* getRestTypeAtPosition(source, pos) for a source whose parameters have no tuple: the rest array itself, or Array<element> past
+ * the rest position, or the empty tuple past the parameters. A tuple of the parameters from pos is not ported. */
+static TsType *cSigRestAt(CSig *src, CParams *ps, TsType *srest, int pos, bool *ok) {
+  int parameterCount = ps->n + (ps->rest ? 1 : 0);
+  if (srest && pos >= parameterCount - 1) {
+    if (pos == parameterCount - 1) return srest;
+    TsType *el = cRestElementOf(srest, ok);
+    if (!*ok) return cErrorType;
+    return cTypeReference(cGlobalArrayDeclared(), &el, 1);
+  }
+  if (!srest && pos >= ps->n) return cTupleReference(NULL, 0);
+  *ok = false;
+  (void)src;
+  return cErrorType;
+}
+
+/* applyToParameterTypes of inferFromSignature (strictFunctionTypes): the this types, then the parameters at each position
+ * (contravariantly), then the rest parameter of the target against the rest of the source */
+static bool cInferApplyToParams(CInfer *c, CSig *src, CParams *ps, CSig *tgt, CParams *pt) {
+  bool okR;
+  TsType *srest = cSigEffectiveRest(src, ps, &okR);
+  if (!okR) return false;
+  TsType *trest = cSigEffectiveRest(tgt, pt, &okR);
+  if (!okR) return false;
+  int targetNonRest = pt->n;
+  int sourceCount = ps->n + (ps->rest ? 1 : 0);
+  int paramCount = srest ? targetNonRest : (sourceCount < targetNonRest ? sourceCount : targetNonRest);
+  if (ps->thisParam && pt->thisParam && ps->thisParam->type && pt->thisParam->type) {
+    TsType *ts = cTypeFromNodeM(ps->thisParam->type, src->mapper), *tt = cTypeFromNodeM(pt->thisParam->type, tgt->mapper);
+    if (ts == cErrorType || tt == cErrorType) return false;
+    cInferContra(c, ts, tt);
+  }
+  for (int i = 0; i < paramCount; i++) {
+    bool okS, okT;
+    TsType *s = cSigParamType(src, ps, i, &okS);
+    TsType *t = cSigParamType(tgt, pt, i, &okT);
+    if (!okS || !okT || s == cErrorType || t == cErrorType) return false;
+    cInferContra(c, s, t);
+  }
+  if (trest) {
+    TsType *rt = cSigRestAt(src, ps, srest, paramCount, &okR);
+    if (!okR || rt == cErrorType) return false;
+    cInferContra(c, rt, trest);
+  }
+  return true;
+}
+
 static bool cInferSignature(CInfer *c, CSig *src0, CSig *tgt) {
   CSig *src = src0;
   if (cSigIsGeneric(src0)) {
@@ -802,15 +869,16 @@ static bool cInferSignature(CInfer *c, CSig *src0, CSig *tgt) {
   CSig tg = cErasedSignature(tgt);
   CParams ps, pt;
   if (!cSplitParams(src->decl, &ps) || !cSplitParams(tg.decl, &pt)) return false;
-  if (ps.thisParam || pt.thisParam || ps.rest || pt.rest) return false;
-  int np = ps.n < pt.n ? ps.n : pt.n;
-  for (int i = 0; i < np; i++) {
-    bool okS, okT;
-    TsType *st = cSigParamType(src, &ps, i, &okS);
-    TsType *tt = cSigParamType(&tg, &pt, i, &okT);
-    if (!okS || !okT) continue;
-    cInferContra(c, tt, st);
-  }
+  /* inferFromSignature: the parameters of methods and constructors are bivariant */
+  int tk = tg.decl->kind;
+  bool biv = tk == TSK_MethodDeclaration || tk == TSK_MethodSignature || tk == TSK_Constructor;
+  bool saveBiv = c->bivariant;
+  c->bivariant = c->bivariant || biv;
+  bool ok = cInferApplyToParams(c, src, &ps, &tg, &pt);
+  c->bivariant = saveBiv;
+  if (!ok) return false;
+  /* applyToReturnTypes: a type predicate of the target is not ported */
+  if (tg.decl->type && tg.decl->type->kind == TSK_TypePredicate) return false;
   cInferFrom(c, cReturnTypeOf(src), cReturnTypeOf(&tg));
   return true;
 }
