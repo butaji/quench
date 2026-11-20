@@ -100,7 +100,7 @@ pub(super) fn declared_local_types(program: &ResidualProgram, function: &crate::
 impl Lowering<'_, '_> {
     /// Whether a check after the instruction at `pc` can resume at the next PC: a fused successor
     /// (`consumed`) is executed by its predecessor's lowering, so an exit there would run it twice.
-    fn resumes_after(&self, pc: usize) -> bool {
+    pub(super) fn resumes_after(&self, pc: usize) -> bool {
         pc + 1 < self.unit.instructions.len() && !self.consumed.contains(pc + 1)
     }
 
