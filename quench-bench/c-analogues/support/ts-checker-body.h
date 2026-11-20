@@ -2581,7 +2581,7 @@ static CSig *cGetSignatureInstance(CSig *base, TsType **args, int n) {
   e->sig.thisType = base->thisType;
   e->sig.mapper = cCreateTypeMapper(tps, args, n);
   e->sig.erased = true;
-  e->sig.ptc = NULL;
+  cSigInstantiate(&e->sig, base, e->sig.mapper);   /* getSignatureInstantiation: instantiateSignature(signature, mapper, true) */
   e->next = cSigInstTab[h & 1023];
   cSigInstTab[h & 1023] = e;
   return &e->sig;

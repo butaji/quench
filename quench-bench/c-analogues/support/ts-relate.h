@@ -613,8 +613,9 @@ static CSig cErasedSignature(CSig *sig) {
   TsType **anys = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
   for (int i = 0; i < n; i++) anys[i] = cAnyType;
   CSig r = *sig;
-  r.ptc = NULL;
-  r.mapper = cCombineMappers(sig->mapper, cCreateTypeMapper(tps, anys, n));
+  TsMapper *eraser = cCreateTypeMapper(tps, anys, n);
+  r.mapper = cCombineMappers(sig->mapper, eraser);
+  cSigInstantiate(&r, sig, eraser);   /* getErasedSignature: instantiateSignature(signature, eraser) */
   r.erased = true;
   if (cEraseN == cEraseCap) {
     cEraseCap = cEraseCap ? cEraseCap * 2 : 16;
@@ -1061,8 +1062,9 @@ static bool cSigInContextOf(CSig *src, CSig *tgt, CSig *out) {
   out->decl = src->decl;
   out->isConstruct = src->isConstruct;
   out->thisType = src->thisType;
-  out->ptc = NULL;
-  out->mapper = cCombineMappers(src->mapper, cCreateTypeMapper(tps, args, n));
+  TsMapper *infer = cCreateTypeMapper(tps, args, n);
+  out->mapper = cCombineMappers(src->mapper, infer);
+  cSigInstantiate(out, src, infer);   /* instantiateSignature of the source with the inference mapper */
   out->erased = true;
   return true;
 }

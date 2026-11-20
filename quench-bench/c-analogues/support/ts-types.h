@@ -123,7 +123,8 @@ typedef struct TsType {
 
 /* erased: the type parameters are instantiated to any (getErasedSignature, or an instantiation in context), so the
  * signature has none of its own */
-struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; bool erased; TsType **ptc; };   /* ptc: the instantiated parameter types of this signature instance (cSigParamType) */
+struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; bool erased; TsSymbol **psyms; TsSymbol *thisSym; };   /* psyms: the parameter symbols of this signature instance (instantiateSignature, cSigInstantiate; the non-this parameters in order); thisSym: its this parameter */
+static void cSigInstantiate(CSig *dst, const CSig *src, struct TsMapper *m);   /* instantiateSignature parameters (below) */
 /* getSignatureInstantiation: the instances of a declared generic signature, one per type argument list (cached) */
 typedef struct CSigInst { TsNode *decl; TsType **args; int n; CSig sig; struct CSigInst *next; } CSigInst;
 static CSigInst *cSigInstTab[1024];
@@ -1748,9 +1749,9 @@ static void cResolveSignatures(TsType *t) {
     t->ncall = t->target->ncall;
     t->nconstruct = t->target->nconstruct;
     t->call = ts_arena_zalloc(sizeof(CSig) * (size_t)(t->ncall ? t->ncall : 1));
-    for (int i = 0; i < t->ncall; i++) { t->call[i] = t->target->call[i]; t->call[i].mapper = t->mapper; t->call[i].ptc = NULL; }
+    for (int i = 0; i < t->ncall; i++) { t->call[i] = t->target->call[i]; t->call[i].mapper = t->mapper; cSigInstantiate(&t->call[i], &t->target->call[i], t->mapper); }
     t->construct = ts_arena_zalloc(sizeof(CSig) * (size_t)(t->nconstruct ? t->nconstruct : 1));
-    for (int i = 0; i < t->nconstruct; i++) { t->construct[i] = t->target->construct[i]; t->construct[i].mapper = t->mapper; t->construct[i].ptc = NULL; }
+    for (int i = 0; i < t->nconstruct; i++) { t->construct[i] = t->target->construct[i]; t->construct[i].mapper = t->mapper; cSigInstantiate(&t->construct[i], &t->target->construct[i], t->mapper); }
     return;
   }
   TsSymbol *callSym = NULL, *newSym = NULL;
@@ -1760,6 +1761,7 @@ static void cResolveSignatures(TsType *t) {
     t->call[0].decl = t->typeNode;
     t->call[0].isConstruct = ctor;
     t->call[0].mapper = t->sigMapper;
+    cSigInstantiate(&t->call[0], &t->call[0], t->sigMapper);
     t->ncall = ctor ? 0 : 1;
     t->construct = ctor ? t->call : NULL;
     t->nconstruct = ctor ? 1 : 0;
@@ -1774,6 +1776,7 @@ static void cResolveSignatures(TsType *t) {
       t->call[t->ncall].decl = s->decls[d];
       t->call[t->ncall].isConstruct = false;
       t->call[t->ncall].mapper = t->sigMapper;
+      cSigInstantiate(&t->call[t->ncall], &t->call[t->ncall], t->sigMapper);
       t->ncall++;
     }
     return;
@@ -1788,6 +1791,7 @@ static void cResolveSignatures(TsType *t) {
       t->call[t->ncall].decl = callSym->decls[d];
       t->call[t->ncall].isConstruct = false;
       t->call[t->ncall].mapper = t->sigMapper;
+      cSigInstantiate(&t->call[t->ncall], &t->call[t->ncall], t->sigMapper);
       t->ncall++;
     }
   }
@@ -1797,6 +1801,7 @@ static void cResolveSignatures(TsType *t) {
       t->construct[t->nconstruct].decl = newSym->decls[d];
       t->construct[t->nconstruct].isConstruct = true;
       t->construct[t->nconstruct].mapper = t->sigMapper;
+      cSigInstantiate(&t->construct[t->nconstruct], &t->construct[t->nconstruct], t->sigMapper);
       t->nconstruct++;
     }
   }
@@ -2068,17 +2073,41 @@ static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
   return t;
 }
 
-/* the type of a parameter of a signature instance: the parameter symbols of an instantiated signature keep their
- * types (getTypeOfSymbol), so each parameter is instantiated once per signature instance; the rest parameter is
- * slot 64 */
+/* instantiateSignature (67xxx): the parameters of a signature instance are instantiated symbols. Each parameter
+ * symbol of the source signature (its declared symbol, or the instance of an earlier instantiation) is passed to
+ * instantiateSymbol with the mapper, as node's instantiateList(signature.parameters, mapper, instantiateSymbol), and
+ * the this parameter likewise. Their types are resolved on demand (getTypeOfInstantiatedSymbol). A NULL mapper
+ * instantiates nothing; a declared symbol that is not generic is kept by instantiateSymbol. */
+static void cSigInstantiate(CSig *dst, const CSig *src, struct TsMapper *m) {
+  dst->psyms = NULL;
+  dst->thisSym = NULL;
+  if (!m) return;
+  TsList *pl = dst->decl->parameters;
+  int np = 0;
+  for (int i = 0; pl && i < pl->n; i++) if (!cIsThisParam(pl->v[i])) np++;
+  TsSymbol **ps = ts_arena_alloc(sizeof(TsSymbol *) * (size_t)(np ? np : 1));
+  TsSymbol *ths = NULL;
+  int k = 0;
+  for (int i = 0; pl && i < pl->n; i++) {
+    TsNode *p = pl->v[i];
+    bool isThis = cIsThisParam(p);
+    TsSymbol *s = isThis ? (src->thisSym ? src->thisSym : p->symbol) : (src->psyms ? src->psyms[k] : p->symbol);
+    if (!s) cUnported("parameter without symbol");
+    if (isThis) ths = s ? cInstantiateSymbol(s, m) : NULL;
+    else ps[k++] = s ? cInstantiateSymbol(s, m) : NULL;
+  }
+  dst->psyms = ps;
+  dst->thisSym = ths;
+}
+
+/* the type of a parameter of a signature instance: the parameter symbol of the instance (getTypeOfSymbol), so each
+ * parameter is instantiated once per signature instance. The rest parameter and the positions past the list keep the
+ * element type of the rest array (cParamTypeAt). */
 static TsType *cSigParamType(CSig *sig, CParams *cp, int pos, bool *ok) {
-  if (!sig->mapper) return cParamTypeAt(cp, pos, ok, NULL);
-  int slot = pos < cp->n ? pos : 64;
-  if (!sig->ptc) sig->ptc = ts_arena_zalloc(sizeof(TsType *) * 65);
-  if (sig->ptc[slot]) { *ok = true; return sig->ptc[slot]; }
-  TsType *t = cParamTypeAt(cp, pos, ok, sig->mapper);
-  if (*ok && t != cErrorType) sig->ptc[slot] = t;
-  return t;
+  if (!sig->mapper || !sig->psyms || pos >= cp->n || !sig->psyms[pos] || cp->params[pos]->dotDotDotToken)
+    return cParamTypeAt(cp, pos, ok, sig->mapper);
+  *ok = true;
+  return cTypeOfSymbol(sig->psyms[pos]);
 }
 
 static bool cCompareSignaturesIdentical(CSig *a, CSig *b) {
