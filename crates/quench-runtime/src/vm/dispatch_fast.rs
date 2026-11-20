@@ -4560,8 +4560,11 @@ lane_handler! {
         };
         let function = code.function(vm.frames[frame].function as usize);
         let instruction = function.widened(function.code[pc]);
-        // A record that returns its result (`RETURN_REGISTER`) completes the frame, which the general path does.
-        if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
+        // A record that returns its result (`RETURN_REGISTER`), or a return op itself (a raw
+        // return such as `WasmReturn64`), completes the frame, which the general path does.
+        if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0
+            || instruction.op().traits().has(crate::bytecode::Traits::RETURN_FAMILY)
+        {
             return exit(ip);
         }
         vm.frames[frame].pc = pc;

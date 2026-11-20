@@ -4021,6 +4021,9 @@ impl Heap {
                 }
                 // SAFETY: just marked, so occupied.
                 unsafe { self.wasm_gc_records.get_live(record_id) }.trace_children(ctx.work);
+                // A Wasm GC object may key a weak map (a JS cache of its wrapper): the value that
+                // waits on it is told that it is marked.
+                ephemeron_tail!(self, ctx, value, None);
             }
         } else if let Some(record_id) = value.direct_symbol_index() {
             // A symbol holds no edges: marking it is the whole visit, and a weak key's ephemeron

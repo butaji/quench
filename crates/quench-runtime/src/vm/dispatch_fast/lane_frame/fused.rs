@@ -152,6 +152,9 @@ lane_handler! {
     pub(super) fn chain_rows<L0: u16, L1: u16, L2: u16, L3: u16, FAMILY: u8>(cx, r, ip, i, view) {
         // The head record's settings word, read before the links name their own records.
         let mode = i.mode;
+        // Each macro takes its link's record (`$ip`, `$i`) as arguments: a `macro_rules!` body's own
+        // `ip` and `i` would name the head record's (the handler's parameters, which its definition
+        // sees), not the link's that the `let`s below shadow them with.
         // Link `$k` at flag `$flag`; its double result is raw where `mode`'s raw mask has bit `$k`.
         macro_rules! link_flag { ($ip:ident, $i:ident, $L:ident, $k:literal, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>($i);
