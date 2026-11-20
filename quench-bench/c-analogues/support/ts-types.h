@@ -2016,51 +2016,7 @@ static bool cCompareSignaturesIdentical(CSig *a, CSig *b) {
   return cIdentical(ra, rb);
 }
 
-static bool cIdentical(TsType *s, TsType *t) {
-  s = cRegularType(s);
-  t = cRegularType(t);
-  if (s == t) return true;
-  if (s == cErrorType || t == cErrorType) { cUnportedHit = true; return true; }
-  if (s->flags != t->flags) return false;
-  if (s->flags & (TF_Any | TF_Unknown | TF_String | TF_Number | TF_Boolean | TF_BigInt | TF_ESSymbol | TF_Void |
-                  TF_Undefined | TF_Null | TF_Never | TF_NonPrimitive))
-    return true;
-  if (s->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BooleanLiteral | TF_BigIntLiteral)) return false; /* distinct literal objects */
-  if (s->flags & (TF_Union | TF_Intersection)) {
-    /* eachTypeRelatedToSomeType both ways */
-    for (int i = 0; i < s->ntypes; i++) {
-      bool hit = false;
-      for (int j = 0; j < t->ntypes && !hit; j++) hit = cIdentical(s->types[i], t->types[j]);
-      if (!hit) return false;
-    }
-    for (int j = 0; j < t->ntypes; j++) {
-      bool hit = false;
-      for (int i = 0; i < s->ntypes && !hit; i++) hit = cIdentical(t->types[j], s->types[i]);
-      if (!hit) return false;
-    }
-    return true;
-  }
-  if (s->flags & TF_IndexedAccess) return cIdentical(s->iaObj, t->iaObj) && cIdentical(s->iaIdx, t->iaIdx);
-  if (s->flags & TF_Index) return cIdentical(s->ixOf, t->ixOf);
-  if (!(s->flags & TF_Object)) return false;
-  /* the identity cache and the stack of pairs being compared (a pair on the stack is assumed related) */
-  int ci = cIdFind(s, t);
-  if (ci >= 0) return cIdCache[ci].r;
-  for (int i = 0; i < cIdDepth; i++)
-    if (cIdentityStack[i].s == s && cIdentityStack[i].t == t) return true;
-  if (cIdDepth >= 200) { cUnportedHit = true; return true; }
-  cIdentityStack[cIdDepth].s = s;
-  cIdentityStack[cIdDepth].t = t;
-  cIdDepth++;
-  bool r;
-  if ((s->objectFlags & OF_Reference) && (t->objectFlags & OF_Reference) && s->target == t->target) {
-    r = true;
-    for (int i = 0; i < s->nargs && r; i++) r = cIdentical(s->args[i], t->args[i]);
-  } else {
-    /* other references (different targets) compare structurally */
-    r = cIdentityStructural(s, t);
-  }
-  cIdDepth--;
+static void cIdentityStore(TsType *s, TsType *t, bool r) {
   if (cIdN == cIdCap) {
     cIdCap = cIdCap ? cIdCap * 2 : 256;
     cIdCache = realloc(cIdCache, sizeof(CIdPair) * (size_t)cIdCap);
@@ -2071,6 +2027,63 @@ static bool cIdentical(TsType *s, TsType *t) {
   cIdCache[cIdN].r = r;
   cIdN++;
   cIdentityCacheCount++;
+}
+
+/* isRelatedTo with the identity relation (checker.ts): the same flags, then the structure. Pairs that reach
+ * recursiveTypeRelatedTo are cached under the key of the sorted ids (getRelationKey), so a pair and its reverse
+ * share one entry; the identical singletons and the flag mismatches are not cached. */
+static bool cIdentical(TsType *s, TsType *t) {
+  s = cRegularType(s);
+  t = cRegularType(t);
+  if (s == t) return true;
+  if (s == cErrorType || t == cErrorType) { cUnportedHit = true; return true; }
+  if (s->flags != t->flags) return false;
+  if (s->flags & (TF_Any | TF_Unknown | TF_String | TF_Number | TF_Boolean | TF_BigInt | TF_ESSymbol | TF_Void |
+                  TF_Undefined | TF_Null | TF_Never | TF_NonPrimitive))
+    return true;
+  if (s->id > t->id) { TsType *x = s; s = t; t = x; }
+  int ci = cIdFind(s, t);
+  if (ci >= 0) return cIdCache[ci].r;
+  bool r;
+  if (s->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BooleanLiteral | TF_BigIntLiteral)) {
+    r = false;   /* distinct literal objects */
+  } else if (s->flags & (TF_Union | TF_Intersection)) {
+    /* eachTypeRelatedToSomeType both ways */
+    r = true;
+    for (int i = 0; i < s->ntypes && r; i++) {
+      bool hit = false;
+      for (int j = 0; j < t->ntypes && !hit; j++) hit = cIdentical(s->types[i], t->types[j]);
+      r = hit;
+    }
+    for (int j = 0; j < t->ntypes && r; j++) {
+      bool hit = false;
+      for (int i = 0; i < s->ntypes && !hit; i++) hit = cIdentical(t->types[j], s->types[i]);
+      r = hit;
+    }
+  } else if (s->flags & TF_IndexedAccess) {
+    return cIdentical(s->iaObj, t->iaObj) && cIdentical(s->iaIdx, t->iaIdx);
+  } else if (s->flags & TF_Index) {
+    return cIdentical(s->ixOf, t->ixOf);
+  } else if (!(s->flags & TF_Object)) {
+    return false;
+  } else {
+    /* the stack of pairs being compared (a pair on the stack is assumed related) */
+    for (int i = 0; i < cIdDepth; i++)
+      if (cIdentityStack[i].s == s && cIdentityStack[i].t == t) return true;
+    if (cIdDepth >= 200) { cUnportedHit = true; return true; }
+    cIdentityStack[cIdDepth].s = s;
+    cIdentityStack[cIdDepth].t = t;
+    cIdDepth++;
+    if ((s->objectFlags & OF_Reference) && (t->objectFlags & OF_Reference) && s->target == t->target) {
+      r = true;
+      for (int i = 0; i < s->nargs && r; i++) r = cIdentical(s->args[i], t->args[i]);
+    } else {
+      /* other references (different targets) compare structurally */
+      r = cIdentityStructural(s, t);
+    }
+    cIdDepth--;
+  }
+  cIdentityStore(s, t, r);
   return r;
 }
 
