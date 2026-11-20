@@ -362,9 +362,7 @@ static void cCheckTypePredicateNode(TsNode *n) {
  * bigint, boolean, null or undefined) */
 static void cCheckTemplateLiteralTypeNode(TsNode *n) {
   if (n->kind != TSK_TemplateLiteralType) return;
-  static TsType *templateConstraint;
-  if (!templateConstraint)
-    templateConstraint = cGetUnionType((TsType *[]){cStringType, cNumberType, cBigIntType, cBooleanType, cNullType, cUndefinedType}, 6);
+  TsType *templateConstraint = cGetUnionType((TsType *[]){cStringType, cNumberType, cBigIntType, cBooleanType, cNullType, cUndefinedType}, 6);
   for (int i = 0; n->spans && i < n->spans->n; i++) {
     TsNode *sp = n->spans->v[i];
     TsType *t = cTypeFromNode(sp->type);
@@ -375,8 +373,7 @@ static void cCheckTemplateLiteralTypeNode(TsNode *n) {
 /* checkMappedType (88420s): the constraint of a mapped type is assignable to keyof any (string | number | symbol) */
 static void cCheckMappedTypeNode(TsNode *n) {
   if (n->kind != TSK_MappedType) return;
-  static TsType *keyofConstraint;
-  if (!keyofConstraint) keyofConstraint = cGetUnionType((TsType *[]){cStringType, cNumberType, cESSymbolType}, 3);
+  TsType *keyofConstraint = cGetUnionType((TsType *[]){cStringType, cNumberType, cESSymbolType}, 3);
   if (n->nameType) { (void)cUnported("mapped type with an as clause"); return; }
   TsType *t = cTypeFromNode(n);
   if (t == cErrorType || !(t->flags & TF_Object) || !(t->objectFlags & OF_Mapped) || t->mapConstraint == cErrorType) return;
@@ -392,6 +389,15 @@ static void cCheckIndexedAccessNode(TsNode *n) {
   TsType *keys = cGetIndexType(t->iaObj);
   if (keys == cErrorType) return;
   cCheckTypeRelatedTo(t->iaIdx, keys, REL_Assignable, n->indexType, 2536);
+}
+
+/* the declaration checks of type nodes, one walk: predicates, template literal types, mapped types and indexed
+ * access types (each returns at once for other kinds) */
+static void cCheckDeclTypeNodes(TsNode *n) {
+  cCheckTypePredicateNode(n);
+  cCheckTemplateLiteralTypeNode(n);
+  cCheckMappedTypeNode(n);
+  cCheckIndexedAccessNode(n);
 }
 
 #endif

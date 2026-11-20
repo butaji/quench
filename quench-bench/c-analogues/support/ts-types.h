@@ -228,10 +228,38 @@ static TsType *cTypeOfTypeParameter(TsSymbol *sym) {
 /* literal types are cached per value (getStringLiteralType / getNumberLiteralType) */
 static TsType **cLitCache;
 static int cLitN, cLitCap;
-static TsType *cLiteralType(uint32_t flags, const char *text, int n) {
+/* the literal types by (flags, text), in a hash table of slots (cLitSlots holds index + 1 into cLitCache) */
+static int32_t *cLitSlots;
+static int cLitSlotCap;
+
+static uint32_t cLitHash(uint32_t flags, const char *text, int n) {
+  uint32_t h = 2166136261u ^ flags;
+  for (int i = 0; i < n; i++) h = (h ^ (uint8_t)text[i]) * 16777619u;
+  return h ^ (h >> 13);
+}
+
+static void cLitRehash(int cap) {
+  free(cLitSlots);
+  cLitSlots = calloc((size_t)cap, sizeof(int32_t));
+  if (!cLitSlots) abort();
+  cLitSlotCap = cap;
   for (int i = 0; i < cLitN; i++) {
     TsType *l = cLitCache[i];
+    uint32_t mask = (uint32_t)cap - 1, h = cLitHash(l->flags, l->text, l->textLen) & mask;
+    while (cLitSlots[h]) h = (h + 1) & mask;
+    cLitSlots[h] = i + 1;
+  }
+}
+
+static TsType *cLiteralType(uint32_t flags, const char *text, int n) {
+  if ((cLitN + 1) * 2 > cLitSlotCap) cLitRehash(cLitSlotCap ? cLitSlotCap * 2 : 1024);
+  uint32_t mask = (uint32_t)cLitSlotCap - 1, h = cLitHash(flags, text, n) & mask;
+  for (;;) {
+    int32_t v = cLitSlots[h];
+    if (v == 0) break;
+    TsType *l = cLitCache[v - 1];
     if (l->flags == flags && l->textLen == n && memcmp(l->text, text, (size_t)n) == 0) return l;
+    h = (h + 1) & mask;
   }
   TsType *l = cNewType(flags);
   l->text = text;
@@ -242,6 +270,7 @@ static TsType *cLiteralType(uint32_t flags, const char *text, int n) {
     if (!cLitCache) abort();
   }
   cLitCache[cLitN++] = l;
+  cLitSlots[h] = cLitN;
   return l;
 }
 
@@ -1882,9 +1911,36 @@ static int cIdDepth;
 
 static bool cIdentical(TsType *s, TsType *t);
 
+/* the identity cache is a hash table of slots (cIdSlots holds index + 1 into cIdCache) */
+static int32_t *cIdSlots;
+static int cIdSlotCap;
+
+static uint32_t cIdHash(TsType *s, TsType *t) {
+  uint32_t h = (uint32_t)s->id * 2654435761u ^ (uint32_t)t->id * 40503u;
+  return h ^ (h >> 15);
+}
+
+static void cIdRehash(int cap) {
+  free(cIdSlots);
+  cIdSlots = calloc((size_t)cap, sizeof(int32_t));
+  if (!cIdSlots) abort();
+  cIdSlotCap = cap;
+  for (int i = 0; i < cIdN; i++) {
+    uint32_t mask = (uint32_t)cap - 1, h = cIdHash(cIdCache[i].s, cIdCache[i].t) & mask;
+    while (cIdSlots[h]) h = (h + 1) & mask;
+    cIdSlots[h] = i + 1;
+  }
+}
+
 static int cIdFind(TsType *s, TsType *t) {
-  for (int i = 0; i < cIdN; i++) if (cIdCache[i].s == s && cIdCache[i].t == t) return i;
-  return -1;
+  if (!cIdSlotCap) return -1;
+  uint32_t mask = (uint32_t)cIdSlotCap - 1, h = cIdHash(s, t) & mask;
+  for (;;) {
+    int32_t v = cIdSlots[h];
+    if (v == 0) return -1;
+    if (cIdCache[v - 1].s == s && cIdCache[v - 1].t == t) return v - 1;
+    h = (h + 1) & mask;
+  }
 }
 
 static bool cSignaturesIdentical(TsType *s, TsType *t, bool isConstruct);
@@ -2022,11 +2078,17 @@ static void cIdentityStore(TsType *s, TsType *t, bool r) {
     cIdCache = realloc(cIdCache, sizeof(CIdPair) * (size_t)cIdCap);
     if (!cIdCache) abort();
   }
+  if ((cIdN + 1) * 2 > cIdSlotCap) cIdRehash(cIdSlotCap ? cIdSlotCap * 2 : 1024);
   cIdCache[cIdN].s = s;
   cIdCache[cIdN].t = t;
   cIdCache[cIdN].r = r;
   cIdN++;
   cIdentityCacheCount++;
+  {
+    uint32_t mask = (uint32_t)cIdSlotCap - 1, h = cIdHash(s, t) & mask;
+    while (cIdSlots[h]) h = (h + 1) & mask;
+    cIdSlots[h] = cIdN;
+  }
 }
 
 /* isRelatedTo with the identity relation (checker.ts): the same flags, then the structure. Pairs that reach
@@ -2090,7 +2152,9 @@ static bool cIdentical(TsType *s, TsType *t) {
 /* Every checker run starts with empty caches: the arena that holds their entries is reset between runs. */
 static void cResetTypeCaches(void) {
   cIdN = 0;
+  if (cIdSlots) memset(cIdSlots, 0, sizeof(int32_t) * (size_t)cIdSlotCap);
   cLitN = 0;
+  if (cLitSlots) memset(cLitSlots, 0, sizeof(int32_t) * (size_t)cLitSlotCap);
   cGlobalArrayType = NULL;
   cGlobalReadonlyArrayType = NULL;
   cNextSymbolId = 1;

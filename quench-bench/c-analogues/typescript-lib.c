@@ -38,11 +38,24 @@
  *   intersection structure in relations, emit. The counts of types, instantiations and relation cache
  *   entries therefore stay far below node's; the run prints them next to node's numbers and fails validation.
  *   --members prints the member list of every class and interface and matches node's exactly.
+ *   Relations (the assignable overshoot of the interface base checks is fixed): optional types go through the
+ *   union cache (addOptionality), isRelatedTo's rules for a type parameter and its constraint, skipCaching and the
+ *   primitive union lookup, indexed access with no property or index signature is unknown when instantiated,
+ *   and signature inference is the inferTypes subset of support/ts-relate.h (candidates by priority, unions,
+ *   references with contravariant arguments, properties and signatures). Declaration checks added: type predicates
+ *   (2677), template literal types (2322), mapped type constraints (2322) and indexed access index types (2536).
+ *   Work counts against node: --iface-counts prints the new assignable pairs, types and instantiations of each
+ *   checkInterfaceDeclaration; --trace-iface NAME prints the pairs of one interface. tools/typescript-lib-instr.cjs
+ *   counts the same things in node (per function, per interface). Per-interface attribution depends on the order
+ *   of lazy resolution, so the totals are the comparison that matters.
+ *   Still behind node: subtype and strictSubtype pairs (body checks: array literal and return type reduction,
+ *   variable initializers), overload consistency of functions (checkFunctionOrConstructorSymbol), enum and module
+ *   declaration checks, the relation of keyof types and generic indexed access (unported, few requests).
  * The benchmark reads files.json (the file name to text map) before the timed region, as the JS
  * harness preloads it, and each iteration parses all 118 files from memory with a fresh node arena.
  * Expected counts are the node 5.9.2 reference in support/ts-immer-expected.h. Each file must match,
  * or the run fails.
- * Usage: typescript-lib [iterations] [jetstream-root] */
+ * Usage: typescript-lib [iterations] [jetstream-root] [--members | --iface-counts | --trace-iface NAME] */
 #define _POSIX_C_SOURCE 199309L
 #include <stdint.h>
 #include <stdio.h>
@@ -480,10 +493,7 @@ static void runChecker(void) {
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckTypeParameterNode);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckTypeNode);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckExpressionNode);
-  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckTypePredicateNode);
-  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckTemplateLiteralTypeNode);
-  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckMappedTypeNode);
-  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckIndexedAccessNode);
+  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckDeclTypeNodes);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckDeclarationTypes);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cCheckBodies(programFiles[i]);
 }
