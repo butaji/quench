@@ -31,8 +31,12 @@ impl Lowering<'_, '_> {
         for register in self.written.iter().take_while(|register| *register < usize::from(self.unit.caller_registers)) {
             if !self.is_live(pc, register as Register) || state.proofs.homed.contains(register) { continue; }
             let fact = state.values[register];
+            // An unboxed register leaves boxed from its unboxed view, which every path defines. Its tagged view
+            // may be a word one arm of a branching row boxed (`register_tagged`): the leave's block, shared by
+            // every leave that stores the same registers, does not see it, and the tagged variable is stale on
+            // the arms that did not box it (an element read's generic arm left a loop counter `undefined`).
             let view = match fact.value.representation {
-                _ if fact.tagged.current() => &mut stores.tagged,
+                Representation::Tagged => &mut stores.tagged,
                 Representation::Int32 => &mut stores.int,
                 Representation::Int64 => &mut stores.long,
                 _ => &mut stores.float,
@@ -47,7 +51,8 @@ impl Lowering<'_, '_> {
     pub(super) fn materialize_inlined(&mut self, state: &mut State, pc: usize) {
         let inlined = usize::from(self.unit.caller_registers)..state.values.len();
         let needed: Vec<usize> = inlined.filter(|register| self.is_live(pc, *register as Register))
-            .filter(|register| !state.values[*register].tagged.current()).collect();
+            // An unboxed register's tagged word is boxed again here, where it dominates the leave (`stored_at`).
+            .filter(|register| !state.values[*register].tagged.current() || state.values[*register].value.representation != Representation::Tagged).collect();
         for register in needed { self.tagged(state, register as Register); }
     }
 
