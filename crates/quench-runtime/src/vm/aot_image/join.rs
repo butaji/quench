@@ -26,5 +26,9 @@ pub(crate) fn lower_lane(
 ) -> Result<Option<LaneImage>, String> {
     // TODO: lower for `target.isa`; the host's ISA until `IsaBaseline` selects the compile target.
     let _ = target;
-    Ok(super::super::compiled::closed_lane_image(program, id, (facts, frozen), (base, calls), symbols))
+    let lane = super::super::compiled::closed_lane_image(program, id, (facts, frozen), (base, calls), symbols);
+    if crate::trace::Channel::AotLanes.on() && let Err(reason) = lane {
+        eprintln!("aot-lanes: function {id} ({} instructions): base body, {reason}", program.function(id as usize).instructions().count());
+    }
+    Ok(lane.ok())
 }
