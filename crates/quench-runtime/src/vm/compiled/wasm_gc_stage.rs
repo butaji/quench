@@ -31,7 +31,7 @@ use std::convert::Infallible;
 /// `context` is the live context of the call that runs the callout.
 unsafe fn machine<'a, H: Host>(context: *const CallContext) -> &'a mut Vm<H> {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    unsafe { &mut *(*context).vm.cast::<Vm<H>>() }
+    unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() }
 }
 
 /// The heap primitives of `WasmGc`, one callout each; every one returns a word, zero where the
@@ -94,7 +94,7 @@ unsafe extern "C" fn gc_copy_fields<H: Host>(
 /// declarations of the running program.
 unsafe extern "C" fn gc_admits<H: Host>(context: *mut CallContext, reference: u64, target: u64) -> u64 {
     let vm = unsafe { machine::<H>(context) };
-    let program = unsafe { (*context).program };
+    let program = unsafe { (*context).head.program };
     let Some(signatures) = vm.programs.wasm_signatures_shared(program) else {
         return 0;
     };

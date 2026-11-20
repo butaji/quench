@@ -34,7 +34,6 @@ mod call_plan;
 pub(crate) use call_plan::{CALL_PLAN_FLAG_COUNT, CallPlan};
 mod instruction;
 mod register_list;
-mod operand_forms;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
 mod numeric_ops; mod op_classes; mod op_scan; mod typeof_names; mod unary_operators; mod rest_alias;
@@ -79,8 +78,8 @@ pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, ent
 pub use instruction::Instr;
 pub(crate) use instruction::WideInstruction;
 pub(crate) use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
-pub(crate) use operand_forms::{ConstructArguments, FieldBase, FieldLookup, RegisterWindow, REGISTER_MASK, RETURN_REGISTER, SET_THIS_REGISTER};
 pub(crate) use numeric_ops::specialized_numeric_op;
+pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 /// Property cache sites are 16-bit. A program with more sites than that gives every site
 /// past the range this last one, for which the VM never records a cache entry, so those
 /// sites always take the uncached lookup.
@@ -328,6 +327,7 @@ impl ImmediateRole {
             | Self::ArrayLength
             | Self::AtomIndex
             | Self::GlobalLexicalIndex
+            | Self::IntCaseMinimum
             | Self::FunctionNamePrefix
             | Self::PropertyDefinitionMode
             | Self::BooleanFlag

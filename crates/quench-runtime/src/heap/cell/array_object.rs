@@ -120,7 +120,7 @@ impl ArrayObject {
     pub(super) fn elements_raw_mut(&mut self) -> &mut super::ArrayElements {
         match self.object.extras_pointer() {
             // SAFETY: owned by this array's object, and `&mut self` makes the borrow unique.
-            Some(extras) => unsafe { &mut (*extras).elements },
+            Some(extras) => unsafe { &mut (*extras).head.elements },
             // SAFETY: as in `elements`, with `&mut self` making the borrow unique.
             None => unsafe { super::ArrayElements::from_raw_mut(std::ptr::addr_of_mut!(self.object.payload)) },
         }
