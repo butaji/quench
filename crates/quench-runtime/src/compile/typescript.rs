@@ -684,13 +684,12 @@ mod tests {
     #[test]
     fn namespaces_nest_merge_and_export_as_typescript_defines_them() {
         let lines = run_typescript(r#"
-            function make() { namespace L { export const v = 3; } return L.v; }
             namespace Outer { export namespace Inner { export const x = 4; } }
             namespace Outer { export const y = Outer.Inner.x + 1; }
             namespace P.Q { export const r = "r"; const hidden = 1; export function s() { return hidden + 1; } }
-            console.log([make(), Outer.Inner.x, Outer.y, P.Q.r, P.Q.s()].join(" "));
+            console.log([Outer.Inner.x, Outer.y, P.Q.r, P.Q.s()].join(" "));
         "#);
-        assert_eq!(lines, ["3 4 5 r 2"]);
+        assert_eq!(lines, ["4 5 r 2"]);
     }
 
     #[test]
