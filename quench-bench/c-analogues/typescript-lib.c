@@ -53,7 +53,7 @@
  *   Still behind node: subtype and strictSubtype pairs (body checks: array literal and return type reduction,
  *   variable initializers), overload consistency of functions (checkFunctionOrConstructorSymbol), enum and module
  *   declaration checks, static and class index constraints, and checkTypeOperator and conditional type checks
- *   (no relation pairs in the corpus, but not ported). Unported requests remain in body checks (about 630 of them; generic calls with context-sensitive arguments, narrowing and contextual typing are the main causes).
+ *   (no relation pairs in the corpus, but not ported). Unported requests remain in body checks (about 410 of them, printed as "unported type requests"; the main causes are contextual signatures of overloaded calls with arrow arguments, parameters of unported callees, unions with type-parameter constraints, equality narrowing with values, and conditional types of unported branches). Node's body instantiations are attributed by tools/typescript-lib-instr.cjs: most of them are the parameter types of call signatures and the union property types of variable initializers.
  * The benchmark reads files.json (the file name to text map) before the timed region, as the JS
  * harness preloads it, and each iteration parses all 118 files from memory with a fresh node arena.
  * Expected counts are the node 5.9.2 reference in support/ts-immer-expected.h. Each file must match,
