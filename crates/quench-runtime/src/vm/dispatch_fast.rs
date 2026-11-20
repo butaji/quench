@@ -4923,7 +4923,7 @@ fn relation_outcome<H: Host>(operator: u32, left: Value, right: Value) -> Option
     if left.is_heap() && right.is_heap() && let Some(holds) = Vm::<H>::word_identity_equality(operator, left, right) {
         return Some(holds);
     }
-    if let Some(holds) = super::operations::number_relation(operator, left, right) {
+    if let Some((holds, _)) = super::operations::number_relation(operator, left, right) {
         return Some(holds);
     }
     if let Some(holds) = Vm::<H>::word_identity_equality(operator, left, right) {
@@ -8686,7 +8686,7 @@ fn loop_run_in_lane<H: Host>(
         loop_compile_in_lane(cx, r, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
         if !tier.is_published() { return LoopContinuation::Compiling; }
     }
-    if let Some(budget) = tier.backedge_budget(site.tiers, site.span()) { entry.set_backedge_budget(budget); }
+    if let Some(budget) = tier.backedge_budget(site.tiers) { entry.set_backedge_budget(budget); }
     // The code alone is held for the run (its publication is the tier's): one count, not two.
     let code = tier.code.as_ref().and_then(|publication| publication.lease()).expect("compiled above");
     drop(tier);

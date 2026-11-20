@@ -170,7 +170,7 @@ pub(crate) enum NumberOperation {
     /// `Math.max` (`maximum`) or `Math.min` of two Numbers, a double: `staged::math::float_extreme`.
     #[cfg_attr(not(stencil_build), allow(dead_code))]
     Extreme { destination: Register, left: Operand, right: Operand, maximum: bool },
-    /// `Math.imul` of two int32s: `staged::math::int_multiply`. Any other value leaves.
+    /// `Math.imul` of two int32s: `staged::math::multiply`, the wrapping product. Any other value leaves.
     #[cfg_attr(not(stencil_build), allow(dead_code))]
     Imul { destination: Register, left: Operand, right: Operand },
     /// The case slot of a `switch` over the dense int labels `minimum..=maximum` (`count` slots, the
@@ -314,8 +314,6 @@ fn extreme<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     Step::Value(result)
 }
 
-/// `Math.imul` of two int32s: their wrapping product; any other operand leaves.
-#[inline(always)]
 /// The case slot of `source` in a `switch` over the dense int labels `minimum..=maximum` (`count` slots). A value
 /// is its own label's slot where it is an int32 or an integral double in the run; every other value (a string,
 /// an object, a fraction) takes `count`, the default. The int32 word is ToInt32 of the Number, which is exact
@@ -358,6 +356,7 @@ fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     Step::Value(slot)
 }
 
+/// `Math.imul` of two int32s: their wrapping product, `math::multiply`; any other operand leaves.
 fn imul<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand,
 ) -> Step<S::Word, F::Control> {

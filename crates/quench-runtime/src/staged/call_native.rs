@@ -33,10 +33,8 @@ pub(crate) fn concrete_admit_identity(callee: u64, expected: u64) -> bool {
 /// A Math function whose call of Number arguments a site makes in place (`math_call`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum MathCall {
-    /// A machine operation of one Number (`staged::math::float_unary`).
+    /// A machine operation of one Number (`staged::math::float_unary`), `Math.sign` among them.
     Unary(FloatUnary),
-    /// `Math.sign`: NaN and either zero as they are, else -1 or 1.
-    Sign,
     /// `Math.max` (true) or `Math.min` (false).
     Extreme(bool),
     /// `Math.imul`: the wrapping product of the arguments' ToInt32.
@@ -108,7 +106,6 @@ fn math_call_of_one<S: NumericStage>(stage: &mut S, call: MathCall, only: S::Wor
     let number = number_word(stage, only, miss)?;
     let result = match call {
         MathCall::Unary(operation) => stage.float_unary(operation, number),
-        MathCall::Sign => sign(stage, number),
         MathCall::Extreme(maximum) => {
             let start = stage.f64_constant(MathCall::extreme_start(maximum));
             stage.float_extreme(maximum, start, number)
@@ -144,20 +141,6 @@ fn absolute<S: NumericStage>(stage: &mut S, only: S::Word, miss: S::Miss) -> Opt
     })
 }
 
-/// `Math.sign` of the binary64 word `number`: NaN and either zero as they are, else -1 below
-/// zero and 1 above.
-#[inline(always)]
-fn sign<S: NumericStage>(stage: &mut S, number: S::Word) -> S::Word {
-    let ordered = stage.relation(NumberRelation::Equal, Domain::Float64, number, number);
-    let unordered = stage.not(ordered);
-    let zero = stage.f64_constant(0.0);
-    let is_zero = stage.relation(NumberRelation::Equal, Domain::Float64, number, zero);
-    let kept = stage.any(unordered, is_zero);
-    let negative = stage.relation(NumberRelation::LessThan, Domain::Float64, number, zero);
-    let (minus_one, one) = (stage.f64_constant(-1.0), stage.f64_constant(1.0));
-    let unit = stage.select(negative, minus_one, one);
-    stage.select(kept, number, unit)
-}
 
 /// `Math.max` (`maximum`) or `Math.min` of two value words: two int32s by their int32 order, any
 /// other two Numbers by `float_extreme`. The native folds from `MathCall::extreme_start`, which
@@ -247,10 +230,10 @@ mod tests {
 
     #[test]
     fn sign_keeps_nan_and_zeros_and_maps_the_rest_to_a_unit() {
-        assert_eq!(call(MathCall::Sign, &[Value::number(-3.5)]), Some(Value::integer(-1)));
-        assert_eq!(call(MathCall::Sign, &[Value::integer(9)]), Some(Value::integer(1)));
-        assert_eq!(call(MathCall::Sign, &[Value::number(-0.0)]).map(Value::to_bits), Some(Value::number(-0.0).to_bits()));
-        assert_eq!(call(MathCall::Sign, &[Value::NAN]), Some(Value::NAN));
+        assert_eq!(call(MathCall::Unary(FloatUnary::Sign), &[Value::number(-3.5)]), Some(Value::integer(-1)));
+        assert_eq!(call(MathCall::Unary(FloatUnary::Sign), &[Value::integer(9)]), Some(Value::integer(1)));
+        assert_eq!(call(MathCall::Unary(FloatUnary::Sign), &[Value::number(-0.0)]).map(Value::to_bits), Some(Value::number(-0.0).to_bits()));
+        assert_eq!(call(MathCall::Unary(FloatUnary::Sign), &[Value::NAN]), Some(Value::NAN));
     }
 
     #[test]

@@ -580,7 +580,7 @@ pub(super) const fn math_call(native: Native) -> Option<MathCall> {
         Native::MathRound => MathCall::Unary(FloatUnary::Round),
         Native::MathTrunc => MathCall::Unary(FloatUnary::Trunc),
         Native::MathFround => MathCall::Unary(FloatUnary::Fround),
-        Native::MathSign => MathCall::Sign,
+        Native::MathSign => MathCall::Unary(FloatUnary::Sign),
         Native::MathMax => MathCall::Extreme(true),
         Native::MathMin => MathCall::Extreme(false),
         Native::MathImul => MathCall::Imul,

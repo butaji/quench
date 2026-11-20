@@ -29,12 +29,63 @@ pub(crate) fn direct_object_id<S: Stage>(stage: &mut S, bits: S::Word) -> S::Wor
     stage.and_imm(bits, u64::from(u32::MAX))
 }
 
+/// The word operations a tag test is written in. A `Stage` answers them with its own word and
+/// condition (the blanket impl below), and a `MachineScalar` answers them through `MachineTags`
+/// with machine words for both, so each predicate has one body for every tier.
+pub(crate) trait TagWords {
+    type Word: Copy;
+    type Flag: Copy;
+    /// `a` masked by `mask`.
+    fn and_mask(&mut self, a: Self::Word, mask: u64) -> Self::Word;
+    /// `a` shifted right by `shift` bits, unsigned.
+    fn shift_field(&mut self, a: Self::Word, shift: u32) -> Self::Word;
+    /// `a` plus `imm`, wrapping.
+    fn add_const(&mut self, a: Self::Word, imm: u64) -> Self::Word;
+    /// Whether `a` is `imm`.
+    fn equals(&mut self, a: Self::Word, imm: u64) -> Self::Flag;
+    /// Whether `a` exceeds `imm`, both unsigned.
+    fn exceeds(&mut self, a: Self::Word, imm: u64) -> Self::Flag;
+}
+
+impl<S: Stage> TagWords for S {
+    type Word = S::Word;
+    type Flag = S::Cond;
+    #[inline(always)]
+    fn and_mask(&mut self, a: S::Word, mask: u64) -> S::Word { self.and_imm(a, mask) }
+    #[inline(always)]
+    fn shift_field(&mut self, a: S::Word, shift: u32) -> S::Word { self.shr_imm(a, shift) }
+    #[inline(always)]
+    fn add_const(&mut self, a: S::Word, imm: u64) -> S::Word { self.add_imm(a, imm) }
+    #[inline(always)]
+    fn equals(&mut self, a: S::Word, imm: u64) -> S::Cond { self.eq_imm(a, imm) }
+    #[inline(always)]
+    fn exceeds(&mut self, a: S::Word, imm: u64) -> S::Cond { self.ugt_imm(a, imm) }
+}
+
+/// A `MachineScalar` read as `TagWords`: its own words, with flags as words.
+pub(crate) struct MachineTags<'a, M>(pub(crate) &'a mut M);
+
+impl<M: MachineScalar> TagWords for MachineTags<'_, M> {
+    type Word = M::Word;
+    type Flag = M::Word;
+    #[inline(always)]
+    fn and_mask(&mut self, a: M::Word, mask: u64) -> M::Word { self.0.raw_binary_imm(Binary::And, a, mask as i64) }
+    #[inline(always)]
+    fn shift_field(&mut self, a: M::Word, shift: u32) -> M::Word { self.0.raw_binary_imm(Binary::ShiftRightUnsigned, a, i64::from(shift)) }
+    #[inline(always)]
+    fn add_const(&mut self, a: M::Word, imm: u64) -> M::Word { self.0.raw_binary_imm(Binary::Add, a, imm as i64) }
+    #[inline(always)]
+    fn equals(&mut self, a: M::Word, imm: u64) -> M::Word { self.0.raw_compare_imm(Relation::Equal, a, imm as i64) }
+    #[inline(always)]
+    fn exceeds(&mut self, a: M::Word, imm: u64) -> M::Word { self.0.raw_compare_imm(Relation::UnsignedGreater, a, imm as i64) }
+}
+
 /// Whether `bits` is an int32 (`Value::as_int`); an int32 has one tagged form, so two
 /// distinct int-tagged words are two distinct values.
 #[inline(always)]
-pub(crate) fn is_int<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
-    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
-    stage.eq_imm(tag, ValueLayout::INT_TAG)
+pub(crate) fn is_int<T: TagWords>(words: &mut T, bits: T::Word) -> T::Flag {
+    let tag = words.and_mask(bits, ValueLayout::TAG_MASK);
+    words.equals(tag, ValueLayout::INT_TAG)
 }
 
 /// Whether `bits` is a heap reference (`Value::is_heap`).
@@ -155,10 +206,10 @@ pub(crate) fn is_direct_function<S: Stage>(stage: &mut S, bits: S::Word) -> S::C
 
 /// Whether `bits` is a binary64 Number: past the span of the tag fields the immediates use.
 #[inline(always)]
-pub(crate) fn is_double<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
-    let field = stage.shr_imm(bits, ValueLayout::TAG_SHIFT);
-    let offset = stage.add_imm(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
-    stage.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN)
+pub(crate) fn is_double<T: TagWords>(words: &mut T, bits: T::Word) -> T::Flag {
+    let field = words.shift_field(bits, ValueLayout::TAG_SHIFT);
+    let offset = words.add_const(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
+    words.exceeds(offset, ValueLayout::TAG_FIELD_SPAN)
 }
 
 /// The states `tagged_truthiness` sorts a word into: undecided by the word, falsy, or truthy.
@@ -242,6 +293,22 @@ pub(crate) const TYPEOF_UNDEFINED: u64 = typeof_name_index("undefined");
 pub(crate) const TYPEOF_OBJECT: u64 = typeof_name_index("object");
 pub(crate) const TYPEOF_BOOLEAN: u64 = typeof_name_index("boolean");
 pub(crate) const TYPEOF_NUMBER: u64 = typeof_name_index("number");
+
+/// The index in `bytecode::TYPEOF_NAMES` of the one name `typeof` yields for every value of the language
+/// set `languages` (the `language` bits), where the set decides one: a set of functions is `function`, a
+/// set of Numbers is `number`, and a set of direct objects and arrays (or none) is `object`. A set that
+/// may name either (a generic object, or a mix of kinds) has none, so a fold built on it leaves at its test.
+pub(crate) const fn language_typeof_index(languages: u16) -> Option<u64> {
+    if languages == language::FUNCTION {
+        Some(typeof_name_index("function"))
+    } else if languages == language::NUMBER {
+        Some(TYPEOF_NUMBER)
+    } else if languages & !(language::OBJECT_PLAIN | language::ARRAY) == 0 {
+        Some(TYPEOF_OBJECT)
+    } else {
+        None
+    }
+}
 
 /// The tag classes `typeof` reads from a value's own word: a Number (int32 or double), a boolean,
 /// and `null`. Every `typeof` row selects its name from these.
@@ -336,26 +403,11 @@ pub(crate) fn number_word<M: MachineScalar>(machine: &mut M, number: M::Word) ->
     machine.raw_select(is_nan, canonical_nan, encoded)
 }
 
-/// Whether the word `bits` is an int32 by its tag (`is_int`), as a machine flag.
-#[inline(always)]
-fn machine_is_int<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
-    let tag = machine.raw_binary_imm(Binary::And, bits, ValueLayout::TAG_MASK as i64);
-    machine.raw_compare_imm(Relation::Equal, tag, ValueLayout::INT_TAG as i64)
-}
-
-/// Whether the word `bits` is a binary64 Number by its tag field (`is_double`), as a machine flag.
-#[inline(always)]
-fn machine_is_double<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
-    let field = machine.raw_binary_imm(Binary::ShiftRightUnsigned, bits, i64::from(ValueLayout::TAG_SHIFT));
-    let offset = machine.raw_binary_imm(Binary::Add, field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg() as i64);
-    machine.raw_compare_imm(Relation::UnsignedGreater, offset, ValueLayout::TAG_FIELD_SPAN as i64)
-}
-
 /// The binary64 value of a Number the caller proved numeric, whose tagged word is `bits`: an int32
 /// converts (`int32_as_f64`), any other word is its own double.
 #[inline(always)]
 pub(crate) fn known_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
-    let integer = machine_is_int(machine, bits);
+    let integer = is_int(&mut MachineTags(&mut *machine), bits);
     let int = int32_as_f64(machine, bits);
     let double = machine.raw_unary(Unary::Bitcast(Lane::F64), bits);
     machine.raw_select(integer, int, double)
@@ -369,8 +421,8 @@ pub(crate) fn tagged_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word
     let number = machine.raw_unary(Unary::Bitcast(Lane::F64), bits);
     let ordered = machine.raw_compare(Relation::FloatEqual, number, number);
     let nan = machine.raw_compare_imm(Relation::Equal, ordered, 0);
-    let integer = machine_is_int(machine, bits);
-    let double = machine_is_double(machine, bits);
+    let integer = is_int(&mut MachineTags(&mut *machine), bits);
+    let double = is_double(&mut MachineTags(&mut *machine), bits);
     let tagged = machine.raw_binary(Binary::Or, integer, double);
     let decided = machine.raw_binary(Binary::Or, ordered, tagged);
     let integer_nan = machine.raw_binary(Binary::And, nan, integer);

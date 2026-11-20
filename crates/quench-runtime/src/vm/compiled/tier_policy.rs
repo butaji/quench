@@ -123,7 +123,7 @@ pub(in crate::vm) struct Loops {
     /// it runs (its own census replaces the guess in the learned cost per IR instruction).
     pub(in crate::vm) ir_per_bytecode: u64,
     /// The weight of the prior that a site's native entries repay themselves, in entries: the
-    /// site's measured runs outweigh it as they mount (`loop_model::repays`), and it stops
+    /// site's measured runs outweigh it as they mount (`loop_model::repaid_entries`), and it stops
     /// entering where its entries cost more than the iterations they ran save.
     pub(in crate::vm) prior_runs: u64,
     /// Runs that leave at one operation before the site compiles again with that operation's
