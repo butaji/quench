@@ -1452,6 +1452,9 @@ static int cRecursiveRelated(TsType *s, TsType *t, int st) {
 /* isRelatedTo (isRelatedTo, 66900s): the simple rules, the weak type check, then the recursive comparison.
  * An unported type is related (and sets cUnportedHit), so the caller never reports a false error. */
 static int cIsRelatedTo(TsType *s, TsType *t, int st) {
+  /* getNormalizedType: a fresh literal relates as its regular type (a property of an object literal keeps its fresh literal) */
+  s = cRegularType(s);
+  t = cRegularType(t);
   if (s == t) return RR_True;
   if (s == cErrorType || t == cErrorType) { cUnportedHit = true; return RR_True; }
   if ((s->flags | t->flags) & (TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); return RR_True; }
