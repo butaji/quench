@@ -1471,6 +1471,11 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Result<Value, JsError> {
         self.prepare_named_function_info_lookup(object, atom);
+        // An array's own `length` answers before the cache ladder: no shape or holder entry
+        // can shadow that data property, so the ladder would only find the same value.
+        if let Some(length) = self.array_length_field(object, atom) {
+            return Ok(length);
+        }
         let probe = self.cached_field_hit(p, object, site);
         #[cfg(feature = "profile-lane-exits")]
         self.record_field_probe_path(
@@ -1484,14 +1489,12 @@ impl<H: Host> Vm<H> {
         );
         match probe {
             FieldCacheProbe::Hit(value) => Ok(value),
-            FieldCacheProbe::OrdinaryMiss => match self.array_length_field(object, atom) {
-                Some(length) => Ok(length),
-                None => self.get_field_polymorphic(p, object, atom, site, object.heap_reference()),
-            },
-            FieldCacheProbe::Ineligible => match self.array_length_field(object, atom) {
-                Some(length) => Ok(length),
-                None => self.get_field_uncached(p, object, atom, site, object.heap_reference()),
-            },
+            FieldCacheProbe::OrdinaryMiss => {
+                self.get_field_polymorphic(p, object, atom, site, object.heap_reference())
+            }
+            FieldCacheProbe::Ineligible => {
+                self.get_field_uncached(p, object, atom, site, object.heap_reference())
+            }
         }
     }
 
@@ -1639,10 +1642,10 @@ impl<H: Host> Vm<H> {
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return FieldCacheProbe::Hit(hit.value);
         }
-        // The tiers the lane's own handlers read past these: a receiver a heap cell holds, and
-        // a field inherited from beyond the immediate prototype.
+        // The tiers the lane's own handlers read past these: a receiver a heap cell holds (whose
+        // ordinary holder entry `cached_ordinary_holder_field_value` has already probed), and a
+        // field inherited from beyond the immediate prototype.
         if let Some(value) = self.cell_own_field_hit(p, object, site)
-            .or_else(|| self.cell_holder_field_hit(p, object, site))
             .or_else(|| self.inherited_field_hit(p, object, site)) {
             return FieldCacheProbe::Hit(value);
         }
