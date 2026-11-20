@@ -1977,6 +1977,7 @@ pub(super) fn lower(
     if !numeric {
         scalar::require_entry_types(program, function, &instructions, |pc| generic.contains(&entry_leave(unit)) || heap.contains(pc), &lowering.written, &mut initial);
         scalar::declared_entry_types(function, &lowering.written, &mut initial);
+        int_inputs::closed_entry_types(vm, function_id, function, &mut initial);
         lowering.declared_definitions = declared::declared_local_types(program, function);
         lowering.declared_this = declared::declared_this(program, function);
         lowering.declared_rest = declared::declared_rest_read(program, function, &lowering.written);
@@ -2642,6 +2643,7 @@ impl Lowering<'_, '_> {
                     }
                     if call.alternative.is_none()
                         && numeric
+                        && !self.closed_proves(frame)
                         && let Some(root) = aliases[usize::from(call.callee_register)] {
                         let binding = (root, call.target);
                         if !admitted.contains(&binding) {
@@ -3580,7 +3582,8 @@ impl Lowering<'_, '_> {
             ),
             CalleeBinding::Function => (
                 if state.values[callee_index].value.ty.body_index() == Some(inlined.target.function)
-                    || self.entry.as_ref().is_some_and(|entry| entry.calls.contains(frame)) { None }
+                    || self.entry.as_ref().is_some_and(|entry| entry.calls.contains(frame))
+                    || self.closed_call(state, exit, frame) { None }
                     else { Some(self.function_binding(callee, inlined.target.function)) },
                 Some(Type::function_body(inlined.target.function)),
             ),

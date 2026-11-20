@@ -79,3 +79,22 @@ fn is_integral_arithmetic(instruction: WideInstruction) -> bool {
         && NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator())
             .is_some_and(NumberArithmetic::integral)
 }
+
+/// The entry types of `function`'s (`function_id`'s) parameters its AOT image's closed world proves
+/// Numbers at every read and write (`AotFacts::numbers`): an int32 or a Number, as a declared
+/// parameter's type enters (`scalar::declared_entry_types`), so the entry proves each once and the
+/// body holds it unboxed. Nothing without a closed world (`VmFacts::closed`).
+pub(super) fn closed_entry_types(vm: VmFacts<'_>, function_id: u32, function: &crate::bytecode::Function, initial: &mut [Type]) {
+    let Some(numbers) = vm.closed.and_then(|closed| closed.function_facts(function_id).numbers()) else { return };
+    for index in 0..usize::from(function.params) {
+        let Some(register) = super::scalar::parameter_register(function, index).map(usize::from) else { continue };
+        let ty = match numbers.get(register) {
+            Some(Some(Representation::Int32)) => Type::INT32,
+            Some(Some(Representation::Float64)) => Type::NUMBER,
+            _ => continue,
+        };
+        if let Some(entry) = initial.get_mut(register).filter(|entry| **entry == Type::ANY) {
+            *entry = ty;
+        }
+    }
+}
