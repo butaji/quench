@@ -14,11 +14,10 @@ c1	[] grown by push to 1024	register	then a[i]	ok
 grow	[] grown by push to 2000 (objects)	register	then a[i].k	ok
 d1	new Array(1024), filled, then stored	register	then a[i]	ok
 c3	literal [0..15]	register a[i & 15]	1024 reads	ok
-# hash-map (SIGBUS, protection fault at 0x2aac000130): region at 0x14b240180 offset 0x360 is
-# `str x9, [x8, x20]` with x8 = 0x2000000030 (LAYOUT_TABLE_BASE + 6*8, a layout entry's
-# address) and x20 = 0xaac000100 (the lane window the row was entered with, = x3). The store
-# writes a field through [window + slot]; the slot operand holds a layout entry's address,
-# not the field's offset (the shape lookup at 0x338-0x35c computes the offset in x10 = 0x18).
-# So a lowering gives a shape-guard/layout value to the slot-offset operand: the same value
-# mixup that makes ML's widening panic in cranelift-frontend ("declared type of variable
-# does not match type of value").
+# hash-map (SIGBUS at 0x2aac000130): region (loop header=22, 4016 bytes) offset 0x360 is
+# `str x9, [x8, x20]` with x8 = 0x0000002000000030 and x20 = 0xaac000100 (the window). The
+# literal is the *layout entry word* (meta 0x30 | auxiliary<<32 = shape 0x20), loaded at
+# 0x2ec and unpacked at 0x2fc (`lsr x10,x8,#32` = the shape). The store's address adds the
+# layout word to the window instead of a slot offset (the field lookup at 0x338-0x35c has the
+# slot in x10 = 0x18), so a row/plan leaves the layout word in the register the store uses as
+# its base. BaseJIT stitched region (fast_pending dump), not Cranelift IR.
