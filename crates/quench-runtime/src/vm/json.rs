@@ -263,9 +263,9 @@ impl From<JsError> for JsonStop {
 type JsonStep = Result<bool, JsonStop>;
 
 /// The state of one stringification. What a shape and prototype decide (lacking `toJSON`, an
-/// object's members) holds while the epochs it was decided under hold, which only guest code
-/// moves; the specification's steps report each place it may have run
-/// (`JsonWriter::after_guest_code`).
+/// object's members) holds while the collection epoch it was decided under holds and the chain
+/// cell of its prototypes holds (`JsonPlanProof`); the specification's steps report each place
+/// guest code may have run (`JsonWriter::after_guest_code`).
 struct JsonWriter {
     to_json: Atom,
     /// The root value's key in its wrapper object.
@@ -274,18 +274,20 @@ struct JsonWriter {
     /// The containers being written: the cycle test, and the gap's indentation depth.
     ancestors: smallvec::SmallVec<[Value; JSON_PLAIN_INLINE_ANCESTORS]>,
     output: JsonText,
-    /// The collection and prototype layout epochs the plans were proved under.
-    epochs: (u64, u64),
+    /// The collection epoch the plans were proved under.
+    epoch: u64,
     /// Counts the places guest code may have run: a plan or a dense array proved under one
     /// count describes its object while the count holds.
     steps: u64,
-    array_lacks_to_json: Option<(u32, Value)>,
-    /// The members of each ordinary object's (shape, prototype) written so far, or `None`
-    /// when objects of it take the specification's steps.
-    object_plans: rustc_hash::FxHashMap<(u32, Value), Option<std::rc::Rc<[JsonMember]>>>,
+    /// That the array (shape, prototype) lacks `toJSON`, and the chain cell of its prototype
+    /// it was proved over.
+    array_lacks_to_json: Option<((u32, Value), crate::heap::ChainCell)>,
+    /// The member plan of each ordinary object's (shape, prototype), or the refusal that
+    /// makes objects of it take the specification's steps.
+    object_plans: rustc_hash::FxHashMap<(u32, Value), JsonPlanProof>,
     /// Recently used plans by (shape, prototype), one per shape's low bits: a payload's few
     /// kinds of object recur, nested inside one another, which this answers without hashing.
-    recent_plans: [Option<((u32, Value), std::rc::Rc<[JsonMember]>)>; JSON_RECENT_PLANS],
+    recent_plans: [Option<((u32, Value), JsonPlanProof)>; JSON_RECENT_PLANS],
     /// The `,"key":` text of every planned member: an object's keys recur across the objects
     /// of a payload, so each shape's are quoted once. Only a new run clears it, so the plans a
     /// run is writing keep their text when the proofs are dropped.
@@ -322,8 +324,9 @@ impl JsonMembers {
 /// What stringifications keep between calls (`Vm::json_plain`): the writer, with its text
 /// buffer and the member plans of the (shape, prototype) pairs met, as V8 keeps a map's "fast
 /// serializable" bit. A plan is a fact of a shape and a prototype chain, so it holds while the
-/// collection epoch (shape ids, prototype records) and the prototype layout epoch (a prototype
-/// gaining `toJSON` or an accessor) both stay where they were when it was made.
+/// collection epoch (shape ids, prototype records) stays where it was when it was made, and the
+/// chain cell of its prototypes (`JsonPlanProof`) holds: a prototype gaining `toJSON` or an
+/// accessor retires that cell alone.
 #[derive(Default)]
 pub(crate) struct JsonPlainCache {
     /// Boxed so a call moves the state out and back as one pointer; a nested call (from a
@@ -331,15 +334,23 @@ pub(crate) struct JsonPlainCache {
     write: Option<Box<JsonWriter>>,
 }
 
+/// A member plan (or its refusal, `None`) proved for one (shape, prototype) pair, held while
+/// the chain cell of the prototype it read holds (`JsonWriter::object_plans`).
+#[derive(Clone)]
+struct JsonPlanProof {
+    cell: crate::heap::ChainCell,
+    plan: Option<std::rc::Rc<[JsonMember]>>,
+}
+
 impl JsonWriter {
-    fn new(to_json: Atom, empty: Atom, epochs: (u64, u64)) -> Self {
+    fn new(to_json: Atom, empty: Atom, epoch: u64) -> Self {
         Self {
             to_json,
             empty,
             options: JsonOptions::default(),
             ancestors: Default::default(),
             output: JsonText::new(),
-            epochs,
+            epoch,
             steps: 0,
             array_lacks_to_json: None,
             object_plans: Default::default(),
@@ -361,21 +372,21 @@ impl JsonWriter {
         self.key_text.clear();
     }
 
-    /// Starts a run under `epochs`: plans proved under others are forgotten.
-    fn prove(&mut self, epochs: (u64, u64)) {
-        if self.epochs != epochs {
+    /// Starts a run under `epoch`: plans proved under another collection epoch are forgotten.
+    fn prove(&mut self, epoch: u64) {
+        if self.epoch != epoch {
             self.forget_plans();
-            self.epochs = epochs;
+            self.epoch = epoch;
         }
     }
 
-    /// Records that guest code may have run, leaving `epochs`: no planned slot or dense
-    /// element proved before is read again, and plans proved under other epochs are dropped.
-    fn after_guest_code(&mut self, epochs: (u64, u64)) {
+    /// Records that guest code may have run, leaving `epoch`: no planned slot or dense element
+    /// proved before is read again, and plans proved under another collection epoch are dropped.
+    fn after_guest_code(&mut self, epoch: u64) {
         self.steps += 1;
-        if self.epochs != epochs {
+        if self.epoch != epoch {
             self.forget_proofs();
-            self.epochs = epochs;
+            self.epoch = epoch;
         }
     }
 
@@ -1700,8 +1711,7 @@ impl<H: Host> Vm<H> {
         let empty = self.intern_atom("");
         let result = self.with_call_roots([holder], |vm| {
             vm.set_property(holder, empty, value)?;
-            let key = JsString::from_str("");
-            vm.json_internalize(p, holder, &key, Some(&parsed), reviver_root)
+            vm.json_internalize(p, holder, empty, Some(&parsed), reviver_root)
         });
         self.heap.release_root(reviver_root);
         result
@@ -1751,7 +1761,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         holder: Value,
-        key: &JsString,
+        key: Atom,
         source: Option<&JsonValue>,
         reviver_root: crate::heap::RootId,
     ) -> Result<Value, JsError> {
@@ -1761,9 +1771,8 @@ impl<H: Host> Vm<H> {
         let mut key_root = None;
         let mut context_root = None;
         let result = (|| {
-            let key_atom = self.intern_js_atom(key);
             let holder = self.heap.root_value(holder_root).unwrap();
-            let value = self.get_property(p, holder, key_atom)?;
+            let value = self.get_property(p, holder, key)?;
             let value_handle = self.heap.root(value);
             value_root = Some(value_handle);
             let source_value = source.map(|source| match source {
@@ -1780,11 +1789,11 @@ impl<H: Host> Vm<H> {
                 };
                 for index in 0..length {
                     let array = self.heap.root_value(value_handle).unwrap();
-                    let child_key = JsString::from(index.to_string());
+                    let child_key = self.index_key_atom(index);
                     let child_source = source_items.and_then(|values| values.get(index));
                     let child =
-                        self.json_internalize(p, array, &child_key, child_source, reviver_root)?;
-                    self.json_update_property(p, value_handle, &child_key, child)?;
+                        self.json_internalize(p, array, child_key, child_source, reviver_root)?;
+                    self.json_update_property(p, value_handle, child_key, child)?;
                 }
             } else if self.is_object_like(value) {
                 let object = self.heap.root_value(value_handle).unwrap();
@@ -1793,22 +1802,22 @@ impl<H: Host> Vm<H> {
                     Some(JsonValue::Object(properties)) => Some(properties.as_slice()),
                     _ => None,
                 };
-                for child_key in keys {
-                    let child_key = self.atom_value(child_key);
+                for child_atom in keys {
+                    let child_name = self.atom_value(child_atom);
                     let object = self.heap.root_value(value_handle).unwrap();
                     let child_source = source_properties.and_then(|properties| {
                         properties
                             .iter()
                             .rev()
-                            .find(|(name, _)| name == &child_key)
+                            .find(|(name, _)| name == &child_name)
                             .map(|(_, value)| value)
                     });
                     let child =
-                        self.json_internalize(p, object, &child_key, child_source, reviver_root)?;
-                    self.json_update_property(p, value_handle, &child_key, child)?;
+                        self.json_internalize(p, object, child_atom, child_source, reviver_root)?;
+                    self.json_update_property(p, value_handle, child_atom, child)?;
                 }
             }
-            let key_value = self.heap.alloc_string(key.clone());
+            let key_value = self.atom_string(key);
             let key_handle = self.heap.root(key_value);
             key_root = Some(key_handle);
             let context = self.json_object();
@@ -1851,11 +1860,11 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         holder: RootId,
-        key: &JsString,
+        key: Atom,
         value: Value,
     ) -> Result<(), JsError> {
         self.with_call_roots([value], |vm| {
-            let key = vm.heap.alloc_string(key.clone());
+            let key = vm.atom_string(key);
             vm.with_call_roots([key], |vm| {
                 let holder = vm.heap.root_value(holder).unwrap();
                 if value.is_undefined() {
@@ -1985,7 +1994,7 @@ impl<H: Host> Vm<H> {
         let value = self.with_call_roots([holder], |vm| {
             vm.json_property_value(p, holder, key, value, to_json, replacer)
         })?;
-        w.after_guest_code(self.json_epochs());
+        w.after_guest_code(self.json_epoch());
         self.with_call_roots([value], |vm| vm.json_serialize_value(p, value, w))
     }
 
@@ -2043,10 +2052,13 @@ impl<H: Host> Vm<H> {
     /// (`plain_property_lookup`). A boxed primitive, whose serialization coerces it, and any
     /// other object answer `false`.
     fn json_lacks_to_json(&self, value: Value, to_json: Atom) -> bool {
+        self.boxed_primitive_data(value).is_none() && self.json_chain_lacks_to_json(value, to_json)
+    }
+
+    /// `json_lacks_to_json` for an object already known not to be a boxed primitive: the chain
+    /// walk alone.
+    fn json_chain_lacks_to_json(&self, value: Value, to_json: Atom) -> bool {
         let key = PropertyKey::string(to_json);
-        if self.boxed_primitive_data(value).is_some() {
-            return false;
-        }
         let mut current = value;
         loop {
             let Some(array) = self.heap.array(current) else {
@@ -2067,11 +2079,11 @@ impl<H: Host> Vm<H> {
 
     /// A key's string value, allocated last before the call that receives it.
     fn json_key_value(&mut self, key: JsonKey) -> Value {
-        let text = match key {
-            JsonKey::Index(index) => JsString::from(index.to_string()),
-            JsonKey::Name(atom) => self.atom_value(atom),
+        let atom = match key {
+            JsonKey::Index(index) => self.index_key_atom(index),
+            JsonKey::Name(atom) => atom,
         };
-        self.heap.alloc_string(text)
+        self.atom_string(atom)
     }
 
     /// SerializeJSONValue of `value`, after `toJSON` and the replacer: plain data as it is
@@ -2094,7 +2106,7 @@ impl<H: Host> Vm<H> {
         }
         let unboxed = self.json_unbox(p, value)?;
         if unboxed != value {
-            w.after_guest_code(self.json_epochs());
+            w.after_guest_code(self.json_epoch());
             return self.json_serialize_value(p, unboxed, w);
         }
         if let Some(raw) = self.json_raw_text(value) {
@@ -2175,7 +2187,7 @@ impl<H: Host> Vm<H> {
             return Ok(property_list.iter().copied().collect());
         }
         let keys = self.json_enumerable_keys(p.ok_or(JsonStop::Plain)?, object)?;
-        w.after_guest_code(self.json_epochs());
+        w.after_guest_code(self.json_epoch());
         Ok(keys)
     }
 

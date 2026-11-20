@@ -8,8 +8,6 @@ const TRUE_TEXT: &[u8] = b"true";
 const FALSE_TEXT: &[u8] = b"false";
 const NULL_TEXT: &[u8] = b"null";
 const UNDEFINED_TEXT: &[u8] = b"undefined";
-/// The radix of an integer's decimal digits, which `int_text_len` counts.
-const DECIMAL_BASE: u32 = 10;
 /// The most text a string of parts may hold in its known parts (regexp -3% at 256, flat at 64):
 /// past it the copy a flat concatenation makes costs more than its record saves, and a string
 /// read soon is copied twice.
@@ -298,32 +296,38 @@ impl<H: Host> Vm<H> {
     /// `STRING_CONCAT_MAX_BYTES`.
     #[inline(always)]
     pub(super) fn ascii_string_concat(&self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<JsString> {
+        // A Number part is formatted here once, and its text is written from this list.
+        let mut texts =
+            smallvec::SmallVec::<[Option<crate::number_to_string::Short>; STRING_CONCAT_INLINE_PARTS]>::with_capacity(count);
         let mut length = 0;
         for index in 0..count {
-            length += self.ascii_part_len(part(self, index))?;
+            let value = part(self, index);
+            let text = number_part_text(value);
+            length += match &text {
+                Some(text) => text.len(),
+                None => self.ascii_part_len(value)?,
+            };
             if length > STRING_CONCAT_MAX_BYTES {
                 return None;
             }
+            texts.push(text);
         }
         Some(JsString::from_ascii_filled(length, |out| {
             let mut at = 0;
-            for index in 0..count {
-                at = self.write_ascii_part(part(self, index), out, at);
+            for (index, text) in texts.iter().enumerate() {
+                at = match text {
+                    Some(text) => put_text(out, at, text),
+                    None => self.write_ascii_part(part(self, index), out, at),
+                };
             }
-            assert_eq!(at, out.len(), "the parts fill the length `ascii_part_len` measured");
+            assert_eq!(at, out.len(), "the parts fill the length measured for them");
         }))
     }
 
-    /// The byte length `write_ascii_part` writes for the part `value`; `None` for a part that is
-    /// not flat ASCII text, which the concatenation does not join.
+    /// The byte length `write_ascii_part` writes for the part `value`, which is not a Number;
+    /// `None` for a part that is not flat ASCII text, which the concatenation does not join.
     #[inline(always)]
     fn ascii_part_len(&self, value: Value) -> Option<usize> {
-        if let Some(int) = value.as_int() {
-            return Some(int_text_len(int));
-        }
-        if let Some(number) = value.as_number() {
-            return Some(number_text(number).len());
-        }
         if let Some(boolean) = value.as_bool() {
             return Some(if boolean { TRUE_TEXT.len() } else { FALSE_TEXT.len() });
         }
@@ -340,16 +344,10 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Writes the text of the part `value` into `out` at `at`, returning the offset past it. The
-    /// part was measured by `ascii_part_len`, so it is flat ASCII text.
+    /// Writes the text of the part `value`, which is not a Number, into `out` at `at`, returning
+    /// the offset past it. The part was measured by `ascii_part_len`, so it is flat ASCII text.
     #[inline(always)]
     fn write_ascii_part(&self, value: Value, out: &mut [std::mem::MaybeUninit<u8>], at: usize) -> usize {
-        if let Some(int) = value.as_int() {
-            return put_text(out, at, itoa::Buffer::new().format(int).as_bytes());
-        }
-        if let Some(number) = value.as_number() {
-            return put_text(out, at, &number_text(number));
-        }
         if let Some(boolean) = value.as_bool() {
             return put_text(out, at, if boolean { TRUE_TEXT } else { FALSE_TEXT });
         }
@@ -387,16 +385,15 @@ impl<H: Host> Vm<H> {
 /// (`JsString::copies_whole`); a longer one is a rope of its parts.
 const STRING_CONCAT_MAX_BYTES: usize = 512;
 
-/// The decimal text of `int` has `int_text_len` bytes: its digits, and a sign when negative.
+/// The text of a Number part, an int32 or a double, held on the stack; `None` for any other part.
 #[inline(always)]
-fn int_text_len(int: i32) -> usize {
-    let mut magnitude = int.unsigned_abs();
-    let mut digits = 1;
-    while magnitude >= DECIMAL_BASE {
-        magnitude /= DECIMAL_BASE;
-        digits += 1;
+fn number_part_text(value: Value) -> Option<crate::number_to_string::Short> {
+    if let Some(int) = value.as_int() {
+        let mut text = crate::number_to_string::Short::new();
+        text.try_extend(itoa::Buffer::new().format(int).as_bytes()).expect("an int32's decimal text fits a Short");
+        return Some(text);
     }
-    usize::from(int < 0) + digits
+    value.as_number().map(number_text)
 }
 
 /// Number::toString(10) of `number` as ASCII text, held on the stack.

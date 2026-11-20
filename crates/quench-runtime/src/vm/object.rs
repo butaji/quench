@@ -99,6 +99,11 @@ impl AtomClass {
     pub(super) const SELF_BINDING: u8 = 1 << 6;
     /// Engine-internal names, which begin with NUL and never name a source binding.
     pub(super) const INTERNAL: u8 = 1 << 7;
+    /// The names whose answer a holder's exotic kind or array and typed-array index rules
+    /// decide, beyond its shape: `shape_property_lookup` excludes them per receiver family, so
+    /// a field cache hit reads its holder through the lookup for them (`non_record_hit_holder`).
+    pub(super) const FAMILY_SENSITIVE: u8 =
+        Self::PRIVATE | Self::ARRAY_INDEX | Self::TYPED_ARRAY_INDEX | Self::RESTRICTED_FUNCTION_PROPERTY | Self::VIRTUAL_FIELD;
 
     #[inline(always)]
     pub(super) fn contains(self, bits: u8) -> bool {
@@ -507,11 +512,41 @@ impl<H: Host> Vm<H> {
         if let Some(index) = lookup_index {
             child.lookup_index = OnceCell::from(index);
         }
-        self.shapes.push(child);
+        push_child(&mut self.shapes, child);
         let parent_length = self.shapes[parent as usize].storage_len();
         self.heap.register_property_shape(next, storage_len, Some((parent, parent_length)));
         next
     }
+    /// The capacity an add that moves an object's arena run to `shape` reserves for a run of
+    /// `length` values (the new length): the size the shape tree predicts. It follows the only
+    /// child of each shape while that child is an `Add` of one more slot, and takes the length
+    /// the chain reaches, clamped to `length..=PREDICTED_RUN_CAP_FACTOR * length`, as a size
+    /// class. Walked only on a move, which already copies the run, never on an add that stays.
+    pub(super) fn predicted_run_capacity(&self, shape: u32, length: usize) -> usize {
+        let cap = length * crate::value_vec::PREDICTED_RUN_CAP_FACTOR;
+        let mut extent = length;
+        let mut cursor = shape;
+        while extent < cap {
+            let entry = &self.shapes[cursor as usize];
+            if entry.facts.children() != 1 || entry.is_dictionary() {
+                break;
+            }
+            let child_id = entry.last_child.get();
+            let Some(child) = self.shapes.get(child_id as usize) else {
+                break;
+            };
+            if child.parent() != Some(cursor)
+                || !matches!(child.transition, ShapeTransition::Add { .. })
+                || child.storage_len() != entry.storage_len() + 1
+            {
+                break;
+            }
+            extent = child.storage_len();
+            cursor = child_id;
+        }
+        crate::value_vec::capacity_class(extent.clamp(length, cap))
+    }
+
     /// Whether `to` is `from` extended by one appended property slot: the shape an add of
     /// one new data property makes, which `Heap::property_add` can apply directly.
     pub(super) fn shape_appends_one_slot(&self, from: u32, to: u32) -> bool {
@@ -1187,8 +1222,15 @@ impl FieldCacheSet {
         self.holds_own |= cache.holder == NO_FIELD_HOLDER;
         let key = field_cache_key(cache.receiver, cache.holder);
         if let Some(entries) = &mut self.overflow {
-            if entries.len() < FIELD_MEGAMORPHIC_LIMIT || entries.contains_key(&key) {
-                entries.insert(key, cache);
+            let room = entries.len() < FIELD_MEGAMORPHIC_LIMIT;
+            match entries.entry(key) {
+                std::collections::hash_map::Entry::Occupied(mut slot) => {
+                    slot.insert(cache);
+                }
+                std::collections::hash_map::Entry::Vacant(slot) if room => {
+                    slot.insert(cache);
+                }
+                std::collections::hash_map::Entry::Vacant(_) => {}
             }
             return;
         }
@@ -2163,12 +2205,18 @@ impl<H: Host> Vm<H> {
             return;
         }
         let (slot, shape) = (usize::from(transition.slot), transition.after);
-        if !(self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, shape))
-            && !self.heap.record_property_append_reserved(record_id, slot, value, shape)
+        if self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
+            && self.heap.record_property_append_plain(record_id, slot, value, shape)
         {
-            self.heap.record_property_add_moving(object, slot, value, shape);
+            return;
         }
+        if self.heap.record_property_append_reserved(record_id, slot, value, shape) {
+            return;
+        }
+        // The add moves the run: reserve the size the shape tree predicts for it, so the
+        // object's next adds append in place rather than move it again.
+        let want = self.predicted_run_capacity(shape, slot + 1);
+        self.heap.record_property_add_moving(object, slot, value, shape, want);
     }
 
     /// `define_field_cached`'s hit inline, for an object record: the site's add entry for its
@@ -3081,7 +3129,7 @@ impl<H: Host> Vm<H> {
     /// proxy: a hit, a miss at the resolved site, or no cacheable receiver.
     #[inline(always)]
     fn object_field_cache_read(&self, cell: &Cell, atom: Atom, site: u16) -> FieldCacheRead {
-        self.receiver_field_cache_read(self.shape_property_lookup_cell(cell, atom), atom, site)
+        self.receiver_field_cache_read(self.shape_property_lookup_cell(cell, self.atom_class(atom)), atom, site)
     }
 
     /// The field cache's answer for a receiver whose shape answers the read (`None`: it
@@ -3191,7 +3239,7 @@ impl<H: Host> Vm<H> {
         // shape slots, so no entry names them.
         let holder = match self.heap.record_prototype(receiver) {
             Some(holder) => holder,
-            None => self.shape_property_lookup(receiver.proto(), atom)?,
+            None => self.non_record_hit_holder(receiver.proto(), atom)?,
         };
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { self.field_caches.get_unchecked(site) };
@@ -3213,6 +3261,26 @@ impl<H: Host> Vm<H> {
             tier,
             depth: 1,
         })
+    }
+
+    /// The holder of a field cache hit whose prototype `proto` is not a record. For an atom
+    /// outside `AtomClass::FAMILY_SENSITIVE` (and not `length`), an object without exotic
+    /// access answers exactly as `shape_property_lookup` does: its shape then decides the
+    /// rest. The atom is fixed per site and the exotic bit is the holder's own header word,
+    /// so the lookup's per-family rules are not re-run here. A dictionary holder needs no test
+    /// of its own: it carries a dictionary shape id, which no recorded holder shape equals (the
+    /// same argument as `cached_holder_matches`). Every other case is decided by the lookup,
+    /// which is also what a cache hit compares against.
+    #[inline(always)]
+    fn non_record_hit_holder(&self, proto: Value, atom: Atom) -> Option<&Object> {
+        if let Some(holder) = self.heap.object(proto)
+            && !holder.has_exotic_access()
+            && atom != self.length_atom
+            && !self.atom_class(atom).intersects(AtomClass::FAMILY_SENSITIVE)
+        {
+            return Some(holder);
+        }
+        self.shape_property_lookup(proto, atom)
     }
 
     #[cold]
@@ -4420,7 +4488,6 @@ impl<H: Host> Vm<H> {
     /// encoding is independent of the shape/descriptor permission to write it.
     fn cached_own_writable_slot(&self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<usize> {
         if !(self.specialized && p.specialized)
-            || self.is_private_name(atom)
             || !self.field_cache_atom_eligible(atom)
             || self.method_caches_may_name(atom)
         {

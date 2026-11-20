@@ -105,7 +105,7 @@ pub(crate) mod ic;
 pub(crate) mod ic_flat;
 pub(crate) mod ic_read;
 pub(crate) mod object;
-mod narrow;
+pub(crate) mod narrow;
 pub(crate) mod store;
 pub(crate) mod slot_store;
 pub(crate) mod strings;
@@ -1189,6 +1189,8 @@ mod property_tests;
 mod coverage_tests;
 #[cfg(test)]
 mod stage_coverage_tests;
+#[cfg(test)]
+mod semantics_duplication_tests;
 #[cfg(test)]
 mod capture_return_tests;
 #[cfg(test)]

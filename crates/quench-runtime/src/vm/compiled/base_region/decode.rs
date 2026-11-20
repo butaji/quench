@@ -144,9 +144,10 @@ pub(super) struct Decoded {
     /// The Stable cell of the global member the row folds (`GlobalRead::NativeMember`'s `cell`, or a held object's read): its fact is
     /// subscribed by the body (`Stitched::push`), and its realm proved once (`globals::held_realm`).
     /// The slot type the fact store proves of a site read's one own flat entry (`decode::fields::cached_read`): a
-    /// Number type the code holds as a dependency (`held_slot_types`), which a widening of the slot retires it
-    /// over, so the read's inline-cache row delivers the word to a pinned double with no tag test
-    /// (`plan::ic_plan`). Kept only where that row runs and the code makes no call (`repr::keep_typed_reads`).
+    /// Number type or the direct-object family, which the code holds as a dependency (`held_slot_types`), and a
+    /// widening of the slot retires it over. A Number read's inline-cache row then delivers the word to a pinned
+    /// double with no tag test (`plan::ic_plan`); an object read's destination is a direct object after it
+    /// (`proofs::typed_object`). Kept only where that row runs and the code makes no call (`repr::keep_typed_reads`).
     pub(super) typed: Option<crate::code_dependencies::SlotDependency>,
     pub(super) cell: Option<crate::vm::global_facts::StableCell>,
     /// Every path proves the inline-cache access's receiver of its entry's shape (`proofs::prove`): the row

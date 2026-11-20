@@ -60,6 +60,31 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Whether the dispatch loop may not push a call made by frame `f` as an activation of its
+    /// own: an eval is in progress, `p` is a Wasm program (its calls keep Wasm's own activation
+    /// and exhaustion accounting), `f` is not the top frame, `f` is the root activation, or the
+    /// call is a strict terminal one that the host makes a proper tail call (`call_forms`).
+    #[inline(always)]
+    fn inline_call_blocked(&self, p: &ResidualProgram, f: usize, i: WideInstruction) -> bool {
+        self.direct_eval
+            || self.parameter_eval
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || f + 1 != self.frames.len()
+            || self.frames[f].function == super::ROOT_FUNCTION_ID
+            || (self.host.proper_tail_calls()
+                && i.returns_from_frame()
+                && p.function(self.frames[f].function as usize).strict)
+    }
+
+    /// Whether the call at `pc` made by frame `f` is a JavaScript proper tail call: the host
+    /// permits them, the call returns from its frame, and the call site permits it.
+    #[inline(always)]
+    pub(super) fn js_tail_call_allowed(&self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> bool {
+        self.host.proper_tail_calls()
+            && i.returns_from_frame()
+            && p.function(self.frames[f].function as usize).permits_js_tail_call_at(pc.saturating_sub(1) as u32)
+    }
+
     /// Starts a plain or array-spread call of an eligible same-realm user function as an
     /// activation of the running dispatch loop, or returns `None` to leave it to `step`. Such a
     /// call involves no direct eval (its callee is not the eval intrinsic) and neither eval mode
@@ -74,20 +99,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<Result<StepResult, JsError>> {
         // A sloppy call that falls into a return of its result is pushed like any other; its
         // caller then returns the callee's completion (see `PendingGeneralCall::returns`).
-        // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
-        // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
-        // exhaustion accounting, so they are never inlined as user calls.
-        if !crate::staged::calls_ordinary(i.op())
-            || i.direct_eval()
-            || self.direct_eval
-            || self.parameter_eval
-            || p.kind == crate::bytecode::ProgramKind::Wasm
-            || f + 1 != self.frames.len()
-            || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (self.host.proper_tail_calls()
-                && i.returns_from_frame()
-                && p.function(self.frames[f].function as usize).strict)
-        {
+        if !crate::staged::calls_ordinary(i.op()) || i.direct_eval() || self.inline_call_blocked(p, f, i) {
             return None;
         }
         let callee = self.read(f, i.register_b());
@@ -445,16 +457,7 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
-        if !crate::staged::calls_positional(i.op())
-            || self.direct_eval
-            || self.parameter_eval
-            || p.kind == crate::bytecode::ProgramKind::Wasm
-            || f + 1 != self.frames.len()
-            || self.frames[f].function == super::ROOT_FUNCTION_ID
-            || (self.host.proper_tail_calls()
-                && i.returns_from_frame()
-                && p.function(self.frames[f].function as usize).strict)
-        {
+        if !crate::staged::calls_positional(i.op()) || self.inline_call_blocked(p, f, i) {
             return None;
         }
         let callee = self.read(f, i.register_b());
@@ -489,7 +492,7 @@ impl<H: Host> Vm<H> {
                     }
                     let (bound_target, bound_this, bound) = self.bound_function_parts(*env)?;
                     (target, this) = (bound_target, bound_this);
-                    bound_arguments = bound.iter().chain(window).copied().collect::<Vec<_>>();
+                    bound_arguments = super::function::bound_then(&bound, window);
                     bound_arguments.as_slice()
                 }
                 // `Reflect.apply` takes its target and receiver as arguments and requires a list
@@ -781,10 +784,22 @@ impl<H: Host> Vm<H> {
                 self.staged_suspend(p, site, i, pc)
             }
             // A row that decides its opcode alone runs as its staged row on the frame, which never declines.
-            Runner::RowOnly => match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
+            // Decoded over the program's tables: a row-only record that names a site or constant (a template, a method
+            // site) decodes only with them.
+            Runner::RowOnly => match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::of(p)) {
                 RowRun::Done(_) => Ok(StepResult::Continue),
                 RowRun::Stop(stop) => stop,
-                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it"),
+                // A unary's row leaves where its words decide nothing the frame proves (an immediate no tag class
+                // names, a Number row's miss); the VM's general unary (`Vm::unary`) answers every operand.
+                RowRun::Declined if i.op() == crate::bytecode::Op::Unary => {
+                    let value = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
+                    self.write(f, i.result_register(), value);
+                    if i.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
+                        return Ok(StepResult::Return(value));
+                    }
+                    Ok(StepResult::Continue)
+                }
+                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it: {:?}", i.op()),
             },
             // An arithmetic binary: its staged row first, then the record's general `Binary` on a miss. The Number
             // relation of `==` or `===` leaves a pair that is no Number, and that relation names both operators, so

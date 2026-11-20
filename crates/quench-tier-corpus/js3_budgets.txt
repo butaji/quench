@@ -1,0 +1,6 @@
+# JetStream 3 budgets (quench-gate step `js3-budgets`; reads QUENCH_JS3_SWEEP and QUENCH_JS3_COMPARATORS).
+# `<bench> <mode> <score|rss> <value>`: a bench and mode that misses its target, with the value recorded when it missed.
+# `ir <bench> <ceiling>`: the no-jit instruction ceiling of a bench.
+# Shrink-only: an unlisted miss fails the step, a listed entry that meets its target fails it too ("remove it"),
+# and a listed value that got worse fails as a regression (3% for score and RSS, 1% for Ir).
+# Seeded by `QUENCH_DEBT_WRITE=1 quench-gate --only js3-budgets` on a finished sweep. Never add a line by hand.

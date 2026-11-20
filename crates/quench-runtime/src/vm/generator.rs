@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         stop: MaterializedStop,
     ) -> Value {
-        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
+        let generator = self.pop_host_frame().expect("a resumed generator's activation");
         let done = match stop {
             MaterializedStop::Yielded { destination, delegated_result } => {
                 frame.with_objects = self.with_stack.split_off(frame.with_base);
@@ -110,7 +110,7 @@ impl<H: Host> Vm<H> {
     /// `resume_generator_step` finishes it, and the native activation ends; the caller's
     /// unwind goes on with the error.
     pub(super) fn abandon_materialized_generator_step(&mut self, _resume: GeneratorResume) {
-        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
+        let generator = self.pop_host_frame().expect("a resumed generator's activation");
         if let Some(record) = self.generator_record_mut(generator) {
             record.complete();
         }

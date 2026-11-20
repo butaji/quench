@@ -142,14 +142,15 @@ impl<H: Host> Vm<H> {
         // tier) is not stitched only for `publish_base_body` to refuse it.
         if !super::body_may_amortize(self.programs.tiers(), body, crate::jit_mode::Tier::Base) && !caller.called_by_bodies() { return LaneBodyOutcome::Short }
         if indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))) { return LaneBodyOutcome::Declined }
-        let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
+        // The region keeps the function's whole code (a function's span is all of it), which the rest reads back.
+        let Some(region) = LoopRegion::of_function(code, self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let seen = observed(parameters);
-        let callees = self.stitch_callees(program, function, &code, &direct(self));
+        let callees = self.stitch_callees(program, function, region.instructions(), &direct(self));
         let invalidation = Invalidation::default();
         // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
         let folds = self.specialized && program.specialized;
-        let SiteFacts { constructors, presences, globals } = self.site_facts(folds, program, function, (&code, parameters), body);
-        let classes = self.class_prototypes(program, function, &code, parameters);
+        let SiteFacts { constructors, presences, globals } = self.site_facts(folds, program, function, (region.instructions(), parameters), body);
+        let classes = self.class_prototypes(program, function, region.instructions(), parameters);
         let reads = |site: u16| self.native_field_read_descriptors(site);
         let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
@@ -174,7 +175,7 @@ impl<H: Host> Vm<H> {
         let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: &seen, kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers::<H>()) }) else { return LaneBodyOutcome::Declined };
-        self.publish_base_body(built, (function, body.registers), callees, (&code, invalidation), caller)
+        self.publish_base_body(built, (function, body.registers), callees, (region.instructions(), invalidation), caller)
     }
 
     /// The prototypes `function`'s class-typed parameters enter with (`DeclaredTypes::parameter_classes`), each resolved

@@ -26,7 +26,7 @@
 //! share the checks, their order and their traps.
 
 use super::{CallContext, Host, JsError, ProgramId, Vm, finish_callout};
-use crate::staged::wasm_gc::{Aggregate, WasmGc, array_length, field_read, field_write, non_null, reference_cast};
+use crate::staged::wasm_gc::{Aggregate, WasmGc, array_length, field_read, field_write, non_null};
 use crate::wasm::gc::{GcField, GcFieldAccess, GcFieldValue};
 use crate::wasm::reference::{NonNullCheck, ReferenceTarget};
 use super::super::wasm_gc::stage::HeapStage;
@@ -92,7 +92,7 @@ fn read_bits(field: GcField, word: u64) -> u64 {
 }
 
 /// The result word of `call` over its operands, which the rules check (a trap or validation error
-/// raised by a rule propagates). `declarations` are the module's, read only by the casts.
+/// raised by a rule propagates). The casts read `program`'s declarations.
 fn run<H: Host>(vm: &mut Vm<H>, program: ProgramId, call: GcCall, imm: u32, a: u64, b: u64, c: u64) -> Result<u64, JsError> {
     match call {
         GcCall::ArrayLength => array_length(&mut HeapStage { vm }, a),
@@ -104,18 +104,7 @@ fn run<H: Host>(vm: &mut Vm<H>, program: ProgramId, call: GcCall, imm: u32, a: u
         }
         GcCall::RefEq => Ok(u64::from(a == b)),
         GcCall::RefTest | GcCall::RefCast => {
-            let declarations = vm
-                .programs
-                .wasm_signatures(program)
-                .map(|pool| pool.declarations.clone())
-                .ok_or_else(|| JsError::validation("Wasm GC operation requires module declarations".into()))?;
-            let target = ReferenceTarget::validated(imm);
-            let stage = &mut HeapStage { vm };
-            if call == GcCall::RefTest {
-                Ok(WasmGc::admits(stage, a, target, &declarations))
-            } else {
-                reference_cast(stage, a, target, &declarations)
-            }
+            vm.wasm_ref_test_or_cast(program, ReferenceTarget::validated(imm), a, call == GcCall::RefCast)
         }
         GcCall::StructGet | GcCall::StructGetSigned | GcCall::ArrayGet | GcCall::ArrayGetSigned => {
             let field = field_of(imm)?;

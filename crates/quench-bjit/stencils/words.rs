@@ -206,24 +206,6 @@ pub(crate) fn truncate32(f: f64) -> i32 {
     out
 }
 
-/// `cvttsd2si` to 64 bits: the truncated integer, or `i64::MIN` out of range or for NaN.
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-pub(crate) fn truncate64(f: f64) -> i64 {
-    // SAFETY: SSE2 is the x86-64 baseline.
-    unsafe { core::arch::x86_64::_mm_cvttsd_si64(core::arch::x86_64::_mm_set_sd(f)) }
-}
-
-/// `fcvtzs` to 64 bits, the 64-bit rows' conversion on AArch64 (`truncate32`'s contract).
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-pub(crate) fn truncate64(f: f64) -> i64 {
-    let out: i64;
-    // SAFETY: one scalar conversion, no memory or flags touched.
-    unsafe { core::arch::asm!("fcvtzs {out:x}, {input:d}", out = out(reg) out, input = in(vreg) f) };
-    out
-}
-
 /// `Value::number(f)`.
 #[inline(always)]
 pub(crate) fn canonical(f: f64) -> u64 {
@@ -239,10 +221,10 @@ pub(crate) fn canonical(f: f64) -> u64 {
 }
 
 
+/// ToInt32 of `f` when its truncation is exact (`value::exact_uint32`'s test), else `None`.
 #[inline(always)]
 pub(crate) fn f64_to_i32(f: f64) -> Option<i32> {
-    let wide = truncate64(f);
-    if wide != i64::MIN { Some(wide as i32) } else { None }
+    crate::value::exact_uint32(f).map(|uint32| uint32 as i32)
 }
 
 /// Whether both tagged words are int words (one test of their upper halves).

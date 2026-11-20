@@ -4497,17 +4497,29 @@ impl Heap {
     ) -> bool {
         // Without `LOGS`, a store the barrier would log is left to the caller, so this one
         // makes no call; the barrier does nothing for any other.
-        if !LOGS && self.object_records.store_logs(record_id, value) {
-            return false;
+        if !LOGS {
+            if self.object_records.store_logs(record_id, value) {
+                return false;
+            }
+            // SAFETY: as the caller's contract; the barrier passed the store.
+            return unsafe { self.record_property_set_unbarriered(record_id, slot, value, layout) };
         }
         // SAFETY: the caller proves the record live; `&mut self` is exclusive.
-        let data = unsafe {
-            if LOGS {
-                self.object_records.get_live_mut_storing(record_id, value, &self.properties)
-            } else {
-                self.object_records.get_live_mut_unbarriered(record_id)
-            }
-        };
+        let data = unsafe { self.object_records.get_live_mut_storing(record_id, value, &self.properties) };
+        let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
+        self.settle_widened();
+        stored
+    }
+
+    /// `record_property_set_flat::<false>` once the caller has tested the barrier (`store_logs`)
+    /// and the store passes it: the flat store with no barrier call.
+    ///
+    /// # Safety
+    /// As `record_property_set_flat`.
+    #[inline(always)]
+    unsafe fn record_property_set_unbarriered(&mut self, record_id: u32, slot: usize, value: Value, layout: PropertyStoreLayout) -> bool {
+        // SAFETY: the caller proves the record live; `&mut self` is exclusive.
+        let data = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
         let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
         self.settle_widened();
         stored
@@ -4529,13 +4541,17 @@ impl Heap {
         if record.layout_id() != hint {
             return false;
         }
+        // The barrier is tested once for both the arena store and the flat store after it.
+        if self.object_records.store_logs(record_id, value) {
+            return false;
+        }
         if crate::staged::ic::layout_form(hint) == 0
-            // SAFETY: the matched layout's shape holds `slot`, in the arena form.
-            && unsafe { self.held_arena_store(record_id, crate::staged::ic::layout_shape(hint), slot, value) } {
+            // SAFETY: the matched layout's shape holds `slot`, in the arena form; the barrier passed.
+            && unsafe { self.held_arena_store_unlogged(record_id, crate::staged::ic::layout_shape(hint), slot, value) } {
             return true;
         }
         // SAFETY: as above.
-        unsafe { self.record_property_set_flat::<false>(record_id, usize::from(slot), value, PropertyStoreLayout::Preserve) }
+        unsafe { self.record_property_set_unbarriered(record_id, usize::from(slot), value, PropertyStoreLayout::Preserve) }
     }
 
     /// The store of `value` at `slot` of the arena-form record `record_id` of exact `shape`
@@ -4550,6 +4566,16 @@ impl Heap {
         if self.object_records.store_logs(record_id, value) {
             return false;
         }
+        // SAFETY: the caller's contract; the barrier passed the store.
+        unsafe { self.held_arena_store_unlogged(record_id, shape, slot, value) }
+    }
+
+    /// `held_arena_store` once the caller has tested the barrier (`store_logs`) and it passes.
+    ///
+    /// # Safety
+    /// As `held_arena_store`, and the barrier does not log the store.
+    #[inline(always)]
+    unsafe fn held_arena_store_unlogged(&mut self, record_id: u32, shape: u32, slot: u16, value: Value) -> bool {
         // SAFETY: the caller's contract.
         let Some(ty) = (unsafe { self.properties.held_slot_word(shape, usize::from(slot), value) }) else {
             return false;
@@ -4616,14 +4642,14 @@ impl Heap {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
             let slot = properties.len(data.properties());
-            append_property(data, properties, slot, value, shape);
+            append_property(data, properties, slot, value, shape, 0);
             slot
         } else {
             let (data, properties) = self
                 .object_and_arena_mut(object)
                 .expect("property owner is an object");
             let slot = properties.len(data.properties());
-            append_property(data, properties, slot, value, shape);
+            append_property(data, properties, slot, value, shape, 0);
             slot
         };
         self.settle_widened();
@@ -4635,6 +4661,13 @@ impl Heap {
     /// storage length (a cached add's recorded slot), without deriving it again.
     #[inline(always)]
     pub(crate) fn record_property_add_at(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
+        self.record_property_add_wanting(object, slot, value, shape, 0);
+    }
+
+    /// `record_property_add_at` whose move, if the add makes one, takes the run capacity `want`
+    /// (`ValueArena::grow`); zero takes the next class.
+    #[inline(always)]
+    fn record_property_add_wanting(&mut self, object: Value, slot: usize, value: Value, shape: u32, want: usize) {
         let Some(record_id) = object.direct_object_index() else {
             return self.property_add(object, value, shape);
         };
@@ -4642,17 +4675,20 @@ impl Heap {
         // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
         let data = unsafe { object_records.get_live_mut_storing(record_id, value, properties) };
         debug_assert_eq!(slot, properties.len(data.properties()));
-        append_property(data, properties, slot, value, shape);
+        append_property(data, properties, slot, value, shape, want);
         self.settle_widened();
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, slot + 1);
     }
 
     /// `record_property_add_at` out of line, for an add whose storage moves or whose store
-    /// the write barrier logs, so a caller's plain appends keep their code call-free.
+    /// the write barrier logs, so a caller's plain appends keep their code call-free. `want` is
+    /// the arena capacity the moved run reserves (`Vm::predicted_run_capacity`): the run takes
+    /// the size the shape tree predicts for the object instead of only the next class, so an
+    /// object that grows by several properties moves once rather than at each class.
     #[inline(never)]
-    pub(crate) fn record_property_add_moving(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
-        self.record_property_add_at(object, slot, value, shape);
+    pub(crate) fn record_property_add_moving(&mut self, object: Value, slot: usize, value: Value, shape: u32, want: usize) {
+        self.record_property_add_wanting(object, slot, value, shape, want);
     }
 
     /// `record_property_add_at` of an add the record admits as a plain append
@@ -5323,9 +5359,10 @@ enum YoungOwner {
 
 
 /// `Heap::property_add` on the owner's storage: writes `value` at `slot`, the owner's
-/// storage length, and moves the owner to `shape`.
+/// storage length, and moves the owner to `shape`. `want` is the capacity a moved arena run
+/// takes (`ValueArena::push`), zero for the next class.
 #[inline(always)]
-fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
+fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32, want: usize) {
     properties.note_shape_value(shape, slot, value);
     let mut vector = data.properties();
     if vector.is_narrow() {
@@ -5335,7 +5372,7 @@ fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, 
     }
     if !vector.has_inline_property_storage() {
         let before = vector.into_parts();
-        properties.push(&mut vector, value, shape);
+        properties.push(&mut vector, value, shape, want);
         // An append within its range leaves the storage as it was; `set_shape` below
         // records the grown shape.
         if vector.into_parts() != before {

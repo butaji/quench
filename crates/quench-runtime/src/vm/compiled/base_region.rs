@@ -159,8 +159,9 @@ impl Known<'_> {
     }
 }
 
-/// Bytes of a register slot in the activation's register file.
-const SLOT: u64 = std::mem::size_of::<Value>() as u64;
+/// Bytes of a register slot in the activation's register file: the shared word (`call_record::REGISTER_BYTES`,
+/// which the call rows read the same slots by; a test pins it to `size_of::<Value>()`).
+const SLOT: u64 = quench_bjit::call_record::REGISTER_BYTES as u64;
 
 /// A pinned register and the register of the activation it holds.
 type Pin = (usize, Register);

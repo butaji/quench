@@ -96,7 +96,7 @@ fn delegate_iterator<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, de
     -> Option<S::Word> {
     let held = frame.tagged(stage, delegation.iterator);
     let missing = undefined(stage, held);
-    stage.choose_leaving(missing, |stage| {
+    stage.choose_leaving(missing, #[inline(always)] |stage| {
         let source = frame.tagged(stage, delegation.source);
         let (iterator, fact) = frame.delegation(stage, DelegationStep::Iterator { source, asynchronous })?;
         frame.write(stage, delegation.iterator, iterator, fact);
@@ -110,7 +110,7 @@ fn next_method<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegati
     -> Option<S::Word> {
     let held = frame.tagged(stage, delegation.next);
     let missing = undefined(stage, held);
-    stage.choose_leaving(missing, |stage| {
+    stage.choose_leaving(missing, #[inline(always)] |stage| {
         let (method, fact) = frame.delegation(stage, DelegationStep::NextMethod { iterator })?;
         frame.write(stage, delegation.next, method, fact);
         Some(method)

@@ -127,7 +127,7 @@ fn property_key<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut 
     let bits = frame.tagged(stage, source);
     let string = is_direct_string(stage, bits);
     let mut converted = None;
-    let key = stage.choose_leaving(string, |_| Some(bits), |stage| {
+    let key = stage.choose_leaving(string, |_| Some(bits), #[inline(always)] |stage| {
         let (key, fact) = frame.vm_step(stage, CallOut::PropertyKey { source }, Some(destination))?;
         converted = Some(fact);
         Some(key)
@@ -164,7 +164,7 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
         // by its tags only where it is not settled: the VM's `===` is false for two values that are
         // neither both Numbers nor both heap values, so the pair is apart unless it is one of those.
         let settled = stage.either(identical, ints);
-        let apart_word = stage.choose(settled, |stage| stage.constant(0), |stage| {
+        let apart_word = stage.choose(settled, #[inline(always)] |stage| stage.constant(0), #[inline(always)] |stage| {
             let (left_double, right_double) = (is_double(stage, left), is_double(stage, right));
             let (left_heap, right_heap) = (is_heap(stage, left), is_heap(stage, right));
             let heap_pair = stage.both(left_heap, right_heap);
@@ -202,7 +202,7 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     let (decision, fact) = frame.boolean(stage, result);
     let call = CallOut::Equality { left, right, strict, negated };
     let value = stage.choose_leaving(decided, |_| Some(decision),
-        |stage| frame.vm_step(stage, call, Some(destination)).map(|(word, _)| word));
+        #[inline(always)] |stage| frame.vm_step(stage, call, Some(destination)).map(|(word, _)| word));
     let Some(value) = value else { return Step::Unresolved };
     frame.write(stage, destination, value, fact);
     Step::Value(value)

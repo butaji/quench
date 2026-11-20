@@ -3795,6 +3795,17 @@ pub(super) fn capture_stores(capture: *const usize) -> Option<*const usize> {
     (capture.addr() & CAPTURE_STORES != 0).then(|| capture_reads(capture))
 }
 
+/// The dense slot view of the environment a `LaneContext::capture` names (`None` where it has
+/// none), and whether that capture admits direct stores (`capture_stores`).
+///
+/// # Safety
+/// `capture` is null or names a live environment's storage, which the caller keeps live.
+#[inline(always)]
+pub(super) unsafe fn capture_view(capture: *const usize) -> (Option<(*const Value, usize)>, bool) {
+    // SAFETY: as the caller promises.
+    (unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(capture)) }, capture_stores(capture).is_some())
+}
+
 /// A lane handler returns the next record for the lane loop, tagged with
 /// [`EXIT_TAG`] when the general path must execute it. The carried state is
 /// passed as scalars so every argument stays in a register; the context,
@@ -4574,12 +4585,16 @@ lane_handler! {
         };
         let function = code.function(vm.frames[frame].function as usize);
         let instruction = function.widened(function.code[pc]);
+        // A record that returns its result (`RETURN_REGISTER`) completes the frame, which the general path does.
+        if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
+            return exit(ip);
+        }
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
         let mut next = pc + 1;
         match vm.step(code, frame, instruction, &mut next, false) {
             Ok(StepResult::Continue) => {}
-            Ok(_) => unreachable!("an in-place step only continues"),
+            Ok(other) => unreachable!("an in-place step only continues: {:?} gave {}", instruction.op(), match other { StepResult::Return(_) => "Return", _ => "another result" }),
             Err(error) => {
                 vm.lane_completion.raise(error);
                 return exit(ip);
@@ -5593,8 +5608,8 @@ pub(super) unsafe fn context_captures<H: Host>(context: usize) -> Option<((*cons
             (*cx).registers.set_capture(frame_capture_in_lane(cx)?);
         }
         // SAFETY: the context's slots stay live while the lane runs, which collects nothing.
-        let view = crate::heap::EnvironmentSlots::native_storage_view(capture_reads((*cx).registers.capture()))?;
-        Some((view, capture_stores((*cx).registers.capture()).is_some()))
+        let (view, stores) = capture_view((*cx).registers.capture());
+        Some((view?, stores))
     }
 }
 
@@ -9506,17 +9521,6 @@ impl<H: Host> Vm<H> {
         let frame = self.frames.len() - 1;
         self.frames[frame].pc = call_pc + 1;
         self.frames[frame].pc_is_resume = true;
-    }
-
-    /// Running natives, innermost of the first `natives`, that recorded `depth` frames beside
-    /// activations now `added` frames above it: their caller is the innermost of those.
-    fn shift_beside_natives(&mut self, natives: usize, depth: usize, added: usize) {
-        for native in self.realm.promise.active_native[..natives].iter_mut().rev() {
-            if native.frame_depth != depth {
-                break;
-            }
-            native.frame_depth += added;
-        }
     }
 
     /// The lane's exit (`dispatch_in_lane`'s exit record): a running leaf, whose records may

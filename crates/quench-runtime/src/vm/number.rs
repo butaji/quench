@@ -385,14 +385,9 @@ impl<H: Host> Vm<H> {
                 "Infinity".to_owned()
             }
         } else {
-            let scientific = match digits {
-                Some(digits) => format!("{number:.digits$e}"),
-                None => format!("{number:e}"),
-            };
-            if digits.is_some() {
-                format_scientific_exponential(number, digits.unwrap_or_default())
-            } else {
-                normalize_exponent_sign(&scientific)
+            match digits {
+                Some(digits) => format_scientific_exponential(number, digits),
+                None => normalize_exponent_sign(&format!("{number:e}")),
             }
         };
         Ok(self.heap.alloc_string(text.into()))
@@ -454,10 +449,15 @@ pub(super) fn number_predicate(native: Native, value: Value) -> Option<bool> {
     })
 }
 
+/// The coefficient text and exponent of a `{:e}` formatted number.
+fn scientific_parts(value: &str) -> (&str, i32) {
+    let (coefficient, exponent) = value.split_once('e').unwrap_or((value, "0"));
+    (coefficient, exponent.parse::<i32>().unwrap_or_default())
+}
+
 fn format_scientific(number: f64, digits: usize) -> String {
     let value = format!("{number:.digits$e}");
-    let (coefficient, exponent) = value.split_once('e').unwrap_or((&value, "0"));
-    let exponent = exponent.parse::<i32>().unwrap_or_default();
+    let (coefficient, exponent) = scientific_parts(&value);
     format!("{coefficient}e{exponent:+}")
 }
 
@@ -467,8 +467,7 @@ pub(super) fn number_to_decimal(number: f64) -> String {
 
 fn format_scientific_exponential(number: f64, digits: usize) -> String {
     let value = format!("{number:.digits$e}");
-    let (coefficient, exponent) = value.split_once('e').unwrap_or((&value, "0"));
-    let exponent = exponent.parse::<i32>().unwrap_or_default();
+    let (coefficient, exponent) = scientific_parts(&value);
     let scaled = number.abs() / 10_f64.powi(exponent - digits as i32);
     if scaled.fract() == 0.5 {
         let mut rounded = scaled.floor() + 1.0;

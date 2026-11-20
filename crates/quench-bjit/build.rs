@@ -131,7 +131,7 @@ fn main() {
         return;
     };
     let instances = instances(&listed, arch);
-    let parts = shards::split(&instances);
+    let parts = shards::split_weighted(&instances, |row| if row.starts_with("heap_row!") { shards::HEAP_ROW_WEIGHT } else { 1 });
     for (shard, part) in parts.iter().enumerate() {
         fs::write(instance_file(&out, shard), part.concat()).unwrap();
     }
