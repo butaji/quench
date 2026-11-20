@@ -238,6 +238,7 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::ObjectSiteIndex
         | ImmediateRole::SuperinstructionIndex => write_index_immediate(output, instruction),
         ImmediateRole::ArrayLength
+        | ImmediateRole::IntCaseMinimum
         | ImmediateRole::FunctionNamePrefix
         | ImmediateRole::PropertyDefinitionMode
         | ImmediateRole::BooleanFlag
@@ -329,6 +330,7 @@ fn write_index_immediate(output: &mut String, instruction: WideInstruction) -> f
 fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt::Result {
     match instruction.op().immediate_role() {
         ImmediateRole::ArrayLength => write!(output, " length={}", instruction.array_length()),
+        ImmediateRole::IntCaseMinimum => write!(output, " minimum={}", instruction.imm() as i32),
         ImmediateRole::FunctionNamePrefix => {
             write!(
                 output,

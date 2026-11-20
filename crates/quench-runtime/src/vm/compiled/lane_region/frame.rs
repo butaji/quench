@@ -73,6 +73,9 @@ pub(super) struct EmitFrame<'a> {
     pub(super) arrays_fixed: bool,
     /// The call or return a step of the call family runs for (`call_frames`).
     pub(super) site: Option<super::call_frames::Site<'a>>,
+    /// Whether the call `call_entry` last planned passes arguments proved to have its callee's proven entry's
+    /// parameter types (`call_frames::EmitFrame::arguments_proven`), which `call_enter` reads.
+    pub(super) proven_arguments: std::cell::Cell<bool>,
     /// What a capture access reaches, where the lowering made it (`captures`).
     pub(super) capture: Option<&'a super::captures::CaptureSite>,
     /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).

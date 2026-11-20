@@ -68,7 +68,7 @@ pub(in crate::vm) fn rebuild_owned_dictionary(
         .map(|entry| entry.map(|(key, attributes)| (key, attributes.rehomed(old_accessors, accessors))))
         .collect();
     let (facts, index) = (facts_with(shapes[parent as usize].facts, &slots), Box::new(ShapeLookupIndex::from_slots(&slots)));
-    shapes.push(owned_dictionary_shape(parent, facts, slots.len(), index));
+    push_child(shapes, owned_dictionary_shape(parent, facts, slots.len(), index));
     Some(u32::try_from(shapes.len() - 1).expect("object shape table exhausted"))
 }
 
@@ -229,7 +229,8 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .fold(0, |parent, transition| self.append_cached_shape_transition(parent, transition));
         let packed_shape = u32::try_from(self.shapes.len()).expect("object shape table exhausted");
-        self.shapes.push(owned_dictionary_shape(parent, self.shapes[shape as usize].facts, values.len(), index));
+        let child = owned_dictionary_shape(parent, self.shapes[shape as usize].facts, values.len(), index);
+        push_child(&mut self.shapes, child);
         self.heap.register_property_shape(packed_shape, values.len(), Some((parent, self.shapes[parent as usize].storage_len())));
         self.heap.initialize_object_properties(object, packed_shape, &values);
         self.heap.set_object_shape(object, packed_shape);

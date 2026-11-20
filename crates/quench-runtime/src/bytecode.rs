@@ -423,6 +423,8 @@ pub(crate) enum ImmediateRole {
     EnvironmentCloneIndex,
     ClosureFunctionIndex,
     ArrayLength,
+    /// The lowest case value of a dense int switch (`IntCaseIndex`), an `i32` as its bits.
+    IntCaseMinimum,
     AtomIndex,
     LocalSlot,
     GlobalLexicalIndex,
@@ -904,7 +906,7 @@ opcodes!($;
     LoadCallee => Effect::PURE; layout Scalar; meaning Unused; class LoadCallee; staged Value; step Body; traits DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; staged Names; step Body; traits MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex; class MakeClosure; staged Literal; step Body; traits MAKES_CLOSURE ENVIRONMENT_CAPTURE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; class MakeArray; staged Literal; step Body; traits ARRAY_MAKE DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
+    MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; class MakeArray; staged Literal; step Body; traits ARRAY_MAKE DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, BooleanFlag, Unused),
     MakeConstArray => CALL_EFFECT; layout Scalar; meaning ConstantIndex; class MakeConstArray; staged Literal; step Body; traits CONST_ARRAY_OBJECT2_HEAD DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, ElementCount, Unused),
     // `a` = the position among the `b` string constants from `imm` of the first strictly equal
     // to register `c`, or `b` when none is: a string `switch`'s case selector, which a
@@ -912,7 +914,7 @@ opcodes!($;
     StringCaseIndex => Effect::PURE; layout Scalar; meaning ConstantIndex; class StringCaseIndex; staged Lane; step Body; traits ROW_HANDLER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, ElementCount, Register),
     // `a` = the slot among the `b` dense int labels from `imm` the discriminant `c` names, when it is an
     // integral double in the run, else `b`: an int `switch`'s jump table index.
-    IntCaseIndex => Effect::PURE; layout Scalar; meaning Unused; staged Generic, @ Register, @ fields(ResultRegister, ElementCount, Register),
+    IntCaseIndex => Effect::PURE; layout Scalar; meaning IntCaseMinimum; staged Generic, @ Register, @ fields(ResultRegister, ElementCount, Register),
     MakeLiteralTemplate => CALL_EFFECT; layout Scalar; meaning LiteralTemplateIndex; staged Literal; step Body; traits DISTANT_PRODUCER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject => CALL_EFFECT; layout Scalar; meaning Unused; js ObjectAllocation; class MakeObject; staged Literal; step Body; traits OBJECT_MAKE DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex; class MakeObject2; staged Literal; step Body; traits RETURNING_OBJECT FRAME_RETURNABLE CONST_ARRAY_OBJECT2_TAIL PAIR_LITERAL_MAKE ROW_HANDLER MAY_ALLOCATE, @ Returnable, @ fields(ResultRegister, Register, Register),
@@ -920,7 +922,7 @@ opcodes!($;
     SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex; class SuperConstArrayObject2; staged Literal; step Body; traits RETURNING_LITERAL FRAME_RETURNABLE FUSED_CONST_ARRAY_OBJECT2 ROW_HANDLER MAY_ALLOCATE, @ Returnable, @ fields(ResultRegister, Unused, Unused),
     GetIterator => READ_THROW; layout Scalar; meaning Unused; class GetIterator; staged Names; step LaneResult; traits ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused; staged Names; step Body; traits ROW_HANDLER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex; class CreateRegExpLiteral; staged Literal; step Body; traits DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
+    CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex; class CreateRegExpLiteral; staged Literal; step Body; traits DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, OptionalReadRegister, Unused),
     IteratorClose => READ_THROW; layout Scalar; meaning Unused; class IteratorClose; staged Names; step LaneResult; traits ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     // ArrayAccumulation past a literal's static prefix: `length` elisions, then the optional
     // value (iterated when the flag marks a spread), appended at the array's length.
@@ -943,7 +945,7 @@ opcodes!($;
     Await => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused; class Await; staged Flow; traits SUSPENDS SUSPENSION_POINT MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused; class Yield; staged Flow; traits SUSPENDS SUSPENSION_POINT MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair; class YieldStar; staged Flow; traits SUSPENSION_POINT SUSPENDS MAY_ALLOCATE, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
-    GetField => READ_THROW; layout Scalar; meaning FieldLookup; js GetField; class GetField; staged Property; step Body; traits BOXED_RESULT FIELD_LEAF RETURNING_FIELD INLINABLE PURE_SETUP FRAME_RETURNABLE MAY_ALLOCATE ROW_ONLY, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
+    GetField => READ_THROW; layout Scalar; meaning FieldLookup; js GetField; class GetField; staged Property; step Body; traits BOXED_RESULT FIELD_LEAF RETURNING_FIELD INLINABLE PURE_SETUP FRAME_RETURNABLE ROW_ONLY MAY_ALLOCATE, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
     GetIndex => READ_THROW; layout Scalar; meaning Unused; class GetIndex; staged Element; step Body; traits BOXED_RESULT INLINABLE PURE_SETUP ELEMENT_ACCESS LIFETIME_SAFE ELEMENT_LOAD INDEXED_RECEIVER DISTANT_PRODUCER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
     ToPropertyKey => READ_THROW; layout Scalar; meaning Unused; class ToPropertyKey; staged Generic; step LaneResult; traits PROPERTY_KEY_CONVERT DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     ToNumeric => READ_THROW; layout Scalar; meaning Unused; class ToNumeric; staged Value; traits ROW_HANDLER INLINABLE PURE_SETUP LIFETIME_SAFE DISTANT_PRODUCER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -1466,8 +1468,6 @@ pub struct Function {
     pub is_generator: bool,
     pub is_class_constructor: bool,
     pub derived_constructor: bool,
-    /// Instance-element initialization run when this derived constructor binds `this`.
-    pub instance_initializer: Option<u32>,
     /// A base class constructor's leading constant fields (`ConstantField`): the public fields
     /// its first instructions define, in order, each with the primitive its initializer is;
     /// empty for every other function.
@@ -2065,6 +2065,13 @@ pub(crate) struct RegisterRoots {
     /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound. Filled where the lowering had the live
     /// sets, else on the first `ResidualProgram::entry_fill`.
     entry_live: std::cell::OnceCell<u16>,
+    /// The masks the derivation of `entry_live` solved, kept for the first mask ask
+    /// (`ResidualProgram::shared_register_root_masks`) so that ask does not solve the function
+    /// again. They are the masks `RegisterMasks::of` would derive, since they come from the same
+    /// solved sets at the same width. Kept only where a collection would keep them
+    /// (`RegisterMasks::too_large_to_keep` is false), so a large function's table is not held
+    /// before anything asks for it. Taken by that ask, so they are held once at most.
+    solved: std::cell::RefCell<Option<crate::compile::liveness::RegisterMasks>>,
 }
 
 /// Uncovered, which bounds no register live at entry.
@@ -2079,12 +2086,28 @@ impl RegisterRoots {
     /// derived on its first ask.
     pub(crate) fn new(covered: bool) -> Self {
         let entry_live = if covered { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(Self::ALL_LIVE_AT_ENTRY) };
-        Self { covered, entry_live }
+        Self { covered, entry_live, solved: std::cell::RefCell::new(None) }
     }
 
     /// Covered, every register live at entry below `entry_live`.
     pub(crate) fn with_entry_live(covered: bool, entry_live: u16) -> Self {
-        Self { covered, entry_live: std::cell::OnceCell::from(entry_live) }
+        Self { covered, entry_live: std::cell::OnceCell::from(entry_live), solved: std::cell::RefCell::new(None) }
+    }
+
+    /// Covered, every register live at entry below `entry_live`, with the masks `solved` that
+    /// derived it kept for the first mask ask (see `solved`).
+    pub(crate) fn with_solved(entry_live: u16, solved: Option<crate::compile::liveness::RegisterMasks>) -> Self {
+        Self { covered: true, entry_live: std::cell::OnceCell::from(entry_live), solved: std::cell::RefCell::new(solved) }
+    }
+
+    /// Keeps `masks`, which a derivation of `entry_live` solved, for the first mask ask.
+    pub(crate) fn keep_solved(&self, masks: crate::compile::liveness::RegisterMasks) {
+        *self.solved.borrow_mut() = Some(masks);
+    }
+
+    /// The masks kept by `keep_solved` or `with_solved`, taken: a later call finds none.
+    pub(crate) fn take_solved(&self) -> Option<crate::compile::liveness::RegisterMasks> {
+        self.solved.take()
     }
 
     /// An `entry_live` that bounds nothing.
@@ -4554,7 +4577,7 @@ impl ResidualProgram {
     pub(crate) fn entry_fill(&self, function: &Function) -> u16 {
         function
             .register_roots
-            .entry_live_with(|| crate::compile::liveness::derive_entry_live(function, self, &self.field_sites, &self.superinstructions))
+            .entry_live_with(|| crate::compile::liveness::derive_entry_live_keeping(function, self, &self.field_sites, &self.superinstructions))
             .min(function.registers)
     }
 
@@ -4577,9 +4600,12 @@ impl ResidualProgram {
             .caches()
             .register_masks
             .get_or_init(|| {
-                crate::compile::liveness::RegisterMasks::of(function, self, &self.field_sites, &self.superinstructions)
-                    .map(std::rc::Rc::new)
-                    .expect("a covered function's liveness is derivable")
+                // The masks the lowering or the entry bound's derivation solved, when kept, else a solve.
+                let masks = function.register_roots.take_solved().unwrap_or_else(|| {
+                    crate::compile::liveness::RegisterMasks::of(function, self, &self.field_sites, &self.superinstructions)
+                        .expect("a covered function's liveness is derivable")
+                });
+                std::rc::Rc::new(masks)
             });
         Some(masks)
     }

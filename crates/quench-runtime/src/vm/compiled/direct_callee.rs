@@ -42,6 +42,13 @@ pub(in crate::vm) struct DirectCallee {
 }
 
 impl DirectCallee {
+    /// The type summary of the callee's published body (`lane_region::TypeSummary`): its entry
+    /// parameter types, which the call's arguments must hold for its proven entry, and its result,
+    /// which types the call's result. `None` where the callee has no published body or its body has none.
+    pub(in crate::vm) fn summary(&self) -> Option<lane_region::TypeSummary> {
+        self.method.as_ref()?.lease()?.summary().cloned()
+    }
+
     /// The callee's dense capture slots, in the one word a body's entry takes them in.
     pub(in crate::vm) fn capture_word(&self) -> u64 {
         super::entry_cell::capture_word(self.capture_values, self.capture_len, self.capture_stores)

@@ -2301,6 +2301,10 @@ pub(crate) fn lower_settled<'a>(
         .iter()
         .any(|instruction| instruction.op().traits().has(Traits::PLAIN_LOCAL_STORE))
     {
+        // This solve stays even when the first one ran: the passes above rewrite the code it
+        // reads (`drop_unread_self_binding`, the promotions, `hoist_loop_constants`, `rest_reads`),
+        // and none of them reports whether it changed anything, so the first solve's sets are
+        // not known to match it.
         let live = liveness::buffers::analyze_with(function, methods, field_sites, superinstructions, scratch);
         if !numeric::apply_plain_local_stores(function, live.as_deref()) {
             solved = live;
@@ -4371,7 +4375,6 @@ impl<'a> Compiler<'a> {
             is_generator: options.generator,
             is_class_constructor: options.class_constructor,
             derived_constructor: options.derived_constructor,
-            instance_initializer: None,
             // Only a base class constructor's receiver is made by its own [[Construct]].
             constant_fields: if options.class_constructor && !options.derived_constructor {
                 std::mem::take(&mut function.constant_fields).into()

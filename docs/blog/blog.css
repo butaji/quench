@@ -1,3 +1,4 @@
+@font-face{font-family:'Inter';font-style:normal;font-display:swap;font-weight:100 900;src:url(/assets/fonts/inter.woff2) format('woff2')}@font-face{font-family:'JetBrains Mono';font-style:normal;font-display:swap;font-weight:100 800;src:url(/assets/fonts/jetbrains-mono.woff2) format('woff2')}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
 body { background: #E8E8E8; color: #1C1C1E; font-family: 'Inter', system-ui, sans-serif; line-height: 1.6; }
@@ -53,8 +54,8 @@ a:focus-visible { outline: 2px solid #EF5102; outline-offset: 3px; border-radius
   font-size: 1.05rem; letter-spacing: .05em; text-transform: uppercase; line-height: 1.15; color: #1C1C1E; white-space: nowrap;
 }
 .hero .title { padding: 2.25rem 2.5rem; }
-.meta { font-size: 0.8125rem; color: #6B7280; }
-.meta a { color: #EF5102; text-decoration: none; }
+.meta { font-size: 0.8125rem; color: #555B66; }
+.meta a { color: #B33F00; text-decoration: underline; text-underline-offset: 3px; }
 .hero h1 { font-weight: 700; font-size: clamp(1.9rem, 4.6vw, 3rem); line-height: 1.1; letter-spacing: -0.025em; color: #020202; margin: .75rem 0 0; text-wrap: balance; }
 .lead { font-size: 1.125rem; color: #4B5563; margin-top: 1rem; max-width: 62ch; }
 .actions { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -63,8 +64,8 @@ a:focus-visible { outline: 2px solid #EF5102; outline-offset: 3px; border-radius
 .card:hover { background: #FAFAFA; }
 .card h2 { font-weight: 600; font-size: 1.4rem; line-height: 1.2; letter-spacing: -0.02em; color: #020202; margin: .6rem 0 .5rem; text-wrap: balance; }
 .card.feature h2 { font-size: clamp(1.6rem, 3.4vw, 2.2rem); }
-.card p { color: #6B7280; font-size: .975rem; }
-.card .more { margin-top: auto; padding-top: 1rem; font-size: .8125rem; font-weight: 700; color: #EF5102; }
+.card p { color: #555B66; font-size: .975rem; }
+.card .more { margin-top: auto; padding-top: 1rem; font-size: .8125rem; font-weight: 700; color: #B33F00; }
 .card:hover .more { text-decoration: underline; }
 .filler { padding: 0; overflow: hidden; background: #EF5102; }
 .filler .stripes { height: 100%; min-height: 120px; }
@@ -80,7 +81,7 @@ a:focus-visible { outline: 2px solid #EF5102; outline-offset: 3px; border-radius
 .prose ul, .prose ol { margin-top: 1rem; padding-left: 1.3rem; }
 .prose li { margin-top: .4rem; }
 .prose li::marker { color: #EF5102; font-weight: 700; }
-.prose a { color: #C24400; text-underline-offset: 3px; }
+.prose a { color: #B33F00; text-underline-offset: 3px; }
 .prose a:hover { color: #EF5102; }
 .prose b { color: #1C1C1E; font-weight: 600; }
 .prose code { font-family: 'JetBrains Mono', monospace; font-size: .86em; background: #E4E4E4; padding: .12em .38em; border-radius: 5px; color: #1C1C1E; overflow-wrap: anywhere; }
@@ -91,10 +92,10 @@ a:focus-visible { outline: 2px solid #EF5102; outline-offset: 3px; border-radius
 .fig-scroll { overflow-x: auto; }
 .fig svg { display: block; max-width: none; height: auto; margin: 0 auto; }
 @media (min-width: 860px) { .fig svg { max-width: 100%; } }
-.fig figcaption { margin-top: .9rem; padding-top: .7rem; border-top: 1px solid #E4E4E4; font-family: 'JetBrains Mono', monospace; font-size: .75rem; line-height: 1.55; color: #6B7280; }
+.fig figcaption { margin-top: .9rem; padding-top: .7rem; border-top: 1px solid #E4E4E4; font-family: 'JetBrains Mono', monospace; font-size: .75rem; line-height: 1.55; color: #555B66; }
 .table-scroll { overflow-x: auto; margin-top: 1.5rem; }
 .prose table { border-collapse: collapse; width: 100%; font-size: .92rem; }
-.prose th { font-family: 'JetBrains Mono', monospace; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; text-align: left; color: #6B7280; padding: .5rem .75rem; border-bottom: 2px solid #1C1C1E; white-space: nowrap; }
+.prose th { font-family: 'JetBrains Mono', monospace; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; text-align: left; color: #555B66; padding: .5rem .75rem; border-bottom: 2px solid #1C1C1E; white-space: nowrap; }
 .prose td { padding: .55rem .75rem; border-bottom: 1px solid #DCDCDC; color: #33383F; vertical-align: top; }
 .prose td.n { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px; background: #111716; border: 4px solid #111716; border-radius: 14px; margin-top: 1.75rem; max-width: 780px; }
@@ -102,12 +103,12 @@ a:focus-visible { outline: 2px solid #EF5102; outline-offset: 3px; border-radius
 .stat.hot { background: #EF5102; }
 .stat-num { font-weight: 300; font-size: 2.6rem; line-height: 1; letter-spacing: -0.04em; color: #1C1C1E; font-variant-numeric: tabular-nums; }
 .stat-label { font-family: 'JetBrains Mono', monospace; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin: .6rem 0 .2rem; }
-.prose .stat-note { font-size: .82rem; line-height: 1.4; color: #6B7280; margin: 0; }
+.prose .stat-note { font-size: .82rem; line-height: 1.4; color: #555B66; margin: 0; }
 .prose .stat.hot .stat-note { color: #1C1C1E; }
 
 .navt { display: flex; flex-direction: column; gap: .4rem; text-decoration: none; transition: background .2s; }
 .navt:hover { background: #FAFAFA; }
-.navt .mono { font-size: .75rem; color: #EF5102; font-weight: 700; }
+.navt .mono { font-size: .75rem; color: #B33F00; font-weight: 700; }
 .navt b { font-size: 1.1rem; line-height: 1.3; color: #020202; font-weight: 600; }
 .navt.right { text-align: right; }
 .navt.empty { background: repeating-linear-gradient(-45deg, #1C1C1E, #1C1C1E 4px, #EF5102 4px, #EF5102 10px); }
@@ -116,7 +117,7 @@ a:focus-visible { outline: 2px solid #EF5102; outline-offset: 3px; border-radius
 .cta-frame .orange h2::before { color: #1C1C1E; }
 .cta-frame p { font-size: .95rem; color: #4B5563; }
 .cta-frame .orange p { color: #1C1C1E; }
-.foot { text-align: center; font-family: 'JetBrains Mono', monospace; font-size: .75rem; color: #6B7280; margin-top: 28px; }
+.foot { text-align: center; font-family: 'JetBrains Mono', monospace; font-size: .75rem; color: #555B66; margin-top: 28px; }
 
 @media (max-width: 760px) {
   .hero { grid-template-columns: minmax(0, 1fr); }

@@ -62,14 +62,14 @@ pub(crate) fn record_length<S: Stage>(stage: &mut S, record: S::Word, short: S::
 fn at_width<S: Stage>(stage: &mut S, string: FlatString<S::Word>,
     row: impl Fn(&mut S, UnitWidth) -> Option<S::Word>) -> Option<S::Word> {
     let wide = stage.ne_imm(string.wide, 0u32);
-    stage.choose_leaving(wide, |stage| row(stage, UnitWidth::Wide), |stage| row(stage, UnitWidth::Narrow))
+    stage.choose_leaving(wide, #[inline(always)] |stage| row(stage, UnitWidth::Wide), #[inline(always)] |stage| row(stage, UnitWidth::Narrow))
 }
 
 /// `builtins::char_code_at` of `string`.
 #[inline(always)]
 pub(crate) fn string_char_code_at<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
-    at_width(stage, string, |stage, width| char_code_at(stage, width, string.units, string.length, index, miss))
+    at_width(stage, string, #[inline(always)] |stage, width| char_code_at(stage, width, string.units, string.length, index, miss))
 }
 
 /// `string_char_code_at` of `string` for an index the caller proves below its length: the row with no
@@ -77,7 +77,7 @@ pub(crate) fn string_char_code_at<S: Stage>(stage: &mut S, string: FlatString<S:
 #[inline(always)]
 pub(crate) fn string_char_code_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
-    at_width(stage, string, |stage, width| char_code_at_within(stage, width, string.units, index, miss))
+    at_width(stage, string, #[inline(always)] |stage, width| char_code_at_within(stage, width, string.units, index, miss))
 }
 
 /// `string_char_at` for an index the caller proves below the string's length (`builtins::char_at_ascii_within`).
@@ -86,7 +86,7 @@ pub(crate) fn string_char_at_within<S: Stage>(stage: &mut S, string: FlatString<
     miss: S::Miss) -> Option<S::Word> {
     let present = stage.ne_imm(table, 0u32);
     stage.guard(present, miss)?;
-    let unit = at_width(stage, string, |stage, width| char_at_ascii_within(stage, width, string.units, index, miss))?;
+    let unit = at_width(stage, string, #[inline(always)] |stage, width| char_at_ascii_within(stage, width, string.units, index, miss))?;
     character_of_unit(stage, table, unit, miss)
 }
 
@@ -99,7 +99,7 @@ pub(crate) fn string_char_at<S: Stage>(stage: &mut S, string: FlatString<S::Word
     miss: S::Miss) -> Option<S::Word> {
     let present = stage.ne_imm(table, 0u32);
     stage.guard(present, miss)?;
-    let unit = at_width(stage, string, |stage, width| char_at_ascii(stage, width, string.units, string.length, index, miss))?;
+    let unit = at_width(stage, string, #[inline(always)] |stage, width| char_at_ascii(stage, width, string.units, string.length, index, miss))?;
     character_of_unit(stage, table, unit, miss)
 }
 

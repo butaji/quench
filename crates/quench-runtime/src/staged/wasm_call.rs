@@ -96,7 +96,7 @@ pub(crate) fn indirect_target_word<S: WasmTable>(
     stage.trap_when(outside, WasmTrap::UndefinedElement)?;
     let signature = stage.element_signature(index);
     let reference = stage.table_element(index);
-    let accepted = stage.unless_equal(signature, expected, |stage| {
+    let accepted = stage.unless_equal(signature, expected, #[inline(always)] |stage| {
         let uninitialized = stage.operate(Binary::Equal, Width::I64, signature, null);
         stage.trap_when(uninitialized, WasmTrap::UninitializedElement)?;
         Ok(stage.signature_accepts(reference, signature, expected))

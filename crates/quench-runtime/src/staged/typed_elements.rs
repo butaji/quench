@@ -193,8 +193,8 @@ fn by_word<S: Stage>(stage: &mut S, kind: S::Word, (first, rest): (NativeKind, &
             stage.guard(named, miss)?;
             access(stage, first)
         }
-        Some((next, rest)) => stage.choose_leaving(named, |stage| access(stage, first),
-            |stage| by_word(stage, kind, (*next, rest), access, miss)),
+        Some((next, rest)) => stage.choose_leaving(named, #[inline(always)] |stage| access(stage, first),
+            #[inline(always)] |stage| by_word(stage, kind, (*next, rest), access, miss)),
     }
 }
 

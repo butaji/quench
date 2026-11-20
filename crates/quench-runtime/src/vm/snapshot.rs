@@ -572,7 +572,7 @@ impl<H: Host> Vm<H> {
                 .get(parent as usize)
                 .ok_or_else(|| SnapshotError("snapshot shape follows no parent".into()))?
                 .facts;
-            self.shapes.push(Shape::child(
+            push_child(&mut self.shapes, Shape::child(
                 Some(parent),
                 transition,
                 storage_len as usize,

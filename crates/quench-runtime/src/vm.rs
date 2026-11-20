@@ -266,6 +266,7 @@ mod primitive_bench;
 mod primitives;
 pub(crate) mod program_store;
 mod promise;
+mod host_frames;
 mod promise_aggregate;
 mod promise_async;
 mod promise_jobs;
@@ -1578,8 +1579,9 @@ impl ShapeLookupIndex {
     }
 }
 /// Facts a shape inherits from its chain: once a transition introduces one, every descendant
-/// keeps it. Two bytes, so `Shape` keeps its size; the top three bits hold the shape's
-/// dictionary trigger (`DICTIONARY_MASK`).
+/// keeps it. Two bytes, so `Shape` keeps its size; bits 10 and 11 hold the shape's child count
+/// (`CHILDREN_MASK`, not inherited), and the top three bits its dictionary trigger
+/// (`DICTIONARY_MASK`).
 #[derive(Clone, Copy, Default)]
 struct ShapeFacts(u16);
 impl ShapeFacts {
@@ -1641,6 +1643,24 @@ impl ShapeFacts {
                 | introduced(matches!(transition, ShapeTransition::FunctionLengthReconfigured), Self::LENGTH_RECONFIGURED)
                 | introduced(matches!(transition, ShapeTransition::Add { key, .. } if !matches!(key, property_key::PropertyKey::String(_))), Self::HAS_SYMBOL_KEY),
         )
+    }
+
+    /// The child count, in bits 10 and 11: none, exactly one, or `CHILDREN_MANY` for two or more,
+    /// which saturates. Set per shape by `push_child` as its children are added, and never
+    /// inherited: `Shape::child` clears the bits `extended_by` copies from the parent.
+    const CHILDREN_SHIFT: u32 = 10;
+    const CHILDREN_MASK: u16 = 0b11 << Self::CHILDREN_SHIFT;
+    const CHILDREN_MANY: u16 = 2;
+
+    /// The child count: 0, 1, or `CHILDREN_MANY`.
+    #[inline(always)]
+    fn children(self) -> u16 {
+        (self.0 & Self::CHILDREN_MASK) >> Self::CHILDREN_SHIFT
+    }
+
+    /// These facts with `children` as the child count.
+    fn with_children(self, children: u16) -> Self {
+        Self((self.0 & !Self::CHILDREN_MASK) | (children << Self::CHILDREN_SHIFT))
     }
 
     /// The dictionary trigger, in the top three bits: zero for none, else the trigger's
@@ -1833,12 +1853,33 @@ impl Shape {
             parent: parent.unwrap_or(NO_PARENT_SHAPE),
             transition,
             storage_len: u32::try_from(storage_len).expect("object property index exceeds u32"),
-            facts: parent_facts.extended_by(transition).with_dictionary_trigger(dictionary_trigger),
+            facts: parent_facts
+                .extended_by(transition)
+                .with_children(0)
+                .with_dictionary_trigger(dictionary_trigger),
             memo: std::cell::Cell::new(ShapeMemo::INITIAL),
             lookup_index: OnceCell::new(),
             last_child: std::cell::Cell::new(NO_LAST_CHILD),
         }
     }
+}
+
+/// Appends `child` to the shape table, counting it among its parent's children
+/// (`ShapeFacts::children`). A parent's first child is also its `last_child`, so a walk down a
+/// chain of single children (`Vm::predicted_run_capacity`) finds the child without the
+/// transition index. Every shape made from a parent is appended here, so the counts are exact
+/// for the table as it stands.
+pub(crate) fn push_child(shapes: &mut Vec<Shape>, child: Shape) {
+    let id = u32::try_from(shapes.len()).expect("object shape table exhausted");
+    if let Some(parent) = child.parent() {
+        let entry = &mut shapes[parent as usize];
+        let children = entry.facts.children();
+        if children == 0 {
+            entry.last_child.set(id);
+        }
+        entry.facts = entry.facts.with_children((children + 1).min(ShapeFacts::CHILDREN_MANY));
+    }
+    shapes.push(child);
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CallTarget {
@@ -3293,6 +3334,7 @@ impl<H: Host> Vm<H> {
         self.shape_constructors.clear();
         // The kept root forgets its transitions along with the index.
         self.shapes[0].last_child.set(NO_LAST_CHILD);
+        self.shapes[0].facts = self.shapes[0].facts.with_children(0);
         self.transitions.clear();
         self.shape_slot_memo.clear();
         self.shape_attribute_memo.clear();

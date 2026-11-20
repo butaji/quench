@@ -31,21 +31,29 @@ pub(super) fn lane_completes_return<H: Host>(cx: *mut LaneContext<H>, call: &Pen
         && (!caller_runs_general(cx, call) || retired && caller_loops(cx, call))
 }
 
-/// Whether `call`'s caller is a function of the running program whose view is not derived,
-/// so the general path runs it.
+/// Whether `call`'s caller runs without a derived view, so the general path runs it. A caller
+/// in another program (`PendingGeneralCall::caller_program`) is read in that program's table:
+/// mandreel's `global_init` calls its emitters across programs, and returning into it derived a
+/// view of all its 614K records for one run (peak RSS 110.9 -> 84.4 MB, no-jit).
 fn caller_runs_general<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall) -> bool {
     let vm = unsafe { vm(cx) };
-    // SAFETY: the context's table holds the running program's views for the lane run.
-    call.caller_program.is_none()
-        && unsafe { &*(*cx).views }
-            .get(vm.frames[call.caller].function as usize)
-            .is_some_and(|view| super::super::program_store::derived_lane_view(view).is_none())
+    let function = vm.frames[call.caller].function as usize;
+    let views = match &call.caller_program {
+        // SAFETY: the context's table holds the running program's views for the lane run.
+        None => unsafe { &*(*cx).views },
+        Some(saved) => match vm.programs.views_in_lane(saved.id) {
+            Some(views) => views,
+            None => return false,
+        },
+    };
+    views.get(function).is_some_and(|view| super::super::program_store::derived_lane_view(view).is_none())
 }
 
 /// Whether `call`'s caller loops, so its view repays itself where its loop runs on.
 fn caller_loops<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall) -> bool {
     let vm = unsafe { vm(cx) };
-    vm.programs.function_loops(unsafe { (*cx).program }, vm.frames[call.caller].function)
+    let program = call.caller_program.as_ref().map_or(unsafe { (*cx).program }, |saved| saved.id);
+    vm.programs.function_loops(program, vm.frames[call.caller].function)
 }
 
 /// A call the running body made through the helper path to a callee it could call by its

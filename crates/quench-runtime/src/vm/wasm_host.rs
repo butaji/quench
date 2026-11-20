@@ -345,16 +345,8 @@ impl<H: Host> Vm<H> {
         };
         let previous_program = self.replace_active_program(program);
         let previous_global = self.switch_realm_global(realm);
-        let native_depth = self.realm.promise.active_native.len();
-        self.realm
-            .promise
-            .active_native
-            .push(super::activation::NativeActivation {
-                callable: wrapper,
-                receiver: Value::UNDEFINED,
-                frame_depth: self.frames.len(),
-                boundary: super::activation::NativeCallBoundary::Opaque,
-            });
+        let native_depth = self.host_frame_count();
+        self.push_host_frame(wrapper, Value::UNDEFINED, self.frames.len(), super::activation::NativeCallBoundary::Opaque);
 
         // The compiled-callout boundary catches Rust panics. Catch here long
         // enough to restore the state this shortcut installs before resuming
@@ -375,7 +367,7 @@ impl<H: Host> Vm<H> {
             })
         }));
 
-        self.realm.promise.active_native.truncate(native_depth);
+        self.truncate_host_frames(native_depth);
         self.switch_realm_global(previous_global);
         self.set_active_program(previous_program);
         self.active_call_roots.truncate(call_roots);
@@ -728,7 +720,7 @@ mod tests {
             (7..20).collect::<Vec<_>>(),
             "the with object shadows the outer lexical HEAPU8"
         );
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
     }
 
@@ -940,7 +932,7 @@ mod tests {
             hits + 1,
             "a replaced method must be re-read and use the JS fallback"
         );
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert!(vm.frames.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
@@ -963,7 +955,7 @@ mod tests {
             )
             .unwrap_err();
         assert!(error.is_execution_terminated());
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert!(vm.frames.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
@@ -1180,7 +1172,7 @@ mod tests {
                         .is_err()
                 );
                 assert_eq!(vm.heap.root_count_for_test(), count);
-                assert!(vm.realm.promise.active_native.is_empty());
+                assert!(vm.host_frame_count() == 0);
                 assert!(vm.active_call_roots.is_empty());
                 assert_eq!(vm.active_program, ProgramId::MAIN);
             }
@@ -1269,7 +1261,7 @@ mod tests {
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
             Some(WasmValue::I32(71_113))
         );
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
     }
@@ -1310,7 +1302,7 @@ mod tests {
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
             Some(WasmValue::I32(1))
         );
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
     }
@@ -1351,7 +1343,7 @@ mod tests {
             vm.invoke_wasm(&instance, 1, &[]).unwrap(),
             Some(WasmValue::I32(1))
         );
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
     }
@@ -1400,7 +1392,7 @@ mod tests {
 
         assert_eq!(error.thrown_value(), Some(marker));
         assert_eq!(vm.heap.root_count_for_test(), roots_before);
-        assert!(vm.realm.promise.active_native.is_empty());
+        assert!(vm.host_frame_count() == 0);
         assert!(vm.active_call_roots.is_empty());
         assert_eq!(vm.active_program, crate::vm::ProgramId::MAIN);
         assert_eq!(vm.realm.globals, realm_before);

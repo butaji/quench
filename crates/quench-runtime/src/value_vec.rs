@@ -103,6 +103,12 @@ pub(crate) use crate::staged::object_encoding::INLINE_PROPERTY_COUNT;
 const MIN_CAPACITY: usize = (INLINE_PROPERTY_COUNT + 1).next_power_of_two();
 /// Range capacities are the size classes `capacity_class` derives, one free list each.
 const BUCKETS: usize = 128;
+/// The most an add that moves an object's run reserves for it, as a multiple of the length
+/// the run grows to: the size the shape tree predicts (`Vm::predicted_run_capacity`), clamped
+/// to this. A prediction that comes true saves the moves that growing by doubling would take;
+/// one that does not wastes at most what doubling would have wasted, since the reserve never
+/// exceeds twice the length.
+pub(crate) const PREDICTED_RUN_CAP_FACTOR: usize = 2;
 
 /// A size class's released runs, linked through each run's first value: a released run's
 /// values are dead, so its list costs no memory of its own. As a `Vec<u32>` per class, the
@@ -1032,7 +1038,8 @@ impl ValueArena {
 
     /// Append `value` past `vector`'s values, which an add of one property makes, moving to
     /// `shape`. Inline: an append that fits its range is the store alone; growing is out of line.
-    #[inline(always)] pub(crate) fn push(&mut self, vector: &mut ValueVec, value: Value, shape: u32) {
+    /// `want` is the capacity the run takes if the add moves it (`grow`), or zero for the next class.
+    #[inline(always)] pub(crate) fn push(&mut self, vector: &mut ValueVec, value: Value, shape: u32, want: usize) {
         debug_assert!(!vector.has_inline_property_storage());
         assert!(!vector.is_narrow(), "an add widens a narrow vector first");
         let len = self.len(*vector);
@@ -1044,7 +1051,7 @@ impl ValueArena {
             return;
         }
         if len == Self::ordered_capacity(*vector, len) {
-            self.grow(vector, MAX_ARENA_START);
+            self.grow(vector, MAX_ARENA_START, want);
             if vector.is_dictionary() {
                 self.dictionaries
                     .get_mut(&vector.dictionary_id())
@@ -1656,19 +1663,31 @@ impl ValueArena {
     /// the young range, as a new object's runs mostly do while its constructor adds
     /// properties, else bumped. An ordinary range for it left the young one dead in the
     /// nursery until the collection, and pushed the arena's end past the nursery's.
+    ///
+    /// `want` is the capacity an add that moves the run predicts for it. A young run takes it
+    /// in one jump where the nursery has the room, and reserves the tail past the class
+    /// (`Reservation`), so the adds up to `want` append in place. An ordinary run takes the
+    /// next class alone: its capacity is a fact of its length (`ordered_capacity`), so a tail
+    /// it could not release would be lost to the free lists.
     #[inline(never)]
-    fn grow(&mut self, vector: &mut ValueVec, max_start: usize) {
+    fn grow(&mut self, vector: &mut ValueVec, max_start: usize, want: usize) {
         assert!(!vector.is_narrow(), "growth widens a narrow vector first");
         let len = self.len(*vector);
         let capacity = self.capacity(*vector);
-        let next = grown_capacity(capacity, capacity + 1, GrowthPolicy::SizeClass);
+        let class = grown_capacity(capacity, capacity + 1, GrowthPolicy::SizeClass);
         let young = self.holds_young_run(*vector);
         // A reserved run (`Reservation`) takes the next class from its reservation.
         if young && self.reserved_room(*vector, capacity + 1) {
             return;
         }
-        if young && vector.start() + capacity == self.nursery.top && vector.start() + next <= self.nursery.end {
+        // The predicted tail is bumped from the nursery's room only, so it never grows the arena.
+        let in_place = young && vector.start() + capacity == self.nursery.top;
+        let room = if in_place { vector.start() } else { self.nursery.top };
+        let predicted = young && want > class && room + want <= self.nursery.end;
+        let next = if predicted { want } else { class };
+        if in_place && vector.start() + next <= self.nursery.end {
             self.nursery.top = vector.start() + next;
+            self.reserve_predicted_run(vector.start(), next, class);
             return;
         }
         let start = if young { self.young_run(next) } else { self.allocate(next, max_start) };
@@ -1683,6 +1702,9 @@ impl ValueArena {
             vector.use_dictionary(id);
             return;
         };
+        if predicted {
+            self.reserve_predicted_run(start, next, class);
+        }
         if len != 0 {
             self.values
                 .copy_within(vector.start()..vector.start() + len, start);
@@ -1691,9 +1713,21 @@ impl ValueArena {
         vector.start = start as u32 | (vector.start & !START_MASK);
     }
 
+    /// Records the young run at `start` as `capacity` values long, past its `class`, so its owner
+    /// appends in place up to that length (`reserved_room`). The tail is the owner's alone until
+    /// the young cycle ends, which `forget_reservations` marks, and an entry another run evicts
+    /// only loses that room.
+    #[inline(always)]
+    fn reserve_predicted_run(&mut self, start: usize, capacity: usize, class: usize) {
+        if capacity > class {
+            self.reservations[Reservation::index(start)] =
+                Reservation { start: start as u32, end: (start + capacity) as u32, cycle: self.reservation_cycle };
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn migrate_to_dictionary_for_test(&mut self, vector: &mut ValueVec) {
-        self.grow(vector, 0);
+        self.grow(vector, 0, 0);
     }
 
     pub(crate) fn vector_stats(&self, vector: ValueVec) -> (usize, usize) {

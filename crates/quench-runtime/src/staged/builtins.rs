@@ -56,10 +56,10 @@ pub(crate) fn char_code_at<S: Stage>(stage: &mut S, width: UnitWidth, units: S::
     index: S::Word, miss: S::Miss) -> Option<S::Word> {
     let index = int32_payload(stage, index, miss)?;
     let inside = stage.ult(index, length);
-    Some(stage.choose(inside, |stage| {
+    Some(stage.choose(inside, #[inline(always)] |stage| {
         let unit = unit_at(stage, width, units, index);
         super::value::int_word(stage, unit)
-    }, |stage| stage.constant(Value::NAN.to_bits())))
+    }, #[inline(always)] |stage| stage.constant(Value::NAN.to_bits())))
 }
 
 /// `charCodeAt(index)` of the flat string of width `width` at `units` for an index the caller proves

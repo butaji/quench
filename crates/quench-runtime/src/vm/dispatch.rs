@@ -723,7 +723,9 @@ impl<H: Host> Vm<H> {
         if i.result_flags() == 0 || i.op().result_layout().allowed_flags() == 0 {
             return Self::decode_row(i, context).map(|operation| (operation, 0));
         }
-        crate::staged::Operation::<u64, ()>::decode_completed(i, context)
+        // Every decoder the row takes (`decode_row`: the general one, a name load, the lane's), over the record without its flags.
+        let (plain, flags) = crate::staged::Operation::<u64, ()>::completion_split(i)?;
+        Self::decode_row(plain, context).map(|operation| (operation, flags))
     }
 
     /// Runs `operation` as its staged row, then completes the frame as the record asks: a return of the
@@ -781,10 +783,40 @@ impl<H: Host> Vm<H> {
                 self.staged_suspend(p, site, i, pc)
             }
             // A row that decides its opcode alone runs as its staged row on the frame, which never declines.
-            Runner::RowOnly => match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
+            // Decoded over the program's tables: a row-only record that names a site or constant (a template, a method
+            // site) decodes only with them.
+            Runner::RowOnly => match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::of(p)) {
                 RowRun::Done(_) => Ok(StepResult::Continue),
                 RowRun::Stop(stop) => stop,
-                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it"),
+                // A unary's row leaves where its words decide nothing the frame proves (an immediate no tag class
+                // names, a Number row's miss); the VM's general unary (`Vm::unary`) answers every operand.
+                RowRun::Declined if i.op() == crate::bytecode::Op::Unary => {
+                    let value = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
+                    self.write(f, i.result_register(), value);
+                    if i.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
+                        return Ok(StepResult::Return(value));
+                    }
+                    Ok(StepResult::Continue)
+                }
+                // A named read whose row leaves (a form its decode or plan does not take) is the VM's named read
+                // (`load_field_step`), completed as the record asks: a `this` write, a return.
+                RowRun::Declined if i.op() == crate::bytecode::Op::GetField => {
+                    let lookup = i.field_lookup().expect("a named read names its lookup");
+                    let value = match self.load_field_step(p, f, *pc, lookup, Some(i.result_register()), allow_inline_calls && !i.writes_current_this())? {
+                        super::call_out::Loaded::Value(value) => value,
+                        super::call_out::Loaded::Pushed(step) => return Ok(step),
+                    };
+                    self.write(f, i.result_register(), value);
+                    if i.writes_current_this() {
+                        self.store_field_sink(p, f, i)?;
+                    }
+                    if i.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
+                        return Ok(StepResult::Return(value));
+                    }
+                    Ok(StepResult::Continue)
+                }
+                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it: {:?} flags {:#x} register a {:?} at pc {}",
+                    i.op(), i.result_flags(), self.frames[f].registers.get(usize::from(i.a())).copied(), *pc),
             },
             // An arithmetic binary: its staged row first, then the record's general `Binary` on a miss. The Number
             // relation of `==` or `===` leaves a pair that is no Number, and that relation names both operators, so
