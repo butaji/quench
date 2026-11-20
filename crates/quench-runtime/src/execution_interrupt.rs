@@ -12,11 +12,16 @@ type NativeWaker = dyn Fn() + Send + Sync;
 /// The process-wide attention byte compiled code polls first: nonzero while any state's attention
 /// flag is raised. It may read nonzero when no run needs attention (the poll then reads the run's
 /// own flag), but never zero while a run's flag is raised.
+// Exported by name: an AOT executable's base bodies poll it (`aot_image::Symbol::Attention`).
+#[unsafe(export_name = "quench_execution_attention")]
 static ATTENTION: AtomicU8 = AtomicU8::new(0);
 /// How many states have their attention flag raised; `ATTENTION` is zero only when it is zero.
 static ATTENTION_STATES: AtomicUsize = AtomicUsize::new(0);
 
 /// The address of the process-wide attention byte, which a b-jit poll reads before its run's flag.
+/// The symbol an object names the attention byte by (`attention_address`).
+pub(crate) const ATTENTION_SYMBOL: &str = "quench_execution_attention";
+
 pub(crate) fn attention_address() -> u64 {
     std::ptr::addr_of!(ATTENTION) as usize as u64
 }
