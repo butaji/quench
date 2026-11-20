@@ -2157,6 +2157,9 @@ static TsType *cContextualType(TsNode *e) {
       if (idx < 0) return cUnported("contextual type of a callee");
       TsType *f = cExprType(p->expression);
       if (f == cErrorType) return f;
+      /* an untyped call (a callee of type any) resolves to anySignature, which has no parameters: every argument is any
+       * (getTypeAtPosition of anySignature). An unannotated function argument then has no contextual signature */
+      if (f == cAnyType) return cAnyType;
       if (!(f->flags & TF_Object)) return cUnported("contextual type of a call of a non-object");
       cResolveSignatures(f);
       int ns = p->kind == TSK_NewExpression ? f->nconstruct : f->ncall;
