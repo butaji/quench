@@ -2739,6 +2739,20 @@ lane_handler! {
     }
 }
 
+/// Whether a view can select accumulator field `acc` for opcode `op`'s record
+/// (`accumulator_field`): a register field it reads, or the first register of its register pair.
+const fn accumulator_readable(op: Op, acc: u8) -> bool {
+    let fields = crate::bytecode::InstructionField::ALL;
+    let mut at = 0;
+    while at < fields.len() {
+        if fields[at].accumulator() == acc && op.field_layout(fields[at]).reads_register() {
+            return true;
+        }
+        at += 1;
+    }
+    acc == ACC_PAIR && matches!(op.immediate_layout(), ImmediateLayout::RegisterPair)
+}
+
 lane_handler! {
     /// The lane handler of every opcode `admits_row` admits, generated from its staged row
     /// rather than written: the record decodes by the row family's one decoder
@@ -2746,6 +2760,12 @@ lane_handler! {
     /// step picks the continuation. `OP` and `ACC` are static, so rustc folds the decode and the
     /// row to the residual a hand-written handler would be (Futamura's first projection).
     pub(super) fn generated_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
+        // An accumulator field the opcode reads no register at: the view never selects this
+        // instance, which every table and handler set still names. It continues as the row that
+        // reads none, so its code is this one jump rather than another copy of the row.
+        if const { ACC != ACC_NONE && !accumulator_readable(LaneFields::<OP, FLAG>::OPCODE, ACC) } {
+            sibling!(generated_row::<H, OP, ACC_NONE, FLAG>, r, ip, view)
+        }
         if LaneFields::<OP, FLAG>::FLAG_ROLE && FLAG == FLAG_UNREAD {
             let flagged: Handler = if i.imm() != 0 { generated_row::<H, OP, ACC, FLAG_SET> } else { generated_row::<H, OP, ACC, FLAG_CLEAR> };
             requicken::<H>(ip, flagged);

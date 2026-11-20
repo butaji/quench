@@ -141,6 +141,15 @@ pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
     { None }
 }
 
+/// The ISA of an AOT lane body: the JIT's, with the frame pointers its leaves' tail calls to
+/// the base body's entries need, as the stencils that base body is built from have.
+pub(super) fn ahead_lane_isa() -> Option<Arc<TargetIsa>> {
+    #[cfg(feature = "jit")]
+    { target_isa_with(JS_JIT_OPT_LEVEL, CodePublication::Stencil, CompileLevel::run_default()) }
+    #[cfg(not(feature = "jit"))]
+    { None }
+}
+
 /// The executable-memory ISA at `opt_level`: the Wasm tier's, which picks its own level.
 pub(super) fn target_isa_at(_opt_level: &'static str) -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]
