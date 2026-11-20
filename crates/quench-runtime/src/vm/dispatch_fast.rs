@@ -2955,16 +2955,17 @@ impl LaneStack {
     fn spill_plain(&self) {
         // The records change: the proved calls' bound no longer holds.
         self.plain.bound.set(0);
-        // Innermost first; each record keeps its side record where its completion carries a
-        // payload (`record_sided`), which a header's carries exactly then.
-        let frames: Vec<ActivationView> = self.frames_innermost().collect();
+        // Innermost first, the frames above the records floor alone (`frames_to_spill`); each
+        // record keeps its side record where its completion carries a payload (`record_sided`),
+        // which a header's carries exactly then.
+        let (floor, sides_below, frames) = self.frames_to_spill();
         // SAFETY: the walk above ended; no reference into the records or side records lives.
         let (records, sides) = unsafe { (&mut *self.activation_records.get(), &mut *self.sides.get()) };
-        debug_assert!(frames.len() <= records.capacity(), "the activation limit counts plain activations");
-        sides.clear();
+        debug_assert!(floor + frames.len() <= records.capacity(), "the activation limit counts plain activations");
+        sides.truncate(sides_below);
         // SAFETY: records hold no drop glue; the activation limit keeps every frame within the
         // capacity, so each push has its slot.
-        unsafe { records.set_len(0) };
+        unsafe { records.set_len(floor) };
         for frame in frames.into_iter().rev() {
             let activation = frame.record();
             if Self::record_sided(&activation) { sides.push(Self::record_side(&activation, frame.payload())); }
