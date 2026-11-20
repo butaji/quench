@@ -121,6 +121,7 @@ impl ShapeTransitionIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vm::push_child;
     use crate::vm::{DictionaryTrigger, DEFAULT_SHAPE_ATTRIBUTES, property_key::PropertyKey};
 
     #[test]

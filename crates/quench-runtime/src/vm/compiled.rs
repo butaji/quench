@@ -131,6 +131,7 @@ mod declared_checks;
 pub(super) mod emit_machine;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
+mod admission;
 #[cfg(all(test, feature = "aot"))]
 #[path = "compiled/lane_unit_polymorphic_tests.rs"]
 mod lane_unit_polymorphic_tests;
@@ -1473,6 +1474,9 @@ pub(super) struct VmFacts<'a> {
     /// escapes nowhere (`lane_region::virtual_objects`). The code tests that the plan still
     /// holds where it would construct, so it takes no dependency on it.
     pub(super) construct_plans: Option<&'a dyn Fn(u32, u32) -> Option<ScalarConstructPlan>>,
+    /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards
+    /// are taken as proved by the caller, so the lowering states them as held rather than testing them.
+    pub(super) proven_entry: bool,
 }
 
 /// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
@@ -1488,14 +1492,14 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, proven_entry: false };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, proven_entry: false }
     }
 }
 
@@ -3780,6 +3784,10 @@ pub(super) struct LaneMethod {
     /// Where its scalar entry lies in the same code (`lane_region::scalar`), which a native call
     /// that proves its numeric arguments calls by the entry cell's `scalar` word.
     scalar: Option<usize>,
+    /// Where its proven entry lies in the same code, with the entry types of the parameters it skips the guards of
+    /// (`lane_region::LoweredRegion::entry_types`): a direct caller that proves each argument has its type calls it
+    /// (`EntryCell::proven_entry`).
+    proven: Option<(usize, Box<[crate::typed_ir::Type]>)>,
     /// Where its row entries lie in the same code (`entry_rows` and its proven-arguments copy, a b-jit body's), which a
     /// b-jit direct call calls by the entry cell's `rows` and `proven` words; none for a Cranelift body.
     rows: Option<entry_cell::RowEntries>,
@@ -3821,6 +3829,9 @@ pub(super) struct LaneMethod {
     /// (`Heap::Realm`) and every callee it names is that realm's, so a switch to another realm
     /// changes nothing it relies on (`ProgramStore::retire_native_calls_across_realms`).
     pub(in crate::vm) realm_bound: bool,
+    /// Its entry types and its activation's result type (`lane_region::TypeSummary`), where it is a
+    /// whole function's body: a direct caller types the call's result with it (`DirectCallee::summary`).
+    pub(in crate::vm) summary: Option<lane_region::TypeSummary>,
 }
 
 impl LaneMethod {
@@ -3843,9 +3854,26 @@ impl LaneMethod {
         self.entry as usize
     }
 
+    /// Its type summary, if its lowering made one (`lane_region::TypeSummary`).
+    pub(in crate::vm) fn summary(&self) -> Option<&lane_region::TypeSummary> {
+        self.summary.as_ref()
+    }
+
     /// The address of its scalar entry, if it has one (`EntryCell::scalar`).
     pub(super) fn scalar_address(&self) -> Option<usize> {
         self.scalar
+    }
+
+    /// The address of its proven entry, if it has one (`EntryCell::proven_entry`).
+    pub(super) fn proven_address(&self) -> Option<usize> {
+        self.proven.as_ref().map(|(address, _)| *address)
+    }
+
+    /// The entry types its proven entry takes its parameters at, the types a direct caller proves its arguments have
+    /// before it calls the proven entry (`call_frames`). Read through this one accessor, which the summary of the
+    /// body's parameter types (`TypeSummary`) may come to back.
+    pub(super) fn entry_param_types(&self) -> Option<&[crate::typed_ir::Type]> {
+        self.proven.as_ref().map(|(_, params)| &params[..])
     }
 
     /// Its row entries, if it has them (`EntryCell::rows`, `proven`, `numbers`, `uses_this`).
