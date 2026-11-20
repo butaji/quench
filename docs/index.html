@@ -27,12 +27,9 @@
     <meta name="twitter:title" content="Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust" />
     <meta name="twitter:description" content="Quench: JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables." />
     <meta name="twitter:image" content="https://quench.run/og.png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap"
-        rel="stylesheet" />
+<link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
     <style>
+        @font-face{font-family:'Inter';font-style:normal;font-display:swap;font-weight:100 900;src:url(/assets/fonts/inter.woff2) format('woff2')}@font-face{font-family:'JetBrains Mono';font-style:normal;font-display:swap;font-weight:100 800;src:url(/assets/fonts/jetbrains-mono.woff2) format('woff2')}
         * {
             margin: 0;
             padding: 0;
@@ -257,8 +254,8 @@
             cursor: pointer;
             background: none;
             border: 0;
-            padding: 6px 10px;
-            margin: -6px -10px;
+            padding: 12px 14px;
+            margin: -12px -14px;
             border-radius: 8px;
             font-family: 'Inter', sans-serif;
             font-weight: 400;
@@ -298,7 +295,7 @@
             font-family: 'Inter', sans-serif;
             font-weight: 400;
             font-size: 1rem;
-            color: #A9A9A9;
+            color: #5F6368;
             line-height: 1.5;
             margin-top: 1rem;
             max-width: 260px;
@@ -308,7 +305,7 @@
             font-family: 'Inter', sans-serif;
             font-weight: 400;
             font-size: 0.875rem;
-            color: #6B7280;
+            color: #555B66;
             line-height: 1.5;
             margin-top: 0.75rem;
             max-width: 100%;
@@ -335,7 +332,7 @@
             font-family: 'Inter', sans-serif;
             font-weight: 400;
             font-size: 1rem;
-            color: #A9A9A9;
+            color: #5F6368;
             line-height: 1.5;
             margin-top: 0;
             max-width: 260px;
@@ -386,11 +383,11 @@
         }
 
         .code-block .string {
-            color: #6B7280;
+            color: #555B66;
         }
 
         .code-block .num {
-            color: #6B7280;
+            color: #555B66;
         }
 
         @media (max-width: 560px) {
@@ -460,129 +457,8 @@
             transform: scale(1.1) rotate(-4deg);
         }
 
-        /* ─── Assembly Loading Animation ─── */
-        .card {
-            opacity: 0;
-            transform: scale(0.92) translateY(30px);
-            animation: assembleCard 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards,
-                       cardSolid 0.5s ease forwards;
-            animation-delay: 0.1s, 1.3s;
-        }
+        .card { background: #111716; border-color: #111716; }
 
-        @keyframes assembleCard {
-            to {
-                opacity: 1;
-                transform: scale(1) translateY(0);
-            }
-        }
-
-        .brand-panel {
-            opacity: 0;
-            transform: translateX(-60px);
-            animation: slideInRight 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 0.35s;
-        }
-
-        .metal-panel {
-            opacity: 0;
-            transform: translateX(60px);
-            animation: slideInLeft 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 0.45s;
-        }
-
-        .divider {
-            transform: scaleX(0);
-            animation: expandX 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards,
-                       fadeIn 0.3s ease forwards;
-            animation-delay: 0.55s, 1.2s;
-        }
-
-        .orange-panel {
-            opacity: 0;
-            transform: translateY(50px);
-            animation: slideInUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 0.65s;
-        }
-
-        .content-panel {
-            opacity: 0;
-            transform: translateX(60px);
-            animation: slideInLeft 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 0.75s;
-        }
-
-        .github-link {
-            opacity: 0;
-            transform: translateY(-20px);
-            animation: slideInDown 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 1.0s;
-        }
-
-        .nav-row,
-        .code-block {
-            opacity: 0;
-            animation: fadeIn 0.5s ease forwards;
-        }
-
-        .nav-row   { animation-delay: 0.9s; }
-        .code-block { animation-delay: 1.05s; }
-
-        .brand-text,
-        .brand-dot {
-            opacity: 0;
-            animation: fadeIn 0.4s ease forwards;
-            animation-delay: 0.55s;
-        }
-
-        .stripes {
-            opacity: 0;
-            transform: scaleY(0);
-            transform-origin: top;
-            animation: expandY 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-            animation-delay: 0.85s;
-        }
-
-        .metric-area {
-            opacity: 0;
-            animation: fadeIn 0.4s ease forwards;
-            animation-delay: 1.0s;
-        }
-
-        @keyframes slideInRight {
-            to { opacity: 1; transform: translateX(0); }
-        }
-
-        @keyframes slideInLeft {
-            to { opacity: 1; transform: translateX(0); }
-        }
-
-        @keyframes slideInUp {
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        @keyframes slideInDown {
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        @keyframes expandX {
-            to { transform: scaleX(1); }
-        }
-
-        @keyframes expandY {
-            to { opacity: 1; transform: scaleY(1); }
-        }
-
-        @keyframes cardSolid {
-            to {
-                background: #111716;
-                border-color: #111716;
-            }
-        }
-
-        @keyframes fadeIn {
-            to { opacity: 1; }
-        }
-    
         /* ─── Carousel UX ─── */
         .nav-arrow:focus-visible,
         .github-link:focus-visible,
@@ -626,7 +502,7 @@
             transition: background 0.2s;
         }
 
-        .dot:hover { background: #A9A9A9; }
+        .dot:hover { background: #5F6368; }
         .dot[aria-current="true"] { background: #EF5102; }
 
         .tui-header { overflow-wrap: anywhere; }
@@ -638,7 +514,7 @@
             translate: -50% 0;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.75rem;
-            color: #6B7280;
+            color: #555B66;
             text-decoration: none;
             padding: 6px 12px;
             border-radius: 8px;
@@ -741,7 +617,7 @@
             overflow-wrap: anywhere;
         }
 
-        .tile pre .c { color: #6B7280; }
+        .tile pre .c { color: #555B66; }
         .tile pre .p { color: #EF5102; }
 
         .stat-num {
@@ -765,7 +641,7 @@
             margin: 0.75rem 0 0.25rem;
         }
 
-        .tile .stat-note { font-size: 0.875rem; line-height: 1.45; color: #6B7280; }
+        .tile .stat-note { font-size: 0.875rem; line-height: 1.45; color: #555B66; }
         .tile.orange .stat-note { color: #1C1C1E; }
         .tlink { color: #1C1C1E; font-weight: 600; text-decoration: underline; text-decoration-color: #EF5102; text-underline-offset: 3px; }
         .tlink:hover { color: #EF5102; }
@@ -773,7 +649,7 @@
         .tile.orange .tlink:hover { color: #F0F0F0; }
         .tile.orange p { color: #1C1C1E; }
         #start, #contribute { scroll-margin-top: 1rem; }
-        .tile .fine { font-size: 0.8125rem; color: #6B7280; }
+        .tile .fine { font-size: 0.8125rem; color: #555B66; }
 
         .faq details { border-top: 1px solid #DCDCDC; }
         .faq details:first-of-type { border-top: 0; }
@@ -827,7 +703,7 @@
             text-align: center;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.75rem;
-            color: #6B7280;
+            color: #555B66;
         }
 
         .foot a { color: #3C3C3C; }
