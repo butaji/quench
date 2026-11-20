@@ -25,6 +25,7 @@ static bool cIsThisless(TsSymbol *s);
 static TsType *cDeclaredTypeOfClassOrInterface(TsSymbol *sym);
 static TsType *cGetIndexedAccessType(TsType *o, TsType *ix);
 static TsType *cGetIndexType(TsType *t);
+static TsType *cGetUnionType(TsType **in, int n);
 static int cInstTotal;              /* totalInstantiationCount (getInstantiationCount) */
 static int cInstDepth;              /* instantiationDepth */
 
@@ -304,7 +305,42 @@ static TsType *cInstantiateAnonymousType(TsType *target, TsMapper *m) {
   r->symbol = target->symbol;
   r->target = target;
   r->mapper = m;
+  r->typeNode = target->typeNode;      /* mapped types: their declaration */
+  r->mapTp = target->mapTp;
+  r->mapConstraint = target->mapConstraint;
   return r;
+}
+
+/* instantiateConstituent (instantiateMappedType): a constituent of the homomorphic type variable is instantiated
+ * with the variable bound to it */
+static TsType *cInstantiateConstituent(TsType *target, TsType *tv, TsType *t, TsMapper *m) {
+  if (!(t->flags & (TF_Any | TF_Unknown | TF_Object | TF_Intersection | TF_TypeParameter | TF_IndexedAccess | TF_Conditional)))
+    return t;
+  if (t->flags & TF_Any) return cUnported("homomorphic mapped type over any");
+  if (t->flags & TF_Object && (t->objectFlags & OF_Reference)) return cUnported("homomorphic mapped type over a reference");
+  TsMapper *unary = cNewMapper(MK_Simple, cCopyTypes(&tv, 1), cCopyTypes(&t, 1), 1);
+  TsMapper *pm = m ? cNewMapper(MK_Merged, NULL, NULL, 0) : unary;
+  if (m) { pm->m1 = unary; pm->m2 = m; }
+  return cInstantiateAnonymousType(target, pm);
+}
+
+/* instantiateMappedType: a homomorphic mapped type (keyof T with a type parameter T) over an instantiated T that
+ * changed distributes over its union constituents; other mapped types are anonymous instantiations */
+static TsType *cInstantiateMappedType(TsType *target, TsMapper *m) {
+  TsType *tv = target->mapConstraint && (target->mapConstraint->flags & TF_Index) && target->mapConstraint->ixOf &&
+               (target->mapConstraint->ixOf->flags & TF_TypeParameter) ? target->mapConstraint->ixOf : NULL;
+  if (tv) {
+    TsType *mv = cInstantiate(tv, m);
+    if (mv != tv) {
+      if (mv->flags & TF_Union) {
+        TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(mv->ntypes ? mv->ntypes : 1));
+        for (int i = 0; i < mv->ntypes; i++) parts[i] = cInstantiateConstituent(target, tv, mv->types[i], m);
+        return cGetUnionType(parts, mv->ntypes);
+      }
+      return cInstantiateConstituent(target, tv, mv, m);
+    }
+  }
+  return cInstantiateAnonymousType(target, m);
 }
 
 /* getObjectTypeInstantiation (67951) for anonymous object types */
@@ -328,7 +364,7 @@ static TsType *cObjectTypeInstantiation(TsType *t, TsMapper *m) {
   TsInst *e = cInstFind(target, targs, n);
   if (e) return e->val;
   TsMapper *nm = cCreateTypeMapper(target->outerTps, targs, n);
-  TsType *r = cInstantiateAnonymousType(target, nm);
+  TsType *r = (target->objectFlags & OF_Mapped) ? cInstantiateMappedType(target, nm) : cInstantiateAnonymousType(target, nm);
   r->couldContain = couldContain ? 1 : 2;   /* set explicitly for anonymous results (68070) */
   cInstAdd(target, targs, n, r);
   return r;
@@ -541,14 +577,7 @@ static TsType *cInstantiateWorker(TsType *t, TsMapper *m) {
       return changed ? cTypeReference(t->target, na, t->nargs) : t;
     }
     if (t->objectFlags & OF_Anonymous) return cObjectTypeInstantiation(t, m);
-    if (t->objectFlags & OF_Mapped) {
-      /* instantiateMappedType: the same node under the combined mapper */
-      TsType *r = cNewType(TF_Object);
-      r->objectFlags = OF_Mapped;
-      r->typeNode = t->typeNode;
-      r->mapper = cCombineMappers(t->mapper, m);
-      return r;
-    }
+    if (t->objectFlags & OF_Mapped) return cObjectTypeInstantiation(t, m);   /* getObjectTypeInstantiation: cached by the outer type arguments */
     return t;
   }
   if (t->flags & (TF_Union | TF_Intersection)) {

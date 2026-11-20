@@ -104,6 +104,8 @@ typedef struct TsType {
   struct CondRoot *root;
   struct TsType *condCheck, *condExtends;
   struct TsMapper *condMapper, *condCombined;
+  /* mapped types (getTypeFromMappedTypeNode): the type parameter of the node and the constraint type */
+  struct TsType *mapTp, *mapConstraint;
 } TsType;
 
 struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; };
@@ -186,6 +188,8 @@ static TsType *cUnported(const char *what) {
 static TsType *cTypeFromNode(TsNode *node);
 static TsType *cTypeOfSymbol(TsSymbol *sym);
 static TsType *cGetTypeFromConditionalTypeNode(TsNode *n);
+static bool cIsGenericIndex(TsType *t);
+static TsType *cConstraintOf(TsType *tp);                   /* ts-relate.h */
 static uint8_t *cVariances(TsType *tg);             /* ts-relate.h */
 static bool cIsRelatedWith(TsType *s, TsType *t, int rel);   /* ts-relate.h */
 static bool cIsSignatureName(BName n);
@@ -221,6 +225,20 @@ static TsType *cLiteralType(uint32_t flags, const char *text, int n) {
   }
   cLitCache[cLitN++] = l;
   return l;
+}
+
+/* getFreshTypeOfLiteralType: the fresh object of a regular literal, created once (a type of the checker) */
+static TsType *cFreshLiteral(TsType *r) {
+  if (r->litFresh) return r->litFresh;
+  TsType *f = cNewType(r->flags);
+  f->text = r->text;
+  f->textLen = r->textLen;
+  f->litNum = r->litNum;
+  f->litRegular = r;
+  f->litFresh = f;
+  r->litRegular = r;
+  r->litFresh = f;
+  return f;
 }
 
 static bool cIsThislessInterface(TsSymbol *sym);
@@ -336,7 +354,7 @@ static TsType *cGenericAliasReference(TsSymbol *sym, TsNode *ref) {
   TsNode *ad = sym->decls[0];
   int ntp = ad->typeParameters->n;
   if (!sym->aliasHolder) {
-    TsType *h = cNewType(TF_Any);
+    TsType *h = ts_arena_zalloc(sizeof(TsType));   /* the holder is not a type of the checker (not counted) */
     h->typeParams = ts_arena_alloc(sizeof(TsType *) * (size_t)ntp);
     h->ntypeParams = 0;
     for (int i = 0; i < ntp; i++) {
@@ -849,7 +867,8 @@ static bool cIsGenericObject(TsType *t) {
     return false;
   }
   if (t->flags & TF_Object) {
-    if (t->objectFlags & OF_Mapped) cUnported("generic check of a mapped type");
+    /* isGenericMappedType: a generic index type as the constraint */
+    if (t->objectFlags & OF_Mapped) return cIsGenericIndex(t->mapConstraint);
     return false;
   }
   return (t->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Conditional)) != 0;
@@ -1043,8 +1062,14 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
       if (l->kind == TSK_NullKeyword) return cNullType;
       if (l->kind == TSK_TrueKeyword) return cTrueType;
       if (l->kind == TSK_FalseKeyword) return cFalseType;
-      if (l->kind == TSK_StringLiteral) return cLiteralType(TF_StringLiteral, l->text, l->textLen);
-      if (l->kind == TSK_NumericLiteral) return cLiteralType(TF_NumberLiteral, l->text, l->textLen);
+      /* getTypeFromLiteralTypeNode: checkExpression of the literal, whose fresh type is created with it */
+      if (l->kind == TSK_StringLiteral || l->kind == TSK_NumericLiteral) {
+        uint32_t fl = l->kind == TSK_StringLiteral ? TF_StringLiteral : TF_NumberLiteral;
+        TsType *r = cLiteralType(fl, l->text, l->textLen);
+        if (fl == TF_NumberLiteral) r->litNum = cNumericLiteralValue(l->text, l->textLen);
+        cFreshLiteral(r);
+        return r;
+      }
       return cUnported("literal type value");
     }
     case TSK_UnionType: case TSK_IntersectionType: {
@@ -1061,10 +1086,18 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
     case TSK_ConditionalType: return cGetTypeFromConditionalTypeNode(n);
     case TSK_InferType: return cTypeOfTypeParameter(cGetMergedSymbol(n->typeParameter->symbol));   /* getTypeFromInferTypeNode */
     case TSK_MappedType: {
-      /* a mapped type object (resolveMappedTypeMembers): its members come from the literal keys of the constraint */
+      /* getTypeFromMappedTypeNode: the object, its type parameter, then the constraint (eagerly, as TypeScript does) */
       TsType *t = cNewType(TF_Object);
       t->objectFlags = OF_Mapped;
+      t->symbol = n->symbol;
       t->typeNode = n;
+      n->resolvedType = t;
+      TsType *P = cTypeOfTypeParameter(cGetMergedSymbol(n->typeParameter->symbol));
+      t->mapTp = P;
+      /* getConstraintOfTypeParameter: hasNonCircularBaseConstraint walks the chain of type parameter constraints */
+      for (TsType *b = P, *g = NULL; b && (b->flags & TF_TypeParameter) && !b->isThisType && b != g; b = cConstraintOf(b)) g = b;
+      TsType *c = cConstraintOf(P);
+      t->mapConstraint = c ? c : cErrorType;
       return t;
     }
     case TSK_TupleType: {
@@ -1502,7 +1535,7 @@ static void cResolveMappedMembers(TsType *t) {
   TsNode *tp = mn->typeParameter;
   TsType *P = cTypeOfTypeParameter(cGetMergedSymbol(tp->symbol));
   t->members = bTableNew();
-  TsType *c = cTypeFromNodeM(tp->constraint, t->mapper);
+  TsType *c = cInstantiate(t->mapConstraint, t->mapper);
   if (c == cErrorType) return;
   TsType **keys = c->flags & TF_Union ? c->types : &c;
   int nk = c->flags & TF_Union ? c->ntypes : 1;
