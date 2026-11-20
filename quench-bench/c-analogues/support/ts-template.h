@@ -16,6 +16,8 @@
 typedef struct { TsType *tpl; } CTplEntry;
 static TsType **cTplList;
 static int cTplN, cTplCap;
+/* the template literal types live in the checker arena, which every checker run resets */
+static void cResetTemplateTypes(void) { cTplN = 0; }
 typedef struct { TsSymbol *sym; TsType *type; TsType *res; } CSmEntry;
 static CSmEntry *cSmList;
 static int cSmN, cSmCap;

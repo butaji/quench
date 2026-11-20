@@ -59,6 +59,7 @@
 #include "support/ts-checker-vars.h"
 #include "support/ts-relate.h"
 #include "support/ts-checker-class.h"
+#include "support/ts-checker-iface.h"
 #include "support/ts-checker-expr.h"
 #include "support/ts-checker-body.h"
 #include "support/ts-checker-expected.h"
@@ -343,6 +344,7 @@ static void cPrintMembersOf(TsNode *n) {
 
 static void runChecker(void) {
   cResetTypeCaches();
+  cResetTemplateTypes();
   cResetRelationCaches();
   cDiagCount = 0;
   cNDupPairs = 0;
@@ -359,6 +361,9 @@ static void runChecker(void) {
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckVariableLike);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cResolveDeclaredMembersOf);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckClassBase);
+  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckInterfaceDecl);
+  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckHeritageArgs);
+  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckTypeReferenceArgs);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckExpressionNode);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckDeclarationTypes);
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cCheckBodies(programFiles[i]);

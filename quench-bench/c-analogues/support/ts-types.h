@@ -45,7 +45,7 @@ enum { OF_Class = 1, OF_Interface = 2, OF_Reference = 4, OF_Tuple = 8, OF_Anonym
        OF_ObjectLiteral = 128 };
 
 typedef struct CSig CSig;
-typedef struct CIndexInfo { struct TsType *keyType, *type; bool isReadonly; } CIndexInfo;
+typedef struct CIndexInfo { struct TsType *keyType, *type; bool isReadonly; TsNode *decl; } CIndexInfo;
 /* an instantiation of a generic type by type arguments (the type's instantiations list) */
 typedef struct TsInst { struct TsType **key; int n; struct TsType *val; } TsInst;
 
@@ -70,6 +70,9 @@ typedef struct TsType {
   struct TsType **outerTps;      /* anonymous types: the outer type parameters of the declaration */
   int nOuterTps;
   bool outerDone, instsInit, declDone, basesDone;
+  bool indexResolved;            /* cResolveIndexInfos has run (own and inherited index infos) */
+  struct TsType **instBases;     /* the base types of the members table, instantiated (cResolveObjectMembers) */
+  int ninstBases;
   TsInst *insts;                 /* instantiations of this generic type, by type arguments */
   int ninsts, capInsts;
   uint8_t couldContain;          /* couldContainTypeVariables: 0 not computed, 1 yes, 2 no */
@@ -1523,10 +1526,13 @@ static void cResolveObjectMembers(TsType *t, TsType *src, TsType **typeParams, T
   cResolveBaseTypes(src);
   TsSymTable *res = src->nbases ? cTableCopy(own) : own;
   TsType *thisArg = n ? typeArgs[n - 1] : NULL;
+  t->instBases = ts_arena_alloc(sizeof(TsType *) * (size_t)(src->nbases ? src->nbases : 1));
+  t->ninstBases = 0;
   for (int i = 0; i < src->nbases; i++) {
     TsType *bi = m ? cInstantiate(src->bases[i], m) : src->bases[i];
     if (thisArg) bi = cGetTypeWithThisArgument(bi, thisArg);
     if (bi == cErrorType) continue;
+    t->instBases[t->ninstBases++] = bi;
     cResolveMembers(bi);
     if (!bi->members) continue;
     for (int k = 0; k < bi->members->n; k++) {
@@ -1738,20 +1744,37 @@ static void cResolveSignatures(TsType *t) {
 
 /* index infos: the __index declarations with one parameter, instantiated with the type's mapper */
 static void cResolveIndexInfos(TsType *t) {
-  if (t->index || t->nindex) return;
+  if (t->indexResolved) return;
   cResolveMembers(t);
+  t->indexResolved = true;
   if (!t->members) return;
   TsSymbol *idx = bTableGet(t->members, bnC("__index"));
-  if (!idx) return;
-  t->index = ts_arena_alloc(sizeof(CIndexInfo) * (size_t)idx->ndecls);
-  for (int d = 0; d < idx->ndecls; d++) {
+  int nown = idx ? idx->ndecls : 0;
+  /* own index signatures first, then the inherited ones whose key type the type does not declare (resolveObjectTypeMembers) */
+  int cap = nown;
+  for (int b = 0; b < t->ninstBases; b++) {
+    cResolveIndexInfos(t->instBases[b]);
+    cap += t->instBases[b]->nindex;
+  }
+  if (cap == 0) return;
+  t->index = ts_arena_alloc(sizeof(CIndexInfo) * (size_t)cap);
+  for (int d = 0; d < nown; d++) {
     TsNode *decl = idx->decls[d];
     if (decl->parameters->n != 1) { cUnported("index signature arity"); continue; }
     CIndexInfo ii;
     ii.keyType = cTypeFromNodeM(decl->parameters->v[0]->type, t->sigMapper);
     ii.type = cTypeFromNodeM(decl->type, t->sigMapper);
     ii.isReadonly = (bModifierFlags(decl) & TMF_Readonly) != 0;
+    ii.decl = decl;
     t->index[t->nindex++] = ii;
+  }
+  for (int b = 0; b < t->ninstBases; b++) {
+    TsType *bt = t->instBases[b];
+    for (int k = 0; k < bt->nindex; k++) {
+      bool own = false;
+      for (int q = 0; q < t->nindex && !own; q++) own = t->index[q].keyType == bt->index[k].keyType;
+      if (!own) t->index[t->nindex++] = bt->index[k];
+    }
   }
 }
 

@@ -684,7 +684,12 @@ static int cSomeTypeRelatedToType(TsType *s, TsType *t, int st) {
 
 static int cStructuredRelated(TsType *s, TsType *t, int st) {
   if (s->flags & TF_Union) return cEachTypeRelatedToType(s, t, st);
-  if (t->flags & TF_Union) return cTypeRelatedToSome(s, t, st);
+  if (t->flags & TF_Union) {
+    /* a type parameter source that is related to no member of the target union is related through its constraint
+     * (structuredTypeRelatedToWorker falls through to the constraint of an instantiable source) */
+    int r = cTypeRelatedToSome(s, t, st);
+    if (r != RR_False || !(s->flags & TF_TypeParameter)) return r;
+  }
   if (t->flags & TF_Intersection) return cTypeRelatedToEach(s, t, IS_Target);
   if (s->flags & TF_Intersection) {
     int r = cSomeTypeRelatedToType(s, t, IS_Source);
