@@ -60,6 +60,7 @@ struct TsNode {
   struct TsType *resolvedType; /* checker: getTypeFromTypeNode cache (links.resolvedType) */
   struct TsType *inferredReturn; /* checker: the inferred return type of a declaration (ts-relate.h) */
   uint8_t inferState;
+  uint8_t retLiteral;         /* checker: a return of the declaration has a literal type (before the widening of cInferReturnType) */
   struct TsFlow *flowNode;    /* binder: the flow node of an identifier, this, super or narrowable access (binder.ts flowNode) */
   struct TsType *exprType;    /* checker: checkExpressionCached result (links.resolvedType of expressions) */
   uint8_t exprState;          /* 0 not checked, 1 being checked, 2 done */

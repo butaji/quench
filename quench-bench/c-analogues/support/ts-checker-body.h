@@ -704,6 +704,7 @@ static TsType *cAccessReferenceFlow(TsNode *e, TsType *declared, bool startInit)
 #define OF_ArrayLiteral 0x2000
 
 /* ---- contextual types (getContextualType): NULL when there is none, the error type when it is not ported ---- */
+static TsType *cContextualReturnOf(TsNode *fn);
 static TsType *cContextualType(TsNode *e) {
   TsNode *c = e, *p = e->parent;
   while (p && p->kind == TSK_ParenthesizedExpression) { c = p; p = p->parent; }
@@ -722,9 +723,11 @@ static TsType *cContextualType(TsNode *e) {
       TsNode *fn = p->parent;
       while (fn && !cIsFunctionLikeKind(fn->kind)) fn = fn->parent;
       if (!fn) return NULL;
-      if (fn->type) return fn->asteriskToken || (bModifierFlags(fn) & TMF_Async) ? cUnported("contextual return of a generator or async function") : cTypeFromNode(fn->type);
-      return cUnported("contextual return type of an unannotated function");
+      return cContextualReturnOf(fn);
     }
+    case TSK_ArrowFunction:
+      if (p->body != c) return cUnported("contextual type of an arrow parameter");
+      return cContextualReturnOf(p);
     case TSK_AsExpression:
       if (p->expression != c) return cUnported("contextual type of an assertion type");
       return cTypeFromNode(p->type);
@@ -773,6 +776,91 @@ static TsType *cContextualType(TsNode *e) {
     default: break;
   }
   return cUnported("contextual type");
+}
+
+/* getContextualSignature of a function expression or arrow: the one call signature of its contextual type that is not too
+ * small for it (getContextualCallSignature with isAritySmaller). A union, an intersection or a context without signatures,
+ * several signatures, a this parameter, a generic signature and every context not ported set *err (NULL with *err set),
+ * and a NULL result without *err means there is no contextual type at all. */
+static CSig *cContextualSignature(TsNode *fn, bool *err) {
+  *err = false;
+  TsType *ctx = cContextualType(fn);
+  if (ctx == NULL) return NULL;
+  if (ctx == cErrorType || !(ctx->flags & TF_Object)) { *err = true; return NULL; }
+  cResolveSignatures(ctx);
+  if (ctx->ncall == 0) { *err = true; return NULL; }
+  /* isAritySmaller: the target parameters before the first optional, initialized or rest one (a this parameter is not counted) */
+  TsList *pl = fn->parameters;
+  int target = 0;
+  while (pl && target < pl->n && !pl->v[target]->initializer && !pl->v[target]->questionToken && !pl->v[target]->dotDotDotToken) target++;
+  if (pl && pl->n && cIsThisParam(pl->v[0])) target--;
+  int applicable = 0;
+  CSig *pick = NULL;
+  for (int c = 0; c < ctx->ncall; c++) {
+    CSig *s = &ctx->call[c];
+    CParams sp;
+    if (!cSplitParams(s->decl, &sp) || sp.thisParam) { *err = true; return NULL; }
+    if (!sp.rest && sp.n < target) continue;
+    applicable++;
+    pick = s;
+  }
+  if (applicable != 1) { *err = true; return NULL; }
+  if (pick->decl->typeParameters && pick->decl->typeParameters->n) { *err = true; return NULL; }
+  return pick;
+}
+
+/* getContextualReturnType: the return annotation, else the return type of the contextual signature (function expressions and
+ * arrows only; a function declaration has none). A generator, an async function and a method are not ported here. */
+static TsType *cContextualReturnOf(TsNode *fn) {
+  if (fn->type) {
+    if (fn->asteriskToken || (bModifierFlags(fn) & TMF_Async)) return cUnported("contextual return of a generator or async function");
+    return cTypeFromNode(fn->type);
+  }
+  if (fn->kind == TSK_FunctionDeclaration || fn->kind == TSK_Constructor || fn->kind == TSK_GetAccessor || fn->kind == TSK_SetAccessor) return NULL;
+  if (fn->kind != TSK_FunctionExpression && fn->kind != TSK_ArrowFunction) return cUnported("contextual return type of a method");
+  if (fn->asteriskToken || (bModifierFlags(fn) & TMF_Async)) return cUnported("contextual return of a generator or async function");
+  bool err = false;
+  CSig *cs = cContextualSignature(fn, &err);
+  if (err) return cErrorType;
+  return cs ? cReturnTypeOf(cs) : NULL;
+}
+
+/* a type with a literal or type variable member: a contextual type that keeps a literal return (isLiteralOfContextualType) */
+static bool cHasLiteralOrVariable(TsType *t) {
+  if (t->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BooleanLiteral | TF_BigIntLiteral | TF_TypeParameter |
+                  TF_IndexedAccess | TF_Conditional | TF_Index | TF_TemplateLiteral | TF_StringMapping)) return true;
+  if (t->flags & TF_Union) for (int i = 0; i < t->ntypes; i++) if (cHasLiteralOrVariable(t->types[i])) return true;
+  return false;
+}
+
+/* getContextuallyTypedParameterType and assignContextualParameterTypes: an unannotated parameter of a function expression or
+ * arrow has the type at its position in the contextual signature. Parameters with an initializer, optional or rest
+ * parameters, binding patterns and the parameters of other functions (implicit any) are not ported. */
+static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
+  (void)sym;
+  TsNode *fn = d->parent;
+  if (!fn || (fn->kind != TSK_FunctionExpression && fn->kind != TSK_ArrowFunction)) return cUnported("parameter without annotation");
+  if (d->initializer || d->questionToken || d->dotDotDotToken || !d->name || d->name->kind != TSK_Identifier)
+    return cUnported("parameter without annotation");
+  if (d->inferState == 1) return cUnported("circular parameter type");
+  d->inferState = 1;
+  TsType *t = cUnported("parameter without annotation");
+  bool err = false;
+  CSig *cs = cContextualSignature(fn, &err);
+  if (!err && cs) {
+    int idx = 0;
+    while (idx < fn->parameters->n && fn->parameters->v[idx] != d) idx++;
+    if (fn->parameters->n && cIsThisParam(fn->parameters->v[0])) idx--;
+    CParams cp;
+    if (idx >= 0 && cSplitParams(cs->decl, &cp)) {
+      bool ok;
+      TsType *pt = cSigParamType(cs, &cp, idx, &ok);
+      /* a position beyond the contextual parameters has no type (tryGetTypeAtPosition): implicit any */
+      if (ok) t = pt;
+    }
+  }
+  d->inferState = 0;
+  return t;
 }
 
 /* isLiteralOfContextualType: a fresh literal keeps its literal type when the contextual type has a literal of its kind */
@@ -1601,10 +1689,26 @@ static TsType *cExprWorker(TsNode *e) {
       if (oc == cErrorType) return oc;
       return cObjectLiteralType(e);
     }
-    case TSK_FunctionExpression: case TSK_ArrowFunction:
-      if (cContextualType(e) != NULL) return cUnported("function expression with a contextual type");
+    case TSK_FunctionExpression: case TSK_ArrowFunction: {
       if (!e->symbol) return cUnported("function expression without symbol");
+      if (cContextualType(e) != NULL) {
+        /* checkFunctionExpressionOrObjectLiteralMethod: the parameters take the contextual signature (cUnannotatedParamType);
+         * a literal return of the body is kept when the contextual return type has a literal or type variable */
+        bool err = false;
+        CSig *cs = cContextualSignature(e, &err);
+        if (err || !cs) return cUnported("function expression with a contextual type");
+        if (!e->type) {
+          TsType *cr = cReturnTypeOf(cs);
+          if (cr == cErrorType) return cr;
+          if (cHasLiteralOrVariable(cr)) {
+            TsType *rt = cInferReturnType(e);
+            if (rt == cErrorType) return rt;
+            if (e->retLiteral) return cUnported("literal return of a contextually typed function");
+          }
+        }
+      }
       return cTypeOfSymbol(e->symbol);
+    }
     default: break;
   }
   return cUnported("expression type");

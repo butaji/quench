@@ -1838,9 +1838,9 @@ static TsType *cInitializedSymbolType(TsSymbol *sym, TsNode *d, bool member) {
 }
 
 /* the declared type of a parameter (getTypeOfParameter): an annotation, with undefined when it is optional */
+static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d);   /* ts-checker-body.h: contextual parameter types */
 static TsType *cParameterSymbolType(TsSymbol *sym, TsNode *d) {
-  (void)sym;
-  if (!d->type) return cUnported("parameter without annotation");
+  if (!d->type) return cUnannotatedParamType(sym, d);
   if (d->name && d->name->kind != TSK_Identifier) return cUnported("parameter with a binding pattern");
   TsType *t = cTypeFromNode(d->type);
   if (d->questionToken || (d->initializer && t != cErrorType)) t = cAddUndefined(t);
@@ -2036,6 +2036,12 @@ static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
     if (tn && tn->kind == TSK_TypeReference && tn->typeArguments && tn->typeArguments->n == 1)
       return cTypeFromNodeM(tn->typeArguments->v[0], m);
     return cUnported("rest parameter element type");
+  }
+  if (!p->type && p->parent && (p->parent->kind == TSK_FunctionExpression || p->parent->kind == TSK_ArrowFunction)) {
+    /* an unannotated parameter of a function expression or arrow: the type of its symbol (the contextual type) */
+    if (!p->symbol) return cUnported("parameter without annotation");
+    TsType *ct = cTypeOfSymbol(p->symbol);
+    return m && ct != cErrorType ? cInstantiate(ct, m) : ct;
   }
   TsType *t = cTypeFromNodeM(p->type, m);
   if (p->questionToken) t = cAddOptionality(t);

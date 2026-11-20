@@ -277,6 +277,13 @@ static TsType *cUnionWithSubtypesRemoved(TsType **ts, int n) {
   return k == 1 ? kept[0] : cGetUnionType(kept, k);
 }
 
+/* a union or a literal type with a literal member */
+static bool cHasLiteralMember(TsType *t) {
+  if (t->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BooleanLiteral | TF_BigIntLiteral)) return true;
+  if (t->flags & TF_Union) for (int i = 0; i < t->ntypes; i++) if (cHasLiteralMember(t->types[i])) return true;
+  return false;
+}
+
 /* getReturnTypeOfSignature for a declaration without a return annotation (uninstantiated) */
 static TsType *cInferReturnType(TsNode *d) {
   if (d->inferState == 2) return d->inferredReturn;
@@ -288,6 +295,7 @@ static TsType *cInferReturnType(TsNode *d) {
   else if (d->body->kind != TSK_Block) {
     /* an arrow function with an expression body: the type of the expression, widened as a return (getReturnTypeFromBody) */
     TsType *t = cExprType(d->body);
+    if (t != cErrorType && cHasLiteralMember(t)) d->retLiteral = 1;
     if (t->flags & TF_StringLiteral) t = cStringType;
     else if (t->flags & TF_NumberLiteral) t = cNumberType;
     else if (t->flags & TF_BooleanLiteral) t = cBooleanType;
@@ -303,6 +311,7 @@ static TsType *cInferReturnType(TsNode *d) {
       for (int i = 0; i < nr; i++) {
         TsType *t = rets[i]->expression ? cExprType(rets[i]->expression) : cUndefinedType;
         if (t == cErrorType) { k = -1; break; }
+        if (cHasLiteralMember(t)) d->retLiteral = 1;
         /* widening of the literal types of a return (getWidenedLiteralLikeType) */
         if (t->flags & TF_StringLiteral) t = cStringType;
         else if (t->flags & TF_NumberLiteral) t = cNumberType;
