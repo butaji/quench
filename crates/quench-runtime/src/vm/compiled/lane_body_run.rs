@@ -103,7 +103,7 @@ impl<H: Host> Vm<H> {
             }
             debug_assert_eq!((*dispatch).field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
             (*dispatch).native_registers = run.registers;
-            let locals = super::super::dispatch_fast::body_locals::<H>(run.lane_context);
+            let locals = super::super::dispatch_fast::body_locals::<H>(run.lane_context, run.registers, super::super::dispatch_fast::LocalsOf::Body);
             ((*dispatch).native_locals, (*dispatch).local_count, (*dispatch).environment_storage) = (locals.locals, locals.count, locals.environment);
             if !run.bases_stand { (*dispatch).refresh_object_bases_at_entry(self); }
             let vm = self as *mut Self;

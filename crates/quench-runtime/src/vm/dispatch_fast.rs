@@ -4303,7 +4303,7 @@ mod derived_frames;
 mod local_fields;
 use local_fields::{local_field_handler, local_field_miss};
 mod window_bodies;
-pub(super) use window_bodies::body_locals;
+pub(super) use window_bodies::{LocalsOf, body_locals};
 mod lane_reads;
 use lane_reads::RecordOperand;
 mod loop_body;
@@ -4439,41 +4439,6 @@ fn plain_local_operand<H: Host>(cx: *mut LaneContext<H>, slot: u16) -> Option<Va
         .plain_local(code, slot)
         .then(|| frame.locals.get(slot).copied())
         .flatten()
-}
-
-/// The local slots a lane body run on `registers` reads and writes (`JsStepDispatch::native_locals`):
-/// those of the activation it runs for, where `plain_local_operand` finds them. An
-/// environment activation keeps them in its window after its registers; a VM frame in its own
-/// storage, or in the window after its registers where that storage does not cover the function
-/// (as `osr_lane::bind_frame`); any other frameless activation has none (null), and a run whose
-/// activation is not pushed yet (`enter_cell_body_in_lane`) is a plain one's.
-pub(super) fn body_locals_in_lane<H: Host>(lane_context: *mut (), registers: *mut Value, pending: bool) -> *mut Value {
-    let cx = lane_context.cast::<LaneContext<H>>();
-    if cx.is_null() || pending {
-        return std::ptr::null_mut();
-    }
-    let vm = unsafe { vm(cx) };
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let window = |function: u32| code.function_get(function as usize)
-        .filter(|body| body.locals != 0)
-        // SAFETY: the activation's window follows its register file.
-        .map_or(std::ptr::null_mut(), |body| unsafe { registers.add(usize::from(body.registers) + usize::from(WINDOW_LOCALS)) });
-    if let Some(activation) = vm.lane_stack.top_frame() {
-        return match activation.script() {
-            Some(script) if script.environment => window(activation.function()),
-            _ => std::ptr::null_mut(),
-        };
-    }
-    // SAFETY: its frame is the running one.
-    let Some(frame) = vm.frames.get_mut(unsafe { (*cx).frame() }) else { return std::ptr::null_mut() };
-    let function = frame.function;
-    match code.function_get(function as usize) {
-        Some(body) if frame.locals.len() >= usize::from(body.locals) => frame.locals.as_mut_ptr(),
-        // No record of the function addresses a local (`context_locals_in_window_in_lane`).
-        Some(body) if !body.call_plan(code).addresses_locals => std::ptr::null_mut(),
-        _ => window(function),
-    }
 }
 
 #[cfg(test)]
@@ -8868,7 +8833,7 @@ fn frame_reaches_in_lane<H: Host>(cx: *mut LaneContext<H>, registers: u16, reach
 
 
 /// Whether the running activation keeps its locals in the window past its registers, as
-/// `body_locals_in_lane` finds them: an environment activation does, and so does a VM frame whose
+/// `body_locals` finds them for an OSR region (`LocalsOf::Osr`): an environment activation does, and so does a VM frame whose
 /// own storage does not cover the function.
 /// # Safety
 /// `context` is the running lane's context.

@@ -65,7 +65,7 @@ pub(super) unsafe fn bind_captures<H: Host>(
 }
 
 /// The lane activation's own registers, locals, body and field cache entries. Its locals are where a lane body's
-/// are (`dispatch_fast::body_locals_in_lane`): the VM frame may name the caller.
+/// are (`dispatch_fast::body_locals` with `LocalsOf::Osr`): the VM frame may name the caller.
 ///
 /// # Safety
 /// `registers` is the activation's live register file; `lane_context` the running lane's
@@ -79,7 +79,8 @@ pub(super) unsafe fn bind_frame<H: Host>(
         && let Some(body) = residual.function_get(function as usize) {
         dispatch.native_registers = registers;
         dispatch.register_count = usize::from(body.registers);
-        dispatch.native_locals = super::dispatch_fast::body_locals_in_lane::<H>(lane_context as *mut (), registers, false);
+        // SAFETY: as the caller promises; the run's registers are the window's.
+        dispatch.native_locals = unsafe { super::dispatch_fast::body_locals::<H>(lane_context as *mut (), registers, super::dispatch_fast::LocalsOf::Osr) }.locals;
         dispatch.local_count = usize::from(body.locals);
         dispatch.body = body as *const _;
         dispatch.residual = Rc::as_ptr(residual) as usize;
