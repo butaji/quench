@@ -880,7 +880,7 @@ pub(super) fn cold_block(builder: &mut FunctionBuilder<'_>) -> ir::Block {
 }
 
 /// The registers an instruction writes, by its operand layouts.
-pub(super) fn writes(instruction: WideInstruction) -> Vec<Register> {
+pub(super) fn writes(instruction: WideInstruction) -> super::facts::Writes {
     instruction.written_registers().collect()
 }
 
@@ -2553,7 +2553,7 @@ impl Lowering<'_, '_> {
     /// value its `Return` names, typed before it, or the result an operator flagged to return defines,
     /// typed after it. A return the facts do not type joins `ANY`; a body that never returns natively is `ANY`.
     fn returned_type(&self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
-        written: &dyn Fn(WideInstruction) -> Vec<Register>) -> Type {
+        written: &dyn Fn(WideInstruction) -> super::facts::Writes) -> Type {
         let native_calls = self.native_calls;
         let mut defined: Vec<Option<Type>> = vec![None; instructions.len()];
         self.facts.for_each_definition(instructions, leaders, &self.program.constants, written, native_calls, 0..=instructions.len().saturating_sub(1), |pc, register, ty| {

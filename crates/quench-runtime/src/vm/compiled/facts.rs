@@ -12,7 +12,7 @@
 //! never the body. Constants, definitions and joins use the one `crate::typed_ir` lattice.
 
 use crate::bytecode::{Class, Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};
-use crate::staged::{DecodeContext, NumberOperation, Operation};
+use crate::staged::{NumberOperation, Operation};
 use crate::typed_ir::Type;
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::num::NonZeroUsize;
@@ -25,6 +25,9 @@ const INLINE_ANALYSIS_ITEMS: usize = 16;
 /// entry to the leader, which every native edge into it proves (`Lowering::conform`) and
 /// every in-loop definition preserves (`loop_int32`).
 pub(super) type Contract = (usize, Register, Type);
+
+/// The registers one instruction writes, inline: an instruction has three register fields (A, B, C).
+pub(super) type Writes = smallvec::SmallVec<[Register; 3]>;
 
 /// The registers' types on entry to each block leader; `None` at a PC that leads no block or
 /// that no path from the entry reaches.
@@ -109,7 +112,7 @@ impl Facts {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn before(&self, pc: usize, register: Register, instructions: &[WideInstruction],
         leaders: &CompoundBitSet, constants: &[Constant],
-        written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool) -> Type {
+        written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool) -> Type {
         let Some(start) = (0..=pc).rev().find(|pc| leaders.contains(*pc)) else { return Type::ANY };
         let Some(entry) = self.at(start) else { return Type::ANY };
         let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = smallvec::SmallVec::from_slice(entry);
@@ -125,7 +128,7 @@ impl Facts {
     /// point. Each block replays from its own entry row, so only the blocks reaching `body` run.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn for_each_definition(&self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
-        constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool,
+        constants: &[Constant], written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool,
         body: std::ops::RangeInclusive<usize>, mut visit: impl FnMut(usize, Register, Type)) {
         // The block covering `body.start()` may begin earlier: replay it from its leader.
         let first = (0..=*body.start()).rev().find(|pc| leaders.contains(*pc)).unwrap_or(0);
@@ -272,8 +275,9 @@ pub(super) fn boolean_binary(operator: u32) -> bool {
 fn transfer(
     types: &mut [Type],
     instruction: WideInstruction,
+    operation: Option<&Operation<u64, ()>>,
     constants: &[Constant],
-    written: &dyn Fn(WideInstruction) -> Vec<Register>,
+    written: &dyn Fn(WideInstruction) -> Writes,
     native_calls: bool,
 ) -> Flow {
     let op = instruction.op();
@@ -282,7 +286,6 @@ fn transfer(
         set(types, instruction.result_register(), ty);
         return Flow::Next;
     }
-    let operation = Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY);
     // A comparison jump: a nullish test of it folds to its edge (`nullish_comparison`).
     let compares = matches!(operation, Some(Operation::CompareJump { .. }));
     match operation {
@@ -358,9 +361,9 @@ fn forget_shapes(types: &mut [Type], forget: bool) -> Flow {
 
 /// The transfer of a ToNumeric or a Number's unary operator, whose operand is a Number or whose
 /// instruction leaves (`Lowering::instruction`, `Lowering::unary`); `None` for any other.
-fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Flow> {
+fn unary_transfer(types: &mut [Type], instruction: WideInstruction, operation: Option<&Operation<u64, ()>>) -> Option<Flow> {
     let op = instruction.op();
-    match Operation::<u64, ()>::of(instruction) {
+    match operation {
         // A Number is its own ToNumeric; an untyped operand is taken for an int32 and tested once.
         Some(Operation::Number(NumberOperation::ToNumeric { .. })) if !instruction.returns_from_frame() => {
             let source = types.get(usize::from(instruction.register_b())).copied().unwrap_or(Type::ANY);
@@ -387,9 +390,10 @@ fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Fl
 /// operands it does not write): a loop that does not write one may have that proved once, on its
 /// entering edge, instead of by each use.
 pub(super) fn proves_numbers(instruction: WideInstruction, registers: usize, constants: &[Constant],
-    written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool) -> Vec<Register> {
+    written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool) -> Vec<Register> {
     let mut types = vec![Type::ANY; registers];
-    if matches!(transfer(&mut types, instruction, constants, written, native_calls), Flow::Leaves) { return Vec::new(); }
+    let operation = Operation::<u64, ()>::of(instruction);
+    if matches!(transfer(&mut types, instruction, operation.as_ref(), constants, written, native_calls), Flow::Leaves) { return Vec::new(); }
     let written = written(instruction);
     (0..registers).filter(|register| types[*register].is_subtype(Type::NUMBER) && !written.contains(&(*register as Register)))
         .map(|register| register as Register).collect()
@@ -419,9 +423,11 @@ impl Observed<'_> {
 /// `transfer`, where an element read observed to hold Numbers or int32s (`Facts::observed`)
 /// defines that type.
 fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
-    written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool, observed: Option<Type>) -> Flow {
-    let flow = unary_transfer(types, instruction)
-        .unwrap_or_else(|| transfer(types, instruction, constants, written, native_calls));
+    written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool, observed: Option<Type>) -> Flow {
+    // The instruction decodes once: its unary and general transfers both read this operation.
+    let operation = Operation::<u64, ()>::of(instruction);
+    let flow = unary_transfer(types, instruction, operation.as_ref())
+        .unwrap_or_else(|| transfer(types, instruction, operation.as_ref(), constants, written, native_calls));
     // `observed` names only the reads the observation typed (element reads, `length` reads).
     if let Some(ty) = observed {
         for register in written(instruction) { set(types, register, ty); }
@@ -435,7 +441,7 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
 #[allow(clippy::too_many_arguments)]
 pub(super) fn inductive_int32(initial: &mut [Type], candidates: CompoundBitSet,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
-    constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
+    constants: &[Constant], written: &dyn Fn(WideInstruction) -> Writes,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
     inductive(initial, candidates, Type::INT32, body, instructions, leaders, constants, written, own_shape, native_calls, raises, observed)
 }
@@ -445,7 +451,7 @@ pub(super) fn inductive_int32(initial: &mut [Type], candidates: CompoundBitSet,
 #[allow(clippy::too_many_arguments)]
 pub(super) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, required: Type,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
-    constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
+    constants: &[Constant], written: &dyn Fn(WideInstruction) -> Writes,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
     // Each unsuccessful iteration removes at least one candidate. Compile
     // work is bounded by candidate count, without a semantic iteration cap.
@@ -476,7 +482,7 @@ pub(super) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, re
 #[allow(clippy::too_many_arguments)]
 pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Contract, std::ops::RangeInclusive<usize>)>,
     instructions: &[WideInstruction], leaders: &CompoundBitSet, constants: &[Constant],
-    written: &dyn Fn(WideInstruction) -> Vec<Register>, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
+    written: &dyn Fn(WideInstruction) -> Writes, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
     native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
     while !candidates.is_empty() {
         let contracts: Vec<Contract> = candidates.iter().map(|(contract, _)| *contract).collect();
