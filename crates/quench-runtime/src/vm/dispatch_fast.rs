@@ -18901,12 +18901,15 @@ fn derive_lane_view<'live, H: Host>(
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
     // A host that runs no lane (`Host::RUNS_LANE` false) never runs these records, so it instantiates no fusion
     // handler: the tables of `fuse_chains`, `fuse_target_backedges` and `fuse_rows` are gated on the host.
-    // A `Binary` record of an operator with rows runs its operator's row rather than fusing (`operator_row`):
-    // its operator and operand tests fold, which a fused pair's run-time operator does not.
+    // A plain `Binary` record with no accumulator field runs its operator's row rather than fusing
+    // (`operator_row`): its operator and operand tests fold, which a fused pair's or chain's run-time
+    // operator does not. Records that read the accumulator wait for the pass at the end, past the
+    // accumulator hazard check, which recognizes only generated rows.
     if !wasm {
-        for (record, selected) in records.iter_mut().zip(selected.iter_mut()) {
-            if let Some(row) = lane_frame::operator_flag_row::<H>(record) {
-                record.handler = row as *const ();
+        let before: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
+        specialize_plain_operators::<H>(&decoded, constants, &mut records, true);
+        for ((record, selected), before) in records.iter().zip(selected.iter_mut()).zip(before) {
+            if record.handler != before {
                 *selected = record.handler;
             }
         }
@@ -18956,7 +18959,7 @@ fn derive_lane_view<'live, H: Host>(
     }
     // Last, so the fusions above and the accumulator check see each record's generated row.
     if !wasm {
-        specialize_plain_operators::<H>(&decoded, constants, &mut records);
+        specialize_plain_operators::<H>(&decoded, constants, &mut records, false);
         specialize_register_operands::<H>(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
@@ -19245,7 +19248,7 @@ fn arithmetic_binary(instruction: WideInstruction) -> bool {
 /// instantiation, so the row neither decodes nor dispatches on it (179 against 64 instructions for an
 /// int32 add). Its operand kinds and any int32 constant operand pick the form (`OPERANDS_*`). Its misses go back to the
 /// generated row, so every operand pair stays decided by the one staged row.
-fn specialize_plain_operators<H: Host>(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction]) {
+fn specialize_plain_operators<H: Host>(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction], accumulator_free: bool) {
     use crate::bytecode::OperandKind::{Constant, Register};
     use lane_frame::{OPERANDS_ANY, OPERANDS_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
     macro_rules! row_at {
@@ -19256,6 +19259,9 @@ fn specialize_plain_operators<H: Host>(decoded: &[WideInstruction], constants: &
     let plain = [row_at!(ACC_NONE), row_at!(ACC_B), row_at!(ACC_C)];
     for (pc, &instruction) in decoded.iter().enumerate() {
         let Some(acc) = plain.iter().position(|row| *row == records[pc].handler) else { continue };
+        if accumulator_free && acc != 0 {
+            continue;
+        }
         if instruction.result_flags() != 0 || instruction.numeric_local_target().is_some() {
             continue;
         }
