@@ -2080,7 +2080,10 @@ static TsType *cAccessReferenceFlow(TsNode *e, TsType *declared, bool startInit)
 static TsType *cContextualReturnOf(TsNode *fn);
 static TsType *cAssignmentTargetType(TsNode *left);
 static TsType *cApparentOf(TsType *o);
-static TsType *cGenericCallFnArgContext(CSig *sig, int idx);
+struct CCallInfer;
+static struct CCallInfer *cInferenceContextOf(TsNode *node);
+static TsType *cInferFixContext(struct CCallInfer *ic, TsType *pt);
+static TsType *cGenericCallFnArgContext(CSig *sig, int idx, TsNode *arg);
 /* the contextual type of a function argument while the candidate of an overloaded call is checked (chooseOverload's
  * second round): the parameter type of that candidate. Saved and restored around each argument check. */
 static TsNode *cCandFn;
@@ -2308,7 +2311,7 @@ static TsType *cContextualType(TsNode *e) {
             return gt;
           }
           if (ca->kind != TSK_ArrowFunction) return cUnported("contextual type of a generic call");
-          return cGenericCallFnArgContext(sig, idx);
+          return cGenericCallFnArgContext(sig, idx, ca);
         }
       }
       CParams ps;
@@ -3042,13 +3045,13 @@ static bool cMentionsTypeParam(TsType *t, TsType *tp, bool *unp) {
   return false;
 }
 
-/* the contextual type of a function argument of a generic call (checkExpressionWithContextualType with the inference context).
- * Ported when the parameter's contextual signature has no parameter that mentions the type parameters of the callee, so the
- * inferences so far never change the contextual parameter types; the return type may mention them (a literal return is
- * then not ported, see cExprWorker). */
-static TsType *cGenericCallFnArgContext(CSig *sig, int idx) {
-  int ntp;
-  TsType **tps = cSigTypeParams(sig->decl, &ntp);
+/* the contextual type of a function argument of a generic call (checkFunctionExpressionOrObjectLiteralMethod, inferential mode).
+ * The contextual signature is the one of the parameter type. Inside the call being inferred (its inference context is found
+ * with getInferenceContext), the parameter type is instantiated with the context's mapper (cInferFixContext: the type
+ * parameters it mentions are fixed, and later inferences to them are ignored). Outside it, the parameter type is the
+ * contextual type as it is declared, whose type parameters stay (contextuallyCheckFunctionExpressionOrObjectLiteralMethod
+ * uses the contextual signature when there is no inference context). Several or generic signatures are not ported. */
+static TsType *cGenericCallFnArgContext(CSig *sig, int idx, TsNode *arg) {
   CParams ps;
   if (!cSplitParams(sig->decl, &ps) || ps.thisParam || ps.rest) return cUnported("contextual type of a generic call");
   bool ok;
@@ -3062,15 +3065,10 @@ static TsType *cGenericCallFnArgContext(CSig *sig, int idx) {
   CParams cp;
   if ((cs->decl->typeParameters && cs->decl->typeParameters->n) || !cSplitParams(cs->decl, &cp) || cp.thisParam)
     return cUnported("contextual type of a generic call");
-  for (int k = 0; k < cp.n; k++) {
-    TsType *x = cSigParamType(cs, &cp, k, &ok);
-    if (!ok) continue;
-    if (x == cErrorType) return cErrorType;
-    bool unp = false;
-    for (int t = 0; t < ntp; t++) if (cMentionsTypeParam(x, tps[t], &unp)) return cUnported("contextual type of a generic call");
-    if (unp) return cUnported("contextual type of a generic call");
-  }
-  return pt;
+  struct CCallInfer *ic = cInferenceContextOf(arg);
+  if (!ic) return pt;
+  TsType *pi = cInferFixContext(ic, pt);
+  return pi ? pi : cErrorType;
 }
 
 /* a type parameter with a const modifier (isConstTypeVariable) */
@@ -3381,29 +3379,54 @@ static TsType *cInferFixContext(CCallInfer *ic, TsType *pt) {
   return r == cErrorType ? NULL : r;
 }
 
+/* the inference contexts of the generic candidates whose arguments are being checked (the innermost last). A call's own
+ * inference context is the innermost one of the call whose argument contains the node (getInferenceContext): the node
+ * is then checked in the inferential mode of its call. */
+#define C_INFER_STACK_MAX 256
+static struct CCallInfer *cInferStack[C_INFER_STACK_MAX];
+static int cInferDepth;
+
+/* getInferenceContext(node): the innermost inference context whose call has the node inside one of its arguments */
+static struct CCallInfer *cInferenceContextOf(TsNode *node) {
+  if (cInferDepth == 0) return NULL;
+  struct CCallInfer *ic = cInferStack[cInferDepth - 1];
+  TsNode *child = node;
+  TsNode *p = node->parent;
+  while (p && p != ic->call) { child = p; p = p->parent; }
+  if (!p || !ic->call->arguments) return NULL;
+  for (int i = 0; i < ic->call->arguments->n; i++) if (ic->call->arguments->v[i] == child) return ic;
+  return NULL;
+}
+
 /* the signature instance of a generic candidate after its inference (inferTypeArguments in round 1, with the context-sensitive
  * arguments skipped, or in round 2, with them typed by their contextual types in argument order). NULL with *err when not ported */
 static CSig *cGenericCandidate(CSig *base, CParams *ps, TsNode *call, TsType **at, bool *deferred, TsNode **args, int na,
                                bool typed, bool *err) {
   CCallInfer ic;
+  CSig *r = NULL;
   if (!cInferBegin(&ic, call, base)) { *err = true; return NULL; }
+  if (cInferDepth == C_INFER_STACK_MAX) { cUnported("generic call nested too deeply"); *err = true; return NULL; }
+  cInferStack[cInferDepth++] = &ic;
   for (int i = 0; i < na; i++) {
     bool ok;
     TsType *pt = cSigParamType(base, ps, i, &ok);
-    if (!ok || pt == cErrorType) { *err = true; return NULL; }
+    if (!ok || pt == cErrorType) { *err = true; goto done; }
     if (!deferred[i]) {
-      if (!cInferAddArg(&ic, at[i], pt, false)) { *err = true; return NULL; }
+      if (!cInferAddArg(&ic, at[i], pt, false)) { *err = true; goto done; }
       continue;
     }
     if (!typed) continue;
     TsType *pi = cInferFixContext(&ic, pt);
-    if (!pi) { *err = true; return NULL; }
+    if (!pi) { *err = true; goto done; }
     TsType *argT = cExprTypeWithContext(args[i], pi);
-    if (!cInferAddArg(&ic, argT, pt, true)) { *err = true; return NULL; }
+    if (!cInferAddArg(&ic, argT, pt, true)) { *err = true; goto done; }
   }
   TsType **targs = ts_arena_alloc(sizeof(TsType *) * (size_t)(ic.n ? ic.n : 1));
-  if (!cInferEnd(&ic, targs)) { *err = true; return NULL; }
-  return cGetSignatureInstance(base, targs, ic.n);
+  if (!cInferEnd(&ic, targs)) { *err = true; goto done; }
+  r = cGetSignatureInstance(base, targs, ic.n);
+done:
+  cInferDepth--;
+  return r;
 }
 
 /* inferTypeArguments of a generic candidate of a call whose arguments are all typed (no deferred argument) */
