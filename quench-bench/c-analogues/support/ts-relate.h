@@ -595,6 +595,7 @@ static TsType **cSigTypeParams(TsNode *d, int *n) {
   return tps;
 }
 
+static CSig *cGetSignatureInstance(CSig *base, TsType **args, int n);   /* ts-checker-body.h */
 static bool cSigIsGeneric(CSig *sig) { return !sig->erased && sig->decl->typeParameters && sig->decl->typeParameters->n > 0; }
 
 /* getErasedSignature (cached per signature): the type parameters instantiated to any */
@@ -784,8 +785,20 @@ static void cInferTypeArguments(CInfer *c, TsType *source, TsType *target) {
 
 /* inferFromSignature: the parameters (contravariantly) and the return types of a non-generic source against the
  * erased target signature */
-static bool cInferSignature(CInfer *c, CSig *src, CSig *tgt) {
-  if (cSigIsGeneric(src)) return false;   /* getBaseSignature of a generic source: not ported */
+static bool cInferSignature(CInfer *c, CSig *src0, CSig *tgt) {
+  CSig *src = src0;
+  if (cSigIsGeneric(src0)) {
+    /* getBaseSignature: each type parameter is the instance of its constraint (unknown without one) */
+    int n;
+    TsType **tps = cSigTypeParams(src0->decl, &n);
+    TsType **vals = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+    for (int k = 0; k < n; k++) {
+      TsType *cn = cConstraintOf(tps[k]);
+      if (cn && cCouldContain(cn)) return false;
+      vals[k] = cn ? cn : cUnknownType;
+    }
+    src = cGetSignatureInstance(src0, vals, n);
+  }
   CSig tg = cErasedSignature(tgt);
   CParams ps, pt;
   if (!cSplitParams(src->decl, &ps) || !cSplitParams(tg.decl, &pt)) return false;

@@ -2373,26 +2373,35 @@ static bool cIsContextSensitiveArg(TsNode *a) {
   return false;
 }
 
-static bool cInferCallTypeArgs(TsNode *call, CSig *sig, TsType **at, int na, TsType **args) {
+static TsType *cExprTypeWithContext(TsNode *arg, TsType *ptype);
+
+/* the inference context of one generic candidate (createInferenceContext and inferTypeArguments): the candidates of each type
+ * parameter, the return type candidates, and the type parameters fixed by a contextual parameter type (getInferredType keeps
+ * the type of a fixed parameter; later candidates do not change it) */
+typedef struct CCallInfer {
+  TsNode *call; CSig *sig; CParams ps; TsType **tps; int n; bool *prim; CInfer ci; bool *notTop; bool *fixed; TsType **fixedT;
+  int before;   /* cUnportedCount at the start: a refusal inside the inference ends it */
+} CCallInfer;
+
+static bool cInferBegin(CCallInfer *ic, TsNode *call, CSig *sig) {
   int n;
   TsType **tps = cSigTypeParams(sig->decl, &n);
-  CParams ps;
-  if (!cSplitParams(sig->decl, &ps)) { cUnported("too many parameters"); return false; }
-  if (ps.thisParam || ps.rest) { cUnported("generic call with a this or rest parameter"); return false; }
-  bool *prim = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));   /* hasPrimitiveConstraint */
+  ic->call = call; ic->sig = sig; ic->tps = tps; ic->n = n;
+  ic->before = cUnportedCount;
+  if (!cSplitParams(sig->decl, &ic->ps)) { cUnported("too many parameters"); return false; }
+  if (ic->ps.thisParam || ic->ps.rest) { cUnported("generic call with a this or rest parameter"); return false; }
+  ic->prim = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));   /* hasPrimitiveConstraint */
   for (int k = 0; k < n; k++) {
     if (cTypeParamIsConst(tps[k])) { cUnported("generic call with a const type parameter"); return false; }
     TsType *c = cConstraintOf(tps[k]);
     if (c) {
       bool unp = false;
       if (cCouldContain(c)) { cUnported("generic call with a constraint of type parameters"); return false; }
-      prim[k] = cMaybePrimitive(c, &unp);
+      ic->prim[k] = cMaybePrimitive(c, &unp);
       if (unp) { cUnported("generic call with a primitive constraint"); return false; }
     }
   }
-  int before = cUnportedCount;
-  CInfer ci;
-  cInferInit(&ci, tps, n);
+  cInferInit(&ic->ci, tps, n);
   /* the contextual type of the call infers from the return type at the ReturnType priority (inferTypeArguments). Only the
    * arguments' candidates decide a type parameter that has them; one with only these candidates is unported below */
   TsType *ctx = cContextualType(call);
@@ -2401,12 +2410,174 @@ static bool cInferCallTypeArgs(TsNode *call, CSig *sig, TsType **at, int na, TsT
     TsType *ret0 = cReturnTypeOf(sig);
     if (ret0 == cErrorType) return false;
     if (cCouldContain(ret0)) {
-      ci.priority = 128;   /* InferencePriority.ReturnType */
-      cInferFrom(&ci, ctx, ret0);
-      ci.priority = 0;
+      ic->ci.priority = 128;   /* InferencePriority.ReturnType */
+      cInferFrom(&ic->ci, ctx, ret0);
+      ic->ci.priority = 0;
     }
   }
-  bool *notTop = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));
+  ic->notTop = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));
+  ic->fixed = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));
+  ic->fixedT = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  return cUnportedCount == ic->before;
+}
+
+/* inferTypes of one argument type against its parameter type. The type parameters fixed by then take no candidates (skipFixed) */
+static bool cInferAddArg(CCallInfer *ic, TsType *argT, TsType *pt, bool skipFixed) {
+  if (argT == cErrorType || pt == cErrorType) { cUnported("generic call with an unported argument or parameter"); return false; }
+  if (!cCouldContain(pt)) return true;
+  bool unp = false;
+  for (int k = 0; k < ic->n; k++)
+    if (cMentionsTypeParam(pt, ic->tps[k], &unp) && !cTypeParamAtTop(pt, ic->tps[k], &unp)) ic->notTop[k] = true;
+  if (unp) { cUnported("generic call with a parameter of an unported shape"); return false; }
+  /* checkExpressionWithContextualType keeps a literal argument regular when its parameter has a literal of its kind */
+  if ((argT->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BooleanLiteral)) && !(pt->flags & TF_TypeParameter) &&
+      cLiteralOfContext(argT, pt)) { cUnported("literal argument of a literal parameter type"); return false; }
+  CInfer *c = &ic->ci;
+  int *scn = ts_arena_alloc(sizeof(int) * (size_t)(ic->n ? ic->n : 1)), *sctn = ts_arena_alloc(sizeof(int) * (size_t)(ic->n ? ic->n : 1));
+  int *sprio = ts_arena_alloc(sizeof(int) * (size_t)(ic->n ? ic->n : 1));
+  for (int k = 0; k < ic->n; k++) { scn[k] = c->cn[k]; sctn[k] = c->ctn[k]; sprio[k] = c->prio[k]; }
+  cInferFrom(c, argT, pt);
+  if (skipFixed) for (int k = 0; k < ic->n; k++) if (ic->fixed[k]) { c->cn[k] = scn[k]; c->ctn[k] = sctn[k]; c->prio[k] = sprio[k]; }
+  return cUnportedCount == ic->before;
+}
+
+/* getCovariantInference and getInferredType of one type parameter from its candidates (no fixing). NULL when not ported */
+static TsType *cInferredOne(CCallInfer *ic, int k) {
+  CInfer *ci = &ic->ci;
+  TsType *tp = ic->tps[k];
+  if (ci->prio[k] >= 0 && (ci->prio[k] & 416)) { cUnported("inference with a combining priority"); return NULL; }
+  if (ci->ctn[k]) { cUnported("contravariant candidates of a generic call"); return NULL; }
+  TsType *c = cConstraintOf(tp);
+  TsType *inferred;
+  if (ci->cn[k] == 0) {
+    /* no candidate: the default (not ported when it mentions a type parameter), else the constraint, else unknown */
+    TsNode *dn = cTypeParamDefaultNode(tp);
+    if (dn) {
+      inferred = cTypeFromNode(dn);
+      if (inferred == cErrorType) return NULL;
+      if (cCouldContain(inferred)) { cUnported("generic call with a default mentioning a type parameter"); return NULL; }
+    } else {
+      inferred = c ? c : cUnknownType;
+    }
+  } else {
+    TsType **cs = ci->cand[k];
+    int nc = ci->cn[k];
+    for (int i = 0; i < nc; i++) {
+      TsType *t = cs[i];
+      if (t->flags & TF_Union) {
+        for (int m = 0; m < t->ntypes; m++) if (t->types[m]->flags & TF_Object && (t->types[m]->objectFlags & (OF_ObjectLiteral | OF_ArrayLiteral))) { cUnported("object or array literal candidate"); return NULL; }
+      } else if ((t->flags & TF_Object) && (t->objectFlags & (OF_ObjectLiteral | OF_ArrayLiteral))) {
+        cUnported("object or array literal candidate");
+        return NULL;
+      }
+    }
+    /* getCovariantInference: a primitive constraint keeps the literal types (regular), else they widen at the top level */
+    TsType *ret = cReturnTypeOf(ic->sig);
+    if (ret == cErrorType) return NULL;
+    if (ic->sig->decl->type && ic->sig->decl->type->kind == TSK_TypePredicate) { cUnported("generic call with a type predicate"); return NULL; }
+    bool unp = false;
+    bool atTop = cTypeParamAtTop(ret, tp, &unp);
+    if (unp) { cUnported("generic call with a conditional return type"); return NULL; }
+    bool widen = !ic->prim[k] && !ic->notTop[k] && !atTop;
+    TsType **base = ts_arena_alloc(sizeof(TsType *) * (size_t)nc);
+    for (int i = 0; i < nc; i++) base[i] = ic->prim[k] ? cRegularType(cs[i]) : widen ? cWidenLiteralType(cs[i]) : cs[i];
+    for (int i = 0; i < nc; i++) if (base[i] == cErrorType) return NULL;
+    inferred = cCommonSupertype(base, nc);
+    if (inferred == cErrorType) return NULL;
+  }
+  if (c && !cIsRelatedWith(inferred, c, REL_Assignable)) inferred = c;
+  return inferred;
+}
+
+/* the type arguments of the candidate: the fixed type parameters keep their types. NULL when not ported */
+static bool cInferEnd(CCallInfer *ic, TsType **args) {
+  for (int k = 0; k < ic->n; k++) {
+    TsType *v = ic->fixed[k] ? ic->fixedT[k] : cInferredOne(ic, k);
+    if (!v) return false;
+    args[k] = v;
+  }
+  return cUnportedCount == ic->before;
+}
+
+/* the contextual type of a context-sensitive argument (the parameter type pt): the type parameters that the parameters of its
+ * signature mention are fixed (assignContextualParameterTypes), the others are instantiated with their current inferences.
+ * NULL when not ported */
+static TsType *cInferFixContext(CCallInfer *ic, TsType *pt) {
+  int n = ic->n;
+  bool unp = false;
+  bool *mention = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));
+  bool *inParams = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));
+  for (int k = 0; k < n; k++) mention[k] = cMentionsTypeParam(pt, ic->tps[k], &unp);
+  if (unp) { cUnported("contextual type of a generic call with an unported shape"); return NULL; }
+  bool single = false;
+  if (pt->flags & TF_Object) { cResolveSignatures(pt); single = pt->ncall == 1; }
+  if (single) {
+    CSig *cs = &pt->call[0];
+    CParams cp;
+    if (!cSplitParams(cs->decl, &cp)) { cUnported("too many parameters"); return NULL; }
+    for (int j = 0; j < cp.n; j++) {
+      bool ok;
+      TsType *t = cSigParamType(cs, &cp, j, &ok);
+      if (!ok || t == cErrorType) { cUnported("contextual parameter of an unported shape"); return NULL; }
+      for (int k = 0; k < n; k++) if (cMentionsTypeParam(t, ic->tps[k], &unp)) inParams[k] = true;
+    }
+    if (unp) { cUnported("contextual parameter of an unported shape"); return NULL; }
+  }
+  for (int k = 0; k < n; k++) {
+    if (!mention[k]) continue;
+    if (!single || inParams[k]) {
+      if (!ic->fixed[k]) {
+        TsType *v = cInferredOne(ic, k);
+        if (!v) return NULL;
+        ic->fixed[k] = true;
+        ic->fixedT[k] = v;
+      }
+    }
+  }
+  TsType **src = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1)), **dst = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  int cnt = 0;
+  for (int k = 0; k < n; k++) {
+    if (!mention[k]) continue;
+    TsType *v = ic->fixed[k] ? ic->fixedT[k] : cInferredOne(ic, k);
+    if (!v) return NULL;
+    src[cnt] = ic->tps[k];
+    dst[cnt] = v;
+    cnt++;
+  }
+  if (cnt == 0) return pt;
+  TsType *r = cInstantiate(pt, cCreateTypeMapper(src, dst, cnt));
+  return r == cErrorType ? NULL : r;
+}
+
+/* the signature instance of a generic candidate after its inference (inferTypeArguments in round 1, with the context-sensitive
+ * arguments skipped, or in round 2, with them typed by their contextual types in argument order). NULL with *err when not ported */
+static CSig *cGenericCandidate(CSig *base, CParams *ps, TsNode *call, TsType **at, bool *deferred, TsNode **args, int na,
+                               bool typed, bool *err) {
+  CCallInfer ic;
+  if (!cInferBegin(&ic, call, base)) { *err = true; return NULL; }
+  for (int i = 0; i < na; i++) {
+    bool ok;
+    TsType *pt = cSigParamType(base, ps, i, &ok);
+    if (!ok || pt == cErrorType) { *err = true; return NULL; }
+    if (!deferred[i]) {
+      if (!cInferAddArg(&ic, at[i], pt, false)) { *err = true; return NULL; }
+      continue;
+    }
+    if (!typed) continue;
+    TsType *pi = cInferFixContext(&ic, pt);
+    if (!pi) { *err = true; return NULL; }
+    TsType *argT = cExprTypeWithContext(args[i], pi);
+    if (!cInferAddArg(&ic, argT, pt, true)) { *err = true; return NULL; }
+  }
+  TsType **targs = ts_arena_alloc(sizeof(TsType *) * (size_t)(ic.n ? ic.n : 1));
+  if (!cInferEnd(&ic, targs)) { *err = true; return NULL; }
+  return cGetSignatureInstance(base, targs, ic.n);
+}
+
+/* inferTypeArguments of a generic candidate of a call whose arguments are all typed (no deferred argument) */
+static bool cInferCallTypeArgs(TsNode *call, CSig *sig, TsType **at, int na, TsType **args) {
+  CCallInfer ic;
+  if (!cInferBegin(&ic, call, sig)) return false;
   /* the arguments that are not context sensitive first, then the others (the second pass of resolveCall) */
   int *ord = ts_arena_alloc(sizeof(int) * (size_t)(na ? na : 1));
   int nord = 0;
@@ -2416,70 +2587,11 @@ static bool cInferCallTypeArgs(TsNode *call, CSig *sig, TsType **at, int na, TsT
   for (int oi = 0; oi < na; oi++) {
     int i = ord[oi];
     bool ok;
-    TsType *pt = cSigParamType(sig, &ps, i, &ok);
+    TsType *pt = cSigParamType(sig, &ic.ps, i, &ok);
     if (!ok || pt == cErrorType || at[i] == cErrorType) { cUnported("generic call with an unported argument or parameter"); return false; }
-    if (!cCouldContain(pt)) continue;
-    bool unp = false;
-    for (int k = 0; k < n; k++) {
-      if (cMentionsTypeParam(pt, tps[k], &unp) && !cTypeParamAtTop(pt, tps[k], &unp)) notTop[k] = true;
-    }
-    if (unp) { cUnported("generic call with a parameter of an unported shape"); return false; }
-    /* checkExpressionWithContextualType keeps a literal argument regular when its parameter has a literal of its kind */
-    if ((at[i]->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BooleanLiteral)) && !(pt->flags & TF_TypeParameter) &&
-        cLiteralOfContext(at[i], pt)) { cUnported("literal argument of a literal parameter type"); return false; }
-    cInferFrom(&ci, at[i], pt);
+    if (!cInferAddArg(&ic, at[i], pt, false)) return false;
   }
-  if (cUnportedCount != before) return false;
-  TsType *ret = NULL;
-  for (int k = 0; k < n; k++) {
-    TsType *inferred;
-    if (ci.prio[k] >= 0 && (ci.prio[k] & 416)) { cUnported("inference with a combining priority"); return false; }
-    if (ci.ctn[k]) { cUnported("contravariant candidates of a generic call"); return false; }
-    TsType *c = cConstraintOf(tps[k]);
-    if (ci.cn[k] == 0) {
-      /* no candidate: the default (instantiated with the backreference mapper: not ported when it mentions a type parameter),
-       * else the constraint, else unknown (getInferredType) */
-      TsNode *dn = cTypeParamDefaultNode(tps[k]);
-      if (dn) {
-        inferred = cTypeFromNode(dn);
-        if (inferred == cErrorType) return false;
-        if (cCouldContain(inferred)) { cUnported("generic call with a default mentioning a type parameter"); return false; }
-      } else {
-        inferred = c ? c : cUnknownType;
-      }
-    } else {
-      TsType **cs = ci.cand[k];
-      int nc = ci.cn[k];
-      for (int i = 0; i < nc; i++) {
-        TsType *t = cs[i];
-        if (t->flags & TF_Union) {
-          for (int m = 0; m < t->ntypes; m++) if (t->types[m]->flags & TF_Object && (t->types[m]->objectFlags & (OF_ObjectLiteral | OF_ArrayLiteral))) { cUnported("object or array literal candidate"); return false; }
-        } else if ((t->flags & TF_Object) && (t->objectFlags & (OF_ObjectLiteral | OF_ArrayLiteral))) {
-          cUnported("object or array literal candidate");
-          return false;
-        }
-      }
-      /* getCovariantInference: the literal types widen unless the parameter is at the top level of the return type */
-      if (!ret) {
-        if (sig->decl->type && sig->decl->type->kind == TSK_TypePredicate) { cUnported("generic call with a type predicate"); return false; }
-        ret = cReturnTypeOf(sig);
-        if (ret == cErrorType) return false;
-      }
-      bool unp = false;
-      bool atTop = cTypeParamAtTop(ret, tps[k], &unp);
-      if (unp) { cUnported("generic call with a conditional return type"); return false; }
-      /* getCovariantInference: a primitive constraint keeps the literal types (regular), else they widen at the top level */
-      bool widen = !prim[k] && !notTop[k] && !atTop;
-      TsType **base = ts_arena_alloc(sizeof(TsType *) * (size_t)nc);
-      for (int i = 0; i < nc; i++) base[i] = prim[k] ? cRegularType(cs[i]) : widen ? cWidenLiteralType(cs[i]) : cs[i];
-      for (int i = 0; i < nc; i++) if (base[i] == cErrorType) return false;
-      inferred = cCommonSupertype(base, nc);
-      if (inferred == cErrorType) return false;
-    }
-    if (c && !cIsRelatedWith(inferred, c, REL_Assignable)) inferred = c;
-    args[k] = inferred;
-  }
-  return true;
+  return cInferEnd(&ic, args);
 }
 
 /* isContextSensitive of a function expression or arrow (hasContextSensitiveParameters: a parameter without a type, and no
@@ -2543,27 +2655,37 @@ static int cCandidateApplicable(CSig *sig, CParams *ps, TsType **at, bool *defer
 
 /* chooseOverload of a call with deferred arguments (5.9.2). argCheckMode is shared by the candidates and by both relation
  * passes of resolveCall: it stays SkipContextSensitive until a candidate passes the skip check, then it is Normal for the rest
- * of the call. Returns NULL when no candidate is applicable; *err is set when a candidate is not ported (a generic one, or a
- * parameter type that is not ported). */
+ * of the call. A generic candidate is inferred in round 1 (its context-sensitive arguments skipped) in skip mode, and in round 2
+ * (them typed) in normal mode. Returns NULL when no candidate is applicable; *err is set when a candidate is not ported. */
 static CSig *cChooseDeferredOverload(CSig *sigs, CParams *pss, bool *arityOk, bool *generic, int ns, TsType **at, bool *deferred,
-                                     TsNode **args, int na, bool *err) {
+                                     TsNode *call, TsNode **args, int na, bool *err) {
   bool skipMode = true;
-  for (int pass = 0; pass < 2; pass++) {
+  for (int pass = ns > 1 ? 0 : 1; pass < 2; pass++) {   /* a single candidate is checked with the assignable relation only */
     int rel = pass == 0 ? REL_Subtype : REL_Assignable;
     for (int c = 0; c < ns; c++) {
       if (!arityOk[c]) continue;
-      /* a generic candidate is reached only when the candidates before it fail (chooseOverload returns the first one that
-       * passes): its inference with context-sensitive arguments is not ported */
-      if (generic[c]) { *err = true; return NULL; }
+      CSig *sig = &sigs[c];
+      if (generic[c]) {
+        /* only the context-sensitive functions are inferred in rounds (the other deferred arguments are not ported) */
+        for (int i = 0; i < na; i++) if (deferred[i] && !cIsContextSensitiveFn(args[i])) { *err = true; return NULL; }
+        if (skipMode) {
+          sig = cGenericCandidate(&sigs[c], &pss[c], call, at, deferred, args, na, false, err);
+          if (!sig) return NULL;
+        }
+      }
       if (skipMode) {
-        int r = cCandidateApplicable(&sigs[c], &pss[c], at, deferred, args, na, rel, true);
+        int r = cCandidateApplicable(sig, &pss[c], at, deferred, args, na, rel, true);
         if (r < 0) { *err = true; return NULL; }
         if (r == 0) continue;
         skipMode = false;
       }
-      int r = cCandidateApplicable(&sigs[c], &pss[c], at, deferred, args, na, rel, false);
+      if (generic[c]) {
+        sig = cGenericCandidate(&sigs[c], &pss[c], call, at, deferred, args, na, true, err);
+        if (!sig) return NULL;
+      }
+      int r = cCandidateApplicable(sig, &pss[c], at, deferred, args, na, rel, false);
       if (r < 0) { *err = true; return NULL; }
-      if (r == 1) return &sigs[c];
+      if (r == 1) return sig;
     }
   }
   return NULL;
@@ -2588,33 +2710,33 @@ static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
   int na = e->arguments ? e->arguments->n : 0;
   for (int i = 0; i < na; i++)
     if (e->arguments->v[i]->kind == TSK_SpreadElement) return cUnported("spread argument");
-  TsType **at = ts_arena_alloc(sizeof(TsType *) * (size_t)(na ? na : 1));
-  /* the context-sensitive function arguments of several candidates are typed per candidate (chooseOverload) */
-  bool *deferred = ts_arena_zalloc(sizeof(bool) * (size_t)(na ? na : 1));
-  bool anyDeferred = false;
-  if (ns > 1) for (int i = 0; i < na; i++) if (cArgNeedsContext(e->arguments->v[i])) { deferred[i] = true; anyDeferred = true; }
-  for (int i = 0; i < na; i++) if (!deferred[i]) at[i] = cExprType(e->arguments->v[i]);
   CParams *pss = ts_arena_alloc(sizeof(CParams) * (size_t)ns);
   bool *arityOk = ts_arena_alloc(sizeof(bool) * (size_t)ns);
   bool *generic = ts_arena_zalloc(sizeof(bool) * (size_t)ns);
-  bool anyGeneric = false;
   for (int c = 0; c < ns; c++) {
     CSig *sig = &sigs[c];
     generic[c] = sig->decl->typeParameters && sig->decl->typeParameters->n > 0;
     if (!cSplitParams(sig->decl, &pss[c])) return cUnported("too many parameters");
     if (pss[c].thisParam) return cUnported("call of a signature with a this parameter");
     if (generic[c] && pss[c].rest) return cUnported("call of a generic signature with a rest parameter");
-    anyGeneric = anyGeneric || generic[c];
     int mx = pss[c].rest ? 1 << 30 : pss[c].n;
     arityOk[c] = na >= pss[c].min && na <= mx;
   }
+  TsType **at = ts_arena_alloc(sizeof(TsType *) * (size_t)(na ? na : 1));
+  /* the context-sensitive function arguments of several candidates (or of one generic candidate) are typed per candidate
+   * (chooseOverload); the other arguments that depend on their contextual type are typed per candidate too when there are several */
+  bool *deferred = ts_arena_zalloc(sizeof(bool) * (size_t)(na ? na : 1));
+  bool anyDeferred = false;
+  if (ns > 1) for (int i = 0; i < na; i++) if (cArgNeedsContext(e->arguments->v[i])) { deferred[i] = true; anyDeferred = true; }
+  if (ns == 1 && generic[0]) for (int i = 0; i < na; i++) if (cIsContextSensitiveFn(e->arguments->v[i])) { deferred[i] = true; anyDeferred = true; }
+  for (int i = 0; i < na; i++) if (!deferred[i]) at[i] = cExprType(e->arguments->v[i]);
   /* the return type inference from a contextual type is not ported */
   /* the candidate that is applicable first (in declaration order, among those of the right arity) */
   int chosen = -1;
   CSig *chosenSig = NULL;
   if (anyDeferred) {
     bool err = false;
-    chosenSig = cChooseDeferredOverload(sigs, pss, arityOk, generic, ns, at, deferred, e->arguments->v, na, &err);
+    chosenSig = cChooseDeferredOverload(sigs, pss, arityOk, generic, ns, at, deferred, e, e->arguments->v, na, &err);
     if (err) return cUnported("overloaded call with a function argument reaches a generic candidate or an unported parameter");
     if (!chosenSig) {
       /* no candidate: the arguments are typed without a context (unported) so that their bodies are still checked */
