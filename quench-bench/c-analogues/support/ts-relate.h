@@ -234,22 +234,37 @@ static bool cIsSimpleRelated(TsType *s, TsType *t, int rel) {
 
 /* isWeakType: an object type with properties, all optional, and no signatures or index signatures */
 static bool cIsWeakType(TsType *t) {
-  if (!(t->flags & TF_Object)) return false;
-  TsSymbol **props;
-  int n = cPropertiesOf(t, &props);
-  if (n == 0) return false;
-  cResolveSignatures(t);
-  if (t->ncall || t->nconstruct) return false;
-  cResolveIndexInfos(t);
-  if (t->nindex) return false;
-  for (int i = 0; i < n; i++) if (!(props[i]->flags & SF_Optional)) return false;
-  return true;
+  /* isWeakType (71764): the structured members of an object are all resolved (signatures and index infos too); an
+   * intersection is weak when every member is */
+  if (t->flags & TF_Object) {
+    TsSymbol **props;
+    int n = cPropertiesOf(t, &props);
+    cResolveSignatures(t);
+    cResolveIndexInfos(t);
+    if (t->ncall || t->nconstruct || t->nindex || n == 0) return false;
+    for (int i = 0; i < n; i++) if (!(props[i]->flags & SF_Optional)) return false;
+    return true;
+  }
+  if (t->flags & TF_Intersection) {
+    for (int i = 0; i < t->ntypes; i++) if (!cIsWeakType(t->types[i])) return false;
+    return true;
+  }
+  return false;
+}
+
+/* isKnownProperty (for the common property check): an object's property, or one of the members of an intersection */
+static bool cIsKnownProperty(TsType *t, BName name) {
+  if (t->flags & TF_Intersection) {
+    for (int i = 0; i < t->ntypes; i++) if (cIsKnownProperty(t->types[i], name)) return true;
+    return false;
+  }
+  return (t->flags & TF_Object) && cPropertyOf(t, name) != NULL;
 }
 
 static bool cHasCommonProperties(TsType *s, TsType *t) {
   TsSymbol **props;
   int n = cPropertiesOf(s, &props);
-  for (int i = 0; i < n; i++) if (cPropertyOf(t, props[i]->name)) return true;
+  for (int i = 0; i < n; i++) if (cIsKnownProperty(t, props[i]->name)) return true;
   return false;
 }
 
@@ -1513,12 +1528,13 @@ static int cIsRelatedTo(TsType *s, TsType *t, int st) {
   if ((s->flags & TF_TypeParameter) && cConstraintOf(s) == t) return RR_True;
   if (!cIsStructured(s) && !cIsStructured(t)) return RR_False;
   /* isPerformingCommonPropertyChecks: a weak target needs a common property (comparable: only from a unit source) */
-  if (cCurRel != REL_Identity && (cCurRel != REL_Comparable || cIsUnitType(s)) && !(st & IS_Target) && (t->flags & TF_Object) && cIsWeakType(t)) {
+  if (cCurRel != REL_Identity && (cCurRel != REL_Comparable || cIsUnitType(s)) && !(st & IS_Target) && (t->flags & (TF_Object | TF_Intersection)) && cIsWeakType(t)) {
     /* getPropertiesOfType of a primitive source is that of its apparent type */
     TsType *sa = (s->flags & TF_Object) ? s : cApparentType(s);
     if (sa) {
       TsSymbol **sp;
-      bool srcHasProps = cPropertiesOf(sa, &sp) > 0 || sa->ncall || sa->nconstruct;
+      bool srcHasProps = cPropertiesOf(sa, &sp) > 0;
+      if (!srcHasProps) { cResolveSignatures(sa); srcHasProps = sa->ncall || sa->nconstruct; }
       if (srcHasProps && !cHasCommonProperties(sa, t)) return RR_False;
     }
   }
