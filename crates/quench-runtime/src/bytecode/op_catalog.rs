@@ -399,7 +399,7 @@ impl Traits {
     pub(crate) const REST_LENGTH_READ: Self = Self(1 << 80, 0);
     /// The call whose callee and arguments are both registers, without a spread or a method site. Tagged: `Call`.
     pub(crate) const PLAIN_CALL: Self = Self(1 << 81, 0);
-    /// The raw-register form of a Wasm i64 or f64 operation (`raw_webs`). Tagged: every `*Raw` row and `WasmReturn64`.
+    /// The raw-register form of a Wasm i64 or f64 operation (`raw_webs`). Tagged: every `*Raw` row (the i64/f64 operators and the GC field accesses of an i64 or f64 field) and `WasmReturn64`.
     pub(crate) const RAW_FORM: Self = Self(1 << 82, 0);
     /// The family of the i64 binary operation, boxed or raw. Tagged: `WasmI64Binary`, `WasmI64BinaryRaw`.
     pub(crate) const I64_BINARY_FAMILY: Self = Self(1 << 83, 0);
@@ -413,6 +413,14 @@ impl Traits {
     pub(crate) const F64_UNARY_FAMILY: Self = Self(1 << 87, 0);
     /// The family of a function's return, boxed or raw. Tagged: `Return`, `WasmReturn64`.
     pub(crate) const RETURN_FAMILY: Self = Self(1 << 88, 0);
+    /// The family of a struct field read, boxed or raw. Tagged: `WasmStructGet`, `WasmStructGetRaw`.
+    pub(crate) const STRUCT_GET_FAMILY: Self = Self(1 << 111, 0);
+    /// The family of a struct field write, boxed or raw. Tagged: `WasmStructSet`, `WasmStructSetRaw`.
+    pub(crate) const STRUCT_SET_FAMILY: Self = Self(1 << 112, 0);
+    /// The family of an array element read, boxed or raw. Tagged: `WasmArrayGet`, `WasmArrayGetRaw`.
+    pub(crate) const ARRAY_GET_FAMILY: Self = Self(1 << 113, 0);
+    /// The family of an array element write, boxed or raw. Tagged: `WasmArraySet`, `WasmArraySetRaw`.
+    pub(crate) const ARRAY_SET_FAMILY: Self = Self(1 << 114, 0);
     /// The op that puts a frame local slot into its temporal-dead-zone state. Tagged: `InitializeTdz`.
     pub(crate) const TDZ_INITIALIZE: Self = Self(1 << 91, 0);
     /// The op that checks a class's `extends` value before the class is built. Tagged: `ValidateClassHeritage`.

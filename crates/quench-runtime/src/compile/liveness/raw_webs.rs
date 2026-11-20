@@ -51,6 +51,10 @@ const RAW_FAMILIES: u128 = Traits::I64_BINARY_FAMILY
     .union(Traits::F64_BINARY_FAMILY)
     .union(Traits::F64_UNARY_FAMILY)
     .union(Traits::RETURN_FAMILY)
+    .union(Traits::STRUCT_GET_FAMILY)
+    .union(Traits::STRUCT_SET_FAMILY)
+    .union(Traits::ARRAY_GET_FAMILY)
+    .union(Traits::ARRAY_SET_FAMILY)
     .0;
 
 /// The raw form of `op`: the opcode that runs the same operation over raw i64 registers, the
@@ -130,6 +134,9 @@ enum Roles {
 fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool, returns_wide: bool, rewritten: bool) -> Option<Roles> {
     let op = instruction.op();
     let (a, b) = (instruction.a(), instruction.b());
+    if let Some(roles) = field_roles(instruction, rewritten) {
+        return Some(roles);
+    }
     if (if rewritten { is_raw(op) } else { raw_form(op).is_some() || is_raw(op) })
         && let Some(operation) = WasmOperation::of(op, instruction.imm())
     {
@@ -186,6 +193,35 @@ fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool,
     } else {
         None
     }
+}
+
+/// The roles of a GC field access of an i64 or f64 field (`GcFieldValue::Wide`, `struct.get`,
+/// `struct.set`, `array.get`, `array.set`): its data register, a read's result or a write's
+/// stored value, is wide, since the field's static type says its bits are an i64's or an f64's
+/// and the access moves them between the register and the storage untouched. The reference and
+/// the array index stay boxed. `None` for any other instruction or field class.
+fn field_roles(instruction: WideInstruction, rewritten: bool) -> Option<Roles> {
+    use crate::staged::wasm_gc::{Aggregate, GcStep};
+    use crate::wasm::gc::{GcField, GcFieldAccess, GcFieldValue};
+    let op = instruction.op();
+    if !(if rewritten { is_raw(op) } else { raw_form(op).is_some() || is_raw(op) }) {
+        return None;
+    }
+    let (aggregate, access) = GcStep::of(op)?.field()?;
+    if GcField::from_tag(instruction.imm())?.value() != GcFieldValue::Wide {
+        return None;
+    }
+    let write = access == GcFieldAccess::Write;
+    let data = match (aggregate, write) {
+        (Aggregate::Struct, true) => instruction.b(),
+        (Aggregate::Array, true) => instruction.c(),
+        (_, false) => instruction.a(),
+    };
+    Some(if write {
+        Roles::Wide { uses: vec![data], definitions: vec![], neutral_uses: vec![] }
+    } else {
+        Roles::Wide { uses: vec![], definitions: vec![data], neutral_uses: vec![] }
+    })
 }
 
 /// Union-find over value nodes.
@@ -380,10 +416,12 @@ fn webs(
 
 /// Switches each op of the Wasm function `function` whose wide web is raw to its raw form
 /// (`raw_form`). `constant_neutral` and `returns_wide` are as `raw_webs`'. A function past the
-/// liveness budget or the root-map width keeps every op boxed.
-pub(crate) fn use_raw_forms(function: &mut Function, constant_neutral: &dyn Fn(usize) -> bool, returns_wide: bool) {
+/// liveness budget or the root-map width keeps every op boxed. Returns the live sets it solved,
+/// which are the live sets of the function as it stands after the switch: a raw form has its
+/// boxed op's transfers and control flow, so only the opcodes change. `None` where it solved none.
+pub(crate) fn use_raw_forms(function: &mut Function, constant_neutral: &dyn Fn(usize) -> bool, returns_wide: bool) -> Option<Vec<RegisterSet>> {
     let no_method_sites: &[MethodSite] = &[];
-    let Some(transfers) = super::transfers(function, no_method_sites, &[], &[]) else { return };
+    let transfers = super::transfers(function, no_method_sites, &[], &[])?;
     let live = super::solve::analyze_wide(function, &transfers, &Successors::of_code(function));
     let webs = raw_webs(function, &live, &transfers, constant_neutral, returns_wide);
     for (pc, raw) in webs.raw_ops.iter().enumerate() {
@@ -399,6 +437,7 @@ pub(crate) fn use_raw_forms(function: &mut Function, constant_neutral: &dyn Fn(u
             function.code[pc].set_op(raw_op);
         }
     }
+    Some(live)
 }
 
 #[cfg(test)]

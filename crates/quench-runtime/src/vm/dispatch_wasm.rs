@@ -110,18 +110,19 @@ impl<H: Host> Vm<H> {
         let (output, input) = i.register_pair();
         let index_type = self.wasm_memory_index_type(destination)?;
         let output = self.wasm_index_operand(self.read(f, output), index_type)?;
-        let length_type = match step {
-            Memory::Copy => copy_length_type(index_type, self.wasm_memory_index_type(source)?),
-            _ => index_type,
-        };
-        let length = self.wasm_index_operand(self.read(f, i.register_c()), length_type)?;
         match step {
             Memory::Fill => {
+                let length = self.wasm_index_operand(self.read(f, i.register_c()), index_type)?;
                 let byte = u64::from(Self::wasm_u32_operand(source)?);
                 self.wasm_memory_bulk(destination, |stage| memory_fill_rule(stage, output, byte, length))
             }
             _ => {
-                let input = self.wasm_memory_index(source, self.read(f, input))?;
+                // A copy's source is a memory too: its index type is derived once, for both the
+                // length and the input offset.
+                let source_type = self.wasm_memory_index_type(source)?;
+                let length_type = copy_length_type(index_type, source_type);
+                let length = self.wasm_index_operand(self.read(f, i.register_c()), length_type)?;
+                let input = self.wasm_index_operand(self.read(f, input), source_type)?;
                 self.wasm_copy_bytes(destination, Some(source), output, input, length)
             }
         }
@@ -196,7 +197,7 @@ impl<H: Host> Vm<H> {
                     .right
                     .map(|ty| self.decode_wasm_value(self.read(f, i.register_c()), ty))
                     .transpose()?;
-                let value = self.encode_wasm_value(execute(selector, left, right));
+                let value = self.encode_wasm_value(execute(kernel, selector, left, right));
                 self.write(f, i.result_register(), value);
             }
             Simd::Shuffle => {

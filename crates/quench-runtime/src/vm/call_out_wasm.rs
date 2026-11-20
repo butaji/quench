@@ -60,20 +60,24 @@ impl<H: Host> Vm<H> {
                 let (output, input) = i.register_pair();
                 let table_type = self.wasm_table_index_type(table)?;
                 let output = self.wasm_index_operand(read(&*self, output), table_type)?;
-                let length_type = match step {
-                    WasmHostStep::WasmTableInit(_) => crate::WasmType::I32,
-                    WasmHostStep::WasmTableCopy(_) => copy_length_type(table_type, self.wasm_table_index_type(source)?),
-                    _ => table_type,
+                // Each operand's index type is derived once: a copy's source is a table too.
+                let (length_type, input_type) = match step {
+                    WasmHostStep::WasmTableInit(_) => (crate::WasmType::I32, crate::WasmType::I32),
+                    WasmHostStep::WasmTableCopy(_) => {
+                        let source_type = self.wasm_table_index_type(source)?;
+                        (copy_length_type(table_type, source_type), source_type)
+                    }
+                    _ => (table_type, table_type),
                 };
                 let length = self.wasm_index_operand(read(&*self, i.register_c()), length_type)?;
                 match step {
                     WasmHostStep::WasmTableFill(_) => self.wasm_table_fill(table, output, source, length)?,
                     WasmHostStep::WasmTableInit(_) => {
-                        let input = self.wasm_index_operand(read(&*self, input), crate::WasmType::I32)?;
+                        let input = self.wasm_index_operand(read(&*self, input), input_type)?;
                         self.wasm_table_init(table, source, output, input, length)?;
                     }
                     _ => {
-                        let input = self.wasm_table_index(source, read(&*self, input))?;
+                        let input = self.wasm_index_operand(read(&*self, input), input_type)?;
                         self.wasm_table_copy(table, source, output, input, length)?;
                     }
                 }
