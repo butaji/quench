@@ -21,6 +21,8 @@ mod call_rows;
 mod checks;
 #[path = "src/class.rs"]
 mod class;
+#[path = "build/edits.rs"]
+mod edits;
 #[path = "build/elf.rs"]
 mod elf;
 #[path = "build/layout.rs"]
@@ -41,6 +43,10 @@ mod row_names;
 use library::TYPED_KINDS;
 #[path = "build/macho.rs"]
 mod macho;
+#[path = "build/reach.rs"]
+mod reach;
+#[path = "build/snapshot.rs"]
+mod snapshot;
 #[path = "build/sources.rs"]
 mod sources;
 #[path = "stencils/shards.rs"]
@@ -187,19 +193,30 @@ fn main() {
     // module) are the rerun triggers. `EXTRA_WATCHED` reruns the script but is not in a key: the supernode list and
     // the opcode table reach a shard only through its instance file, and the flags file through its arguments.
     let first = |family: Family| parts.iter().position(|(of, _)| *of == family);
+    // Beside each family's key, the key it had under the sources of the last finished build (`snapshot`) and the
+    // functions an edit since then changed (`edits`): a shard object built from those sources whose rows reach none
+    // of them is still the object these sources make (`compile`).
+    let snapshot = snapshot::Snapshot::load(&out);
     let mut keys = Vec::new();
+    let mut all_watched = std::collections::BTreeSet::new();
     for family in Family::ALL {
         let Some(shard) = first(family) else { continue };
         let watched = stencil_sources(&out, family, shard).unwrap_or_else(|| sources::watched(manifest));
         if family == Family::Fixed {
             watch(&watched);
         }
-        keys.push((family, cache::sources_key(&rustc(), manifest, &watched, &[])));
+        let now = cache::sources_key(&rustc(), manifest, &watched, &[]);
+        let since = snapshot.covers(&watched).then(|| {
+            let was = cache::sources_key_of(&rustc(), manifest, &watched, &[], |file| snapshot.get(file).expect("a covered file").to_vec());
+            (was, snapshot.changed_functions(&watched).map(std::sync::Arc::new))
+        });
+        keys.push((family, now, since));
+        all_watched.extend(watched);
     }
-    let key_of = |family: Family| keys.iter().find(|(of, _)| *of == family).map(|(_, key)| *key).expect("a family key");
+    let key_of = |family: Family| keys.iter().find(|(of, ..)| *of == family).map(|(_, key, since)| (*key, since.clone())).expect("a family key");
     let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| parts.iter().enumerate().map(|(shard, (family, _))| shard_job(&out, shard, *family, *cpu, key_of(*family))).collect::<Vec<_>>()).collect();
     for family in Family::ALL {
-        if jobs.iter().any(|job| job.family == family && !job.cached()) {
+        if jobs.iter().any(|job| job.family == family && !job.cached() && !job.unchanged_by_edit()) {
             type_check(&out, family, first(family).expect("a shard of the family"));
         }
     }
@@ -218,6 +235,7 @@ fn main() {
         tables += &library_source(name, *counts, rows);
     }
     fs::write(&table, tables).unwrap();
+    snapshot::Snapshot::save(&out, &all_watched);
 }
 
 /// One macro invocation per generated row, the unit `shards::split` distributes, with its
@@ -281,12 +299,65 @@ struct Shard {
     object: PathBuf,
     key_file: PathBuf,
     key: String,
+    /// The key this shard had under the last finished build's sources, and the functions edited since then (`None`:
+    /// a structural edit), where that build's sources are known.
+    since: Option<(String, Option<std::sync::Arc<std::collections::BTreeSet<String>>>)>,
 }
 
 impl Shard {
     /// Whether the object on disk was built from exactly these inputs.
     fn cached(&self) -> bool {
         self.object.is_file() && fs::read_to_string(&self.key_file).is_ok_and(|key| key == self.key)
+    }
+
+    /// The identifiers its rows reach (`reach`), one a line, kept beside the object.
+    fn reach_file(&self) -> PathBuf {
+        self.object.with_extension("reach")
+    }
+
+    /// Whether the object on disk is still the one these inputs make although its key is not: it was built from
+    /// the last finished build's sources with these arguments and instances, every edit since then is inside
+    /// function bodies (`edits`), and no row of the shard reaches an edited function (`reach`). A row is made of the
+    /// bodies it reaches and nothing else (it has no call), so its code is the same.
+    fn unchanged_by_edit(&self) -> bool {
+        let Some((was, Some(edited))) = &self.since else { return false };
+        if !self.object.is_file() || !fs::read_to_string(&self.key_file).is_ok_and(|key| key == *was) {
+            return false;
+        }
+        let Ok(reach) = fs::read_to_string(self.reach_file()) else { return false };
+        let reach: std::collections::HashSet<&str> = reach.lines().collect();
+        edited.iter().all(|name| !reach.contains(name.as_str()))
+    }
+
+    /// Writes the identifiers the shard's rows reach: its unoptimized LLVM IR (the shard's own arguments, no
+    /// optimization and no LLVM pass, so every function a row runs is a definition of its own), walked from the rows.
+    fn write_reach(&self) {
+        let ll = self.object.with_extension("ll");
+        let mut args = Vec::new();
+        let mut at = 0;
+        while at < self.args.len() {
+            let arg = self.args[at].to_string_lossy();
+            let value = self.args.get(at + 1).map(|v| v.to_string_lossy().into_owned()).unwrap_or_default();
+            if (arg == "-C" && (value.starts_with("opt-level=") || value.starts_with("passes="))) || arg == "-o" {
+                at += 2;
+            } else if arg.starts_with("--emit") {
+                at += 1;
+            } else {
+                args.push(self.args[at].clone());
+                at += 1;
+            }
+        }
+        let status = {
+            let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            Command::new(rustc()).args(&args).args(["--emit=llvm-ir", "-C", "opt-level=0", "-C", "no-prepopulate-passes", "-o"]).arg(&ll)
+                .envs(self.envs.iter().map(|(name, path)| (*name, path))).stderr(std::process::Stdio::null()).status().expect("run rustc")
+        };
+        let _ = fs::remove_file(self.reach_file());
+        if status.success() && let Ok(text) = fs::read_to_string(&ll) {
+            let ids = reach::reached(&text, bytes::is_row_name);
+            fs::write(self.reach_file(), ids.into_iter().map(|id| id + "\n").collect::<String>()).unwrap();
+        }
+        let _ = fs::remove_file(&ll);
     }
 }
 
@@ -299,7 +370,9 @@ fn base_args() -> Vec<String> {
     args
 }
 
-fn shard_job(out: &Path, shard: usize, family: Family, cpu: Option<&'static str>, sources: u128) -> Shard {
+type Since = Option<(u128, Option<std::sync::Arc<std::collections::BTreeSet<String>>>)>;
+
+fn shard_job(out: &Path, shard: usize, family: Family, cpu: Option<&'static str>, (sources, since): (u128, Since)) -> Shard {
     let name = cpu.unwrap_or("native");
     let object = out.join(format!("rows_{name}_{shard}.o"));
     let mut args = base_args();
@@ -310,13 +383,14 @@ fn shard_job(out: &Path, shard: usize, family: Family, cpu: Option<&'static str>
     args.extend(family.args());
     let instances = instance_file(out, shard);
     let key = cache::shard_key(sources, &args, &[&instances, &call_rows_file(out)]);
+    let since = since.map(|(was, edited)| (cache::shard_key(was, &args, &[&instances, &call_rows_file(out)]), edited));
     // Not `-C incremental`: rustc's incremental mode partitions and inlines differently (with one codegen unit
     // or 16, and with `-Z inline-mir=yes`), so 116 of 303 sampled rows came out changed and 61 kept relocations
     // that are not holes. A shard is reused whole, by its key, or compiled whole.
     let mut args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
     args.extend(["-o".into(), object.clone().into(), SOURCE.into()]);
     let envs = [(INSTANCES_VAR, instances), (CALL_ROWS_VAR, call_rows_file(out))];
-    Shard { cpu, family, args, envs, key_file: object.with_extension("key"), object, key }
+    Shard { cpu, family, args, envs, key_file: object.with_extension("key"), object, key, since }
 }
 
 /// Environment variable that builds the V3 library in a profile other than `release` (any non-empty value).
@@ -413,12 +487,22 @@ fn compile(job: &Shard, shard: usize) {
         if let Some(shared) = shared.as_ref().filter(|path| !path.is_file()) {
             publish(&job.object, shared);
         }
+        if !job.reach_file().is_file() {
+            job.write_reach();
+        }
+        return;
+    }
+    if job.unchanged_by_edit() {
+        fs::write(&job.key_file, &job.key).unwrap();
         return;
     }
     let _ = fs::remove_file(&job.key_file);
     if let Some(shared) = shared.as_ref().filter(|path| path.is_file())
         && fs::copy(shared, &job.object).is_ok()
     {
+        if fs::copy(shared.with_extension("reach"), job.reach_file()).is_err() {
+            job.write_reach();
+        }
         fs::write(&job.key_file, &job.key).unwrap();
         return;
     }
@@ -430,8 +514,12 @@ fn compile(job: &Shard, shard: usize) {
         status = run();
     }
     assert!(status.success(), "rustc failed on {SOURCE} (shard {shard}): {status}");
+    job.write_reach();
     if let Some(shared) = &shared {
         publish(&job.object, shared);
+        if job.reach_file().is_file() {
+            publish(&job.reach_file(), &shared.with_extension("reach"));
+        }
     }
     fs::write(&job.key_file, &job.key).unwrap();
 }

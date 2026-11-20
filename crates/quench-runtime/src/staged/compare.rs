@@ -138,7 +138,7 @@ impl<W, P> Operation<W, P> {
 /// Run the comparison jump `operation`: the edge its answer takes, or `Unresolved` where the
 /// tier decides the comparison itself.
 #[inline(always)]
-pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let Operation::CompareJump { comparison, left, right, negate } = operation else { return Step::Unresolved };
     let holds = match outcome(stage, frame, comparison, [left, right], negate) {
@@ -150,6 +150,13 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     };
     let taken = if negate { stage.not(holds) } else { holds };
     Step::Control(frame.branch(stage, taken))
+}
+
+/// `step_of` for any operation.
+#[inline(always)]
+pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
 /// Whether `comparison` of `operands` holds, for a jump that `negate`s it; `None` where only the

@@ -69,6 +69,7 @@ mod admission;
 mod delete;
 mod operation;
 pub(crate) use operation::Operation;
+pub(crate) use operation::kind as op_kind;
 mod binary_class;
 pub(crate) use binary_class::BinaryClass;
 mod edge;

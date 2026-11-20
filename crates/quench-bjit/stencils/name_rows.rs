@@ -11,7 +11,7 @@ use crate::places::{LEFT, Places, finish_fast};
 use crate::codes::{MEM, ADD_AFTER_AT, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_LINK_AT, ADD_LINK_BITS, ADD_OBJECT_AT, ADD_PACKED_ROW, ADD_SLOT_BITS, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, NAME_EITHER_ROW, NAME_FUNCTION_AT};
 use crate::stage::StencilStage;
 use crate::staged::object::Form;
-use crate::staged::{Frame, Operation, Step, add, step};
+use crate::staged::{Frame, Operation, Step, add, op_kind, step_of};
 use crate::heap_rows::{context_word, word_at};
 
 /// The add row of `form`: the value operand (hole 1) is added to `object` by the transition hole 0
@@ -28,7 +28,7 @@ fn add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form, o
     let records = frame.object_records();
     let object = object(site >> ADD_OBJECT_AT);
     let value = frame.tagged(&mut stage, LEFT);
-    let done = matches!(step(&mut stage, &mut frame, Operation::AddSite { records, object, edge, link, form, value }), Step::Value(_));
+    let done = matches!(step_of::<{ op_kind::ADD_SITE }, _, _>(&mut stage, &mut frame, Operation::AddSite { records, object, edge, link, form, value }), Step::Value(_));
     finish_fast(frame, done)
 }
 
@@ -60,7 +60,7 @@ fn name_row(s: S, payload: usize, form: Form) -> Out {
     let records = frame.function_records();
     let naming = (edge, frame.empty_string());
     let name = hole64::<HOLE_A>();
-    let done = matches!(step(&mut stage, &mut frame, Operation::NamingSite { records, function, naming, form, name }), Step::Value(_));
+    let done = matches!(step_of::<{ op_kind::NAMING_SITE }, _, _>(&mut stage, &mut frame, Operation::NamingSite { records, function, naming, form, name }), Step::Value(_));
     finish_fast(frame, done)
 }
 

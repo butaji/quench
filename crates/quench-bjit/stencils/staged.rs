@@ -57,8 +57,9 @@ pub(crate) use crate::typed_ir::Type;
 // frame traits. A row builds its `Operation` from its holes and runs the family step over `Places`.
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/operation.rs"] mod operation;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use operation::Operation;
+#[cfg(not(stencil_family = "wasm"))] pub(crate) use operation::kind as op_kind;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/steps.rs"] mod steps;
-#[cfg(not(stencil_family = "wasm"))] pub(crate) use steps::{step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_arith};
+#[cfg(not(stencil_family = "wasm"))] pub(crate) use steps::{step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_arith, step_of, step_flow_of, step_local_of, step_value_of, step_names_of, step_property_of, step_keyed_of, step_generic_of, step_arith_of};
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/names.rs"] mod names;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use names::Protocol;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/captures.rs"] mod captures;
