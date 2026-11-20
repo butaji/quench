@@ -163,14 +163,19 @@ static bool cIsUnitType(TsType *t) {
                       TF_Undefined | TF_Null)) != 0;
 }
 
-/* isEmptyAnonymousObjectType: an anonymous object type with no properties, signatures or index infos */
-static bool cIsEmptyAnonymousObject(TsType *t) {
-  if (!(t->flags & TF_Object) || !(t->objectFlags & OF_Anonymous)) return false;
+/* isEmptyResolvedType: an object type with no properties, signatures or index infos */
+static bool cIsEmptyResolved(TsType *t) {
+  if (!(t->flags & TF_Object)) return false;
   TsSymbol **props;
   if (cPropertiesOf(t, &props) != 0) return false;
   cResolveSignatures(t);
   cResolveIndexInfos(t);
   return t->ncall == 0 && t->nconstruct == 0 && t->nindex == 0;
+}
+
+/* isEmptyAnonymousObjectType: an anonymous object type that is empty */
+static bool cIsEmptyAnonymousObject(TsType *t) {
+  return (t->flags & TF_Object) && (t->objectFlags & OF_Anonymous) && cIsEmptyResolved(t);
 }
 
 /* isUnknownLikeUnionType (strictNullChecks): undefined | null | {} and more members, with the empty object type */
@@ -286,21 +291,82 @@ static void cCollectReturns(TsNode *n, TsNode ***out, int *cnt, int *cap) {
   cCollectReturns(n->caseBlock, out, cnt, cap);
 }
 
-/* removeSubtypes (UnionReduction.Subtype of getUnionType): a type that is a strict subtype of another member is
- * dropped, scanning from the last member; the relation is the strict subtype relation */
+static TsType *cBaseConstraintOf(TsType *t);
+
+/* removeSubtypes (65855, UnionReduction.Subtype of getUnionType). The members are scanned from the last one; a member
+ * is a candidate when it is structured or instantiable, or when an empty object type is a member. A candidate is
+ * dropped when it is a strict subtype of another member, and the targets whose key property (the first unit-typed
+ * property of the candidate) has another unit type are not compared. The subtype reduction cache is not kept. */
 static TsType *cUnionWithSubtypesRemoved(TsType **ts, int n) {
-  bool *drop = calloc((size_t)n, sizeof(bool));
-  if (!drop) abort();
+  if (n == 0) return cNeverType;
+  if (n == 1) return ts[0];
+  bool hasObject = false;
+  for (int i = 0; i < n; i++) if (ts[i]->flags & TF_Object) hasObject = true;
+  bool hasEmptyObject = false;
+  for (int i = 0; hasObject && i < n; i++) {
+    TsType *m = ts[i];
+    if ((m->flags & TF_Object) && !(m->objectFlags & OF_Mapped) && cIsEmptyResolved(m)) hasEmptyObject = true;
+  }
+  bool *alive = calloc((size_t)n, sizeof(bool));
+  if (!alive) abort();
+  for (int i = 0; i < n; i++) alive[i] = true;
   for (int i = n - 1; i >= 0; i--) {
+    TsType *source = ts[i];
+    if (!(hasEmptyObject || (source->flags & (TF_Object | TF_Union | TF_Intersection | TF_TypeParameter | TF_Index |
+                                              TF_IndexedAccess | TF_Conditional | TF_TemplateLiteral | TF_StringMapping))))
+      continue;
+    if (source->flags & TF_TypeParameter) {
+      /* a type parameter whose constraint is a union is dropped when it is a strict subtype of the other members */
+      TsType *bc = cBaseConstraintOf(source);
+      if (bc == cErrorType) { cUnported("subtype reduction of a type parameter"); continue; }
+      if (bc && (bc->flags & TF_Union)) {
+        TsType **others = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
+        int no = 0;
+        for (int j = 0; j < n; j++) if (alive[j]) others[no++] = ts[j] == source ? cNeverType : ts[j];
+        TsType *u = no == 1 ? others[0] : cGetUnionType(others, no);
+        if (cIsRelatedWith(source, u, REL_StrictSubtype)) alive[i] = false;
+        continue;
+      }
+    }
+    /* the key property: the first property of the candidate with a unit type */
+    TsSymbol *keyProp = NULL;
+    TsType *keyType = NULL;
+    if (source->flags & (TF_Object | TF_Intersection | TF_TypeParameter | TF_IndexedAccess | TF_Conditional)) {
+      if (source->flags & TF_Object) {
+        TsSymbol **props;
+        int np = cPropertiesOf(source, &props);
+        for (int p = 0; p < np && !keyProp; p++) {
+          TsType *pt = cTypeOfSymbol(props[p]);
+          if (cIsUnitType(pt)) { keyProp = props[p]; keyType = cRegularType(pt); }
+        }
+      } else {
+        cUnported("subtype reduction key property of an intersection or instantiable type");
+        continue;
+      }
+    }
     for (int j = 0; j < n; j++) {
-      if (j == i || drop[j]) continue;
-      if (cIsRelatedWith(ts[i], ts[j], REL_StrictSubtype)) { drop[i] = true; break; }
+      if (j == i || !alive[j]) continue;
+      TsType *target = ts[j];
+      if (keyProp && (target->flags & (TF_Object | TF_Intersection | TF_TypeParameter | TF_IndexedAccess | TF_Conditional))) {
+        if (!(target->flags & TF_Object)) { cUnported("subtype reduction key property of an intersection or instantiable target"); continue; }
+        TsSymbol *tp = cPropertyOf(target, keyProp->name);
+        if (tp) {
+          TsType *tt = cTypeOfSymbol(tp);
+          if (cIsUnitType(tt) && cRegularType(tt) != keyType) continue;
+        }
+      }
+      if (!cIsRelatedWith(source, target, REL_StrictSubtype)) continue;
+      /* a class source and a class target are kept unless the source derives from the target (not ported) */
+      bool bothClasses = (source->objectFlags & OF_Class) && (target->objectFlags & OF_Class);
+      if (bothClasses) { cUnported("subtype reduction between classes"); continue; }
+      alive[i] = false;
+      break;
     }
   }
   TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
   int k = 0;
-  for (int i = 0; i < n; i++) if (!drop[i]) kept[k++] = ts[i];
-  free(drop);
+  for (int i = 0; i < n; i++) if (alive[i]) kept[k++] = ts[i];
+  free(alive);
   return k == 1 ? kept[0] : cGetUnionType(kept, k);
 }
 
