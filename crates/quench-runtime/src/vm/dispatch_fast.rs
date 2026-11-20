@@ -10638,11 +10638,13 @@ use lane_plain_activation;
 mod leaf_calls;
 use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, materialize_running_leaf_in_lane, leaf_call_handler};
 
-/// Makes the running leaf, if one runs in `registers`, the activation its call would have pushed, before a lane
-/// body runs in it whose direct calls push windows at the lane stack's values' top: a leaf's window lies at that
-/// top without moving it (`script_call_leaf_miss`), so the first callee's window would be the leaf's own and its
-/// arguments overwrite the leaf's registers (a recursive `f(d - 1)` read `d` as its callee's under `--b-jit`).
-pub(in crate::vm) fn settle_leaf_before_direct_calls<H: Host>(lane_context: *mut (), registers: *mut Value) {
+/// Refuses the direct calls of a lane body or region about to run in `registers` where the running leaf owns them: a
+/// leaf's activation is pending (`script_call_leaf_miss`, `enter_cell_body_in_lane`), and a direct row's push would put
+/// the callee's frame (and, at a leaf's unmoved top, its window over the leaf's registers) below the activation the
+/// leaf makes on a leave, which then resumes the wrong frame. Zeroing the plain depth limit makes every direct row
+/// refuse to its helper row, which makes the leaf's activation first (`in_innermost_frame`). Called after the run's
+/// stack words are bound, which set the limit.
+pub(in crate::vm) fn refuse_direct_calls_in_leaf<H: Host>(lane_context: *mut (), registers: *mut Value) {
     let cx = lane_context.cast::<LaneContext<H>>();
     // SAFETY: a lane body's context is the running lane's, which nothing else accesses.
     if cx.is_null() || unsafe { (*cx).leaf.call }.is_null() || unsafe { (*cx).registers.0 } != registers {
@@ -10650,10 +10652,11 @@ pub(in crate::vm) fn settle_leaf_before_direct_calls<H: Host>(lane_context: *mut
     }
     // The body runs in the leaf only where no activation owns `registers` yet: a body's call made from inside the
     // leaf pushed the callee's activation on its own window, which the context names while the leaf stays set.
-    if unsafe { vm(cx) }.lane_stack.top_frame().is_some_and(|frame| frame.window == registers.addr()) {
+    let stack = &unsafe { vm(cx) }.lane_stack;
+    if stack.top_frame().is_some_and(|frame| frame.window == registers.addr()) {
         return;
     }
-    materialize_running_leaf_in_lane(cx);
+    stack.frames_changed();
 }
 
 /// Make the running leaf (`LaneContext::leaf`) the activation its call would have pushed
