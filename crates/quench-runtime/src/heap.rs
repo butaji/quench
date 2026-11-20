@@ -3460,7 +3460,8 @@ impl Heap {
             // Frees `slot`'s cell, if it has one. A BigInt, the cell most often freed where
             // BigInt arithmetic runs, owns nothing beyond its slot but spilled digits, which its
             // own drop releases: no payload or external bytes, no properties, no cell move.
-            let mut release = |properties: &mut ValueArena, _index: usize, slot: &mut Slot| -> bool {
+            let mut release = |properties: &mut ValueArena, index: usize, slot: &mut Slot| -> bool {
+                let _ = index; // the memory profile's alone (`profile-memory`)
                 match &slot.cell {
                     None => return false,
                     Some(Cell::BigInt(_)) => {

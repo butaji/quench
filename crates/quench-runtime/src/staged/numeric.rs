@@ -321,6 +321,8 @@ fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     Step::Value(slot)
 }
 
+/// `Math.imul` of two int32s: their wrapping product; any other operand leaves.
+#[inline(always)]
 fn imul<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand,
 ) -> Step<S::Word, F::Control> {

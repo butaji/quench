@@ -3,7 +3,6 @@
 //! (`aot_image::live::install`), and reads and writes the file (`aot_image::file`). A recording
 //! bundles the images of one run into one file.
 use super::*;
-use std::collections::BTreeMap;
 use crate::vm::jit_backend::relocatable_code::RelocatableCode;
 use crate::vm::aot_image::{LaneImage, base::{BaseImage, NO_ENTRY}, symbols::{Symbol, SymbolTable}};
 use crate::compile::aot_facts::AotFacts;
@@ -39,7 +38,7 @@ fn unit_of(program: &ResidualProgram, function: u32) -> Option<lane_unit::Unit> 
 /// it polls for faults; `None` where it gives no native record.
 fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, facts: VmFacts<'_>) -> Option<(RelocatableCode, bool)> {
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
-        &Default::default(), facts, &[], &BTreeMap::new(), &[], None, &[])?;
+        &Default::default(), facts, &[], &std::collections::BTreeMap::new(), &[], None, &[])?;
     if lowered.region.native == 0 { return None; }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = crate::vm::jit_backend::target_isa()?;
@@ -85,10 +84,11 @@ pub struct AheadImages {
 }
 
 /// The images of each program stored while recording (`start_recording`); the entry may run
-/// on a worker thread, so this is process-wide.
-static RECORDED: std::sync::Mutex<Option<Vec<Vec<u8>>>> = std::sync::Mutex::new(None);
+/// on a worker thread, so this is process-wide. It holds the lowered images alone: a linked
+/// image belongs to the VM (and thread) that loaded it.
+static RECORDED: std::sync::Mutex<Option<Vec<AotImage>>> = std::sync::Mutex::new(None);
 
-fn recorded() -> std::sync::MutexGuard<'static, Option<Vec<Vec<u8>>>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
+fn recorded() -> std::sync::MutexGuard<'static, Option<Vec<AotImage>>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
 
 impl AheadImages {
     /// The image of `program`, lowered under its closed-world facts for the baseline ISA.
@@ -130,13 +130,11 @@ impl AheadImages {
     pub(in crate::vm) fn record(program: &ResidualProgram) {
         if recorded().is_none() { return; }
         let Ok(images) = Self::compile(program) else { return };
-        if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images.to_bytes()); } }
+        if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images.image); } }
     }
 
     /// What was recorded since `start_recording`, which stops.
-    pub fn finish_recording() -> Vec<AheadImages> {
-        recorded().take().unwrap_or_default().into_iter().filter_map(|file| Self::from_bytes(&file).ok()).collect()
-    }
+    pub fn finish_recording() -> Vec<AheadImages> { recorded().take().unwrap_or_default().into_iter().map(Self::of).collect() }
 
     /// A file of several programs' images: each as `to_bytes` wrote it, after its length.
     pub fn bundle(all: &[AheadImages]) -> Vec<u8> {

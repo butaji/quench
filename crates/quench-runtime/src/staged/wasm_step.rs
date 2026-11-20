@@ -173,4 +173,79 @@ pub(crate) mod opcodes {
     pub(crate) const SHIFT_RIGHT_UNSIGNED_AND_IMMEDIATE: Op = Op::WasmI32ShiftRightUnsignedAndImmediate;
 }
 
-
+/// The opcode lists the lane fusions in `vm::dispatch_fast` match by name, each keyed by what it
+/// is for. `wasm_lane_list!($m => $key)` applies `$m!` to the list's opcodes;
+/// `wasm_lane_list!($m ($pre) ($post) => $key)` applies it to `$pre`, the opcodes, then `$post`,
+/// for a consumer that takes leading or trailing arguments. Each expansion is the token list the
+/// consumer's own spelled list gave, so the fusions generated from them are unchanged.
+#[allow(unused_macros)]
+macro_rules! wasm_lane_list {
+    ($m:ident => $key:ident) => {
+        $crate::staged::wasm_step::wasm_lane_list!(@emit $m () () $key)
+    };
+    ($m:ident ($($pre:tt)*) ($($post:tt)*) => $key:ident) => {
+        $crate::staged::wasm_step::wasm_lane_list!(@emit $m ($($pre)*) ($($post)*) $key)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) load_store_copies) => {
+        $m!($($pre)* (WasmI32Load, WasmI32Store), (WasmI32Load8U, WasmI32Store8), (WasmI64Load, WasmI64Store) $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) i32_loads) => {
+        $m!($($pre)* WasmI32Load, WasmI32Load8S, WasmI32Load8U, WasmI32Load16S, WasmI32Load16U $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) scalar_loads) => {
+        $m!($($pre)* WasmI32Load, WasmI64Load, WasmF32Load, WasmF64Load, WasmI32Load8S, WasmI32Load8U, WasmI32Load16S, WasmI32Load16U, WasmI64Load8S, WasmI64Load8U, WasmI64Load16S, WasmI64Load16U, WasmI64Load32S, WasmI64Load32U $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) load_operator_pairs) => {
+        $m!($($pre)* (WasmI32Load, WasmI32Add), (WasmI32Load, WasmI32Multiply), (WasmI32Load16S, WasmI32Multiply), (WasmI32Load16U, WasmI32Multiply), (WasmI32Load8U, WasmI32Add) $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) immediate_equal_jumps) => {
+        $m!($($pre)* WasmJumpI32EqualImmediate, WasmJumpI32NotEqualImmediate, WasmJumpI32LessUnsignedImmediate, WasmJumpI32LessEqualUnsignedImmediate, WasmJumpI32GreaterUnsignedImmediate, WasmJumpI32GreaterEqualUnsignedImmediate $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) register_equal_jumps) => {
+        $m!($($pre)* WasmJumpI32Equal, WasmJumpI32NotEqual $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) bit_field_seconds) => {
+        $m!($($pre)* WasmI32ShiftRightUnsignedAndImmediate, WasmI32Multiply, WasmI32XorImmediate $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) operator_constant_selects) => {
+        $m!($($pre)* WasmI32GreaterSigned, WasmI32GreaterUnsigned, WasmI32LessSigned, WasmI32LessUnsigned, WasmI32Equal, WasmI32NotEqual, WasmI32GreaterEqualSigned, WasmI32LessEqualSigned $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) i32_stores) => {
+        $m!($($pre)* WasmI32Store, WasmI32Store8, WasmI32Store16 $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) scalar_stores) => {
+        $m!($($pre)* WasmI32Store, WasmI64Store, WasmF32Store, WasmF64Store, WasmI32Store8, WasmI32Store16, WasmI64Store8, WasmI64Store16, WasmI64Store32 $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) i32_updates) => {
+        $m!($($pre)* WasmI32Add, WasmI32Subtract, WasmI32Multiply, WasmI32And, WasmI32Or, WasmI32Xor, WasmI32ShiftLeft, WasmI32ShiftRightSigned, WasmI32ShiftRightUnsigned, WasmI32Equal, WasmI32NotEqual, WasmI32LessSigned, WasmI32LessUnsigned $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) i32_load) => {
+        $m!($($pre)* WasmI32Load $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) i32_load_u8) => {
+        $m!($($pre)* WasmI32Load8U $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) equal_immediate_jump) => {
+        $m!($($pre)* WasmJumpI32EqualImmediate $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) not_equal_immediate_jump) => {
+        $m!($($pre)* WasmJumpI32NotEqualImmediate $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) i32_add) => {
+        $m!($($pre)* WasmI32Add $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) i32_add_immediate) => {
+        $m!($($pre)* WasmI32AddImmediate $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) i32_add_immediate_jump_non_zero) => {
+        $m!($($pre)* WasmI32AddImmediateJumpNonZero $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) i32_subtract_immediate) => {
+        $m!($($pre)* WasmI32SubtractImmediate $($post)*)
+    };
+    (@emit $m:ident ($($pre:tt)*) ($($post:tt)*) i32_and_immediate) => {
+        $m!($($pre)* WasmI32AndImmediate $($post)*)
+    };
+}
+#[allow(unused_imports)]
+pub(crate) use wasm_lane_list;

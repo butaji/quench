@@ -7,7 +7,7 @@
 //! sorted static table (`OUT_DIR/rustc_stencils.rs`).
 //!
 //! Extension point: a new row family adds its `*_row!` macro to `rows.rs` and a generator line
-//! to `instances`; a new source file is found by its `#[path]` (`sources::watched`). Sharding, per-shard checks and
+//! to `instances`; a new source file is found by rustc's dep-info of `rows.rs` (`stencil_sources`). Sharding, per-shard checks and
 //! the merge apply to both without further edits. A row that contains a `call` or a `ret` is a
 //! build error: rows chain by `become` only, and only the `leave_*` rows return. Other targets
 //! get an empty table.
@@ -93,7 +93,7 @@ const EXIT_PREFIX: usize = "EXIT".len();
 const VARIANTS: [(&str, Option<&str>); 2] = [("BASELINE", Some("x86-64-v2")), ("V3", Some("x86-64-v3"))];
 /// The flags every stencil object is built with beyond the target (`stencil-rustc-flags.txt`, next to `Cargo.toml`).
 const RUSTC_FLAGS_FILE: &str = "stencil-rustc-flags.txt";
-/// The files beyond the `#[path]` graph (`sources::watched`) whose change reruns the build script, relative to the crate.
+/// The files beyond the stencil sources (`stencil_sources`) whose change reruns the build script, relative to the crate.
 const EXTRA_WATCHED: [&str; 3] = ["supernodes.txt", RUSTC_FLAGS_FILE, "../quench-runtime/src/bytecode.rs"];
 
 /// The flags of `RUSTC_FLAGS_FILE` in file order: one flag or flag-and-value pair per line, `#` starts a comment.
@@ -117,9 +117,6 @@ fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
 
 fn main() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for source in sources::watched(manifest) {
-        println!("cargo::rerun-if-changed={}", source.display());
-    }
     println!("cargo::rustc-check-cfg=cfg(stencil_build)");
     for extra in EXTRA_WATCHED {
         println!("cargo::rerun-if-changed={extra}");
@@ -131,6 +128,7 @@ fn main() {
     println!("cargo::rustc-env={SUPERNODES_VAR}={}", generated.display());
     let table = out.join("rustc_stencils.rs");
     let Some((arch, read)) = target() else {
+        watch(&sources::watched(manifest));
         fs::write(&table, VARIANTS.map(|(name, _)| library_source(name, Counts::default(), &[])).concat()).unwrap();
         return;
     };
@@ -142,8 +140,12 @@ fn main() {
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
     // `VARIANTS` are x86-64 cpu levels; another target has the one baseline table, built without a
     // `-C target-cpu` (which for an AArch64 target is not a cpu at all).
-    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &[("BASELINE", None)] };
-    let sources = cache::sources_key(&rustc(), manifest, &sources::watched(manifest), &EXTRA_WATCHED);
+    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { if builds_v3(&out) { &VARIANTS } else { &VARIANTS[..1] } } else { &[("BASELINE", None)] };
+    let watched = stencil_sources(&out).unwrap_or_else(|| sources::watched(manifest));
+    watch(&watched);
+    // `EXTRA_WATCHED` reruns the script but is not in the key: the supernode list and the opcode table reach a shard
+    // only through its instance file, and the flags file through its arguments, which the key holds.
+    let sources = cache::sources_key(&rustc(), manifest, &watched, &[]);
     let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| (0..parts.len()).map(|shard| shard_job(&out, shard, *cpu, sources))).collect();
     if jobs.iter().any(|job| !job.cached()) {
         type_check(&out);
@@ -167,8 +169,8 @@ fn main() {
 
 /// One macro invocation per generated row, the unit `shards::split` distributes, with its
 /// compile weight (`shards::NUMBER_WEIGHT` and the weights beside it).
-/// A target whose rows are stencilled builds the numeric, heap and supernode rows: the row is
-/// the same staged definition on every target, and the AOT tier stitches them from this table.
+/// The base tier's numeric, heap and supernode rows are x86-64's only; every other target builds the Wasm rows alone,
+/// and its base tier falls back as a `--b-jit` without one does.
 fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize)> {
     let base: Vec<(String, usize)> = if matches!(arch, Arch::X86_64 | Arch::Aarch64) {
         let numbers = library::library().into_iter().map(|c| (format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4), shards::NUMBER_WEIGHT));
@@ -267,6 +269,48 @@ fn shard_job(out: &Path, shard: usize, cpu: Option<&'static str>, sources: u128)
     args.extend(["-o".into(), object.clone().into(), SOURCE.into()]);
     let envs = [(INSTANCES_VAR, instances), (CALL_ROWS_VAR, call_rows_file(out))];
     Shard { cpu, args, envs, key_file: object.with_extension("key"), object, key }
+}
+
+/// Environment variable that builds the V3 library in a profile other than `release` (any non-empty value).
+const V3_VAR: &str = "QUENCH_STENCILS_V3";
+
+/// Whether this build compiles the x86-64-v3 library as well as the baseline. Only the `release` profile (the
+/// shipping artifact) does, or a build with `V3_VAR` set: the V3 shards are half of a stencil rebuild, and the
+/// dev-loop profile (`experiment`) keeps the baseline rows in both tables, which the runtime's choice of table
+/// (`runs_v3`) then runs on every CPU. The profile is the directory cargo builds in: `OUT_DIR` is
+/// `<target>/[<triple>/]<profile>/build/<package>/out`.
+fn builds_v3(out: &Path) -> bool {
+    println!("cargo::rerun-if-env-changed={V3_VAR}");
+    let profile = out.ancestors().nth(3).and_then(Path::file_name).and_then(|name| name.to_str()).unwrap_or_default();
+    profile == "release" || !env::var(V3_VAR).unwrap_or_default().is_empty()
+}
+
+/// Prints the rerun triggers: `watched` and `EXTRA_WATCHED`.
+fn watch(watched: &std::collections::BTreeSet<PathBuf>) {
+    for source in watched {
+        println!("cargo::rerun-if-changed={}", source.display());
+    }
+}
+
+/// The source files the stencil crate is made of, as rustc reads them (`--emit=dep-info`, about a second: parse
+/// and expansion only), less the generated files under `out` (in each shard's key by content): the files whose
+/// change reruns the build script and whose contents are in every shard's key. The fixed-rows shard's cfgs, the
+/// widest set. `None` where rustc cannot read the source, which falls back to the `#[path]` graph.
+fn stencil_sources(out: &Path) -> Option<std::collections::BTreeSet<PathBuf>> {
+    let deps = out.join("rows.d");
+    let mut command = Command::new(rustc());
+    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit")));
+    command.args(["--cfg", "fixed_rows", "--emit=dep-info", "-o"]).arg(&deps).arg(SOURCE);
+    let status = command.env(INSTANCES_VAR, instance_file(out, FIXED_ROWS_SHARD)).env(CALL_ROWS_VAR, call_rows_file(out)).status().ok()?;
+    if !status.success() {
+        return None;
+    }
+    let text = fs::read_to_string(&deps).ok()?;
+    // The first rule names the output and then every input, separated by spaces (a space in a path is `\ `).
+    let (_, inputs) = text.lines().next()?.split_once(": ")?;
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let files = inputs.replace("\\ ", "\0").split_whitespace().map(|path| manifest.join(path.replace('\0', " "))).filter(|path| !path.starts_with(out)).collect();
+    Some(files)
 }
 
 /// Type-checks the stencil source once (`--emit=metadata`, the fixed-rows shard's instances) before any shard's

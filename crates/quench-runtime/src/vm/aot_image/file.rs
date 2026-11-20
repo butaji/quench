@@ -30,6 +30,11 @@ pub(crate) fn to_bytes(image: &AotImage) -> Vec<u8> {
     out.extend(image.build_id.to_le_bytes());
     out.extend(image.fingerprint.to_le_bytes());
     put_recipes(&mut out, image);
+    put_count(&mut out, image.labels.len());
+    for (function, pc) in &image.labels {
+        out.extend(function.to_le_bytes());
+        out.extend(pc.to_le_bytes());
+    }
     put_count(&mut out, image.functions.len());
     for function in &image.functions {
         put_function(&mut out, function);
@@ -45,7 +50,8 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
         return Err("images from another quench-node build".into());
     }
     let fingerprint = words.quad()?;
-    let (shapes, heap_values, atoms, labels) = read_recipes(&mut words)?;
+    let (shapes, heap_values, atoms) = read_recipes(&mut words)?;
+    let labels = (0..words.half()?).map(|_| Ok((words.half()?, words.half()?))).collect::<Result<_, String>>()?;
     let count = words.half()?;
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
     Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels })
@@ -76,11 +82,6 @@ fn put_recipes(out: &mut Vec<u8>, image: &AotImage) {
     for atom in &image.atoms {
         put_count(out, atom.len());
         out.extend(atom.as_bytes());
-    }
-    put_count(out, image.labels.len());
-    for (function, pc) in &image.labels {
-        out.extend(function.to_le_bytes());
-        out.extend(pc.to_le_bytes());
     }
 }
 
@@ -175,14 +176,13 @@ fn reloc_of(tag: u8) -> Result<Reloc, String> {
     })
 }
 
-type Recipes = (Vec<ShapeRecipe>, Vec<HeapValueRecipe>, Vec<Box<str>>, Vec<(u32, u32)>);
+type Recipes = (Vec<ShapeRecipe>, Vec<HeapValueRecipe>, Vec<Box<str>>);
 
 fn read_recipes(words: &mut Words<'_>) -> Result<Recipes, String> {
     let shapes = (0..words.half()?).map(|_| read_shape(words)).collect::<Result<_, String>>()?;
     let heap_values = (0..words.half()?).map(|_| read_heap_value(words)).collect::<Result<_, String>>()?;
     let atoms = (0..words.half()?).map(|_| read_atom(words)).collect::<Result<_, String>>()?;
-    let labels = (0..words.half()?).map(|_| Ok((words.half()?, words.half()?))).collect::<Result<_, String>>()?;
-    Ok((shapes, heap_values, atoms, labels))
+    Ok((shapes, heap_values, atoms))
 }
 
 fn read_shape(words: &mut Words<'_>) -> Result<ShapeRecipe, String> {

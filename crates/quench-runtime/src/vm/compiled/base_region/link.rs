@@ -2,7 +2,7 @@ use super::*;
 use super::call_plan::DirectFacts;
 use super::declared::EntryGuard;
 use super::super::LaneHelper;
-use quench_bjit::{call, exit_stub, padded_holes, patch_successor, EXIT_STUB_LEN, HOLES};
+use quench_bjit::{call, padded_holes, patch_successor, HOLES};
 
 mod entry;
 mod place;

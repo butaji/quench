@@ -7,8 +7,6 @@
 
 use super::{Atom, EvalBinding, EvalBindingLocation, Function};
 use super::{Op, Traits};
-#[cfg(test)]
-use super::WideInstruction;
 use std::rc::Rc;
 
 /// One word: most functions bind no names a dynamic lookup can see (`None`), and every
