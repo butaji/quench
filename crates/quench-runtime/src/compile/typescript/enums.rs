@@ -14,8 +14,15 @@ pub(super) enum Value {
 
 pub(super) enum Member {
     Constant(Value),
-    /// A runtime initializer, as source text with member names already qualified.
-    Computed(String),
+    /// A value only the run time knows.
+    Computed(Computed),
+}
+
+pub(super) enum Computed {
+    /// The enum's runtime initializer at this index of its initializer list.
+    Initializer(usize),
+    /// The previous member's value plus one, when that member's value is not constant.
+    Successor(String),
 }
 
 pub(super) fn member_name(name: &TSEnumMemberName<'_>) -> Option<String> {
@@ -116,13 +123,6 @@ pub(super) fn display(value: &Value) -> Option<String> {
             && !(*number == 0.0 && number.is_sign_negative()) => Some(format!("{}", *number as i64)),
         Value::Number(_) => None,
         Value::String(text) => Some(text.clone()),
-    }
-}
-
-pub(super) fn literal(value: &Value) -> Option<String> {
-    match value {
-        Value::Number(_) => display(value),
-        Value::String(text) => Some(quote(text)),
     }
 }
 

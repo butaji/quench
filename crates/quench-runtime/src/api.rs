@@ -5091,6 +5091,40 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
     }
 
     #[test]
+    fn regression_module_early_error_in_a_function_body_reports_as_at_top_level() {
+        // A module compiles before it is analyzed, so an early error inside a function body must
+        // still be found and reported with the message its top-level twin gets.
+        const SOURCE: &str = r#"
+            (async () => {
+                const messages = [];
+                for (const name of ['top-level', 'function-body']) {
+                    try { await import('./' + name + '.mjs'); } catch (error) {
+                        messages.push(error instanceof SyntaxError ? error.message : String(error));
+                    }
+                }
+                print(messages.length === 2 && messages[0] === messages[1]);
+                print(messages[1].includes('already been declared'));
+            })();
+        "#;
+        const MODULES: &[(&str, &str)] = &[
+            ("top-level.mjs", "let value = 1; let value = 2;"),
+            ("function-body.mjs", "export function read() { let value = 1; let value = 2; return value; }"),
+        ];
+        let modules = |host: TestHost| {
+            host.without_globals()
+                .with_modules(|specifier: &str| -> Result<Option<crate::ModuleSource>, crate::ModuleLoadError> {
+                    let name = specifier.rsplit('/').next().unwrap();
+                    Ok(MODULES.iter().find(|(candidate, _)| *candidate == name).map(|(_, source)| crate::ModuleSource::text(format!("early-error-modules/{name}"), *source)))
+                })
+        };
+        let view = TestHost::default().with_test262();
+        let mut runtime = Runtime::new(modules(view.clone()));
+        let program = Engine::specialize_module(SOURCE, "early-error-modules/entry.mjs").unwrap();
+        runtime.execute(&program).unwrap();
+        assert_eq!(view.lines().as_slice(), &["true", "true"]);
+    }
+
+    #[test]
     fn regression_linking_leaves_deferred_and_source_requests_unevaluated() {
         const SOURCE: &str = r#"
             import './setup.mjs';

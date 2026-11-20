@@ -34,18 +34,28 @@ impl Engine {
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
         let checked = replay.checked_at_load(span.start);
-        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, run: None, checked };
+        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, run: None, checked, program_declared: program.declared_types.as_deref(), end: span.end };
         let allocator = lazy_bodies::sized_arena(&chunk.text);
         let mut free_names = FreeNames::default();
         let nested = replay.direct_stubs;
-        let mut parsed = parse_text(&allocator, &window, &chunk, span.start, nested.then_some(&mut free_names));
+        let mut admitted = crate::bytecode::DeclaredTypes { type_names: window.saved_names(), ..Default::default() };
+        let mut parsed = parse_text(&allocator, &window, &chunk, span.start, nested.then_some(&mut free_names), source.typescript, &mut admitted);
         let name = program.source_name.as_str();
         let method = super::stub_is_method(&header);
         let mut prototype_unobservable = chunk_analysis(&parsed, name, nested.then_some((&chunk.text, usize::from(!header.is_arrow && !method))), window.checked())?;
+        // What the chunk's admission declared, at the chunk's positions: an appended chunk has no room in
+        // the program for it, so a chunk that declares compiles as a program of its own (`Vm::call_first_chunk`).
+        admitted.shift(chunk.start);
+        if admitted.has_declarations() {
+            return None;
+        }
+        let declared = window.declared();
         let mut compiler = window.compiler(name, SpecializationMode::of(atom_prefix), atom_prefix, &mut parsed.program, Default::default(), &mut Default::default(), &mut prototype_unobservable);
+        compiler.declared_types = declared;
+        compiler.type_names = admitted.type_names.clone();
         compiler.prototype_unobservable = prototype_unobservable;
         compiler.source_comments = parsed.program.comments.iter().map(|comment| comment.span).collect();
-        compiler.source_type = SourceType::script();
+        compiler.source_type = SourceType::script().with_typescript(source.typescript);
         compiler.first_call.free_names = free_names;
         compiler.first_call.nested_allowed = nested;
         compiler.first_call.direct = nested;
@@ -77,12 +87,15 @@ fn parse_text<'a>(
     chunk: &'a ChunkText<'_>,
     function_start: u32,
     free_names: Option<&mut FreeNames>,
+    typescript: bool,
+    declared: &mut crate::bytecode::DeclaredTypes,
 ) -> oxc_parser::ParserReturn<'a> {
+    let goal = SourceType::script().with_typescript(typescript);
     let Some(free_names) = free_names else {
-        return lazy_bodies::parse(allocator, &chunk.text, SourceType::script(), None, None, None, false, false, crate::compile::annex_b_targets::Recognize::No, None, None);
+        return lazy_bodies::parse(allocator, &chunk.text, goal, None, None, None, false, false, crate::compile::annex_b_targets::Recognize::No, None, Some(declared));
     };
     let strict = window.outer.is_some_and(|(_, scopes)| scopes.strict());
-    lazy_bodies::parse_chunk(allocator, &chunk.text, function_start - chunk.start, chunk.start, strict, free_names)
+    lazy_bodies::parse_chunk(allocator, &chunk.text, function_start - chunk.start, chunk.start, strict, free_names, typescript, declared)
 }
 
 /// What the analysis of the chunk's text, a function alone, finds: its private names, which
