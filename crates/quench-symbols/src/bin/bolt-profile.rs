@@ -35,9 +35,9 @@ use std::{
     process::{Command, ExitCode, Stdio},
 };
 
-use quench_wasm_test::RUST_SYMBOL_PREFIX;
+use quench_symbols::RUST_SYMBOL_PREFIX;
 
-use quench_wasm_test::CODE_KINDS;
+use quench_symbols::CODE_KINDS;
 
 /// The `nm` kind of local code, whose BOLT name carries a disambiguating count.
 const LOCAL_CODE_KIND: &str = "t";

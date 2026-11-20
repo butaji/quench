@@ -96,7 +96,7 @@ build() {
 }
 
 cd "$root_dir"
-CARGO_TARGET_DIR="$target_dir" cargo build --locked --profile "$profile" -p quench-wasm-test \
+CARGO_TARGET_DIR="$target_dir" cargo build --locked --profile "$profile" -p quench-symbols \
     --bin symbol-order --bin bolt-profile
 build
 
