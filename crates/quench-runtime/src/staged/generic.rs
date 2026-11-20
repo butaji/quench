@@ -160,7 +160,7 @@ fn property_key<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut 
         Some(key)
     });
     let Some(key) = key else { return Step::Unresolved };
-    let fact = converted.unwrap_or_else(|| frame.fact(source));
+    let fact = converted.unwrap_or_else(#[inline(always)] || frame.fact(source));
     frame.write(stage, destination, key, fact);
     Step::Value(key)
 }

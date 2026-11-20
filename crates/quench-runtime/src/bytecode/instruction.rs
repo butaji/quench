@@ -302,13 +302,13 @@ macro_rules! layout_accessors {
                 }
             }
 
-            #[allow(dead_code)] #[inline]
+            #[allow(dead_code)] #[inline(always)]
             pub(crate) fn direct_eval(self) -> bool {
                 debug_assert!(self.op().is_call_with_eval_flags());
                 ImmediateLayout::direct_eval(self.imm())
             }
 
-            #[allow(dead_code)] #[inline]
+            #[allow(dead_code)] #[inline(always)]
             pub(crate) fn parameter_eval(self) -> bool {
                 debug_assert!(self.op().is_call_with_eval_flags());
                 ImmediateLayout::parameter_eval(self.imm())
@@ -1064,6 +1064,7 @@ impl Instr {
         }
     }
 
+    #[inline(always)]
     const fn unpack_immediate(op: Op, packed: u16) -> u32 {
         if op.immediate_layout().uses_packed_pair() {
             (((packed >> PACKED_PAIR_LOW_BITS) as u32) << PACKED_PAIR_SOURCE_SHIFT)

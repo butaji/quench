@@ -21,6 +21,7 @@ use crate::bytecode::{FieldBase, FieldLookup, Operand};
 use crate::typed_ir::Type;
 
 mod concrete;
+mod word_ops;
 pub(crate) mod numeric;
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
 pub(crate) mod layout_offsets;
@@ -173,7 +174,7 @@ mod guard;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, step_out_of_line, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
+pub(crate) use steps::{step, step_of, step_out_of_line, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
 pub(crate) mod effects;
 pub(crate) mod function_plan;
 pub(crate) mod region;
@@ -927,10 +928,11 @@ pub(crate) const fn checked_local(op: Op) -> bool {
 /// store has no result register, and answers the source word it stored; a store's result is its
 /// `b` register and an InitializeTdz has none.
 pub(crate) const fn row_writes_result(op: Op) -> bool {
-    // A Wasm row writes its result register only where its record has one: a store, a global
-    // store and a fill define none.
+    // A Wasm row writes the result register its record names, if any. A store, a global store and
+    // a fill name none: the lane must not write the answered word into their record's `a`, which
+    // a fill leaves at register 0 (`wasm_emit`'s fill emission).
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
-        return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
+        return true;
     }
     // An opcode whose A field is no result register defines none, so there is nothing for the lane
     // to write: its row's value (a cleanup pop's 0, a store's source) must not land in register A.

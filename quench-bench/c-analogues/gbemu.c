@@ -1,29 +1,34 @@
 // jetstream-row: gbemu
 // jetstream-files: Octane/gbemu-part1.js Octane/gbemu-part2.js
 // iterations: 120
-/* C analogue of JetStream's Octane/gbemu-part1.js and gbemu-part2.js: a Game Boy
- * emulator (Grant Galitz's GameBoyCore, adapted by Google as a benchmark) that runs
- * the embedded cartridge for 250,000 instructions and checks the final processor and
- * memory state against the JS expectation.
+// jetstream-driver: deterministic=true
+/* C analogue of JetStream's Octane/gbemu-part1.js and gbemu-part2.js: a Game Boy Color
+ * emulator (Grant Galitz's GameBoyCore, adapted by Google as a benchmark) that runs the
+ * embedded cartridge for 250,000 instructions and checks the final processor and memory
+ * state against the JS expectation (checkFinalState).
  *
- * Ported here: the SM83 CPU (every documented opcode, with the cycle counts of the
- * JS TICKTable and SecondaryTICKTable, which are copied from the JS source), the
- * interrupt and EI-delay logic, the HALT bug, the DIV/TIMA timers, the memory map
- * (ROM, MBC1 banking, external RAM, VRAM, OAM with mode gating, WRAM and echo, I/O,
- * HRAM, IE), OAM DMA, the LCD line/mode timing with STAT and LYC interrupts, and a
- * background-only scanline renderer. The ROM image is the base64 literal from the JS
- * source, decoded with the same algorithm the JS falls back to (see decode_rom); that
- * decoder appends two bytes for the final "==" group, which the expected sums include.
+ * Ported, and matched against the JS by instruction trace (every executed opcode with its
+ * registers and flags, plus the LCD, interrupt and I/O state): the SM83 CPU with the cycle
+ * counts of the JS TICKTable, the interrupt latch and EI/RETI delay (IRQLineMatched is
+ * refreshed only at the points where the JS calls checkIRQMatching), the DIV and TIMA
+ * timers, the memory map (ROM, MBC1, external RAM, WRAM and echo, OAM with mode gating,
+ * I/O, HRAM, IE), OAM DMA, the LCD line state machine with STAT, LYC and VBlank, the CGB
+ * parts the cartridge uses (speed switch through KEY1, VRAM bank 1, tile maps, palette
+ * index and data ports, HDMA with its CPU cost, the NR52 power-off clear), and the
+ * background scanline renderer.
  *
- * Not ported: sound, the Game Boy Color modes, MBC2/3/5/7, the real-time clock,
- * sprites and the window in the renderer, serial transfers, and the JS JIT caches.
- * STOP is treated as a two-byte NOP, and the illegal opcodes as NOPs with the table's
- * cycle counts. The program prints the final state in the same JSON form the JS uses
- * and exits 1 when it differs from the expected string. This port has not been compiled
- * or run, so whether that comparison holds is unverified.
+ * Not ported: the audio output, the sprite and window pixels (sprites still count toward
+ * the mode 3 length), MBC2/3/5/7, the real-time clock, serial transfers, the WRAM bank
+ * select (the cartridge never writes the banked 0xD000 region in this run), the DMG mode,
+ * and the JS JIT caches. The JS benchmark also validates a hash of the rendered frames
+ * (validate(), EXPECTED_RESULT_HASH); that hash needs the full pixel renderer, so this port
+ * validates the final state only. sumVRam is 0 in the JS because checkFinalState reads an
+ * undefined property (gameboy.VRam). The ROM image is the base64 literal from the JS source,
+ * decoded with the same algorithm the JS falls back to (see decode_rom); that decoder
+ * appends two bytes for the final "==" group, which the expected sums include.
  *
  * main() does one warm-up run, then ITERATIONS timed runs, and prints the elapsed
- * milliseconds. */
+ * milliseconds and a validation line. It exits 1 when the final state differs. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <stdio.h>
@@ -31,7 +36,8 @@
 #include <string.h>
 #include <time.h>
 
-#pragma STDC FP_CONTRACT OFF
+/* The cycle accounting is double arithmetic; the build does not use -march flags, so no FMA
+ * contraction happens and the results agree with the JS. */
 
 #define ITERATIONS 120
 #define TOTAL_INSTRUCTIONS 250000L
@@ -1026,6 +1032,16 @@ static const char ROM_B64[] =
 static uint8_t reg_a, reg_f, reg_b, reg_c, reg_d, reg_e, reg_h, reg_l;
 static uint16_t sp, pc;
 static int ime, ei_delay, halted, skip_pc_inc;
+static int irq_line; /* JS IRQLineMatched: latched by check_irq, cleared when an IRQ launches */
+/* IF and IE are held apart from memory, as in the JS (interruptsRequested, interruptsEnabled). */
+static int if_reg, ie_reg;
+static int sound_on; /* JS soundMasterEnabled (NR52 bit 7) */
+static int hdma_running, vram_bank; /* JS hdmaRunning and currVRAMBank (FF55, FF4F) */
+static uint8_t vram1[0x2000];       /* VRAM bank 1 (JS VRAM) */
+static uint8_t bgchr[2][0x800];      /* tile maps at 0x9800-0x9FFF: JS BGCHRBank1 (bank 0), BGCHRBank2 (bank 1) */
+static void dma_write(int tiles);
+static uint8_t bg_raw_palette[64], obj_raw_palette[64]; /* JS gbcBGRawPalette / gbcOBJRawPalette */
+
 static long cpu_ticks;
 
 static uint8_t memory[0x10000];
@@ -1036,7 +1052,8 @@ static long rom_base;   /* JS currentROMBank: ROM index of 0x4000 minus 0x4000 *
 static long ram_pos;    /* JS currMBCRAMBankPosition */
 static int ram_enabled, mbc1_mode, rom_offs;
 
-static int lcd_line, lcd_mode;
+static int actual_line, mode_stat, stat_tracker, lcd_on, sprite_count;
+static int mode0_trig, mode1_trig, mode2_trig, lyc_trig;
 static long lcd_ticks;
 static uint32_t frame[160 * 144];
 
@@ -1044,6 +1061,7 @@ static long div_ticks, timer_ticks, tac_clocker;
 static int tima_enabled;
 
 static double emulator_ticks, cycles_total, cycles_current, roundoff;
+static int double_shift; /* JS doubleSpeedShifter: 1 in CGB double-speed mode */
 static long instructions;
 static int stop_emu;
 static int failures;
@@ -1112,8 +1130,9 @@ static uint8_t io_read(uint16_t a) {
     case 0xFF00: return (uint8_t)((memory[a] & 0x30) | 0xCF);
     case 0xFF02: return (uint8_t)(memory[a] | 0x7E);
     case 0xFF07: return (uint8_t)(0xF8 | memory[a]);
-    case 0xFF0F: return (uint8_t)(memory[a] | 0xE0);
-    case 0xFF41: return (uint8_t)((memory[a] & 0x7C) | lcd_mode | 0x80);
+    case 0xFF0F: return (uint8_t)(0xE0 | if_reg);
+    case 0xFFFF: return (uint8_t)ie_reg;
+    case 0xFF41: return (uint8_t)(0x80 | memory[a] | mode_stat);
     default: return memory[a];
   }
 }
@@ -1125,48 +1144,85 @@ static uint8_t rd(uint16_t a) {
     i = rom_base + a;
     return (i >= 0 && i < rom_len) ? rom[i] : 0xFF;
   }
-  if (a < 0xA000) return memory[a];
+  if (a < 0xA000) {
+    if (mode_stat > 2) return 0xFF;
+    if (a >= 0x9800) return bgchr[vram_bank][a & 0x7FF];
+    return vram_bank ? vram1[a & 0x1FFF] : memory[a];
+  }
   if (a < 0xC000) {
     i = (long)a + ram_pos;
     return (ram_enabled && i >= 0 && i < 0x8000) ? mbc_ram[i] : 0xFF;
   }
   if (a < 0xE000) return memory[a];
   if (a < 0xFE00) return memory[a - 0x2000];
-  if (a < 0xFEA0) return lcd_mode > 1 ? 0xFF : memory[a];
+  if (a < 0xFEA0) return mode_stat > 1 ? 0xFF : memory[a];
   if (a < 0xFF00) return 0xFF;
   return io_read(a);
 }
 
-static void match_lyc(void) {
+static void request_irq(uint8_t bit) { if_reg |= bit; }
+
+/* checkIRQMatching: the latch is refreshed only here (and at the other JS check points). */
+static void check_irq(void) {
+  if (ime) irq_line = ie_reg & if_reg & 0x1F;
+}
+
+static void request_irq_check(uint8_t bit) {
+  if_reg |= bit;
+  check_irq();
+}
+
+/* LYC compare: FF41 bit 2 follows LY == LYC, and IF bit 1 is set when the LYC source is on. */
+static void lcd_lyc_compare(int check) {
   if (memory[0xFF44] == memory[0xFF45]) {
     memory[0xFF41] |= 0x04;
-    if (memory[0xFF41] & 0x40) memory[0xFF0F] |= 0x02;
+    if (lyc_trig) {
+      if (check) request_irq_check(0x02);
+      else request_irq(0x02);
+    }
   } else {
-    memory[0xFF41] &= 0xFB;
+    memory[0xFF41] &= 0x7B;
   }
 }
 
-static void request_irq(uint8_t bit) { memory[0xFF0F] |= bit; }
+static void match_lyc(void) { lcd_lyc_compare(1); }
+
 
 static void lcdc_write(uint8_t v) {
-  int was_on = (memory[0xFF40] & 0x80) != 0;
-  int now_on = (v & 0x80) != 0;
-  memory[0xFF40] = v;
-  if (was_on != now_on) {
-    lcd_line = 0;
-    memory[0xFF44] = 0;
-    lcd_ticks = 0;
-    lcd_mode = now_on ? 2 : 0;
-    match_lyc();
+  if (memory[0xFF40] != v) {
+    int on = v > 0x7F;
+    if (on != lcd_on) {
+      lcd_on = on;
+      memory[0xFF41] &= 0x78;
+      lcd_ticks = 0;
+      stat_tracker = 0;
+      actual_line = 0;
+      memory[0xFF44] = 0;
+      if (lcd_on) {
+        mode_stat = 2;
+        match_lyc();
+      } else {
+        mode_stat = 0;
+      }
+      if_reg &= 0xFD;
+    }
+    memory[0xFF40] = v;
   }
 }
 
 static void dma_transfer(uint8_t v) {
   uint16_t base = (uint16_t)(v << 8);
-  for (int i = 0; i < 160; i++) memory[0xFE00 + i] = rd((uint16_t)(base + i));
+  int stat = mode_stat;
+  memory[0xFF46] = v;
+  if (v < 0xE0) { /* the CGB writer copies from every region below 0xE0 */
+    mode_stat = 0;
+    for (int i = 0; i < 160; i++) memory[0xFE00 + i] = rd((uint16_t)(base + i));
+    mode_stat = stat;
+  }
 }
 
 static void io_write(uint16_t a, uint8_t v) {
+  if (a >= 0xFF10 && a <= 0xFF25 && !sound_on && a != 0xFF15 && a != 0xFF1F) return;
   switch (a) {
     case 0xFF04:
       memory[a] = 0;
@@ -1181,22 +1237,115 @@ static void io_write(uint16_t a, uint8_t v) {
       break;
     }
     case 0xFF0F:
-      memory[a] = (uint8_t)((v & 0x1F) | 0xE0);
+      if_reg = v;
+      check_irq();
+      break;
+    case 0xFFFF:
+      ie_reg = v;
+      check_irq();
+      break;
+    case 0xFF26:
+      /* NR52: power off clears the sound registers (through their writers, which ignore writes
+       * while the APU is off in CGB mode; the two unused ones have no writer and take the zeros) */
+      if (sound_on && v < 0x80) {
+        memory[a] = 0;
+        sound_on = 0;
+        memory[0xFF15] = 0;
+        memory[0xFF1F] = 0;
+      } else if (!sound_on && v > 0x7F) {
+        memory[a] = 0x80;
+        sound_on = 1;
+      }
       break;
     case 0xFF40:
       lcdc_write(v);
       break;
     case 0xFF41:
-      memory[a] = (uint8_t)((v & 0x78) | (memory[a] & 0x04));
+      lyc_trig = (v & 0x40) != 0;
+      mode2_trig = (v & 0x20) != 0;
+      mode1_trig = (v & 0x10) != 0;
+      mode0_trig = (v & 0x08) != 0;
+      memory[a] = (uint8_t)(v & 0x78);
       break;
-    case 0xFF44:
-      break; /* LY is driven by the LCD model */
+    case 0xFF44: /* read-only, but a write restarts the LCD line counter while the LCD is on */
+      if (lcd_on) {
+        mode_stat = 2;
+        lcd_ticks = 0;
+        stat_tracker = 0;
+        actual_line = 0;
+        memory[0xFF44] = 0;
+      }
+      break;
     case 0xFF45:
-      memory[a] = v;
-      match_lyc();
+      if (memory[a] != v) {
+        memory[a] = v;
+        if (lcd_on) match_lyc();
+      }
       break;
     case 0xFF46:
       dma_transfer(v);
+      break;
+    case 0xFF4F:
+      vram_bank = v & 0x01;
+      break;
+    case 0xFF68:
+      memory[0xFF69] = bg_raw_palette[v & 0x3F];
+      memory[a] = v;
+      break;
+    case 0xFF69:
+      bg_raw_palette[memory[0xFF68] & 0x3F] = v;
+      if (memory[0xFF68] > 0x7F) {
+        int next = (memory[0xFF68] + 1) & 0x3F;
+        memory[0xFF68] = (uint8_t)(next | 0x80);
+        memory[0xFF69] = bg_raw_palette[next];
+      } else {
+        memory[0xFF69] = v;
+      }
+      break;
+    case 0xFF6A:
+      memory[0xFF6B] = obj_raw_palette[v & 0x3F];
+      memory[a] = v;
+      break;
+    case 0xFF6B:
+      obj_raw_palette[memory[0xFF6A] & 0x3F] = v;
+      if (memory[0xFF6A] > 0x7F) {
+        int next = (memory[0xFF6A] + 1) & 0x3F;
+        memory[0xFF6A] = (uint8_t)(next | 0x80);
+        memory[0xFF6B] = obj_raw_palette[next];
+      } else {
+        memory[0xFF6B] = v;
+      }
+      break;
+    case 0xFF51:
+      if (!hdma_running) memory[a] = v;
+      break;
+    case 0xFF52:
+      if (!hdma_running) memory[a] = v & 0xF0;
+      break;
+    case 0xFF53:
+      if (!hdma_running) memory[a] = v & 0x1F;
+      break;
+    case 0xFF54:
+      if (!hdma_running) memory[a] = v & 0xF0;
+      break;
+    case 0xFF55:
+      if (!hdma_running) {
+        if ((v & 0x80) == 0) {
+          dma_write((v & 0x7F) + 1); /* general-purpose DMA, completed at once */
+          memory[a] = 0xFF;
+        } else {
+          hdma_running = 1;
+          memory[a] = v & 0x7F;
+        }
+      } else if ((v & 0x80) == 0) {
+        hdma_running = 0;
+        memory[a] |= 0x80;
+      } else {
+        memory[a] = v & 0x7F;
+      }
+      break;
+    case 0xFF4D:
+      memory[a] = (uint8_t)((v & 0x7F) | (memory[a] & 0x80));
       break;
     default:
       memory[a] = v;
@@ -1234,7 +1383,11 @@ static void wr(uint16_t a, uint8_t v) {
     return;
   }
   if (a < 0xA000) {
-    if (lcd_mode < 3) memory[a] = v;
+    if (mode_stat < 3) {
+      if (a >= 0x9800) bgchr[vram_bank][a & 0x7FF] = v;
+      else if (vram_bank) vram1[a & 0x1FFF] = v;
+      else memory[a] = v;
+    }
     return;
   }
   if (a < 0xC000) {
@@ -1251,14 +1404,12 @@ static void wr(uint16_t a, uint8_t v) {
     return;
   }
   if (a < 0xFEA0) {
-    if (lcd_mode < 2) memory[a] = v;
+    if (mode_stat < 2) memory[a] = v;
     return;
   }
   if (a < 0xFF00) return;
   io_write(a, v);
 }
-
-/* ---- LCD: 456 dots per line, 144 visible lines then 10 VBlank lines ---- */
 
 static void render_line(int ly) {
   static const uint32_t shade_colour[4] = {0xF8F8F8, 0xA8A8A8, 0x505050, 0x000000};
@@ -1290,39 +1441,210 @@ static void render_line(int ly) {
   }
 }
 
-static void lcd_step(long ticks) {
-  if (!(memory[0xFF40] & 0x80)) return;
-  lcd_ticks += ticks;
-  while (lcd_ticks >= 456) {
+/* DMAWrite (CGB VRAM DMA): copies `tiles` 16-byte blocks from FF51/FF52 to FF53/FF54 and clocks
+ * the CPU for them. Destinations at 0x9800 and above go to the tile-map arrays (bgchr). */
+static void dma_write(int tiles) {
+  uint16_t source;
+  int destination;
+  if (!halted) cpu_ticks += 4 | ((tiles << 5) << double_shift);
+  source = (uint16_t)((memory[0xFF51] << 8) | memory[0xFF52]);
+  destination = (memory[0xFF53] << 8) | memory[0xFF54];
+  do {
+    if (destination < 0x1800) {
+      for (int k = 0; k < 16; k++) {
+        uint8_t val = rd(source++);
+        if (vram_bank) vram1[destination + k] = val;
+        else memory[0x8000 + destination + k] = val;
+      }
+      destination += 0x10;
+    } else {
+      destination &= 0x7F0;
+      for (int k = 0; k < 16; k++) bgchr[vram_bank][destination++] = rd(source++);
+      destination = (destination + 0x1800) & 0x1FF0;
+    }
+    source &= 0xFFF0;
+    --tiles;
+  } while (tiles > 0);
+  /* the JS writes the advanced addresses back to the HDMA registers */
+  memory[0xFF51] = (uint8_t)(source >> 8);
+  memory[0xFF52] = (uint8_t)(source & 0xF0);
+  memory[0xFF53] = (uint8_t)(destination >> 8);
+  memory[0xFF54] = (uint8_t)(destination & 0xF0);
+}
+
+/* executeHDMA: one H-blank block, run from the mode 0 and line-end points while HDMA is active. */
+static void execute_hdma(void) {
+  dma_write(1);
+  if (halted) {
+    if ((lcd_ticks - sprite_count) < ((4 >> double_shift) | 0x20)) {
+      cpu_ticks = 4 + ((0x20 + sprite_count) << double_shift);
+      lcd_ticks = sprite_count + ((4 >> double_shift) | 0x20);
+    }
+  } else {
+    lcd_ticks += (4 >> double_shift) | 0x20;
+  }
+  if (memory[0xFF55] == 0) {
+    hdma_running = 0;
+    memory[0xFF55] = 0xFF;
+  } else {
+    --memory[0xFF55];
+  }
+}
+
+/* ---- LCD: the JS LINECONTROL state machine. The handler is picked from actual_line; LY is
+ * memory[0xFF44], advanced with ++ as the JS does. The STAT mode, trigger flags and IF bits follow
+ * the JS handlers, including the sites where the JS sets IF without re-checking the IRQ latch.
+ * Pixels come from render_line (background only); sprites enter through sprite_count, which sets
+ * the mode 3 length. ---- */
+
+static void line_control(void);
+
+static void lcd_render_line(void) {
+  if (actual_line < 144) render_line(actual_line);
+}
+
+/* updateSpriteCount: in CGB mode each sprite on the line adds 6 dots to mode 3. */
+static void update_sprite_count(int line) {
+  sprite_count = 252;
+  if (memory[0xFF40] & 0x02) {
+    int line_adjusted = line + 0x10;
+    int y_cap = (memory[0xFF40] & 0x04) ? 0x10 : 0x08;
+    for (int oam = 0xFE00; oam < 0xFEA0 && sprite_count < 312; oam += 4) {
+      int yoffset = line_adjusted - memory[oam];
+      if (yoffset > -1 && yoffset < y_cap) sprite_count += 6;
+    }
+  }
+}
+
+static void lcd_mode2(void) {
+  if (stat_tracker != 1) {
+    if (mode2_trig) request_irq_check(0x02);
+    stat_tracker = 1;
+    mode_stat = 2;
+  }
+}
+
+static void lcd_mode3(void) {
+  if (mode_stat != 3) {
+    if (stat_tracker == 0 && mode2_trig) request_irq_check(0x02);
+    stat_tracker = 1;
+    mode_stat = 3;
+  }
+}
+
+static void lcd_mode0(void) {
+  if (mode_stat != 0) {
+    if (stat_tracker != 2) {
+      if (stat_tracker == 0) {
+        if (mode2_trig) request_irq_check(0x02);
+        mode_stat = 3;
+      }
+      lcd_render_line();
+      update_sprite_count(actual_line);
+      stat_tracker = 2;
+    }
+    if (lcd_ticks >= sprite_count) {
+      if (hdma_running) execute_hdma();
+      if (mode0_trig) request_irq_check(0x02);
+      stat_tracker = 3;
+      mode_stat = 0;
+    }
+  }
+}
+
+/* The "new scan line" block of the visible lines, run before LY advances. The JS sets IF here
+ * without re-checking the latch. */
+static void lcd_end_of_line(void) {
+  if (stat_tracker != 3) {
+    if (stat_tracker != 2) {
+      if (stat_tracker == 0 && mode2_trig) request_irq(0x02);
+      lcd_render_line();
+    }
+    if (hdma_running) execute_hdma();
+    if (mode0_trig) request_irq(0x02);
+  }
+}
+
+/* Lines 0..142 (last = 0) and line 143 (last = 1, which enters VBlank). */
+static void lcd_visible_line(int last) {
+  if (lcd_ticks < 80) {
+    lcd_mode2();
+  } else if (lcd_ticks < 252) {
+    lcd_mode3();
+  } else if (lcd_ticks < 456) {
+    lcd_mode0();
+  } else {
     lcd_ticks -= 456;
-    lcd_line = (lcd_line + 1) % 154;
-    memory[0xFF44] = (uint8_t)lcd_line;
-    if (lcd_line == 144) {
-      lcd_mode = 1;
-      request_irq(0x01);
-      if (memory[0xFF41] & 0x10) request_irq(0x02);
-    } else if (lcd_line < 144) {
-      lcd_mode = 2;
-      if (memory[0xFF41] & 0x20) request_irq(0x02);
+    if (stat_tracker != 3) lcd_end_of_line();
+    if (last) {
+      actual_line = memory[0xFF44] = 144;
+      lcd_lyc_compare(0);
+      stat_tracker = 0;
+      mode_stat = 1;
+      if_reg |= (mode1_trig ? 0x03 : 0x01);
+      check_irq();
+    } else {
+      actual_line = ++memory[0xFF44];
+      lcd_lyc_compare(0);
+      check_irq();
+      stat_tracker = 0;
+      mode_stat = 2;
     }
-    match_lyc();
+    line_control();
   }
-  if (lcd_line < 144) {
-    if (lcd_mode == 2 && lcd_ticks >= 80) lcd_mode = 3;
-    if (lcd_mode == 3 && lcd_ticks >= 252) {
-      lcd_mode = 0;
-      render_line(lcd_line);
-      if (memory[0xFF41] & 0x08) request_irq(0x02);
+}
+
+/* Lines 144..152. */
+static void lcd_vblank_line(void) {
+  if (lcd_ticks >= 456) {
+    lcd_ticks -= 456;
+    actual_line = ++memory[0xFF44];
+    lcd_lyc_compare(1);
+    line_control();
+  }
+}
+
+/* Line 153: LY reads 0 early, then the frame restarts at line 0. */
+static void lcd_last_line(void) {
+  if (lcd_ticks >= 8) {
+    if (stat_tracker != 4 && memory[0xFF44] == 153) {
+      memory[0xFF44] = 0;
+      lcd_lyc_compare(1);
+      stat_tracker = 4;
+    }
+    if (lcd_ticks >= 456) {
+      lcd_ticks -= 456;
+      stat_tracker = 0;
+      actual_line = 0;
+      line_control();
     }
   }
+}
+
+static void line_control(void) {
+  if (actual_line < 143) {
+    lcd_visible_line(0);
+  } else if (actual_line == 143) {
+    lcd_visible_line(1);
+  } else if (actual_line < 153) {
+    lcd_vblank_line();
+  } else {
+    lcd_last_line();
+  }
+}
+
+static void lcd_step(long ticks) {
+  lcd_ticks += ticks;
+  if (lcd_on) line_control();
 }
 
 /* ---- clocking, timers and interrupts ---- */
 
 static void update_core(void) {
-  long t = cpu_ticks;
-  lcd_step(t);
-  emulator_ticks += (double)t;
+  long t;
+  lcd_step(cpu_ticks >> double_shift); /* HDMA inside the LCD step can add to cpu_ticks */
+  t = cpu_ticks;
+  emulator_ticks += (double)(t >> double_shift);
   div_ticks += t;
   if (tima_enabled) {
     timer_ticks += t;
@@ -1333,7 +1655,7 @@ static void update_core(void) {
       memory[0xFF05] = (uint8_t)tima;
       if (tima == 0x100) {
         memory[0xFF05] = memory[0xFF06];
-        request_irq(0x04);
+        request_irq_check(0x04);
       }
     }
   }
@@ -1371,15 +1693,22 @@ static uint16_t pop16(void) {
   return (uint16_t)((hi << 8) | lo);
 }
 
-static void launch_irq(int pending) {
-  int b = 0;
-  while (!(pending & (1 << b))) b++;
-  ime = 0;
-  memory[0xFF0F] &= (uint8_t)~(1 << b);
-  cpu_ticks = 20;
-  push16(pc);
-  pc = (uint16_t)(0x40 + (b << 3));
-  update_core();
+/* launchIRQ: the lowest bit of the latch fires. The JS subtracts the bit from IF and clears the
+ * whole latch, so a stale latch can fire after IF has changed. */
+static void launch_irq(void) {
+  for (int b = 0; b < 5; b++) {
+    int testbit = 1 << b;
+    if ((testbit & irq_line) == testbit) {
+      ime = 0;
+      if_reg -= testbit;
+      irq_line = 0;
+      cpu_ticks = 20;
+      push16(pc);
+      pc = (uint16_t)(0x40 | (b << 3));
+      update_core();
+      return;
+    }
+  }
 }
 
 /* ---- registers ---- */
@@ -1584,9 +1913,11 @@ static void daa(void) {
   reg_f = (uint8_t)((reg_a == 0 ? FZ : 0) | (n ? FN : 0) | (c ? FC : 0));
 }
 
+/* HALT: with an IRQ already matched the CGB core adds 4 ticks (the DMG HALT bug is not used by
+ * CGB cartridges); otherwise the CPU halts. */
 static void do_halt(void) {
-  if (!ime && (memory[0xFFFF] & memory[0xFF0F] & 0x1F)) {
-    skip_pc_inc = 1; /* HALT bug: the next opcode fetch does not advance PC */
+  if (ie_reg & if_reg & 0x1F) {
+    cpu_ticks += 4;
   } else {
     halted = 1;
   }
@@ -1612,6 +1943,25 @@ static void exec_cb(void) {
   }
 }
 
+/* STOP is one byte in the JS core. With KEY1 bit 0 set, the CGB switches speed (the JS does the
+ * same: the CPU keeps running and the LCD and audio clocks use the shifted tick count). Without a
+ * request the JS halts the CPU until joypad input, which this run never provides; the cartridge is
+ * checked not to reach that path (failures is raised if it does). */
+static void stop_op(void) {
+  if (memory[0xFF4D] & 0x01) {
+    if (memory[0xFF4D] > 0x7F) {
+      double_shift = 0;
+      memory[0xFF4D] &= 0x7F;
+    } else {
+      double_shift = 1;
+      memory[0xFF4D] |= 0x80;
+    }
+    memory[0xFF4D] &= 0xFE;
+  } else {
+    failures++;
+  }
+}
+
 static void exec_op(uint8_t op) {
   int x = op >> 6;
   int y = (op >> 3) & 7;
@@ -1628,7 +1978,7 @@ static void exec_op(uint8_t op) {
               wr(a, (uint8_t)(sp & 0xFF));
               wr((uint16_t)(a + 1), (uint8_t)(sp >> 8));
               break;
-            case 2: fetch8(); break; /* STOP: consumed as a two-byte NOP */
+            case 2: stop_op(); break;
             case 3: {
               int e = fetch_s8();
               pc = (uint16_t)(pc + e);
@@ -1712,7 +2062,7 @@ static void exec_op(uint8_t op) {
           if (y & 1) {
             switch (y) {
               case 1: pc = pop16(); break;
-              case 3: pc = pop16(); ime = 1; break;
+              case 3: pc = pop16(); ei_delay = (ei_delay == 2 || rd(pc) == 0x76) ? 1 : 2; break;
               case 5: pc = get_hl(); break;
               default: sp = get_hl(); break;
             }
@@ -1740,7 +2090,7 @@ static void exec_op(uint8_t op) {
             case 0: pc = fetch16(); break;
             case 1: exec_cb(); break;
             case 6: ime = 0; ei_delay = 0; break;
-            case 7: ei_delay = 2; break;
+            case 7: ei_delay = (ei_delay == 2 || rd(pc) == 0x76) ? 1 : 2; break;
             default: break; /* illegal opcodes act as NOPs */
           }
           break;
@@ -1798,17 +2148,18 @@ static void check_final_state(void) {
 
 static void execute_iteration(void) {
   while (stop_emu == 0) {
-    int pending;
     int executed = 0;
     if (ei_delay == 1) {
       ime = 1;
+      check_irq();
       ei_delay = 0;
     } else if (ei_delay == 2) {
       ei_delay = 1;
     }
-    pending = memory[0xFFFF] & memory[0xFF0F] & 0x1F;
-    if (pending) halted = 0;
-    if (ime && pending) launch_irq(pending);
+    if (irq_line > 0) {
+      halted = 0;
+      launch_irq();
+    }
     if (halted) {
       cpu_ticks = 4;
       update_core();
@@ -1849,8 +2200,20 @@ static void init_state(void) {
   memcpy(memory, rom, 0x4000);
   memset(mbc_ram, 0, sizeof mbc_ram);
   for (int i = 0; i < 256; i++) memory[0xFF00 + i] = FFXX_DUMP[i];
-  memory[0xFF0F] = 0xE1;
-  reg_a = 0x01;
+  memory[0xFF0F] = 0; /* JS: IF and IE live outside memory[] */
+  memory[0xFFFF] = 0;
+  if_reg = 0xE1;
+  ie_reg = 0;
+  sound_on = 1;
+  memory[0xFF74] = 0xFE;
+  double_shift = 0;
+  hdma_running = 0;
+  vram_bank = 0;
+  memset(vram1, 0, sizeof vram1);
+  memset(bgchr, 0, sizeof bgchr);
+  memset(bg_raw_palette, 0, sizeof bg_raw_palette);
+  memset(obj_raw_palette, 0, sizeof obj_raw_palette);
+  reg_a = 0x11; /* CGB boot value: the cartridge (0x143 = 0x80) runs in CGB mode */
   reg_f = 0xB0;
   reg_b = 0x00;
   reg_c = 0x13;
@@ -1861,6 +2224,7 @@ static void init_state(void) {
   pc = 0x0100;
   sp = 0xFFFE;
   ime = 0;
+  irq_line = 0;
   ei_delay = 0;
   halted = 0;
   skip_pc_inc = 0;
@@ -1870,9 +2234,13 @@ static void init_state(void) {
   ram_pos = -0xA000;
   ram_enabled = 0;
   mbc1_mode = 0;
-  lcd_line = 144;
-  lcd_mode = 1;
+  actual_line = 144;
+  mode_stat = 1;
   lcd_ticks = 160;
+  stat_tracker = 0;
+  sprite_count = 252;
+  mode0_trig = mode1_trig = mode2_trig = lyc_trig = 0;
+  lcd_on = 1;
   div_ticks = 27044;
   timer_ticks = 0;
   tima_enabled = 0;
@@ -1897,8 +2265,13 @@ int main(void) {
   t0 = now_ms();
   for (int it = 0; it < ITERATIONS; it++) run_iteration();
   ms = now_ms() - t0;
-  printf("gbemu %d iterations %.3f ms %s\n", ITERATIONS, ms, failures ? "FAILED" : "ok");
-  printf("state %s\n", last_state);
+  printf("gbemu %d iterations %.3f ms\n", ITERATIONS, ms);
+  if (failures) {
+    printf("validation FAILED: %d iterations ended in a different final state\n", failures);
+    printf("state %s\n", last_state);
+  } else {
+    printf("validation OK: final CPU and memory state matches the JS expectation\n");
+  }
   free(rom);
   return failures ? 1 : 0;
 }

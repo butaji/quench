@@ -355,6 +355,12 @@ pub(super) fn method_read(receiver: Register, cache: u16, scratch: Register) -> 
 /// The row of `decoded` at `pc`, which takes general semantics where `general` and the speculation of
 /// its feedback `variant`; a backward jump takes the poll row the layout's ending names.
 pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), helpers: LaneHelpers) -> Result<Planned, String> {
+    // An image body makes a miss by the step helper and continues (`steps::stepped_misses`).
+    steps::stepped_misses(planned_row(decoded, layout, pc, (general, variant), helpers)?, decoded, layout, pc, helpers)
+}
+
+/// `plan` before an image body's misses are taken to the step helper.
+fn planned_row(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), helpers: LaneHelpers) -> Result<Planned, String> {
     if decoded.step.is_some() {
         return plan_step(decoded, layout, pc, helpers);
     }

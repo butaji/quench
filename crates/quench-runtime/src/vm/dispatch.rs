@@ -695,9 +695,9 @@ impl<H: Host> Vm<H> {
         if matches!(run, RowRun::Done(Edge::Target)) {
             *pc = i.jump_target() as usize;
             if matches!(operation, Operation::Jump) {
-                // The back edge's target is the next instruction, not a continuation after the one
-                // before it: the collection scans the registers live into the target, which a loop
-                // head's state (a for-in's) is, and the instruction before it may define.
+                // The target is the next instruction to run, so a collection scans the roots
+                // live before it: a resume PC would name the instruction before the target,
+                // an unrelated one whose liveness can drop registers the target reads.
                 self.frames[f].pc = *pc;
                 self.frames[f].pc_is_resume = false;
                 self.maybe_collect(p);
@@ -766,6 +766,10 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn run_row_completed(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool,
         operation: crate::staged::Operation<u64, ()>, completes: crate::bytecode::Register) -> RowRun {
+        // A numeric local target names a local slot, not a register: the plain row writes its result to the
+        // register of that index, which holds another value (a hoisted closure in TypeScript's checker), so the
+        // register is put back once the local has the result.
+        let kept = i.numeric_local_target().map(|local| self.read(f, local));
         // A read that writes `this` pushes no getter: its value is stored to `this` once it is read.
         let run = self.run_row(p, f, i, pc, allow_inline_calls && !i.writes_current_this(), operation);
         if !matches!(run, RowRun::Done(_)) {
@@ -782,6 +786,7 @@ impl<H: Host> Vm<H> {
         if let Some(local) = i.numeric_local_target() {
             let value = self.read(f, i.result_register());
             self.frames[f].locals[local as usize] = value;
+            if let Some(kept) = kept { self.write(f, local, kept); }
             self.profile
                 .virtual_opcode(self.frames[f].program.raw(), crate::staged::STORE_LOCAL_PLAIN_ROW as usize);
         }
@@ -910,10 +915,16 @@ impl<H: Host> Vm<H> {
                     RowRun::Declined => unreachable!("the interpreter frame answers every literal row: {:?}", i.op()),
                 }
             }
-            // A call-out row the interpreter's stage answers in place (`staged_value_step`).
+            // A call-out row the interpreter's stage answers in place (`staged_value_step`). A record
+            // that returns its result (`CallRest` ending an arrow's expression body) completes the
+            // frame with it: the compiler emits no `Return` after it.
             Runner::Value => {
                 let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
-                self.staged_value_step(p, site, i)?;
+                let (plain, returning) = i.split_return();
+                self.staged_value_step(p, site, plain)?;
+                if returning {
+                    return Ok(StepResult::Return(self.read(f, plain.result_register())));
+                }
                 Ok(StepResult::Continue)
             }
             // A flow row that reads the program's constants (`LoadConst`) decodes over the active program's constants
@@ -1128,28 +1139,6 @@ const RUNNERS: [Runner; Op::COUNT] = {
     }
     table
 };
-
-impl<H: Host> Vm<H> {
-    /// The frame call-like instruction `i` of frame `caller` pushes, as its step pushes it:
-    /// callee, argument window, receiver and completion. `getter` and `this` are what the step
-    /// found running: a getter read's function, and a construction's or getter's receiver.
-    /// Frame recovery (`compiled::recover_call`) rebuilds a native activation's frame from it.
-    #[cfg(feature = "native-execution")]
-    pub(super) fn pushed_frame(&self, caller: usize, i: WideInstruction, getter: Value, this: Value)
-        -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
-        if crate::staged::Operation::<u64, ()>::is_construction(i) {
-            let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
-                unreachable!("a pushed construction passes registers")
-            };
-            (self.read(caller, i.register_b()), window, this, CallCompletion::Constructor(this))
-        } else if crate::staged::Operation::<u64, ()>::is_field_read(i) {
-            // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
-            (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value)
-        } else {
-            (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value)
-        }
-    }
-}
 
 impl<H: Host> Vm<H> {
     /// The new array of the `count` constants from `start` of `program` (a `MakeConstArray`

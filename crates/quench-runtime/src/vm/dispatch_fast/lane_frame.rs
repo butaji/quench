@@ -130,6 +130,7 @@ struct CaptureStores {
 
 impl CaptureStores {
     /// The stores of the running lane's `cx` (`store_to_capture`).
+    #[inline(always)]
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { context: cx.cast(), store: |context, depth, slot, value| store_to_capture(context.cast::<LaneContext<H>>(), depth, slot, value) }
     }
@@ -165,6 +166,7 @@ struct Decisions {
 
 impl Decisions {
     /// The decisions of the running lane's `cx`.
+    #[inline(always)]
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { context: cx.cast(), decide: |context, operator, left, right|
             super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right),
@@ -2101,15 +2103,8 @@ impl<const OP: u16, const FLAG: u8> crate::staged::Fields for LaneFields<'_, OP,
         let a = if const { FLAG == super::SINK_SITE } { self.0.a & crate::bytecode::REGISTER_MASK } else { self.0.a };
         // Both operands of a two-operand arithmetic row the view proved registers (`FLAG_REGISTERS`):
         // their tags are the register tag, so the decode's operand kind tests fold.
-        // A `Binary` record at an operator flag (`FLAG_OPERATOR_BASE`): its operator is the flag's, and
-        // its operands registers, or a register then a constant.
-        let operator_row = const { matches!(Self::OPCODE, Op::Binary) && FLAG >= FLAG_OPERATOR_BASE };
-        let imm = if operator_row { u32::from(FLAG.wrapping_sub(FLAG_OPERATOR_BASE) / 2) } else { imm };
-        const CONSTANT_TAG: u16 = (crate::bytecode::OperandKind::Constant as u16) << 14;
-        let (b, c) = if FLAG == FLAG_REGISTERS || (operator_row && FLAG.wrapping_sub(FLAG_OPERATOR_BASE) % 2 == 0) {
+        let (b, c) = if FLAG == FLAG_REGISTERS {
             (self.0.b & crate::bytecode::Operand::PAYLOAD_MASK, self.0.c & crate::bytecode::Operand::PAYLOAD_MASK)
-        } else if operator_row {
-            (self.0.b & crate::bytecode::Operand::PAYLOAD_MASK, (self.0.c & crate::bytecode::Operand::PAYLOAD_MASK) | CONSTANT_TAG)
         } else { (self.0.b, self.0.c) };
         WideInstruction::new(self.op(), a, b, c, imm)
     }
@@ -2175,12 +2170,6 @@ pub(in crate::vm::dispatch_fast) const FLAG_KEPT_OBJECT: u8 = 18;
 /// `FLAG` of a two-operand arithmetic record (`Binary`, `NumericAdd`, `NumericMultiply`) whose operands
 /// are both registers (`specialize_register_operands`): the row reads them without testing their tags.
 pub(in crate::vm::dispatch_fast) const FLAG_REGISTERS: u8 = 19;
-/// `FLAG` of a `Binary` record whose operator is `(FLAG - FLAG_OPERATOR_BASE) / 2` (`BinaryOperator`, up to
-/// `OPERATOR_ROWS`), its operands two registers where the rest is even, else a register then a constant
-/// (`specialize_binary_operators`): the row's operator and operand tests fold.
-pub(in crate::vm::dispatch_fast) const FLAG_OPERATOR_BASE: u8 = 200;
-/// The operators with operator rows: `BinaryOperator` 0 (`==`) through 19 (`&`).
-pub(in crate::vm::dispatch_fast) const OPERATOR_ROWS: usize = 20;
 
 /// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -2578,28 +2567,6 @@ pub(in crate::vm::dispatch_fast) fn registers_row<H: Host, const OP: u16>(handle
     plain.iter().position(|row| *row as *const () == handler).map(|at| registers[at])
 }
 
-/// The `Binary` row of plain record `record` at its operator flag (`FLAG_OPERATOR_BASE`): where its handler is
-/// the plain accumulator-free row, its operator has rows, and its operands are registers, or a register then a constant.
-pub(in crate::vm::dispatch_fast) fn operator_row<H: Host>(record: &LaneInstruction) -> Option<Handler> {
-    const BINARY: u16 = Op::Binary as u16;
-    macro_rules! rows { ($($k:literal)*) => { [$(generated_row!(H, BINARY, ACC_NONE, FLAG_OPERATOR_BASE + $k)),*] } }
-    let rows: [Handler; 2 * OPERATOR_ROWS] = rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29
-        30 31 32 33 34 35 36 37 38 39);
-    if record.handler != generated_row!(H, BINARY, ACC_NONE, FLAG_UNREAD) as Handler as *const () {
-        return None;
-    }
-    let operator = record.imm() as usize;
-    if operator >= OPERATOR_ROWS || record.b >> 14 != 0 {
-        return None;
-    }
-    let form = match record.c >> 14 {
-        0 => 0,
-        1 => 1,
-        _ => return None,
-    };
-    Some(rows[operator * 2 + form])
-}
-
 /// Whether `handler` is opcode `OP`'s generated row handler (`generated_row`), at any accumulator field:
 /// the passes that fuse a record by its handler find the row whichever field the view carried.
 pub(in crate::vm::dispatch_fast) fn is_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
@@ -2753,19 +2720,72 @@ macro_rules! target_run {
         }
         // SAFETY: `at` is the target or the record the prefix rows fall through to, a validated record of the view.
         let test_i = unsafe { &*at };
-        let fields = LaneFields::<$test, { FLAG_UNREAD }>(test_i);
-        let Some(operation) = row_decode!($test, { FLAG_UNREAD }, fields) else { sibling!(general_step_in_lane::<H>, $r, at, carried) };
-        let mut stage = Concrete::new(std::ptr::null());
-        let mut frame = row_frame::<H, $test, ACC_NONE, FLAG_UNREAD>($cx, $r, at, test_i, carried);
-        match row_step!(LaneFields::<$test>::OPCODE, &mut stage, &mut frame, operation) {
-            Step::Control(LaneControl::Edge(Edge::Target)) => {
-                // SAFETY: as the read of `test_i` above.
-                let backward_test = unsafe { (*at).jump() } <= 0;
-                resume!($cx, crate::vm::dispatch_fast::take_jump::<H>($cx, $r, at, backward_test, carried, None))
+        // The test at comparison `$comparison` (`Some`, a constant of the arm), as `compare_jump_row`'s
+        // instance runs it: its row folds to that comparison's test, and only that one's paths, which
+        // keep the frame out of memory. `None` is the record's own comparison.
+        macro_rules! test_run { ($comparison:expr, $constant:expr) => {{
+            // SAFETY: the arm below tested the operand kinds `$constant` states (`compare_operands`).
+            if let Some(constant) = $constant {
+                unsafe {
+                    std::hint::assert_unchecked(Operand(test_i.b).kind() == Some(crate::bytecode::OperandKind::Register));
+                    std::hint::assert_unchecked(Operand(test_i.c).kind() == Some(if constant { crate::bytecode::OperandKind::Constant } else { crate::bytecode::OperandKind::Register }));
+                }
             }
-            Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!($cx, $r, following(at), carried),
-            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<$test>::OPCODE) }, $r, at, carried),
+            let fields = LaneFields::<$test, { FLAG_UNREAD }>(test_i);
+            let decoded = match ($comparison, row_decode!($test, { FLAG_UNREAD }, fields)) {
+                (Some(comparison), Some(Operation::CompareJump { left, right, negate, .. })) =>
+                    Some(Operation::CompareJump { comparison, left, right, negate }),
+                (_, decoded) => decoded,
+            };
+            let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, $r, at, carried) };
+            let mut stage = Concrete::new(std::ptr::null());
+            let mut frame = row_frame::<H, $test, ACC_NONE, FLAG_UNREAD>($cx, $r, at, test_i, carried);
+            match row_step!(LaneFields::<$test>::OPCODE, &mut stage, &mut frame, operation) {
+                Step::Control(LaneControl::Edge(Edge::Target)) => {
+                    // SAFETY: as the read of `test_i` above.
+                    let backward_test = unsafe { (*at).jump() } <= 0;
+                    resume!($cx, crate::vm::dispatch_fast::take_jump::<H>($cx, $r, at, backward_test, carried, None))
+                }
+                Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!($cx, $r, following(at), carried),
+                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<$test>::OPCODE) }, $r, at, carried),
+            }
+        }}; }
+        if const { $test == crate::bytecode::Op::JumpBinaryFalse as u16 } {
+            // A loop's test is almost always a relation or a strict equality: each of those runs its own
+            // arm, any other comparison the record's decode.
+            use oxc_ast::ast::BinaryOperator as B;
+            const LT: u32 = B::LessThan as u32;
+            const LE: u32 = B::LessEqualThan as u32;
+            const GT: u32 = B::GreaterThan as u32;
+            const GE: u32 = B::GreaterEqualThan as u32;
+            const SEQ: u32 = B::StrictEquality as u32;
+            const SNE: u32 = B::StrictInequality as u32;
+            // Each comparison's arm also fixes its operand kinds where they are a register and a register or a
+            // constant, as the comparison's own formed instances do (`compare_jump_row`).
+            use crate::bytecode::OperandKind::{Constant, Register};
+            let form = match (Operand(test_i.b).kind(), Operand(test_i.c).kind()) {
+                (Some(Register), Some(Register)) => 1u32,
+                (Some(Register), Some(Constant)) => 2,
+                _ => 0,
+            };
+            macro_rules! formed { ($op:ident) => {
+                match form {
+                    1 => test_run!(Some(Comparison::of_operator($op)), Some(false)),
+                    2 => test_run!(Some(Comparison::of_operator($op)), Some(true)),
+                    _ => test_run!(Some(Comparison::of_operator($op)), None::<bool>),
+                }
+            }; }
+            match u32::from(test_i.a) {
+                LT => formed!(LT),
+                LE => formed!(LE),
+                GT => formed!(GT),
+                GE => formed!(GE),
+                SEQ => formed!(SEQ),
+                SNE => formed!(SNE),
+                _ => {}
+            }
         }
+        test_run!(None::<Comparison>, None::<bool>)
     }};
 }
 
@@ -2823,38 +2843,56 @@ const FLAG_COMPARE: u8 = 200;
 /// The operators a comparison jump's instance fixes: every binary operator code (`binary_operator`).
 const COMPARE_OPERATORS: u8 = 22;
 
-/// The operators (equality and relation, codes 0 through 7) whose comparison jumps also fix their operand
-/// form: two registers (`FLAG_COMPARE_REGISTERS + operator`), or a register then a constant
-/// (`FLAG_COMPARE_CONSTANT + operator`), so the row tests no operand tag.
-const COMPARE_FORM_OPERATORS: u8 = 8;
-const FLAG_COMPARE_REGISTERS: u8 = FLAG_COMPARE + COMPARE_OPERATORS;
-const FLAG_COMPARE_CONSTANT: u8 = FLAG_COMPARE_REGISTERS + COMPARE_FORM_OPERATORS;
+/// The comparisons whose jumps also have instances that fix their operand kinds (`FLAG_COMPARE_FORMED`):
+/// the relations and the strict equalities a loop or a recursion tests.
+const FORMED_COMPARISONS: [u32; 6] = {
+    use oxc_ast::ast::BinaryOperator as B;
+    [B::LessThan as u32, B::LessEqualThan as u32, B::GreaterThan as u32, B::GreaterEqualThan as u32,
+        B::StrictEquality as u32, B::StrictInequality as u32]
+};
+/// The first `FLAG` of a comparison jump that fixes its operator, a `FORMED_COMPARISONS` entry, and its
+/// operand kinds: `FLAG_COMPARE_FORMED + 2 * entry + form`, where form 0 is two registers and 1 a register
+/// and a constant (`compare_operands`).
+const FLAG_COMPARE_FORMED: u8 = FLAG_COMPARE + COMPARE_OPERATORS;
+const _: () = assert!(FLAG_COMPARE_FORMED as usize + 2 * FORMED_COMPARISONS.len() <= 256);
 
 /// The operator a comparison jump's `flag` fixes, `None` for any other flag.
 const fn compare_flag(flag: u8) -> Option<u32> {
-    if flag >= FLAG_COMPARE && flag < FLAG_COMPARE_REGISTERS { Some((flag - FLAG_COMPARE) as u32) }
-    else if flag >= FLAG_COMPARE_REGISTERS && flag < FLAG_COMPARE_CONSTANT { Some((flag - FLAG_COMPARE_REGISTERS) as u32) }
-    else if flag >= FLAG_COMPARE_CONSTANT && flag < FLAG_COMPARE_CONSTANT + COMPARE_FORM_OPERATORS { Some((flag - FLAG_COMPARE_CONSTANT) as u32) }
-    else { None }
-}
-
-/// The operand form a comparison jump's `flag` fixes: 0 any, 1 two registers, 2 a register then a constant.
-const fn compare_form(flag: u8) -> u8 {
-    if flag >= FLAG_COMPARE_REGISTERS && flag < FLAG_COMPARE_CONSTANT { 1 }
-    else if flag >= FLAG_COMPARE_CONSTANT && flag < FLAG_COMPARE_CONSTANT + COMPARE_FORM_OPERATORS { 2 }
-    else { 0 }
-}
-
-/// The instance of the comparison jump row whose comparison is `operator`'s, at operand form `form`
-/// (`compare_form`; an operator past `COMPARE_FORM_OPERATORS` takes form 0), `None` past the codes.
-fn compare_jump_row<H: Host, const BACKWARD: bool>(operator: u32, form: u8) -> Option<Handler> {
-    macro_rules! rows { ($base:expr; $($n:literal)+) => { [$(row_jump::<H, { crate::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $base + $n }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }> as Handler),+] } }
-    if form != 0 && operator < u32::from(COMPARE_FORM_OPERATORS) {
-        let registers: [Handler; COMPARE_FORM_OPERATORS as usize] = rows!(FLAG_COMPARE_REGISTERS; 0 1 2 3 4 5 6 7);
-        let constant: [Handler; COMPARE_FORM_OPERATORS as usize] = rows!(FLAG_COMPARE_CONSTANT; 0 1 2 3 4 5 6 7);
-        return Some(if form == 1 { registers } else { constant }[operator as usize]);
+    if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { return Some((flag - FLAG_COMPARE) as u32) }
+    if flag >= FLAG_COMPARE_FORMED && ((flag - FLAG_COMPARE_FORMED) as usize) < 2 * FORMED_COMPARISONS.len() {
+        return Some(FORMED_COMPARISONS[((flag - FLAG_COMPARE_FORMED) / 2) as usize]);
     }
-    let table: [Handler; COMPARE_OPERATORS as usize] = rows!(FLAG_COMPARE; 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21);
+    None
+}
+
+/// Whether a comparison jump's `flag` fixes its right operand as a register (`Some(false)`) or a constant
+/// (`Some(true)`), its left one being a register; `None` where it fixes no operand kinds.
+const fn compare_operands(flag: u8) -> Option<bool> {
+    if flag >= FLAG_COMPARE_FORMED && ((flag - FLAG_COMPARE_FORMED) as usize) < 2 * FORMED_COMPARISONS.len() {
+        Some((flag - FLAG_COMPARE_FORMED) % 2 == 1)
+    } else {
+        None
+    }
+}
+
+/// The instance of the comparison jump row whose comparison is `operator`'s, and whose operand kinds are
+/// `left` and `right`'s where the operator is a `FORMED_COMPARISONS` one and those are a register and a
+/// register or a constant; `None` past the codes.
+fn compare_jump_row<H: Host, const BACKWARD: bool>(operator: u32, left: Operand, right: Operand) -> Option<Handler> {
+    use crate::bytecode::OperandKind::{Constant, Register};
+    macro_rules! row { ($flag:expr) => { row_jump::<H, { crate::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }> as Handler } }
+    macro_rules! formed { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_FORMED + $n)),+] } }
+    let form = match (left.kind(), right.kind()) {
+        (Some(Register), Some(Register)) => Some(0),
+        (Some(Register), Some(Constant)) => Some(1),
+        _ => None,
+    };
+    if let (Some(entry), Some(form)) = (FORMED_COMPARISONS.iter().position(|&formed| formed == operator), form) {
+        let table: [Handler; 2 * FORMED_COMPARISONS.len()] = formed!(0 1 2 3 4 5 6 7 8 9 10 11);
+        return Some(table[2 * entry + form]);
+    }
+    macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
+    let table: [Handler; COMPARE_OPERATORS as usize] = rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21);
     table.get(operator as usize).copied()
 }
 
@@ -2889,10 +2927,16 @@ lane_handler! {
             let operator = u32::from(i.a);
             let decodes_so = matches!(Operation::<u64, ()>::decode_generic(crate::staged::Fields::wide(LaneFields::<OP>(i))),
                 Some(Operation::CompareJump { comparison, .. }) if comparison == crate::staged::Comparison::of_operator(operator));
-            let form = match (i.b >> 14, i.c >> 14) { (0, 0) => 1, (0, 1) => 2, _ => 0 };
-            if decodes_so && let Some(handler) = compare_jump_row::<H, BACKWARD>(operator, form) {
+            if decodes_so && let Some(handler) = compare_jump_row::<H, BACKWARD>(operator, Operand(i.b), Operand(i.c)) {
                 requicken::<H>(ip, handler);
                 sibling!(handler, r, ip, view)
+            }
+        }
+        // SAFETY: `compare_jump_row` chose a formed instance from the record's own operand kinds.
+        if let Some(constant) = const { compare_operands(FLAG) } {
+            unsafe {
+                std::hint::assert_unchecked(Operand(i.b).kind() == Some(crate::bytecode::OperandKind::Register));
+                std::hint::assert_unchecked(Operand(i.c).kind() == Some(if constant { crate::bytecode::OperandKind::Constant } else { crate::bytecode::OperandKind::Register }));
             }
         }
         let fields = LaneFields::<OP>(i);
@@ -2903,10 +2947,10 @@ lane_handler! {
                     // The instance's operand form: the tags it fixes, so the operand reads test none.
                     const CONSTANT_TAG: u16 = (crate::bytecode::OperandKind::Constant as u16) << 14;
                     let payload = crate::bytecode::Operand::PAYLOAD_MASK;
-                    let (left, right) = match const { compare_form(FLAG) } {
-                        1 => (crate::bytecode::Operand(left.0 & payload), crate::bytecode::Operand(right.0 & payload)),
-                        2 => (crate::bytecode::Operand(left.0 & payload), crate::bytecode::Operand((right.0 & payload) | CONSTANT_TAG)),
-                        _ => (left, right),
+                    let (left, right) = match const { compare_operands(FLAG) } {
+                        Some(false) => (crate::bytecode::Operand(left.0 & payload), crate::bytecode::Operand(right.0 & payload)),
+                        Some(true) => (crate::bytecode::Operand(left.0 & payload), crate::bytecode::Operand((right.0 & payload) | CONSTANT_TAG)),
+                        None => (left, right),
                     };
                     Some(Operation::CompareJump {
                         comparison: crate::staged::Comparison::of_operator(const { match compare_flag(FLAG) { Some(operator) => operator, None => 0 } }),
@@ -3218,7 +3262,14 @@ lane_handler! {
             };
             let mut stage = Concrete::new(std::ptr::null());
             let mut frame = call_frame::<H, OP, ACC, MISS>(cx, r, ip, i, view);
-            match crate::staged::step(&mut stage, &mut frame, operation) {
+            // The call decoder makes a call site, or for a `super(...)` construction a spread call: only a
+            // construction's row keeps more than the call arm of the step (every arm was ~10 KB per instance).
+            let step = if const { matches!(LaneFields::<OP>::OPCODE, crate::bytecode::Op::Construct) } {
+                crate::staged::step(&mut stage, &mut frame, operation)
+            } else {
+                crate::staged::step_of::<{ crate::staged::op_kind::CALL }, _, _>(&mut stage, &mut frame, operation)
+            };
+            match step {
                 Step::Value(value) => {
                     r.set(i.a, Value::from_bits(value));
                     next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -3439,7 +3490,7 @@ script_handler! {
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = LaneFrame::<ACC_NONE> { reads: Reads::of_jump::<H>(cx, Some(i.constant())),
             ..row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view) };
-        match crate::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
+        match step_binary_number::<OPERATOR, _, _>(&mut stage, &mut frame, number) {
             Step::Value(value) => {
                 // An int32 row's result is an integer already; a Float64 one is made as its canonical Value
                 // (`Value::number`), so an integral result is the integer it is.
@@ -3452,6 +3503,89 @@ script_handler! {
             }
             Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
         }
+    }
+}
+
+/// `operator_row`'s operand forms: any operands (`binary_operation`); two registers; a register and a
+/// constant on the right; a register and an int32 constant on the right; an int32 constant with any
+/// other operand (`int32_binary_operation` for the two int32 forms).
+pub(in crate::vm::dispatch_fast) const OPERANDS_ANY: u8 = 0;
+pub(in crate::vm::dispatch_fast) const OPERANDS_REGISTERS: u8 = 1;
+pub(in crate::vm::dispatch_fast) const OPERANDS_REGISTER_CONSTANT: u8 = 2;
+pub(in crate::vm::dispatch_fast) const OPERANDS_REGISTER_INT32: u8 = 3;
+pub(in crate::vm::dispatch_fast) const OPERANDS_INT32: u8 = 4;
+
+script_handler! {
+    /// The lane handler of a plain `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
+    /// value) whose accumulator field is `ACC`: `generated_row`'s row with the operator a parameter of the
+    /// instantiation rather than a field the row decodes and dispatches on. `FORM` (`OPERANDS_*`) states
+    /// the operand kinds the view proved, so the row's operand tests fold, and whether an operand is an
+    /// int32 constant, where the operation is `numeric::int32_binary_operation`'s, else
+    /// `numeric::binary_operation`'s, over the record's own operands. Any step but a value hands the
+    /// record to its generated row for good (`requicken`), which decides every operand pair.
+    pub(super) fn operator_row<OP: u16, ACC: u8, OPERATOR: u8, FORM: u8>(cx, r, ip, i, view) {
+        let generic: Handler = generated_row!(H, OP, ACC, FLAG_UNREAD);
+        // SAFETY: `specialize_plain_operators` chose `FORM` from the record's own operand kinds.
+        unsafe {
+            if const { FORM == OPERANDS_REGISTERS || FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 } {
+                std::hint::assert_unchecked(Operand(i.b).kind() == Some(crate::bytecode::OperandKind::Register));
+            }
+            if const { FORM == OPERANDS_REGISTERS } {
+                std::hint::assert_unchecked(Operand(i.c).kind() == Some(crate::bytecode::OperandKind::Register));
+            }
+            if const { FORM == OPERANDS_REGISTER_CONSTANT || FORM == OPERANDS_REGISTER_INT32 } {
+                std::hint::assert_unchecked(Operand(i.c).kind() == Some(crate::bytecode::OperandKind::Constant));
+            }
+        }
+        let (left, right) = (Operand(i.b), Operand(i.c));
+        let number = if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_INT32 } {
+            crate::staged::numeric::int32_binary_operation(OPERATOR as u32, i.a, left, right)
+        } else {
+            crate::staged::numeric::binary_operation(OPERATOR as u32, i.a, left, right)
+        };
+        let Some(number) = number else {
+            requicken::<H>(ip, generic);
+            sibling!(generic, r, ip, view)
+        };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = row_frame::<H, OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
+        match crate::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
+            Step::Value(value) => next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view }),
+            Step::Control(_) | Step::Unresolved => {
+                requicken::<H>(ip, generic);
+                sibling!(generic, r, ip, view)
+            }
+        }
+    }
+}
+
+/// The `numeric::kind` of the operation `numeric::binary_operation` (and `int32_binary_operation`) builds for
+/// `operator`, read off the shared operator tables, so a row whose operator is static instantiates only that arm
+/// of the Number step (`numeric::step_of`) rather than every arm: `returning_operator_row` had 110 instances of
+/// about 14 KB each that a line shift in a widely inlined helper re-codegened. `ANY` for an operator no Number
+/// operation denotes.
+pub(in crate::vm::dispatch_fast) const fn binary_number_kind(operator: u32) -> u8 {
+    use crate::staged::numeric::kind;
+    use crate::vm::operations::binary_operator as code;
+    macro_rules! arithmetic {
+        ($($operation:ident => $operator:ident, $a:ident, $b:ident, $c:tt, $d:ident, $e:ident, $f:ident;)+) => { false $(|| operator == code::$operator)+ };
+    }
+    macro_rules! bitwise {
+        ($($operation:ident => $operator:ident, $a:ident, $b:literal;)+) => { false $(|| operator == code::$operator)+ };
+    }
+    macro_rules! relation {
+        ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $a:ident;)+) => { false $($(|| operator == code::$operator)+)+ };
+    }
+    if crate::vm::operations::number_arithmetic_rows!(arithmetic) {
+        kind::ARITHMETIC
+    } else if operator == code::Remainder {
+        kind::REMAINDER
+    } else if crate::vm::operations::number_bitwise_rows!(bitwise) {
+        kind::BITWISE
+    } else if crate::vm::operations::number_relation_rows!(relation) {
+        kind::RELATION_VALUE
+    } else {
+        kind::ANY
     }
 }
 
@@ -3919,4 +4053,45 @@ mod generated_rows_14 {
 mod generated_rows_15 {
     use super::*;
     include!("generated_row.rs");
+}
+
+/// The Number step of a row whose binary operator `OPERATOR` is static: only the arm `binary_number_kind` names.
+#[inline(always)]
+fn step_binary_number<const OPERATOR: u8, S: crate::staged::NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    number: NumberOperation) -> Step<S::Word, F::Control> {
+    use crate::staged::numeric::{kind, step_of};
+    if const { binary_number_kind(OPERATOR as u32) == kind::ARITHMETIC } {
+        step_of::<{ kind::ARITHMETIC }, S, F>(stage, frame, number)
+    } else if const { binary_number_kind(OPERATOR as u32) == kind::REMAINDER } {
+        step_of::<{ kind::REMAINDER }, S, F>(stage, frame, number)
+    } else if const { binary_number_kind(OPERATOR as u32) == kind::BITWISE } {
+        step_of::<{ kind::BITWISE }, S, F>(stage, frame, number)
+    } else if const { binary_number_kind(OPERATOR as u32) == kind::RELATION_VALUE } {
+        step_of::<{ kind::RELATION_VALUE }, S, F>(stage, frame, number)
+    } else {
+        step_of::<{ kind::ANY }, S, F>(stage, frame, number)
+    }
+}
+
+#[cfg(test)]
+mod binary_number_kind_tests {
+    use crate::staged::{numeric, NumberOperation};
+    use crate::bytecode::Operand;
+
+    /// `binary_number_kind` names the variant `binary_operation` builds, for every operator code.
+    #[test]
+    fn names_the_variant_binary_operation_builds() {
+        for operator in 0..32u32 {
+            let built = numeric::binary_operation(operator, 0, Operand::register(1), Operand::register(2));
+            let expected = match built {
+                Some(NumberOperation::Arithmetic { .. }) => numeric::kind::ARITHMETIC,
+                Some(NumberOperation::Remainder { .. }) => numeric::kind::REMAINDER,
+                Some(NumberOperation::Bitwise { .. }) => numeric::kind::BITWISE,
+                Some(NumberOperation::RelationValue { .. }) => numeric::kind::RELATION_VALUE,
+                Some(_) => panic!("operator {operator}: unexpected variant"),
+                None => numeric::kind::ANY,
+            };
+            assert_eq!(super::binary_number_kind(operator), expected, "operator {operator}");
+        }
+    }
 }

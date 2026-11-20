@@ -138,10 +138,12 @@ impl Lowering<'_, '_> {
         within: bool, exit: ir::Block) -> ir::Value {
         let bits = self.tagged(state, base);
         let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); crate::staged::value::is_direct_string(&mut stage, bits) };
+        // The key's tagged word is made before the paths split: the row's host read takes it too,
+        // so a word the string path made would not dominate its use.
+        let key_word = self.tagged(state, index);
         let (string, row, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         self.branch_if(is_string, (string, &[]), (row, &[]));
         self.builder.switch_to_block(string);
-        let key_word = self.tagged(state, index);
         let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
         let table = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.ascii_unit_strings));
         let character = {
@@ -330,7 +332,11 @@ impl Lowering<'_, '_> {
             self.exit(state, pc as u32);
             return false;
         }
-        let exit = self.guard_exit(state, pc as u32);
+        // An image body makes a store its row misses by the interpreter's step, and continues (`fill_stepped_miss`).
+        let stepped = self.stepped_record(pc);
+        if stepped.is_some() { self.canonicalize(state, pc); self.home_written(state, pc); }
+        let entering = stepped.map(|_| state.clone());
+        let exit = if stepped.is_none() { self.guard_exit(state, pc as u32) } else { cold_block(&mut self.builder) };
         let number = state.values[usize::from(value)].value.ty.is_subtype(Type::NUMBER);
         // A reference is stored through a hoisted dense view too, past its barrier gate (`store_gate`);
         // a typed view takes a Number alone.
@@ -347,6 +353,18 @@ impl Lowering<'_, '_> {
                 // call the VM's store, which may move any backing.
                 if held.is_none() { self.reload_dense_arrays(pc); }
             }
+        }
+        if let (Some(record), Some(entering)) = (stepped, entering) {
+            let join = self.builder.create_block();
+            self.goto(join, &[]);
+            self.fill_stepped_miss(&entering, pc, record, exit, join);
+            self.builder.switch_to_block(join);
+            // Both paths hold what held before the store; a view the row derived holds on its path alone.
+            *state = entering;
+            // The step may have run a setter, moved a backing or reshaped any object.
+            self.reshaped(state);
+            self.reload_receiver();
+            self.reload_dense_arrays(pc);
         }
         state.proofs.arrays.clear();
         state.proofs.fields.clear();

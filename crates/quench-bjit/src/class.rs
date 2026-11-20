@@ -22,10 +22,8 @@ pub const MOVW_GROUPS: u8 = (u64::BITS / u16::BITS) as u8;
 
 /// Bytes of a rel32 field.
 pub const REL32_BYTES: usize = (i32::BITS / u8::BITS) as usize;
-/// `jmp rel32`: the opcode byte, then the displacement a relocation patches.
+/// `jmp rel32`.
 pub const JMP_REL32: u8 = 0xe9;
-/// Bytes of `jmp rel32`: its opcode and the rel32 field.
-pub const JMP_REL32_LEN: usize = 1 + REL32_BYTES;
 
 /// A pc-relative transfer to a successor hole (`NEXT`, `TAKEN`, an exit), not a value hole.
 pub const fn is_successor(class: u8) -> bool {

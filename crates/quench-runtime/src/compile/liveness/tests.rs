@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::Instr;
 
 #[test]
 fn fixed_transfers_match_the_general_derivation() {

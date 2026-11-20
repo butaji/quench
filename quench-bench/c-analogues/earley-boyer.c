@@ -1,6 +1,7 @@
 // jetstream-row: earley-boyer
 // jetstream-files: Octane/earley-boyer.js
 // iterations: 120
+// jetstream-driver: deterministic=true
 /* C analogue of JetStream 3's Octane/earley-boyer.js, which is Scheme code compiled to JS.
  * Two workloads run on tagged cons cells, as the Scheme does:
  *  - earley: Feeley's Earley parser (make-parser builds the nonterminal, starter, ender and

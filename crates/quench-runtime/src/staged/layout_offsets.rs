@@ -206,12 +206,11 @@ pub(crate) const NATIVE_ENVIRONMENT_LAYOUT: NativeEnvironmentLayout = NativeEnvi
 };
 
 /// A Wasm GC object's record (`record_heads::WasmGcHead`): where its payload's address, length and type
-/// index sit, so compiled code reads a field's slot inline.
+/// index sit, so compiled code reads a field's slot inline. The record's stride is the record space's
+/// element size (`WasmGcRecord`, which the head starts), not the head's, so it is not named here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeWasmGcLayout {
     pub(crate) record_capacity: usize,
-    pub(crate) record_size: usize,
-    pub(crate) record_align: usize,
     pub(crate) payload_offset: usize,
     pub(crate) length_offset: usize,
     pub(crate) type_offset: usize,
@@ -219,8 +218,6 @@ pub(crate) struct NativeWasmGcLayout {
 
 pub(crate) const NATIVE_WASM_GC_LAYOUT: NativeWasmGcLayout = NativeWasmGcLayout {
     record_capacity: WASM_GC_RECORD_CAPACITY,
-    record_size: size_of::<super::record_heads::WasmGcHead>(),
-    record_align: align_of::<super::record_heads::WasmGcHead>(),
     payload_offset: core::mem::offset_of!(super::record_heads::WasmGcHead, payload),
     length_offset: core::mem::offset_of!(super::record_heads::WasmGcHead, length),
     type_offset: core::mem::offset_of!(super::record_heads::WasmGcHead, ty),
@@ -372,6 +369,9 @@ pub(crate) const RAISED_RUN: u64 = 1 << u32::BITS;
 /// (`staged::frame::CONTEXT_THIS`, `CONTEXT_BODY`); the stencils read them at `context_word(frame, ..)`.
 pub(crate) const CONTEXT_THIS: usize = crate::staged::frame::CONTEXT_THIS;
 pub(crate) const CONTEXT_BODY: usize = crate::staged::frame::CONTEXT_BODY;
+/// The closure environment and captures pointer a linked activation's interpreter reads (`staged::frame::CONTEXT_ENV`, `CONTEXT_CAPTURE`).
+pub(crate) const CONTEXT_ENV: usize = crate::staged::frame::CONTEXT_ENV;
+pub(crate) const CONTEXT_CAPTURE: usize = crate::staged::frame::CONTEXT_CAPTURE;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).

@@ -49,7 +49,7 @@ mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
 #[path = "lane_region/builtin_calls.rs"] mod builtin_calls;
 #[path = "lane_region/data_view_calls.rs"] mod data_view_calls;
-pub(in crate::vm) use native_calls::{inlines_in_loop, native_method_call};
+pub(in crate::vm) use native_calls::{inlines_in_loop, inlines_in_loop_call, native_method_call};
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]
@@ -99,6 +99,7 @@ use captures::RootedRead;
 use call_frames::{CallSite, DirectSite, Leave, ReturnSite, Site};
 pub(super) use call_frames::ProvenCall;
 #[path = "lane_region/call_outs.rs"] mod call_outs;
+#[path = "lane_region/general_steps.rs"] mod general_steps;
 #[path = "lane_region/jumps.rs"] mod jumps;
 #[path = "lane_region/call_rows.rs"] mod call_rows;
 #[path = "lane_region/register_rows.rs"] mod register_rows;
@@ -1407,6 +1408,10 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         // undefined operand leaves before any effect (`staged::require_object_coercible`).
         _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric { .. }))) || matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::RequireObjectCoercible { .. })) => !instruction.returns_from_frame(),
         // A Number operator of a Number; any other operand leaves before any effect (`Lowering::unary`).
+        // A dense switch's case slot and its branch table read one frame register; an operand that
+        // is no int leaves before any effect (`Lowering::int_case_index`, `Lowering::branch_table`).
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IntCase { .. }))) => instruction.result_flags() == 0,
+        _ if instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::BranchTable => instruction.result_flags() == 0,
         _ if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::UnaryOperator
             && crate::vm::compiled::number_unary(instruction, instruction.unary_operator()).is_some() =>
             instruction.result_flags() == 0 && !instruction.writes_current_this(),
@@ -1485,7 +1490,8 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
 }
 
 fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loops: &[(usize, usize)],
-    intrinsics: &native_calls::Intrinsics, quiet_store: &dyn Fn(usize) -> bool) -> BTreeMap<usize, Vec<InvariantRead>> {
+    intrinsics: &native_calls::Intrinsics, quiet_store: &dyn Fn(usize) -> bool,
+    global_reads: &crate::vm::global_facts::GlobalReads) -> BTreeMap<usize, Vec<InvariantRead>> {
     let mut hoists = BTreeMap::new();
     let boundaries = leaders(&unit.instructions);
     for &(header, back) in loops {
@@ -1506,6 +1512,9 @@ fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loo
                 return Some(InvariantRead { pc, owner: None, rooted: stored.is_empty(), callee: None });
             }
             if !matches!(crate::vm::compiled::performed(candidate), Some(crate::staged::Operation::GetField { .. })) { return None; }
+            // A native method's read folds to the function its holder holds (`fold_native_member`): its receiver,
+            // a string primitive for `charCodeAt`, is no object whose field the entry would hoist.
+            if matches!(global_reads.get(&pc), Some(crate::vm::global_facts::GlobalRead::NativeMember { .. })) { return None; }
             match candidate.field_lookup() {
             Some(FieldLookup::Atom { atom, base, .. }) if !stored.contains(&atom) && !(resizes && names_length(program, atom)) => {
                 let owner = invariant_field_owner(unit, header, pc, base.register_index()?, &written, &boundaries)?;
@@ -1763,6 +1772,9 @@ pub(super) struct RegionSpecializer<'p> {
     /// The registers whose values at entry were doubles: with `int_entries`, candidates for a
     /// Number entry contract (`refine_inductive_inputs`) where an int32 one fails.
     pub(super) number_entries: &'p [Register],
+    /// The registers whose values at entry were strings: a loop array they hold is no view, its
+    /// reads take the string row (`Lowering::string_or_row`), which reads any value.
+    pub(super) string_entries: &'p [Register],
     /// The capture slots that held typed arrays at compilation (`Observation::typed_captures`).
     pub(super) typed_captures: &'p [u16],
     /// The capture slots that held int32s at compilation (`Observation::int_captures`).
@@ -1776,7 +1788,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.entry_fields, self.number_reads, (self.int_entries, self.number_entries), self.typed_captures, self.int_captures, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
+            self.isa, self.entry_fields, self.number_reads, (self.int_entries, self.number_entries, self.string_entries), self.typed_captures, self.int_captures, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1813,7 +1825,7 @@ pub(super) fn lower_body(
     DECLINED.with(|declined| declined.set(None));
     UNLOWERED.with(|unlowered| unlowered.borrow_mut().clear());
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
+        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[],
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::Body, views: ElementViews::Dense } };
     // The scalar entry lowers first: the body calls it only where it exists.
@@ -1874,7 +1886,7 @@ pub(super) fn lower(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     entry_fields: &EntryWords,
     number_reads: &[super::facts::ObservedRead],
-    (int_entries, number_entries): (&[(Register, IntRange)], &[Register]),
+    (int_entries, number_entries, string_entries): (&[(Register, IntRange)], &[Register], &[Register]),
     typed_captures: &[u16],
     int_captures: &[u16],
     coverage: Coverage,
@@ -2087,6 +2099,9 @@ pub(super) fn lower(
     let own_shape = |pc: usize| {
         let instruction = instructions[pc];
         if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::GetField { .. })) || instruction.result_flags() != 0 { return None; }
+        // A native method's read names its holder's function whatever its receiver (`fold_native_member`):
+        // a string primitive's `charCodeAt` proves no object shape of it.
+        if matches!(global_reads.get(&pc), Some(crate::vm::global_facts::GlobalRead::NativeMember { .. })) { return None; }
         let FieldLookup::Atom { base, cache_site, .. } = instruction.field_lookup()? else { return None };
         let [field] = site_loads(fields, cache_site)?.as_slice() else { return None };
         field.own_direct().then_some((base.register_index()?, field.shape))
@@ -2151,14 +2166,15 @@ pub(super) fn lower(
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
     let preliminary = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
     let quiet_store = |pc: usize| preliminary.numeric_store(pc) && lowering.typed_access(pc) == Some(super::facts::TypedAccess::Store);
-    let hoists = invariant_reads(program, unit, &loops, &lowering.intrinsics, &quiet_store);
+    let hoists = invariant_reads(program, unit, &loops, &lowering.intrinsics, &quiet_store, global_reads);
     lowering.hoists = hoists;
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && matches!(crate::vm::compiled::performed(&instructions[at]), Some(crate::staged::Operation::LoadCapture { .. })))),
         lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     let arrays = std::mem::take(&mut lowering.loop_arrays);
-    lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)).collect();
+    lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)
+        && !matches!(array.source, ArraySource::Register(register) if string_entries.contains(&register))).collect();
     lowering.loop_strings = loop_strings::loop_strings(unit, &loops, &lowering.intrinsics, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
@@ -2316,6 +2332,9 @@ pub(super) fn lower(
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Tail, now - mark); mark = now; }
     for GuardExit { block, values, homed, virtuals, pc, line } in lowering.take_leaves() {
         lowering.switch_to(block, true);
+        if helpers == LaneHelpers::Ahead && crate::trace::Channel::AotLanes.on() {
+            eprintln!("aot-lanes: function {function_id}: a leave at {pc} (lowering line {line})");
+        }
         let mut leaving = State { values, proofs: LocalProofs { homed, ..LocalProofs::default() }, refinements: smallvec::SmallVec::new(), virtuals };
         if lowering.vm.diagnostics {
             let line = lowering.raw_const(Lane::I64, i64::from(line));
@@ -2908,6 +2927,9 @@ impl Lowering<'_, '_> {
     fn field_owner(&self, pc: usize, instruction: WideInstruction) -> Option<usize> {
         let count = usize::from(self.unit.registers);
         match () {
+            // A native method's read folds to its holder's function whatever its receiver (`fold_native_member`):
+            // a string primitive's `charCodeAt` reads no object's field.
+            _ if matches!(self.global_reads.get(&pc), Some(crate::vm::global_facts::GlobalRead::NativeMember { .. })) => None,
             _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) && !super::reads_length(self.program, instruction) => {
                 let base = self.field_base(pc, instruction);
                 base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
@@ -3167,6 +3189,10 @@ impl Lowering<'_, '_> {
                 if falls { self.conform_declared_definitions(state, pc, instruction); }
                 falls
             }
+            None if let Some(falls) = self.general_step(state, pc, instruction) => {
+                self.native += 1;
+                falls
+            }
             None => {
                 super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
                 if self.helpers == LaneHelpers::Ahead && crate::trace::Channel::AotLanes.on() {
@@ -3361,7 +3387,7 @@ impl Lowering<'_, '_> {
         let makes_environment = operation.makes_environment();
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
-        let mut stage = Emit { builder: &mut self.builder, property_values, gate };
+        let mut stage = Emit { builder: &mut self.builder, property_values, gate, payload: Some(self.payload) };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held,
             stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
@@ -3400,17 +3426,19 @@ impl Lowering<'_, '_> {
         false
     }
 
-    fn typeof_index(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+    fn typeof_index(&mut self, state: &mut State, _pc: usize, instruction: WideInstruction) -> Option<bool> {
         let source = instruction.register_b();
         let ty = state.values[usize::from(source)].value.ty;
         let known = [crate::ValueType::Number, crate::ValueType::Boolean, crate::ValueType::Null,
             crate::ValueType::Undefined, crate::ValueType::String, crate::ValueType::BigInt, crate::ValueType::Symbol]
             .into_iter().find(|kind| ty != Type::NEVER && ty.is_subtype(Type::language(*kind)));
         let Some(kind) = known else {
-            // The staged operation leaves at the instruction for a heap value, whose cell decides its name.
-            let exit = self.guard_exit(state, pc as u32);
-            let operation = crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::EMPTY).expect("typeof index decodes");
-            self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
+            // A value of no one known kind: the VM names it, a heap value by its cell (`typeof_index_in_lane`).
+            // The staged row's heap arm needs a frame that proves a cell's kind, which this one does not.
+            let bits = self.tagged(state, source);
+            let index = self.helper_call(LaneHelper::TypeofIndex, &[bits]);
+            let int = self.raw_unary(Unary::Narrow(Lane::I32), index);
+            self.define(state, instruction.result_register(), int, RegisterFact::definition(Type::INT32, Representation::Int32));
             return Some(true);
         };
         let index = crate::bytecode::typeof_name_index(super::super::coercion::typeof_text(kind)).expect("a language typeof name");
@@ -3435,11 +3463,36 @@ impl Lowering<'_, '_> {
     fn decided_relation(&mut self, state: &mut State, pc: u32, operator: u32, left: Operand, right: Operand) -> Option<ir::Value> {
         let exit = self.guard_exit(state, pc);
         let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
+        // A relational operator of operands no fact types (a field's value, a call's result): two
+        // int-tagged words compare as int32 in place, as the interpreter's integer path does
+        // (`operations::integer_binary`); any other pair is the helper's.
+        let Some(relation) = super::operations::NumberRelation::from_operator(operator) else {
+            return Some(self.decided_words(left, right, operator, exit));
+        };
+        let (left_int, right_int) = (is_int_tagged(&mut self.builder, left), is_int_tagged(&mut self.builder, right));
+        let ints = self.raw_binary(Binary::And, left_int, right_int);
+        let (int_block, other, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        let holds = self.builder.append_block_param(join, types::I8);
+        self.branch_if(ints, (int_block, &[]), (other, &[]));
+        self.builder.switch_to_block(int_block);
+        let (left_bits, right_bits) = (self.raw_unary(Unary::Narrow(Lane::I32), left), self.raw_unary(Unary::Narrow(Lane::I32), right));
+        let int_holds = crate::staged::number_machine::number_relation(&mut super::object_slots::emit(&mut self.builder), relation, left_bits, right_bits, NumberRelationDomain::Int32);
+        self.goto(join, &[int_holds]);
+        self.builder.switch_to_block(other);
+        let decided = self.decided_words(left, right, operator, exit);
+        self.goto(join, &[decided]);
+        self.builder.switch_to_block(join);
+        Some(holds)
+    }
+
+    /// The `Decide` helper's Boolean of `left operator right`, leaving at `exit` where only the
+    /// full algorithm decides it (`comparison_decision`).
+    fn decided_words(&mut self, left: ir::Value, right: ir::Value, operator: u32, exit: ir::Block) -> ir::Value {
         let operator = self.raw_const(Lane::I64, i64::from(operator));
         let holds = self.helper_call(LaneHelper::Decide, &[left, right, operator]);
         let decided = self.raw_compare_imm(Relation::NotEqual, holds, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, decided, exit);
-        Some(self.raw_unary(Unary::Narrow(Lane::I8), holds))
+        self.raw_unary(Unary::Narrow(Lane::I8), holds)
     }
 
     /// `number === other` where `number` is a Number: equal only where `other` is a Number too
@@ -3760,7 +3813,9 @@ impl Lowering<'_, '_> {
             self.exit(state, pc as u32);
             return false;
         };
-        let missed = self.guard_exit(state, pc as u32);
+        // An image body makes a call its helper misses by the interpreter's step, and continues (`fill_stepped_miss`).
+        let stepped = self.stepped_record(pc);
+        let missed = if stepped.is_none() { self.guard_exit(state, pc as u32) } else { cold_block(&mut self.builder) };
         self.home_written(state, pc);
         let completed = self.builder.create_block();
         let raised = cold_block(&mut self.builder);
@@ -3768,6 +3823,7 @@ impl Lowering<'_, '_> {
         // The callee's exception block is filled before the call's blocks, from the state the call is made in.
         self.goto(entered, &[]);
         self.raised_call(state, pc, record, raised);
+        if let Some(record) = stepped { self.fill_stepped_miss(state, pc, record, missed, completed); }
         self.builder.switch_to_block(entered);
         // SAFETY: the body owns its callees for as long as its code runs.
         let callees: Vec<&DirectCallee> = self.direct.get(&pc).map(|sites| sites.iter().map(|callee| unsafe { &**callee }).collect()).unwrap_or_default();
@@ -4857,7 +4913,9 @@ impl Lowering<'_, '_> {
         // again.
         // The site's own shapes still store in place first: a body that left here once (before
         // the site cached a shape, say) keeps its arms, and only their miss adds.
-        if self.generic.contains(&pc) && self.completion.status_and_pc() {
+        // An image body has no runtime feedback to say a store adds: every store may, and its
+        // miss of the site's own shapes adds through the VM's entries rather than leaving.
+        if (self.generic.contains(&pc) || self.helpers == LaneHelpers::Ahead) && self.completion.status_and_pc() {
             let (arms, _) = self.site_store_plan(instruction.cache_site_index(), ty);
             let admitted = (!arms.is_empty()).then(|| self.store_atom_admitted(state, instruction.atom_index(), exit));
             state.proofs.write_field(instruction.atom_index());

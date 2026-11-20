@@ -111,7 +111,7 @@ pub(super) unsafe extern "C" fn lane_new_regexp<H: Host>(vm: u64, residual: u64,
     let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
     if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
     let callee = Value::from_bits(callee);
-    let made = match regexp_argument_key(vm, dispatch).filter(|_| !callee.is_deleted()) {
+    let made = match regexp_argument_key(dispatch).filter(|_| !callee.is_deleted()) {
         Some(key) => vm.regexp_literal_argument_of(residual, dispatch.program_id, key, site as usize, callee),
         None => vm.regexp_literal_of(residual, dispatch.program_id, site as usize),
     };
@@ -124,39 +124,19 @@ pub(super) unsafe extern "C" fn lane_new_regexp<H: Host>(vm: u64, residual: u64,
 /// The key a callee-argument regexp literal evaluated by the payload's activation shares its
 /// object under (`RegExpArgumentShare::frame`): the payload's frame index where the code runs as
 /// that frame (a loop region or body of it, and any callee inlined into it), the interpreter's own
-/// key for it; inside a frameless activation, the payload's frame and the activation's depth on
-/// the frameless stack, tagged with the top bit, which no frame index has; `None` inside a lane
-/// activation, which then makes a fresh object.
+/// key for it; `None` inside a lane activation, which then makes a fresh object.
 ///
 /// Sound because no two activations live at once with a use of the object in flight hold one key,
 /// which is all `Vm::regexp_literal_argument_of` asks of a frame index: a use runs builtins alone
-/// unless guest code runs, and guest code never runs inside a frameless activation, whose chain
-/// becomes frames first (`frameless`, `materialize_chain`) and stops its native callers. So any
-/// evaluation overlapping a use runs in a frame above the use's (an index above the payload's),
-/// or in a frameless activation of a native entry made on such a frame (another payload frame);
-/// and the payload's frame continues natively, making a frameless activation at that depth again,
-/// only once those frames returned and the use completed. An inlined callee shares its caller's
-/// key, so it may answer the caller's object, but only to an evaluation that completes its own
-/// use before the caller's starts (between the literal and the call nothing suspends), the same
-/// sequential reuse as two evaluations of one frame. A lane activation (`lane_context`) has no
-/// frame and its records are reused across lane runs this helper cannot tell apart.
-fn regexp_argument_key<H: Host>(vm: &Vm<H>, dispatch: &JsStepDispatch) -> Option<usize> {
-    /// The top bit, which marks a frameless activation's key.
-    const FRAMELESS: usize = 1 << (usize::BITS - 1);
-    /// The bits of a frameless key that hold the depth: more than the shadow records number.
-    const DEPTH_BITS: u32 = u16::BITS;
-    if dispatch.lane_context != 0 {
-        return None;
-    }
-    if !vm.frameless.inside(dispatch) {
-        return Some(dispatch.frame);
-    }
-    let depth = vm.frameless.depth(dispatch);
-    // A frame or depth past the key's fields has no key: the site makes a fresh object.
-    if dispatch.frame >> (usize::BITS - 1 - DEPTH_BITS) != 0 || depth >> DEPTH_BITS != 0 {
-        return None;
-    }
-    Some(FRAMELESS | dispatch.frame << DEPTH_BITS | depth)
+/// unless guest code runs, and guest code that runs during it runs in a frame above the use's (an
+/// index above the payload's), which continues only once that frame returned and the use completed.
+/// An inlined callee shares its caller's key, so it may answer the caller's object, but only to an
+/// evaluation that completes its own use before the caller's starts (between the literal and the
+/// call nothing suspends), the same sequential reuse as two evaluations of one frame. A lane
+/// activation (`lane_context`) has no frame and its records are reused across lane runs this
+/// helper cannot tell apart.
+fn regexp_argument_key(dispatch: &JsStepDispatch) -> Option<usize> {
+    (dispatch.lane_context == 0).then_some(dispatch.frame)
 }
 
 /// A lane body's object literal of literal `site`'s shape over the `count` values at `parts`,
@@ -178,15 +158,15 @@ pub(super) unsafe extern "C" fn new_object_literal_in_lane<H: Host>(vm: u64, res
 /// A lane body's closure of function `id` over the frame's own environment, as the lane makes
 /// it (`dispatch_fast::closure_value_of_in_lane`): only a function that is not a module's root and
 /// has no binding sites, whose closures share the frame's environment; `DELETED` for any other,
-/// inside a frameless or lane activation, or with a collection due, which the exact step makes.
+/// inside a lane activation, or with a collection due, which the exact step makes.
 /// Promotion moves the frame's captured locals into its environment, so the dispatch takes its
 /// views again.
 pub(super) unsafe extern "C" fn new_closure_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, id: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program.
     let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
         &mut *(payload as *mut JsStepDispatch)) };
-    // A lane or frameless activation has no frame of the payload's to read.
-    if dispatch.lane_context != 0 || vm.frameless.inside(dispatch) || vm.heap.should_collect() {
+    // A lane activation has no frame of the payload's to read.
+    if dispatch.lane_context != 0 || vm.heap.should_collect() {
         return Value::DELETED.to_bits();
     }
     let function = vm.frames[dispatch.frame].function;
@@ -210,12 +190,12 @@ pub(super) unsafe extern "C" fn new_closure_in_lane<H: Host>(vm: u64, residual: 
 }
 
 /// A lane body's literal template `template` in its frame, as the interpreter builds it
-/// (`Vm::literal_template`); `DELETED` inside a frameless or lane activation, whose frame is
+/// (`Vm::literal_template`); `DELETED` inside a lane activation, whose frame is
 /// not the payload's, where the template fails, or where a collection is due.
 pub(super) unsafe extern "C" fn new_template_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, template: u64) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running program.
     let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
-    if vm.heap.should_collect() || vm.frameless.inside(dispatch) || dispatch.lane_context != 0 { return Value::DELETED.to_bits(); }
+    if vm.heap.should_collect() || dispatch.lane_context != 0 { return Value::DELETED.to_bits(); }
     let Ok(value) = vm.literal_template(residual, dispatch.frame, template as usize) else { return Value::DELETED.to_bits() };
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);

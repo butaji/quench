@@ -25,6 +25,8 @@ pub(super) struct Events {
     pub(super) writes: Vec<(Key, Fact)>,
     pub(super) wild_global: bool,
     pub(super) wild_owner: bool,
+    /// Whether a store through a key the analysis cannot name may write a named property.
+    pub(super) wild_member: bool,
 }
 
 /// The staged operation of `instruction`, with no constants or sites resolved.
@@ -61,6 +63,11 @@ fn value_of(
 ) -> Fact {
     if let Some((_, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
         return ctx.scope.constants.get(index).copied().flatten().map_or(Fact::Unknown, Fact::number);
+    }
+    if matches!(instruction.op().class(), crate::bytecode::Class::GetField) && instruction.result_flags() == 0 && !instruction.writes_current_this()
+        && let Some(crate::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup()
+    {
+        return Fact::Member(atom);
     }
     if is_global_load(instruction) {
         let atom = instruction.atom_index();
@@ -137,6 +144,24 @@ fn writes(
 ) {
     unfollowed_writes(ctx, instruction, operation, events);
     binding_stores(ctx, pc, operation, state, events);
+    member_stores(instruction, operation, state, events);
+}
+
+/// Records the named property stores `instruction` makes (`Key::Member`), with the facts they store; a store through a
+/// key that is no Number may name any property (`Events::wild_member`).
+fn member_stores(instruction: WideInstruction, operation: Option<Operation<(), ()>>, state: &[Fact], events: &mut Events) {
+    match operation {
+        Some(Operation::SetField { value, atom, .. }) => events.writes.push((Key::Member(atom), state[usize::from(value)])),
+        Some(Operation::StoreField { atom, .. } | Operation::FieldStoreMiss { atom, .. } | Operation::FieldAdd { atom, .. }) => {
+            events.writes.push((Key::Member(atom), Fact::Unknown));
+        }
+        Some(Operation::ElementWrite { key, .. }) if !state[usize::from(key)].is_number() => events.wild_member = true,
+        Some(Operation::IndexWrite { .. } | Operation::IndexSetHelper { .. } | Operation::Delete { .. }) => events.wild_member = true,
+        _ if instruction.op().is_field_store() && !matches!(operation, Some(Operation::SetField { .. })) => {
+            events.writes.push((Key::Member(instruction.atom_index()), Fact::Unknown));
+        }
+        _ => {}
+    }
 }
 
 /// Marks the writes the analysis cannot follow: name operations other than plain loads and

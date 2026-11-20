@@ -20,9 +20,11 @@ const REPEATS: usize = 3;
 const COMPILE_OPTION: &str = "--build-aot";
 const OUTPUT_OPTION: &str = "-o";
 const C_COMPILER: &str = "cc";
+const CXX_COMPILER: &str = "c++";
+/// The extensions of C++ sources: an analogue with one of them compiles with `c++`.
+const CXX_EXTENSIONS: [&str; 2] = ["cc", "cpp"];
 const C_OPTIMIZATION: &str = "-O2";
 const C_LIBRARIES: &str = "-lm";
-const JETSTREAM: &str = "quench-bench/jetstream";
 const PROGRAM_NAME: &str = "program.js";
 const C_NAME: &str = "c";
 const AOT_NAME: &str = "aot";
@@ -38,10 +40,51 @@ fn checked(command: &mut Command, what: &str) -> Result<Finished, String> {
     if finished.success { Ok(finished) } else { Err(format!("{what} failed:\n{}", finished.excerpt())) }
 }
 
-/// The C reference: the analogue's source compiled with `cc -O2` into `directory`.
+/// Whether `path` names a C++ source.
+fn is_cxx_source(path: &Path) -> bool {
+    path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| CXX_EXTENSIONS.contains(&extension))
+}
+
+/// The compiler for `analogue`: `c++` when its driver or one of its `c-sources` is C++, else `cc`.
+fn c_compiler(analogue: &Analogue) -> &'static str {
+    let cxx = is_cxx_source(&analogue.source) || analogue.c_sources.iter().any(|token| is_cxx_source(Path::new(token)));
+    if cxx { CXX_COMPILER } else { C_COMPILER }
+}
+
+/// A `c-sources` token as cc takes it: `-I` directories and sources resolve against `jetstream`,
+/// other flags pass through unchanged.
+fn resolve(token: &str, jetstream: &Path) -> String {
+    if let Some(directory) = token.strip_prefix("-I") {
+        format!("-I{}", jetstream.join(directory).display())
+    } else if token.starts_with('-') {
+        token.to_owned()
+    } else {
+        jetstream.join(token).display().to_string()
+    }
+}
+
+/// The compile inputs in cc's order: the driver, then the `c-sources` tokens resolved against
+/// `jetstream`. A path after `-include` is a header of the analogue's own directory, so it
+/// resolves there.
+fn compile_inputs(analogue: &Analogue, jetstream: &Path) -> Vec<String> {
+    let directory = analogue.source.parent().unwrap_or(Path::new("."));
+    let mut inputs = vec![analogue.source.display().to_string()];
+    let mut included = false;
+    for token in &analogue.c_sources {
+        let resolved = if included { directory.join(token).display().to_string() } else { resolve(token, jetstream) };
+        included = token == "-include";
+        inputs.push(resolved);
+    }
+    inputs
+}
+
+/// The C reference: the analogue's driver and sources compiled with `-O2` into `directory`.
 fn compile_c(config: &Config, analogue: &Analogue, directory: &Path) -> Result<PathBuf, String> {
     let binary = directory.join(C_NAME);
-    checked(config.command(C_COMPILER).arg(C_OPTIMIZATION).arg(OUTPUT_OPTION).arg(&binary).arg(&analogue.source).arg(C_LIBRARIES), "the C compile")?;
+    let jetstream = config.jetstream.clone();
+    let mut command = config.command(c_compiler(analogue));
+    command.arg(C_OPTIMIZATION).arg(OUTPUT_OPTION).arg(&binary).args(compile_inputs(analogue, &jetstream)).arg(C_LIBRARIES);
+    checked(&mut command, "the C compile")?;
     Ok(binary)
 }
 
@@ -78,7 +121,7 @@ pub fn measure(config: &Config, analogue: &Analogue, host: &Path, compiler: &Pat
     let directory = scratch(config, &analogue.row);
     fresh(&directory)?;
     let script = directory.join(PROGRAM_NAME);
-    let text = program::compose(analogue, &config.root.join(JETSTREAM))?;
+    let text = program::compose(analogue, &config.jetstream)?;
     fs::write(&script, text).map_err(|error| format!("{}: {error}", script.display()))?;
     let c = compile_c(config, analogue, &directory)?;
     let aot = compile_aot(config, compiler, &script, &directory)?;
@@ -90,7 +133,8 @@ pub fn measure(config: &Config, analogue: &Analogue, host: &Path, compiler: &Pat
             actual.stdout, actual.code, expected.stdout, expected.code
         ));
     }
-    let c_time = best(config, &c, &[analogue.iterations.to_string()])?;
+    let c_arguments = [analogue.iterations.to_string(), config.jetstream.display().to_string()];
+    let c_time = best(config, &c, &c_arguments)?;
     let aot_time = best(config, &aot, &[])?;
     Ok(aot_time.as_secs_f64() / c_time.as_secs_f64())
 }

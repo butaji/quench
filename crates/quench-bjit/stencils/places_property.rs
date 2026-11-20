@@ -62,6 +62,7 @@ pub(crate) struct RowPlans<const N: usize> {
 }
 
 impl<const N: usize> PlanSource for RowPlans<N> {
+    #[inline(always)]
     fn field_plan(&self, _lookup: FieldLookup) -> Option<FieldPlan<'_>> {
         Some(match &self.held {
             Some(held) => FieldPlan::Inherited { shape: held.shape, constants: &held.constant[..],
@@ -72,6 +73,7 @@ impl<const N: usize> PlanSource for RowPlans<N> {
 
     /// Every store of a row is the VM's callout (`StorePlan::Host`): the row's own store is
     /// `Callout::FlatStore`, `SiteStore`, which the frame answers through `field_store_host`.
+    #[inline(always)]
     fn store_plan(&self, _site: u16) -> Option<StorePlan<'_>> {
         Some(StorePlan::Host)
     }
@@ -81,8 +83,8 @@ impl<const N: usize> PlanSource for RowPlans<N> {
 /// not reached by the property operations a row runs, so their impls take the defaults. The global
 /// hooks answer only where `lexical` names a global lexical binding's address (the lexical rows):
 /// the name read is then `GlobalBinding::Lexical` and the store writes that binding.
-pub(crate) struct PlannedPlaces<'a, const D: u8, const A: u8, const B: u8, const N: usize> {
-    pub(crate) places: &'a mut Places<D, A, B>,
+pub(crate) struct PlannedPlaces<'a, const N: usize> {
+    pub(crate) places: &'a mut Places,
     pub(crate) ops: [IcOp<'static>; N],
     pub(crate) callout: Callout,
     pub(crate) lexical: Option<u64>,
@@ -90,7 +92,7 @@ pub(crate) struct PlannedPlaces<'a, const D: u8, const A: u8, const B: u8, const
     pub(crate) held: Option<HeldRead>,
 }
 
-impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> Frame<Concrete> for PlannedPlaces<'a, D, A, B, N> {
+impl<'a, const N: usize> Frame<Concrete> for PlannedPlaces<'a, N> {
     type Fact = Representation;
     type Control = ();
 
@@ -145,7 +147,7 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> Frame<Concrete> 
     fn heap_records(&mut self, stage: &mut Concrete) -> Option<(u64, u64, u64)> { self.places.heap_records(stage) }
 }
 
-impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> NumericFrame<Concrete> for PlannedPlaces<'a, D, A, B, N> {
+impl<'a, const N: usize> NumericFrame<Concrete> for PlannedPlaces<'a, N> {
     #[inline(always)]
     fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, miss: ()) -> Option<u64> {
         self.places.int_operand(stage, operand, miss)
@@ -171,7 +173,7 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> NumericFrame<Con
     fn number_fact(&self) -> Representation { self.places.number_fact() }
 }
 
-impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> GlobalFrame<Concrete> for PlannedPlaces<'a, D, A, B, N> {
+impl<'a, const N: usize> GlobalFrame<Concrete> for PlannedPlaces<'a, N> {
     /// The lexical binding the row names (`lexical`), else the dynamic global the row's read answers.
     #[inline(always)]
     fn global_binding(&mut self, _proof: ()) -> GlobalBinding {
@@ -200,10 +202,10 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> GlobalFrame<Conc
         Some(())
     }
 }
-impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> ElementFrame<Concrete> for PlannedPlaces<'a, D, A, B, N> {}
-impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> CallFrame<Concrete> for PlannedPlaces<'a, D, A, B, N> {}
+impl<'a, const N: usize> ElementFrame<Concrete> for PlannedPlaces<'a, N> {}
+impl<'a, const N: usize> CallFrame<Concrete> for PlannedPlaces<'a, N> {}
 
-impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> PropertyFrame<Concrete> for PlannedPlaces<'a, D, A, B, N> {
+impl<'a, const N: usize> PropertyFrame<Concrete> for PlannedPlaces<'a, N> {
     type Plans = RowPlans<N>;
 
     #[inline(always)]
@@ -276,16 +278,16 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> PropertyFrame<Co
 /// The planned frame for a row: `places` wrapped with the plan `ops` and the callout, the frame the rows that
 /// run the staged step themselves build (`site_rows`, `ic_rows`), so the row names the `Operation` it runs.
 #[inline(always)]
-pub(crate) fn planned_frame<'a, const D: u8, const A: u8, const B: u8, const N: usize>(places: &'a mut Places<D, A, B>,
-    ops: [IcOp<'static>; N], callout: Callout) -> PlannedPlaces<'a, D, A, B, N> {
+pub(crate) fn planned_frame<'a, const N: usize>(places: &'a mut Places,
+    ops: [IcOp<'static>; N], callout: Callout) -> PlannedPlaces<'a, N> {
     PlannedPlaces { places, ops, callout, lexical: None, held: None }
 }
 
 /// The staged global-name operation `operation` (`LoadName` or `GlobalWrite`) run over `places` where
 /// the name is the global lexical binding at `address` (`GlobalBinding::Lexical`): the step it made.
 #[inline(always)]
-pub(crate) fn run_lexical<const KIND: u16, const D: u8, const A: u8, const B: u8>(stage: &mut Concrete,
-    places: &mut Places<D, A, B>, address: u64, operation: Operation<u64, ()>) -> Step<u64, ()> {
+pub(crate) fn run_lexical<const KIND: u16>(stage: &mut Concrete,
+    places: &mut Places, address: u64, operation: Operation<u64, ()>) -> Step<u64, ()> {
     let mut frame = PlannedPlaces { places, ops: [], callout: Callout::Plan, lexical: Some(address), held: None };
     step_names_of::<KIND, _, _>(stage, &mut frame, operation)
 }

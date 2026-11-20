@@ -2321,6 +2321,13 @@ const TARGET_READS_IMPLICIT: u8 = 16;
 const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 32;
 
 impl ScriptCallTarget {
+    /// The closure environment and captures pointer its activation's window holds
+    /// (`CONTEXT_ENV`, `CONTEXT_CAPTURE`): a direct call row writes them (`CallRecord::env`, `capture`).
+    #[inline(always)]
+    pub(in crate::vm) fn context_words(&self) -> (u64, u64) {
+        (self.env.to_bits(), self.capture.expose_provenance() as u64)
+    }
+
     /// `new` may activate it too (`Vm::inline_constructible`).
     #[inline(always)]
     fn constructs(&self) -> bool {
@@ -2874,12 +2881,13 @@ pub(in crate::vm) struct LaneStackWords {
     pub(in crate::vm) native_table: usize,
 }
 
-/// Whether emitted code may push native headers at all (one-frame-one-call.md F5). Off until the
-/// emitted push, its readers and the body table are verified (`QUENCH_DEV=native-frames` turns it on):
-/// the bound stays 0, so every call takes the helper row.
+/// Whether emitted code may push native headers (one-frame-one-call.md F5): on by default, so a
+/// u-jit direct call's `admit_stacks` finds room under `plain_depth_limit` instead of always
+/// missing to the helper row. `QUENCH_DEV=no-native-frames` keeps the bound 0 (every call takes
+/// the helper row) to compare against the old path.
 fn native_frames_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| crate::trace::Dev::NativeFrames.on())
+    *ON.get_or_init(|| !crate::trace::Dev::NoNativeFrames.on())
 }
 
 impl LaneStack {
@@ -2954,16 +2962,17 @@ impl LaneStack {
     fn spill_plain(&self) {
         // The records change: the proved calls' bound no longer holds.
         self.plain.bound.set(0);
-        // Innermost first; each record keeps its side record where its completion carries a
-        // payload (`record_sided`), which a header's carries exactly then.
-        let frames: Vec<ActivationView> = self.frames_innermost().collect();
+        // Innermost first, the frames above the records floor alone (`frames_to_spill`); each
+        // record keeps its side record where its completion carries a payload (`record_sided`),
+        // which a header's carries exactly then.
+        let (floor, sides_below, frames) = self.frames_to_spill();
         // SAFETY: the walk above ended; no reference into the records or side records lives.
         let (records, sides) = unsafe { (&mut *self.activation_records.get(), &mut *self.sides.get()) };
-        debug_assert!(frames.len() <= records.capacity(), "the activation limit counts plain activations");
-        sides.clear();
+        debug_assert!(floor + frames.len() <= records.capacity(), "the activation limit counts plain activations");
+        sides.truncate(sides_below);
         // SAFETY: records hold no drop glue; the activation limit keeps every frame within the
         // capacity, so each push has its slot.
-        unsafe { records.set_len(0) };
+        unsafe { records.set_len(floor) };
         for frame in frames.into_iter().rev() {
             let activation = frame.record();
             if Self::record_sided(&activation) { sides.push(Self::record_side(&activation, frame.payload())); }
@@ -4333,7 +4342,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{protocol_row, protocol_handler, returning_row, returning_operator_row, protocol_family, is_row, jump_row, row_jump, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{protocol_row, protocol_handler, returning_row, returning_operator_row, operator_row, protocol_family, is_row, jump_row, row_jump, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 mod capture_append;
@@ -4577,6 +4586,10 @@ lane_handler! {
         };
         let function = code.function(vm.frames[frame].function as usize);
         let instruction = function.widened(function.code[pc]);
+        // A return op itself (a raw return such as `WasmReturn64`) completes the frame, which the general path does.
+        if instruction.op().traits().has(crate::bytecode::Traits::RETURN_FAMILY) {
+            return exit(ip);
+        }
         let returns = instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0;
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
@@ -4665,7 +4678,9 @@ fn step_beside_activations_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Register
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = body.widened(body.code[pc]);
-    if !instruction.op().steps_with_result() {
+    // A record that returns its result completes its activation, which the general path does
+    // (`general_step_in_lane`); no record follows it in the function.
+    if !instruction.op().steps_with_result() || instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
         return Resumed::Exit(exit(ip));
     }
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
@@ -4847,8 +4862,8 @@ unsafe fn binary_value<H: Host>(
     unsafe { binary_values::<H>(cx, i.imm(), left, right) }
 }
 
-/// The value of `left operator right` where it runs no guest code (`binary_value`'s pure
-/// part, which the lane frame answers a row's `Binary` or `Equality` call-out with).
+/// The value of `left operator right` where it runs no guest code (the pure part of a returning
+/// `Binary`, which the lane frame answers a row's `Binary` or `Equality` call-out with).
 ///
 /// # Safety
 /// `cx` is the running lane's context.
@@ -4859,7 +4874,24 @@ unsafe fn binary_values<H: Host>(
     left: Value,
     right: Value,
 ) -> Option<Value> {
-    match unsafe { vm(cx) }.number_binary(operator, left, right) {
+    unsafe { binary_values_classified::<H>(cx, operator, left, right, Value::numeric_pair(left, right)) }
+}
+
+/// `binary_values` of operands whose classification `pair` is `Value::numeric_pair(left,
+/// right)`, which a caller that has classified them already passes so the Number path
+/// does not classify them again. The same value as `binary_values` for the same operands.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn binary_values_classified<H: Host>(
+    cx: *mut LaneContext<H>,
+    operator: u32,
+    left: Value,
+    right: Value,
+    pair: crate::value::NumericPair,
+) -> Option<Value> {
+    match unsafe { vm(cx) }.number_binary_classified(operator, left, right, pair) {
         Some(value) => Some(value),
         // `undefined`, `null` or a Boolean among Numbers, as Sunspider's `x | 0` of a missing
         // element or an emulator's `flag & mask`; a string key's `"k" + i` first.
@@ -4898,37 +4930,40 @@ fn concat_or_immediate<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Va
     unsafe { vm(cx) }.immediate_binary(operator, left, right)
 }
 
-/// `binary_value` of a returning `Binary`, which keeps its operands encoded: two
-/// integer registers decide it in place (`integer_binary`), as the operator-specialized
-/// records decide theirs; any other operands take the general value.
+/// The value of a returning `Binary`, which keeps its operands encoded: each operand is read
+/// once (`operand_value_in_lane`, so a register, a folded constant or a plain local), after two
+/// integer registers are tried as they stand. Two int32 operands decide it in place (`integer_binary`), as the operator-specialized records decide
+/// theirs; the other operands are classified once (`Value::numeric_pair`) for the general value.
 ///
 /// # Safety
-/// As for `binary_value`.
+/// `cx` is the running lane's context and `r` its registers.
 #[inline(always)]
 unsafe fn returning_binary_value_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
+    // Two integer registers decide it without decoding the operands further.
     let register = |encoded: u16| {
         let operand = crate::bytecode::Operand(encoded);
         (operand.kind() == Some(crate::bytecode::OperandKind::Register)).then(|| r.get(operand.payload()))
     };
     if let (Some(left), Some(right)) = (register(i.b), register(i.c))
-        && let Some((left, right)) = Value::int_pair(left, right)
-        && let Some(value) = super::operations::integer_binary(i.imm(), left, right)
+        && let Some((a, b)) = Value::int_pair(left, right)
+        && let Some(value) = super::operations::integer_binary(i.imm(), a, b)
     {
         return Some(value);
     }
-    // A folded constant operand (`binding_time`) takes the integer path a register's
-    // value does, decoded as any operand is (`operand_value_in_lane`).
-    if let (Some(left), Some(right)) = (operand_value_in_lane(cx, r, i.b), operand_value_in_lane(cx, r, i.c))
-        && let Some((left, right)) = Value::int_pair(left, right)
-        && let Some(value) = super::operations::integer_binary(i.imm(), left, right)
+    let left = operand_value_in_lane(cx, r, i.b)?;
+    let right = operand_value_in_lane(cx, r, i.c)?;
+    // A folded constant takes the integer path a register's value does; any other pair is
+    // classified once, and the Number path reuses that classification.
+    if let Some((a, b)) = Value::int_pair(left, right)
+        && let Some(value) = super::operations::integer_binary(i.imm(), a, b)
     {
         return Some(value);
     }
-    unsafe { binary_value(cx, r, i) }
+    unsafe { binary_values_classified::<H>(cx, i.imm(), left, right, Value::numeric_pair(left, right)) }
 }
 
 /// A BigInt operator of two BigInts that raises nothing (`Vm::bigint_binary_value`), which
@@ -8533,6 +8568,16 @@ fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
+    // A function of a program with a loaded AOT image takes the image's body and no other
+    // (`install_ahead_lane_body`): no warm-up, no runtime tier.
+    if vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some() {
+        let published = own.entry_published();
+        let installed = own.install_ahead_lane_body(body_entry_row::<H>(), || vm.install_ahead_body(code, function, None, &[]));
+        if !published && own.entry_published() {
+            unsafe { self::vm(cx) }.unprove_view_entries(own);
+        }
+        return installed;
+    }
     let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let specialize = |work: super::compiled::LaneBodyWork| {
         let work = match work {
@@ -10340,7 +10385,12 @@ impl<H: Host> Vm<H> {
         // Once native headers are enabled, emitted pushes keep body_top equal to the total count between bindings.
         debug_assert!(!native_frames_enabled() || stack.body_top.get() == stack.activation_count(), "body_top names the total frame count at binding");
         stack.body_top.set(stack.activation_count());
-        stack.plain_depth_limit.set(if native_frames_enabled() { stack.activation_limit.get().min(LANE_STACK_ACTIVATIONS) } else { 0 });
+        // A binding that admits no direct-call frames admits no native headers either: a run with a
+        // pending activation (a cell body entered as the context's leaf, `enter_cell_body_in_lane`)
+        // has its caller still unmaterialized, and a header pushed over it would end above the
+        // activation the leaf becomes, with a stale caller (earley-boyer under --u-jit). Its calls
+        // take the helper row, which materializes the leaf first (`native_frames::in_innermost_frame`).
+        stack.plain_depth_limit.set(if native_frames_enabled() && frames != 0 { stack.activation_limit.get().min(LANE_STACK_ACTIVATIONS) } else { 0 });
         words
     }
 
@@ -10646,6 +10696,27 @@ use lane_plain_activation;
 
 mod leaf_calls;
 use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, materialize_running_leaf_in_lane, leaf_call_handler};
+
+/// Refuses the direct calls of a lane body or region about to run in `registers` where the running leaf owns them: a
+/// leaf's activation is pending (`script_call_leaf_miss`, `enter_cell_body_in_lane`), and a direct row's push would put
+/// the callee's frame (and, at a leaf's unmoved top, its window over the leaf's registers) below the activation the
+/// leaf makes on a leave, which then resumes the wrong frame. Zeroing the plain depth limit makes every direct row
+/// refuse to its helper row, which makes the leaf's activation first (`in_innermost_frame`). Called after the run's
+/// stack words are bound, which set the limit.
+pub(in crate::vm) fn refuse_direct_calls_in_leaf<H: Host>(lane_context: *mut (), registers: *mut Value) {
+    let cx = lane_context.cast::<LaneContext<H>>();
+    // SAFETY: a lane body's context is the running lane's, which nothing else accesses.
+    if cx.is_null() || unsafe { (*cx).leaf.call }.is_null() || unsafe { (*cx).registers.0 } != registers {
+        return;
+    }
+    // The body runs in the leaf only where no activation owns `registers` yet: a body's call made from inside the
+    // leaf pushed the callee's activation on its own window, which the context names while the leaf stays set.
+    let stack = &unsafe { vm(cx) }.lane_stack;
+    if stack.top_frame().is_some_and(|frame| frame.window == registers.addr()) {
+        return;
+    }
+    stack.frames_changed();
+}
 
 /// Make the running leaf (`LaneContext::leaf`) the activation its call would have pushed
 /// (`enter_window_in_lane`), before anything observes activations: their materialization
@@ -10959,6 +11030,16 @@ script_handler! {
     }
 }
 
+/// Whether `target`, a settling target of the running program (`CallEntry::Settles`), may
+/// suspend: its first `await` leaves its caller the promise, which only a caller that keeps
+/// the call's result can take (`Vm::try_settling_call`).
+#[inline(never)]
+fn settling_body_suspends<H: Host>(cx: *mut LaneContext<H>, target: &ScriptCallTarget) -> bool {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    code.function_get(target.function as usize).is_none_or(|body| body.suspends())
+}
+
 script_handler! {
     /// `script_call_full_miss` of a non-suspending async target (`CallEntry::Settles`), out of
     /// line so the other calls keep their registers: the call makes its promise first, as
@@ -10982,8 +11063,12 @@ script_handler! {
             sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+        // A returning call of a body that may suspend takes the general path, as
+        // `Vm::try_settling_call` declines it: the general loop's `Await` makes the
+        // continuation only for a call whose caller keeps its result, and a caller that returns
+        // the promise would otherwise suspend with it ("await requires async continuation").
         if ImmediateLayout::argument_count(i.imm()) > target.params
-            || (returns && !returning_call_admitted(cx))
+            || (returns && (!returning_call_admitted(cx) || settling_body_suspends(cx, &target)))
             || vm.with_scope_entered
             || vm.host.observes_promise_lifecycle()
         {
@@ -17068,7 +17153,7 @@ const fn returning_operator_miss_of<H: Host, const LEAF: u8>(operator: u8) -> Op
 
 script_handler! {
     /// `returning_operator_miss` of operands other than two integers: other Numbers, then the
-    /// concatenation and BigInt values `binary_value` decides; any other takes the
+    /// concatenation and BigInt values `returning_binary_value_in_lane` decides; any other takes the
     /// general path. Out of line, so the integer case keeps few values live.
     #[inline(never)]
     fn returning_operator_other_in_lane<OP: u32, CONSTANT: bool, LEAF: u8>(cx, r, ip, i, view) {
@@ -18821,12 +18906,15 @@ fn derive_lane_view<'live, H: Host>(
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
     // A host that runs no lane (`Host::RUNS_LANE` false) never runs these records, so it instantiates no fusion
     // handler: the tables of `fuse_chains`, `fuse_target_backedges` and `fuse_rows` are gated on the host.
-    // A `Binary` record of an operator with rows runs its operator's row rather than fusing (`operator_row`):
-    // its operator and operand tests fold, which a fused pair's run-time operator does not.
+    // A plain `Binary` record with no accumulator field runs its operator's row rather than fusing
+    // (`operator_row`): its operator and operand tests fold, which a fused pair's or chain's run-time
+    // operator does not. Records that read the accumulator wait for the pass at the end, past the
+    // accumulator hazard check, which recognizes only generated rows.
     if !wasm {
-        for (record, selected) in records.iter_mut().zip(selected.iter_mut()) {
-            if let Some(row) = lane_frame::operator_row::<H>(record) {
-                record.handler = row as *const ();
+        let before: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
+        specialize_plain_operators::<H>(&decoded, constants, &mut records, true);
+        for ((record, selected), before) in records.iter().zip(selected.iter_mut()).zip(before) {
+            if record.handler != before {
                 *selected = record.handler;
             }
         }
@@ -18874,7 +18962,9 @@ fn derive_lane_view<'live, H: Host>(
             }
         }
     }
+    // Last, so the fusions above and the accumulator check see each record's generated row.
     if !wasm {
+        specialize_plain_operators::<H>(&decoded, constants, &mut records, false);
         specialize_register_operands::<H>(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
@@ -19146,6 +19236,72 @@ fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants
     for (pc, &instruction) in decoded.iter().enumerate() {
         if records[pc].handler == returning_binary {
             specialize_returning_operator::<H>(instruction, constants, &mut records[pc]);
+        }
+    }
+}
+
+/// Whether `instruction` is a plain `Binary` of an arithmetic operator (`arithmetic_operators!`), which
+/// `specialize_plain_operators` gives its operator's row.
+fn arithmetic_binary(instruction: WideInstruction) -> bool {
+    macro_rules! pick { ($op:expr) => { () }; }
+    instruction.op() == crate::bytecode::Op::Binary && instruction.result_flags() == 0
+        && arithmetic_operators!(instruction.binary_operator(), pick).is_some()
+}
+
+/// Gives each plain `Binary` record of an arithmetic operator that still runs its generated row, at
+/// any accumulator field, that operator's `operator_row`: the operator becomes a parameter of the
+/// instantiation, so the row neither decodes nor dispatches on it (179 against 64 instructions for an
+/// int32 add). Its operand kinds and any int32 constant operand pick the form (`OPERANDS_*`). Its misses go back to the
+/// generated row, so every operand pair stays decided by the one staged row.
+fn specialize_plain_operators<H: Host>(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction], accumulator_free: bool) {
+    use crate::bytecode::OperandKind::{Constant, Register};
+    use lane_frame::{OPERANDS_ANY, OPERANDS_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
+    macro_rules! row_at {
+        ($acc:expr) => {
+            generated_row!(H, crate::staged::BINARY_ROW, $acc, FLAG_UNREAD) as Handler as *const ()
+        };
+    }
+    let plain = [row_at!(ACC_NONE), row_at!(ACC_B), row_at!(ACC_C)];
+    for (pc, &instruction) in decoded.iter().enumerate() {
+        let Some(acc) = plain.iter().position(|row| *row == records[pc].handler) else { continue };
+        if accumulator_free && acc != 0 {
+            continue;
+        }
+        if instruction.result_flags() != 0 || instruction.numeric_local_target().is_some() {
+            continue;
+        }
+        let int32_constant = |operand: crate::bytecode::Operand| operand.kind() == Some(Constant)
+            && constants.get(usize::from(operand.payload())).is_some_and(|constant| constant.as_int().is_some());
+        let (left, right) = (instruction.operand_b(), instruction.operand_c());
+        let form = match (left.kind(), right.kind()) {
+            (Some(Register), Some(Register)) => OPERANDS_REGISTERS,
+            (Some(Register), Some(Constant)) if int32_constant(right) => OPERANDS_REGISTER_INT32,
+            (Some(Register), Some(Constant)) => OPERANDS_REGISTER_CONSTANT,
+            _ if int32_constant(left) || int32_constant(right) => OPERANDS_INT32,
+            _ => OPERANDS_ANY,
+        };
+        macro_rules! at_form {
+            ($acc:expr, $op:expr) => {
+                match form {
+                    OPERANDS_REGISTERS => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTERS> as Handler,
+                    OPERANDS_REGISTER_INT32 => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_INT32> as Handler,
+                    OPERANDS_REGISTER_CONSTANT => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_CONSTANT> as Handler,
+                    OPERANDS_INT32 => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_INT32> as Handler,
+                    _ => operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_ANY> as Handler,
+                }
+            };
+        }
+        macro_rules! pick {
+            ($op:expr) => {
+                match acc {
+                    0 => at_form!(ACC_NONE, $op),
+                    1 => at_form!(ACC_B, $op),
+                    _ => at_form!(ACC_C, $op),
+                }
+            };
+        }
+        if let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) {
+            records[pc].handler = handler as *const ();
         }
     }
 }
@@ -20885,43 +21041,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// Dispatch lane records from `ip` until a handler exits; the record it exits at.
-#[inline(always)]
-fn dispatch_in_lane<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
-    loop {
-        #[cfg(feature = "profile-lane-exits")]
-        {
-            // The record's opcode from its packed instruction: the census needs the mix, and
-            // the lane record keeps only the handler.
-            let function = running_function_in_lane(cx);
-            let code = unsafe { &*(*cx).code };
-            let pc = unsafe { ip.offset_from((*cx).base) as usize };
-            if let Some(body) = code.function_get(function as usize)
-                && let Some(packed) = body.code.get(pc)
-            {
-                super::lane_exits::dispatch(body.widened(*packed).op());
-            }
-        }
-        // SAFETY: handlers have returned, so no other access is live.
-        let (view, registers, acc) = unsafe {
-            let acc = std::mem::replace(&mut (*cx).resumed_acc, Slot::of(Value::UNDEFINED));
-            ((*cx).memory, (*cx).registers, acc)
-        };
-        let next = handler(ip)(
-            registers,
-            ip,
-            view.bytes,
-            view.reach,
-            crate::value::IntegerEncoding::TAG,
-            acc,
-        );
-        let (ip_next, left) = exited(next);
-        if left {
-            return ip_next;
-        }
-        ip = ip_next;
-    }
-}
+mod lane_dispatch; use lane_dispatch::dispatch_in_lane;
 
 #[cfg(test)]
 mod instruction_set_tests;

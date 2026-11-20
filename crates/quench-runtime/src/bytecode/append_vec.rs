@@ -21,6 +21,7 @@ enum Storage<T> {
 }
 
 impl<T> Storage<T> {
+    #[inline(always)]
     fn as_slice(&self) -> &[T] {
         match self {
             Self::Heap(entries) => entries,

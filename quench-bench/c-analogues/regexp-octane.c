@@ -1,15 +1,18 @@
 // jetstream-row: regexp-octane
 // jetstream-files: Octane/regexp.js
 // iterations: 120
+// jetstream-driver: deterministic=true
+// c-sources: -lpcre2-16
 /* C analogue of JetStream's Octane/regexp.js: the same 237 regular expressions,
  * the same input strings (the setup statements are translated in source order,
  * with the computeInputVariants() arrays built by replaying JetStream's
- * deterministic Math.random), and the same twelve run blocks. The JS engine's
- * RegExp is replaced by a small backtracking matcher (engine below) that
- * implements the syntax these patterns use; each exec() becomes a call that
- * returns the sum of the lengths of the captures, as Exec() does in JS.
+ * deterministic Math.random), and the same twelve run blocks. Each RegExp is
+ * translated to PCRE2 syntax and run by PCRE2-JIT (16-bit library, non-UTF mode:
+ * JS matches UTF-16 code units and these patterns have no u flag). Each exec()
+ * becomes a call that returns the sum of the lengths of the captures, as Exec()
+ * does in JS; replace/split/match follow the JS global-iteration rules.
  * The checksum 1666156 must match on every inner run or the program exits 1.
- * main() does one warm-up run, then ITERATIONS timed runs of the five-run
+ * main() does argv[1] (default ITERATIONS) timed runs of the five-run
  * benchmark body, and prints the elapsed milliseconds and the checksum. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
@@ -18,14 +21,15 @@
 #include <string.h>
 #include <time.h>
 
-#pragma STDC FP_CONTRACT OFF
 
 #define ITERATIONS 120
 #define EXPECTED_SUM 1666156
 
+struct WideStr;
 typedef struct {
   const char *p;
   size_t n;
+  struct WideStr *w; /* the string's UTF-16 form, once made (see wide_lookup) */
 } Str;
 
 static int failures;
@@ -48,7 +52,7 @@ static double js_random(void) {
 /* computeInputVariants(str, n): variant 0 is str, each later variant replaces
  * one character of its predecessor's source string at a random position. */
 static Str *compute_variants(Str str, int n) {
-  Str *v = malloc(sizeof(Str) * (size_t)n);
+  Str *v = calloc((size_t)n, sizeof(Str));
   if (!v) {
     fprintf(stderr, "regexp-octane: out of memory\n");
     exit(1);
@@ -78,684 +82,395 @@ static double now_ms(void) {
   return (double)ts.tv_sec * 1e3 + (double)ts.tv_nsec / 1e6;
 }
 
-/* ---- Regular expression engine ---- */
-/* ---------------------------------------------------------------------------
- * A small backtracking regular-expression engine for the JavaScript regexp
- * syntax used by the benchmark: literals and escapes, character classes with
- * ranges, . ^ $ \b \B, groups (capturing, (?:), lookahead (?= (?!), |, the
- * quantifiers * + ? {n} {n,} {n,m} with lazy forms, back-references, and the
- * i and g flags. Patterns are compiled once into a node graph; matching uses
- * recursion for alternatives and groups, and a loop for single-character
- * repeats so that long runs do not recurse per character. */
+/* ---- Regular expressions: JavaScript RegExp sources translated to PCRE2-JIT ---- */
+/* A JavaScript RegExp matches UTF-16 code units (no u flag here), so the matcher is
+ * PCRE2's 16-bit library in its non-UTF mode, which matches code units exactly as JS
+ * does. The input strings are UTF-8 literals; each subject is converted to UTF-16 once
+ * per exec/replace/split/match call (the global loops reuse that conversion), and all
+ * lengths and offsets are in code units, as in JS. Each JS pattern is translated once,
+ * in RegExpSetup, to PCRE2 syntax with the JS meaning: JS \s and '.' sets, $ at the end
+ * of input only, ASCII \w \d \b (no UCP), backreferences to groups that did not
+ * participate match the empty string (PCRE2_MATCH_UNSET_BACKREF). The pattern is compiled
+ * with pcre2_compile and pcre2_jit_compile once, outside the timed loop. */
 
-#define MAXG 32
-#define INF_MAX (-1)
+#define PCRE2_CODE_UNIT_WIDTH 16
+#include <ctype.h>
+#include <pcre2.h>
 
-typedef struct Node Node;
-struct Node {
-  int type, ch, group, neg, min, max, greedy, simple;
-  int gfirst, glast, count, iter_start, hi_on, hi_lo, hi_hi;
-  unsigned char set[256];
-  Node *next, *body, *rep, **alts;
-  int nalts;
-};
+/* JS \s: WhiteSpace and LineTerminator code units. */
+#define JS_SPACE "\\t\\n\\x{0b}\\f\\r \\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}\\x{feff}"
+/* JS '.': any code unit except LineTerminator (\n \r    ). */
+#define JS_DOT "[^\\n\\r\\x{2028}\\x{2029}]"
 
 typedef struct {
-  Node *start;
-  int ngroups, icase, global, bol_anchored;
-  Node **pool;
-  int npool, cap;
+  char *s;
+  size_t n, cap;
+} Buf;
+
+typedef struct {
+  pcre2_code *code;
+  pcre2_match_data *md;
+  int ngroups;
+  int global;
 } Rx;
 
-enum {
-  N_NOP, N_CHAR, N_SET, N_ANY, N_BOL, N_EOL, N_WORDB, N_NWORDB, N_GOPEN, N_GCLOSE,
-  N_ALT, N_REP, N_REPTAIL, N_BACKREF, N_LOOK, N_LOOKEND, N_MATCH
-};
+static pcre2_match_context *rx_mctx;
 
-typedef struct {
-  const char *s;
-  size_t n, i;
-  Rx *rx;
-  int ngroups;
-} Parser;
+/* The subject of the current exec/replace/split/match call, as UTF-16 code units. */
+static PCRE2_UCHAR *subj;
+static size_t subj_len;
 
-typedef struct {
-  const unsigned char *s;
-  int len, icase;
-  int caps[MAXG + 1][2];
-  int pend[MAXG + 1];
-  int match_end;
-} M;
+static void buf_put(Buf *b, const char *s, size_t n) {
+  if (b->n + n + 1 > b->cap) {
+    b->cap = (b->n + n + 1) * 2;
+    b->s = realloc(b->s, b->cap);
+    if (!b->s) {
+      fprintf(stderr, "regexp-octane: out of memory\n");
+      exit(1);
+    }
+  }
+  memcpy(b->s + b->n, s, n);
+  b->n += n;
+  b->s[b->n] = '\0';
+}
+
+static void buf_str(Buf *b, const char *s) { buf_put(b, s, strlen(s)); }
 
 static void rx_die(const char *what) {
-  fprintf(stderr, "regexp: %s\n", what);
+  fprintf(stderr, "regexp-octane: %s\n", what);
   exit(1);
 }
 
-static int pk(const Parser *p) { return p->i < p->n ? (unsigned char)p->s[p->i] : -1; }
-
-static Node *pnew(Parser *p, int type) {
-  Rx *rx = p->rx;
-  Node *n;
-  if (rx->npool == rx->cap) {
-    rx->cap = rx->cap ? rx->cap * 2 : 64;
-    rx->pool = realloc(rx->pool, sizeof *rx->pool * (size_t)rx->cap);
-  }
-  n = calloc(1, sizeof *n);
-  if (!n) rx_die("out of memory");
-  n->type = type;
-  n->max = INF_MAX;
-  n->greedy = 1;
-  rx->pool[rx->npool++] = n;
-  return n;
-}
-
-static int is_word(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; }
-
-static int fold(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
-
-/* Fills tmp with the members of the class named by kind (d, w, s). */
-static void class_fill(unsigned char *tmp, int kind) {
-  for (int c = 0; c < 256; c++) {
-    int in = 0;
-    if (kind == 'd') in = (c >= '0' && c <= '9');
-    else if (kind == 'w') in = is_word(c);
-    else if (kind == 's') in = (c == ' ' || (c >= 9 && c <= 13) || c == 0xa0);
-    tmp[c] = (unsigned char)in;
-  }
-}
-
-static Node *set_node_for_kind(Parser *p, int kind) {
-  Node *n = pnew(p, N_SET);
-  int upper = (kind == 'D' || kind == 'W' || kind == 'S');
-  class_fill(n->set, (kind | 0x20));
-  if (upper) {
-    for (int c = 0; c < 256; c++) n->set[c] = (unsigned char)!n->set[c];
-    n->hi_on = 1;
-    n->hi_lo = 256;
-    n->hi_hi = 0x7fffffff;
-  }
-  return n;
-}
-
-static int hexval(int c) {
+static int hex_value(int c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
   if (c >= 'A' && c <= 'F') return c - 'A' + 10;
   return -1;
 }
 
-/* Reads one escape after the backslash. Returns 1 with kind set for a class
- * escape (\d \w \s and their upper-case forms), else 0 with *val set. */
-static int read_escape(Parser *p, int *kind, int *val) {
-  int e = pk(p);
-  if (e < 0) rx_die("trailing backslash");
-  p->i++;
-  switch (e) {
-    case 'd': case 'D': case 'w': case 'W': case 's': case 'S':
-      *kind = e;
-      return 1;
-    case 't': *val = 9; return 0;
-    case 'n': *val = 10; return 0;
-    case 'v': *val = 11; return 0;
-    case 'f': *val = 12; return 0;
-    case 'r': *val = 13; return 0;
-    case '0': *val = 0; return 0;
-    case 'x': {
-      int a = hexval(pk(p)), b;
-      p->i++;
-      b = hexval(pk(p));
-      p->i++;
-      *val = a * 16 + b;
-      return 0;
-    }
-    case 'u': {
-      int v = 0;
-      for (int k = 0; k < 4; k++) {
-        v = v * 16 + hexval(pk(p));
-        p->i++;
-      }
-      *val = v;
-      return 0;
-    }
-    default:
-      *val = e;
-      return 0;
+/* Reads exactly `digits` hex digits at src[i]; returns the value, advances i. */
+static unsigned hex_run(const char *src, size_t n, size_t *i, int digits) {
+  unsigned v = 0;
+  for (int k = 0; k < digits; k++) {
+    int h = *i < n ? hex_value((unsigned char)src[*i]) : -1;
+    if (h < 0) rx_die("bad hex escape in regexp source");
+    v = v * 16 + (unsigned)h;
+    (*i)++;
   }
+  return v;
 }
 
-static Node *parse_class(Parser *p) {
-  Node *n = pnew(p, N_SET);
-  unsigned char set[256];
-  int neg = 0, hi_on = 0, hi_lo = 0, hi_hi = 0;
-  memset(set, 0, sizeof set);
-  if (pk(p) == '^') {
-    neg = 1;
-    p->i++;
-  }
-  while (pk(p) != ']') {
-    int lo = 0, kind = 0, isc = 0, hi = 0;
-    if (pk(p) < 0) rx_die("unterminated class");
-    if (pk(p) == '\\') {
-      p->i++;
-      isc = read_escape(p, &kind, &lo);
-    } else {
-      lo = pk(p);
-      p->i++;
-    }
-    if (!isc && pk(p) == '-' && p->i + 1 < p->n && p->s[p->i + 1] != ']') {
-      int isc2 = 0, kind2 = 0;
-      p->i++;
-      if (pk(p) == '\\') {
-        p->i++;
-        isc2 = read_escape(p, &kind2, &hi);
-      } else {
-        hi = pk(p);
-        p->i++;
-      }
-      if (isc2) rx_die("class escape as range end");
-      for (int c = lo; c <= hi && c < 256; c++) set[c] = 1;
-      if (hi >= 256) {
-        hi_on = 1;
-        hi_lo = lo > 256 ? lo : 256;
-        hi_hi = hi;
-      }
-    } else if (isc) {
-      unsigned char tmp[256];
-      class_fill(tmp, kind | 0x20);
-      for (int c = 0; c < 256; c++) {
-        if (kind >= 'a') set[c] = (unsigned char)(set[c] | tmp[c]);
-        else set[c] = (unsigned char)(set[c] | !tmp[c]);
-      }
-    } else {
-      if (lo < 256) set[lo] = 1;
-      else {
-        hi_on = 1;
-        hi_lo = lo;
-        hi_hi = lo;
-      }
-    }
-    (void)hi;
-  }
-  p->i++;
-  if (p->rx->icase)
-    for (int c = 'a'; c <= 'z'; c++)
-      if (set[c] || set[c - 32]) set[c] = set[c - 32] = 1;
-  if (neg)
-    for (int c = 0; c < 256; c++) set[c] = (unsigned char)!set[c];
-  memcpy(n->set, set, sizeof set);
-  n->neg = neg;
-  n->hi_on = hi_on;
-  n->hi_lo = hi_lo;
-  n->hi_hi = hi_hi;
-  return n;
-}
-
-static void parse_alt(Parser *p, Node **head, Node **tail);
-
-static int parse_quant(Parser *p, int *min, int *max) {
-  int c = pk(p);
-  if (c == '*') { p->i++; *min = 0; *max = INF_MAX; }
-  else if (c == '+') { p->i++; *min = 1; *max = INF_MAX; }
-  else if (c == '?') { p->i++; *min = 0; *max = 1; }
-  else if (c == '{') {
-    size_t save = p->i;
-    int a = 0, b = 0;
-    p->i++;
-    if (!(pk(p) >= '0' && pk(p) <= '9')) { p->i = save; return 0; }
-    while (pk(p) >= '0' && pk(p) <= '9') { a = a * 10 + (pk(p) - '0'); p->i++; }
-    if (pk(p) == '}') { b = a; p->i++; }
-    else if (pk(p) == ',') {
-      p->i++;
-      if (pk(p) == '}') { b = INF_MAX; p->i++; }
-      else {
-        b = 0;
-        if (!(pk(p) >= '0' && pk(p) <= '9')) { p->i = save; return 0; }
-        while (pk(p) >= '0' && pk(p) <= '9') { b = b * 10 + (pk(p) - '0'); p->i++; }
-        if (pk(p) != '}') { p->i = save; return 0; }
-        p->i++;
-      }
-    } else { p->i = save; return 0; }
-    *min = a;
-    *max = b;
-  } else {
-    return 0;
-  }
-  return 1;
-}
-
-/* Parses one atom into the fragment *h .. *t (t->next is left for the caller).
- * Returns 1 when the fragment is a single character matcher. */
-static int parse_atom(Parser *p, Node **h, Node **t) {
-  int c = pk(p);
-  Node *n;
-  p->i++;
-  switch (c) {
-    case '^': n = pnew(p, N_BOL); *h = *t = n; return 0;
-    case '$': n = pnew(p, N_EOL); *h = *t = n; return 0;
-    case '.': n = pnew(p, N_ANY); *h = *t = n; return 1;
-    case '[': n = parse_class(p); *h = *t = n; return 1;
-    case '\\': {
-      int kind = 0, val = 0;
-      int e = pk(p);
-      if (e == 'b') { p->i++; n = pnew(p, N_WORDB); *h = *t = n; return 0; }
-      if (e == 'B') { p->i++; n = pnew(p, N_NWORDB); *h = *t = n; return 0; }
-      if (e >= '1' && e <= '9') {
-        p->i++;
-        n = pnew(p, N_BACKREF);
-        n->group = e - '0';
-        *h = *t = n;
-        return 0;
-      }
-      if (read_escape(p, &kind, &val)) {
-        n = set_node_for_kind(p, kind);
-      } else {
-        n = pnew(p, N_CHAR);
-        n->ch = val;
-      }
-      *h = *t = n;
-      return 1;
-    }
-    case '(': {
-      Node *gopen, *gclose, *bh, *bt;
-      if (pk(p) == '?') {
-        int k;
-        p->i++;
-        k = pk(p);
-        if (k == ':') {
-          p->i++;
-          parse_alt(p, &bh, &bt);
-          if (pk(p) != ')') rx_die("expected )");
-          p->i++;
-          *h = bh;
-          *t = bt;
-          return 0;
+/* Translates a JavaScript pattern (no u or v flag) to PCRE2 syntax for 16-bit non-UTF mode. */
+static void js_to_pcre2(const char *src, size_t n, Buf *out) {
+  size_t i = 0;
+  int in_class = 0;
+  char tmp[32];
+  while (i < n) {
+    unsigned char c = (unsigned char)src[i];
+    if (c == '\\') {
+      unsigned char e;
+      if (i + 1 >= n) rx_die("trailing backslash in regexp source");
+      e = (unsigned char)src[i + 1];
+      i += 2;
+      switch (e) {
+        case 's':
+          buf_str(out, in_class ? JS_SPACE : "[" JS_SPACE "]");
+          break;
+        case 'S':
+          if (in_class) rx_die("\\S inside a class is not translated");
+          buf_str(out, "[^" JS_SPACE "]");
+          break;
+        case 'b':
+          buf_str(out, in_class ? "\\x{08}" : "\\b");
+          break;
+        case 'B':
+          buf_str(out, "\\B");
+          break;
+        case 'd': case 'D': case 'w': case 'W':
+        case 'n': case 'r': case 't': case 'f':
+          buf_put(out, "\\", 1);
+          buf_put(out, (const char *)&e, 1);
+          break;
+        case 'v':
+          buf_str(out, "\\x{0b}");
+          break;
+        case '0':
+          buf_str(out, "\\x{0}");
+          break;
+        case 'x':
+          snprintf(tmp, sizeof tmp, "\\x{%x}", hex_run(src, n, &i, 2));
+          buf_str(out, tmp);
+          break;
+        case 'u':
+          snprintf(tmp, sizeof tmp, "\\x{%x}", hex_run(src, n, &i, 4));
+          buf_str(out, tmp);
+          break;
+        case 'c': {
+          unsigned letter;
+          if (i >= n || !isalpha((unsigned char)src[i])) rx_die("bad \\c escape");
+          letter = (unsigned char)src[i++];
+          snprintf(tmp, sizeof tmp, "\\x{%x}", letter % 32u);
+          buf_str(out, tmp);
+          break;
         }
-        if (k == '=' || k == '!') {
-          Node *look, *le;
-          p->i++;
-          parse_alt(p, &bh, &bt);
-          if (pk(p) != ')') rx_die("expected )");
-          p->i++;
-          le = pnew(p, N_LOOKEND);
-          bt->next = le;
-          look = pnew(p, N_LOOK);
-          look->body = bh;
-          look->neg = (k == '!');
-          *h = *t = look;
-          return 0;
-        }
-        rx_die("unsupported group");
+        default:
+          if (e >= '1' && e <= '9') {
+            if (in_class) rx_die("backreference inside a class");
+            buf_put(out, "\\", 1);
+            buf_put(out, (const char *)&e, 1);
+          } else if (isalpha(e)) {
+            /* JS identity escape of a letter: the letter itself */
+            buf_put(out, (const char *)&e, 1);
+          } else {
+            /* JS identity escape of a punctuation character: literal in PCRE2 too */
+            buf_put(out, "\\", 1);
+            buf_put(out, (const char *)&e, 1);
+          }
+          break;
       }
-      gopen = pnew(p, N_GOPEN);
-      gclose = pnew(p, N_GCLOSE);
-      gopen->group = gclose->group = ++p->ngroups;
-      parse_alt(p, &bh, &bt);
-      if (pk(p) != ')') rx_die("expected )");
-      p->i++;
-      gopen->next = bh;
-      bt->next = gclose;
-      *h = gopen;
-      *t = gclose;
-      return 0;
-    }
-    default:
-      n = pnew(p, N_CHAR);
-      n->ch = c;
-      *h = *t = n;
-      return 1;
-  }
-}
-
-static void parse_seq(Parser *p, Node **head, Node **tail) {
-  Node *h = NULL, *t = NULL;
-  while (pk(p) >= 0 && pk(p) != '|' && pk(p) != ')') {
-    Node *ah, *at;
-    int g0 = p->ngroups, single = parse_atom(p, &ah, &at), min = 0, max = 0;
-    if (parse_quant(p, &min, &max)) {
-      Node *rep = pnew(p, N_REP);
-      int greedy = 1;
-      if (pk(p) == '?') {
-        p->i++;
-        greedy = 0;
-      }
-      rep->min = min;
-      rep->max = max;
-      rep->greedy = greedy;
-      rep->gfirst = g0 + 1;
-      rep->glast = p->ngroups;
-      if (single) {
-        rep->simple = 1;
-        rep->body = ah;
-      } else {
-        Node *tailn = pnew(p, N_REPTAIL);
-        tailn->rep = rep;
-        at->next = tailn;
-        rep->body = ah;
-      }
-      ah = at = rep;
-    }
-    if (!h) {
-      h = ah;
-      t = at;
-    } else {
-      t->next = ah;
-      t = at;
-    }
-  }
-  if (!h) h = t = pnew(p, N_NOP);
-  *head = h;
-  *tail = t;
-}
-
-static void parse_alt(Parser *p, Node **head, Node **tail) {
-  Node *join = pnew(p, N_NOP);
-  Node *heads[128];
-  int na = 0;
-  for (;;) {
-    Node *h, *t;
-    parse_seq(p, &h, &t);
-    t->next = join;
-    if (na == 128) rx_die("too many alternatives");
-    heads[na++] = h;
-    if (pk(p) == '|') {
-      p->i++;
       continue;
     }
-    break;
+    if (in_class) {
+      if (c == ']') {
+        in_class = 0;
+        buf_put(out, "]", 1);
+      } else if (c == '[') {
+        buf_str(out, "\\[");
+      } else {
+        buf_put(out, (const char *)&c, 1);
+      }
+      i++;
+      continue;
+    }
+    switch (c) {
+      case '[':
+        in_class = 1;
+        buf_put(out, "[", 1);
+        i++;
+        if (i < n && src[i] == '^') {
+          buf_put(out, "^", 1);
+          i++;
+        }
+        break;
+      case '.':
+        buf_str(out, JS_DOT);
+        i++;
+        break;
+      case '$':
+        buf_str(out, "\\z"); /* no m flag: $ is the end of input only */
+        i++;
+        break;
+      default:
+        buf_put(out, (const char *)&c, 1);
+        i++;
+        break;
+    }
   }
-  if (na == 1) {
-    *head = heads[0];
-  } else {
-    Node *alt = pnew(p, N_ALT);
-    alt->alts = malloc(sizeof(Node *) * (size_t)na);
-    memcpy(alt->alts, heads, sizeof(Node *) * (size_t)na);
-    alt->nalts = na;
-    *head = alt;
-  }
-  *tail = join;
 }
 
-/* Compiles a JavaScript regular expression source once. */
+/* Compiles one JS RegExp (source bytes and flags g, i) for PCRE2-JIT. */
 static Rx *rx_compile(const char *src, size_t n, const char *flags) {
+  static pcre2_jit_stack *jit_stack;
+  Buf pat = {0};
+  PCRE2_UCHAR *wide;
+  uint32_t opts = PCRE2_MATCH_UNSET_BACKREF;
+  uint32_t ng = 0;
+  int err = 0;
+  PCRE2_SIZE eoff = 0;
   Rx *rx = calloc(1, sizeof *rx);
-  Parser p;
-  Node *h, *t, *mt;
-  rx->icase = strchr(flags, 'i') != NULL;
-  rx->global = strchr(flags, 'g') != NULL;
-  p.s = src;
-  p.n = n;
-  p.i = 0;
-  p.rx = rx;
-  p.ngroups = 0;
-  parse_alt(&p, &h, &t);
-  if (p.i != n) rx_die("unexpected )");
-  mt = pnew(&p, N_MATCH);
-  t->next = mt;
-  rx->start = h;
-  rx->ngroups = p.ngroups;
-  rx->bol_anchored = (h->type == N_BOL);
+  if (!rx) rx_die("out of memory");
+  for (const char *f = flags; *f; f++) {
+    if (*f == 'i') opts |= PCRE2_CASELESS;
+    else if (*f == 'g') rx->global = 1;
+    else rx_die("regexp flag not used by this benchmark");
+  }
+  if (!rx_mctx) {
+    jit_stack = pcre2_jit_stack_create(32 * 1024, 4 * 1024 * 1024, NULL);
+    rx_mctx = pcre2_match_context_create(NULL);
+    if (!jit_stack || !rx_mctx) rx_die("cannot create PCRE2 JIT stack");
+    pcre2_jit_stack_assign(rx_mctx, NULL, jit_stack);
+    pcre2_set_match_limit(rx_mctx, 0xffffffffu); /* JS has no match limit */
+  }
+  js_to_pcre2(src, n, &pat);
+  /* the translated pattern is ASCII: widen it to code units for the 16-bit library */
+  wide = malloc((pat.n + 1) * sizeof *wide);
+  if (!wide) rx_die("out of memory");
+  for (size_t k = 0; k < pat.n; k++) wide[k] = (unsigned char)pat.s[k];
+  rx->code = pcre2_compile(wide, pat.n, opts, &err, &eoff, NULL);
+  if (!rx->code) {
+    PCRE2_UCHAR msg[256];
+    pcre2_get_error_message(err, msg, sizeof msg);
+    fprintf(stderr, "regexp-octane: %s at %zu in /%s/\n", (const char *)msg, (size_t)eoff, pat.s);
+    exit(1);
+  }
+  if (pcre2_jit_compile(rx->code, PCRE2_JIT_COMPLETE) < 0) rx_die("pcre2_jit_compile failed");
+  rx->md = pcre2_match_data_create_from_pattern(rx->code, NULL);
+  if (!rx->md) rx_die("out of memory");
+  pcre2_pattern_info(rx->code, PCRE2_INFO_CAPTURECOUNT, &ng);
+  rx->ngroups = (int)ng;
+  free(wide);
+  free(pat.s);
   return rx;
 }
 
-static int single_ok(const M *ms, const Node *n, int c) {
-  switch (n->type) {
-    case N_CHAR:
-      return ms->icase ? fold(c) == fold(n->ch) : c == n->ch;
-    case N_SET:
-      if (c < 256) return n->set[c] != 0;
-      return ((n->hi_on && c >= n->hi_lo && c <= n->hi_hi) != 0) != (n->neg != 0);
-    case N_ANY:
-      return c != '\n' && c != '\r';
-    default:
-      return 0;
+/* Length of a UTF-8 literal in JS string units (UTF-16 code units). */
+static size_t js_length_utf8(Str *s) {
+  size_t units = 0;
+  for (size_t i = 0; i < s->n; i++) {
+    unsigned char c = (unsigned char)s->p[i];
+    if ((c & 0xC0) != 0x80) units += (c >= 0xF0) ? 2 : 1;
   }
+  return units;
 }
 
-static int m(M *ms, Node *n, int i);
+/* A JS engine holds each string in its in-memory form (Latin-1 or UTF-16) from the moment it is
+ * created, so matching never re-encodes the subject. The C sources keep the strings as UTF-8
+ * literals; each distinct string (keyed by its stable address and length: literals and the
+ * setup-time variants never move) is converted to UTF-16 once, on first use, and kept. */
+typedef struct WideStr { const char *p; size_t n; PCRE2_UCHAR *w; size_t wn; } WideStr;
+static WideStr **wide_tab; /* open addressing; entries are separately allocated, so Str.w stays valid */
+static size_t wide_cap, wide_count;
 
-static int rep_simple(M *ms, Node *rep, int i) {
-  const Node *b = rep->body;
-  int k = 0, pos = i;
-  if (!rep->greedy) {
-    int cnt = 0;
-    while (cnt < rep->min) {
-      if (pos < ms->len && single_ok(ms, b, ms->s[pos])) {
-        pos++;
-        cnt++;
-      } else {
-        return 0;
-      }
-    }
-    for (;;) {
-      if (m(ms, rep->next, pos)) return 1;
-      if ((rep->max >= 0 && cnt >= rep->max) || pos >= ms->len || !single_ok(ms, b, ms->s[pos])) return 0;
-      pos++;
-      cnt++;
-    }
-  }
-  while ((rep->max < 0 || k < rep->max) && pos < ms->len && single_ok(ms, b, ms->s[pos])) {
-    pos++;
-    k++;
-  }
-  if (k < rep->min) return 0;
-  for (int c = k; c >= rep->min; c--)
-    if (m(ms, rep->next, i + c)) return 1;
-  return 0;
+static size_t wide_hash(const char *p, size_t n) {
+  return (size_t)((((uintptr_t)p >> 3) * 0x9E3779B97F4A7C15ull) ^ n);
 }
 
-static int rep_enter(M *ms, Node *rep, int i) {
-  int ss = rep->iter_start, r;
-  int saved[MAXG + 1][2], savedp[MAXG + 1];
-  for (int g = rep->gfirst; g <= rep->glast; g++) {
-    saved[g][0] = ms->caps[g][0];
-    saved[g][1] = ms->caps[g][1];
-    savedp[g] = ms->pend[g];
-    ms->caps[g][0] = ms->caps[g][1] = -1;
-    ms->pend[g] = -1;
-  }
-  rep->iter_start = i;
-  r = m(ms, rep->body, i);
-  rep->iter_start = ss;
-  if (!r) {
-    for (int g = rep->gfirst; g <= rep->glast; g++) {
-      ms->caps[g][0] = saved[g][0];
-      ms->caps[g][1] = saved[g][1];
-      ms->pend[g] = savedp[g];
+static void wide_grow(void) {
+  size_t old_cap = wide_cap;
+  WideStr **old = wide_tab;
+  wide_cap = old_cap ? old_cap * 2 : 8192;
+  wide_tab = calloc(wide_cap, sizeof *wide_tab);
+  if (!wide_tab) rx_die("out of memory");
+  for (size_t i = 0; i < old_cap; i++)
+    if (old[i]) {
+      size_t h = wide_hash(old[i]->p, old[i]->n) & (wide_cap - 1);
+      while (wide_tab[h]) h = (h + 1) & (wide_cap - 1);
+      wide_tab[h] = old[i];
+    }
+  free(old);
+}
+
+static WideStr *wide_lookup(Str *s) {
+  if (s->w) return s->w;
+  if ((wide_count + 1) * 2 >= wide_cap) wide_grow();
+  size_t h = wide_hash(s->p, s->n) & (wide_cap - 1);
+  for (WideStr *e; (e = wide_tab[h]); h = (h + 1) & (wide_cap - 1))
+    if (e->p == s->p && e->n == s->n) return s->w = e;
+  WideStr *e = malloc(sizeof *e);
+  size_t need = js_length_utf8(s), k = 0;
+  if (!e || !(e->w = malloc((need + 1) * sizeof *e->w))) rx_die("out of memory");
+  for (size_t i = 0; i < s->n;) {
+    unsigned char c = (unsigned char)s->p[i];
+    unsigned cp;
+    int extra;
+    if (c < 0x80) { cp = c; extra = 0; }
+    else if (c < 0xE0) { cp = c & 0x1Fu; extra = 1; }
+    else if (c < 0xF0) { cp = c & 0x0Fu; extra = 2; }
+    else { cp = c & 0x07u; extra = 3; }
+    for (int j = 1; j <= extra; j++) cp = (cp << 6) | ((unsigned char)s->p[i + (size_t)j] & 0x3Fu);
+    i += (size_t)extra + 1;
+    if (cp >= 0x10000u) {
+      cp -= 0x10000u;
+      e->w[k++] = (PCRE2_UCHAR)(0xD800u + (cp >> 10));
+      e->w[k++] = (PCRE2_UCHAR)(0xDC00u + (cp & 0x3FFu));
+    } else {
+      e->w[k++] = (PCRE2_UCHAR)cp;
     }
   }
-  return r;
+  e->p = s->p;
+  e->n = s->n;
+  e->wn = k;
+  wide_tab[h] = e;
+  wide_count++;
+  return s->w = e;
 }
 
-static int rep_step(M *ms, Node *rep, int i) {
-  int can_more = rep->max < 0 || rep->count < rep->max;
-  if (rep->count < rep->min) return rep_enter(ms, rep, i);
-  if (rep->greedy) {
-    if (can_more && rep_enter(ms, rep, i)) return 1;
-    return m(ms, rep->next, i);
-  }
-  if (m(ms, rep->next, i)) return 1;
-  return can_more && rep_enter(ms, rep, i);
+/* Length of the string in JS units. */
+static size_t js_length(Str *s) { return wide_lookup(s)->wn; }
+
+/* Selects the subject of the current call (from == 0) as its UTF-16 form. */
+static void subject_convert(Str *s) {
+  WideStr *e = wide_lookup(s);
+  subj = e->w;
+  subj_len = e->wn;
 }
 
-static int m(M *ms, Node *n, int i) {
-  for (;;) {
-    switch (n->type) {
-      case N_NOP:
-        n = n->next;
-        continue;
-      case N_CHAR:
-      case N_SET:
-      case N_ANY:
-        if (i < ms->len && single_ok(ms, n, ms->s[i])) {
-          i++;
-          n = n->next;
-          continue;
-        }
-        return 0;
-      case N_BOL:
-        if (i != 0) return 0;
-        n = n->next;
-        continue;
-      case N_EOL:
-        if (i != ms->len) return 0;
-        n = n->next;
-        continue;
-      case N_WORDB:
-      case N_NWORDB: {
-        int a = i > 0 && is_word(ms->s[i - 1]);
-        int b = i < ms->len && is_word(ms->s[i]);
-        if ((a != b) != (n->type == N_WORDB)) return 0;
-        n = n->next;
-        continue;
-      }
-      case N_BACKREF: {
-        int g = n->group, L, k;
-        if (ms->caps[g][0] < 0) {
-          n = n->next;
-          continue;
-        }
-        L = ms->caps[g][1] - ms->caps[g][0];
-        if (i + L > ms->len) return 0;
-        for (k = 0; k < L; k++) {
-          int x = ms->s[ms->caps[g][0] + k], y = ms->s[i + k];
-          if (ms->icase ? fold(x) != fold(y) : x != y) return 0;
-        }
-        i += L;
-        n = n->next;
-        continue;
-      }
-      case N_GOPEN: {
-        int g = n->group, old = ms->pend[g];
-        ms->pend[g] = i;
-        if (m(ms, n->next, i)) return 1;
-        ms->pend[g] = old;
-        return 0;
-      }
-      case N_GCLOSE: {
-        int g = n->group, o0 = ms->caps[g][0], o1 = ms->caps[g][1];
-        ms->caps[g][0] = ms->pend[g];
-        ms->caps[g][1] = i;
-        if (m(ms, n->next, i)) return 1;
-        ms->caps[g][0] = o0;
-        ms->caps[g][1] = o1;
-        return 0;
-      }
-      case N_ALT:
-        for (int k = 0; k < n->nalts; k++)
-          if (m(ms, n->alts[k], i)) return 1;
-        return 0;
-      case N_LOOK: {
-        int ok = m(ms, n->body, i);
-        if (ok == n->neg) return 0;
-        n = n->next;
-        continue;
-      }
-      case N_LOOKEND:
-        return 1;
-      case N_MATCH:
-        ms->match_end = i;
-        return 1;
-      case N_REP: {
-        if (n->simple) return rep_simple(ms, n, i);
-        {
-          int sc = n->count, ss = n->iter_start, r;
-          n->count = 0;
-          r = rep_step(ms, n, i);
-          n->count = sc;
-          n->iter_start = ss;
-          return r;
-        }
-      }
-      case N_REPTAIL: {
-        Node *rep = n->rep;
-        int sc, r;
-        if (i == rep->iter_start && rep->count >= rep->min) return 0;
-        sc = rep->count;
-        rep->count++;
-        r = rep_step(ms, rep, i);
-        rep->count = sc;
-        return r;
-      }
-      default:
-        return 0;
-    }
-  }
-}
-
-static void m_init(M *ms, const Str *s, int icase) {
-  ms->s = (const unsigned char *)s->p;
-  ms->len = (int)s->n;
-  ms->icase = icase;
-}
-
-/* Matches the pattern starting exactly at position start. */
-static int rx_at(Rx *rx, M *ms, int start) {
-  for (int g = 0; g <= MAXG; g++) {
-    ms->caps[g][0] = ms->caps[g][1] = -1;
-    ms->pend[g] = -1;
-  }
-  if (!m(ms, rx->start, start)) return 0;
-  ms->caps[0][0] = start;
-  ms->caps[0][1] = ms->match_end;
+/* Finds the first match starting at or after from (anchored: only at from), in the
+ * subject selected by the call's first lookup (from == 0 selects). */
+static int rx_find(Rx *rx, Str *s, size_t from, int anchored) {
+  int rc;
+  PCRE2_SIZE *ov;
+  if (from == 0) subject_convert(s);
+  if (from > subj_len) return 0;
+  rc = pcre2_jit_match(rx->code, subj, (PCRE2_SIZE)subj_len, (PCRE2_SIZE)from,
+                   anchored ? PCRE2_ANCHORED : 0, rx->md, rx_mctx);
+  if (rc == PCRE2_ERROR_NOMATCH) return 0;
+  if (rc < 0) rx_die("pcre2_match failed");
+  ov = pcre2_get_ovector_pointer(rx->md);
+  for (int g = rc; g <= rx->ngroups; g++) ov[2 * g] = ov[2 * g + 1] = PCRE2_UNSET;
   return 1;
 }
 
-/* First match starting at or after from (RegExp.prototype.exec). */
-static int rx_search(Rx *rx, M *ms, int from) {
-  for (int s = from; s <= ms->len; s++) {
-    if (rx_at(rx, ms, s)) return 1;
-    if (rx->bol_anchored) break;
-  }
-  return 0;
-}
-
-/* exec(): sum of the lengths of the match and its captured strings. */
-static size_t rx_exec_len(Rx *rx, const Str *s) {
-  M ms;
+/* exec(): sum of the lengths of the match and its captured strings (undefined ones add 0). */
+static size_t rx_exec_len(Rx *rx, Str *s) {
+  PCRE2_SIZE *ov;
   size_t sum = 0;
-  m_init(&ms, s, rx->icase);
-  if (!rx_search(rx, &ms, 0)) return 0;
+  if (!rx_find(rx, s, 0, 0)) return 0;
+  ov = pcre2_get_ovector_pointer(rx->md);
   for (int g = 0; g <= rx->ngroups; g++)
-    if (ms.caps[g][0] >= 0) sum += (size_t)(ms.caps[g][1] - ms.caps[g][0]);
+    if (ov[2 * g] != PCRE2_UNSET) sum += (size_t)(ov[2 * g + 1] - ov[2 * g]);
   return sum;
 }
 
-/* replace(re, ''): length of the result. */
-static size_t rx_replace_len(Rx *rx, const Str *s) {
-  M ms;
-  size_t removed = 0;
-  int len = (int)s->n, pos = 0;
-  m_init(&ms, s, rx->icase);
-  if (!rx->global) {
-    if (rx_search(rx, &ms, 0)) removed = (size_t)(ms.caps[0][1] - ms.caps[0][0]);
-  } else {
-    while (pos <= len && rx_search(rx, &ms, pos)) {
-      int st = ms.caps[0][0], en = ms.caps[0][1];
-      removed += (size_t)(en - st);
-      pos = (en == st) ? en + 1 : en;
-    }
+/* replace(re, ''): builds the result (the kept segments, as the JS string the engine makes) and
+ * returns its length in JS units. */
+static PCRE2_UCHAR *rep_buf;
+static size_t rep_cap;
+static size_t rx_replace_len(Rx *rx, Str *s) {
+  size_t total = js_length(s), pos = 0, kept = 0, out = 0;
+  const PCRE2_UCHAR *src;
+  if (total + 1 > rep_cap) {
+    rep_cap = (total + 1) * 2;
+    rep_buf = realloc(rep_buf, rep_cap * sizeof *rep_buf);
+    if (!rep_buf) rx_die("out of memory");
   }
-  return s->n - removed;
+  if (!rx->global) {
+    if (rx_find(rx, s, 0, 0)) {
+      PCRE2_SIZE *ov = pcre2_get_ovector_pointer(rx->md);
+      src = subj;
+      memcpy(rep_buf, src, ov[0] * sizeof *src);
+      memcpy(rep_buf + ov[0], src + ov[1], (total - ov[1]) * sizeof *src);
+      return total - (size_t)(ov[1] - ov[0]);
+    }
+    return total;
+  }
+  while (pos <= total && rx_find(rx, s, pos, 0)) {
+    PCRE2_SIZE *ov = pcre2_get_ovector_pointer(rx->md);
+    size_t st = ov[0], en = ov[1];
+    memcpy(rep_buf + out, subj + kept, (st - kept) * sizeof *subj);
+    out += st - kept;
+    kept = en;
+    pos = (en == st) ? en + 1 : en; /* AdvanceStringIndex, one code unit */
+  }
+  memcpy(rep_buf + out, subj + kept, (total - kept) * sizeof *subj);
+  out += total - kept;
+  return out;
 }
 
 /* split(re): number of elements, captures included (undefined ones count). */
-static size_t rx_split_len(Rx *rx, const Str *s) {
-  M ms;
-  int size = (int)s->n, p = 0, q = 0;
-  size_t count = 0;
-  m_init(&ms, s, rx->icase);
-  if (size == 0) return rx_at(rx, &ms, 0) ? 0 : 1;
+static size_t rx_split_len(Rx *rx, Str *s) {
+  size_t size = js_length(s), p = 0, q = 0, count = 0;
+  if (size == 0) return rx_find(rx, s, 0, 1) ? 0 : 1;
   while (q < size) {
-    int e;
-    if (!rx_at(rx, &ms, q)) {
-      q++;
-      continue;
-    }
-    e = ms.match_end;
-    if (e > size) e = size;
+    PCRE2_SIZE *ov;
+    size_t st, e;
+    if (!rx_find(rx, s, q, 0)) break;
+    ov = pcre2_get_ovector_pointer(rx->md);
+    st = ov[0];
+    if (st >= size) break;
+    e = ov[1];
     if (e == p) {
-      q++;
+      q = st + 1;
       continue;
     }
     count += 1 + (size_t)rx->ngroups;
@@ -766,14 +481,12 @@ static size_t rx_split_len(Rx *rx, const Str *s) {
 }
 
 /* match(re) with the g flag: number of matches (the array is not used). */
-static size_t rx_match_all(Rx *rx, const Str *s) {
-  M ms;
-  size_t count = 0;
-  int pos = 0, len = (int)s->n;
-  m_init(&ms, s, rx->icase);
-  if (!rx->global) return rx_search(rx, &ms, 0) ? 1 : 0;
-  while (pos <= len && rx_search(rx, &ms, pos)) {
-    int st = ms.caps[0][0], en = ms.caps[0][1];
+static size_t rx_match_all(Rx *rx, Str *s) {
+  size_t count = 0, pos = 0;
+  if (!rx->global) return rx_find(rx, s, 0, 0) ? 1 : 0;
+  while (pos <= js_length(s) && rx_find(rx, s, pos, 0)) {
+    PCRE2_SIZE *ov = pcre2_get_ovector_pointer(rx->md);
+    size_t st = ov[0], en = ov[1];
     count++;
     pos = (en == st) ? en + 1 : en;
   }
@@ -1268,13 +981,13 @@ static void setup_vars(void) {
   s25 = compute_variants((Str){"qvfcynl", 7}, 85);
   str2 = (Str){"{\"anzr\":\"\",\"ahzoreSbezng\":{\"PheeraplQrpvznyQvtvgf\":2,\"PheeraplQrpvznyFrcnengbe\":\".\","
     "\"VfErnqBayl\":gehr,\"PheeraplTebhcFvmrf\":[3],\"AhzoreTebhcFvmrf\":[3],\"CrepragTebhcFvmrf\":[3"
-    "],\"PheeraplTebhcFrcnengbe\":\",\",\"PheeraplFlzoby\":\"\244\",\"AnAFlzoby\":\"AnA\",\"PheeraplA"
+    "],\"PheeraplTebhcFrcnengbe\":\",\",\"PheeraplFlzoby\":\"\302\244\",\"AnAFlzoby\":\"AnA\",\"PheeraplA"
     "rtngvirCnggrea\":0,\"AhzoreArtngvirCnggrea\":1,\"CrepragCbfvgvirCnggrea\":0,\"CrepragArtngvirCng"
     "grea\":0,\"ArtngvirVasvavglFlzoby\":\"-Vasvavgl\",\"ArtngvirFvta\":\"-\",\"AhzoreQrpvznyQvtvgf\""
     ":2,\"AhzoreQrpvznyFrcnengbe\":\".\",\"AhzoreTebhcFrcnengbe\":\",\",\"PheeraplCbfvgvirCnggrea\":0"
     ",\"CbfvgvirVasvavglFlzoby\":\"Vasvavgl\",\"CbfvgvirFvta\":\"+\",\"CrepragQrpvznyQvtvgf\":2,\"Cre"
     "pragQrpvznyFrcnengbe\":\".\",\"CrepragTebhcFrcnengbe\":\",\",\"CrepragFlzoby\":\"%\",\"CreZvyyrF"
-    "lzoby\":\"\342\200\260\",\"AngvirQvtvgf\":[\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\""
+    "lzoby\":\"\302\211\",\"AngvirQvtvgf\":[\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\""
     ",\"9\"],\"QvtvgFhofgvghgvba\":1},\"qngrGvzrSbezng\":{\"NZQrfvtangbe\":\"NZ\",\"Pnyraqne\":{\"Zva"
     "FhccbegrqQngrGvzr\":\"@-62135568000000@\",\"ZnkFhccbegrqQngrGvzr\":\"@253402300799999@\",\"Nytbe"
     "vguzGlcr\":1,\"PnyraqneGlcr\":1,\"Renf\":[1],\"GjbQvtvgLrneZnk\":2029,\"VfErnqBayl\":gehr},\"Qng"
@@ -1302,7 +1015,7 @@ static void setup_vars(void) {
     "gf\":2,\"AhzoreQrpvznyFrcnengbe\":\".\",\"AhzoreTebhcFrcnengbe\":\",\",\"PheeraplCbfvgvirCnggrea"
     "\":0,\"CbfvgvirVasvavglFlzoby\":\"Vasvavgl\",\"CbfvgvirFvta\":\"+\",\"CrepragQrpvznyQvtvgf\":2,"
     "\"CrepragQrpvznyFrcnengbe\":\".\",\"CrepragTebhcFrcnengbe\":\",\",\"CrepragFlzoby\":\"%\",\"CreZ"
-    "vyyrFlzoby\":\"\342\200\260\",\"AngvirQvtvgf\":[\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\","
+    "vyyrFlzoby\":\"\302\211\",\"AngvirQvtvgf\":[\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\","
     "\"8\",\"9\"],\"QvtvgFhofgvghgvba\":1},\"qngrGvzrSbezng\":{\"NZQrfvtangbe\":\"NZ\",\"Pnyraqne\":{"
     "\"ZvaFhccbegrqQngrGvzr\":\"@-62135568000000@\",\"ZnkFhccbegrqQngrGvzr\":\"@253402300799999@\",\""
     "NytbevguzGlcr\":1,\"PnyraqneGlcr\":1,\"Renf\":[1],\"GjbQvtvgLrneZnk\":2029,\"VfErnqBayl\":snyfr}"
@@ -1321,7 +1034,7 @@ static void setup_vars(void) {
     "nyraqneAnzr\":\"Tertbevna Pnyraqne\",\"NooerivngrqZbaguTravgvirAnzrf\":[\"Wna\",\"Sro\",\"Zne\","
     "\"Nce\",\"Znl\",\"Wha\",\"Why\",\"Nht\",\"Frc\",\"Bpg\",\"Abi\",\"Qrp\",\"\"],\"ZbaguTravgvirAnz"
     "rf\":[\"Wnahnel\",\"Sroehnel\",\"Znepu\",\"Ncevy\",\"Znl\",\"Whar\",\"Whyl\",\"Nhthfg\",\"Frcgrz"
-    "ore\",\"Bpgbore\",\"Abirzore\",\"Qrprzore\",\"\"]}}", 2274};
+    "ore\",\"Bpgbore\",\"Abirzore\",\"Qrprzore\",\"\"]}}", 2273};
   str4 = (Str){"HFEYBP=DKWyLHAiMTH9AwHjWxAcqUx9GJ91oaEunJ4tIzyyqlMQo3IhqUW5D29xMG1IHlMQo3IhqUW5GzSgMG1Iozy0MJDtH"
     "3EuqTImWxEgLHAiMTH9BQN3WxkuqTy0qJEyCGZ3YwDkBGVzGT9hM2y0qJEyCF0kZwVhZQH3APMDo3A0LJkQo2EyCGx0ZQDmW"
     "yWyM2yiox5uoJH9D0R%3Q", 213};
@@ -1631,8 +1344,7 @@ static void setup_vars(void) {
     "G16\" fglyr=\"onpxtebhaq-vzntr:hey(uggc://vzt.jykef.pbz/~Yvir.FvgrPbagrag.VQ/~14.2.1230/~/~/~/oy"
     "g16.cat)\">Ybgf bs fgbentr &#40;5 TO&#41; - zber pbby fghss ba gur jnl.<oe> <oe> <n uers=\"uggc:"
     "//znvy.yvir.pbz/znvy/nobhg.nfck\" gnetrg=\"_oynax\">Yrnea zber##/N##</hy>", 631};
-  str33 = (Str){"Bar Jvaqbjf Yvir VQ trgf lbh vagb <o>Ubgznvy</o>, <o>Zrffratre</o>, <o>Kobk YVIR</o> \342\200"
-    "\224 naq bgure cynprf lbh frr #~#argjbexybtb#~#", 131};
+  str33 = (Str){"Bar Jvaqbjf Yvir VQ trgf lbh vagb <o>Ubgznvy</o>, <o>Zrffratre</o>, <o>Kobk YVIR</o> \342\200\224 naq bgure cynprf lbh frr #~#argjbexybtb#~#", 131};
   str34 = (Str){"${1}://${2}${3}${4}${5}", 23};
   str35 = (Str){" O=6gnyg0g4znrrn&o=3&f=gc; Q=_lyu=K3bQZGSxnT4lZzD3OS9GNmV3ZGLkAQxRpTyxNmRlZmRmAmNkAQLRqTImqNZjOU"
     "EgpTjQnJ5xMKtgoN--; SCF=qy", 122};
@@ -2030,8 +1742,10 @@ static int64_t runBlock1(void) {
       sum += rx_exec_len(RX[13], &s44[i]);
     }
     for (int i = 0; i < 73; i++) {
+      /* s46 has 72 variants; the JS reads s46[72] as undefined, which re.exec coerces to "undefined". */
+      static Str undef_str = {"undefined", 9};
       sum += rx_replace_len(RX[18], &s45[i]);
-      sum += rx_exec_len(RX[1], &s46[i]);
+      sum += rx_exec_len(RX[1], i < 72 ? &s46[i] : &undef_str);
     }
     for (int i = 0; i < 70; i++) {
       sum += rx_exec_len(RX[19], &(Str){"", 0});
@@ -3336,15 +3050,15 @@ static int64_t run_regexp_benchmark(void) {
 
 /* ---- Driver ---- */
 
-int main(void) {
+int main(int argc, char **argv) {
   int64_t checksum = 0;
+  int iterations = argc > 1 ? atoi(argv[1]) : ITERATIONS;
   setup_regexps();
   setup_vars();
-  checksum = run_regexp_benchmark(); /* warm-up; also checks the checksum */
   double t0 = now_ms();
-  for (int it = 0; it < ITERATIONS; it++) checksum = run_regexp_benchmark();
+  for (int it = 0; it < iterations; it++) checksum = run_regexp_benchmark();
   double ms = now_ms() - t0;
-  printf("regexp-octane %d iterations %.3f ms checksum %lld %s\n", ITERATIONS, ms,
+  printf("regexp-octane %d iterations %.3f ms checksum %lld %s\n", iterations, ms,
          (long long)checksum, failures ? "FAILED" : "ok");
   return failures ? 1 : 0;
 }

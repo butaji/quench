@@ -428,6 +428,8 @@ impl<'heap> ParallelMarkView<'heap> {
                     return;
                 }
                 record.trace_children(work);
+                // A weak map's value may wait on the object as its key.
+                self.note_marked_key(value, batch);
                 CellKind::WasmGc
             }
             HeapReference::LegacySlot(index) => {

@@ -16,10 +16,11 @@ pub(super) fn typeof_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, f
     let bits = frame.tagged(stage, source);
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
     let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
-    let name = stage.choose_leaving(heap, #[inline(always)] |stage| Some(immediate_name(stage, bits)), #[inline(always)] |stage| {
+    // A heap value's name is its cell's kind; every other value's word decides it.
+    let name = stage.choose_leaving(heap, #[inline(always)] |stage| {
         let kind = frame.type_of(stage, bits)?;
         Some(stage.i32_constant(kind.index() as i32))
-    });
+    }, #[inline(always)] |stage| Some(immediate_name(stage, bits)));
     let Some(name) = name else { return Step::Unresolved };
     let result = frame.int_result(stage, name);
     let fact = frame.int_fact();
@@ -61,10 +62,10 @@ fn name_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, 
     let miss = frame.miss();
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
     let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
-    stage.choose_leaving(heap, #[inline(always)] |stage| super::value::immediate_typeof_index(stage, bits, miss), #[inline(always)] |stage| {
+    stage.choose_leaving(heap, #[inline(always)] |stage| {
         let kind = frame.type_of(stage, bits)?;
         Some(stage.constant(kind.index()))
-    })
+    }, #[inline(always)] |stage| super::value::immediate_typeof_index(stage, bits, miss))
 }
 
 /// The name index of the immediate `bits`: every immediate that is no Number,

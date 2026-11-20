@@ -2359,7 +2359,7 @@ pub(crate) struct Vm<H> {
     bound_parts_layout: std::cell::Cell<Option<(u32, [u16; 3])>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     construct_targets: Box<[ConstructTarget; CALL_TARGET_CACHE_SIZE]>,
-    frameless: compiled::Frameless,
+    frameless: compiled::CalleeAdmissions,
     field_caches: site_table::CacheSiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
@@ -4181,5 +4181,7 @@ enum StringConstantKey<'a> {
     Units(&'a [u16]),
 }
 
+/// The build an image belongs to, which `native_link` checks a runtime library against.
+pub(crate) use compiled::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX};
 #[cfg(feature = "native-execution")]
 pub use compiled::{NativeJsOperationEntry, define_lane_helper_symbols, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for};

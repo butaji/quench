@@ -562,11 +562,6 @@ pub(in crate::vm) const MAX_DOUBLINGS: u8 = 7;
 /// semver, ajv, Babel, color-convert and typescript-eslint; eight adds at most 0.3%.
 pub(in crate::vm) const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
 
-// Frameless calls (compiled/frameless)
-/// Recoveries of one function's frameless activations in one collection epoch after which
-/// its calls keep frames for the rest of the epoch.
-pub(in crate::vm) const MATERIALIZATION_LIMIT: u32 = 16;
-
 // OSR loop regions: compile admission (compiled/osr_loop, osr_compile)
 /// The most instructions a region spans. Native code polls termination only at backward
 /// jumps, so the bound keeps compile time and code size proportional to small loop bodies.

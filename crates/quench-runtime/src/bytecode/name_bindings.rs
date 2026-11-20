@@ -6,6 +6,7 @@
 //! declarations rather than a copy of every outer name.
 
 use super::{Atom, EvalBinding, EvalBindingLocation, Function};
+#[cfg(test)] use super::WideInstruction;
 use super::{Op, Traits};
 use std::rc::Rc;
 

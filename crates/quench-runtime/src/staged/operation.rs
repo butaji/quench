@@ -579,7 +579,8 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The call operations of `decode`: a call or construction through its forms (`Invocation`),
-    /// except `super(...)`, whose arguments the VM gathers (`spread`).
+    /// except `super(...)`, whose arguments the VM gathers (`spread`). Inlined: a call row decodes
+    /// its record on every run, which its constant opcode folds only once the decode is in place.
     #[inline(always)]
     pub(crate) fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         if instruction.op() == Op::Construct && instruction.is_super_construct() {

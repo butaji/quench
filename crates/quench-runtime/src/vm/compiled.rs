@@ -112,10 +112,11 @@ mod entry_protocol;
 mod region_lend;
 pub(super) use exit_protocol::{ExitTable, RegionRun};
 mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; pub(in crate::vm) use base_body::image_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
-pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
+pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
+pub(in crate::vm) use lane_compile::FactTables;
 pub(super) use lane_facts::bind_callees as bind_region_callees;
 pub(super) use lane_region::ElementViews;
-pub(in crate::vm) use lane_region::{inlines_in_loop, native_method_call};
+pub(in crate::vm) use lane_region::{inlines_in_loop, inlines_in_loop_call, native_method_call};
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 
@@ -148,7 +149,7 @@ mod site_posterior;
 #[path = "compiled/numeric_image.rs"] mod numeric_image; #[cfg(test)] pub(super) use numeric_image::compile_js_typed_numeric_region;
 pub(super) use numeric_image::NumericImage;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages; pub(in crate::vm) use ahead_images::closed_lane_image;
-pub(crate) use ahead_images::{AHEAD_BUILD_ID, ahead_program_fingerprint};
+pub(crate) use ahead_images::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX, ahead_program_fingerprint};
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
@@ -268,9 +269,7 @@ mod constructions;
 mod function_binding;
 use function_binding::{admitted_function_binding_in_lane, function_binding_in_lane};
 mod general_store;
-#[cfg(feature = "native-execution")]
-pub(super) use frameless::ChainFrame;
-pub(super) use frameless::Frameless;
+pub(super) use frameless::CalleeAdmissions;
 use direct_call::direct_call;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
 mod guard_aarch64;
@@ -604,7 +603,7 @@ pub(super) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: None };
     if view.uncounted {
         crate::staged::elements::replace_uncounted_element(&mut stage, address, value);
     } else {
@@ -1139,6 +1138,8 @@ lane_helper_inventory! { H;
     InstanceOf => instance_of_in_lane::<H>,
     /// A fused `typeof` test of a heap value (`typeof_is_in_lane`).
     TypeofIs => typeof_is_in_lane::<H>,
+    /// The `typeof` name index of any value (`typeof_index_in_lane`).
+    TypeofIndex => typeof_index_in_lane::<H>,
     /// A planned construction (`construct_in_lane`).
     Construct => constructions::construct_in_lane::<H>,
     ConstructReceiver => constructions::construct_receiver_in_lane::<H>,
@@ -1201,56 +1202,6 @@ lane_helper_inventory! { H;
     Decide => super::dispatch_fast::decide_comparison::<H>,
     /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::handler_edge`).
     HandlerEdge => super::dispatch_fast::handler_edge::<H>,
-}
-
-/// Makes the frames of a chain of native activations, outer to inner, above the payload's
-/// frame, and stops the payload with them (`StepResult::ResumeFrames`).
-#[cfg(feature = "native-execution")]
-fn materialize_chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut JsStepDispatch,
-    chain: &[ChainFrame]) {
-    let mut recovered = super::dispatch_frame::RecoveredCalls { calls: Vec::with_capacity(chain.len()), failure: None };
-    for (caller, entry) in (dispatch.frame..).zip(chain) {
-        match recover_call(vm, program, caller, *entry) {
-            Ok(call) => recovered.calls.push(call),
-            Err(failure) => { recovered.failure = Some(failure); break; }
-        }
-    }
-    let call_pc = chain[0].link.call_pc as usize;
-    dispatch.outcome = Some(JsNativeStep { instruction_pc: call_pc, next_pc: call_pc + 1,
-        result: Ok(StepResult::ResumeFrames(Box::new(recovered))) });
-}
-
-/// Makes the frame of one chain entry above `caller`, its registers copied from the entry's,
-/// as the call's or construction's exact step pushes it.
-#[cfg(feature = "native-execution")]
-fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usize, entry: ChainFrame)
-    -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
-    let body = program.function(vm.frames[caller].function as usize);
-    let call_pc = entry.link.call_pc as u32;
-    let function = frameless::callee_function(vm, entry.link.callee);
-    let instruction = body.widened(body.code[call_pc as usize]);
-    // The activation the instruction's step pushes (`Vm::pushed_frame`).
-    let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.link.callee, entry.link.this);
-    let env = vm.heap.function(callee).expect("admitted inline closure").env;
-    let passed: *const [Value] = vm.register_window(caller, window);
-    let target = (vm.frames[caller].program, function, env);
-    // SAFETY: the caller's window outlives the callee's setup.
-    let pushed = vm.push_in_loop_activation(program, caller, call_pc as usize + 1, target, callee, receiver,
-        unsafe { &*passed }, instruction.result_register(), completion).expect("a recovered callee shares its caller's program");
-    let super::StepResult::PushFrame { call_guard: guard, completion, .. } = pushed.map_err(|error| (call_pc, error))? else {
-        unreachable!("an in-loop push pushes a frame")
-    };
-    let frame = vm.frames.last_mut().expect("recovered inline frame");
-    let count = frame.registers.len();
-    // SAFETY: the chain's registers hold the frame's register count of live values.
-    frame.registers.copy_from_slice(unsafe { std::slice::from_raw_parts(entry.registers, count) });
-    frame.pc = entry.source_pc as usize;
-    frame.pc_is_resume = true;
-    vm.active_registers = frame.registers.as_mut_ptr();
-    Ok(super::dispatch_frame::PendingGeneralCall {
-        caller, caller_cursor: None, call_pc: call_pc, destination: instruction.result_register(),
-        completion, returns: instruction.returns_from_frame(), call_guard: Some(guard), caller_program: None,
-    })
 }
 
 unsafe extern "C" fn interrupt_owner_in_lane(context: u64) -> u64 {
@@ -1585,7 +1536,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
         fields: &[], global_reads, facts, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[],
         plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
             completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok().filter(|region| region.native != 0)
@@ -2026,7 +1977,8 @@ const COMPILED_STACK_BUDGET: usize = 512 * 1024;
 pub(super) struct CallContext {
     /// Every field compiled code loads, at its `CallContextHead` offset (`CALL_CONTEXT_ADAPTER_PAYLOAD`).
     head: CallContextFields,
-    // Fields below are the VM's, never read by compiled code.
+    // Fields below are the VM's, never read by the stencils; the last one, `wasm_gc_records`, is read by the
+    // u-jit's emitted code at its `offset_of!`, and is last so the offsets above stay where the stencils hold them.
     /// Borrowed only during a running entry; a non-reentrant region may prove unique ownership.
     interrupt_owner: *const crate::ExecutionInterrupt,
     /// The record of the instance this context is in (`InstanceContext`), whose words the fields
@@ -2037,6 +1989,10 @@ pub(super) struct CallContext {
     /// The VM's `memory_grow_callout::<H>`: (context, pages) -> the size before in pages, or -1.
     /// A stitched `memory.grow` row calls it (`CONTEXT_MEMORY_GROW`).
     memory_grow: usize,
+    /// The base of the Wasm GC record range (`Heap::wasm_gc_record_base`), zero until it is reserved. The
+    /// u-jit's array reads take an element's slot from the record at `base + id * record size`, and call
+    /// the `field_slot` callout where it is zero. Read by the u-jit's emitted code, not the stencils.
+    wasm_gc_records: usize,
 }
 
 /// The ABI prefix of a call context, with the runtime's own field types (`staged::record_heads`).
@@ -2097,6 +2053,7 @@ impl CallContext {
             instance: std::ptr::null(),
             native_roots: std::ptr::null_mut(),
             memory_grow: 0,
+            wasm_gc_records: 0,
         };
         context.bind_native_adapter(adapter_payload, interrupt, poll_page);
         context
@@ -2159,6 +2116,7 @@ impl CallContext {
             instance: std::ptr::null(),
             native_roots: std::ptr::null_mut(),
             memory_grow: 0,
+            wasm_gc_records: 0,
         }
     }
 
@@ -2209,6 +2167,7 @@ impl CallContext {
             instance: self.instance,
             native_roots: self.native_roots,
             memory_grow: self.memory_grow,
+            wasm_gc_records: self.wasm_gc_records,
         }
     }
 }
@@ -2452,6 +2411,12 @@ fn refresh_memory_length<H: Host>(context: &mut CallContext, vm: &Vm<H>) {
     {
         context.memory_length = length as u64;
     }
+}
+
+/// Publishes the Wasm GC record range's base (`CallContext::wasm_gc_records`) after a callout that may
+/// have reserved it: the base is fixed once reserved, so zero means the range is not yet made.
+pub(super) fn refresh_wasm_gc_records<H: Host>(context: &mut CallContext, vm: &Vm<H>) {
+    context.wasm_gc_records = vm.heap.wasm_gc_record_base().map_or(0, |base| base as usize);
 }
 
 fn finish_callout(
@@ -2744,6 +2709,7 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
         );
     }
     refresh_memory_length(context, vm);
+    refresh_wasm_gc_records(context, vm);
     direct_status.map_or_else(|| finish_callout(context, called), i64::from)
 }
 
@@ -2803,6 +2769,7 @@ unsafe extern "C" fn import_callout<H: Host>(
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
     refresh_memory_length(context, vm);
+    refresh_wasm_gc_records(context, vm);
     finish_callout(context, called)
 }
 
@@ -3770,12 +3737,6 @@ struct JsStepDispatch {
     /// The lowering line of the guard a lane body last left at, where its code was compiled
     /// for diagnostics (`VmFacts::diagnostics`); zero otherwise.
     exit_line: u64,
-    /// A frameless entry's free windows and shadow records (`frameless`): the next and the end
-    /// of each stack.
-    native_top: usize,
-    native_end: usize,
-    shadow_top: usize,
-    shadow_end: usize,
     /// The element read past a present dense element (`general_elements`).
     element_get: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
@@ -3876,6 +3837,9 @@ pub(super) struct LaneMethod {
     /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
     /// types no call, so its summary is not read.
     withdrawn: std::cell::Cell<bool>,
+    /// Whether it is an ahead image's body (`Vm::install_ahead_body`): nothing replaces it, so no leave
+    /// retires it (`LaneView::note_lane_body_end`).
+    pub(in crate::vm) ahead: bool,
 }
 
 impl LaneMethod {
@@ -4209,6 +4173,14 @@ unsafe extern "C" fn typeof_is_in_lane<H: Host>(vm: u64, _residual: u64, value: 
     // SAFETY: as `field_get_in_lane`; the test reads the value's cell and allocates nothing.
     let vm = unsafe { &*(vm as *const Vm<H>) };
     u64::from(vm.typeof_test_value(Value::from_bits(value), index as usize, false) == Value::TRUE)
+}
+
+/// The index in `bytecode::TYPEOF_NAMES` of `typeof value` (`Vm::typeof_index_value`): a heap value's by its
+/// cell. Reads the cell and allocates nothing.
+unsafe extern "C" fn typeof_index_in_lane<H: Host>(vm: u64, _residual: u64, value: u64) -> u64 {
+    // SAFETY: as `typeof_is_in_lane`.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    vm.typeof_index_value(Value::from_bits(value)).as_int().map_or(0, |index| index as u64)
 }
 
 /// A lane body's store of `value` to the field the packed `write` names (its atom above its
@@ -4772,7 +4744,6 @@ impl JsStepDispatch {
             typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
             call_cache: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
             body: std::ptr::null(), inlined: 0, exit_line: 0,
-            native_top: 0, native_end: 0, shadow_top: 0, shadow_end: 0,
             outcome: None,
         }
     }
@@ -4907,7 +4878,7 @@ impl JsStepDispatch {
     /// bound for (`EntryStamp`): its program, frame, register, local and body words, `this` slot
     /// and frame capture view stand (the run binds its captures itself, `osr_lane::bind_captures`).
     /// What the VM may have changed since is bound again: its run storage, the run state, the
-    /// bases (a compare-only pass while nothing moved), the frameless stacks' tops, the program's
+    /// bases (a compare-only pass while nothing moved), the program's
     /// field entries (a moved cache table moves them) and the store specialization.
     #[inline]
     fn rewarm_region<H: Host>(&mut self, vm: &mut Vm<H>, program_specialized: bool) {
@@ -5198,8 +5169,9 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
     arguments: *const u64,
     result: *mut u64,
 ) -> i64 {
-    // Keep the opcode static through the shared exception/continuation boundary,
-    // so specialization resolves the operation and its guards in this body.
+    // The opcode resolves its operation statically; the boundary around the step is the same for
+    // every opcode, so one body per host runs it (`js_semantic_callout_with`): one copy per opcode was
+    // 290 instances of ~6 KB that every edit to a helper it inlines compiled again.
     let operation = const {
         if SINGLE_OPERATION {
             match Op::from_index(OPCODE) {
@@ -5213,6 +5185,20 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             None
         }
     };
+    // SAFETY: forwarded from this callout's contract.
+    unsafe { js_semantic_callout_with::<H, SINGLE_OPERATION>(operation, context, function, arguments, result) }
+}
+
+/// `js_semantic_callout`'s body, with the operation its opcode resolved (`None` for the dynamic entry).
+#[cfg(feature = "native-execution")]
+#[inline(never)]
+unsafe fn js_semantic_callout_with<H: Host, const SINGLE_OPERATION: bool>(
+    operation: Option<StaticJsOperation<H>>,
+    context: *mut CallContext,
+    function: u64,
+    arguments: *const u64,
+    result: *mut u64,
+) -> i64 {
     // The shared trampoline marks its active context while native code runs.
     // Clear it while Rust semantics and any host or guest helper run, so a
     // fault there is never mistaken for a generated-code fault.
@@ -5235,7 +5221,6 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         // SAFETY: the owning activation (`JsStepDispatch::with`) admits both pointers once and retains the shared
         // program until native execution (including reentry) finishes; release needs it unique.
         let program = unsafe { &*(dispatch.residual as *const ResidualProgram) };
-        if let Some(step) = frameless::leave(vm, program, dispatch, pc) { return Ok(JsCalloutStep::Stop(step)); }
         let body = unsafe { &*dispatch.body };
         #[cfg(feature = "native-execution")]
         if SINGLE_OPERATION && dispatch.stop_pc == pc {
@@ -9493,6 +9478,7 @@ impl<H: Host> Vm<H> {
                 instance: std::ptr::null(),
                 native_roots: &mut *self.native_roots,
                 memory_grow: wasm_memory_stage::memory_grow_callout::<H> as *const () as usize,
+                wasm_gc_records: self.heap.wasm_gc_record_base().map_or(0, |base| base as usize),
             };
             // SAFETY: the record belongs to the environment the call runs in.
             context.enter(unsafe { &*record });
@@ -9768,7 +9754,7 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
-        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None };
+        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None, payload: None };
         let encoded = crate::staged::narrow::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
         builder.seal_all_blocks();
@@ -11336,7 +11322,7 @@ mod tests {
             assert_eq!(status, i64::from(LANE_BODY_THREW), "a semantic stop is the body's own exception");
             assert!(outcome.is_none());
             assert!(vm.lane_completion.take_raised().is_some());
-            assert_eq!(vm.frames[0].registers, before);
+            assert_eq!(vm.frames[0].registers[..], before[..]);
         }
     }
 

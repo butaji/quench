@@ -200,7 +200,7 @@ pub(super) fn leave(pc: u32) -> Result<Planned, String> {
 /// completed, branched or missed (nothing ran: the leave at the record), or left, where the step ran in frames it made
 /// of the lane's activations (a frame-needing step of a native callee) and the body leaves past it: the row's
 /// (status, word) exit.
-fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers), packed: Option<[u64; 2]>) -> Result<Planned, String> {
+pub(super) fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers), packed: Option<[u64; 2]>) -> Result<Planned, String> {
     // A step the planner decoded runs the packed helper (`LaneHelper::StepPacked`), which takes its instruction as is.
     let packed = packed.filter(|_| helper == LaneHelper::Step).and_then(|words| call_plan::helper_address(helpers, LaneHelper::StepPacked).map(|address| (address, words)));
     let (address, packed) = match packed {
@@ -355,6 +355,9 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     chained(parts, spills.len(), record)
 }
 
+#[path = "steps/misses.rs"]
+mod misses;
+pub(super) use misses::stepped_misses;
 #[path = "steps/branches.rs"]
 mod branches;
 use branches::{branching, jump_to};

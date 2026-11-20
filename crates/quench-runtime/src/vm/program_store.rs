@@ -630,9 +630,10 @@ impl JitTierManager {
 }
 
 /// The one object a callee-argument RegExp literal site shares (`Vm::regexp_literal_argument_of`),
-/// and what keeps it unobservable: it is answered again only in `frame`, the frame (or the
-/// native activation's key, `lane_allocations::regexp_argument_key`) of the evaluation that made it, while the current realm is `realm`, `watch` (on the values of
-/// `RegExp.prototype`) is published and the `@@species` fuse of `constructor` holds.
+/// and what keeps it unobservable: it is answered again only in `frame`, the frame of the
+/// evaluation that made it (`lane_allocations::regexp_argument_key`), while the current realm is
+/// `realm`, `watch` (on the values of `RegExp.prototype`) is published and the `@@species` fuse of
+/// `constructor` holds.
 pub(crate) struct RegExpArgumentShare {
     pub(crate) object: Value,
     pub(crate) frame: usize,
@@ -667,6 +668,9 @@ struct ProgramEntry {
     module_imports: Vec<(u16, ModuleImport)>,
     /// Each root slot's rule, derived from the residual and `module_imports` on first read.
     root_slots: std::cell::OnceCell<Box<[crate::bytecode::RootSlotRule]>>,
+    /// Whether every root slot is the binding itself (`ProgramStore::root_slots_are_bindings`),
+    /// derived with `root_slots`.
+    root_bindings: std::cell::OnceCell<bool>,
     /// Its root slots written once, the read records that keep their values, and how many
     /// runs its root has made.
     root_constants: root_constants::RootConstants,
@@ -1321,6 +1325,7 @@ impl ProgramStore {
             import_meta: None,
             module_imports: Vec::new(),
             root_slots: std::cell::OnceCell::new(),
+            root_bindings: std::cell::OnceCell::new(),
             root_constants: root_constants::RootConstants::default(),
             module: false,
             views_in_lane,
@@ -1532,15 +1537,21 @@ impl ProgramStore {
     }
 
     /// Whether every slot of `id`'s root environment is the binding itself
-    /// (`RootSlotRule::Binding`), as a strict eval's or a function-wrapped script's is: its
-    /// dense slots then serve a closure's captures as any function environment's do
-    /// (`Vm::target_capture`). A module's imports read through their records, so none is.
+    /// (`RootSlotRule::Binding`), as a strict eval's, a function-wrapped script's or an
+    /// import-free module's is: its dense slots then serve a closure's captures as any
+    /// function environment's do (`Vm::target_capture`, `Vm::environment_capture_slots`).
+    /// A module's imports read through their records, so a module that declares any (its
+    /// residual's, known before linking) has none.
     pub(crate) fn root_slots_are_bindings(&self, id: ProgramId) -> bool {
         let Some(entry) = self.entry(id) else { return false };
-        if entry.module || !entry.module_imports.is_empty() { return false; }
-        let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
-        // Past the named locals every slot is a temporary, the binding itself (`root_slot`).
-        (0..locals).all(|slot| self.root_slot(id, slot as u16) == crate::bytecode::RootSlotRule::Binding)
+        *entry.root_bindings.get_or_init(|| {
+            if !entry.module_imports.is_empty() || !entry.residual.module_imports.is_empty() {
+                return false;
+            }
+            let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
+            // Past the named locals every slot is a temporary, the binding itself (`root_slot`).
+            (0..locals).all(|slot| self.root_slot(id, slot as u16) == crate::bytecode::RootSlotRule::Binding)
+        })
     }
 
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
@@ -1602,6 +1613,7 @@ impl ProgramStore {
         if let Some(entry) = self.entry_mut(id) {
             entry.module_imports = imports;
             entry.root_slots = std::cell::OnceCell::new();
+            entry.root_bindings = std::cell::OnceCell::new();
         }
     }
 

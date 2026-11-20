@@ -125,6 +125,20 @@ impl Type {
         Self(TypeKind::DirectObjectShape { shape, nullish: 0 })
     }
 
+    /// Whether every language type of this one is among `other`'s: `is_subtype` of a plain language set,
+    /// as a const word test a stencil's constant fact folds (no `join`, no derived `==`).
+    #[inline(always)]
+    pub(crate) const fn within_languages(self, other: Self) -> bool {
+        self.kinds() & !other.kinds() == 0
+    }
+
+    /// The plain language set of both types' language types (no refinement): `join` of two language sets, const.
+    #[inline(always)]
+    pub(crate) const fn language_union(self, other: Self) -> Self {
+        Self::languages(self.kinds() | other.kinds())
+    }
+
+    #[inline(always)]
     pub(crate) const fn is_direct_object_family(self) -> bool {
         matches!(self.0, TypeKind::DirectObjectFamily | TypeKind::DirectObjectShape { nullish: 0, .. })
     }
