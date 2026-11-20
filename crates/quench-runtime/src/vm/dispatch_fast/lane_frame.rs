@@ -2629,7 +2629,14 @@ macro_rules! target_run {
         // The test at comparison `$comparison` (`Some`, a constant of the arm), as `compare_jump_row`'s
         // instance runs it: its row folds to that comparison's test, and only that one's paths, which
         // keep the frame out of memory. `None` is the record's own comparison.
-        macro_rules! test_run { ($comparison:expr) => {{
+        macro_rules! test_run { ($comparison:expr, $constant:expr) => {{
+            // SAFETY: the arm below tested the operand kinds `$constant` states (`compare_operands`).
+            if let Some(constant) = $constant {
+                unsafe {
+                    std::hint::assert_unchecked(Operand(test_i.b).kind() == Some(crate::bytecode::OperandKind::Register));
+                    std::hint::assert_unchecked(Operand(test_i.c).kind() == Some(if constant { crate::bytecode::OperandKind::Constant } else { crate::bytecode::OperandKind::Register }));
+                }
+            }
             let fields = LaneFields::<$test, { FLAG_UNREAD }>(test_i);
             let decoded = match ($comparison, row_decode!($test, { FLAG_UNREAD }, fields)) {
                 (Some(comparison), Some(Operation::CompareJump { left, right, negate, .. })) =>
@@ -2659,17 +2666,32 @@ macro_rules! target_run {
             const GE: u32 = B::GreaterEqualThan as u32;
             const SEQ: u32 = B::StrictEquality as u32;
             const SNE: u32 = B::StrictInequality as u32;
+            // Each comparison's arm also fixes its operand kinds where they are a register and a register or a
+            // constant, as the comparison's own formed instances do (`compare_jump_row`).
+            use crate::bytecode::OperandKind::{Constant, Register};
+            let form = match (Operand(test_i.b).kind(), Operand(test_i.c).kind()) {
+                (Some(Register), Some(Register)) => 1u32,
+                (Some(Register), Some(Constant)) => 2,
+                _ => 0,
+            };
+            macro_rules! formed { ($op:ident) => {
+                match form {
+                    1 => test_run!(Some(Comparison::of_operator($op)), Some(false)),
+                    2 => test_run!(Some(Comparison::of_operator($op)), Some(true)),
+                    _ => test_run!(Some(Comparison::of_operator($op)), None::<bool>),
+                }
+            }; }
             match u32::from(test_i.a) {
-                LT => test_run!(Some(Comparison::of_operator(LT))),
-                LE => test_run!(Some(Comparison::of_operator(LE))),
-                GT => test_run!(Some(Comparison::of_operator(GT))),
-                GE => test_run!(Some(Comparison::of_operator(GE))),
-                SEQ => test_run!(Some(Comparison::of_operator(SEQ))),
-                SNE => test_run!(Some(Comparison::of_operator(SNE))),
+                LT => formed!(LT),
+                LE => formed!(LE),
+                GT => formed!(GT),
+                GE => formed!(GE),
+                SEQ => formed!(SEQ),
+                SNE => formed!(SNE),
                 _ => {}
             }
         }
-        test_run!(None::<Comparison>)
+        test_run!(None::<Comparison>, None::<bool>)
     }};
 }
 
