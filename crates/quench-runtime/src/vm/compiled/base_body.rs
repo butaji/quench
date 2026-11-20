@@ -10,6 +10,7 @@ use super::base_region::callees::{Callees, InlineBody};
 use super::base_region::function::{build_body, Body, BodySpec, ClassProto};
 use super::base_region::{Known, RealmProof};
 use super::lane_facts::bind_callees;
+use super::admission::{refuse, Refusal};
 use crate::code_dependencies::{InstanceofFact, Invalidation};
 use crate::vm::global_facts::GlobalTable;
 use crate::bytecode::{Atom, Class, FieldLookup, Register, WideInstruction};
@@ -123,7 +124,7 @@ impl<H: Host> Vm<H> {
         let Some(method) = LaneMethod::of_base_body(self.programs.tiers(), built, function, registers, callees.owned, (closed, realm_bound), invalidation) else { return LaneBodyOutcome::Declined };
         // A body native callers call by its entry (`bind_callees`) pays for itself whatever its
         // length, as a Cranelift body does (`start_lane_method`).
-        if !method.amortizes_entry() && !caller.called_by_bodies() { return LaneBodyOutcome::Short }
+        if !method.amortizes_entry() && !caller.called_by_bodies() { refuse(self, Refusal::NotAmortized); return LaneBodyOutcome::Short }
         bind_callees(&method.direct, caller);
         self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()).map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
     }
@@ -140,7 +141,7 @@ impl<H: Host> Vm<H> {
         if !super::base_region::covers(&code) { return LaneBodyOutcome::Declined }
         // A body whose entry its work cannot repay (no loop, no call, too short for the stencil
         // tier) is not stitched only for `publish_base_body` to refuse it.
-        if !super::body_may_amortize(self.programs.tiers(), body, crate::jit_mode::Tier::Base) && !caller.called_by_bodies() { return LaneBodyOutcome::Short }
+        if !super::body_may_amortize(self.programs.tiers(), body, crate::jit_mode::Tier::Base) && !caller.called_by_bodies() { refuse(self, Refusal::NotAmortized); return LaneBodyOutcome::Short }
         if indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))) { return LaneBodyOutcome::Declined }
         // The region keeps the function's whole code (a function's span is all of it), which the rest reads back.
         let Some(region) = LoopRegion::of_function(code, self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
