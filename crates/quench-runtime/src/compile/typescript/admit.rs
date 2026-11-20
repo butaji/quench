@@ -13,8 +13,9 @@
 //! Every parse of typed text goes through `lazy_bodies::parse`, so a body compiled
 //! later (lazily, streamed, on first call) is admitted exactly as at load.
 
+use super::enum_ast;
 use super::enum_folding;
-use super::enums::{self, Member, Value};
+use super::enums::{self, Computed, Member, Value};
 use oxc_allocator::{Allocator, Box as ArenaBox, TakeIn, Vec as ArenaVec};
 use oxc_ast::ast::*;
 use oxc_ast_visit::{VisitMut, walk_mut};
@@ -65,7 +66,7 @@ struct Admit<'a, 'd> {
     /// semantics inline their reads, so `E.X` is the constant (no load at run time). A plain
     /// enum in `folded` inlines the same way once its declaration is admitted, so the reads
     /// after it see the constants.
-    const_enums: FxHashMap<String, FxHashMap<String, String>>,
+    const_enums: FxHashMap<String, FxHashMap<String, Value>>,
     /// The plain enums whose member reads may fold (`enum_folding`).
     folded: FxHashSet<String>,
     /// Value import bindings by local name: source, and imported name (`None`: a namespace).
@@ -78,7 +79,7 @@ struct Admit<'a, 'd> {
 
 /// How a declaration is exported: not, from the module, or from namespace `N`.
 #[derive(Clone, Copy)]
-enum Export<'n> {
+pub(super) enum Export<'n> {
     None,
     Module,
     Namespace(&'n str),
@@ -401,15 +402,12 @@ impl<'a> Admit<'a, '_> {
         };
         if inline {
             let literals = members.iter().filter_map(|(member, value)| match value {
-                Member::Constant(value) => enums::literal(value).map(|literal| (member.clone(), literal)),
+                Member::Constant(value) => enums::display(value).map(|_| (member.clone(), value.clone())),
                 Member::Computed(_) => None,
             });
             self.const_enums.entry(name.clone()).or_default().extend(literals);
         }
-        let keyword = self.keyword();
-        let text = object_enum(&name, &members, first, how, keyword).unwrap_or_else(|| incremental_enum(&name, &members, first, how, keyword));
-        let mut statements = self.javascript(&text, enumeration.span);
-        fill(&mut statements, values);
+        let statements = enum_ast::statements(self.allocator, &name, &members, values, first, how, self.lexical, enumeration.span);
         statements.into_iter().map(|statement| (statement, false)).collect()
     }
 
@@ -428,14 +426,14 @@ impl<'a> Admit<'a, '_> {
                     Some(value) => Member::Constant(value),
                     None => {
                         let mut expression = initializer.take_in(&self.allocator);
-                        Qualify { admit: self, enum_name, names: &names }.visit_expression(&mut expression);
+                        Qualify { allocator: self.allocator, enum_name, names: &names }.visit_expression(&mut expression);
                         values.push(expression);
-                        Member::Computed(format!("$$quench_ts_{}", values.len() - 1))
+                        Member::Computed(Computed::Initializer(values.len() - 1))
                     }
                 },
                 (None, None) => Member::Constant(Value::Number(0.0)),
                 (None, Some((_, Some(number)))) => Member::Constant(Value::Number(number + 1.0)),
-                (None, Some((previous_name, None))) => Member::Computed(format!("{enum_name}[{}] + 1", enums::quote(previous_name))),
+                (None, Some((previous_name, None))) => Member::Computed(Computed::Successor(previous_name.clone())),
             };
             let number = match &value { Member::Constant(Value::Number(number)) => Some(*number), _ => None };
             if let Member::Constant(constant) = &value { known.insert(name.clone(), constant.clone()); }
@@ -448,64 +446,22 @@ impl<'a> Admit<'a, '_> {
 }
 
 /// Earlier members named bare inside an initializer read the enum object.
-struct Qualify<'s, 'a, 'd> {
-    admit: &'s Admit<'a, 'd>,
+struct Qualify<'s, 'a> {
+    allocator: &'a Allocator,
     enum_name: &'s str,
     names: &'s [String],
 }
 
-impl<'a> VisitMut<'a> for Qualify<'_, 'a, '_> {
+impl<'a> VisitMut<'a> for Qualify<'_, 'a> {
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         if let Expression::Identifier(identifier) = expression
             && self.names.iter().any(|name| name == identifier.name.as_str())
         {
-            let text = format!("{}[{}]", self.enum_name, enums::quote(identifier.name.as_str()));
-            *expression = self.admit.javascript_expression(&text, identifier.span);
+            *expression = enum_ast::read(self.allocator, identifier.span, self.enum_name, identifier.name.as_str());
             return;
         }
         walk_mut::walk_expression(self, expression);
     }
-}
-
-/// `var E = {"A": 0, "0": "A", …};`: when every member folds to an exact literal.
-fn object_enum(name: &str, members: &[(String, Member)], first: bool, how: Export<'_>, keyword: &str) -> Option<String> {
-    if !first { return None; }
-    let mut fields = Vec::with_capacity(members.len() * 2);
-    for (member, value) in members {
-        let Member::Constant(value) = value else { return None };
-        let key = enums::quote(member);
-        fields.push(format!("{key}: {}", enums::literal(value)?));
-        if let Value::Number(_) = value {
-            fields.push(format!("{}: {key}", enums::quote(&enums::display(value)?)));
-        }
-    }
-    let object = format!("{{{}}}", fields.join(", "));
-    Some(match how {
-        Export::None => format!("{keyword} {name} = {object};"),
-        Export::Module => format!("export var {name} = {object};"),
-        Export::Namespace(namespace) => format!("{keyword} {name} = {namespace}.{name} = {object};"),
-    })
-}
-
-/// tsc's emit, without its function: `var E; E || (E = {}); E[E["A"] = 0] = "A"; …`.
-fn incremental_enum(name: &str, members: &[(String, Member)], first: bool, how: Export<'_>, keyword: &str) -> String {
-    let mut text = format!("{}{};", declaration_prefix(name, first, how, keyword), namespace_object(name, how));
-    for (member, value) in members {
-        let key = enums::quote(member);
-        match value {
-            Member::Constant(Value::String(string)) => text.push_str(&format!(" {name}[{key}] = {};", enums::quote(string))),
-            Member::Constant(Value::Number(number)) => text.push_str(&format!(" {name}[{name}[{key}] = {}] = {key};", number_text(*number))),
-            Member::Computed(expression) => text.push_str(&format!(" {name}[{name}[{key}] = ({expression})] = {key};")),
-        }
-    }
-    text
-}
-
-fn number_text(number: f64) -> String {
-    if number.is_nan() { "NaN".into() }
-    else if number.is_infinite() { if number > 0.0 { "Infinity".into() } else { "-Infinity".into() } }
-    else if number == 0.0 && number.is_sign_negative() { "-0".into() }
-    else { format!("{number}") }
 }
 
 /// `var N; ` before the first declaration of a merged name (`export var N; ` from a module).
@@ -718,10 +674,10 @@ impl<'a> VisitMut<'a> for Admit<'a, '_> {
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         if !self.const_enums.is_empty()
             && let Some((enumeration, member)) = enum_member_read(expression)
-            && let Some(literal) = self.const_enums.get(enumeration).and_then(|members| members.get(member))
+            && let Some(value) = self.const_enums.get(enumeration).and_then(|members| members.get(member))
         {
             let span = expression.span();
-            *expression = self.javascript_expression(&literal.clone(), span);
+            *expression = enum_ast::constant(self.allocator, span, value);
             return;
         }
         walk_mut::walk_expression(self, expression);

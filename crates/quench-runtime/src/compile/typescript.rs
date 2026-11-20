@@ -13,6 +13,7 @@ use crate::staged::value::language as bits;
 
 mod admit;
 mod checked;
+mod enum_ast;
 mod enum_folding;
 mod enums;
 mod fields;
