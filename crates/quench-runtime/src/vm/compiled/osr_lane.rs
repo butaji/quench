@@ -47,10 +47,10 @@ pub(super) unsafe fn bind_captures<H: Host>(
     region: &LoopRegion, entry: &LoopEntry, lane_context: usize, registers: *mut crate::value::Value, calls: bool,
     captures: &mut Vec<crate::Value>,
 ) {
-    // A region that reads and stores no capture and calls nothing binds no view. One that calls may
-    // test a captured callee's identity at its entry (`CAPTURE_IDENTITY_ROW`), which reads the view
-    // although no `LoadCapture` of its own is in `captures`.
-    if region.captures.is_empty() && region.stored_captures.is_empty() && !calls { return; }
+    // Every region binds a view, even one whose own instructions name no capture: its window's captures word is
+    // otherwise whatever the activation's push left there (an interpreter push writes none), and a base region's
+    // rows may read it all the same (richards under `--b-jit` read capture 34 through a deleted marker). One that
+    // calls may also test a captured callee's identity at its entry (`CAPTURE_IDENTITY_ROW`).
     // A region that calls reads its captures live too where the lane has them: a callee may
     // store one, which a copy would not see. Where it has none, the copy as before.
     let live = (calls || !region.stored_captures.is_empty())
