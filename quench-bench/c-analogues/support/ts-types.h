@@ -199,6 +199,7 @@ static TsType *cTypeOfSymbol(TsSymbol *sym);
 static TsType *cExprType(TsNode *e);                       /* ts-checker-body.h */
 static TsType *cWidenLiteralType(TsType *t);               /* ts-checker-body.h */
 static TsType *cAddUndefined(TsType *t);                  /* ts-checker-body.h */
+static TsType *cMutableLocationType(TsNode *e, TsType *t); /* ts-checker-body.h */
 static TsType *cGetTypeFromConditionalTypeNode(TsNode *n);
 static TsType *cGetTypeFromTemplateTypeNode(TsNode *n);   /* ts-template.h */
 static bool cIsGenericIndex(TsType *t);
@@ -1760,11 +1761,13 @@ static void cResolveIndexInfos(TsType *t) {
  * reference is unported. */
 static TsType *cInitializedSymbolType(TsSymbol *sym, TsNode *d, bool member) {
   sym->type = cErrorType;
-  TsType *t = cExprType(d->initializer ? d->initializer : d->name);
+  TsNode *init = d->initializer ? d->initializer : d->name;
+  TsType *t = cExprType(init);
   if (t == cErrorType) return t;
   bool readonly = (bModifierFlags(d) & TMF_Readonly) != 0;
-  if (!(member ? readonly : cIsConstVariableDecl(d))) t = cWidenLiteralType(t);
-  return t;
+  if (member && readonly) return t;
+  if (!member && cIsConstVariableDecl(d)) return t;
+  return cMutableLocationType(init, t);
 }
 
 /* the declared type of a parameter (getTypeOfParameter): an annotation, with undefined when it is optional */

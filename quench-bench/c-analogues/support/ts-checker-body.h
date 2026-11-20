@@ -200,84 +200,212 @@ static bool cIsMemberOfRef(TsNode *n, CFlowRef *r) {
   return n && (n->kind == TSK_PropertyAccessExpression || n->kind == TSK_ElementAccessExpression) && cMatchesRefTree(n->expression, r);
 }
 
-/* the truthiness narrowing of a type (narrowTypeByTruthiness, getTypeWithFacts): members that are falsy or truthy only */
+/* TypeFacts (TypeScript 5.9.2, values of the enum TypeFacts; getTypeFactsWorker for the ported kinds) */
+enum {
+  TFC_TypeofEQString = 1, TFC_TypeofEQNumber = 2, TFC_TypeofEQBigInt = 4, TFC_TypeofEQBoolean = 8, TFC_TypeofEQSymbol = 16,
+  TFC_TypeofEQObject = 32, TFC_TypeofEQFunction = 64, TFC_TypeofEQHostObject = 128, TFC_TypeofNEString = 256,
+  TFC_TypeofNENumber = 512, TFC_TypeofNEBigInt = 1024, TFC_TypeofNEBoolean = 2048, TFC_TypeofNESymbol = 4096,
+  TFC_TypeofNEObject = 8192, TFC_TypeofNEFunction = 16384, TFC_TypeofNEHostObject = 32768, TFC_EQUndefined = 65536,
+  TFC_EQNull = 131072, TFC_EQUndefinedOrNull = 262144, TFC_NEUndefined = 524288, TFC_NENull = 1048576,
+  TFC_NEUndefinedOrNull = 2097152, TFC_Truthy = 4194304, TFC_Falsy = 8388608
+};
+enum {
+  TFC_StringStrict = 16317953, TFC_EmptyStringStrict = 12123649, TFC_NonEmptyStringStrict = 7929345,
+  TFC_NumberStrict = 16317698, TFC_ZeroNumberStrict = 12123394, TFC_NonZeroNumberStrict = 7929090,
+  TFC_BigIntStrict = 16317188, TFC_BooleanStrict = 16316168, TFC_FalseStrict = 12121864, TFC_TrueStrict = 7927560,
+  TFC_SymbolStrict = 7925520, TFC_ObjectStrict = 7888800, TFC_FunctionStrict = 7880640, TFC_EmptyObjectStrict = 83427327,
+  TFC_VoidFacts = 9830144, TFC_UndefinedFacts = 26607360, TFC_NullFacts = 42917664, TFC_UnknownFacts = 83886079
+};
+
+/* getTypeFactsWorker; *ok is false when a member is not ported */
+static uint32_t cTypeFacts(TsType *t, bool *ok) {
+  uint32_t f = t->flags;
+  if (f & TF_Boolean) return TFC_BooleanStrict;              /* the boolean union is tested before its members */
+  if (f & TF_Union) {
+    uint32_t r = 0;
+    for (int i = 0; i < t->ntypes; i++) r |= cTypeFacts(t->types[i], ok);
+    return r;
+  }
+  if (f & TF_String) return TFC_StringStrict;
+  if (f & TF_StringLiteral) return t->textLen == 0 ? TFC_EmptyStringStrict : TFC_NonEmptyStringStrict;
+  if (f & TF_EnumLiteral) { *ok = false; return 0; }
+  if (f & (TF_Number | TF_Enum)) return TFC_NumberStrict;
+  if (f & TF_NumberLiteral) return t->litNum == 0 ? TFC_ZeroNumberStrict : TFC_NonZeroNumberStrict;
+  if (f & TF_BigInt) return TFC_BigIntStrict;
+  if (f & TF_BooleanLiteral) return t == cTrueType ? TFC_TrueStrict : TFC_FalseStrict;
+  if (f & TF_Object) {
+    cResolveSignatures(t);
+    if (t->ncall || t->nconstruct) return TFC_FunctionStrict;
+    TsSymbol **props;
+    int np = cPropertiesOf(t, &props);
+    cResolveIndexInfos(t);
+    if ((t->objectFlags & OF_Anonymous) && np == 0 && t->nindex == 0) return TFC_EmptyObjectStrict;
+    return TFC_ObjectStrict;
+  }
+  if (f & (TF_ESSymbol | TF_UniqueESSymbol)) return TFC_SymbolStrict;
+  if (f & TF_NonPrimitive) return TFC_ObjectStrict;
+  if (f & TF_Void) return TFC_VoidFacts;
+  if (f & TF_Undefined) return TFC_UndefinedFacts;
+  if (f & TF_Null) return TFC_NullFacts;
+  if (f & TF_Never) return 0;
+  if (f & (TF_Any | TF_Unknown)) return TFC_UnknownFacts;
+  *ok = false;
+  return 0;
+}
+
+/* the members of a type (a union's members, or the type itself) */
+static int cMemberCount(TsType *t) { return (t->flags & TF_Union) ? t->ntypes : 1; }
+static TsType *cMemberAt(TsType *t, int i) { return (t->flags & TF_Union) ? t->types[i] : t; }
+
+/* getTypeWithFacts: the members that have one of the facts. *ok is false when a member is not ported. */
+static TsType *cTypeWithFacts(TsType *t, uint32_t facts) {
+  if (t == cErrorType) return t;
+  int n = cMemberCount(t);
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  int k = 0;
+  bool changed = false;
+  for (int i = 0; i < n; i++) {
+    TsType *m = cMemberAt(t, i);
+    bool ok = true;
+    uint32_t mf = cTypeFacts(m, &ok);
+    if (!ok) return cUnported("facts of a type that is not ported");
+    if (mf & facts) kept[k++] = m; else changed = true;
+  }
+  if (!changed) return t;
+  if (k == 0) return cNeverType;
+  return k == 1 ? kept[0] : cGetUnionType(kept, k);
+}
+
+/* narrowTypeByTruthiness: the truthy or falsy part of a type (getTypeWithFacts with Truthy or Falsy) */
 static TsType *cTruthiness(TsType *t, bool truthy) {
   if (t == cErrorType || (t->flags & TF_Any)) return t;
-  bool isUnion = (t->flags & TF_Union) != 0;
-  int n = isUnion ? t->ntypes : 1;
-  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
-  int k = 0;
-  bool changed = false;
-  for (int i = 0; i < n; i++) {
-    TsType *m = isUnion ? t->types[i] : t;
-    uint32_t f = m->flags;
-    if (f & (TF_Undefined | TF_Null | TF_Void)) {
-      if (truthy) changed = true; else kept[k++] = m;
-    } else if (f & TF_BooleanLiteral) {
-      bool isTrue = m == cTrueType;
-      if (truthy == isTrue) kept[k++] = m; else changed = true;
-    } else if (f & (TF_Object | TF_NonPrimitive)) {
-      if (truthy) kept[k++] = m; else changed = true;
-    } else if (f & (TF_String | TF_Number | TF_BigInt)) {
-      if (!truthy) return cUnported("falsy narrowing of a primitive");
-      kept[k++] = m;
-    } else if (f & (TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral)) {
-      bool falsy = (f & TF_StringLiteral) ? m->textLen == 0 : (f & TF_NumberLiteral) ? (m->litNum == 0 || m->litNum != m->litNum)
-                                                                                  : false;
-      if (f & TF_BigIntLiteral) return cUnported("truthiness of a bigint literal");
-      if (truthy != falsy) kept[k++] = m; else changed = true;
-    } else {
-      return cUnported("truthiness of another type");
-    }
-  }
-  if (!changed) return t;
-  if (k == 0) return cNeverType;
-  return k == 1 ? kept[0] : cGetUnionType(kept, k);
+  return cTypeWithFacts(t, truthy ? TFC_Truthy : TFC_Falsy);
 }
 
-/* narrowTypeByEquality against undefined or null (=== and !==): the members comparable with the value, or the others */
-static TsType *cEqualityNarrow(TsType *t, TsType *value, bool assumeEq) {
+/* narrowTypeByEquality against undefined or null (getAdjustedTypeWithFacts with the facts of the comparison) */
+static TsType *cNullishEquality(TsType *t, TsType *value, bool doubleEquals, bool assumeTrue) {
   if (t == cErrorType || (t->flags & TF_Any)) return t;
-  bool isUnion = (t->flags & TF_Union) != 0;
-  int n = isUnion ? t->ntypes : 1;
-  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
-  int k = 0;
-  bool changed = false;
-  bool isUndef = value == cUndefinedType;
-  for (int i = 0; i < n; i++) {
-    TsType *m = isUnion ? t->types[i] : t;
-    bool unit = (m->flags & (isUndef ? (TF_Undefined | TF_Void) : TF_Null)) != 0;
-    if (assumeEq) {
-      if (m->flags & (TF_Unknown | TF_TypeParameter)) return cUnported("equality narrowing of an unknown or type parameter");
-      if (unit) kept[k++] = m;
-      else changed = true;
-    } else {
-      if (m->flags & (TF_Unknown | TF_TypeParameter)) return cUnported("inequality narrowing of an unknown or type parameter");
-      if (m->flags & (TF_Undefined | TF_Null) && (isUndef ? (m->flags & TF_Undefined) : (m->flags & TF_Null))) changed = true;
-      else kept[k++] = m;
-    }
-  }
-  if (!changed) return t;
-  if (k == 0) return cNeverType;
-  return k == 1 ? kept[0] : cGetUnionType(kept, k);
+  uint32_t facts;
+  if (doubleEquals) facts = assumeTrue ? TFC_EQUndefinedOrNull : TFC_NEUndefinedOrNull;
+  else if (value == cNullType) facts = assumeTrue ? TFC_EQNull : TFC_NENull;
+  else facts = assumeTrue ? TFC_EQUndefined : TFC_NEUndefined;
+  return cTypeWithFacts(t, facts);
 }
 
-/* the type of a callee has a type predicate or an assertion signature (narrowing by a call) */
+/* the facts of a typeof name, for the true branch (typeofEQFacts) and the false branch (typeofNEFacts) */
+static uint32_t cTypeofEqFacts(const char *n, int len, bool *ok) {
+  *ok = true;
+  if (len == 6 && memcmp(n, "string", 6) == 0) return TFC_TypeofEQString;
+  if (len == 6 && memcmp(n, "number", 6) == 0) return TFC_TypeofEQNumber;
+  if (len == 6 && memcmp(n, "bigint", 6) == 0) return TFC_TypeofEQBigInt;
+  if (len == 7 && memcmp(n, "boolean", 7) == 0) return TFC_TypeofEQBoolean;
+  if (len == 6 && memcmp(n, "symbol", 6) == 0) return TFC_TypeofEQSymbol;
+  if (len == 9 && memcmp(n, "undefined", 9) == 0) return TFC_EQUndefined;
+  if (len == 6 && memcmp(n, "object", 6) == 0) return TFC_TypeofEQObject;
+  if (len == 8 && memcmp(n, "function", 8) == 0) return TFC_TypeofEQFunction;
+  *ok = false;
+  return TFC_TypeofEQHostObject;
+}
+
+static uint32_t cTypeofNeFacts(const char *n, int len) {
+  if (len == 6 && memcmp(n, "string", 6) == 0) return TFC_TypeofNEString;
+  if (len == 6 && memcmp(n, "number", 6) == 0) return TFC_TypeofNENumber;
+  if (len == 6 && memcmp(n, "bigint", 6) == 0) return TFC_TypeofNEBigInt;
+  if (len == 7 && memcmp(n, "boolean", 7) == 0) return TFC_TypeofNEBoolean;
+  if (len == 6 && memcmp(n, "symbol", 6) == 0) return TFC_TypeofNESymbol;
+  if (len == 9 && memcmp(n, "undefined", 9) == 0) return TFC_NEUndefined;
+  if (len == 6 && memcmp(n, "object", 6) == 0) return TFC_TypeofNEObject;
+  if (len == 8 && memcmp(n, "function", 8) == 0) return TFC_TypeofNEFunction;
+  return TFC_TypeofNEHostObject;
+}
+
+/* narrowTypeByTypeFacts: a member that is a strict subtype of the implied type is kept with the facts, a member that
+ * the implied type is a subtype of is replaced by the implied type, and the others are dropped. A member that could
+ * still overlap is an intersection, which is not ported. */
+static TsType *cNarrowByTypeFacts(TsType *t, TsType *implied, uint32_t facts) {
+  if (t == cErrorType) return t;
+  int n = cMemberCount(t);
+  TsType **res = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  int k = 0;
+  for (int i = 0; i < n; i++) {
+    TsType *m = cMemberAt(t, i);
+    if (m->flags & (TF_Any | TF_Unknown)) return cUnported("typeof narrowing of any or unknown");
+    bool ok = true;
+    uint32_t mf = cTypeFacts(m, &ok);
+    if (!ok) return cUnported("typeof narrowing of a type that is not ported");
+    if (cIsRelatedWith(m, implied, REL_StrictSubtype)) {
+      if (mf & facts) res[k++] = m;
+    } else if (cIsRelatedWith(implied, m, REL_Subtype)) {
+      res[k++] = implied;
+    } else if (mf & facts) {
+      return cUnported("typeof narrowing into an intersection");
+    }
+  }
+  if (k == 0) return cNeverType;
+  return k == 1 ? res[0] : cGetUnionType(res, k);
+}
+
+/* narrowTypeByTypeName: the implied type of a typeof name */
+static TsType *cNarrowByTypeName(TsType *t, const char *n, int len) {
+  if (t == cErrorType) return t;
+  bool isAny = (t->flags & TF_Any) != 0;
+  if (len == 6 && memcmp(n, "string", 6) == 0) return cNarrowByTypeFacts(t, cStringType, TFC_TypeofEQString);
+  if (len == 6 && memcmp(n, "number", 6) == 0) return cNarrowByTypeFacts(t, cNumberType, TFC_TypeofEQNumber);
+  if (len == 6 && memcmp(n, "bigint", 6) == 0) return cNarrowByTypeFacts(t, cBigIntType, TFC_TypeofEQBigInt);
+  if (len == 7 && memcmp(n, "boolean", 7) == 0) return cNarrowByTypeFacts(t, cBooleanType, TFC_TypeofEQBoolean);
+  if (len == 6 && memcmp(n, "symbol", 6) == 0) return cNarrowByTypeFacts(t, cESSymbolType, TFC_TypeofEQSymbol);
+  if (len == 6 && memcmp(n, "object", 6) == 0) {
+    if (isAny) return t;
+    TsType *a = cNarrowByTypeFacts(t, cNonPrimitiveType, TFC_TypeofEQObject);
+    TsType *b = cNarrowByTypeFacts(t, cNullType, TFC_EQNull);
+    if (a == cErrorType || b == cErrorType) return cUnported("typeof object narrowing");
+    TsType *v[2] = { a, b };
+    return cGetUnionType(v, 2);
+  }
+  if (len == 8 && memcmp(n, "function", 8) == 0) {
+    if (isAny) return t;
+    /* a member with signatures is a function: its narrowing to the global Function type is not ported */
+    for (int i = 0; i < cMemberCount(t); i++) {
+      TsType *m = cMemberAt(t, i);
+      if (m->flags & TF_Object) { cResolveSignatures(m); if (m->ncall || m->nconstruct) return cUnported("typeof function narrowing of a function type"); }
+    }
+    TsSymbol *fs = bTableGet(cGlobals, bnC("Function"));
+    if (!fs) return cUnported("no global Function");
+    return cNarrowByTypeFacts(t, cDeclaredTypeOfClassOrInterface(fs), TFC_TypeofEQFunction);
+  }
+  if (len == 9 && memcmp(n, "undefined", 9) == 0) return cNarrowByTypeFacts(t, cUndefinedType, TFC_EQUndefined);
+  return cUnported("typeof of an unknown name");
+}
+
+/* narrowTypeByTypeof: `typeof ref op "name"` (the name is a string literal) */
+static TsType *cNarrowByTypeof(TsNode *typeofExpr, TsNode *lit, bool truthy, TsType *t, CFlowRef *r, bool isEq) {
+  (void)typeofExpr;
+  (void)r;
+  bool assume = isEq ? truthy : !truthy;   /* the comparison holds */
+  if (assume) return cNarrowByTypeName(t, lit->text, lit->textLen);
+  if (t == cErrorType || (t->flags & TF_Any)) return t;
+  return cTypeWithFacts(t, cTypeofNeFacts(lit->text, lit->textLen));
+}
+
+/* the callee of a call has a type predicate or an assertion signature (narrowing by a call); *known is false when the
+ * callee type is not ported */
 static bool cCalleeHasPredicate(TsNode *call, bool *known) {
   *known = false;
   TsType *f = cExprType(call->expression);
   if (f == cErrorType || !(f->flags & TF_Object)) return false;
   cResolveSignatures(f);
+  *known = true;
   for (int i = 0; i < f->ncall; i++) {
     TsNode *d = f->call[i].decl;
-    if (d && d->type && d->type->kind == TSK_TypePredicate) { *known = true; return true; }
+    if (d && d->type && d->type->kind == TSK_TypePredicate) return true;
   }
-  *known = true;
   return false;
 }
 
-/* narrowing of a flow type by a condition (narrowType): the reference is matched directly, through `!`, comparisons with
- * undefined and null, and calls whose arguments include it; a condition that mentions it otherwise is unported */
+/* the flow type of a reference narrowed by a condition (narrowType): the reference is matched directly, through `!`,
+ * by equality with undefined or null, by a typeof comparison, and by calls whose arguments include it (without a type
+ * predicate). Discriminants, instanceof, in, literal equality and type predicates are not ported. A condition that does
+ * not mention the reference does not narrow it. */
 static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r) {
   c = cSkipParens(c);
   if (t == cErrorType || !cMentionsText(c, r->text, r->len)) return t;
@@ -289,16 +417,34 @@ static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r
     bool isNe = op == TSK_ExclamationEqualsEqualsToken || op == TSK_ExclamationEqualsToken;
     if (isEq || isNe) {
       TsNode *l = cSkipParens(c->left), *rt = cSkipParens(c->right);
+      bool doubleEq = op == TSK_EqualsEqualsToken || op == TSK_ExclamationEqualsToken;
+      /* typeof ref === "name" (either order) */
+      TsNode *tof = NULL, *lit = NULL;
+      if (l->kind == TSK_TypeOfExpression && rt->kind == TSK_StringLiteral) { tof = l; lit = rt; }
+      else if (rt->kind == TSK_TypeOfExpression && l->kind == TSK_StringLiteral) { tof = rt; lit = l; }
+      if (tof) {
+        TsNode *operand = cSkipParens(tof->expression);
+        if (!cMatchesRefTree(operand, r)) return cIsMemberOfRef(operand, r) && (t->flags & TF_Union) ? cUnported("discriminant by typeof") : t;
+        bool ok;
+        cTypeofEqFacts(lit->text, lit->textLen, &ok);
+        if (!ok) return cUnported("typeof comparison with another name");
+        return cNarrowByTypeof(tof, lit, truthy, t, r, isEq);
+      }
       bool lm = cMatchesRefTree(l, r), rm = cMatchesRefTree(rt, r);
       if (lm || rm) {
         TsNode *other = lm ? rt : l;
-        bool strictOp = op == TSK_EqualsEqualsEqualsToken || op == TSK_ExclamationEqualsEqualsToken;
-        if (other->kind == TSK_NullKeyword && strictOp) return cEqualityNarrow(t, cNullType, isEq == truthy);
-        if (other->kind == TSK_Identifier && other->textLen == 9 && memcmp(other->text, "undefined", 9) == 0 && strictOp) {
-          TsSymbol *u = cResolveValueName(other, bnC("undefined"));
-          if (u == cUndefinedSymbol || u == NULL) return cEqualityNarrow(t, cUndefinedType, isEq == truthy);
+        TsType *ov = cExprType(other);
+        if (ov == cErrorType) return cUnported("equality with an unported value");
+        if (ov->flags & (TF_Undefined | TF_Null)) {
+          bool holds = isEq == truthy;   /* the comparison holds on this branch */
+          return cNullishEquality(t, ov, doubleEq, holds);
         }
-        return cUnported("equality narrowing with another value");
+        /* narrowTypeByEquality: the true branch filters by comparability (not ported); the false branch of a unit value
+         * filters by comparability too, and any other value leaves the type as it is */
+        if (isEq == truthy) return cUnported("equality narrowing with a value");
+        if (ov->flags & (TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral | TF_BooleanLiteral | TF_UniqueESSymbol | TF_EnumLiteral))
+          return cUnported("equality narrowing with a unit value");
+        return t;
       }
       /* a discriminant: a property of the reference compared (narrowTypeByDiscriminant for a union) */
       if (cIsMemberOfRef(l, r) || cIsMemberOfRef(rt, r)) return (t->flags & TF_Union) ? cUnported("discriminant narrowing") : t;
@@ -563,9 +709,73 @@ static TsType *cContextualType(TsNode *e) {
     case TSK_AsExpression:
       if (p->expression != c) return cUnported("contextual type of an assertion type");
       return cTypeFromNode(p->type);
+    case TSK_CallExpression: case TSK_NewExpression: {
+      /* the parameter of a single non-generic signature (the candidates of several signatures are not ported) */
+      if (!p->arguments) return cUnported("contextual type of a call");
+      int idx = -1;
+      for (int i = 0; i < p->arguments->n; i++) if (p->arguments->v[i] == c) idx = i;
+      if (idx < 0) return cUnported("contextual type of a callee");
+      TsType *f = cExprType(p->expression);
+      if (f == cErrorType) return f;
+      if (!(f->flags & TF_Object)) return cUnported("contextual type of a call of a non-object");
+      cResolveSignatures(f);
+      int ns = p->kind == TSK_NewExpression ? f->nconstruct : f->ncall;
+      CSig *sigs = p->kind == TSK_NewExpression ? f->construct : f->call;
+      if (ns != 1) return cUnported("contextual type of a call with several signatures");
+      CSig *sig = &sigs[0];
+      if (sig->decl->typeParameters && sig->decl->typeParameters->n) return cUnported("contextual type of a generic call");
+      CParams ps;
+      if (!cSplitParams(sig->decl, &ps) || ps.thisParam) return cUnported("contextual type of a call with a this parameter");
+      bool ok;
+      TsType *pt = cParamTypeAt(&ps, idx, &ok, sig->mapper);
+      return ok ? pt : NULL;
+    }
+    case TSK_PropertyAssignment: {
+      /* the property of the contextual type of the object literal */
+      if (p->initializer != c || !p->name || p->name->kind != TSK_Identifier || !p->parent || p->parent->kind != TSK_ObjectLiteralExpression)
+        return cUnported("contextual type of a property name");
+      TsType *oc = cContextualType(p->parent);
+      if (oc == NULL || oc == cErrorType) return oc;
+      if (!(oc->flags & TF_Object)) return cUnported("contextual type of a property of a non-object");
+      TsSymbol *ps = cPropertyOf(oc, bnEscapeText(p->name->text, p->name->textLen));
+      return ps ? cTypeOfSymbol(ps) : NULL;
+    }
+    case TSK_ArrayLiteralExpression: {
+      TsType *ac = cContextualType(p);
+      if (ac == NULL || ac == cErrorType) return ac;
+      if (!(ac->flags & TF_Object) || cIsTupleType(ac)) return cUnported("contextual element of a tuple or non-object");
+      cResolveIndexInfos(ac);
+      for (int i = 0; i < ac->nindex; i++) if (ac->index[i].keyType == cNumberType) return ac->index[i].type;
+      return cUnported("contextual element without a number index");
+    }
+    case TSK_ConditionalExpression:
+      if (p->condition == c) return NULL;
+      return cContextualType(p);
     default: break;
   }
   return cUnported("contextual type");
+}
+
+/* isLiteralOfContextualType: a fresh literal keeps its literal type when the contextual type has a literal of its kind */
+static bool cLiteralOfContext(TsType *cand, TsType *ctx) {
+  if (ctx->flags & TF_Union) {
+    for (int i = 0; i < ctx->ntypes; i++) if (cLiteralOfContext(cand, ctx->types[i])) return true;
+    return false;
+  }
+  if (ctx->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Conditional | TF_Index)) return false;
+  if (cand->flags & TF_StringLiteral) return (ctx->flags & (TF_StringLiteral | TF_TemplateLiteral | TF_StringMapping)) != 0;
+  if (cand->flags & TF_NumberLiteral) return (ctx->flags & TF_NumberLiteral) != 0;
+  if (cand->flags & TF_BooleanLiteral) return (ctx->flags & TF_BooleanLiteral) != 0;
+  return false;
+}
+
+/* checkExpressionForMutableLocation: a fresh literal widens unless its contextual type has a literal of its kind */
+static TsType *cMutableLocationType(TsNode *e, TsType *t) {
+  if (t == cErrorType || !cIsFreshLiteral(t)) return cWidenLiteralType(t);
+  TsType *ctx = cContextualType(e);
+  if (ctx == cErrorType) return ctx;
+  if (ctx == NULL) return cWidenLiteralType(t);
+  return cLiteralOfContext(t, ctx) ? t : cWidenLiteralType(t);
 }
 
 /* ---- expression types (checkExpression, cached on the node) ---- */
@@ -611,8 +821,6 @@ static TsType *cThisType(TsNode *e) {
   TsType *c = cEnclosingClassType(e);
   return c ? c : cUnported("this outside a class");
 }
-
-static TsType *cWidenedExpr(TsNode *e) { return cWidenLiteralType(cExprType(e)); }
 
 /* the object type of a member access: the apparent type of a primitive, any for any */
 static TsType *cApparentOf(TsType *o) {
@@ -737,7 +945,21 @@ static TsType *cTypeofUnion(void) {
   return cGetUnionType(v, 8);
 }
 
-/* the type of a call or new expression of a single non-generic signature (resolveCall without overloads) */
+/* getSignatureApplicabilityError: the arguments are related to the parameters in order; the first failure ends it */
+static bool cArgsApplicable(CParams *ps, TsType **at, int na, CSig *sig, int rel) {
+  for (int i = 0; i < na; i++) {
+    bool ok;
+    TsType *pt = cParamTypeAt(ps, i, &ok, sig->mapper);
+    if (!ok || pt == cErrorType || at[i] == cErrorType) continue;
+    if (!cIsRelatedWith(at[i], pt, rel)) return false;
+  }
+  return true;
+}
+
+/* the type of a call or new expression of non-generic signatures (resolveCall: chooseOverload with the subtype
+ * relation first when there are several candidates, then the assignable relation). The first applicable candidate
+ * gives the return type. Generic candidates, this parameters, spread arguments and no applicable candidate are not
+ * ported. */
 static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
   if (f == cAnyType || f == cErrorType) {
     /* untyped call: the arguments are checked, the result is any */
@@ -748,25 +970,35 @@ static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
   cResolveSignatures(f);
   int ns = isNew ? f->nconstruct : f->ncall;
   CSig *sigs = isNew ? f->construct : f->call;
-  if (ns != 1) return cUnported("call with other than one signature");
-  CSig *sig = &sigs[0];
-  if (sig->decl->typeParameters && sig->decl->typeParameters->n) return cUnported("call of a generic signature");
+  if (ns == 0) return cUnported("call without signatures");
   if (e->typeArguments) return cUnported("call with type arguments");
-  CParams ps;
-  if (!cSplitParams(sig->decl, &ps)) return cUnported("too many parameters");
-  if (ps.thisParam || ps.rest) return cUnported("call with a this or rest parameter");
   int na = e->arguments ? e->arguments->n : 0;
+  for (int i = 0; i < na; i++)
+    if (e->arguments->v[i]->kind == TSK_SpreadElement) return cUnported("spread argument");
   TsType **at = ts_arena_alloc(sizeof(TsType *) * (size_t)(na ? na : 1));
   for (int i = 0; i < na; i++) at[i] = cExprType(e->arguments->v[i]);
-  if (na < ps.min || na > ps.n) return cUnported("call with a wrong argument count");
-  for (int i = 0; i < na; i++) {
-    if (at[i] == cErrorType) continue;
-    bool ok;
-    TsType *pt = cParamTypeAt(&ps, i, &ok, sig->mapper);
-    if (!ok || pt == cErrorType) continue;
-    cIsRelatedWith(at[i], pt, REL_Assignable);
+  CParams *pss = ts_arena_alloc(sizeof(CParams) * (size_t)ns);
+  bool *arityOk = ts_arena_alloc(sizeof(bool) * (size_t)ns);
+  for (int c = 0; c < ns; c++) {
+    CSig *sig = &sigs[c];
+    if (sig->decl->typeParameters && sig->decl->typeParameters->n) return cUnported("call of a generic signature");
+    if (!cSplitParams(sig->decl, &pss[c])) return cUnported("too many parameters");
+    if (pss[c].thisParam) return cUnported("call of a signature with a this parameter");
+    int mx = pss[c].rest ? 1 << 30 : pss[c].n;
+    arityOk[c] = na >= pss[c].min && na <= mx;
   }
-  TsType *rt = cReturnTypeOf(sig);
+  /* the candidate that is applicable first (in declaration order, among those of the right arity) */
+  int chosen = -1;
+  for (int pass = 0; pass < 2 && chosen < 0; pass++) {
+    if (pass == 0 && ns == 1) continue;   /* a single candidate is checked with the assignable relation only */
+    int rel = pass == 0 ? REL_Subtype : REL_Assignable;
+    for (int c = 0; c < ns && chosen < 0; c++) {
+      if (!arityOk[c]) continue;
+      if (cArgsApplicable(&pss[c], at, na, &sigs[c], rel)) chosen = c;
+    }
+  }
+  if (chosen < 0) return cUnported("no applicable signature");
+  TsType *rt = cReturnTypeOf(&sigs[chosen]);
   /* checkCallExpression: Symbol() and Symbol.for() give the unique symbol of the declaration they initialize */
   if (!isNew && rt != cErrorType && (rt->flags & (TF_ESSymbol | TF_UniqueESSymbol)) && cIsSymbolCall(e)) {
     TsNode *p = e->parent;
@@ -805,7 +1037,7 @@ static TsType *cArrayLiteralType(TsNode *e) {
     TsNode *el = e->elements->v[i];
     if (el->kind == TSK_SpreadElement) return cUnported("spread in an array literal");
     if (el->kind == TSK_OmittedExpression) { ts[i] = cUndefinedType; continue; }
-    TsType *t = cWidenedExpr(el);
+    TsType *t = cMutableLocationType(el, cExprType(el));
     if (t == cErrorType) return t;
     ts[i] = t;
   }
@@ -879,6 +1111,45 @@ static TsType *cAssignmentExpr(TsNode *e) {
   return rt;
 }
 
+/* the facts of a type for the logical operators: can it be falsy, can it be truthy (getTypeFacts for the ported members) */
+static void cTypeTruthFacts(TsType *t, bool *canFalsy, bool *canTruthy, bool *nullish) {
+  *canFalsy = *canTruthy = *nullish = false;
+  int n = (t->flags & TF_Union) ? t->ntypes : 1;
+  for (int i = 0; i < n; i++) {
+    TsType *m = (t->flags & TF_Union) ? t->types[i] : t;
+    uint32_t f = m->flags;
+    if (f & (TF_Undefined | TF_Null | TF_Void)) { *canFalsy = true; *nullish = true; }
+    else if (f & (TF_Object | TF_NonPrimitive)) *canTruthy = true;
+    else if (f & TF_BooleanLiteral) { if (m == cTrueType) *canTruthy = true; else *canFalsy = true; }
+    else if (f & (TF_StringLiteral | TF_NumberLiteral)) {
+      bool falsy = (f & TF_StringLiteral) ? m->textLen == 0 : (m->litNum == 0 || m->litNum != m->litNum);
+      if (falsy) *canFalsy = true; else *canTruthy = true;
+    } else { *canFalsy = true; *canTruthy = true; }
+  }
+}
+
+/* checkBinaryLikeExpression for && || ??: the result when the left type cannot be falsy (or cannot be nullish), and when
+ * it is always falsy (or always nullish); the mixed cases are unported */
+static TsType *cLogicalResult(int op, TsType *l, TsType *r) {
+  bool canFalsy, canTruthy, nullish;
+  cTypeTruthFacts(l, &canFalsy, &canTruthy, &nullish);
+  bool onlyNullish = canFalsy && !canTruthy && nullish;
+  if (op == TSK_AmpersandAmpersandToken) {
+    if (!canFalsy && canTruthy) return r;
+    if (!canTruthy && canFalsy) return l;
+    return cUnported("&& of a mixed type");
+  }
+  if (op == TSK_BarBarToken) {
+    if (!canFalsy) return l;
+    if (onlyNullish) return r;
+    return cUnported("|| of a mixed type");
+  }
+  /* ?? */
+  if (!nullish) return l;
+  if (onlyNullish) return r;
+  return cUnported("?? of a mixed type");
+}
+
 static TsType *cBinaryType(TsNode *e) {
   int op = e->operatorToken->kind;
   switch (op) {
@@ -890,6 +1161,31 @@ static TsType *cBinaryType(TsNode *e) {
       TsType *l = cExprType(e->left), *r = cExprType(e->right);
       if (l == cErrorType || r == cErrorType) return cUnported("comparison of an unported operand");
       return cBooleanType;
+    }
+    case TSK_AmpersandAmpersandToken: case TSK_BarBarToken: case TSK_QuestionQuestionToken: {
+      TsType *l = cExprType(e->left), *r = cExprType(e->right);
+      if (l == cErrorType || r == cErrorType) return cUnported("logical operator of an unported operand");
+      return cLogicalResult(op, l, r);
+    }
+    case TSK_PlusEqualsToken: case TSK_MinusEqualsToken: case TSK_AsteriskEqualsToken: case TSK_SlashEqualsToken:
+    case TSK_PercentEqualsToken: case TSK_LessThanLessThanEqualsToken: case TSK_GreaterThanGreaterThanEqualsToken:
+    case TSK_GreaterThanGreaterThanGreaterThanEqualsToken: case TSK_AmpersandEqualsToken: case TSK_BarEqualsToken:
+    case TSK_CaretEqualsToken: {
+      TsType *l = cExprType(e->left), *r = cExprType(e->right);
+      if (l == cErrorType || r == cErrorType) return cUnported("compound assignment of an unported operand");
+      TsType *res;
+      if (op == TSK_PlusEqualsToken) {
+        if (cIsNumberLike(l) && cIsNumberLike(r)) res = cNumberType;
+        else if (cIsStringLike(l) || cIsStringLike(r)) res = cStringType;
+        else return cUnported("compound sum of other types");
+      } else {
+        if ((l->flags | r->flags) & TF_BigInt) return cUnported("compound arithmetic on bigint");
+        res = cNumberType;
+      }
+      /* checkAssignmentOperator: the result is related to the target, which is the declared type */
+      TsType *lt = cAssignmentTargetType(e->left);
+      if (lt != cErrorType && !cIsRelatedWith(res, lt, REL_Assignable)) cDiagAdd(cSourceFileOf(e->left), cNodeStart(e->left), 2322, NULL);
+      return res;
     }
     case TSK_PlusToken: {
       TsType *l = cExprType(e->left), *r = cExprType(e->right);
@@ -967,12 +1263,17 @@ static TsType *cExprWorker(TsNode *e) {
     case TSK_ElementAccessExpression: return cElementAccessType(e);
     case TSK_CallExpression: return cCallType(e);
     case TSK_NewExpression: return cNewType2(e);
-    case TSK_ArrayLiteralExpression:
-      if (cContextualType(e) != NULL) return cUnported("array literal with a contextual type");
+    case TSK_ArrayLiteralExpression: {
+      TsType *ac = cContextualType(e);
+      if (ac == cErrorType) return ac;
+      if (ac != NULL && ((ac->flags & TF_Object) == 0 || cIsTupleType(ac))) return cUnported("array literal of a tuple or non-object context");
       return cArrayLiteralType(e);
-    case TSK_ObjectLiteralExpression:
-      if (cContextualType(e) != NULL) return cUnported("object literal with a contextual type");
+    }
+    case TSK_ObjectLiteralExpression: {
+      TsType *oc = cContextualType(e);
+      if (oc == cErrorType) return oc;
       return cObjectLiteralType(e);
+    }
     case TSK_FunctionExpression: case TSK_ArrowFunction:
       if (cContextualType(e) != NULL) return cUnported("function expression with a contextual type");
       if (!e->symbol) return cUnported("function expression without symbol");
