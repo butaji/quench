@@ -298,6 +298,17 @@ static TsType *cLiteralType(uint32_t flags, const char *text, int n) {
   return l;
 }
 
+/* getNumberLiteralType of a position index (a non-negative integer, keyed by its decimal text) */
+static TsType *cIndexLiteral(int idx) {
+  char buf[16];
+  int n = snprintf(buf, sizeof buf, "%d", idx);
+  char *text = ts_arena_alloc((size_t)n);
+  memcpy(text, buf, (size_t)n);
+  TsType *l = cLiteralType(TF_NumberLiteral, text, n);
+  l->litNum = idx;
+  return l;
+}
+
 /* getFreshTypeOfLiteralType: the fresh object of a regular literal, created once (a type of the checker) */
 static TsType *cFreshLiteral(TsType *r) {
   if (r->litFresh) return r->litFresh;
@@ -2366,17 +2377,31 @@ static bool cSplitParams(TsNode *decl, CParams *cp) {
   return true;
 }
 
+/* getIndexedAccessType of a rest type at an index, distributed over a union (the union property of the members) */
+static TsType *cIndexedAtPosition(TsType *rt, int index) {
+  if (!(rt->flags & TF_Union)) return cGetIndexedAccessType(rt, cIndexLiteral(index), false);
+  TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(rt->ntypes ? rt->ntypes : 1));
+  for (int i = 0; i < rt->ntypes; i++) {
+    parts[i] = cIndexedAtPosition(rt->types[i], index);
+    if (parts[i] == cErrorType) return parts[i];
+  }
+  return cGetUnionType(parts, rt->ntypes);
+}
+
 /* the type of a parameter at a position (getTypeAtPosition): a rest parameter gives its element type */
 static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
   TsNode *p = pos < cp->n ? cp->params[pos] : cp->rest;
   *ok = true;
   if (!p) { *ok = false; return cErrorType; }
   if (p->dotDotDotToken) {
-    TsNode *tn = p->type;
-    if (tn && tn->kind == TSK_ArrayType) return cTypeFromNodeM(tn->elementType, m);
-    if (tn && tn->kind == TSK_TypeReference && tn->typeArguments && tn->typeArguments->n == 1)
-      return cTypeFromNodeM(tn->typeArguments->v[0], m);
-    return cUnported("rest parameter element type");
+    /* getTypeAtPosition: the rest type indexed by the position past the other parameters (getIndexedAccessType); a tuple
+     * rest has no type beyond its length */
+    if (!p->type) return cUnported("rest parameter element type");
+    TsType *rt = cTypeFromNodeM(p->type, m);
+    if (rt == cErrorType) return rt;
+    int index = pos - (cp->n - 1);   /* the rest parameter is the last of cp->params */
+    if ((rt->objectFlags & OF_Tuple) && index >= rt->nargs) { *ok = false; return NULL; }
+    return cIndexedAtPosition(rt, index);
   }
   bool objMethod = !p->type && p->parent && p->parent->kind == TSK_MethodDeclaration && p->parent->parent &&
                    p->parent->parent->kind == TSK_ObjectLiteralExpression;
