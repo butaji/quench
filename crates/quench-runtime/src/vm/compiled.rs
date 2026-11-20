@@ -189,7 +189,7 @@ mod wasm_stitch;
 mod wasm_codes_check;
 #[cfg(target_arch = "x86_64")]
 mod wasm_call_vm;
-pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
+pub(super) use lane_unit::{CalleeBinding, CallTarget, InlinedCall};
 #[cfg(all(test, feature = "aot"))]
 pub(super) use lane_unit::static_call_targets;
 /// `emit` with its guards exempt from the forced-deopt switch: the status dispatch of a call

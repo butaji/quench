@@ -4473,7 +4473,7 @@ impl Lowering<'_, '_> {
         // A nested lookup that writes the current `this` stores the chain's value to `this`'s
         // sink field too, after its reads (`FieldSite::sink`).
         // An inlined frame's nested site names its base, and its sink's `this`, by the callee's
-        // registers: they are the frame's (`lane_unit::Frame`).
+        // registers: they are the frame's (`lane_unit::InlinedCall`).
         let frame = match self.unit.origins.get(pc) {
             Some(super::lane_unit::Origin::Inlined { frame, .. }) => Some(self.unit.frames[*frame]),
             _ => None,
