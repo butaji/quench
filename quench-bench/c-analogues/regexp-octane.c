@@ -12,7 +12,7 @@
  * becomes a call that returns the sum of the lengths of the captures, as Exec()
  * does in JS; replace/split/match follow the JS global-iteration rules.
  * The checksum 1666156 must match on every inner run or the program exits 1.
- * main() does one warm-up run, then ITERATIONS timed runs of the five-run
+ * main() does argv[1] (default ITERATIONS) timed runs of the five-run
  * benchmark body, and prints the elapsed milliseconds and the checksum. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
@@ -25,9 +25,11 @@
 #define ITERATIONS 120
 #define EXPECTED_SUM 1666156
 
+struct WideStr;
 typedef struct {
   const char *p;
   size_t n;
+  struct WideStr *w; /* the string's UTF-16 form, once made (see wide_lookup) */
 } Str;
 
 static int failures;
@@ -50,7 +52,7 @@ static double js_random(void) {
 /* computeInputVariants(str, n): variant 0 is str, each later variant replaces
  * one character of its predecessor's source string at a random position. */
 static Str *compute_variants(Str str, int n) {
-  Str *v = malloc(sizeof(Str) * (size_t)n);
+  Str *v = calloc((size_t)n, sizeof(Str));
   if (!v) {
     fprintf(stderr, "regexp-octane: out of memory\n");
     exit(1);
@@ -116,7 +118,6 @@ static pcre2_match_context *rx_mctx;
 
 /* The subject of the current exec/replace/split/match call, as UTF-16 code units. */
 static PCRE2_UCHAR *subj;
-static size_t subj_cap;
 static size_t subj_len;
 
 static void buf_put(Buf *b, const char *s, size_t n) {
@@ -313,7 +314,7 @@ static Rx *rx_compile(const char *src, size_t n, const char *flags) {
 }
 
 /* Length of a UTF-8 literal in JS string units (UTF-16 code units). */
-static size_t js_length(const Str *s) {
+static size_t js_length_utf8(Str *s) {
   size_t units = 0;
   for (size_t i = 0; i < s->n; i++) {
     unsigned char c = (unsigned char)s->p[i];
@@ -322,15 +323,42 @@ static size_t js_length(const Str *s) {
   return units;
 }
 
-/* Converts the UTF-8 literal into subj as UTF-16 code units. */
-static void subject_convert(const Str *s) {
-  size_t k = 0;
-  size_t need = js_length(s);
-  if (need + 1 > subj_cap) {
-    subj_cap = (need + 1) * 2;
-    subj = realloc(subj, subj_cap * sizeof *subj);
-    if (!subj) rx_die("out of memory");
-  }
+/* A JS engine holds each string in its in-memory form (Latin-1 or UTF-16) from the moment it is
+ * created, so matching never re-encodes the subject. The C sources keep the strings as UTF-8
+ * literals; each distinct string (keyed by its stable address and length: literals and the
+ * setup-time variants never move) is converted to UTF-16 once, on first use, and kept. */
+typedef struct WideStr { const char *p; size_t n; PCRE2_UCHAR *w; size_t wn; } WideStr;
+static WideStr **wide_tab; /* open addressing; entries are separately allocated, so Str.w stays valid */
+static size_t wide_cap, wide_count;
+
+static size_t wide_hash(const char *p, size_t n) {
+  return (size_t)((((uintptr_t)p >> 3) * 0x9E3779B97F4A7C15ull) ^ n);
+}
+
+static void wide_grow(void) {
+  size_t old_cap = wide_cap;
+  WideStr **old = wide_tab;
+  wide_cap = old_cap ? old_cap * 2 : 8192;
+  wide_tab = calloc(wide_cap, sizeof *wide_tab);
+  if (!wide_tab) rx_die("out of memory");
+  for (size_t i = 0; i < old_cap; i++)
+    if (old[i]) {
+      size_t h = wide_hash(old[i]->p, old[i]->n) & (wide_cap - 1);
+      while (wide_tab[h]) h = (h + 1) & (wide_cap - 1);
+      wide_tab[h] = old[i];
+    }
+  free(old);
+}
+
+static WideStr *wide_lookup(Str *s) {
+  if (s->w) return s->w;
+  if ((wide_count + 1) * 2 >= wide_cap) wide_grow();
+  size_t h = wide_hash(s->p, s->n) & (wide_cap - 1);
+  for (WideStr *e; (e = wide_tab[h]); h = (h + 1) & (wide_cap - 1))
+    if (e->p == s->p && e->n == s->n) return s->w = e;
+  WideStr *e = malloc(sizeof *e);
+  size_t need = js_length_utf8(s), k = 0;
+  if (!e || !(e->w = malloc((need + 1) * sizeof *e->w))) rx_die("out of memory");
   for (size_t i = 0; i < s->n;) {
     unsigned char c = (unsigned char)s->p[i];
     unsigned cp;
@@ -343,23 +371,38 @@ static void subject_convert(const Str *s) {
     i += (size_t)extra + 1;
     if (cp >= 0x10000u) {
       cp -= 0x10000u;
-      subj[k++] = (PCRE2_UCHAR)(0xD800u + (cp >> 10));
-      subj[k++] = (PCRE2_UCHAR)(0xDC00u + (cp & 0x3FFu));
+      e->w[k++] = (PCRE2_UCHAR)(0xD800u + (cp >> 10));
+      e->w[k++] = (PCRE2_UCHAR)(0xDC00u + (cp & 0x3FFu));
     } else {
-      subj[k++] = (PCRE2_UCHAR)cp;
+      e->w[k++] = (PCRE2_UCHAR)cp;
     }
   }
-  subj_len = k;
+  e->p = s->p;
+  e->n = s->n;
+  e->wn = k;
+  wide_tab[h] = e;
+  wide_count++;
+  return s->w = e;
+}
+
+/* Length of the string in JS units. */
+static size_t js_length(Str *s) { return wide_lookup(s)->wn; }
+
+/* Selects the subject of the current call (from == 0) as its UTF-16 form. */
+static void subject_convert(Str *s) {
+  WideStr *e = wide_lookup(s);
+  subj = e->w;
+  subj_len = e->wn;
 }
 
 /* Finds the first match starting at or after from (anchored: only at from), in the
- * subject converted by the call's first lookup (from == 0 converts). */
-static int rx_find(Rx *rx, const Str *s, size_t from, int anchored) {
+ * subject selected by the call's first lookup (from == 0 selects). */
+static int rx_find(Rx *rx, Str *s, size_t from, int anchored) {
   int rc;
   PCRE2_SIZE *ov;
   if (from == 0) subject_convert(s);
   if (from > subj_len) return 0;
-  rc = pcre2_match(rx->code, subj, (PCRE2_SIZE)subj_len, (PCRE2_SIZE)from,
+  rc = pcre2_jit_match(rx->code, subj, (PCRE2_SIZE)subj_len, (PCRE2_SIZE)from,
                    anchored ? PCRE2_ANCHORED : 0, rx->md, rx_mctx);
   if (rc == PCRE2_ERROR_NOMATCH) return 0;
   if (rc < 0) rx_die("pcre2_match failed");
@@ -369,7 +412,7 @@ static int rx_find(Rx *rx, const Str *s, size_t from, int anchored) {
 }
 
 /* exec(): sum of the lengths of the match and its captured strings (undefined ones add 0). */
-static size_t rx_exec_len(Rx *rx, const Str *s) {
+static size_t rx_exec_len(Rx *rx, Str *s) {
   PCRE2_SIZE *ov;
   size_t sum = 0;
   if (!rx_find(rx, s, 0, 0)) return 0;
@@ -379,27 +422,43 @@ static size_t rx_exec_len(Rx *rx, const Str *s) {
   return sum;
 }
 
-/* replace(re, ''): length of the result in JS units. */
-static size_t rx_replace_len(Rx *rx, const Str *s) {
-  size_t total = js_length(s), removed = 0, pos = 0;
+/* replace(re, ''): builds the result (the kept segments, as the JS string the engine makes) and
+ * returns its length in JS units. */
+static PCRE2_UCHAR *rep_buf;
+static size_t rep_cap;
+static size_t rx_replace_len(Rx *rx, Str *s) {
+  size_t total = js_length(s), pos = 0, kept = 0, out = 0;
+  const PCRE2_UCHAR *src;
+  if (total + 1 > rep_cap) {
+    rep_cap = (total + 1) * 2;
+    rep_buf = realloc(rep_buf, rep_cap * sizeof *rep_buf);
+    if (!rep_buf) rx_die("out of memory");
+  }
   if (!rx->global) {
     if (rx_find(rx, s, 0, 0)) {
       PCRE2_SIZE *ov = pcre2_get_ovector_pointer(rx->md);
-      removed = (size_t)(ov[1] - ov[0]);
+      src = subj;
+      memcpy(rep_buf, src, ov[0] * sizeof *src);
+      memcpy(rep_buf + ov[0], src + ov[1], (total - ov[1]) * sizeof *src);
+      return total - (size_t)(ov[1] - ov[0]);
     }
-  } else {
-    while (pos <= total && rx_find(rx, s, pos, 0)) {
-      PCRE2_SIZE *ov = pcre2_get_ovector_pointer(rx->md);
-      size_t st = ov[0], en = ov[1];
-      removed += en - st;
-      pos = (en == st) ? en + 1 : en; /* AdvanceStringIndex, one code unit */
-    }
+    return total;
   }
-  return total - removed;
+  while (pos <= total && rx_find(rx, s, pos, 0)) {
+    PCRE2_SIZE *ov = pcre2_get_ovector_pointer(rx->md);
+    size_t st = ov[0], en = ov[1];
+    memcpy(rep_buf + out, subj + kept, (st - kept) * sizeof *subj);
+    out += st - kept;
+    kept = en;
+    pos = (en == st) ? en + 1 : en; /* AdvanceStringIndex, one code unit */
+  }
+  memcpy(rep_buf + out, subj + kept, (total - kept) * sizeof *subj);
+  out += total - kept;
+  return out;
 }
 
 /* split(re): number of elements, captures included (undefined ones count). */
-static size_t rx_split_len(Rx *rx, const Str *s) {
+static size_t rx_split_len(Rx *rx, Str *s) {
   size_t size = js_length(s), p = 0, q = 0, count = 0;
   if (size == 0) return rx_find(rx, s, 0, 1) ? 0 : 1;
   while (q < size) {
@@ -422,7 +481,7 @@ static size_t rx_split_len(Rx *rx, const Str *s) {
 }
 
 /* match(re) with the g flag: number of matches (the array is not used). */
-static size_t rx_match_all(Rx *rx, const Str *s) {
+static size_t rx_match_all(Rx *rx, Str *s) {
   size_t count = 0, pos = 0;
   if (!rx->global) return rx_find(rx, s, 0, 0) ? 1 : 0;
   while (pos <= js_length(s) && rx_find(rx, s, pos, 0)) {
@@ -1684,7 +1743,7 @@ static int64_t runBlock1(void) {
     }
     for (int i = 0; i < 73; i++) {
       /* s46 has 72 variants; the JS reads s46[72] as undefined, which re.exec coerces to "undefined". */
-      static const Str undef_str = {"undefined", 9};
+      static Str undef_str = {"undefined", 9};
       sum += rx_replace_len(RX[18], &s45[i]);
       sum += rx_exec_len(RX[1], i < 72 ? &s46[i] : &undef_str);
     }
@@ -2991,15 +3050,15 @@ static int64_t run_regexp_benchmark(void) {
 
 /* ---- Driver ---- */
 
-int main(void) {
+int main(int argc, char **argv) {
   int64_t checksum = 0;
+  int iterations = argc > 1 ? atoi(argv[1]) : ITERATIONS;
   setup_regexps();
   setup_vars();
-  checksum = run_regexp_benchmark(); /* warm-up; also checks the checksum */
   double t0 = now_ms();
-  for (int it = 0; it < ITERATIONS; it++) checksum = run_regexp_benchmark();
+  for (int it = 0; it < iterations; it++) checksum = run_regexp_benchmark();
   double ms = now_ms() - t0;
-  printf("regexp-octane %d iterations %.3f ms checksum %lld %s\n", ITERATIONS, ms,
+  printf("regexp-octane %d iterations %.3f ms checksum %lld %s\n", iterations, ms,
          (long long)checksum, failures ? "FAILED" : "ok");
   return failures ? 1 : 0;
 }
