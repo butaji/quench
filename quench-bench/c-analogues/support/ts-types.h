@@ -356,6 +356,7 @@ static TsType **cTypeArgsOfReference(TsType **params, int ntp, TsNode *ref, int 
 /* getDeclaredTypeOfTypeAlias for a generic alias, instantiated per type arguments (getTypeAliasInstantiation):
  * the body is the declared body under a mapper from the parameters to the arguments. The instantiations are
  * kept on a holder type of the alias. */
+static int cStringMappingKind(TsSymbol *sym);   /* ts-template.h */
 static TsType *cGenericAliasReference(TsSymbol *sym, TsNode *ref) {
   TsNode *ad = sym->decls[0];
   int ntp = ad->typeParameters->n;
@@ -373,9 +374,15 @@ static TsType *cGenericAliasReference(TsSymbol *sym, TsNode *ref) {
   int n;
   TsType **args = cTypeArgsOfReference(h->typeParams, ntp, ref, &n);
   if (!args) return cUnported("generic alias arguments");
+  /* getTypeAliasInstantiation: an intrinsic alias (Uppercase, Lowercase, Capitalize, Uncapitalize) is the string
+   * mapping of its argument, before the instantiation cache */
+  TsType *body = cTypeFromNode(ad->type);
+  if (body == cIntrinsicMarkerType) {
+    if (ntp == 1 && n == 1 && cStringMappingKind(sym) >= 0) return cGetStringMappingType(sym, args[0]);
+    return cUnported("intrinsic type alias");
+  }
   TsInst *e = cInstFind(h, args, n);
   if (e) return e->val;
-  TsType *body = cTypeFromNode(ad->type);
   TsType *r = body == cErrorType ? body : cInstantiate(body, cCreateTypeMapper(h->typeParams, args, n));
   cInstAdd(h, args, n, r);
   return r;
