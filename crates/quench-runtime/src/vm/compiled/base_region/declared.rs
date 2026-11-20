@@ -11,7 +11,7 @@
 //! function never writes, which hold the fact at every row.
 
 use super::*;
-use super::super::declared_checks::{ARRAY, OBJECT_PLAIN};
+use super::super::declared_checks::{entry_checks, ARRAY, BASE_TESTED, EntryCheck, OBJECT_PLAIN};
 use super::super::lane_region::scalar::parameter_register;
 use crate::bytecode::{Function, Operand};
 use crate::staged::{DecodeContext, Operation};
@@ -37,14 +37,8 @@ const _: () = {
     assert!(tier::ARRAY == bits::ARRAY && tier::OBJECT_PLAIN == bits::OBJECT_PLAIN);
 };
 
-/// The language types a value's tag word alone decides, with no heap read: the members of the
-/// shared declared set (`declared_checks::DECLARED_CHECKED`) the b-jit's tag test decides
-/// (`declared_checks::BASE_TESTED`). A String, a Symbol or a BigInt needs a heap read or a family
-/// test this tier has no row for, so a set naming one gets no entry check.
-const TAG_DECIDED: u16 = super::super::declared_checks::DECLARED_CHECKED & super::super::declared_checks::BASE_TESTED;
-
-/// What a declared parameter type gives the b-jit's entry: exactly a Number, proved through the
-/// register's representation, or a set of tag-decided language types (`language` bits), tested at once.
+/// What a declared parameter's entry check gives the b-jit's entry: exactly a Number, proved through the
+/// register's representation, or a set of language types (`language` bits), tested by tag at once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::vm::compiled) enum DeclaredFact {
     Number,
@@ -52,20 +46,24 @@ pub(in crate::vm::compiled) enum DeclaredFact {
 }
 
 impl DeclaredFact {
-    /// The fact the declared set `declared` gives where an entry can check it; none for no fact
-    /// (`DECLARED_ANY`) or a set naming a type a tag does not decide.
-    pub(in crate::vm::compiled) fn of(declared: u16) -> Option<Self> {
-        if Type::languages(declared) == Type::NUMBER {
-            return Some(Self::Number);
+    /// The fact `check` gives where this tier's entry test decides it; None for a check this tier does not
+    /// emit yet. A direct string has no tag test here (it needs a heap read), so a String gets none.
+    pub(in crate::vm::compiled) fn of(check: EntryCheck) -> Option<Self> {
+        match check {
+            EntryCheck::Number => Some(Self::Number),
+            EntryCheck::Array => Some(Self::Languages(ARRAY)),
+            EntryCheck::PlainObject => Some(Self::Languages(OBJECT_PLAIN)),
+            // not emitted by this tier yet: a string is a heap word this tier has no tag row for
+            EntryCheck::String => None,
+            EntryCheck::Languages(languages) => (languages & !BASE_TESTED == 0).then_some(Self::Languages(languages)),
         }
-        (declared != 0 && declared & !TAG_DECIDED == 0).then_some(Self::Languages(declared))
     }
 }
 
 /// Each parameter of `function` with a checkable declared fact, by the register it enters in.
 fn declared(function: &Function) -> impl Iterator<Item = (Register, DeclaredFact)> + '_ {
-    function.declared_parameters().iter().enumerate()
-        .filter_map(|(index, declared)| Some((parameter_register(function, index)?, DeclaredFact::of(*declared)?)))
+    entry_checks(function)
+        .filter_map(|(index, check)| Some((parameter_register(function, index)?, DeclaredFact::of(check)?)))
 }
 
 /// The registers some instruction of `function` writes.
@@ -260,9 +258,14 @@ pub(super) fn branch_fold(function: &Function, constants: &[Value], pc: u32, ins
 mod tests {
     use super::*;
 
+    /// The fact a declared set gives the b-jit's entry, through the shared entry check.
+    fn fact(declared: u16) -> Option<DeclaredFact> {
+        EntryCheck::of(declared).and_then(DeclaredFact::of)
+    }
+
     #[test]
     fn a_declared_number_is_proved_through_its_representation() {
-        assert_eq!(DeclaredFact::of(language(ValueType::Number)), Some(DeclaredFact::Number));
+        assert_eq!(fact(language(ValueType::Number)), Some(DeclaredFact::Number));
     }
 
     #[test]
@@ -270,16 +273,17 @@ mod tests {
         for set in [language(ValueType::Boolean), language(ValueType::Null) | language(ValueType::Undefined),
             language(ValueType::Object), language(ValueType::Function), language(ValueType::Number) | language(ValueType::Undefined),
             ARRAY, OBJECT_PLAIN, ARRAY | OBJECT_PLAIN | language(ValueType::Undefined)] {
-            assert_eq!(DeclaredFact::of(set), Some(DeclaredFact::Languages(set)));
+            assert_eq!(fact(set), Some(DeclaredFact::Languages(set)));
         }
     }
 
     #[test]
     fn sets_a_tag_does_not_decide_get_no_check() {
-        assert_eq!(DeclaredFact::of(u16::MAX), None);
-        assert_eq!(DeclaredFact::of(language(ValueType::String)), None);
-        assert_eq!(DeclaredFact::of(language(ValueType::Number) | language(ValueType::BigInt)), None);
-        assert_eq!(DeclaredFact::of(0), None);
+        assert_eq!(fact(u16::MAX), None);
+        assert_eq!(fact(language(ValueType::String)), None);
+        assert_eq!(fact(language(ValueType::String) | language(ValueType::Undefined)), None);
+        assert_eq!(fact(language(ValueType::Number) | language(ValueType::BigInt)), None);
+        assert_eq!(fact(0), None);
     }
 
     #[test]
