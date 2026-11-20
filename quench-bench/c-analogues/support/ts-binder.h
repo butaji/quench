@@ -744,7 +744,10 @@ typedef struct TsFlow {
   struct TsFlow *target;        /* ReduceLabel: target and antecedents */
   struct TsFlow **redAnts;
   int nRedAnts;
-  uint32_t visit;               /* checker: the walk (cFlowStamp) that last visited the node */
+  uint32_t walkStamp;           /* checker: the flow walk (cFlowStamp) that last computed the node */
+  struct TsType *walkType;      /* checker: the flow type computed by that walk (NULL while in progress) */
+  uint8_t walkDone, walkRevisited, walkMismatch;   /* checker: loop labels: revisited while in progress */
+  struct TsType *walkSeen;      /* checker: the partial loop type that a revisit returned first */
 } TsFlow;
 
 /* the two unreachable nodes are created once by createBinder in TypeScript, so they are not counted */

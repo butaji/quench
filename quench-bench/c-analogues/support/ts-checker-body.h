@@ -163,14 +163,21 @@ static TsNode *cAssignTarget(TsNode *n) {
   }
 }
 
-/* containsMatchingReference: the target is the reference or an access chain that contains it */
+/* isMatchingReference: the target is the reference itself */
 static bool cAssignMatches(TsNode *target, CFlowRef *r) {
   TsNode *t = cSkipParens(target);
-  for (;;) {
-    if (cSameChain(t, r->node)) return true;
-    if (!t || (t->kind != TSK_PropertyAccessExpression && t->kind != TSK_ElementAccessExpression)) return false;
+  if (cSameChain(t, r->node)) return true;
+  return false;
+}
+
+/* containsMatchingReference: the target is an access chain that contains the reference (x.y = ... for x) */
+static bool cAssignContains(TsNode *target, CFlowRef *r) {
+  TsNode *t = cSkipParens(target);
+  while (t && (t->kind == TSK_PropertyAccessExpression || t->kind == TSK_ElementAccessExpression)) {
     t = cSkipParens(t->expression);
+    if (cSameChain(t, r->node)) return true;
   }
+  return false;
 }
 
 static bool cOuterNarrowingSafe(TsType *d) {
@@ -179,74 +186,291 @@ static bool cOuterNarrowingSafe(TsType *d) {
                       TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral | TF_Undefined | TF_Null | TF_Void)) != 0;
 }
 
-static bool cFlowRefWalk(TsFlow *f, CFlowRef *r) {
-  for (;;) {
-    if (!f) return false;
-    if (f->visit == cFlowStamp) return true;
-    f->visit = cFlowStamp;
-    uint32_t fl = f->flags;
-    if (fl & FF_Unreachable) return false;
-    if (fl & FF_Start) {
-      if (r->outer) return cOuterNarrowingSafe(r->declared);
-      return r->startInit;
+/* the type of a reference at the start of its container (getTypeAtFlowNode, FlowStart) */
+static TsType *cFlowStartType(CFlowRef *r) {
+  if (r->outer) return cOuterNarrowingSafe(r->declared) ? r->declared : cUnported("narrowing of an outer reference");
+  return r->startInit ? r->declared : cUnported("reference used before its assignment");
+}
+
+static bool cMatchesRefTree(TsNode *n, CFlowRef *r) { return cSameChain(n, r->node); }
+
+/* the object of a reference chain (x for x.y): the reference is the object of a member access */
+static bool cIsMemberOfRef(TsNode *n, CFlowRef *r) {
+  n = cSkipParens(n);
+  return n && (n->kind == TSK_PropertyAccessExpression || n->kind == TSK_ElementAccessExpression) && cMatchesRefTree(n->expression, r);
+}
+
+/* the truthiness narrowing of a type (narrowTypeByTruthiness, getTypeWithFacts): members that are falsy or truthy only */
+static TsType *cTruthiness(TsType *t, bool truthy) {
+  if (t == cErrorType || (t->flags & TF_Any)) return t;
+  bool isUnion = (t->flags & TF_Union) != 0;
+  int n = isUnion ? t->ntypes : 1;
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  int k = 0;
+  bool changed = false;
+  for (int i = 0; i < n; i++) {
+    TsType *m = isUnion ? t->types[i] : t;
+    uint32_t f = m->flags;
+    if (f & (TF_Undefined | TF_Null | TF_Void)) {
+      if (truthy) changed = true; else kept[k++] = m;
+    } else if (f & TF_BooleanLiteral) {
+      bool isTrue = m == cTrueType;
+      if (truthy == isTrue) kept[k++] = m; else changed = true;
+    } else if (f & (TF_Object | TF_NonPrimitive)) {
+      if (truthy) kept[k++] = m; else changed = true;
+    } else if (f & (TF_String | TF_Number | TF_BigInt)) {
+      if (!truthy) return cUnported("falsy narrowing of a primitive");
+      kept[k++] = m;
+    } else if (f & (TF_StringLiteral | TF_NumberLiteral | TF_BigIntLiteral)) {
+      bool falsy = (f & TF_StringLiteral) ? m->textLen == 0 : (f & TF_NumberLiteral) ? (m->litNum == 0 || m->litNum != m->litNum)
+                                                                                  : false;
+      if (f & TF_BigIntLiteral) return cUnported("truthiness of a bigint literal");
+      if (truthy != falsy) kept[k++] = m; else changed = true;
+    } else {
+      return cUnported("truthiness of another type");
     }
-    if (fl & FF_ReduceLabel) {
-      if (cRedOverrideN == 32) return false;
-      cRedOverrides[cRedOverrideN].target = f->target;
-      cRedOverrides[cRedOverrideN].ants = f->redAnts;
-      cRedOverrides[cRedOverrideN].n = f->nRedAnts;
-      cRedOverrideN++;
-      bool ok = cFlowRefWalk(f->ante, r);
-      cRedOverrideN--;
-      return ok;
+  }
+  if (!changed) return t;
+  if (k == 0) return cNeverType;
+  return k == 1 ? kept[0] : cGetUnionType(kept, k);
+}
+
+/* narrowTypeByEquality against undefined or null (=== and !==): the members comparable with the value, or the others */
+static TsType *cEqualityNarrow(TsType *t, TsType *value, bool assumeEq) {
+  if (t == cErrorType || (t->flags & TF_Any)) return t;
+  bool isUnion = (t->flags & TF_Union) != 0;
+  int n = isUnion ? t->ntypes : 1;
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  int k = 0;
+  bool changed = false;
+  bool isUndef = value == cUndefinedType;
+  for (int i = 0; i < n; i++) {
+    TsType *m = isUnion ? t->types[i] : t;
+    bool unit = (m->flags & (isUndef ? (TF_Undefined | TF_Void) : TF_Null)) != 0;
+    if (assumeEq) {
+      if (m->flags & (TF_Unknown | TF_TypeParameter)) return cUnported("equality narrowing of an unknown or type parameter");
+      if (unit) kept[k++] = m;
+      else changed = true;
+    } else {
+      if (m->flags & (TF_Unknown | TF_TypeParameter)) return cUnported("inequality narrowing of an unknown or type parameter");
+      if (m->flags & (TF_Undefined | TF_Null) && (isUndef ? (m->flags & TF_Undefined) : (m->flags & TF_Null))) changed = true;
+      else kept[k++] = m;
     }
-    if (fl & (FF_BranchLabel | FF_LoopLabel)) {
-      TsFlow **ants = f->labelAnts;
-      int n = f->nLabelAnts;
-      for (int i = cRedOverrideN - 1; i >= 0; i--)
-        if (cRedOverrides[i].target == f) { ants = cRedOverrides[i].ants; n = cRedOverrides[i].n; break; }
-      for (int i = 0; i < n; i++)
-        if (!cFlowRefWalk(ants[i], r)) return false;
-      return true;
+  }
+  if (!changed) return t;
+  if (k == 0) return cNeverType;
+  return k == 1 ? kept[0] : cGetUnionType(kept, k);
+}
+
+/* the type of a callee has a type predicate or an assertion signature (narrowing by a call) */
+static bool cCalleeHasPredicate(TsNode *call, bool *known) {
+  *known = false;
+  TsType *f = cExprType(call->expression);
+  if (f == cErrorType || !(f->flags & TF_Object)) return false;
+  cResolveSignatures(f);
+  for (int i = 0; i < f->ncall; i++) {
+    TsNode *d = f->call[i].decl;
+    if (d && d->type && d->type->kind == TSK_TypePredicate) { *known = true; return true; }
+  }
+  *known = true;
+  return false;
+}
+
+/* narrowing of a flow type by a condition (narrowType): the reference is matched directly, through `!`, comparisons with
+ * undefined and null, and calls whose arguments include it; a condition that mentions it otherwise is unported */
+static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r) {
+  c = cSkipParens(c);
+  if (t == cErrorType || !cMentionsText(c, r->text, r->len)) return t;
+  if (c->kind == TSK_PrefixUnaryExpression && c->extra == TSK_ExclamationToken) return cNarrowByCondition(c->operand, !truthy, t, r);
+  if (cMatchesRefTree(c, r)) return cTruthiness(t, truthy);
+  if (c->kind == TSK_BinaryExpression) {
+    int op = c->operatorToken->kind;
+    bool isEq = op == TSK_EqualsEqualsEqualsToken || op == TSK_EqualsEqualsToken;
+    bool isNe = op == TSK_ExclamationEqualsEqualsToken || op == TSK_ExclamationEqualsToken;
+    if (isEq || isNe) {
+      TsNode *l = cSkipParens(c->left), *rt = cSkipParens(c->right);
+      bool lm = cMatchesRefTree(l, r), rm = cMatchesRefTree(rt, r);
+      if (lm || rm) {
+        TsNode *other = lm ? rt : l;
+        bool strictOp = op == TSK_EqualsEqualsEqualsToken || op == TSK_ExclamationEqualsEqualsToken;
+        if (other->kind == TSK_NullKeyword && strictOp) return cEqualityNarrow(t, cNullType, isEq == truthy);
+        if (other->kind == TSK_Identifier && other->textLen == 9 && memcmp(other->text, "undefined", 9) == 0 && strictOp) {
+          TsSymbol *u = cResolveValueName(other, bnC("undefined"));
+          if (u == cUndefinedSymbol || u == NULL) return cEqualityNarrow(t, cUndefinedType, isEq == truthy);
+        }
+        return cUnported("equality narrowing with another value");
+      }
+      /* a discriminant: a property of the reference compared (narrowTypeByDiscriminant for a union) */
+      if (cIsMemberOfRef(l, r) || cIsMemberOfRef(rt, r)) return (t->flags & TF_Union) ? cUnported("discriminant narrowing") : t;
     }
-    if (fl & FF_Assignment) {
-      TsNode *t = cAssignTarget(f->node);
-      if (t && cAssignMatches(t, r)) return r->nonUnion;
-      if (t && t->kind != TSK_Identifier && t->kind != TSK_PropertyAccessExpression && t->kind != TSK_ElementAccessExpression &&
-          cMentionsText(t, r->text, r->len))
-        return false;
-      f = f->ante;
-      continue;
-    }
-    if (fl & (FF_TrueCondition | FF_FalseCondition)) {
-      if (cMentionsText(f->node, r->text, r->len)) return false;
-      f = f->ante;
-      continue;
-    }
-    if (fl & FF_SwitchClause) {
-      if (cMentionsText(f->node->expression, r->text, r->len)) return false;
-      f = f->ante;
-      continue;
-    }
-    if (fl & FF_Call) {
-      if (f->node->arguments)
-        for (int i = 0; i < f->node->arguments->n; i++)
-          if (cMentionsText(f->node->arguments->v[i], r->text, r->len)) return false;
-      f = f->ante;
-      continue;
-    }
-    f = f->ante;   /* assignments of array mutations and the other flow kinds do not narrow a declared type */
+  }
+  if (c->kind == TSK_CallExpression && c->arguments) {
+    bool argMentions = false;
+    for (int i = 0; i < c->arguments->n; i++) if (cMentionsText(c->arguments->v[i], r->text, r->len)) argMentions = true;
+    if (!argMentions) return t;
+    bool known;
+    bool pred = cCalleeHasPredicate(c, &known);
+    if (known && !pred) return t;
+    return cUnported("narrowing by a call");
+  }
+  if (c->kind == TSK_PropertyAccessExpression || c->kind == TSK_ElementAccessExpression) {
+    if (cIsMemberOfRef(c, r)) return (t->flags & TF_Union) ? cUnported("discriminant truthiness") : t;
+  }
+  return cUnported("condition that mentions the reference");
+}
+
+/* getAssignmentReducedType: the members of the declared union that the assigned type may be assigned to */
+static TsType *cAssignmentReduced(TsType *declared, TsType *assigned) {
+  if (declared == assigned) return declared;
+  if (assigned == cNeverType) return assigned;
+  if (!(declared->flags & TF_Union)) return declared;
+  bool aUnion = (assigned->flags & TF_Union) != 0;
+  TsType **kept = ts_arena_alloc(sizeof(TsType *) * (size_t)declared->ntypes);
+  int k = 0;
+  for (int i = 0; i < declared->ntypes; i++) {
+    TsType *m = declared->types[i];
+    bool maybe = false;
+    if (aUnion) {
+      for (int j = 0; j < assigned->ntypes && !maybe; j++) maybe = cIsRelatedWith(assigned->types[j], m, REL_Assignable);
+    } else maybe = cIsRelatedWith(assigned, m, REL_Assignable);
+    if (maybe) kept[k++] = m;
+  }
+  if (k == 0) return cNeverType;
+  TsType *reduced = k == 1 ? kept[0] : cGetUnionType(kept, k);
+  if (reduced == cErrorType) return reduced;
+  return cIsRelatedWith(assigned, reduced, REL_Assignable) ? reduced : declared;
+}
+
+/* the type assigned by an assignment flow node (getAssignedType): the initializer, the right side, or number for ++ and -- */
+static TsType *cAssignedType(TsNode *n) {
+  switch (n->kind) {
+    case TSK_VariableDeclaration:
+      if (!n->initializer || (n->name && n->name->kind != TSK_Identifier)) return cUnported("assignment of a pattern");
+      return cExprType(n->initializer);
+    case TSK_BinaryExpression:
+      if (n->operatorToken->kind != TSK_EqualsToken) return cUnported("compound assignment");
+      return cExprType(n->right);
+    case TSK_PrefixUnaryExpression: case TSK_PostfixUnaryExpression: return cNumberType;
+    default: return cUnported("assignment of another kind");
   }
 }
 
-/* getFlowTypeOfReference: the declared type, or the error type when the flow may narrow it */
+/* the flow type of a reference at a flow node (getTypeAtFlowNode) */
+static TsType *cFlowWalkType(TsFlow *f, CFlowRef *r);
+
+static TsType *cFlowWalkNode(TsFlow *f, CFlowRef *r) {
+  uint32_t fl = f->flags;
+  TsType *declared = r->declared;
+  if (fl & FF_Unreachable) return cNeverType;
+  if (fl & FF_Start) return cFlowStartType(r);
+  if (fl & FF_ReduceLabel) {
+    if (cRedOverrideN == 32) return cUnported("reduce label depth");
+    cRedOverrides[cRedOverrideN].target = f->target;
+    cRedOverrides[cRedOverrideN].ants = f->redAnts;
+    cRedOverrides[cRedOverrideN].n = f->nRedAnts;
+    cRedOverrideN++;
+    TsType *t = cFlowWalkType(f->ante, r);
+    cRedOverrideN--;
+    return t;
+  }
+  if (fl & (FF_BranchLabel | FF_LoopLabel)) {
+    TsFlow **ants = f->labelAnts;
+    int n = f->nLabelAnts;
+    for (int i = cRedOverrideN - 1; i >= 0; i--)
+      if (cRedOverrides[i].target == f) { ants = cRedOverrides[i].ants; n = cRedOverrides[i].n; break; }
+    if (n == 0) return cNeverType;
+    TsType **ts = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
+    int k = 0;
+    bool same = true, subtypeReduction = false;
+    for (int i = 0; i < n; i++) {
+      /* a loop label's partial type (the union so far) is what a revisit from its back edge sees (getTypeAtFlowLoopLabel) */
+      TsType *t = cFlowWalkType(ants[i], r);
+      if (t == cErrorType) return t;
+      if (t == cNeverType) continue;
+      if (k > 0 && t != ts[0]) same = false;
+      ts[k++] = t;
+      if (t != declared && cIsRelatedWith(t, declared, REL_Subtype)) subtypeReduction = true;
+      if (fl & FF_LoopLabel) f->walkType = k ? (same ? ts[0] : (subtypeReduction ? cUnionWithSubtypesRemoved(ts, k) : cGetUnionType(ts, k))) : cNeverType;
+    }
+    TsType *res;
+    if (k == 0) res = cNeverType;
+    else if (same) res = ts[0];
+    else if (subtypeReduction) res = cUnionWithSubtypesRemoved(ts, k);
+    else res = cGetUnionType(ts, k);
+    if (res == cErrorType) return res;
+    if ((fl & FF_LoopLabel) && f->walkRevisited && (f->walkMismatch || f->walkSeen != res)) return cUnported("loop flow without a fixed point");
+    return res;
+  }
+  if (fl & FF_Assignment) {
+    TsNode *tg = cAssignTarget(f->node);
+    if (tg && cAssignMatches(tg, r)) {
+      if (r->nonUnion) return declared;
+      TsType *assigned = cAssignedType(f->node);
+      if (assigned == cErrorType) return assigned;
+      return cAssignmentReduced(declared, assigned);
+    }
+    if (tg && cAssignContains(tg, r)) return r->nonUnion ? declared : cUnported("assignment to a member of a union");
+    if (tg && tg->kind != TSK_Identifier && tg->kind != TSK_PropertyAccessExpression && tg->kind != TSK_ElementAccessExpression &&
+        cMentionsText(tg, r->text, r->len))
+      return cUnported("destructuring assignment of the reference");
+    return cFlowWalkType(f->ante, r);
+  }
+  if (fl & (FF_TrueCondition | FF_FalseCondition)) {
+    TsType *t = cFlowWalkType(f->ante, r);
+    if (t == cErrorType) return t;
+    return cNarrowByCondition(f->node, (fl & FF_TrueCondition) != 0, t, r);
+  }
+  if (fl & FF_SwitchClause) {
+    TsType *t = cFlowWalkType(f->ante, r);
+    if (t == cErrorType) return t;
+    if (cMentionsText(f->node->expression, r->text, r->len)) return cUnported("switch narrowing");
+    return t;
+  }
+  if (fl & FF_Call) {
+    TsType *t = cFlowWalkType(f->ante, r);
+    if (t == cErrorType) return t;
+    bool argMentions = false;
+    if (f->node->arguments)
+      for (int i = 0; i < f->node->arguments->n; i++)
+        if (cMentionsText(f->node->arguments->v[i], r->text, r->len)) argMentions = true;
+    if (!argMentions) return t;
+    bool known;
+    bool pred = cCalleeHasPredicate(f->node, &known);
+    if (known && !pred) return t;
+    return cUnported("assertion call narrowing");
+  }
+  return cFlowWalkType(f->ante, r);
+}
+
+static TsType *cFlowWalkType(TsFlow *f, CFlowRef *r) {
+  if (!f) return cUnported("flow node without antecedent");
+  if (f->walkStamp == cFlowStamp) {
+    if (f->walkDone) return f->walkType;
+    /* in progress: only a loop label is revisited, and it gives the partial union so far */
+    if (!(f->flags & FF_LoopLabel)) return cUnported("flow cycle");
+    if (!f->walkRevisited) { f->walkRevisited = 1; f->walkSeen = f->walkType ? f->walkType : cNeverType; }
+    else if (f->walkSeen != (f->walkType ? f->walkType : cNeverType)) f->walkMismatch = 1;
+    return f->walkType ? f->walkType : cNeverType;
+  }
+  f->walkStamp = cFlowStamp;
+  f->walkType = NULL;
+  f->walkDone = 0;
+  f->walkRevisited = 0;
+  f->walkMismatch = 0;
+  f->walkSeen = NULL;
+  TsType *t = cFlowWalkNode(f, r);
+  f->walkType = t;
+  f->walkDone = 1;
+  return t;
+}
+
+/* getFlowTypeOfReference: the declared type when no narrowing applies, else the narrowed type (ported forms only) */
 static TsType *cFlowTypeOfReference(TsNode *ref, CFlowRef *r) {
   TsType *d = r->declared;
   if (!ref->flowNode || (d->flags & (TF_Undefined | TF_Null | TF_Void | TF_Never))) return d;
   cFlowStamp++;
   r->nonUnion = !(d->flags & TF_Union);
-  if (cFlowRefWalk(ref->flowNode, r)) return d;
-  return cUnported("flow narrowing of a reference");
+  return cFlowWalkType(ref->flowNode, r);
 }
 
 /* the declaration of a symbol (the first one for a merged symbol) */
