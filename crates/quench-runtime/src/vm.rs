@@ -491,15 +491,20 @@ impl Frame {
         self.registers.clear();
         self.registers.reserve(count);
         let registers = self.registers.as_mut_ptr();
+        let window_end = base + parameters.len();
         // SAFETY: capacity holds `count` values; every slot below `count` is
-        // written before the length covers it, parameters in their window.
+        // written before the length covers it. The fills cover only the slots
+        // outside the parameter window, which the copy below writes.
         unsafe {
-            for index in 0..count {
+            for index in 0..base {
                 registers.add(index).write(initial);
             }
             // A few values: an inline copy, not a library call.
             for (offset, value) in parameters.iter().enumerate() {
                 registers.add(base + offset).write(*value);
+            }
+            for index in window_end..count {
+                registers.add(index).write(initial);
             }
             self.registers.set_len(count);
         }
