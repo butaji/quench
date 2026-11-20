@@ -140,6 +140,7 @@ typedef struct {
   bool startInit;        /* the reference is initialized at the start of its container (parameter, assigned, ...) */
   bool jump;             /* a const reference continues at the creation flow of each function value between it and its declaration */
   TsNode *flowContainer; /* the container the walk ends at (checkIdentifier's flowContainer) */
+  bool declaredAtStart;  /* an outer mutable variable (let or var): its flow start is its declared type, whatever the union */
 } CFlowRef;
 
 static uint32_t cFlowStamp;
@@ -184,7 +185,7 @@ static bool cOuterNarrowingSafe(TsType *d) {
 /* the type of a reference at the start of its container (getTypeAtFlowNode, FlowStart) */
 static TsType *cFlowStartType(CFlowRef *r) {
   if (r->jump) return r->startInit ? r->declared : cUnported("reference used before its assignment");
-  if (r->outer) return cOuterNarrowingSafe(r->declared) ? r->declared : cUnported("narrowing of an outer reference");
+  if (r->outer) return (r->declaredAtStart || cOuterNarrowingSafe(r->declared)) ? r->declared : cUnported("narrowing of an outer reference");
   return r->startInit ? r->declared : cUnported("reference used before its assignment");
 }
 
@@ -728,7 +729,11 @@ static TsType *cIdentifierType(TsNode *e) {
       flowC = cFlowContainerOf(flowC);
     jump = flowC != NULL;
   }
-  CFlowRef r = { e, e->text, e->textLen, d, false, outer, startInit, jump, flowC };
+  /* a let or var of an enclosing function is not narrowed through the function value that creates the reference
+   * (isConstantVariable is false): the walk of the reference's own function starts at the declared type */
+  bool mutableOuter = outer && !jump && decl && decl->kind == TSK_VariableDeclaration && decl->parent &&
+                      decl->parent->kind == TSK_VariableDeclarationList && (decl->parent->flags & 7u) != TNF_Const;
+  CFlowRef r = { e, e->text, e->textLen, d, false, outer, startInit, jump, flowC, mutableOuter };
   return cFlowTypeOfReference(e, &r);
 }
 
@@ -744,7 +749,7 @@ static TsType *cAccessReferenceFlow(TsNode *e, TsType *declared, bool startInit)
     text = k->text;
     len = k->textLen;
   }
-  CFlowRef r = { e, text, len, declared, false, false, startInit, false, NULL };
+  CFlowRef r = { e, text, len, declared, false, false, startInit, false, NULL, false };
   return cFlowTypeOfReference(e, &r);
 }
 
