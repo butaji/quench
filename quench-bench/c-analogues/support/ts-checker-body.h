@@ -3827,18 +3827,25 @@ static TsType *cExprWorker(TsNode *e) {
          * a literal return of the body is kept when the contextual return type has a literal or type variable */
         bool err = false;
         CSig *cs = cContextualSignature(e, &err);
-        if (err || !cs) return cUnported("function expression with a contextual type");
-        /* assignContextualParameterTypes: the parameters take their types in this check, while the contextual signature is the
-         * one of the candidate (a request made later has no context, and a refusal would be cached on the symbol) */
-        if (e->parameters) for (int i = 0; i < e->parameters->n; i++)
-          if (!e->parameters->v[i]->type && e->parameters->v[i]->symbol) (void)cTypeOfSymbol(e->parameters->v[i]->symbol);
-        if (!e->type) {
-          TsType *cr = cReturnTypeOf(cs);
-          if (cr == cErrorType) return cr;
-          if (cHasLiteralOrVariable(cr)) {
-            TsType *rt = cInferReturnType(e);
-            if (rt == cErrorType) return rt;
-            if (e->retLiteral) return cUnported("literal return of a contextually typed function");
+        if (err) return cUnported("function expression with a contextual type");
+        if (!cs) {
+          /* no contextual signature (an any context, or none applicable): the parameters take no contextual type, so they
+           * must be annotated (an unannotated one would be implicitly any) */
+          if (e->parameters) for (int i = 0; i < e->parameters->n; i++)
+            if (!e->parameters->v[i]->type) return cUnported("function expression with a contextual type");
+        } else {
+          /* assignContextualParameterTypes: the parameters take their types in this check, while the contextual signature is the
+           * one of the candidate (a request made later has no context, and a refusal would be cached on the symbol) */
+          if (e->parameters) for (int i = 0; i < e->parameters->n; i++)
+            if (!e->parameters->v[i]->type && e->parameters->v[i]->symbol) (void)cTypeOfSymbol(e->parameters->v[i]->symbol);
+          if (!e->type) {
+            TsType *cr = cReturnTypeOf(cs);
+            if (cr == cErrorType) return cr;
+            if (cHasLiteralOrVariable(cr)) {
+              TsType *rt = cInferReturnType(e);
+              if (rt == cErrorType) return rt;
+              if (e->retLiteral) return cUnported("literal return of a contextually typed function");
+            }
           }
         }
       }
