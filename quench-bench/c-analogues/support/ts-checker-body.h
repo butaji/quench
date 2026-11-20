@@ -3413,7 +3413,7 @@ static TsType *cTupleArrayLiteralType(TsNode *e) {
     if (t == cErrorType) return t;
     ts[i] = t;
   }
-  return cArrayLiteralOf(cTupleReference(ts, n));
+  return cArrayLiteralOf(cTupleReference(ts, n, false));
 }
 
 /* the type of an object literal without a contextual type (createObjectLiteralType over the literal's symbol) */

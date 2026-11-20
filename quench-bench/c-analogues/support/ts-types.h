@@ -46,7 +46,8 @@ enum { OF_Class = 1, OF_Interface = 2, OF_Reference = 4, OF_Tuple = 8, OF_Anonym
        OF_PrimitiveUnion = 256,   /* unions of no object, any, void, never or intersection members */
        OF_ContainsIntersections = 0x4000000,   /* unions with an intersection member (ObjectFlags.ContainsIntersections) */
        OF_NeverIntComputed = 0x1000000,        /* intersections: IsNeverIntersectionComputed */
-       OF_NeverIntersection = 0x2000000 };    /* intersections: IsNeverIntersection (a never-reduced property) */
+       OF_NeverIntersection = 0x2000000,       /* intersections: IsNeverIntersection (a never-reduced property) */
+       OF_ReadonlyTuple = 0x8000000 };         /* tuple targets: readonly (createTupleTargetType with readonly) */
 
 typedef struct CSig CSig;
 typedef struct CIndexInfo { struct TsType *keyType, *type; bool isReadonly; TsNode *decl; } CIndexInfo;
@@ -912,7 +913,7 @@ static TsType *cUniqueSymbolType(TsNode *decl) {
 }
 
 static TsType *cTypeFromNodeWorker(TsNode *n);
-static TsType *cTupleReference(TsType **elems, int n);
+static TsType *cTupleReference(TsType **elems, int n, bool readonly);
 
 /* getTypeFromTypeNode (67684): the type of a type node, cached on the node (links.resolvedType) */
 static TsType *cTypeFromNode(TsNode *n) {
@@ -1174,7 +1175,7 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
           if (el == cErrorType) return cErrorType;
           return cTypeReference(cGlobalReadonlyArrayDeclared(), &el, 1);
         }
-        if (!n->type || n->type->kind == TSK_TupleType) return cUnported("readonly tuple");
+        if (!n->type) return cUnported("readonly operator without an operand");
         return cTypeFromNode(n->type);
       }
       if (n->extra != TSK_UniqueKeyword) return cUnported("type operator");
@@ -1255,7 +1256,9 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
         el[i] = cTypeFromNode(e);
         if (el[i] == cErrorType) return cErrorType;
       }
-      return cTupleReference(el, cnt);
+      /* a tuple under the readonly type operator is readonly (getTypeFromArrayOrTupleTypeNode) */
+      bool readonly = n->parent && n->parent->kind == TSK_TypeOperator && n->parent->extra == TSK_ReadonlyKeyword;
+      return cTupleReference(el, cnt, readonly);
     }
     case TSK_ArrayType: {
       /* createArrayType: Array<T>, a reference to the global generic interface */
@@ -1312,11 +1315,11 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
 /* tuple targets by arity (createTupleTargetType): the target has one type parameter per element and its base
  * type is Array<T0 | T1 | ...>, so the members of a tuple are those of the array; element properties are not
  * ported */
-static TsType *cTupleTargets[16];
-static TsType *cTupleTarget(int arity) {
-  if (arity < 16 && cTupleTargets[arity]) return cTupleTargets[arity];
+static TsType *cTupleTargets[2][16];
+static TsType *cTupleTarget(int arity, bool readonly) {
+  if (arity < 16 && cTupleTargets[readonly][arity]) return cTupleTargets[readonly][arity];
   TsType *tg = cNewType(TF_Object);
-  tg->objectFlags = OF_Tuple | OF_Interface;
+  tg->objectFlags = OF_Tuple | OF_Interface | (readonly ? OF_ReadonlyTuple : 0);
   TsSymbol *sym = cCreateSymbol(SF_TypeLiteral, bnC("__tuple"));
   tg->symbol = sym;
   tg->typeParams = ts_arena_alloc(sizeof(TsType *) * (size_t)(arity ? arity : 1));
@@ -1332,15 +1335,15 @@ static TsType *cTupleTarget(int arity) {
   TsType *elem = cNeverType;
   if (arity) elem = cGetUnionType(tg->typeParams, arity);
   tg->bases = ts_arena_alloc(sizeof(TsType *));
-  tg->bases[0] = cTypeReference(cGlobalArrayDeclared(), &elem, 1);
+  tg->bases[0] = cTypeReference(readonly ? cGlobalReadonlyArrayDeclared() : cGlobalArrayDeclared(), &elem, 1);
   tg->nbases = 1;
   tg->basesDone = true;
-  if (arity < 16) cTupleTargets[arity] = tg;
+  if (arity < 16) cTupleTargets[readonly][arity] = tg;
   return tg;
 }
 
-static TsType *cTupleReference(TsType **elems, int n) {
-  TsType *tg = cTupleTarget(n);
+static TsType *cTupleReference(TsType **elems, int n, bool readonly) {
+  TsType *tg = cTupleTarget(n, readonly);
   TsType *r = cTypeReference(tg, elems, n);
   r->objectFlags |= OF_Tuple;
   return r;

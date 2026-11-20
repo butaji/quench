@@ -841,7 +841,7 @@ static TsType *cSigRestAt(CSig *src, CParams *ps, TsType *srest, int pos, bool *
     if (!*ok) return cErrorType;
     return cTypeReference(cGlobalArrayDeclared(), &el, 1);
   }
-  if (!srest && pos >= ps->n) return cTupleReference(NULL, 0);
+  if (!srest && pos >= ps->n) return cTupleReference(NULL, 0, false);
   *ok = false;
   (void)src;
   return cErrorType;
@@ -910,6 +910,20 @@ static bool cInferSignature(CInfer *c, CSig *src0, CSig *tgt) {
 }
 
 static void cInferObjectsBody(CInfer *c, TsType *source, TsType *target);
+/* isArrayOrTupleType: an Array or ReadonlyArray reference, or a tuple reference */
+static bool cIsArrayOrTupleRef(TsType *t) {
+  return (t->objectFlags & OF_Reference) && t->target &&
+         (t->target == cGlobalArrayDeclared() || t->target == cGlobalReadonlyArrayDeclared() || (t->target->objectFlags & OF_Tuple));
+}
+/* inferFromIndexTypes of an array target: the number index of the source against the number index of the target */
+static void cInferArrayIndexTypes(CInfer *c, TsType *source, TsType *target) {
+  cResolveIndexInfos(source);
+  cResolveIndexInfos(target);
+  TsType *si = NULL, *ti = NULL;
+  for (int i = 0; i < source->nindex; i++) if (source->index[i].keyType == cNumberType) si = source->index[i].type;
+  for (int i = 0; i < target->nindex; i++) if (target->index[i].keyType == cNumberType) ti = target->index[i].type;
+  if (si && ti) cInferFrom(c, si, ti);
+}
 /* inferFromObjectTypes: the properties of the target that the source has, then the signatures */
 static void cInferObjects(CInfer *c, TsType *source, TsType *target) {
   /* invokeOnce: a pair already being inferred is not inferred again (node's circularity), and the depth is bounded */
@@ -1018,7 +1032,14 @@ static void cInferFrom(CInfer *c, TsType *source, TsType *target) {
   }
   if (target->flags & TF_Object) {
     if (!(source->flags & TF_Object)) source = cApparentType(source);
-    if (source && (source->flags & TF_Object)) cInferObjects(c, source, target);
+    if (!source || !(source->flags & TF_Object)) return;
+    /* inferFromObjectTypes: an array or tuple source against an Array or ReadonlyArray target infers from the index types */
+    if ((target->objectFlags & OF_Reference) && target->target && (target->target == cGlobalArrayDeclared() || target->target == cGlobalReadonlyArrayDeclared()) &&
+        cIsArrayOrTupleRef(source)) {
+      cInferArrayIndexTypes(c, source, target);
+      return;
+    }
+    cInferObjects(c, source, target);
   }
 }
 
@@ -1384,6 +1405,16 @@ static bool cHasTypeParamMember(TsType *t) {
   return false;
 }
 
+/* isReadonlyArrayType or a readonly tuple reference, and a mutable tuple target (structuredTypeRelatedToWorker: a tuple target
+ * that is not readonly takes no readonly array or tuple) */
+static bool cIsReadonlyArrayOrTuple(TsType *s) {
+  return (s->objectFlags & OF_Reference) && s->target &&
+         (s->target == cGlobalReadonlyArrayDeclared() || (s->target->objectFlags & OF_ReadonlyTuple));
+}
+static bool cIsMutableTupleTarget(TsType *t) {
+  return (t->objectFlags & OF_Reference) && t->target && (t->target->objectFlags & OF_Tuple) && !(t->target->objectFlags & OF_ReadonlyTuple);
+}
+
 static int cStructuredRelated(TsType *s, TsType *t, int st) {
   if (s->flags & TF_Union) return cCurRel == REL_Comparable ? cSomeTypeRelatedToType(s, t, st) : cEachTypeRelatedToType(s, t, st);
   if (t->flags & TF_Union) {
@@ -1427,6 +1458,7 @@ static int cStructuredRelated(TsType *s, TsType *t, int st) {
   if (t->flags & TF_TypeParameter) return RR_False;
   if (s->flags & TF_Object) {
     if (!(t->flags & TF_Object)) return RR_False;
+    if (cIsMutableTupleTarget(t) && cIsReadonlyArrayOrTuple(s)) return RR_False;
     return cStructuredObjects(s, t, st);
   }
   /* a primitive source is compared through its apparent type */
