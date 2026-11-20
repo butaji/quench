@@ -456,6 +456,7 @@ static TsType *cNarrowByCondition(TsNode *c, bool truthy, TsType *t, CFlowRef *r
       }
       bool lm = cMatchesRefTree(l, r), rm = cMatchesRefTree(rt, r);
       if (lm || rm) {
+        if (t->flags & TF_Any) return t;   /* narrowTypeByEquality: an any type is kept */
         TsNode *other = lm ? rt : l;
         TsType *ov = cExprType(other);
         if (ov == cErrorType) return cUnported("equality with an unported value");
