@@ -649,6 +649,17 @@ static int cStructuredObjects(TsType *s, TsType *t, int st) {
 /* unionOrIntersectionRelatedTo / structuredTypeRelatedToWorker (the decomposition part) */
 static int cTypeRelatedToSome(TsType *s, TsType *t, int st) {
   for (int i = 0; i < t->ntypes; i++) if (t->types[i] == s) return RR_True;   /* containsType */
+  /* typeRelatedToSomeType: a string, boolean or bigint literal (and a number literal for the subtype relations)
+   * is looked up in a primitive union instead of comparing each member */
+  if ((t->objectFlags & OF_PrimitiveUnion) && !(s->flags & TF_EnumLiteral) &&
+      ((s->flags & (TF_StringLiteral | TF_BooleanLiteral | TF_BigIntLiteral)) ||
+       ((cCurRel == REL_Subtype || cCurRel == REL_StrictSubtype) && (s->flags & TF_NumberLiteral)))) {
+    TsType *prim = (s->flags & TF_StringLiteral) ? cStringType : (s->flags & TF_NumberLiteral) ? cNumberType
+                 : (s->flags & TF_BigIntLiteral) ? cBigIntType : NULL;
+    bool found = false;
+    for (int i = 0; prim && i < t->ntypes && !found; i++) found = t->types[i] == prim;
+    return found ? RR_True : RR_False;
+  }
   int result = RR_False;
   for (int i = 0; i < t->ntypes; i++) {
     int r = cIsRelatedTo(s, t->types[i], st);
@@ -786,7 +797,11 @@ static int cIsRelatedTo(TsType *s, TsType *t, int st) {
     }
   }
   cRelDepth++;
-  int r = cRecursiveRelated(s, t, st);
+  /* skipCaching (isRelatedTo): a union source of fewer than four members against a non-union target, or a union
+   * target of fewer than four members against a non-structured source, is related without a cache entry */
+  bool skipCaching = ((s->flags & TF_Union) && s->ntypes < 4 && !(t->flags & TF_Union)) ||
+                     ((t->flags & TF_Union) && t->ntypes < 4 && !cIsStructured(s));
+  int r = skipCaching ? cStructuredRelated(s, t, st) : cRecursiveRelated(s, t, st);
   cRelDepth--;
   return r;
 }

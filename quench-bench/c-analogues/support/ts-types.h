@@ -42,7 +42,8 @@ enum {
 
 /* ObjectFlags (TypeScript 5.9.2) */
 enum { OF_Class = 1, OF_Interface = 2, OF_Reference = 4, OF_Tuple = 8, OF_Anonymous = 16, OF_Mapped = 32, OF_Instantiated = 64,
-       OF_ObjectLiteral = 128 };
+       OF_ObjectLiteral = 128,
+       OF_PrimitiveUnion = 256 };   /* unions of no object, any, void, never or intersection members */
 
 typedef struct CSig CSig;
 typedef struct CIndexInfo { struct TsType *keyType, *type; bool isReadonly; TsNode *decl; } CIndexInfo;

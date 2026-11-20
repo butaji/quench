@@ -471,6 +471,11 @@ static TsType *cGetUnionType(TsType **in, int n) {
   TsType *u = cNewType(TF_Union);
   u->types = cCopyTypes(v, nm);
   u->ntypes = nm;
+  uint32_t includes = 0;
+  for (int i = 0; i < nm; i++) includes |= v[i]->flags;
+  /* getUnionTypeFromSortedList: PrimitiveUnion unless a member is any, unknown, void, never, object,
+   * intersection or substitution */
+  if (!(includes & (TF_Any | TF_Unknown | TF_Void | TF_Never | TF_Object | TF_Intersection))) u->objectFlags |= OF_PrimitiveUnion;
   cHashPut(cUnionTab, v, nm, u);
   return u;
 }
