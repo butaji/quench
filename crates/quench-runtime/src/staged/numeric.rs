@@ -392,9 +392,11 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             };
             match operation {
                 NumberUnary::Plus => {
+                    // The int's word as the frame holds an int (`int_result`): the operand is the raw int32.
+                    let result = frame.int_result(stage, value);
                     let fact = frame.int_fact();
-                    frame.write(stage, destination, value, fact);
-                    Step::Value(value)
+                    frame.write(stage, destination, result, fact);
+                    Step::Value(result)
                 }
                 NumberUnary::Negate => {
                     // `-0` is no int32: a zero operand leaves, as `i32::MIN`'s overflow does; the VM's negation takes both.
