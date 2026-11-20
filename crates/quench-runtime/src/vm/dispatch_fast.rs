@@ -8514,6 +8514,16 @@ fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
+    // A function of a program with a loaded AOT image takes the image's body and no other
+    // (`install_ahead_lane_body`): no warm-up, no runtime tier.
+    if vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some() {
+        let published = own.entry_published();
+        let installed = own.install_ahead_lane_body(body_entry_row::<H>(), || vm.install_ahead_body(code, function, None, &[]));
+        if !published && own.entry_published() {
+            unsafe { self::vm(cx) }.unprove_view_entries(own);
+        }
+        return installed;
+    }
     let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let specialize = |work: super::compiled::LaneBodyWork| {
         let work = match work {

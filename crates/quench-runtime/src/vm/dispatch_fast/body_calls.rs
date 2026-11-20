@@ -430,11 +430,18 @@ fn body_run_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &
     let leave = move |resume: Ip, acc: Value| finish(cx, depth, resume, acc, constructs);
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::super::program_store::derived_lane_view);
-    let Some(own) = own else { return leave(start, Value::UNDEFINED) };
+    let Some(own) = own else {
+        if crate::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_LEAVE callee={} why=no-view", target.function); }
+        return leave(start, Value::UNDEFINED)
+    };
     let respecializes = own.respecializes();
     if respecializes || own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, respecializes, &[], None); }
     let Some(method) = own.body_view_in_lane().filter(|method| body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
+        if crate::trace::Channel::BodyLeave.on() {
+            let why = if own.body_view_in_lane().is_some() { "not-admitted" } else if own.warming() { "warming" } else { "no-body" };
+            eprintln!("QUENCH_CALLEE_LEAVE callee={} why={why}", target.function);
+        }
         return leave(start, Value::UNDEFINED);
     };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
