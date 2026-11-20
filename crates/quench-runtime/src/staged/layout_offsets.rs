@@ -372,6 +372,9 @@ pub(crate) const RAISED_RUN: u64 = 1 << u32::BITS;
 /// (`staged::frame::CONTEXT_THIS`, `CONTEXT_BODY`); the stencils read them at `context_word(frame, ..)`.
 pub(crate) const CONTEXT_THIS: usize = crate::staged::frame::CONTEXT_THIS;
 pub(crate) const CONTEXT_BODY: usize = crate::staged::frame::CONTEXT_BODY;
+/// The closure environment and captures pointer a linked activation's interpreter reads (`staged::frame::CONTEXT_ENV`, `CONTEXT_CAPTURE`).
+pub(crate) const CONTEXT_ENV: usize = crate::staged::frame::CONTEXT_ENV;
+pub(crate) const CONTEXT_CAPTURE: usize = crate::staged::frame::CONTEXT_CAPTURE;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).
