@@ -1096,6 +1096,26 @@ macro_rules! lane_helper_inventory {
                     options(nomem, nostack, preserves_flags),
                 );
             }
+            // Mach-O has no `.pushsection`; the trampolines are laid out in this function's own
+            // section, which never runs (the instance exists for its symbols alone).
+            #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))]
+            // SAFETY: as above.
+            unsafe {
+                core::arch::asm!(
+                    $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 2\n_quench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
+                    $($name = sym $address),+,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+            #[cfg(all(target_vendor = "apple", target_arch = "x86_64"))]
+            // SAFETY: as above.
+            unsafe {
+                core::arch::asm!(
+                    $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 4\n_quench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
+                    $($name = sym $address),+,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
         }
     };
 }
