@@ -263,6 +263,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     }
 
     /// The entry at `slot`, if it is live.
+    #[inline(always)]
     pub(crate) fn get(&self, slot: usize) -> Option<T> {
         self.table
             .slots()
@@ -285,7 +286,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
     /// The slot of the entry whose key is `key` or one `same` accepts. `key_hash` is `key`'s
     /// hash, under which SameValueZero-equal keys agree. Identical bits are SameValueZero (a
     /// NaN included), so `same` runs only for keys spelled differently.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn position(&self, key: Value, key_hash: u64, same: impl Fn(Value) -> bool) -> Option<usize> {
         let hash = folded_hash(key_hash);
         let slots = self.table.slots();
@@ -404,6 +405,7 @@ impl<T: CollectionEntry> CollectionEntries<T> {
 
 impl CollectionEntries<(Value, Value)> {
     /// The value of the live Map entry at `slot`.
+    #[inline(always)]
     pub(crate) fn value_at(&self, slot: usize) -> Value {
         self.get(slot).expect("a found slot holds a live entry").1
     }
