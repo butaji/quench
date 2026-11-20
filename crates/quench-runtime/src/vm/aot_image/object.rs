@@ -205,8 +205,9 @@ fn record_bytes(record: &CallRecord) -> Vec<u8> {
     use std::mem::offset_of;
     let mut bytes = vec![0; std::mem::size_of::<CallRecord>()];
     let words = [(offset_of!(CallRecord, callee), record.callee), (offset_of!(CallRecord, cell), record.cell), (offset_of!(CallRecord, expected), record.expected),
-        (offset_of!(CallRecord, descriptor), record.descriptor), (offset_of!(CallRecord, captures), record.captures),
-        (offset_of!(CallRecord, global_this), record.global_this), (offset_of!(CallRecord, frame_bytes), record.frame_bytes)];
+        (offset_of!(CallRecord, captures), record.captures), (offset_of!(CallRecord, global_this), record.global_this),
+        (offset_of!(CallRecord, call), record.call), (offset_of!(CallRecord, caller_base), record.caller_base), (offset_of!(CallRecord, packed), record.packed),
+        (offset_of!(CallRecord, proven_args), record.proven_args), (offset_of!(CallRecord, descriptor), record.descriptor)];
     let registers = [(offset_of!(CallRecord, callee_register), record.callee_register), (offset_of!(CallRecord, this_register), record.this_register),
         (offset_of!(CallRecord, args_register), record.args_register), (offset_of!(CallRecord, result_register), record.result_register)];
     words.iter().for_each(|&(at, word)| bytes[at..at + std::mem::size_of::<u64>()].copy_from_slice(&word.to_ne_bytes()));

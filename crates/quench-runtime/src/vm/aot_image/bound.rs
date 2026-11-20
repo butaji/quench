@@ -68,8 +68,10 @@ impl BoundCalls {
     }
 
     /// Binds record `key` to `direct`, the callee its site resolved: the record's run-time words become
-    /// the callee's, as a JIT plan's record holds them (`DirectFacts::of`), the identity last, which
-    /// admits the rows. `None` where the site has bound its `POLYMORPHISM` closures already.
+    /// the callee's, as a JIT plan's record holds them (`DirectFacts::of`), the descriptor is the callee's
+    /// `DirectCallee` address (the native header's descriptor word), and the identity last, which admits
+    /// the rows and the AOT lane body's native call (`call_frames::push_native`). `None` where the site has
+    /// bound its `POLYMORPHISM` closures already.
     pub(crate) fn bind(&self, key: usize, direct: DirectCallee, heap: &mut crate::heap::Heap) -> Option<()> {
         let (record, mut held) = (self.records.get(key)?.get(), self.held.descriptors.get(key)?.borrow_mut());
         if held.len() >= POLYMORPHISM { return None; }
@@ -79,15 +81,18 @@ impl BoundCalls {
         }
         let identity = self.held.callees.borrow_mut().embed_heap_identity(direct.callee);
         held.push(Box::new(direct));
-        let direct = held.last()?;
+        // The box's contents do not move when the vector grows, so the descriptor address stays valid.
+        let direct: &DirectCallee = &**held.last()?;
         let validity = (direct.cell + crate::staged::call::ENTRY_CELL.validity_offset as usize) as *const u64;
+        let descriptor = std::ptr::from_ref(direct) as u64;
         // SAFETY: the record is the image's, read in place by code on this thread, none of which runs
         // while the VM binds; the cell is the callee's live entry cell (`DirectCallee::cell`).
         unsafe {
             *record = CallRecord { callee: unbound_callee(), cell: direct.cell as u64, expected: validity.read(),
                 call: direct.call as u64, caller_base: direct.caller_base as u64,
                 packed: ((*record).packed & !FUNCTION_WORD) | u64::from(direct.target.function),
-                captures: direct.capture_word(), global_this: direct.sloppy.map_or(0, crate::Value::to_bits), ..*record };
+                captures: direct.capture_word(), global_this: direct.sloppy.map_or(0, crate::Value::to_bits), descriptor,
+                ..*record };
             (*record).callee = identity;
         }
         Some(())

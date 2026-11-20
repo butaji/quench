@@ -104,12 +104,14 @@ fn put_sites(out: &mut Vec<u8>, image: &AotImage) {
     }
 }
 
-/// A proven call site: its site and callee, and its record's words the plan fixed (the frame stride,
-/// the registers it names, its argument places); the run-time words are the loader's (`read_call`).
+/// A proven call site: its site and callee, and its record's words the plan fixed (the packed header word with
+/// its argc, the proven arguments, the registers it names, its argument places); the run-time words are the
+/// loader's (`read_call`).
 fn put_call(out: &mut Vec<u8>, call: &CallSite) {
     let record = &call.record;
     [call.function, call.pc, call.callee].iter().for_each(|half| out.extend(half.to_le_bytes()));
-    out.extend(record.frame_bytes.to_le_bytes());
+    out.extend(record.packed.to_le_bytes());
+    out.extend(record.proven_args.to_le_bytes());
     [record.callee_register, record.this_register, record.args_register, record.result_register].iter().for_each(|register| out.extend(register.to_le_bytes()));
     out.extend(record.argument_places);
 }
@@ -117,10 +119,11 @@ fn put_call(out: &mut Vec<u8>, call: &CallSite) {
 /// The call site `put_call` wrote, its record bound to no closure (`super::unbound_callee`).
 fn read_call(words: &mut Words<'_>) -> Result<CallSite, String> {
     let (function, pc, callee) = (words.half()?, words.half()?, words.half()?);
-    let frame_bytes = words.quad()?;
+    let packed = words.quad()?;
+    let proven_args = words.quad()?;
     let [callee_register, this_register, args_register, result_register] = [words.pair()?, words.pair()?, words.pair()?, words.pair()?];
     let argument_places = words.take()?;
-    let record = quench_bjit::call_record::CallRecord { callee: super::unbound_callee(), frame_bytes, callee_register, this_register,
+    let record = quench_bjit::call_record::CallRecord { callee: super::unbound_callee(), packed, proven_args, callee_register, this_register,
         args_register, result_register, argument_places, ..Default::default() };
     Ok(CallSite { function, pc, callee, record })
 }

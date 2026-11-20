@@ -437,6 +437,7 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
         args_register: shape.window,
         result_register: shape.result,
         argument_places: arguments,
+        descriptor: 0,
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
@@ -457,7 +458,7 @@ fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Optio
     let record = Box::new(CallRecord {
         proven_args: 0, callee: identity, cell: 0, expected: 0, call: 0, caller_base: 0, packed: 0, captures: 0, global_this: 0,
         callee_register: shape.callee, this_register: shape.this, args_register: shape.window, result_register: shape.result,
-        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS],
+        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS], descriptor: 0,
     });
     let stencil = call::stencil(CallRow::Builtin(row))?;
     Ok(Some((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), Vec::new()), record)))

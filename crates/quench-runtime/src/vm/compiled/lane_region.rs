@@ -95,7 +95,8 @@ use captures::RootedRead;
 #[path = "lane_region/loop_strings.rs"] mod loop_strings;
 #[path = "lane_region/call_frames.rs"] mod call_frames;
 #[path = "lane_region/declared.rs"] mod declared;
-use call_frames::{CallSite, Leave, ReturnSite, Site};
+use call_frames::{CallSite, DirectSite, Leave, ReturnSite, Site};
+pub(super) use call_frames::ProvenCall;
 #[path = "lane_region/call_outs.rs"] mod call_outs;
 #[path = "lane_region/jumps.rs"] mod jumps;
 #[path = "lane_region/call_rows.rs"] mod call_rows;
@@ -1750,6 +1751,8 @@ pub(super) fn lower_body(
 #[derive(Clone, Copy)]
 pub(super) struct AheadLeaves<'a> {
     pub(super) targets: &'a [Option<(u32, u32)>],
+    /// By unit PC, the calls the closed world proves whose records the body reads (`ProvenCall`).
+    pub(super) calls: &'a BTreeMap<usize, ProvenCall>,
 }
 
 /// The position a failed entry contract takes in a lane body's leave set
@@ -3667,6 +3670,9 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(entered);
         // SAFETY: the body owns its callees for as long as its code runs.
         let callees: Vec<&DirectCallee> = self.direct.get(&pc).map(|sites| sites.iter().map(|callee| unsafe { &**callee }).collect()).unwrap_or_default();
+        // An image's call the closed world proves reads its callee's words from the site's record (`ProvenCall`): a
+        // construction takes the VM's call, as the proven callee is not a construction's.
+        let proven = self.vm.ahead.and_then(|ahead| ahead.calls.get(&pc).copied()).filter(|_| !site.constructs());
         // The declared result the call's completion conforms to: the callee's, where every candidate declares the same one.
         let returns = callees.iter().filter(|_| !site.constructs())
             .map(|callee| declared::declared_return(self.program, callee.target.function))
@@ -3675,11 +3681,12 @@ impl Lowering<'_, '_> {
             crate::staged::forms::Callee::Register(register) if callees.len() >= 2 && !site.constructs() =>
                 self.polymorphic_call(state, site, record, register, &callees, (completed, missed, raised)),
             _ => {
-                let callee = callees.first().copied();
+                let owned = callees.first().copied();
+                let callee = owned.map(DirectSite::Owned).or(proven.map(DirectSite::Proven));
                 let generic = self.builder.create_block();
                 // A construction of a stores-only constructor, whose arguments are a window of the caller's
                 // registers (`CallSite::initializing`): its receiver is allocated finished and its body not entered.
-                let initializing = match (site.arguments, callee) {
+                let initializing = match (site.arguments, owned) {
                     // A forwarding site's target is the forwarded initializer, whose receiver its forwarder's plan
                     // allocates (`DirectCallee::forwarder`): that path keeps its body.
                     (crate::staged::Arguments::Window { first, count }, Some(callee))
@@ -3731,7 +3738,7 @@ impl Lowering<'_, '_> {
             self.branch_if(matched, (arm, &[]), (next, &[]));
             self.builder.switch_to_block(arm);
             let miss = cold_block(&mut self.builder);
-            let call = CallSite { callee: Some(callee), record, context, registers, completed, missed, raised, stop, leave, initializing: None };
+            let call = CallSite { callee: Some(DirectSite::Owned(callee)), record, context, registers, completed, missed, raised, stop, leave, initializing: None };
             self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
         }
         // No candidate's identity: the VM's call alone, as a site with no direct entry makes it.
