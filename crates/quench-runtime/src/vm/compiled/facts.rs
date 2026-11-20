@@ -49,6 +49,18 @@ pub(super) struct Facts {
     under: Vec<Option<Register>>,
     atmost: Vec<Option<Register>>,
     twice: Vec<Option<Register>>,
+    /// The replays `before` runs from each block leader, keyed by leader PC.
+    replays: std::cell::RefCell<std::collections::BTreeMap<usize, Replay>>,
+}
+
+/// The transfer `Facts::before` replays from one block leader, kept so each instruction runs once.
+struct Replay {
+    /// The states before each PC from the leader through `next`, `registers` types apiece.
+    rows: Vec<Type>,
+    /// The PC the replay has reached: the state before it is the last row.
+    next: usize,
+    /// The instruction that leaves the function's native code, which ends the replay.
+    leaves: Option<usize>,
 }
 
 impl Facts {
@@ -104,6 +116,8 @@ impl Facts {
         let start = self.offsets[pc].expect("reachable contract block").get() - 1;
         let known = &mut self.types[start + usize::from(register)];
         if !known.is_subtype(required) { *known = required; }
+        // A replay from this leader started from the row just changed.
+        self.replays.get_mut().remove(&pc);
     }
 
     /// Project a block's entry facts to an instruction using the same transfer
@@ -115,13 +129,24 @@ impl Facts {
         written: &dyn Fn(WideInstruction) -> Writes, native_calls: bool) -> Type {
         let Some(start) = (0..=pc).rev().find(|pc| leaders.contains(*pc)) else { return Type::ANY };
         let Some(entry) = self.at(start) else { return Type::ANY };
-        let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = smallvec::SmallVec::from_slice(entry);
-        for (at, instruction) in instructions.iter().enumerate().take(pc).skip(start) {
-            if matches!(transfer_observed(&mut types, *instruction, constants, written, native_calls, self.observed_at(at)), Flow::Leaves) {
+        let registers = self.registers;
+        let mut replays = self.replays.borrow_mut();
+        let replay = replays.entry(start).or_insert_with(|| Replay { rows: entry.to_vec(), next: start, leaves: None });
+        if replay.leaves.is_some_and(|leaves| pc > leaves) { return Type::ANY; }
+        // Extend the replay to `pc` (or the end of the code), so each instruction runs once.
+        while replay.next < pc.min(instructions.len()) {
+            let at = replay.next;
+            let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = smallvec::SmallVec::from_slice(&replay.rows[replay.rows.len() - registers..]);
+            if matches!(transfer_observed(&mut types, instructions[at], constants, written, native_calls, self.observed_at(at)), Flow::Leaves) {
+                replay.leaves = Some(at);
                 return Type::ANY;
             }
+            replay.rows.extend_from_slice(&types);
+            replay.next += 1;
         }
-        types.get(usize::from(register)).copied().unwrap_or(Type::ANY)
+        let index = usize::from(register);
+        if index >= registers { return Type::ANY; }
+        replay.rows[(pc.min(replay.next) - start) * registers + index]
     }
 
     /// Project each definition in `body`'s post-state through the same transfer as the fixed
@@ -151,6 +176,7 @@ impl Facts {
 
     #[cfg(test)]
     fn merge(&mut self, pc: usize, incoming: &[Type]) -> bool {
+        self.replays.get_mut().clear();
         let Some(slot) = self.offsets.get(pc) else { return false };
         let Some(offset) = *slot else {
             self.store_row(pc, incoming, [&[], &[], &[], &[], &[]]);
