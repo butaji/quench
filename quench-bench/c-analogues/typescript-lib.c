@@ -26,6 +26,9 @@
  *   Expression checks of assignments (support/ts-checker-expr.h): `this[K] = { ... }` in a constructor is
  *   checked by elaborating the object literal per property, which gives the last diagnostic (mapset.ts
  *   185:5, 2322, at the property name). All 54 node diagnostics match.
+ *   Declaration type annotations of every file are resolved (checkSourceElement over declarations, the
+ *   getTypeFromTypeNode part of checkSourceFile, support/ts-checker-expr.h); the unported type nodes left are
+ *   indexed access, this, conditional, infer and template literal types (about 1700 requests, printed).
  *   NOT PORTED: statement and expression checking in general (checkSourceFile bodies, checkExpression,
  *   this types, indexed access and conditional types in general, template and string mapping types,
  *   intersection structure in relations, emit. The counts of types, instantiations and relation cache
