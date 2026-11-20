@@ -912,6 +912,11 @@ pub(crate) const fn row_writes_result(op: Op) -> bool {
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
         return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
     }
+    // An opcode whose A field is no result register defines none, so there is nothing for the lane
+    // to write: its row's value (a cleanup pop's 0, a store's source) must not land in register A.
+    if !matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) {
+        return true;
+    }
     // A keyed read's answer is written by the lane (its record's result register, as every
     // producer writes it beside the carried value).
     !matches!(op, Op::GetEnumerated | Op::GetIndex | Op::StoreName | Op::StoreLocal | Op::InitializeTdz | Op::DefineArrayElement
