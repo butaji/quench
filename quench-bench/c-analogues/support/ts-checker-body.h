@@ -2196,6 +2196,7 @@ static TsType *cContextualType(TsNode *e) {
       if (c->kind != TSK_MethodDeclaration || !c->name || c->name->kind != TSK_Identifier) return cUnported("contextual type of an object literal member");
       TsType *oc = cContextualType(p);
       if (oc == NULL || oc == cErrorType) return oc;
+      if (oc->flags & TF_Any) return NULL;   /* a property of any is not a structured type's property: no contextual type */
       if (!(oc->flags & TF_Object)) return cUnported("contextual type of a property of a non-object");
       TsSymbol *ps = cPropertyOf(oc, bnEscapeText(c->name->text, c->name->textLen));
       return ps ? cTypeOfSymbol(ps) : NULL;
@@ -2206,6 +2207,7 @@ static TsType *cContextualType(TsNode *e) {
         return cUnported("contextual type of a property name");
       TsType *oc = cContextualType(p->parent);
       if (oc == NULL || oc == cErrorType) return oc;
+      if (oc->flags & TF_Any) return NULL;   /* a property of any is not a structured type's property: no contextual type */
       if (!(oc->flags & TF_Object)) return cUnported("contextual type of a property of a non-object");
       TsSymbol *ps = cPropertyOf(oc, bnEscapeText(p->name->text, p->name->textLen));
       return ps ? cTypeOfSymbol(ps) : NULL;
@@ -2253,7 +2255,9 @@ static CSig *cContextualSignature(TsNode *fn, bool *err) {
   *err = false;
   TsType *ctx = cContextualType(fn);
   if (ctx == NULL) return NULL;
-  if (ctx == cErrorType || !(ctx->flags & TF_Object)) { *err = true; return NULL; }
+  if (ctx == cErrorType) { *err = true; return NULL; }
+  if (ctx->flags & TF_Any) return NULL;   /* getContextualCallSignature of any: no call signatures, so no contextual signature */
+  if (!(ctx->flags & TF_Object)) { *err = true; return NULL; }
   cResolveSignatures(ctx);
   if (ctx->ncall == 0) { *err = true; return NULL; }
   /* isAritySmaller: the target parameters before the first optional, initialized or rest one (a this parameter is not counted) */
