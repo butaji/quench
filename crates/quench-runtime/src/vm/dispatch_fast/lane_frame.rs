@@ -575,6 +575,9 @@ struct EnvironmentReads {
     context: *mut (),
     read: unsafe fn(*mut ()) -> Option<*mut crate::heap::EnvironmentSlots>,
     write: unsafe fn(*mut (), u16) -> Option<*mut crate::heap::EnvironmentSlots>,
+    /// The value of one slot where `read` declines the whole storage (`environment_slot_read`): a
+    /// function that captures selectively reads each slot its environment holds.
+    slot_read: unsafe fn(*mut (), u16) -> Option<Value>,
 }
 
 /// The lane context's iterator cleanup stack for an `IteratorCleanupPush`/`Pop` row (`iterator_push_in_lane`,
@@ -1296,6 +1299,12 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
                 // SAFETY: the running lane's context, live for the row's step.
                 unsafe { step(context, operation, operands) }.map(|value| (value.to_bits(), Boxing::Value))
             }
+            // A slot of a selectively captured environment (`environment_slot_read`).
+            CallOut::LoadEnvLocal { slot } => {
+                let EnvironmentReads { context, slot_read, .. } = self.environment?;
+                // SAFETY: the running lane's context, live for the row's step.
+                unsafe { slot_read(context, slot) }.map(|value| (value.to_bits(), Boxing::Value))
+            }
             // The clone defines no register; its word is a placeholder the row does not write.
             CallOut::CloneEnv { plan } => {
                 let EnvironmentClones { context, window, run } = self.clones?;
@@ -1586,11 +1595,43 @@ unsafe fn environment_of<H: Host>(cx: *mut LaneContext<H>, store: Option<u16>)
     let vm = unsafe { vm(cx) };
     let frame = &vm.frames[unsafe { (*cx).frame() }];
     let function = unsafe { &*(*cx).code }.function(frame.function as usize);
-    if function.selective_capture_slots.is_some() || function.arguments_alias_parameters()
+    if function.selective_capture_slots.is_some() || aliases_arguments(function)
         || store.is_some_and(|slot| function.is_self_binding_slot(usize::from(slot))) {
         return None;
     }
     Some((std::ptr::from_mut(storage), frame.env))
+}
+
+/// Whether a parameter's binding may live in the function's `arguments` object
+/// (`mapped_arguments_slot`): a mapped object the function binds. A sloppy function that rebinds a
+/// parameter (`var l1`) but never names `arguments` has none.
+#[inline(always)]
+fn aliases_arguments(function: &crate::bytecode::Function) -> bool {
+    function.arguments_slot.is_some() && function.arguments_alias_parameters()
+}
+
+/// `EnvironmentReads::slot_read`: slot `slot` of the frame's environment storage where its function
+/// keeps that slot there (`Function::local_slot_uses_environment`), as `Vm::load_local_binding`
+/// reads it; a binding in its dead zone, or any other function `environment_of` declines, is the
+/// general path's.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(never)]
+unsafe fn environment_slot_read<H: Host>(cx: *mut (), slot: u16) -> Option<Value> {
+    let cx = cx.cast::<LaneContext<H>>();
+    if !unsafe { (*cx).registers }.env().is_deleted() {
+        return None;
+    }
+    let storage = super::frame_storage_in_lane(cx)?;
+    let vm = unsafe { vm(cx) };
+    let frame = &vm.frames[unsafe { (*cx).frame() }];
+    let function = unsafe { &*(*cx).code }.function(frame.function as usize);
+    if !function.local_slot_uses_environment(usize::from(slot)) || aliases_arguments(function) {
+        return None;
+    }
+    let mut stage = Concrete::new(std::ptr::null());
+    crate::staged::environment::environment_slot(&mut stage, std::ptr::from_mut(storage) as u64, slot, ()).map(Value::from_bits)
 }
 
 /// `EnvironmentReads::read`: the storage `environment_of` finds for a read.
@@ -2263,7 +2304,8 @@ fn row_frame_of<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut 
         } else {
             |context, slot| unsafe { super::arguments_count::<H, false>(context.cast(), slot) }
         };
-        let environment = EnvironmentReads { context: cx.cast(), read: environment_read::<H>, write: environment_write_storage::<H> };
+        let environment = EnvironmentReads { context: cx.cast(), read: environment_read::<H>, write: environment_write_storage::<H>,
+            slot_read: environment_slot_read::<H> };
         // A global-name store writes through the record's own hint (`global_name_store`), which a window's
         // store does not take: its scope answers the name (`ScopeReads::store`).
         let global_store = if const { OP == crate::staged::GLOBAL_WRITE_ROW } && FLAG != FLAG_SCOPE {

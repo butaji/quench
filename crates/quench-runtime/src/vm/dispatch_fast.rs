@@ -8153,7 +8153,11 @@ fn relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Option<b
     }
     // An ordering operator (`<`, `<=`, `>`, `>=`) is decided by its operand pair alone: the
     // membership, prototype and identity tests below never answer it.
-    if super::operations::NumberRelation::from_operator(operator).is_some() {
+    // `==` and `===` share `Equal` (`NumberRelation::from_operator`), which is no ordering: they take
+    // the identity and string tests below.
+    if super::operations::NumberRelation::from_operator(operator)
+        .is_some_and(|relation| !matches!(relation, super::operations::NumberRelation::Equal | super::operations::NumberRelation::NotEqual))
+    {
         return vm.string_relation(operator, left, right)
             .or_else(|| vm.bigint_relation(operator, left, right))
             .or_else(|| vm.primitive_comparison(operator, left, right))
