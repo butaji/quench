@@ -14,6 +14,7 @@
 //! later (lazily, streamed, on first call) is admitted exactly as at load.
 
 use super::enum_ast;
+use super::module_ast;
 use super::enum_folding;
 use super::enums::{self, Computed, Member, Value};
 use super::namespace_ast;
@@ -148,9 +149,9 @@ impl<'a> Admit<'a, '_> {
             }
             Statement::ExportDefaultDeclaration(export) => self.export_default(export),
             Statement::TSExportAssignment(mut assignment) => {
-                let mut statements = self.javascript("module.exports = $$quench_ts_0;", assignment.span);
-                fill(&mut statements, vec![assignment.expression.take_in(&self.allocator)]);
-                statements.into_iter().map(|statement| (statement, false)).collect()
+                let span = assignment.span;
+                let expression = assignment.expression.take_in(&self.allocator);
+                vec![(module_ast::export_assignment(self.allocator, expression, span), false)]
             }
             Statement::TSNamespaceExportDeclaration(declaration) => {
                 self.declare(DeclaredKind::ModuleType, Some(declaration.id.name.as_str()), declaration.span);
@@ -292,7 +293,7 @@ impl<'a> Admit<'a, '_> {
             let ExportDefaultDeclarationKind::ClassDeclaration(class) = export.declaration.take_in(&self.allocator) else { unreachable!() };
             match self.decorated_class(class, export.span, Export::None) {
                 Ok((name, mut produced)) => {
-                    produced.extend(self.javascript(&format!("export default {name};"), export.span).into_iter().map(|statement| (statement, true)));
+                    produced.push((module_ast::export_default_name(self.allocator, &name, export.span), true));
                     return produced;
                 }
                 Err(class) => export.declaration = ExportDefaultDeclarationKind::ClassDeclaration(class),
@@ -319,19 +320,8 @@ impl<'a> Admit<'a, '_> {
 
     /// `import x = require("m")` / `import x = A.B`: a binding to that value.
     fn import_equals(&mut self, alias: ArenaBox<'a, TSImportEqualsDeclaration<'a>>, span: Span, how: Export<'_>) -> Vec<Produced<'a>> {
-        let name = alias.id.name.as_str();
-        let target = match &alias.module_reference {
-            TSModuleReference::ExternalModuleReference(external) => format!("require({})", enums::quote(external.expression.value.as_str())),
-            TSModuleReference::IdentifierReference(identifier) => identifier.name.to_string(),
-            TSModuleReference::QualifiedName(qualified) => qualified_text(qualified),
-        };
-        let keyword = self.keyword();
-        let text = match how {
-            Export::None => format!("{keyword} {name} = {target};"),
-            Export::Module => format!("export var {name} = {target};"),
-            Export::Namespace(namespace) => format!("{keyword} {name} = {namespace}.{name} = {target};"),
-        };
-        self.javascript(&text, span).into_iter().map(|statement| (statement, true)).collect()
+        let statement = module_ast::import_equals(self.allocator, alias.unbox(), how, self.lexical, span);
+        vec![(statement, true)]
     }
 }
 
@@ -543,9 +533,8 @@ impl<'a> Admit<'a, '_> {
             let names = parameter_properties(&mut method.value.params);
             let span = method.value.params.span;
             let Some(body) = method.value.body.as_mut().filter(|_| !names.is_empty()) else { continue };
-            let text: String = names.iter().map(|name| format!("this.{name} = {name}; ")).collect();
             let at = if derived { root_super_call(body).map_or(0, |index| index + 1) } else { 0 };
-            for (offset, statement) in self.javascript(&text, span).into_iter().enumerate() {
+            for (offset, statement) in module_ast::parameter_assignments(self.allocator, &names, span).into_iter().enumerate() {
                 body.statements.insert(at + offset, statement);
             }
         }

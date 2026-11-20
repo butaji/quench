@@ -18,6 +18,7 @@ mod enum_folding;
 mod enums;
 mod fields;
 mod imports;
+mod module_ast;
 mod names;
 mod namespace_ast;
 mod signatures;
@@ -704,6 +705,33 @@ mod tests {
     }
 
     #[test]
+    fn import_aliases_export_assignments_and_scoped_aliases_run() {
+        let lines = run_typescript(r#"
+            const require = (name: string) => "got " + name;
+            namespace Outer { export namespace Inner { export const v = 4; } }
+            import mod = require("m");
+            import alias = Outer.Inner;
+            namespace Wrap { import local = Outer.Inner; export const seen = local.v + 1; }
+            const module: any = { exports: {} };
+            const value = 41;
+            export = value + 1;
+            console.log([mod, alias.v, Wrap.seen, module.exports].join(" "));
+        "#);
+        assert_eq!(lines, ["got m 4 5 42"]);
+    }
+
+    #[test]
+    fn parameter_properties_assign_after_the_root_super_call() {
+        let lines = run_typescript(r#"
+            class Base { constructor(readonly a: number) {} }
+            class Child extends Base { constructor(a: number, private b: string) { super(a * 2); } show() { return this.a + this.b; } }
+            class Plain { constructor(public x = 1, protected y?: string) {} }
+            console.log([new Child(2, "x").show(), new Plain().x, Object.keys(new Plain(3, "q")).join()].join(" "));
+        "#);
+        assert_eq!(lines, ["4x 1 x,y"]);
+    }
+
+    #[test]
     fn the_declared_environment_is_kept_with_the_program() {
         use crate::bytecode::{DeclaredKind, EnumConstant};
         let source = "interface Point { x: number }\ntype Id = string;\nfunction f(a: string): void;\nfunction f(a: any) {}\nenum E { A = 2, B, C = \"c\" }\nabstract class K { abstract m(): void; }";
@@ -769,6 +797,24 @@ mod tests {
         let program = Engine::specialize_typescript(control, "written.cts").unwrap();
         assert!(function_ops(&program, "w").contains(&Op::GetField));
         assert_eq!(run_typescript(source), ["8 20"]);
+    }
+
+    #[test]
+    fn exported_import_aliases_and_default_decorated_classes_run() {
+        let source = r#"
+            function tag(c: any) { console.log("tag " + c.name); return c; }
+            namespace Outer { export namespace Inner { export const v = 4; } }
+            export import alias = Outer.Inner;
+            @tag
+            export default class Service { hi() { return "hi"; } }
+            console.log([alias.v, new Service().hi()].join(" "));
+        "#;
+        let program = Engine::specialize_typescript_module(source, "exported-forms.mts").unwrap();
+        let host = TestHost::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime.execute(&program).unwrap();
+        assert_eq!(&*view.lines(), &["tag Service", "4 hi"]);
     }
 
     #[test]
