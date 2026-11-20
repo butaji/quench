@@ -705,6 +705,7 @@ static TsType *cAccessReferenceFlow(TsNode *e, TsType *declared, bool startInit)
 
 /* ---- contextual types (getContextualType): NULL when there is none, the error type when it is not ported ---- */
 static TsType *cContextualReturnOf(TsNode *fn);
+static TsType *cGenericCallFnArgContext(CSig *sig, int idx);
 static TsType *cContextualType(TsNode *e) {
   TsNode *c = e, *p = e->parent;
   while (p && p->kind == TSK_ParenthesizedExpression) { c = p; p = p->parent; }
@@ -745,7 +746,11 @@ static TsType *cContextualType(TsNode *e) {
       CSig *sigs = p->kind == TSK_NewExpression ? f->construct : f->call;
       if (ns != 1) return cUnported("contextual type of a call with several signatures");
       CSig *sig = &sigs[0];
-      if (sig->decl->typeParameters && sig->decl->typeParameters->n) return cUnported("contextual type of a generic call");
+      if (sig->decl->typeParameters && sig->decl->typeParameters->n) {
+        TsNode *ca = cSkipParens(c);
+        if (ca->kind != TSK_ArrowFunction) return cUnported("contextual type of a generic call");
+        return cGenericCallFnArgContext(sig, idx);
+      }
       CParams ps;
       if (!cSplitParams(sig->decl, &ps) || ps.thisParam) return cUnported("contextual type of a call with a this parameter");
       bool ok;
@@ -863,6 +868,47 @@ static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
   return t;
 }
 
+/* getTypeForBindingElement: a destructured variable has the property of an object pattern, or the element of an array pattern,
+ * of the type of the declaration the pattern belongs to (getTypeForBindingElementParent). Ported: a declaration with a type
+ * annotation or an initializer (widened as a mutable location), nested patterns, identifier property names, array elements of
+ * an array type. Defaults, rest elements, tuples, parameters and missing properties are not ported. */
+static TsType *cBindingElementType(TsSymbol *sym, TsNode *d) {
+  TsNode *pat = d->parent;
+  TsNode *decl = pat ? pat->parent : NULL;
+  if (!pat || !decl || !pat->elements || d->dotDotDotToken || d->initializer) return cUnported("binding element");
+  TsType *pt;
+  if (decl->kind == TSK_VariableDeclaration) {
+    if (decl->type) pt = cTypeFromNode(decl->type);
+    else if (decl->initializer) {
+      TsType *t = cExprType(decl->initializer);
+      if (t == cErrorType) return t;
+      pt = cIsConstVariableDecl(decl) ? t : cMutableLocationType(decl->initializer, t);
+    } else return cUnported("binding element of a declaration without a type");
+  } else if (decl->kind == TSK_BindingElement && decl->symbol) {
+    pt = cTypeOfSymbol(decl->symbol);
+  } else {
+    return cUnported("binding element of a parameter");
+  }
+  if (pt == cErrorType) return pt;
+  if (pat->kind == TSK_ObjectBindingPattern) {
+    TsNode *nm = d->propertyName ? d->propertyName : d->name;
+    if (!nm || nm->kind != TSK_Identifier) return cUnported("binding element name");
+    if (!(pt->flags & TF_Object)) return cUnported("binding element of a non-object");
+    TsSymbol *ps = cPropertyOf(pt, bnEscapeText(nm->text, nm->textLen));
+    if (!ps) return cUnported("binding element without a property");
+    return cTypeOfSymbol(ps);
+  }
+  /* an array pattern: the element at the position of the binding element (an omitted element counts) */
+  if (pat->kind != TSK_ArrayBindingPattern) return cUnported("binding element pattern");
+  if (!(pt->flags & TF_Object) || cIsTupleType(pt)) return cUnported("array binding of a non-array");
+  cResolveIndexInfos(pt);
+  for (int i = 0; i < pt->nindex; i++) if (pt->index[i].keyType == cNumberType) {
+    (void)sym;
+    return pt->index[i].type;
+  }
+  return cUnported("array binding without an element type");
+}
+
 /* isLiteralOfContextualType: a fresh literal keeps its literal type when the contextual type has a literal of its kind */
 static bool cLiteralOfContext(TsType *cand, TsType *ctx) {
   if (ctx->flags & TF_Union) {
@@ -939,6 +985,55 @@ static TsType *cApparentOf(TsType *o) {
   return o;
 }
 
+/* getUnionOrIntersectionProperty of a union (createUnionOrIntersectionProperty, cached per union type): the property of a union of
+ * object types. Every member must be an object with the property, which is not private or protected (not ported: a missing
+ * property is an error or an index signature). The same symbol in every member is that symbol, and so are the instantiations of
+ * one symbol with the same type; otherwise a synthetic property whose type is the union of the member property types (literal
+ * reduction only). The instantiations that node merges through a generic declaration are not ported. NULL when not ported. */
+static TsSymbol *cUnionProperty(TsType *u, BName name) {
+  if (!u->unionProps) u->unionProps = bTableNew();
+  TsSymbol *cached = bTableGet(u->unionProps, name);
+  if (cached) return cached;
+  TsSymbol *single = NULL;
+  TsSymbol **set = NULL;
+  int nset = 0;
+  for (int i = 0; i < u->ntypes; i++) {
+    TsType *m = u->types[i];
+    if (!(m->flags & TF_Object)) return NULL;
+    TsSymbol *p = cPropertyOf(m, name);
+    if (!p || (!p->valueDeclaration && !p->ndecls)) return NULL;
+    TsNode *d = p->valueDeclaration ? p->valueDeclaration : p->decls[0];
+    if (bModifierFlags(d) & (TMF_Private | TMF_Protected)) return NULL;
+    if (!single) { single = p; continue; }
+    if (p == single) continue;
+    TsSymbol *ta = single->instTarget ? single->instTarget : single, *tb = p->instTarget ? p->instTarget : p;
+    if (ta == tb && cTypeOfSymbol(p) == cTypeOfSymbol(single) && ((p->flags ^ single->flags) & SF_Optional) == 0) {
+      /* the same property of the same declaration with the same type (compareProperties on the identical types) */
+      TsNode *owner = single->parent && single->parent->valueDeclaration ? single->parent->valueDeclaration : NULL;
+      if (owner && owner->typeParameters && owner->typeParameters->n) return NULL;
+      continue;
+    }
+    if (!set) { set = ts_arena_alloc(sizeof(TsSymbol *) * (size_t)u->ntypes); set[nset++] = single; }
+    bool seen = false;
+    for (int k = 0; k < nset; k++) if (set[k] == p) seen = true;
+    if (!seen) set[nset++] = p;
+  }
+  if (!single) return NULL;
+  TsSymbol *result = single;
+  if (set) {
+    TsType **pts = ts_arena_alloc(sizeof(TsType *) * (size_t)nset);
+    for (int k = 0; k < nset; k++) {
+      pts[k] = cTypeOfSymbol(set[k]);
+      if (pts[k] == cErrorType) return NULL;
+    }
+    result = cCreateSymbol(SF_Property, name);
+    result->type = cGetUnionType(pts, nset);
+    if (result->type == cErrorType) return NULL;
+  }
+  bTableSet(u->unionProps, name, result);
+  return result;
+}
+
 /* a property of an object type, or the error type */
 static TsType *cMemberType(TsType *o, TsSymbol *p, TsNode *e) {
   (void)o;
@@ -956,9 +1051,16 @@ static TsType *cPropertyAccessType(TsNode *e) {
   if (!e->name || e->name->kind != TSK_Identifier) return cUnported("private name access");
   o = cApparentOf(o);
   if (o == cErrorType) return o;
-  if (!(o->flags & TF_Object)) return cUnported("property access on a non-object");
-  TsSymbol *p = cPropertyOf(o, bnEscapeText(e->name->text, e->name->textLen));
-  if (!p) return cUnported("property access: no property");
+  BName pname = bnEscapeText(e->name->text, e->name->textLen);
+  TsSymbol *p;
+  if (o->flags & TF_Union) {
+    p = cUnionProperty(o, pname);
+    if (!p) return cUnported("property of a union");
+  } else {
+    if (!(o->flags & TF_Object)) return cUnported("property access on a non-object");
+    p = cPropertyOf(o, pname);
+    if (!p) return cUnported("property access: no property");
+  }
   TsType *declared = cMemberType(o, p, e);
   if (declared == cErrorType) return declared;
   return cAccessReferenceFlow(e, declared, true);
@@ -1133,8 +1235,57 @@ static bool cMentionsTypeParam(TsType *t, TsType *tp, bool *unp) {
     for (int i = 0; i < t->nargs; i++) if (cMentionsTypeParam(t->args[i], tp, unp)) return true;
     return false;
   }
+  if ((t->flags & TF_Object) && (t->objectFlags & OF_Anonymous) && t->typeNode && t->typeNode->kind == TSK_FunctionType && !t->target) {
+    /* a function type literal: the parameters and the return type of its one signature */
+    cResolveSignatures(t);
+    if (t->ncall != 1 || t->nconstruct != 0) { *unp = true; return false; }
+    CSig *s = &t->call[0];
+    CParams cp;
+    if ((s->decl->typeParameters && s->decl->typeParameters->n) || !cSplitParams(s->decl, &cp) || cp.thisParam) { *unp = true; return false; }
+    for (int k = 0; k < cp.n; k++) {
+      bool ok;
+      TsType *x = cSigParamType(s, &cp, k, &ok);
+      if (!ok) continue;
+      if (x == cErrorType) { *unp = true; return false; }
+      if (cMentionsTypeParam(x, tp, unp)) return true;
+    }
+    TsType *r = cReturnTypeOf(s);
+    if (r == cErrorType) { *unp = true; return false; }
+    return cMentionsTypeParam(r, tp, unp);
+  }
   *unp = true;
   return false;
+}
+
+/* the contextual type of a function argument of a generic call (checkExpressionWithContextualType with the inference context).
+ * Ported when the parameter's contextual signature has no parameter that mentions the type parameters of the callee, so the
+ * inferences so far never change the contextual parameter types; the return type may mention them (a literal return is
+ * then not ported, see cExprWorker). */
+static TsType *cGenericCallFnArgContext(CSig *sig, int idx) {
+  int ntp;
+  TsType **tps = cSigTypeParams(sig->decl, &ntp);
+  CParams ps;
+  if (!cSplitParams(sig->decl, &ps) || ps.thisParam || ps.rest) return cUnported("contextual type of a generic call");
+  bool ok;
+  TsType *pt = cSigParamType(sig, &ps, idx, &ok);
+  if (!ok) return cUnported("contextual type of a generic call");
+  if (pt == cErrorType) return pt;
+  if (!(pt->flags & TF_Object)) return cUnported("contextual type of a generic call");
+  cResolveSignatures(pt);
+  if (pt->ncall != 1 || pt->nconstruct != 0) return cUnported("contextual type of a generic call");
+  CSig *cs = &pt->call[0];
+  CParams cp;
+  if ((cs->decl->typeParameters && cs->decl->typeParameters->n) || !cSplitParams(cs->decl, &cp) || cp.thisParam)
+    return cUnported("contextual type of a generic call");
+  for (int k = 0; k < cp.n; k++) {
+    TsType *x = cSigParamType(cs, &cp, k, &ok);
+    if (!ok) continue;
+    if (x == cErrorType) return cErrorType;
+    bool unp = false;
+    for (int t = 0; t < ntp; t++) if (cMentionsTypeParam(x, tps[t], &unp)) return cUnported("contextual type of a generic call");
+    if (unp) return cUnported("contextual type of a generic call");
+  }
+  return pt;
 }
 
 /* a type parameter with a const modifier (isConstTypeVariable) */
@@ -1224,7 +1375,15 @@ static TsType *cCommonSupertype(TsType **types, int n) {
 /* inferTypeArguments and getInferredTypes for a call without a contextual type and with context-insensitive arguments
  * (the subset of the header comment). The arguments are the types of the arguments (cExprType). Returns false when the
  * subset does not cover the call; the reason is then reported as unported. */
-static bool cInferCallTypeArgs(CSig *sig, TsType **at, int na, TsType **args) {
+/* an arrow with an unannotated parameter: its type depends on the contextual parameter types (isContextSensitive) */
+static bool cIsContextSensitiveArg(TsNode *a) {
+  a = cSkipParens(a);
+  if (a->kind != TSK_ArrowFunction || !a->parameters) return false;
+  for (int i = 0; i < a->parameters->n; i++) if (!a->parameters->v[i]->type) return true;
+  return false;
+}
+
+static bool cInferCallTypeArgs(TsNode *call, CSig *sig, TsType **at, int na, TsType **args) {
   int n;
   TsType **tps = cSigTypeParams(sig->decl, &n);
   CParams ps;
@@ -1244,7 +1403,14 @@ static bool cInferCallTypeArgs(CSig *sig, TsType **at, int na, TsType **args) {
   CInfer ci;
   cInferInit(&ci, tps, n);
   bool *notTop = ts_arena_zalloc(sizeof(bool) * (size_t)(n ? n : 1));
-  for (int i = 0; i < na; i++) {
+  /* the arguments that are not context sensitive first, then the others (the second pass of resolveCall) */
+  int *ord = ts_arena_alloc(sizeof(int) * (size_t)(na ? na : 1));
+  int nord = 0;
+  for (int pass = 0; pass < 2; pass++)
+    for (int i = 0; i < na; i++)
+      if (cIsContextSensitiveArg(call->arguments->v[i]) == (pass == 1)) ord[nord++] = i;
+  for (int oi = 0; oi < na; oi++) {
+    int i = ord[oi];
     bool ok;
     TsType *pt = cSigParamType(sig, &ps, i, &ok);
     if (!ok || pt == cErrorType || at[i] == cErrorType) { cUnported("generic call with an unported argument or parameter"); return false; }
@@ -1355,7 +1521,7 @@ static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
       /* chooseOverload: inferTypeArguments, then the instance is checked (getSignatureApplicabilityError) */
       int ntp = sigs[c].decl->typeParameters->n;
       TsType **targs = ts_arena_alloc(sizeof(TsType *) * (size_t)ntp);
-      if (!cInferCallTypeArgs(&sigs[c], at, na, targs)) return cErrorType;
+      if (!cInferCallTypeArgs(e, &sigs[c], at, na, targs)) return cErrorType;
       CSig *inst = cGetSignatureInstance(&sigs[c], targs, ntp);
       if (cArgsApplicable(&pss[c], at, na, inst, rel)) { chosen = c; chosenSig = inst; }
     }
@@ -1573,8 +1739,10 @@ static TsType *cBinaryType(TsNode *e) {
     case TSK_EqualsEqualsToken: case TSK_ExclamationEqualsToken: case TSK_EqualsEqualsEqualsToken:
     case TSK_ExclamationEqualsEqualsToken: case TSK_LessThanToken: case TSK_GreaterThanToken:
     case TSK_LessThanEqualsToken: case TSK_GreaterThanEqualsToken: case TSK_InstanceOfKeyword: case TSK_InKeyword: {
-      TsType *l = cExprType(e->left), *r = cExprType(e->right);
-      if (l == cErrorType || r == cErrorType) return cUnported("comparison of an unported operand");
+      /* the result is boolean whatever the operands are (checkBinaryLikeExpression); the comparability errors are not ported,
+       * so an unported operand does not change the result, only the operands' own checks (which are still made) */
+      cExprType(e->left);
+      cExprType(e->right);
       return cBooleanType;
     }
     case TSK_AmpersandAmpersandToken: case TSK_BarBarToken: case TSK_QuestionQuestionToken: {

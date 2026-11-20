@@ -79,6 +79,7 @@ typedef struct TsType {
   uint8_t couldContain;          /* couldContainTypeVariables: 0 not computed, 1 yes, 2 no */
   struct TsMapper *sigMapper;    /* the mapper of the signatures and index infos of this type */
   TsSymTable *declMembers;       /* declared members of an interface, class or type literal (own and late) */
+  TsSymTable *unionProps;        /* union types: the properties of the members (getUnionOrIntersectionProperty, cUnionProperty) */
   /* union and intersection */
   struct TsType **types;
   int ntypes;
@@ -1839,6 +1840,7 @@ static TsType *cInitializedSymbolType(TsSymbol *sym, TsNode *d, bool member) {
 
 /* the declared type of a parameter (getTypeOfParameter): an annotation, with undefined when it is optional */
 static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d);   /* ts-checker-body.h: contextual parameter types */
+static TsType *cBindingElementType(TsSymbol *sym, TsNode *d);     /* ts-checker-body.h: destructured variables */
 static TsType *cParameterSymbolType(TsSymbol *sym, TsNode *d) {
   if (!d->type) return cUnannotatedParamType(sym, d);
   if (d->name && d->name->kind != TSK_Identifier) return cUnported("parameter with a binding pattern");
@@ -1863,6 +1865,7 @@ static TsType *cTypeOfSymbol(TsSymbol *sym) {
   } else if (sym->flags & SF_Variable) {
     TsNode *d = sym->valueDeclaration ? sym->valueDeclaration : sym->decls[0];
     if (d->kind == TSK_Parameter) t = cParameterSymbolType(sym, d);
+    else if (d->kind == TSK_BindingElement) { sym->type = cErrorType; t = cBindingElementType(sym, d); }
     else if (d->kind != TSK_VariableDeclaration) t = cUnported("variable declaration kind");
     else if (d->type) t = cTypeFromNode(d->type);
     else if (cIsConstVariableDecl(d) && d->initializer && cIsSymbolCall(d->initializer)) t = cUniqueSymbolType(d);
