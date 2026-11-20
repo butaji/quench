@@ -2357,6 +2357,15 @@ static TsType *cContextualType(TsNode *e) {
       if (p->operatorToken->kind != TSK_EqualsToken || p->right != c) return cUnported("contextual type");
       TsNode *l = cSkipParens(p->left);
       if (l->kind == TSK_Identifier) return cAssignmentTargetType(l);
+      if (l->kind == TSK_ElementAccessExpression) {
+        /* getContextualTypeForAssignmentDeclaration (kind None): the symbol of a target whose key is a property name (a literal
+         * or unique symbol) decides; any other target gives the type of the target (getTypeOfExpression) */
+        if (!l->argumentExpression) return cUnported("contextual type");
+        TsType *kt = cExprType(l->argumentExpression);
+        if (kt == cErrorType) return kt;
+        if (kt->flags & (TF_StringLiteral | TF_NumberLiteral | TF_UniqueESSymbol)) return cUnported("contextual type of an assignment to a property name");
+        return cExprType(l);
+      }
       if (l->kind != TSK_PropertyAccessExpression || !l->name || l->name->kind != TSK_Identifier) return cUnported("contextual type");
       TsType *lt = cAssignmentTargetType(l);
       if (lt == cErrorType) return lt;
@@ -2852,6 +2861,12 @@ static TsType *cElementAccessType(TsNode *e) {
     return cAccessReferenceFlow(e, declared, true);
   }
   if (kt->flags & TF_NumberLiteral) return cUnported("element access by a number literal type");
+  if (kt->flags & TF_Any) {
+    /* getApplicableIndexInfo of any: any is assignable to the string and the number key types, so the one index signature applies */
+    cResolveIndexInfos(o);
+    if (o->nindex == 1) return o->index[0].type;
+    return cUnported("element access with an any key");
+  }
   if (kt == cNumberType) {
     cResolveIndexInfos(o);
     for (int i = 0; i < o->nindex; i++)
