@@ -472,6 +472,8 @@ pub(super) struct LoweredRegion {
     pub(super) entry_types: Box<[Type]>,
     /// The body's type summary (`TypeSummary`), where it is a whole function's body.
     pub(super) summary: Option<TypeSummary>,
+    /// The leaves the code takes, with the values each stores (`ExitTable::of_unit`, the emitter's own store sets).
+    pub(super) exits: ExitTable,
 }
 
 /// What a published lane body assumes of its arguments and what its activation returns natively,
@@ -488,7 +490,7 @@ pub(in crate::vm) struct TypeSummary {
 impl Default for LoweredRegion {
     /// A region that lowered nothing (`LoweredLane`'s default): an empty function.
     fn default() -> Self {
-        Self { number_result: None, function: ir::Function::new(), native: 0, fault_poll: false, hoists_arrays: false, stable: StableFacts::default(), summary: None, entry_types: Box::default() }
+        Self { number_result: None, function: ir::Function::new(), native: 0, fault_poll: false, hoists_arrays: false, stable: StableFacts::default(), summary: None, entry_types: Box::default(), exits: ExitTable::default() }
     }
 }
 
@@ -2266,6 +2268,7 @@ pub(super) fn lower(
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Leaves, now - mark); mark = now; }
     lowering.fill_call_out_stop();
     lowering.fill_exits();
+    let exits = ExitTable::of_unit(unit, |pc, frame| lowering.inlined_stores(pc, frame));
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Exits, now - mark); mark = now; }
     lowering.builder.switch_to_block(stop);
     let word = lowering.builder.block_params(stop)[0];
@@ -2306,7 +2309,7 @@ pub(super) fn lower(
     let decided = known_branches::decide(&mut native);
     if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
     if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
-    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable, summary, entry_types: proven_types })
+    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable, summary, entry_types: proven_types, exits })
 }
 
 impl Lowering<'_, '_> {
