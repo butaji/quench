@@ -1,5 +1,5 @@
 use super::*;
-use crate::bytecode::Class;
+use crate::bytecode::{Class, Op};
 
 #[test]
 fn static_hints_keep_numeric_local_indices_out_of_register_rows() {

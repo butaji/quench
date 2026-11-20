@@ -11345,7 +11345,7 @@ mod tests {
             assert_eq!(status, i64::from(LANE_BODY_THREW), "a semantic stop is the body's own exception");
             assert!(outcome.is_none());
             assert!(vm.lane_completion.take_raised().is_some());
-            assert_eq!(vm.frames[0].registers, before);
+            assert_eq!(vm.frames[0].registers[..], before[..]);
         }
     }
 

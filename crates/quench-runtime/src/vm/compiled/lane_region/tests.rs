@@ -11,6 +11,7 @@ fn call_effect_retires_nullable_shapes_without_losing_null_alternatives() {
 
 use super::*;
 use crate::value::EXACT_I64_TRUNCATION_LIMIT;
+use cranelift_codegen::ir::condcodes::FloatCC;
 
 #[test]
 fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {

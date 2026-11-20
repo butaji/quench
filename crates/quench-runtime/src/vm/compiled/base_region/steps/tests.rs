@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::Op;
 
 fn instruction(op: Op) -> WideInstruction {
     WideInstruction::new(op, 1, 2, 3, 0)
