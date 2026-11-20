@@ -63,6 +63,15 @@ impl<H: Host> Vm<H> {
         let outer_locals = unsafe { let dispatch = &(*frame).dispatch; (dispatch.native_locals, dispatch.local_count, dispatch.environment_storage) };
         let context = unsafe { self.bind_body_entry(frame, run) };
         let captures = entry_cell::capture_word(capture_values, capture_len, stores);
+        // A stencil body (`entry_body`) reads its receiver and captures from its window's header, which
+        // whoever enters it writes; a Cranelift body takes them as the entry's words.
+        if run.method.framed() {
+            // SAFETY: a framed body runs in a lane window, whose context words precede register 0.
+            unsafe {
+                super::super::dispatch_fast::set_frame_word(run.registers, crate::staged::frame::CONTEXT_THIS, run.receiver.to_bits());
+                super::super::dispatch_fast::set_frame_word(run.registers, crate::staged::frame::CONTEXT_BODY, captures);
+            }
+        }
         let descriptor = EntryDescriptor { kind: EntryKind::Body, receiver: run.receiver.to_bits(), captures, registers: run.registers.cast_const().cast(), entry: run.method.entry };
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases bound above.

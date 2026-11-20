@@ -803,7 +803,7 @@ impl LanePlan {
         let scalar = scalar.map(|at| memory.pointer().addr() + at);
         let proven = proven.map(|(at, params)| (memory.pointer().addr() + at, params));
         Some(LaneMethod {
-            dependencies, stable, invalidation: self.invalidation, _code: memory, entry, scalar, proven, rows: None, recovery_space,
+            dependencies, stable, invalidation: self.invalidation, _code: Some(memory), entry, scalar, proven, rows: None, recovery_space,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, exits: std::mem::take(&mut self.lowered.region.exits), inlined: self.unit.frames,

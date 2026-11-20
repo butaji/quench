@@ -58,6 +58,11 @@ impl ProgramStore {
         self.ahead.borrow_mut().push(Rc::new(images));
     }
 
+    /// Whether the image the system linker placed at `table` is loaded (`Vm::load_linked_image`).
+    pub(in crate::vm) fn has_linked_image(&self, table: &crate::vm::aot_image::live::LinkedTable) -> bool {
+        self.ahead.borrow().iter().any(|images| images.is_linked_at(table))
+    }
+
     /// The published body of `key`, if one still holds.
     pub(in crate::vm) fn installed_lane(&self, key: &LaneKey) -> Option<Rc<PublishedLaneMethod>> {
         self.lane_installed.borrow().get(key).and_then(Weak::upgrade).filter(|published| published.is_published())

@@ -127,6 +127,8 @@ pub struct AheadImages {
     known: std::cell::RefCell<Vec<(u32, bool)>>,
     /// The image placed in the loading VM's executable memory; `None` where it did not link.
     linked: Option<LiveImage>,
+    /// The address of the entry table the system linker placed it at, for an image of the executable (`of_linked`).
+    placed: Option<usize>,
     /// The program's closed-world facts, which shaped its lane bodies' units (`unit_of`): the
     /// compile's, or derived once again from the program where the image was read from a file.
     facts: std::cell::OnceCell<AotFacts>,
@@ -148,7 +150,7 @@ impl AheadImages {
     }
 
     fn of(image: AotImage) -> Self {
-        Self { image, known: Default::default(), linked: None, facts: std::cell::OnceCell::new() }
+        Self { image, known: Default::default(), linked: None, placed: None, facts: std::cell::OnceCell::new() }
     }
 
     /// Whether this is the image of `program`, the program numbered `id`; each program is
@@ -169,6 +171,19 @@ impl AheadImages {
 
     /// The file of this image (`from_bytes` reads it back).
     pub fn to_bytes(&self) -> Vec<u8> { aot_image::file::to_bytes(&self.image) }
+
+    /// The image the system linker placed in this executable (`aot_image::object`), as its entry
+    /// table lists it: its file read back, its code and records used where they are placed.
+    pub(crate) fn of_linked(table: &live::LinkedTable) -> Result<Self, String> {
+        let image = aot_image::file::from_bytes(table.file)?;
+        let linked = live::linked(&image, table)?;
+        Ok(Self { linked: Some(linked), placed: Some(table.entries.as_ptr().addr()), ..Self::of(image) })
+    }
+
+    /// Whether this is the image the system linker placed at `table`'s entries.
+    pub(crate) fn is_linked_at(&self, table: &live::LinkedTable) -> bool {
+        self.placed == Some(table.entries.as_ptr().addr())
+    }
 
     /// The image `to_bytes` wrote; an error names what the file lacks.
     pub fn from_bytes(file: &[u8]) -> Result<Self, String> { Ok(Self::of(aot_image::file::from_bytes(file)?)) }
@@ -222,11 +237,24 @@ fn plain_cell(callee: &DirectCallee, registers: u16) -> bool {
 }
 
 impl<H: Host> Vm<H> {
-    /// `function`'s lane body linked to this VM and published as its lane body, if the loaded
-    /// images hold one for this program.
+    /// `function`'s body from the loaded images for this program, published as its lane body: its
+    /// lane body linked to this VM, or where it has none (or none this VM can take) its base body
+    /// where the image placed it.
     pub(in crate::vm) fn install_ahead_body(&mut self, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
         if entry.is_some() || !generic.is_empty() { return None; }
         let images = self.programs.ahead_images(self.active_program, program)?;
+        let method = match self.ahead_lane_method(program, &images, function) {
+            Some(method) => method,
+            None => Self::ahead_base_method(program, &images, function)?,
+        };
+        let published = self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())?;
+        let linked_live: &LiveImage = images.linked.as_ref()?;
+        for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, &mut self.heap); }
+        Some(published)
+    }
+
+    /// `function`'s lane body from `images`, linked to this VM.
+    fn ahead_lane_method(&mut self, program: &ResidualProgram, images: &AheadImages, function: u32) -> Option<LaneMethod> {
         let linked_live: &LiveImage = images.linked.as_ref()?;
         let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll.is_some();
         let unit = unit_of(program, function, images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program)))?;
@@ -239,10 +267,15 @@ impl<H: Host> Vm<H> {
             exits: ExitTable::of_unit(&unit, |_, _| Vec::new()) };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None, proven: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: linked_live.invalidation.clone(), budget: 0, tiers: self.programs.tiers() };
-        let method = plan.finish(&linked, None, None)?;
-        let published = self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())?;
-        for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, &mut self.heap); }
-        Some(published)
+        plan.finish(&linked, None, None)
+    }
+
+    /// `function`'s base body from `images`, where they are placed (`LiveImage::bases`).
+    fn ahead_base_method(program: &ResidualProgram, images: &AheadImages, function: u32) -> Option<LaneMethod> {
+        let linked_live: &LiveImage = images.linked.as_ref()?;
+        let base = &images.image.functions.get(function as usize)?.base;
+        let registers = program.function_get(function as usize)?.registers;
+        Some(LaneMethod::of_linked_base(*linked_live.bases.get(function as usize)?, registers, base.scratch as usize, linked_live.invalidation.clone()))
     }
 
 
@@ -281,5 +314,15 @@ impl<H: Host> Vm<H> {
     pub fn load_ahead_images(&mut self, mut images: AheadImages) {
         images.linked = live::install(&images.image, self).ok();
         self.programs.add_ahead_images(images);
+    }
+
+    /// Keeps the image the system linker placed at `table` for the program it was compiled from
+    /// (`AheadImages::of_linked`), once: `program`'s functions lower now, before any frame runs
+    /// them, as the compile lowered them (`lower_native_js_module_for`), so its PCs are the image's.
+    pub(in crate::vm) fn load_linked_image(&mut self, program: &ResidualProgram, table: &live::LinkedTable) -> Result<(), String> {
+        if self.programs.has_linked_image(table) { return Ok(()); }
+        for index in 0..program.function_count() { program.lowered_function(index); }
+        self.programs.add_ahead_images(AheadImages::of_linked(table)?);
+        Ok(())
     }
 }

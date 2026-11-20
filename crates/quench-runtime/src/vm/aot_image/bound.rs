@@ -25,12 +25,20 @@ const FUNCTION_WORD: u64 = u32::MAX as u64;
 /// The image's call records, by `Symbol::CallRecord` key, with what their bindings keep alive.
 pub(crate) struct BoundCalls {
     /// The records the direct rows read in place.
-    records: Box<[UnsafeCell<CallRecord>]>,
+    records: Records,
     /// Each record's key by its site, sorted: the VM's call of a site finds its record here.
     sites: Box<[((u32, u32), usize)]>,
     held: Rc<Held>,
     /// Whether the heap roots `held` (`Heap::hold_folded_roots`), which the first binding asks.
     rooted: Cell<bool>,
+}
+
+/// Where the records live: in the loader's own allocation (`aot_image::live::install`), or in the
+/// executable's writable data, where the system linker placed them beside the code that reads them
+/// (`aot_image::object`, `live::linked`).
+enum Records {
+    Owned(Box<[UnsafeCell<CallRecord>]>),
+    Linked(&'static [UnsafeCell<CallRecord>]),
 }
 
 /// What the bindings keep: every closure bound, and by key every descriptor the record named.
@@ -47,14 +55,36 @@ impl RootedCode for Held {
 impl BoundCalls {
     /// The records of `image`, each its template.
     pub(crate) fn of(image: &AotImage) -> Self {
-        let records = image.calls.iter().map(|call| UnsafeCell::new(call.record)).collect();
+        let records = Records::Owned(image.calls.iter().map(|call| UnsafeCell::new(call.record)).collect());
+        Self::with_records(image, records)
+    }
+
+    /// The records of `image` the executable holds at `records`, each reset to its template.
+    ///
+    /// # Safety
+    /// `records` is the image's writable call records record (`object::call_data`), one `CallRecord`
+    /// per `image.calls`, aligned, alive for the process, and read by no code while it loads.
+    pub(crate) unsafe fn linked(image: &AotImage, records: *mut CallRecord) -> Self {
+        // SAFETY: the caller's contract; `UnsafeCell<CallRecord>` has `CallRecord`'s layout.
+        let records: &'static [UnsafeCell<CallRecord>] = unsafe { std::slice::from_raw_parts(records.cast(), image.calls.len()) };
+        // SAFETY: no code reads the records while the image loads.
+        records.iter().zip(&image.calls).for_each(|(record, call)| unsafe { *record.get() = call.record });
+        Self::with_records(image, Records::Linked(records))
+    }
+
+    fn with_records(image: &AotImage, records: Records) -> Self {
         let mut sites: Vec<((u32, u32), usize)> = image.calls.iter().enumerate().map(|(key, call)| ((call.function, call.pc), key)).collect();
         sites.sort_unstable();
         let descriptors = image.calls.iter().map(|_| RefCell::default()).collect();
         Self { records, sites: sites.into(), held: Rc::new(Held { callees: RefCell::default(), descriptors }), rooted: Cell::new(false) }
     }
 
-    pub(crate) fn records(&self) -> &[UnsafeCell<CallRecord>] { &self.records }
+    pub(crate) fn records(&self) -> &[UnsafeCell<CallRecord>] {
+        match &self.records {
+            Records::Owned(records) => records,
+            Records::Linked(records) => records,
+        }
+    }
 
     /// The key of the record of the call at `pc` of `function`, if the image proves that call.
     pub(crate) fn key(&self, site: (u32, u32)) -> Option<usize> {
@@ -64,7 +94,7 @@ impl BoundCalls {
     /// Whether record `key` names `callee`'s closure now.
     pub(crate) fn names(&self, key: usize, callee: crate::Value) -> bool {
         // SAFETY: the record is read on this thread, between runs of the code that reads it.
-        self.records.get(key).is_some_and(|record| unsafe { (*record.get()).callee } == callee.to_bits())
+        self.records().get(key).is_some_and(|record| unsafe { (*record.get()).callee } == callee.to_bits())
     }
 
     /// Binds record `key` to `direct`, the callee its site resolved: the record's run-time words become
@@ -73,7 +103,7 @@ impl BoundCalls {
     /// the rows and the AOT lane body's native call (`call_frames::push_native`). `None` where the site has
     /// bound its `POLYMORPHISM` closures already.
     pub(crate) fn bind(&self, key: usize, direct: DirectCallee, heap: &mut crate::heap::Heap) -> Option<()> {
-        let (record, mut held) = (self.records.get(key)?.get(), self.held.descriptors.get(key)?.borrow_mut());
+        let (record, mut held) = (self.records().get(key)?.get(), self.held.descriptors.get(key)?.borrow_mut());
         if held.len() >= POLYMORPHISM { return None; }
         if !self.rooted.replace(true) {
             let code: Rc<dyn RootedCode> = self.held.clone();

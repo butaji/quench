@@ -10,7 +10,7 @@ use crate::vm::compiled::AHEAD_BUILD_ID;
 use crate::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x01";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x02";
 /// The shape prototype a shape with none names.
 const NO_PROTOTYPE: u32 = u32::MAX;
 const RECIPE_INTRINSIC: u8 = 0;
@@ -55,14 +55,6 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
     let count = words.half()?;
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
     Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, operands, calls })
-}
-
-/// The recipe tables and atom texts of `image` as they are in the file, for an object's data
-/// records (the object linker's loader reads the same encoding).
-pub(crate) fn recipe_bytes(image: &AotImage) -> Vec<u8> {
-    let mut out = Vec::new();
-    put_recipes(&mut out, image);
-    out
 }
 
 fn put_count(out: &mut Vec<u8>, count: usize) {
@@ -170,6 +162,7 @@ fn put_base(out: &mut Vec<u8>, base: &BaseImage) {
     put_code(out, &base.code);
     put_halves(out, &base.pc_offsets);
     put_halves(out, &base.generic);
+    out.extend(base.scratch.to_le_bytes());
 }
 
 fn put_halves(out: &mut Vec<u8>, values: &[u32]) {
@@ -275,7 +268,8 @@ fn read_base(words: &mut Words<'_>) -> Result<BaseImage, String> {
     let code = read_code(words)?;
     let pc_offsets = read_halves(words)?;
     let generic = read_halves(words)?;
-    Ok(BaseImage { code, pc_offsets, generic })
+    let scratch = words.half()?;
+    Ok(BaseImage { code, pc_offsets, generic, scratch })
 }
 
 fn read_halves(words: &mut Words<'_>) -> Result<Box<[u32]>, String> {

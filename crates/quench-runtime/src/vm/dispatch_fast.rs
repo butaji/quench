@@ -8477,6 +8477,12 @@ fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
             poll => poll,
         };
         let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
+        // A function of a program with a loaded AOT image takes the image's body (`install_ahead_body`) before any tier's.
+        if let super::compiled::LaneBodyWork::Start { generic, .. } = &work
+            && let Some(published) = vm.install_ahead_body(code, function, None, generic)
+        {
+            return super::compiled::LaneBodyOutcome::Published(published);
+        }
         // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         if crate::jit_mode::base_only() {
             let super::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
@@ -14155,7 +14161,9 @@ fn tier_enter_in_lane<H: Host>(
     if vm.programs.js_jit_lane_methods_enabled()
         && let Some(own) = own
     {
-        if !specialize_in_lane(cx, own, function, false, parameters, None) {
+        // A function of a program with a loaded AOT image takes its body at its first entry, no warm-up.
+        let ahead = vm.programs.ahead_images(program, code).is_some();
+        if !specialize_in_lane(cx, own, function, ahead, parameters, None) {
             own.release_from_tier();
         }
         return None;
