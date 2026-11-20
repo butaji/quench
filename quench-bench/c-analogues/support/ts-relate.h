@@ -1453,7 +1453,56 @@ static int cRecursiveRelated(TsType *s, TsType *t, int st) {
 
 /* isRelatedTo (isRelatedTo, 66900s): the simple rules, the weak type check, then the recursive comparison.
  * An unported type is related (and sets cUnportedHit), so the caller never reports a false error. */
+/* getReducedType (node 63774) for the kinds of this port: an intersection with a property that is a discriminant of
+ * type never, or a conflicting private property, is never; a union with intersection members reduces its members */
+static TsType *cReducedType(TsType *t);
+static bool cIsNeverReducedProperty(TsSymbol *p) {
+  bool disc = !(p->flags & SF_Optional) && (p->checkFlags & (CK_HasNonUniformType | CK_HasLiteralType | CK_HasNeverType)) ==
+              (CK_HasNonUniformType | CK_HasLiteralType) && (cTypeOfSymbol(p)->flags & TF_Never);
+  return disc || (!p->valueDeclaration && (p->checkFlags & CK_ContainsPrivate));
+}
+static TsType *cReducedType(TsType *t) {
+  if (t->flags & TF_Union) {
+    if (!(t->objectFlags & OF_ContainsIntersections)) return t;
+    if (t->resolvedReducedType) return t->resolvedReducedType;
+    TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)(t->ntypes ? t->ntypes : 1));
+    bool changed = false;
+    for (int i = 0; i < t->ntypes; i++) {
+      v[i] = cReducedType(t->types[i]);
+      if (v[i] != t->types[i]) changed = true;
+    }
+    if (!changed) { t->resolvedReducedType = t; return t; }
+    TsType *red = cGetUnionType(v, t->ntypes);
+    if (red->flags & TF_Union) red->resolvedReducedType = red;
+    t->resolvedReducedType = red;
+    return red;
+  }
+  if (t->flags & TF_Intersection) {
+    if (!(t->objectFlags & OF_NeverIntComputed)) {
+      t->objectFlags |= OF_NeverIntComputed;
+      TsSymbol **props;
+      int n = cPropertiesOfUnionOrIntersection(t, &props);
+      for (int i = 0; i < n; i++)
+        if (cIsNeverReducedProperty(props[i])) { t->objectFlags |= OF_NeverIntersection; break; }
+    }
+    return (t->objectFlags & OF_NeverIntersection) ? cNeverType : t;
+  }
+  return t;
+}
+
+/* getNormalizedType for the kinds of this port (isRelatedTo normalizes both sides; the fresh literal and simplified
+ * forms are not ported: the relation takes the regular literal and the simplified type as they are) */
+static TsType *cNormalizeType(TsType *t) {
+  for (;;) {
+    TsType *r = (t->flags & (TF_Union | TF_Intersection)) ? cReducedType(t) : t;
+    if (r == t) return t;
+    t = r;
+  }
+}
+
 static int cIsRelatedTo(TsType *s, TsType *t, int st) {
+  s = cNormalizeType(s);
+  t = cNormalizeType(t);
   if (s == t) return RR_True;
   if (s == cErrorType || t == cErrorType) { cUnportedHit = true; return RR_True; }
   if ((s->flags | t->flags) & (TF_Conditional | TF_TemplateLiteral | TF_StringMapping)) { cUnported("relation of an indexed access, index, conditional, template literal or string mapping type"); return RR_True; }

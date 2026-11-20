@@ -43,7 +43,10 @@ enum {
 /* ObjectFlags (TypeScript 5.9.2) */
 enum { OF_Class = 1, OF_Interface = 2, OF_Reference = 4, OF_Tuple = 8, OF_Anonymous = 16, OF_Mapped = 32, OF_Instantiated = 64,
        OF_ObjectLiteral = 128,
-       OF_PrimitiveUnion = 256 };   /* unions of no object, any, void, never or intersection members */
+       OF_PrimitiveUnion = 256,   /* unions of no object, any, void, never or intersection members */
+       OF_ContainsIntersections = 0x4000000,   /* unions with an intersection member (ObjectFlags.ContainsIntersections) */
+       OF_NeverIntComputed = 0x1000000,        /* intersections: IsNeverIntersectionComputed */
+       OF_NeverIntersection = 0x2000000 };    /* intersections: IsNeverIntersection (a never-reduced property) */
 
 typedef struct CSig CSig;
 typedef struct CIndexInfo { struct TsType *keyType, *type; bool isReadonly; TsNode *decl; } CIndexInfo;
@@ -81,6 +84,7 @@ typedef struct TsType {
   struct TsMapper *sigMapper;    /* the mapper of the signatures and index infos of this type */
   TsSymTable *declMembers;       /* declared members of an interface, class or type literal (own and late) */
   TsSymTable *unionProps;        /* union and intersection types: the propertyCache (getUnionOrIntersectionProperty) */
+  struct TsType *resolvedReducedType;   /* unions with intersection members: getReducedType (ts-relate.h) */
   TsSymbol **resolvedProps;      /* union and intersection types: resolvedProperties (getPropertiesOfUnionOrIntersectionType) */
   int nResolvedProps;
   bool resolvedPropsDone;

@@ -488,6 +488,7 @@ static TsType *cGetUnionType(TsType **in, int n) {
   /* getUnionTypeFromSortedList: PrimitiveUnion unless a member is any, unknown, void, never, object,
    * intersection or substitution */
   if (!(includes & (TF_Any | TF_Unknown | TF_Void | TF_Never | TF_Object | TF_Intersection))) u->objectFlags |= OF_PrimitiveUnion;
+  if (includes & TF_Intersection) u->objectFlags |= OF_ContainsIntersections;
   cHashPut(cUnionTab, v, nm, u);
   return u;
 }
