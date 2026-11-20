@@ -259,7 +259,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
     let reached = reachable(&span, &stitched.rows)?;
-    if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) {
+    // An image body covers every function of its program: one whose first record leaves runs it in the lane's interpreter.
+    if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) && helpers != LaneHelpers::Ahead {
         return Err("first instruction leaves".to_string());
     }
     let mut rows: Vec<Decoded> = stitched.rows.into_iter().enumerate()
