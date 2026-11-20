@@ -418,6 +418,12 @@ impl BuildDirectory {
 }
 impl Drop for BuildDirectory {
     fn drop(&mut self) {
+        // A failed compile leaves its objects and the linker's command for inspection
+        // (`QUENCH_TRACE=build-dir`), which is what a relocation defect needs.
+        if quench_runtime::trace::Channel::BuildDir.on() {
+            eprintln!("quench: build directory {}", self.0.display());
+            return;
+        }
         let _ = fs::remove_dir_all(&self.0);
     }
 }
