@@ -3485,7 +3485,7 @@ impl CompiledOsrRegion {
                             EntryStamp { captures: captures_key(vm, frame), ..EntryStamp::of(vm, (program, function, frame), lane_context, registers, residual.specialized) }
                         }
                     };
-                    osr_lane::bind_loop::<H>(&mut dispatch, region, entry, lane_context, registers);
+                    osr_lane::bind_loop::<H>(&mut dispatch, region, entry, lane_context);
                     osr_lane::bind_captures::<H>(region, entry, lane_context, registers, calls, &mut captures);
                     self.stamp.set(Some(stamp));
                     let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
@@ -3497,7 +3497,7 @@ impl CompiledOsrRegion {
                 // runs after it.
                 None => JsStepDispatch::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |dispatch, vm| {
                     dispatch.bind_native_storage(std::ptr::from_mut(vm));
-                    osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context, registers);
+                    osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context);
                     osr_lane::bind_captures::<H>(region, entry, lane_context, registers, calls, &mut captures);
                     // `with_function` admitted the program; it holds it for the run.
                     let Some(residual) = vm.programs.get(program) else { return RegionRun::own(LaneExit::Terminated) };

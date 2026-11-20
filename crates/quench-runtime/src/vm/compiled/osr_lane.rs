@@ -3,25 +3,13 @@
 //! (`CompiledOsrRegion::run_lane`).
 use super::*;
 
-/// The loop's own words: its receiver, the entry's counter and the scratch a leave inside an
-/// inlined callee writes the callee's live registers to.
+/// The loop's own words: the entry's counter and the scratch a leave inside an inlined callee
+/// writes the callee's live registers to.
 ///
 /// # Safety
-/// `lane_context` is the running lane's context for `H`; `registers` is the live window the run
-/// executes in, whose header is its own.
-pub(super) unsafe fn bind_loop<H: Host>(
-    dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize, registers: *mut crate::value::Value,
-) {
+/// `lane_context` is the running lane's context for `H`.
+pub(super) unsafe fn bind_loop<H: Host>(dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize) {
     dispatch.lane_context = lane_context;
-    // A region's `THIS`-based reads take the running activation's receiver, as a lane
-    // body's do (`run_loop_body`); `with` leaves it `DELETED`. A frameless activation's
-    // receiver is the lane context's: `frame` is then the VM frame beneath it, its caller's.
-    // The receiver lives in the window's header (`CONTEXT_THIS`), as a lane body's does.
-    // SAFETY: as the caller promises.
-    unsafe {
-        let this = super::dispatch_fast::context_this_in_lane::<H>(lane_context).to_bits();
-        super::dispatch_fast::set_frame_word(registers, crate::staged::frame::CONTEXT_THIS, this);
-    }
     // The counter is the `words` field's first word, not the struct's offset 0:
     // `LoopEntry` is not `repr(C)`.
     dispatch.loop_entry = entry.words_mut() as usize;
@@ -133,6 +121,14 @@ pub(super) unsafe fn enter<H: Host>(
     (code, resume): (BodyEntry, u64), registers: *mut crate::value::Value,
     interrupt: *const crate::execution_interrupt::ExecutionInterrupt, (lane_context, lend): (usize, Option<bool>),
 ) -> RegionRun {
+    // A region's `THIS`-based reads take the running activation's receiver, as a lane body's do
+    // (`run_loop_body`); `with` leaves it `DELETED`. A frameless activation's receiver is the lane
+    // context's: `frame` is then the VM frame beneath it, its caller's. The entry takes it as its
+    // receiver word; the window's header holds the same word for the helpers that read `this`
+    // there (`this_in_lane`), so it is written once per run, here.
+    // SAFETY: as the caller promises.
+    let receiver = unsafe { super::dispatch_fast::context_this_in_lane::<H>(lane_context).to_bits() };
+    unsafe { super::dispatch_fast::set_frame_word(registers, crate::staged::frame::CONTEXT_THIS, receiver) };
     let mut context = CallContext::interrupt_only(unsafe { &*interrupt });
     context.vm = std::ptr::from_mut(vm).cast();
     context.program = program;
@@ -142,10 +138,10 @@ pub(super) unsafe fn enter<H: Host>(
     // The region's call rows reload its payload's heap bases after the callee ran (`region_call_in_lane`).
     // SAFETY: `lane_context` is the running lane's.
     let outer = unsafe { super::dispatch_fast::region_payload_in_lane::<H>(lane_context, payload.addr()) };
-    // The region's entry takes no receiver (its `this` is the dispatch's), its resume stub's address
-    // as the capture word, and the register file.
+    // The region's entry takes its receiver, its resume stub's address as the capture word, and the
+    // register file.
     let descriptor = super::entry_protocol::EntryDescriptor {
-        kind: super::entry_protocol::EntryKind::Region, receiver: 0, captures: resume,
+        kind: super::entry_protocol::EntryKind::Region, receiver, captures: resume,
         registers: registers.cast::<u64>().cast_const(), entry: code,
     };
     // SAFETY: as the caller promises; the code reads the register file and returns
