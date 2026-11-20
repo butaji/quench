@@ -744,10 +744,9 @@ typedef struct TsFlow {
   struct TsFlow *target;        /* ReduceLabel: target and antecedents */
   struct TsFlow **redAnts;
   int nRedAnts;
-  uint32_t walkStamp;           /* checker: the flow walk (cFlowStamp) that last computed the node */
-  struct TsType *walkType;      /* checker: the flow type computed by that walk (NULL while in progress) */
-  uint8_t walkDone, walkRevisited, walkMismatch;   /* checker: loop labels: revisited while in progress */
-  struct TsType *walkSeen;      /* checker: the partial loop type that a revisit returned first */
+  int clauseStart, clauseEnd;   /* SwitchClause: the clause range (empty for the implicit default of a switch) */
+  struct CLoopCache *loopCache; /* checker: the loop label's types by reference key (flowLoopCaches) */
+  uint8_t reach;                /* checker: reachability of a shared node (0 not known, 1 reachable, 2 not) */
 } TsFlow;
 
 /* the two unreachable nodes are created once by createBinder in TypeScript, so they are not counted */
@@ -810,7 +809,10 @@ static TsFlow *bReduceLabel(TsFlow *target, TsFlow **ants, int n, TsFlow *ante) 
 static TsFlow *bFlowCondition(uint32_t flags, TsFlow *ante, TsNode *expr);
 static TsFlow *bFlowSwitchClause(TsFlow *ante, TsNode *sw, int s, int e) {
   bSetReferenced(ante);
-  return bNewFlow(FF_SwitchClause, sw, ante);
+  TsFlow *f = bNewFlow(FF_SwitchClause, sw, ante);
+  f->clauseStart = s;
+  f->clauseEnd = e;
+  return f;
 }
 static TsFlow *bFlowMutation(uint32_t flags, TsFlow *ante, TsNode *node) {
   bSetReferenced(ante);

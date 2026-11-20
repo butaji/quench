@@ -141,13 +141,13 @@ typedef struct {
   bool jump;             /* a const reference continues at the creation flow of each function value between it and its declaration */
   TsNode *flowContainer; /* the container the walk ends at (checkIdentifier's flowContainer) */
   bool declaredAtStart;  /* an outer mutable variable (let or var): its flow start is its declared type, whatever the union */
+  TsType *initial;       /* initialType of the walk (the declared type, or its optional type when not assumed initialized) */
+  int depth;             /* flowDepth of the walk */
+  int sharedStart;       /* the shared flow memo of this walk starts here (sharedFlowStart) */
+  const char *key;       /* the flow cache key of the reference (getFlowCacheKey), built when a loop label needs it */
+  bool keyDone;
 } CFlowRef;
 
-static uint32_t cFlowStamp;
-static int cFlowReentry;   /* the non-loop flow nodes walked again while in progress (cFlowWalkType) */
-typedef struct { TsFlow *target; TsFlow **ants; int n; } CRedOverride;
-static CRedOverride cRedOverrides[32];
-static int cRedOverrideN;
 
 /* the target of an assignment flow node: the name of a declaration, the left side of `=`, the operand of ++ or -- */
 static TsNode *cAssignTarget(TsNode *n) {
@@ -771,14 +771,359 @@ static TsType *cAssignedType(TsNode *n) {
   }
 }
 
-/* the flow type of a reference at a flow node (getTypeAtFlowNode) */
-static TsType *cFlowWalkType(TsFlow *f, CFlowRef *r);
+/* ---- flow types (getTypeAtFlowNode, checker.ts 5.9.2 lines 74879-75165) ----
+ * A flow type is a type with node's incomplete flag (an incomplete one is { flags: 0, type } in node). One walk of
+ * getFlowTypeOfReference keeps node's shared flow memo (the Shared flow nodes it passed, by sharedFlowNodes and
+ * sharedFlowTypes), the loop label caches (flowLoopCaches, by flow node and reference key), the loop stack of the labels in
+ * progress (flowLoopNodes, flowLoopKeys, flowLoopTypes) and the reduce label overrides (target.antecedent). Node's
+ * flowTypeCache of expression types is replaced by the rollback below: an expression type computed while a loop label is
+ * in progress is dropped when that loop's back edge is done, since its flow types may be incomplete. */
+typedef struct { TsType *t; bool inc; } CFT;
+static CFT cFT(TsType *t) { CFT r = { t, false }; return r; }
+static CFT cFlowAt(TsFlow *flow, CFlowRef *r);
+/* createFlowType: an incomplete never is the silent never (node's silentNeverType, which is not the unreachable one) */
+static CFT cCreateFlowType(TsType *t, bool inc) {
+  CFT r = { (inc && (t->flags & TF_Never)) ? cNeverType : t, inc };
+  return r;
+}
+
+/* unreachableNeverType: the never type of a flow that is unreachable (a call that never returns, an assignment in dead
+ * code). It is not counted as a type, as it is not in the type count of the checker's intrinsics that are ported. */
+static TsType cUnreachableNeverObj = { .flags = TF_Never };
+#define cUnreachableNeverType (&cUnreachableNeverObj)
+
+/* a growing list of types (the antecedentTypes of a label) */
+typedef struct CTypeList { TsType **v; int n, cap; } CTypeList;
+static void cTLAdd(CTypeList *l, TsType *t) {
+  if (l->n == l->cap) {
+    int cap = l->cap ? l->cap * 2 : 8;
+    TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)cap);
+    if (l->n) memcpy(v, l->v, sizeof(TsType *) * (size_t)l->n);
+    l->v = v;
+    l->cap = cap;
+  }
+  l->v[l->n++] = t;
+}
+static bool cTLContains(CTypeList *l, TsType *t) {
+  for (int i = 0; i < l->n; i++) if (l->v[i] == t) return true;
+  return false;
+}
+/* pushIfUnique */
+static void cTLAddUnique(CTypeList *l, TsType *t) { if (!cTLContains(l, t)) cTLAdd(l, t); }
+
+/* the loop label caches of node (flowLoopCaches): per flow node, the complete result of each reference key */
+typedef struct CLoopCache { const char *key; TsType *t; struct CLoopCache *next; } CLoopCache;
+/* the loop labels in progress (flowLoopNodes, flowLoopKeys, flowLoopTypes) and the expression log of their back edges */
+typedef struct { TsFlow *flow; const char *key; CTypeList *types; int logMark; } CLoopEntry;
+static CLoopEntry *cLoops;
+static int cLoopN, cLoopCap;
+static TsNode **cFlowLog;
+static int cFlowLogN, cFlowLogCap;
+
+/* the shared flow memo of the walks (sharedFlowNodes and sharedFlowTypes): one walk sees the entries from its start */
+typedef struct { TsFlow *flow; CFT t; } CSharedFlow;
+static CSharedFlow *cSharedFlows;
+static int cSharedN, cSharedCap;
+
+typedef struct { TsFlow *target; TsFlow **ants; int n; } CRedOverride;
+static CRedOverride cRedOverrides[32];
+static int cRedOverrideN;
+
+/* the expression types computed while a loop back edge is walked (see cExprType) are logged, and dropped at the back edge's end */
+static void cFlowLogAdd(TsNode *e) {
+  if (cFlowLogN == cFlowLogCap) {
+    cFlowLogCap = cFlowLogCap ? cFlowLogCap * 2 : 256;
+    cFlowLog = realloc(cFlowLog, sizeof(TsNode *) * (size_t)cFlowLogCap);
+    if (!cFlowLog) abort();
+  }
+  cFlowLog[cFlowLogN++] = e;
+}
+
+static void cLoopPush(TsFlow *flow, const char *key, CTypeList *types) {
+  if (cLoopN == cLoopCap) {
+    cLoopCap = cLoopCap ? cLoopCap * 2 : 64;
+    cLoops = realloc(cLoops, sizeof(CLoopEntry) * (size_t)cLoopCap);
+    if (!cLoops) abort();
+  }
+  cLoops[cLoopN].flow = flow;
+  cLoops[cLoopN].key = key;
+  cLoops[cLoopN].types = types;
+  cLoops[cLoopN].logMark = cFlowLogN;
+  cLoopN++;
+}
+
+static void cLoopPop(void) {
+  CLoopEntry *top = &cLoops[--cLoopN];
+  for (int i = top->logMark; i < cFlowLogN; i++) {
+    cFlowLog[i]->exprState = 0;
+    cFlowLog[i]->exprType = NULL;
+  }
+  cFlowLogN = top->logMark;
+}
+
+static TsType *cLoopCacheGet(TsFlow *f, const char *key) {
+  for (CLoopCache *c = f->loopCache; c; c = c->next) if (strcmp(c->key, key) == 0) return c->t;
+  return NULL;
+}
+static void cLoopCachePut(TsFlow *f, const char *key, TsType *t) {
+  for (CLoopCache *c = f->loopCache; c; c = c->next) if (strcmp(c->key, key) == 0) { c->t = t; return; }
+  CLoopCache *c = ts_arena_alloc(sizeof(CLoopCache));
+  c->key = key;
+  c->t = t;
+  c->next = f->loopCache;
+  f->loopCache = c;
+}
+
+/* the antecedents of a label, or the antecedents a reduce label gave its target */
+static void cLabelAnts(TsFlow *f, TsFlow ***ants, int *n) {
+  *ants = f->labelAnts;
+  *n = f->nLabelAnts;
+  for (int i = cRedOverrideN - 1; i >= 0; i--)
+    if (cRedOverrides[i].target == f) { *ants = cRedOverrides[i].ants; *n = cRedOverrides[i].n; return; }
+}
+
+/* isTypeSubsetOf (the enum-like case of isTypeSubsetOfUnion is not ported) */
+static bool cIsTypeSubsetOf(TsType *s, TsType *t) {
+  if (s == t || (s->flags & TF_Never)) return true;
+  if (!(t->flags & TF_Union)) return false;
+  if (s->flags & TF_Union) {
+    for (int i = 0; i < s->ntypes; i++) {
+      bool in = false;
+      for (int j = 0; j < t->ntypes && !in; j++) in = t->types[j] == s->types[i];
+      if (!in) return false;
+    }
+    return true;
+  }
+  for (int j = 0; j < t->ntypes; j++) if (t->types[j] == s) return true;
+  return false;
+}
+
+/* getUnionOrEvolvingArrayType (the evolving arrays are not ported): the union of the types with the literal or the subtype
+ * reduction, and the declared type when the union has the members of the declared union */
+static TsType *cFlowUnion(TsType **ts, int n, bool subtypeRed, TsType *declared) {
+  TsType *res = subtypeRed ? cUnionWithSubtypesRemoved(ts, n) : cGetUnionType(ts, n);
+  if (res != declared && (res->flags & TF_Union) && (declared->flags & TF_Union) && res->ntypes == declared->ntypes &&
+      memcmp(res->types, declared->types, sizeof(TsType *) * (size_t)res->ntypes) == 0)
+    return declared;
+  return res;
+}
+
+/* the reference key of a flow cache (getFlowCacheKey): the symbol of the root identifier and the property names of the chain */
+static char *cFlowCat(const char *a, const char *sep, const char *b, int blen) {
+  size_t la = strlen(a), ls = strlen(sep);
+  char *s = ts_arena_alloc(la + ls + (size_t)blen + 1);
+  memcpy(s, a, la);
+  memcpy(s + la, sep, ls);
+  memcpy(s + la + ls, b, (size_t)blen);
+  s[la + ls + (size_t)blen] = 0;
+  return s;
+}
+static const char *cFlowChainKey(TsNode *n) {
+  for (;;) {
+    if (n->kind == TSK_ParenthesizedExpression || n->kind == TSK_NonNullExpression) { n = n->expression; continue; }
+    break;
+  }
+  if (n->kind == TSK_Identifier) {
+    TsSymbol *s = cResolveValueName(n, bnEscapeText(n->text, n->textLen));
+    if (!s) return NULL;
+    char *b = ts_arena_alloc(32);
+    snprintf(b, 32, "@%p", (void *)s);
+    return b;
+  }
+  if (n->kind == TSK_PropertyAccessExpression && n->name) {
+    const char *k = cFlowChainKey(n->expression);
+    return k ? cFlowCat(k, ".", n->name->text, n->name->textLen) : NULL;
+  }
+  if (n->kind == TSK_ElementAccessExpression) {
+    TsNode *a = cSkipParens(n->argumentExpression);
+    if (!a || (a->kind != TSK_StringLiteral && a->kind != TSK_NumericLiteral)) return NULL;
+    const char *k = cFlowChainKey(n->expression);
+    return k ? cFlowCat(k, ".", a->text, a->textLen) : NULL;
+  }
+  return NULL;
+}
+/* getFlowCacheKey of a reference: the container, the declared and the initial type, and the chain */
+static const char *cFlowRefKey(CFlowRef *r) {
+  if (!r->keyDone) {
+    r->keyDone = true;
+    const char *chain = cFlowChainKey(r->node);
+    if (chain) {
+      size_t cap = strlen(chain) + 96;
+      char *b = ts_arena_alloc(cap);
+      snprintf(b, cap, "%p|%p|%p%s", (void *)r->flowContainer, (void *)r->declared, (void *)r->initial, chain);
+      r->key = b;
+    }
+  }
+  return r->key;
+}
+
+/* isFalseExpression */
+static bool cIsFalseExpr(TsNode *e) {
+  TsNode *n = cSkipParens(e);
+  if (n->kind == TSK_FalseKeyword) return true;
+  if (n->kind == TSK_BinaryExpression) {
+    int op = n->operatorToken->kind;
+    if (op == TSK_AmpersandAmpersandToken) return cIsFalseExpr(n->left) || cIsFalseExpr(n->right);
+    if (op == TSK_BarBarToken) return cIsFalseExpr(n->left) && cIsFalseExpr(n->right);
+  }
+  return false;
+}
+
+/* getTypePredicateOfSignature and hasTypePredicateOrNeverReturnType on a declaration; the return type is the annotation */
+static bool cIsNeverReturn(TsNode *d) {
+  return d && d->type && d->type->kind != TSK_TypePredicate && (cTypeFromNode(d->type)->flags & TF_Never) != 0;
+}
+static bool cSigHasPredOrNever(TsNode *d) {
+  return d && d->type && (d->type->kind == TSK_TypePredicate || cIsNeverReturn(d));
+}
+
+/* the parameter an asserts predicate names (its parameterIndex), or -1 */
+static int cAssertParamIndex(TsNode *d, TsNode *pred) {
+  CParams ps;
+  if (!cSplitParams(d, &ps)) return -1;
+  int idx = -1;
+  for (int k = 0; k < ps.n; k++) {
+    TsNode *pn = ps.params[k]->name;
+    if (pn && pn->kind == TSK_Identifier && pn->textLen == pred->parameterName->textLen &&
+        memcmp(pn->text, pred->parameterName->text, (size_t)pn->textLen) == 0) idx = k;
+  }
+  return idx;
+}
+
+/* the effects signature of a call (getEffectsSignature): none, the single declared signature, or a case not ported (several
+ * signatures with a predicate or a never return, a generic one, a union or other callee type). The callee is the expression
+ * type (node uses the dotted name in an expression statement). An error or any callee has no effect. */
+enum { CE_None = 0, CE_Sig, CE_Unported };
+static int cGetEffects(TsNode *call, TsNode **decl) {
+  *decl = NULL;
+  if (call->kind != TSK_CallExpression || call->expression->kind == TSK_SuperKeyword) return CE_None;
+  TsType *f = cExprType(call->expression);
+  if (f == cErrorType || (f->flags & (TF_Any | TF_Unknown))) return CE_None;
+  if (!(f->flags & TF_Object)) {
+    if (f->flags & (TF_Union | TF_Intersection | TF_TypeParameter | TF_Index | TF_IndexedAccess)) return CE_Unported;
+    return CE_None;
+  }
+  cResolveSignatures(f);
+  bool eff = false;
+  for (int i = 0; i < f->ncall && !eff; i++) eff = cSigHasPredOrNever(f->call[i].decl);
+  if (!eff) return CE_None;
+  if (f->ncall == 1 && f->call[0].decl && !(f->call[0].decl->typeParameters && f->call[0].decl->typeParameters->n)) {
+    *decl = f->call[0].decl;
+    return CE_Sig;
+  }
+  return CE_Unported;
+}
+
+static bool cIsExhaustiveSwitch(TsNode *sw);
+
+/* isReachableFlowNode (isReachableFlowNodeWorker): a flow node is reachable unless a path back from it is unreachable (the
+ * start of the walk is not reached through an unreachable node, a never-returning call or a false assertion, or an exhaustive
+ * switch with no clause). The result of a shared node is kept in the node. */
+static bool cIsReachableFlow(TsFlow *flow, bool noCacheCheck) {
+  for (;;) {
+    uint32_t fl = flow->flags;
+    if (fl & FF_Shared) {
+      if (!noCacheCheck) {
+        if (flow->reach) return flow->reach == 1;
+        bool v = cIsReachableFlow(flow, true);
+        flow->reach = v ? 1 : 2;
+        return v;
+      }
+      noCacheCheck = false;
+    }
+    if (fl & (FF_Assignment | FF_TrueCondition | FF_FalseCondition | FF_ArrayMutation)) { flow = flow->ante; continue; }
+    if (fl & FF_Call) {
+      TsNode *d = NULL;
+      int k = cGetEffects(flow->node, &d);
+      if (k == CE_Unported) { (void)cUnported("reachability of an overloaded or generic callee"); return true; }
+      if (k == CE_Sig) {
+        TsNode *p = d->type;
+        if (p->kind == TSK_TypePredicate && p->assertsModifier && p->parameterName && !p->type) {
+          int idx = cAssertParamIndex(d, p);
+          if (idx >= 0 && flow->node->arguments && idx < flow->node->arguments->n && cIsFalseExpr(flow->node->arguments->v[idx]))
+            return false;
+        }
+        if (cIsNeverReturn(d)) return false;
+      }
+      flow = flow->ante;
+      continue;
+    }
+    if (fl & FF_BranchLabel) {
+      TsFlow **ants; int n;
+      cLabelAnts(flow, &ants, &n);
+      for (int i = 0; i < n; i++) if (cIsReachableFlow(ants[i], false)) return true;
+      return false;
+    }
+    if (fl & FF_LoopLabel) {
+      TsFlow **ants; int n;
+      cLabelAnts(flow, &ants, &n);
+      if (n == 0) return false;
+      flow = ants[0];
+      continue;
+    }
+    if (fl & FF_SwitchClause) {
+      if (flow->clauseStart == flow->clauseEnd && cIsExhaustiveSwitch(flow->node)) return false;
+      flow = flow->ante;
+      continue;
+    }
+    if (fl & FF_ReduceLabel) {
+      if (cRedOverrideN == 32) { (void)cUnported("reduce label depth"); return true; }
+      cRedOverrides[cRedOverrideN].target = flow->target;
+      cRedOverrides[cRedOverrideN].ants = flow->redAnts;
+      cRedOverrides[cRedOverrideN].n = flow->nRedAnts;
+      cRedOverrideN++;
+      bool res = cIsReachableFlow(flow->ante, false);
+      cRedOverrideN--;
+      return res;
+    }
+    return !(fl & FF_Unreachable);
+  }
+}
+
+/* isExhaustiveSwitchStatement for the switches whose operand is a literal type (computeExhaustiveSwitchStatement); a switch on
+ * typeof is not ported and is not exhaustive here */
+static bool cIsLiteralTypeFlow(TsType *t) {
+  if (t->flags & TF_Boolean) return true;
+  if (t->flags & TF_Union) {
+    if (t->flags & TF_EnumLiteral) return true;
+    for (int i = 0; i < t->ntypes; i++) if (!cIsUnitType(t->types[i])) return false;
+    return true;
+  }
+  return cIsUnitType(t);
+}
+static bool cIsExhaustiveSwitch(TsNode *sw) {
+  TsNode *e = sw->expression;
+  if (e->kind == TSK_TypeOfExpression) { (void)cUnported("exhaustive switch on typeof"); return false; }
+  TsType *t = cExprType(e);
+  if (t == cErrorType) return false;
+  TsType *bc = cBaseConstraintOf(t);
+  if (!bc) bc = t;
+  if (bc == cErrorType || !cIsLiteralTypeFlow(bc)) return false;
+  TsList *cl = sw->caseBlock->clauses;
+  int n = cl ? cl->n : 0;
+  if (n == 0) return false;
+  TsType **st = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
+  for (int i = 0; i < n; i++) {
+    TsNode *c = cl->v[i];
+    st[i] = c->kind == TSK_CaseClause ? cRegularType(cExprType(c->expression)) : cNeverType;
+  }
+  for (int i = 0; i < n; i++) if (!(cIsUnitType(st[i]) || (st[i]->flags & TF_Never))) return false;
+  /* eachTypeContainedIn (the members of the regular literal type, each in the switch types) */
+  int m = (bc->flags & TF_Union) ? bc->ntypes : 1;
+  for (int j = 0; j < m; j++) {
+    TsType *mt = cRegularType((bc->flags & TF_Union) ? bc->types[j] : bc);
+    bool in = false;
+    for (int i = 0; i < n && !in; i++) in = st[i] == mt;
+    if (!in) return false;
+  }
+  return true;
+}
 
 /* narrowTypeByAssertion (75001): the argument of an assertion function narrowed as a condition that holds. `a && b` narrows
- * by a and then by b, `a || b` is the union of both, and `false` makes the flow unreachable (not ported). */
+ * by a and then by b, `a || b` is the union of both, and `false` makes the flow unreachable. */
 static TsType *cNarrowByAssertionExpr(TsNode *e, TsType *t, CFlowRef *r) {
   TsNode *n = cSkipParens(e);
-  if (n->kind == TSK_FalseKeyword) return cUnported("assertion of false");
+  if (n->kind == TSK_FalseKeyword) return cUnreachableNeverType;
   if (n->kind == TSK_BinaryExpression && n->operatorToken->kind == TSK_AmpersandAmpersandToken)
     return cNarrowByAssertionExpr(n->right, cNarrowByAssertionExpr(n->left, t, r), r);
   if (n->kind == TSK_BinaryExpression && n->operatorToken->kind == TSK_BarBarToken) {
@@ -791,21 +1136,16 @@ static TsType *cNarrowByAssertionExpr(TsNode *e, TsType *t, CFlowRef *r) {
   return cNarrowByCondition(n, true, t, r);
 }
 
-/* getTypeAtFlowCall (5.9.2): a call whose single signature has an assertion predicate narrows the reference when the
- * predicate's argument is the reference (`asserts x is T` by the predicate type, `asserts x` by the argument's condition).
- * Assertions of this, overloaded callees, and never-returning calls are not ported. */
+/* getTypeAtFlowCall's assertion narrowing (5.9.2): the reference narrowed by the predicate of an assertion call. `asserts x is
+ * T` narrows by the predicate type, `asserts x` by the argument's condition. Assertions of this and of overloaded callees
+ * are not ported. */
 static TsType *cAssertionCallNarrowing(TsNode *call, TsNode *d, TsType *t, CFlowRef *r) {
   TsNode *pred = d->type;
   if (!pred || pred->kind != TSK_TypePredicate || !pred->assertsModifier) return t;   /* a plain predicate has no flow effect */
   if (!pred->parameterName || pred->parameterName->kind != TSK_Identifier) return cUnported("assertion of this");
   CParams ps;
   if (!cSplitParams(d, &ps) || ps.thisParam || ps.rest) return cUnported("assertion call of a rest or this parameter");
-  int idx = -1;
-  for (int k = 0; k < ps.n; k++) {
-    TsNode *pn = ps.params[k]->name;
-    if (pn && pn->kind == TSK_Identifier && pn->textLen == pred->parameterName->textLen &&
-        memcmp(pn->text, pred->parameterName->text, (size_t)pn->textLen) == 0) idx = k;
-  }
+  int idx = cAssertParamIndex(d, pred);
   if (idx < 0 || !call->arguments || idx >= call->arguments->n) return cUnported("assertion call without its argument");
   TsNode *arg = call->arguments->v[idx];
   if (!pred->type) return cNarrowByAssertionExpr(arg, t, r);
@@ -816,148 +1156,242 @@ static TsType *cAssertionCallNarrowing(TsNode *call, TsNode *d, TsType *t, CFlow
   return cGetNarrowedType(t, cand, true);
 }
 
-static TsType *cFlowWalkNode(TsFlow *f, CFlowRef *r) {
-  uint32_t fl = f->flags;
+static bool cArgsMention(TsNode *call, CFlowRef *r) {
+  if (!call->arguments) return false;
+  for (int i = 0; i < call->arguments->n; i++) if (cMentionsText(call->arguments->v[i], r->text, r->len)) return true;
+  return false;
+}
+
+/* getTypeAtFlowAssignment: the reference assigned here (its declared type, or the assigned type reduced by it), the
+ * reference's container assigned (the declared type), or no effect (false). An assignment in unreachable code is never. */
+static bool cFlowAssignment(TsFlow *flow, CFlowRef *r, CFT *out) {
+  TsNode *tg = cAssignTarget(flow->node);
   TsType *declared = r->declared;
-  if (fl & FF_Unreachable) return cNeverType;
-  if (fl & FF_Start) {
-    /* FlowStart: a function value created in another container continues at its creation flow */
-    TsNode *c = f->node;
-    if (r->jump && c && c != r->flowContainer) {
-      if (!c->flowNode) return cUnported("function value without a flow node");
-      return cFlowWalkType(c->flowNode, r);
-    }
-    return cFlowStartType(r);
+  if (tg && cAssignMatches(tg, r)) {
+    if (!cIsReachableFlow(flow, false)) { *out = cFT(cUnreachableNeverType); return true; }
+    if (r->nonUnion) { *out = cFT(declared); return true; }
+    TsType *assigned = cAssignedType(flow->node);
+    *out = cFT(assigned == cErrorType ? assigned : cAssignmentReduced(declared, assigned));
+    return true;
   }
-  if (fl & FF_ReduceLabel) {
-    if (cRedOverrideN == 32) return cUnported("reduce label depth");
-    cRedOverrides[cRedOverrideN].target = f->target;
-    cRedOverrides[cRedOverrideN].ants = f->redAnts;
-    cRedOverrides[cRedOverrideN].n = f->nRedAnts;
-    cRedOverrideN++;
-    TsType *t = cFlowWalkType(f->ante, r);
-    cRedOverrideN--;
-    return t;
+  /* containsMatchingReference (x.y = v for the reference x): the declared type, whatever it is (getTypeAtFlowAssignment) */
+  if (tg && cAssignContains(tg, r)) {
+    if (!cIsReachableFlow(flow, false)) { *out = cFT(cUnreachableNeverType); return true; }
+    *out = cFT(declared);
+    return true;
   }
-  if (fl & (FF_BranchLabel | FF_LoopLabel)) {
-    TsFlow **ants = f->labelAnts;
-    int n = f->nLabelAnts;
-    for (int i = cRedOverrideN - 1; i >= 0; i--)
-      if (cRedOverrides[i].target == f) { ants = cRedOverrides[i].ants; n = cRedOverrides[i].n; break; }
-    if (n == 0) return cNeverType;
-    TsType **ts = ts_arena_alloc(sizeof(TsType *) * (size_t)n);
-    int k = 0;
-    bool same = true, subtypeReduction = false;
-    for (int i = 0; i < n; i++) {
-      /* a loop label's partial type (the union so far) is what a revisit from its back edge sees (getTypeAtFlowLoopLabel) */
-      TsType *t = cFlowWalkType(ants[i], r);
-      if (t == cErrorType) return t;
-      if (t == cNeverType) continue;
-      if (k > 0 && t != ts[0]) same = false;
-      ts[k++] = t;
-      if (t != declared && cIsRelatedWith(t, declared, REL_Subtype)) subtypeReduction = true;
-      if (fl & FF_LoopLabel) f->walkType = k ? (same ? ts[0] : (subtypeReduction ? cUnionWithSubtypesRemoved(ts, k) : cGetUnionType(ts, k))) : cNeverType;
-    }
-    TsType *res;
-    if (k == 0) res = cNeverType;
-    else if (same) res = ts[0];
-    else if (subtypeReduction) res = cUnionWithSubtypesRemoved(ts, k);
-    else res = cGetUnionType(ts, k);
-    if (res == cErrorType) return res;
-    if ((fl & FF_LoopLabel) && f->walkRevisited && (f->walkMismatch || f->walkSeen != res)) return cUnported("loop flow without a fixed point");
-    return res;
+  if (tg && tg->kind != TSK_Identifier && tg->kind != TSK_PropertyAccessExpression && tg->kind != TSK_ElementAccessExpression &&
+      cMentionsText(tg, r->text, r->len)) {
+    *out = cFT(cUnported("destructuring assignment of the reference"));
+    return true;
   }
-  if (fl & FF_Assignment) {
-    TsNode *tg = cAssignTarget(f->node);
-    if (tg && cAssignMatches(tg, r)) {
-      if (r->nonUnion) return declared;
-      TsType *assigned = cAssignedType(f->node);
-      if (assigned == cErrorType) return assigned;
-      return cAssignmentReduced(declared, assigned);
-    }
-    /* containsMatchingReference (x.y = v for the reference x): the declared type, whatever it is (getTypeAtFlowAssignment) */
-    if (tg && cAssignContains(tg, r)) return declared;
-    if (tg && tg->kind != TSK_Identifier && tg->kind != TSK_PropertyAccessExpression && tg->kind != TSK_ElementAccessExpression &&
-        cMentionsText(tg, r->text, r->len))
-      return cUnported("destructuring assignment of the reference");
-    return cFlowWalkType(f->ante, r);
-  }
-  if (fl & (FF_TrueCondition | FF_FalseCondition)) {
-    TsType *t = cFlowWalkType(f->ante, r);
-    if (t == cErrorType) return t;
-    return cNarrowByCondition(f->node, (fl & FF_TrueCondition) != 0, t, r);
-  }
-  if (fl & FF_SwitchClause) {
-    TsType *t = cFlowWalkType(f->ante, r);
-    if (t == cErrorType) return t;
-    if (cMentionsText(f->node->expression, r->text, r->len)) return cUnported("switch narrowing");
-    return t;
-  }
-  if (fl & FF_Call) {
-    TsType *t = cFlowWalkType(f->ante, r);
-    if (t == cErrorType) return t;
-    bool argMentions = false;
-    if (f->node->arguments)
-      for (int i = 0; i < f->node->arguments->n; i++)
-        if (cMentionsText(f->node->arguments->v[i], r->text, r->len)) argMentions = true;
-    if (!argMentions) return t;
-    bool known;
-    bool pred = cCalleeHasPredicate(f->node, &known);
-    if (!known) return cUnported("assertion call narrowing");
-    /* the single call signature of the callee (getEffectsSignature); several signatures are not ported */
-    TsType *ft = cExprType(f->node->expression);
-    if (!pred) {
-      /* a callee with one signature that is declared never returns makes the flow unreachable (not ported) */
-      if (ft->ncall == 1 && ft->call[0].decl && ft->call[0].decl->type && ft->call[0].decl->type->kind == TSK_NeverKeyword)
-        return cUnported("never-returning call");
-      return t;
-    }
-    if (ft->ncall != 1) return cUnported("assertion call of an overloaded callee");
-    TsNode *d = ft->call[0].decl;
-    if (!d) return cUnported("assertion call without a declaration");
-    return cAssertionCallNarrowing(f->node, d, t, r);
-  }
-  return cFlowWalkType(f->ante, r);
+  return false;
 }
 
-static TsType *cFlowWalkType(TsFlow *f, CFlowRef *r) {
-  if (!f) return cUnported("flow node without antecedent");
-  if (f->walkStamp == cFlowStamp) {
-    if (f->walkDone) return f->walkType;
-    /* in progress: a loop label is revisited and gives the partial union so far. Any other flow node is walked again, as
-     * getTypeAtFlowNode does not memoize a node in progress: the walk comes back to it only through a loop label, which
-     * stops the recursion. The depth is bounded. */
-    if (!(f->flags & FF_LoopLabel)) {
-      if (cFlowReentry >= 64) return cUnported("flow cycle");
-      cFlowReentry++;
-      TsType *again = cFlowWalkNode(f, r);
-      cFlowReentry--;
-      return again;
-    }
-    if (!f->walkRevisited) { f->walkRevisited = 1; f->walkSeen = f->walkType ? f->walkType : cNeverType; }
-    else if (f->walkSeen != (f->walkType ? f->walkType : cNeverType)) f->walkMismatch = 1;
-    return f->walkType ? f->walkType : cNeverType;
+/* getTypeAtFlowCall: an assertion call narrows the reference, a call that never returns makes the flow unreachable, and
+ * any other call has no effect (false) */
+static bool cFlowCall(TsFlow *flow, CFlowRef *r, CFT *out) {
+  TsNode *call = flow->node;
+  TsNode *d = NULL;
+  int k = cGetEffects(call, &d);
+  if (k == CE_None) return false;
+  if (k == CE_Unported) { *out = cFT(cUnported("effects of an overloaded or generic callee")); return true; }
+  TsNode *pred = d->type;
+  if (pred->kind == TSK_TypePredicate && pred->assertsModifier) {
+    CFT ft = cFlowAt(flow->ante, r);
+    if (!cArgsMention(call, r)) { *out = ft; return true; }
+    TsType *n = cAssertionCallNarrowing(call, d, ft.t, r);
+    *out = n == ft.t ? ft : cCreateFlowType(n, ft.inc);
+    return true;
   }
-  f->walkStamp = cFlowStamp;
-  f->walkType = NULL;
-  f->walkDone = 0;
-  f->walkRevisited = 0;
-  f->walkMismatch = 0;
-  f->walkSeen = NULL;
-  TsType *t = cFlowWalkNode(f, r);
-  f->walkType = t;
-  f->walkDone = 1;
-  return t;
+  if (cIsNeverReturn(d)) { *out = cFT(cUnreachableNeverType); return true; }
+  return false;
 }
 
-/* getFlowTypeOfReference: the declared type when no narrowing applies, else the narrowed type (ported forms only) */
+/* getTypeAtFlowCondition: the antecedent narrowed by the condition (a never antecedent stays as it is) */
+static CFT cFlowCondition(TsFlow *flow, CFlowRef *r) {
+  CFT ft = cFlowAt(flow->ante, r);
+  TsType *t = ft.t;
+  if (t == cErrorType || (t->flags & TF_Never)) return ft;
+  bool truthy = (flow->flags & FF_TrueCondition) != 0;
+  TsType *n = cNarrowByCondition(flow->node, truthy, t, r);
+  if (n == t) return ft;
+  return cCreateFlowType(n, ft.inc);
+}
+
+/* getTypeAtSwitchClause: the antecedent, narrowed by the switch (the narrowing of a switch that mentions the reference is not
+ * ported) */
+static CFT cFlowSwitchClause(TsFlow *flow, CFlowRef *r) {
+  CFT ft = cFlowAt(flow->ante, r);
+  if (ft.t == cErrorType) return ft;
+  if (cMentionsText(flow->node->expression, r->text, r->len)) return cFT(cUnported("switch narrowing"));
+  return ft;
+}
+
+/* getTypeAtFlowBranchLabel: the union of the antecedent types (subtype reduction when one is not a subset of the initial type).
+ * The implicit default of a switch without a default clause is a bypass, unless the switch is exhaustive. */
+static CFT cFlowBranchLabel(TsFlow *flow, CFlowRef *r) {
+  TsType *declared = r->declared, *initial = r->initial;
+  TsFlow **ants; int n;
+  cLabelAnts(flow, &ants, &n);
+  CTypeList *list = ts_arena_zalloc(sizeof(CTypeList));
+  bool subtypeRed = false, seenInc = false;
+  TsFlow *bypass = NULL;
+  for (int i = 0; i < n; i++) {
+    TsFlow *a = ants[i];
+    if (!bypass && (a->flags & FF_SwitchClause) && a->clauseStart == a->clauseEnd) { bypass = a; continue; }
+    CFT ft = cFlowAt(a, r);
+    TsType *t = ft.t;
+    if (t == declared && declared == initial) return cFT(t);
+    cTLAddUnique(list, t);
+    if (!cIsTypeSubsetOf(t, initial)) subtypeRed = true;
+    if (ft.inc) seenInc = true;
+  }
+  if (bypass) {
+    CFT ft = cFlowAt(bypass, r);
+    TsType *t = ft.t;
+    if (!(t->flags & TF_Never) && !cTLContains(list, t) && !cIsExhaustiveSwitch(bypass->node)) {
+      if (t == declared && declared == initial) return cFT(t);
+      cTLAdd(list, t);
+      if (!cIsTypeSubsetOf(t, initial)) subtypeRed = true;
+      if (ft.inc) seenInc = true;
+    }
+  }
+  return cCreateFlowType(cFlowUnion(list->v, list->n, subtypeRed, declared), seenInc);
+}
+
+/* getTypeAtFlowLoopLabel: the cached type of the reference at the loop, else the union of its antecedents. The first antecedent
+ * is walked outside the loop; each other one is walked with the loop in progress, so a back edge that reaches the loop again
+ * gets the union so far, incomplete. A complete result is cached. */
+static CFT cFlowLoopLabel(TsFlow *flow, CFlowRef *r) {
+  TsType *declared = r->declared;
+  const char *key = cFlowRefKey(r);
+  if (!key) return cFT(declared);
+  TsType *cached = cLoopCacheGet(flow, key);
+  if (cached) return cFT(cached);
+  for (int i = 0; i < cLoopN; i++) {
+    if (cLoops[i].flow == flow && strcmp(cLoops[i].key, key) == 0 && cLoops[i].types->n)
+      return cCreateFlowType(cFlowUnion(cLoops[i].types->v, cLoops[i].types->n, false, declared), true);
+  }
+  TsFlow **ants; int n;
+  cLabelAnts(flow, &ants, &n);
+  if (n == 0) return cFT(cNeverType);
+  CTypeList *list = ts_arena_zalloc(sizeof(CTypeList));
+  bool subtypeRed = false;
+  CFT first = { NULL, false };
+  for (int i = 0; i < n; i++) {
+    CFT ft;
+    if (i == 0) {
+      first = cFlowAt(ants[0], r);
+      ft = first;
+    } else {
+      cLoopPush(flow, key, list);
+      ft = cFlowAt(ants[i], r);
+      cLoopPop();
+      TsType *c2 = cLoopCacheGet(flow, key);
+      if (c2) return cFT(c2);
+    }
+    TsType *t = ft.t;
+    cTLAddUnique(list, t);
+    if (!cIsTypeSubsetOf(t, r->initial)) subtypeRed = true;
+    if (t == declared) break;
+  }
+  TsType *res = cFlowUnion(list->v, list->n, subtypeRed, declared);
+  if (first.inc) return cCreateFlowType(res, true);
+  cLoopCachePut(flow, key, res);
+  return cFT(res);
+}
+
+/* getTypeAtFlowNode: the flow type of the reference at a flow node. The walk follows the antecedents of the assignments,
+ * calls, conditions and switch clauses that do not apply to it; a label joins its antecedents; the start of the container
+ * gives the initial type (or continues at the function value's creation flow). A Shared node is memoized for this walk. */
+static CFT cFlowAt(TsFlow *flow, CFlowRef *r) {
+  if (r->depth >= 2000) return cFT(cUnported("flow depth"));
+  r->depth++;
+  TsFlow *sharedFlow = NULL;
+  CFT type;
+  for (;;) {
+    uint32_t fl = flow->flags;
+    if (fl & FF_Shared) {
+      for (int i = r->sharedStart; i < cSharedN; i++)
+        if (cSharedFlows[i].flow == flow) { r->depth--; return cSharedFlows[i].t; }
+      sharedFlow = flow;
+    }
+    if (fl & FF_Assignment) {
+      if (!cFlowAssignment(flow, r, &type)) { flow = flow->ante; continue; }
+    } else if (fl & FF_Call) {
+      if (!cFlowCall(flow, r, &type)) { flow = flow->ante; continue; }
+    } else if (fl & (FF_TrueCondition | FF_FalseCondition)) {
+      type = cFlowCondition(flow, r);
+    } else if (fl & FF_SwitchClause) {
+      type = cFlowSwitchClause(flow, r);
+    } else if (fl & (FF_BranchLabel | FF_LoopLabel)) {
+      TsFlow **ants; int n;
+      cLabelAnts(flow, &ants, &n);
+      if (n == 1) { flow = ants[0]; continue; }
+      type = (fl & FF_BranchLabel) ? cFlowBranchLabel(flow, r) : cFlowLoopLabel(flow, r);
+    } else if (fl & FF_ArrayMutation) {
+      /* getTypeAtFlowArrayMutation: only the evolving arrays of an auto type, which are not ported */
+      flow = flow->ante;
+      continue;
+    } else if (fl & FF_ReduceLabel) {
+      if (cRedOverrideN == 32) {
+        type = cFT(cUnported("reduce label depth"));
+      } else {
+        cRedOverrides[cRedOverrideN].target = flow->target;
+        cRedOverrides[cRedOverrideN].ants = flow->redAnts;
+        cRedOverrides[cRedOverrideN].n = flow->nRedAnts;
+        cRedOverrideN++;
+        type = cFlowAt(flow->ante, r);
+        cRedOverrideN--;
+      }
+    } else if (fl & FF_Start) {
+      /* FlowStart: a function value created in another container continues at its creation flow */
+      TsNode *c = flow->node;
+      if (r->jump && c && c != r->flowContainer) {
+        if (!c->flowNode) { type = cFT(cUnported("function value without a flow node")); }
+        else { flow = c->flowNode; continue; }
+      } else {
+        type = cFT(cFlowStartType(r));
+      }
+    } else {
+      /* an unreachable flow node: the declared type (convertAutoToAny) */
+      type = cFT(r->declared);
+    }
+    if (sharedFlow) {
+      if (cSharedN == cSharedCap) {
+        cSharedCap = cSharedCap ? cSharedCap * 2 : 256;
+        cSharedFlows = realloc(cSharedFlows, sizeof(CSharedFlow) * (size_t)cSharedCap);
+        if (!cSharedFlows) abort();
+      }
+      cSharedFlows[cSharedN].flow = sharedFlow;
+      cSharedFlows[cSharedN].t = type;
+      cSharedN++;
+    }
+    r->depth--;
+    return type;
+  }
+}
+
+/* getFlowTypeOfReference: the declared type when no narrowing applies, else the narrowed type (ported forms only). The
+ * unreachable result and a non-null reference that is never not undefined give the declared type. */
 static TsType *cFlowTypeOfReference(TsNode *ref, CFlowRef *r) {
   TsType *d = r->declared;
   if (!ref->flowNode || (d->flags & (TF_Undefined | TF_Null | TF_Void | TF_Never))) return d;
-  cFlowStamp++;
   r->nonUnion = !(d->flags & TF_Union);
-  return cFlowWalkType(ref->flowNode, r);
+  r->initial = r->startInit ? d : cAddUndefined(d);
+  r->sharedStart = cSharedN;
+  r->depth = 0;
+  CFT ft = cFlowAt(ref->flowNode, r);
+  cSharedN = r->sharedStart;
+  TsType *res = ft.t;
+  if (res == cUnreachableNeverType) return d;
+  if (ref->parent && ref->parent->kind == TSK_NonNullExpression && !(res->flags & TF_Never) &&
+      (cTypeWithFacts(res, TFC_NEUndefinedOrNull)->flags & TF_Never))
+    return d;
+  return res;
 }
+
 
 /* the declaration of a symbol (the first one for a merged symbol) */
 static TsNode *cFirstDeclOf(TsSymbol *s) { return s->valueDeclaration ? s->valueDeclaration : (s->ndecls ? s->decls[0] : NULL); }
@@ -1331,6 +1765,7 @@ static TsType *cExprType(TsNode *e) {
   TsType *t = cExprWorker(e);
   e->exprType = t;
   e->exprState = 2;
+  if (cLoopN) cFlowLogAdd(e);   /* computed while a loop back edge is walked: dropped with the back edge (cLoopPop) */
   return t;
 }
 
