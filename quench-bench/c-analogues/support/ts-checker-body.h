@@ -1086,6 +1086,8 @@ static TsSymbol *cUnionProperty(TsType *u, BName name) {
     if (!p || (!p->valueDeclaration && !p->ndecls)) return NULL;
     TsNode *d = p->valueDeclaration ? p->valueDeclaration : p->decls[0];
     if (bModifierFlags(d) & (TMF_Private | TMF_Protected)) return NULL;
+    /* an accessor may have a write type other than its read type (not ported) */
+    if (d->kind == TSK_GetAccessor || d->kind == TSK_SetAccessor) return NULL;
     if (!single) { single = p; continue; }
     if (p == single) continue;
     TsSymbol *ta = single->instTarget ? single->instTarget : single, *tb = p->instTarget ? p->instTarget : p;
@@ -1217,8 +1219,16 @@ static TsType *cAssignmentTargetType(TsNode *left) {
     if (o->flags & TF_Any) return o;
     o = cApparentOf(o);
     if (o == cErrorType) return o;
+    BName pname = bnEscapeText(l->name->text, l->name->textLen);
+    TsSymbol *p;
+    if (o->flags & TF_Union) {
+      /* the write type of a union property is the union of the members' write types, which are their read types here */
+      p = cUnionProperty(o, pname);
+      if (!p) return cUnported("assignment to a member of a union");
+      return cTypeOfSymbol(p);
+    }
     if (!(o->flags & TF_Object)) return cUnported("assignment to a member of a non-object");
-    TsSymbol *p = cPropertyOf(o, bnEscapeText(l->name->text, l->name->textLen));
+    p = cPropertyOf(o, pname);
     if (!p) return cUnported("assignment to a missing member");
     return cTypeOfSymbol(p);
   }
