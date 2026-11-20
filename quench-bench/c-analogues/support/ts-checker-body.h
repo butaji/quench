@@ -3284,6 +3284,31 @@ static bool cInferAddArg(CCallInfer *ic, TsType *argT, TsType *pt, bool skipFixe
 /* getCovariantInference and getInferredType of one type parameter from its candidates (no fixing). NULL when not ported */
 static TsType *cInferredOneCore(CCallInfer *ic, int k);
 
+/* getUnionType(types, UnionReduction.Subtype) of several types: any, unknown and error decide the result, never is
+ * dropped, the members are sorted by id and deduplicated, then the subtypes are removed */
+static TsType *cSubtypeUnionOfList(TsType **ts, int n) {
+  int cap = 1;
+  for (int i = 0; i < n; i++) cap += cMemberCount(ts[i]);
+  TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)cap);
+  int m = 0;
+  for (int i = 0; i < n; i++) {
+    TsType *t = ts[i];
+    if (t == cErrorType) return cErrorType;
+    if (t->flags & TF_Any) return cAnyType;
+    if (t->flags & TF_Unknown) return cUnknownType;
+    for (int j = 0; j < cMemberCount(t); j++) if (!(cMemberAt(t, j)->flags & TF_Never)) v[m++] = cMemberAt(t, j);
+  }
+  for (int i = 1; i < m; i++) {
+    TsType *x = v[i];
+    int j = i - 1;
+    while (j >= 0 && v[j]->id > x->id) { v[j + 1] = v[j]; j--; }
+    v[j + 1] = x;
+  }
+  int d = 0;
+  for (int i = 0; i < m; i++) if (d == 0 || v[d - 1] != v[i]) v[d++] = v[i];
+  return d == 0 ? cNeverType : cUnionWithSubtypesRemoved(v, d);
+}
+
 /* getInferredType of parameter k of the context (without fixing it). A constraint that refers to another parameter is
  * instantiated through the non-fixing mapper (makeNonFixingMapperForContext) of the parameters it mentions; a cycle
  * through the constraints is not ported */
@@ -3298,7 +3323,8 @@ static TsType *cInferredOne(CCallInfer *ic, int k) {
 static TsType *cInferredOneCore(CCallInfer *ic, int k) {
   CInfer *ci = &ic->ci;
   TsType *tp = ic->tps[k];
-  if (ci->prio[k] >= 0 && (ci->prio[k] & 416)) { cUnported("inference with a combining priority"); return NULL; }
+  /* PriorityImpliesCombination: the candidates are combined by a subtype union, not a common supertype */
+  bool combine = ci->prio[k] >= 0 && (ci->prio[k] & 416);
   if (ci->ctn[k]) { cUnported("contravariant candidates of a generic call"); return NULL; }
   TsType *c = cConstraintOf(tp);
   TsType *inferred;
@@ -3335,7 +3361,7 @@ static TsType *cInferredOneCore(CCallInfer *ic, int k) {
     TsType **base = ts_arena_alloc(sizeof(TsType *) * (size_t)nc);
     for (int i = 0; i < nc; i++) base[i] = ic->prim[k] ? cRegularType(cs[i]) : widen ? cWidenLiteralType(cs[i]) : cs[i];
     for (int i = 0; i < nc; i++) if (base[i] == cErrorType) return NULL;
-    inferred = cCommonSupertype(base, nc);
+    inferred = combine ? cSubtypeUnionOfList(base, nc) : cCommonSupertype(base, nc);
     if (inferred == cErrorType) return NULL;
   }
   if (c) {
