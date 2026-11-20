@@ -33,6 +33,7 @@
 #include "support/ts-binder-expected.h"
 #include "support/ts-checker.h"
 #include "support/ts-checker-names.h"
+#include "support/ts-checker-decls.h"
 #include "support/ts-checker-expected.h"
 
 #define FAIL(...)                  \
@@ -276,6 +277,7 @@ static void runChecker(void) {
   cInitializeGlobals(programFiles, EXPECTED_PROGRAM_FILES);
   cReportAmalgamatedDuplicates();
   for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkNames(programFiles[i]);
+  for (int i = 0; i < EXPECTED_PROGRAM_FILES; i++) cWalkAll(programFiles[i], cCheckDeclaresObjectType);
 }
 
 int main(int argc, char **argv) {
