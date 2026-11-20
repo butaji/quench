@@ -415,15 +415,38 @@ pub(crate) fn element_at(index: f64, length: usize) -> Option<usize> {
 #[inline(always)]
 pub(crate) fn find_number_element(elements: &[u8], kind: TypedArrayKind, from: usize, search: f64, nan_matches: bool)
     -> Option<usize> {
-    elements
-        .chunks_exact(kind.width())
-        .enumerate()
-        .skip(from)
-        .find(|(_, field)| {
-            let element = element_number(kind, field, NATIVE_LITTLE_ENDIAN);
-            element == search || (nan_matches && element.is_nan() && search.is_nan())
-        })
-        .map(|(index, _)| index)
+    // The searched kinds' loops each read one element width as a constant, so the kind is matched once,
+    // not per element; a NaN matches only `includes` (SameValueZero), never `indexOf` (strict equality).
+    macro_rules! scan {
+        ($width:literal, $read:expr) => {{
+            let read: fn([u8; $width]) -> f64 = $read;
+            let fields = elements.chunks_exact($width);
+            let nan = nan_matches && search.is_nan();
+            fields.enumerate().skip(from).find(|(_, field)| {
+                let element = read((*field).try_into().expect("a chunk is one element"));
+                element == search || (nan && element.is_nan())
+            }).map(|(index, _)| index)
+        }};
+    }
+    match kind {
+        TypedArrayKind::Uint8 => {
+            // No byte is a NaN or a fraction: only a Number that is one byte's value can match.
+            let byte = search as u8;
+            if f64::from(byte) != search { return None; }
+            elements.get(from..)?.iter().position(|&element| element == byte).map(|offset| from + offset)
+        }
+        TypedArrayKind::Int32 => scan!(4, |bytes| f64::from(i32::from_ne_bytes(bytes))),
+        TypedArrayKind::Float64 => scan!(8, f64::from_ne_bytes),
+        _ => elements
+            .chunks_exact(kind.width())
+            .enumerate()
+            .skip(from)
+            .find(|(_, field)| {
+                let element = element_number(kind, field, NATIVE_LITTLE_ENDIAN);
+                element == search || (nan_matches && element.is_nan() && search.is_nan())
+            })
+            .map(|(index, _)| index),
+    }
 }
 
 /// Writes `element` at `target`, which need not be aligned.
