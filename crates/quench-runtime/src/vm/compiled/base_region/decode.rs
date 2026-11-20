@@ -339,7 +339,7 @@ pub(super) fn test_row(numbers: Numbers, known: Known, instruction: WideInstruct
 /// The Boolean identity test a register `===` a constant Boolean is: its row kind and the register.
 fn boolean_test(known: Known, (left, right): (crate::bytecode::Operand, crate::bytecode::Operand)) -> Option<(Kind, Register)> {
     let constant = |operand: crate::bytecode::Operand| (operand.kind() == Some(OperandKind::Constant))
-        .then(|| known.constants.get(usize::from(operand.payload())).copied()).flatten();
+        .then(|| known.constants.get(usize::from(operand.payload())).copied()).flatten().filter(|value| *value != Value::DELETED);
     let (register, expected) = match (left.register_index(), right.register_index()) {
         (Some(register), None) => (register, constant(right)?),
         (None, Some(register)) => (register, constant(left)?),
@@ -471,7 +471,8 @@ fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
 /// string, a BigInt): the tagged word the compiling VM holds for it, written as it is
 /// (`Source::Value`), where the VM has the program's constants (`Known::constants`).
 fn value_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
-    let table = |index: usize| known.constants.get(index).map(|value| Constant::untyped(*value));
+    // The deleted marker is no constant's value: an image's table holds it for a constant it cannot name (`image_body`).
+    let table = |index: usize| known.constants.get(index).filter(|value| **value != Value::DELETED).map(|value| Constant::untyped(*value));
     let context = DecodeContext { constant_at: Some(&table), ..DecodeContext::EMPTY };
     let Some(Operation::LoadConst { destination, constant }) = Operation::<(), ()>::decode(instruction, context) else { return None };
     (instruction.result_flags() == 0).then(|| Decoded::number(Kind::Move, Some(destination), Some(Source::Value(constant.value.to_bits())), None, None))

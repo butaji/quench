@@ -297,6 +297,7 @@ fn compile(options: Options) -> Result<(), String> {
         }
     };
     let support = NativeSupport::from_cargo_report_with_support(&support_report, support)?;
+    support.check_build()?;
     report["support_artifacts"] = support.report();
     let driver = work.0.join("driver.rs");
     fs::write(&driver, include_str!("image_driver.rs")).map_err(|error| error.to_string())?;
@@ -305,10 +306,13 @@ fn compile(options: Options) -> Result<(), String> {
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
-    let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
-    report["symbol_audit_stage"] = json!("before_symbol_removal");
-    report["binary_bytes"] = json!(payload.binary_bytes);
-    report["payload_reduction"] = json!(payload);
+    // `QUENCH_KEEP_SYMBOLS` keeps the symbol table, so a profiler or debugger names the runtime's functions.
+    if std::env::var_os("QUENCH_KEEP_SYMBOLS").is_none() {
+        let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
+        report["symbol_audit_stage"] = json!("before_symbol_removal");
+        report["binary_bytes"] = json!(payload.binary_bytes);
+        report["payload_reduction"] = json!(payload);
+    }
     report["native_dependencies"] = json!(native_dependencies(&staged)?);
     report["status"] = json!("compiled");
     // Publish only an audited executable. A failed compile leaves existing output intact.

@@ -21,7 +21,7 @@ use crate::heap_rows::{context_word, word_at};
 fn add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form, object: impl FnOnce(u64) -> u64) -> Out {
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
     let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
-    let mut frame = Places::<MEM, A, MEM>::new(s);
+    let mut frame = Places::new::<MEM, A, MEM>(s);
     let (shapes, site) = (hole64::<0>(), hole64::<HOLE_B>());
     let edge = add::Edge { before: shapes & u64::from(u32::MAX), after: shapes >> ADD_AFTER_AT, slot: site & ((1 << ADD_SLOT_BITS) - 1) };
     let link = CHAINED.then(|| (site >> ADD_LINK_AT) & ((1 << ADD_LINK_BITS) - 1));
@@ -53,7 +53,7 @@ fn this_add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Fo
 fn name_row(s: S, payload: usize, form: Form) -> Out {
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
     let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
-    let mut frame = Places::<MEM, MEM, MEM>::new(s);
+    let mut frame = Places::new::<MEM, MEM, MEM>(s);
     let (shapes, site) = (hole64::<0>(), hole64::<HOLE_B>());
     let edge = add::Edge { before: shapes & u64::from(u32::MAX), after: shapes >> ADD_AFTER_AT, slot: site & ((1 << ADD_SLOT_BITS) - 1) };
     let function = word_at(frame.s.frame, (site >> NAME_FUNCTION_AT) as usize);

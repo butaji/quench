@@ -26,6 +26,8 @@ pub(super) struct FunctionFlow {
     pub(super) wild_owner: bool,
     /// Whether a write the analysis cannot follow reaches the globals.
     pub(super) global_wild: bool,
+    /// Whether a store through a key the analysis cannot name may write a named property.
+    pub(super) member_wild: bool,
     /// Per register, the Number representation it holds at every read and write.
     pub(super) numbers: Box<[Option<Representation>]>,
     /// The fields the prologue stores on `this`, where the function is a plain constructor.
@@ -121,6 +123,7 @@ struct Record {
     writes: Vec<(Key, Fact)>,
     wild_owner: bool,
     wild_global: bool,
+    wild_member: bool,
     /// Per register, the join of the facts it is defined with.
     defs: Vec<Option<Fact>>,
     /// Per register, whether a read saw a value that is not a Number.
@@ -134,6 +137,7 @@ impl Record {
             writes: Vec::new(),
             wild_owner: false,
             wild_global: false,
+            wild_member: false,
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
         }
@@ -158,6 +162,7 @@ impl Record {
     fn commit(&mut self, instruction: WideInstruction, state: &[Fact], events: Events) {
         self.wild_owner |= events.wild_owner;
         self.wild_global |= events.wild_global;
+        self.wild_member |= events.wild_member;
         self.writes.extend(events.writes);
         for register in instruction.written_registers() {
             let index = usize::from(register);
@@ -177,6 +182,7 @@ impl Record {
             writes: self.writes,
             wild_owner: self.wild_owner,
             global_wild: self.wild_global,
+            member_wild: self.wild_member,
             numbers,
             shape,
         }

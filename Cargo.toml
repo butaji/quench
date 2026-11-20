@@ -23,6 +23,7 @@ members = [
     "crates/quench-test262",
     "crates/quench-wasm",
     "crates/quench-wasm-test",
+    "crates/quench-symbols",
 ]
 
 # Function arity and type size are not review caps here; every other clippy lint stays at

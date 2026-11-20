@@ -2321,6 +2321,13 @@ const TARGET_READS_IMPLICIT: u8 = 16;
 const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 32;
 
 impl ScriptCallTarget {
+    /// The closure environment and captures pointer its activation's window holds
+    /// (`CONTEXT_ENV`, `CONTEXT_CAPTURE`): a direct call row writes them (`CallRecord::env`, `capture`).
+    #[inline(always)]
+    pub(in crate::vm) fn context_words(&self) -> (u64, u64) {
+        (self.env.to_bits(), self.capture.expose_provenance() as u64)
+    }
+
     /// `new` may activate it too (`Vm::inline_constructible`).
     #[inline(always)]
     fn constructs(&self) -> bool {
@@ -8544,6 +8551,16 @@ fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
     let code = unsafe { &*(*cx).code };
     let diagnostics = vm.programs.js_jit_diagnostics_enabled();
     // The entry activation's array parameters, sampled: a lane body's loops read them typed (`observed_reads`).
+    // A function of a program with a loaded AOT image takes the image's body and no other
+    // (`install_ahead_lane_body`): no warm-up, no runtime tier.
+    if vm.programs.ahead_images(unsafe { (*cx).program }, code).is_some() {
+        let published = own.entry_published();
+        let installed = own.install_ahead_lane_body(body_entry_row::<H>(), || vm.install_ahead_body(code, function, None, &[]));
+        if !published && own.entry_published() {
+            unsafe { self::vm(cx) }.unprove_view_entries(own);
+        }
+        return installed;
+    }
     let arrays = loop_tier::sampled_arrays(vm, parameters.iter().copied());
     let specialize = |work: super::compiled::LaneBodyWork| {
         let work = match work {
@@ -10657,6 +10674,27 @@ use lane_plain_activation;
 
 mod leaf_calls;
 use leaf_calls::{complete_leaf_in_lane, lane_enter_leaf, materialize_running_leaf_in_lane, leaf_call_handler};
+
+/// Refuses the direct calls of a lane body or region about to run in `registers` where the running leaf owns them: a
+/// leaf's activation is pending (`script_call_leaf_miss`, `enter_cell_body_in_lane`), and a direct row's push would put
+/// the callee's frame (and, at a leaf's unmoved top, its window over the leaf's registers) below the activation the
+/// leaf makes on a leave, which then resumes the wrong frame. Zeroing the plain depth limit makes every direct row
+/// refuse to its helper row, which makes the leaf's activation first (`in_innermost_frame`). Called after the run's
+/// stack words are bound, which set the limit.
+pub(in crate::vm) fn refuse_direct_calls_in_leaf<H: Host>(lane_context: *mut (), registers: *mut Value) {
+    let cx = lane_context.cast::<LaneContext<H>>();
+    // SAFETY: a lane body's context is the running lane's, which nothing else accesses.
+    if cx.is_null() || unsafe { (*cx).leaf.call }.is_null() || unsafe { (*cx).registers.0 } != registers {
+        return;
+    }
+    // The body runs in the leaf only where no activation owns `registers` yet: a body's call made from inside the
+    // leaf pushed the callee's activation on its own window, which the context names while the leaf stays set.
+    let stack = &unsafe { vm(cx) }.lane_stack;
+    if stack.top_frame().is_some_and(|frame| frame.window == registers.addr()) {
+        return;
+    }
+    stack.frames_changed();
+}
 
 /// Make the running leaf (`LaneContext::leaf`) the activation its call would have pushed
 /// (`enter_window_in_lane`), before anything observes activations: their materialization
@@ -20975,43 +21013,7 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// Dispatch lane records from `ip` until a handler exits; the record it exits at.
-#[inline(always)]
-fn dispatch_in_lane<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
-    loop {
-        #[cfg(feature = "profile-lane-exits")]
-        {
-            // The record's opcode from its packed instruction: the census needs the mix, and
-            // the lane record keeps only the handler.
-            let function = running_function_in_lane(cx);
-            let code = unsafe { &*(*cx).code };
-            let pc = unsafe { ip.offset_from((*cx).base) as usize };
-            if let Some(body) = code.function_get(function as usize)
-                && let Some(packed) = body.code.get(pc)
-            {
-                super::lane_exits::dispatch(body.widened(*packed).op());
-            }
-        }
-        // SAFETY: handlers have returned, so no other access is live.
-        let (view, registers, acc) = unsafe {
-            let acc = std::mem::replace(&mut (*cx).resumed_acc, Slot::of(Value::UNDEFINED));
-            ((*cx).memory, (*cx).registers, acc)
-        };
-        let next = handler(ip)(
-            registers,
-            ip,
-            view.bytes,
-            view.reach,
-            crate::value::IntegerEncoding::TAG,
-            acc,
-        );
-        let (ip_next, left) = exited(next);
-        if left {
-            return ip_next;
-        }
-        ip = ip_next;
-    }
-}
+mod lane_dispatch; use lane_dispatch::dispatch_in_lane;
 
 #[cfg(test)]
 mod instruction_set_tests;

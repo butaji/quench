@@ -91,7 +91,8 @@ pub(in crate::vm) fn frozen_global_reads(program: &ResidualProgram, function: &F
 }
 
 /// `frozen_global_reads` over a lane unit, by unit PC: each instruction read in the function
-/// its origin names (the caller's, or an inlined frame's callee).
+/// its origin names (the caller's, or an inlined frame's callee); a `LoadName` no frozen fact
+/// folds is the lane's own read (`dynamic_load`).
 pub(in crate::vm) fn frozen_unit_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, function: u32,
     globals: &FrozenValues,
 ) -> crate::vm::global_facts::GlobalReads {
@@ -100,9 +101,18 @@ pub(in crate::vm) fn frozen_unit_reads(program: &ResidualProgram, unit: &super::
             super::lane_unit::Origin::Caller(_) => function,
             super::lane_unit::Origin::Inlined { frame, .. } => unit.frames.get(frame)?.target.function,
         };
-        let read = frozen_read(program, program.function_get(owner as usize)?, instruction, globals)?;
+        let read = frozen_read(program, program.function_get(owner as usize)?, instruction, globals)
+            .or_else(|| dynamic_load(instruction))?;
         Some((pc, read))
     }).collect()
+}
+
+/// A `LoadName` no frozen fact folds: the lane's own read at run time (`GlobalRead::Dynamic`,
+/// `LaneHelper::GlobalGet`), which leaves where the global scope gives no plain value, as the
+/// interpreter's read would answer it.
+fn dynamic_load(instruction: WideInstruction) -> Option<crate::vm::global_facts::GlobalRead> {
+    matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(crate::staged::Operation::LoadName { .. }))
+        .then_some(crate::vm::global_facts::GlobalRead::Dynamic)
 }
 
 /// The frozen read `instruction` of `function` makes: a by-name load or a capture access of a

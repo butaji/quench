@@ -146,10 +146,9 @@ impl CompiledSources {
         writeln!(catalog, "}} }}").map_err(|error| error.to_string())?;
         fs::write(directory.join(REQUIRED_EXPORTS_FILENAME), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
             .map_err(|error| error.to_string())?;
-        // The image's lane helper imports are defined together, by one token (`define_lane_helper_symbols`).
-        let (helpers, operations): (Vec<&String>, Vec<&String>) = required_exports.iter().partition(|name| name.starts_with("quench_lane_helper_"));
-        let exports = operations.iter().map(|name| format!("{name:?}"))
-            .chain((!helpers.is_empty()).then(|| format!("{:?}", "quench_lane_helper_symbols")))
+        // The image's lane helper imports are defined by this library (`aot::lane_helper_symbols`), and the
+        // attention byte its polls read by the runtime (`execution_interrupt`, exported by name).
+        let exports = required_exports.iter().filter(|name| !name.starts_with("quench_lane_helper_") && *name != "quench_execution_attention").map(|name| format!("{name:?}"))
             .collect::<Vec<_>>().join(",");
         writeln!(catalog, "quench_runtime::export_native_js_operations!(quench::NodeHost, semantic_exports, [{exports}]);")
             .map_err(|error| error.to_string())?;

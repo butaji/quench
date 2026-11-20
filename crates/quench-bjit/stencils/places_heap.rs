@@ -11,6 +11,7 @@ use crate::bytecode::{Operand, Register};
 use crate::heap_rows::{payload, stage_site, word_at};
 use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_LOOP_ENTRY, JS_STEP_STORE_WATCH, LOOP_ENTRY_ARRAY_COUNT_AT, STORE_WATCH_COUNTS};
 use crate::numeric::{HOLE_A, HOLE_B};
+use crate::places::at_place;
 use crate::typed_ir::Representation;
 use crate::places::{LEFT, RIGHT, Places, index_of};
 use crate::staged::{Concrete, ElementFrame, Frame, elements, entry, value};
@@ -23,7 +24,7 @@ fn record_table(payload_base: usize) -> Option<u64> {
     (records != 0).then_some(records)
 }
 
-impl<const D: u8, const A: u8, const B: u8> ElementFrame<Concrete> for Places<D, A, B> {
+impl ElementFrame<Concrete> for Places {
     /// The array record table the activation's dispatch payload holds.
     #[inline(always)]
     fn array_records(&mut self, _stage: &mut Concrete) -> Option<u64> {
@@ -35,9 +36,9 @@ impl<const D: u8, const A: u8, const B: u8> ElementFrame<Concrete> for Places<D,
     #[inline(always)]
     fn index_key(&mut self, _stage: &mut Concrete, key: Operand, _miss: ()) -> Option<u64> {
         let index = match key.register_index()? {
-            LEFT => index_of::<A, HOLE_A>(&self.s),
-            RIGHT => index_of::<B, HOLE_B>(&self.s),
-            _ => index_of::<D, 0>(&self.s),
+            LEFT => at_place!(self.a, |P| index_of::<P, HOLE_A>(&self.s)),
+            RIGHT => at_place!(self.b, |P| index_of::<P, HOLE_B>(&self.s)),
+            _ => at_place!(self.d, |P| index_of::<P, 0>(&self.s)),
         }?;
         Some(u64::from(index as u32))
     }
@@ -52,7 +53,7 @@ impl<const D: u8, const A: u8, const B: u8> ElementFrame<Concrete> for Places<D,
     }
 }
 
-impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
+impl Places {
     /// `Frame::direct_array`: whether the register `source` holds a direct array.
     #[inline(always)]
     pub(crate) fn heap_direct_array(&mut self, stage: &mut Concrete, source: Register) -> Option<()> {

@@ -163,6 +163,23 @@ impl NativeSupport {
         })
     }
 
+    /// Fails unless the runtime library is the build this compiler is (`AHEAD_BUILD_ID_MARK`):
+    /// an image this compiler lowers runs only on the runtime it was lowered for, so a library
+    /// rebuilt from a changed tree would link an executable that refuses its own images.
+    pub fn check_build(&self) -> Result<(), String> {
+        let bytes = std::fs::read(&self.runtime).map_err(|error| format!("{}: {error}", self.runtime.display()))?;
+        let prefix = crate::vm::AHEAD_BUILD_ID_PREFIX;
+        let id = bytes.windows(32).find(|window| window.starts_with(prefix) && window[16..].iter().all(u8::is_ascii_hexdigit))
+            .map(|window| String::from_utf8_lossy(&window[16..]).into_owned())
+            .ok_or_else(|| format!("{} names no quench build", self.runtime.display()))?;
+        let own = format!("{:016x}", crate::vm::AHEAD_BUILD_ID);
+        if id != own {
+            return Err(format!("the runtime library {} is build {id}, but this compiler is build {own}: the tree changed \
+                after this compiler was built; rebuild it (cargo build -p quench) and compile again", self.runtime.display()));
+        }
+        Ok(())
+    }
+
     /// Link images as the host binary links: no dynamic relocations dirtying pages at startup,
     /// and the trained order packing the functions a run executes.
     pub fn with_executable_link_args(mut self, arguments: &'static [&'static str]) -> Self { self.executable_link_args = arguments; self }

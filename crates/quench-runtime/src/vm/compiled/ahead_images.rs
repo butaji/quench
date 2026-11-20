@@ -14,6 +14,26 @@ use crate::vm::aot_image::{self, AotImage, ImageTarget, file::Words, live::{self
 /// Names the build whose machine code and layouts the images are (`build.rs`); a file from another build is rejected.
 pub(crate) const AHEAD_BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
 
+/// The text that names the build in a library's bytes, followed by `QUENCH_BUILD_ID` in 16 hex
+/// digits (`AHEAD_BUILD_ID_MARK`).
+pub(crate) const AHEAD_BUILD_ID_PREFIX: &[u8; 16] = b"QUENCH_BUILD_ID=";
+
+/// `AHEAD_BUILD_ID_PREFIX` and the build ID, kept in every object of this crate's library so
+/// `quench compile` can read which build a runtime library is before it links an image against
+/// it (`native_link::NativeSupport::check_build`): an image only runs on its own build.
+#[used]
+pub(crate) static AHEAD_BUILD_ID_MARK: [u8; 32] = {
+    let id = env!("QUENCH_BUILD_ID").as_bytes();
+    let mut mark = [0u8; 32];
+    let mut at = 0;
+    while at < 16 {
+        mark[at] = AHEAD_BUILD_ID_PREFIX[at];
+        mark[16 + at] = id[at];
+        at += 1;
+    }
+    mark
+};
+
 /// What names a program: a hash of its source text and every function's registers and opcodes
 /// (atom numbers are per VM, so no operand), which an image is valid for and no other (plus the helper count the code was linked against; it is a validity key, never a reason to treat a program specially).
 pub(crate) fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
@@ -57,8 +77,11 @@ fn unit_or_refusal(program: &ResidualProgram, function: u32, facts: &AotFacts) -
 /// it polls for faults; `None` where it gives no native record.
 fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, (facts, global_reads): (VmFacts<'_>, &crate::vm::global_facts::GlobalReads))
     -> Result<(RelocatableCode, bool), &'static str> {
+    // An image has no feedback and no later tier: every record lowers as one a previous body left
+    // at (`generic`), by the form whose miss calls the VM's own operation rather than leaving.
+    let generic: Vec<usize> = (0..unit.instructions.len()).collect();
     let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
-        global_reads, facts, &[], &BTreeMap::new(), &[], None, &[]).ok_or("the lane lowering declines")?;
+        global_reads, facts, &generic, &BTreeMap::new(), &[], None, &[]).ok_or("the lane lowering declines")?;
     if lowered.region.native == 0 { return Err("no native record"); }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = crate::vm::jit_backend::ahead_lane_isa().ok_or("no lane ISA")?;
@@ -248,13 +271,39 @@ impl<H: Host> Vm<H> {
     /// lane body linked to this VM, or where it has none (or none this VM can take) its base body
     /// where the image placed it.
     pub(in crate::vm) fn install_ahead_body(&mut self, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
-        if entry.is_some() || !generic.is_empty() { return None; }
-        let images = self.programs.ahead_images(self.active_program, program)?;
-        let (method, kind) = match self.ahead_lane_method(program, &images, function) {
-            Some(method) => (method, "lane"),
-            None => (Self::ahead_base_method(program, &images, function)?, "base"),
+        let traced = crate::trace::Channel::AotLanes.on();
+        if entry.is_some() || !generic.is_empty() {
+            if traced { eprintln!("aot-lanes: install function {function}: refused, entry {entry:?}, {} generic leaves", generic.len()); }
+            return None;
+        }
+        let Some(images) = self.programs.ahead_images(self.active_program, program) else {
+            if traced { eprintln!("aot-lanes: install function {function}: refused, no image for the program"); }
+            return None;
         };
-        if crate::trace::Channel::AotLanes.on() { eprintln!("aot-lanes: install function {function}: {kind} body"); }
+        let within = |setting: crate::trace::Dev| !setting.on() || setting.value()
+            .and_then(|range| range.split_once('-'))
+            .and_then(|(low, high)| Some((low.parse::<u32>().ok()?, high.parse::<u32>().ok()?)))
+            .is_some_and(|(low, high)| (low..=high).contains(&function));
+        if !within(crate::trace::Dev::AotBodies) { return None; }
+        let lanes_allowed = within(crate::trace::Dev::AotLanes);
+        let lane = if lanes_allowed { self.ahead_lane_method(program, &images, function) } else { None };
+        let (mut method, kind) = match lane {
+            Some(method) => (method, "lane"),
+            None => match Self::ahead_base_method(program, &images, function) {
+                Some(method) => (method, "base"),
+                None => {
+                    if traced { eprintln!("aot-lanes: install function {function}: refused, no base body"); }
+                    return None;
+                }
+            },
+        };
+        if crate::trace::Channel::AotLanes.on() {
+            let name = program.functions.get(function as usize)
+                .and_then(|f| f.header().name.or(f.header().inferred_name))
+                .and_then(|atom| program.atoms.get(atom as usize)).map_or("", |name| &name[..]);
+            eprintln!("aot-lanes: install function {function} ({name}): {kind} body");
+        }
+        method.ahead = true;
         let published = self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())?;
         let linked_live: &LiveImage = images.linked.as_ref()?;
         for (key, callee) in self.ahead_callees(program, &images.image, function) { linked_live.calls.bind(key, callee, &mut self.heap); }
@@ -311,18 +360,28 @@ impl<H: Host> Vm<H> {
     /// rows call this one by its entry from now on (`BoundCalls::bind`). Nothing where no loaded image
     /// proves the call, or `target` is no closure of the proven function.
     pub(in crate::vm) fn rebind_ahead_call(&mut self, program: &ResidualProgram, (function, pc): (u32, u32), (argc, target): (u16, super::super::dispatch_fast::ScriptCallTarget)) {
-        let Some(images) = self.programs.ahead_images(self.active_program, program) else { return };
-        let Some(live) = images.linked.as_ref() else { return };
-        let Some(key) = live.calls.key((function, pc)) else { return };
-        let facts = images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program));
-        if facts.function_facts(function).call_target(pc) != Some(target.function) { return; }
-        let Some(views) = self.programs.views_in_lane(self.active_program) else { return };
-        let Some(view) = views.get(function as usize).and_then(super::super::program_store::derived_lane_view) else { return };
-        let Some(mut direct) = super::super::dispatch_fast::direct_callee_in_lane(self, view, function, pc as usize, argc, target) else { return };
-        (direct.method, direct.body) = (None, None);
-        if live.calls.names(key, direct.callee) || !admits_proven(program, target.function, &direct) { return; }
-        live.calls.bind(key, direct, &mut self.heap);
+        let why = self.rebound_ahead_call(program, (function, pc), (argc, target));
+        // The common answers (no proof of the site, the record already names the callee) are not traced: every helper call makes one.
+        if !matches!(why, "unproven-site" | "already-named") && crate::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_REBIND function={function} pc={pc} callee={} {why}", target.function); }
     }
+
+    /// `rebind_ahead_call`, answering what it did.
+    fn rebound_ahead_call(&mut self, program: &ResidualProgram, (function, pc): (u32, u32), (argc, target): (u16, super::super::dispatch_fast::ScriptCallTarget)) -> &'static str {
+        let Some(images) = self.programs.ahead_images(self.active_program, program) else { return "no-image" };
+        let Some(live) = images.linked.as_ref() else { return "unlinked" };
+        let Some(key) = live.calls.key((function, pc)) else { return "unproven-site" };
+        let facts = images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program));
+        if facts.function_facts(function).call_target(pc) != Some(target.function) { return "other-function" }
+        let Some(views) = self.programs.views_in_lane(self.active_program) else { return "no-views" };
+        let Some(view) = views.get(function as usize).and_then(super::super::program_store::derived_lane_view) else { return "no-view" };
+        let Some(mut direct) = super::super::dispatch_fast::direct_callee_in_lane(self, view, function, pc as usize, argc, target) else { return "no-direct" };
+        (direct.method, direct.body) = (None, None);
+        if live.calls.names(key, direct.callee) { return "already-named" }
+        if !admits_proven(program, target.function, &direct) { return "not-admitted" }
+        live.calls.bind(key, direct, &mut self.heap);
+        "bound"
+    }
+
 
     /// Takes `images`, links them into this VM, and keeps them for the program they were
     /// compiled from, whenever it runs.

@@ -26,6 +26,10 @@ const BASE_PC_NAMESPACE: u32 = SEMANTIC_ENTRY_NAMESPACE + 1;
 pub(crate) const OPERANDS_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 /// The namespace of `Symbol::CallRecord`, whose key is its site in the image's call table.
 pub(crate) const CALL_RECORD_NAMESPACE: u32 = OPERANDS_NAMESPACE + 1;
+/// The namespace of `Symbol::NarrowUpperWords`, one table keyed 0.
+const NARROW_WORDS_NAMESPACE: u32 = CALL_RECORD_NAMESPACE + 1;
+/// The namespace of `Symbol::Attention`, one byte keyed 0.
+const ATTENTION_NAMESPACE: u32 = NARROW_WORDS_NAMESPACE + 1;
 
 /// The attribute bits of a `ShapeRecipe` field, as `DataAttributes` reads them.
 pub(crate) const ATTRIBUTE_WRITABLE: u8 = 1 << 0;
@@ -52,6 +56,11 @@ pub(crate) enum Symbol {
     /// The record (`CallRecord`) the direct call of record `pc` of `function` reads, a call the closed
     /// world proves (`AotFacts::call_target`): data the linker places and binds (`AotImage::calls`).
     CallRecord { function: u32, pc: u32 },
+    /// The narrow decode's upper-word table (`NarrowLayout::upper_words`): a process address, which a
+    /// base body's field and element reads take as a hole. The object carries its own copy.
+    NarrowUpperWords,
+    /// The process-wide attention byte a poll row reads first (`execution_interrupt::attention_address`).
+    Attention,
     /// Class C: heap value number `key` of `AotImage::heap_values`.
     HeapValue(u32),
     /// Class D: shape number `key` of `AotImage::shapes`.
@@ -173,6 +182,8 @@ impl SymbolTable {
             OPERANDS_NAMESPACE => image.operands.get(key as usize).map(|record| Symbol::Operands { function: record.function, pc: record.pc }),
             CALL_RECORD_NAMESPACE => image.calls.get(key as usize).map(|call| Symbol::CallRecord { function: call.function, pc: call.pc }),
             SEMANTIC_ENTRY_NAMESPACE => u16::try_from(key).ok().map(Symbol::SemanticEntry),
+            NARROW_WORDS_NAMESPACE => (key == 0).then_some(Symbol::NarrowUpperWords),
+            ATTENTION_NAMESPACE => (key == 0).then_some(Symbol::Attention),
             _ => KEYED.iter().find(|(kind, _)| *kind == namespace).map(|(_, make)| make(key)),
         }
     }
@@ -218,6 +229,8 @@ impl Symbol {
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
             Self::Operands { .. } => OPERANDS_NAMESPACE,
             Self::CallRecord { .. } => CALL_RECORD_NAMESPACE,
+            Self::NarrowUpperWords => NARROW_WORDS_NAMESPACE,
+            Self::Attention => ATTENTION_NAMESPACE,
         }
     }
 
@@ -226,7 +239,7 @@ impl Symbol {
         match self {
             Self::EntryCell(key) | Self::Descriptor(key) | Self::CaptureWords(key) | Self::Helper(key)
                 | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) => key,
-            Self::Invalidation => 0,
+            Self::Invalidation | Self::NarrowUpperWords | Self::Attention => 0,
             Self::SemanticEntry(op) => u32::from(op),
             Self::BasePc { .. } | Self::Operands { .. } | Self::CallRecord { .. } =>
                 unreachable!("a base PC, an operand record or a call record is keyed by its site (`intern`)"),

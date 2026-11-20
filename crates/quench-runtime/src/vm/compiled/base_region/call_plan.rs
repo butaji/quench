@@ -204,6 +204,9 @@ pub(super) struct DirectFacts {
     pub(super) caller_base: u64,
     pub(super) function: u32,
     pub(super) captures: u64,
+    /// The callee's closure environment and captures pointer (`CallRecord::env`, `capture`).
+    pub(super) env: u64,
+    pub(super) capture: u64,
     /// The global object a sloppy callee binds an `undefined` or `null` receiver to.
     pub(super) global_this: Option<u64>,
     /// An arrow, which binds no receiver (`DirectCallee::lexical`).
@@ -234,6 +237,8 @@ impl DirectFacts {
             caller_base: callee.caller_base as u64,
             function: callee.target.function,
             captures: callee.capture_word(),
+            env: callee.target.context_words().0,
+            capture: callee.target.context_words().1,
             global_this: callee.sloppy.map(|global| global.to_bits()),
             lexical: callee.lexical,
             registers: callee.registers,
@@ -431,6 +436,8 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
         result_register: shape.result,
         argument_places: arguments,
         descriptor: 0,
+        env: facts.env,
+        capture: facts.capture,
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
@@ -452,7 +459,7 @@ fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Optio
     let record = Box::new(CallRecord {
         proven_args: 0, callee: identity, cell: 0, expected: 0, call: 0, caller_base: 0, packed: 0, captures: 0, global_this: 0,
         callee_register: shape.callee, this_register: shape.this, args_register: shape.window, result_register: shape.result,
-        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS], descriptor: 0,
+        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS], descriptor: 0, env: 0, capture: 0,
     });
     let stencil = call::stencil(CallRow::Builtin(row))?;
     Ok(Some((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), Vec::new()), record)))

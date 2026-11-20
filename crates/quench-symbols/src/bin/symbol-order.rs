@@ -51,9 +51,9 @@ const PROCESS_RUNTIME: &[&str] = &[
     "frame_dummy",
 ];
 
-use quench_wasm_test::RUST_SYMBOL_PREFIX;
+use quench_symbols::RUST_SYMBOL_PREFIX;
 
-use quench_wasm_test::CODE_KINDS;
+use quench_symbols::CODE_KINDS;
 
 /// The binary's code symbols, by mangled name.
 fn code_symbols(binary: &str) -> Result<Vec<String>, String> {

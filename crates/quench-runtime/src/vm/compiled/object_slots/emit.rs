@@ -20,6 +20,10 @@ pub(in crate::vm::compiled) struct Emit<'a, 'b> {
     /// The dispatch payload that holds the slot-observation flag and the object marks the store
     /// barrier's test reads, where the operation stores (`Stage::store_gate`).
     pub(in crate::vm::compiled) gate: Option<ir::Value>,
+    /// The dispatch payload, where the operation may address the arena with no base given
+    /// (`property_values` is `None`): `Table::PropertyValues` then reads the payload's property
+    /// buffer where it is used, after any call the operation made before it.
+    pub(in crate::vm::compiled) payload: Option<ir::Value>,
 }
 
 /// An immediate of the Cranelift stage: a constant, or a value the caller holds as one (a stencil's
@@ -300,7 +304,11 @@ impl Stage for Emit<'_, '_> {
     fn known(&self, _cond: ir::Value) -> Option<bool> { None }
     fn table(&mut self, table: Table) -> ir::Value {
         match table {
-            Table::PropertyValues => self.property_values.expect("an operation addressing the arena has its base"),
+            Table::PropertyValues => match (self.property_values, self.payload) {
+                (Some(base), _) => base,
+                (None, Some(payload)) => super::super::emit_js_property_values(self.builder, payload).0,
+                (None, None) => panic!("an operation addressing the arena has its base"),
+            },
             // The table is a static that never moves; in-process code embeds its address.
             Table::Layouts => self.builder.ins().iconst(types::I64, crate::heap::layouts::table_base() as i64),
         }
