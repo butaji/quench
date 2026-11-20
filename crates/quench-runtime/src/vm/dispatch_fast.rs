@@ -4845,6 +4845,23 @@ pub(super) fn proof_index(key: Value) -> Option<usize> {
     usize::try_from(key.as_int()?).ok()
 }
 
+/// A `Binary` record's value where it runs no guest code: Number arithmetic and
+/// relations, then identity equality, an ordinary `instanceof` and an `in` whose key
+/// and receiver (`Vm::plain_in`) need no guest code.
+///
+/// # Safety
+/// `cx` is the running lane's context and `r` its registers.
+#[inline(always)]
+unsafe fn binary_value<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    i: &LaneInstruction,
+) -> Option<Value> {
+    let left = operand_value_in_lane(cx, r, i.b)?;
+    let right = operand_value_in_lane(cx, r, i.c)?;
+    unsafe { binary_values::<H>(cx, i.imm(), left, right) }
+}
+
 /// The value of `left operator right` where it runs no guest code (the pure part of a returning
 /// `Binary`, which the lane frame answers a row's `Binary` or `Equality` call-out with).
 ///
@@ -18888,7 +18905,7 @@ fn derive_lane_view<'live, H: Host>(
     // its operator and operand tests fold, which a fused pair's run-time operator does not.
     if !wasm {
         for (record, selected) in records.iter_mut().zip(selected.iter_mut()) {
-            if let Some(row) = lane_frame::operator_row::<H>(record) {
+            if let Some(row) = lane_frame::operator_flag_row::<H>(record) {
                 record.handler = row as *const ();
                 *selected = record.handler;
             }

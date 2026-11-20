@@ -2582,7 +2582,7 @@ pub(in crate::vm::dispatch_fast) fn registers_row<H: Host, const OP: u16>(handle
 
 /// The `Binary` row of plain record `record` at its operator flag (`FLAG_OPERATOR_BASE`): where its handler is
 /// the plain accumulator-free row, its operator has rows, and its operands are registers, or a register then a constant.
-pub(in crate::vm::dispatch_fast) fn operator_row<H: Host>(record: &LaneInstruction) -> Option<Handler> {
+pub(in crate::vm::dispatch_fast) fn operator_flag_row<H: Host>(record: &LaneInstruction) -> Option<Handler> {
     const BINARY: u16 = Op::Binary as u16;
     macro_rules! rows { ($($k:literal)*) => { [$(generated_row!(H, BINARY, ACC_NONE, FLAG_OPERATOR_BASE + $k)),*] } }
     let rows: [Handler; 2 * OPERATOR_ROWS] = rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29
@@ -4111,7 +4111,7 @@ fn step_binary_number<const OPERATOR: u8, S: crate::staged::NumericStage, F: Num
 #[cfg(test)]
 mod binary_number_kind_tests {
     use crate::staged::{numeric, NumberOperation};
-    use crate::staged::Operand;
+    use crate::bytecode::Operand;
 
     /// `binary_number_kind` names the variant `binary_operation` builds, for every operator code.
     #[test]
