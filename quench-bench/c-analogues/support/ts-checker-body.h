@@ -1966,6 +1966,17 @@ static int cGenericKind(TsType *t) {
 
 static TsType *cContextualType(TsNode *e);   /* below: getContextualType */
 
+/* a call or new expression whose callee has a generic candidate (chooseOverload creates an inference context for it) */
+static bool cCallHasGenericCandidate(TsNode *p) {
+  TsType *f = cExprType(p->expression);
+  if (f == cErrorType || !(f->flags & TF_Object)) return false;
+  cResolveSignatures(f);
+  int ns = p->kind == TSK_NewExpression ? f->nconstruct : f->ncall;
+  CSig *sigs = p->kind == TSK_NewExpression ? f->construct : f->call;
+  for (int i = 0; i < ns; i++) if (sigs[i].decl->typeParameters && sigs[i].decl->typeParameters->n) return true;
+  return false;
+}
+
 /* getNarrowableTypeForReference (76095): the constraint of a type parameter with a union constraint replaces it when the
  * reference is in a constraint position (a property access, a call or new callee, an element access object whose argument
  * is not a generic index) or has a contextual type that is not generic. Returns 1 to substitute, 0 not, -1 not ported. */
@@ -1981,6 +1992,9 @@ static int cSubstituteConstraintFor(TsNode *e) {
     if (gk < 0) return -1;
     if (gk == 0) return 1;
   }
+  /* an argument checked while its generic call is being resolved is checked in an inference context (checkMode Inferential),
+   * which never substitutes the constraint */
+  if ((p->kind == TSK_CallExpression || p->kind == TSK_NewExpression) && p->exprState == 1 && cCallHasGenericCandidate(p)) return 0;
   TsType *cx = cContextualType(e);
   if (cx == cErrorType) return -1;
   if (!cx) return 0;
@@ -2072,6 +2086,36 @@ static TsNode *cCandFn;
 static TsType *cCandType;
 
 static bool cIsInitializedDeclParam(TsNode *p);
+
+/* isTupleLikeType of a contextual type: a tuple, an object with a "0" property, or a union with such a member (someType) */
+static bool cIsTupleLikeContext(TsType *ac) {
+  if (ac->flags & TF_Union) {
+    for (int i = 0; i < ac->ntypes; i++) if (cIsTupleLikeContext(ac->types[i])) return true;
+    return false;
+  }
+  if (!(ac->flags & TF_Object)) return false;
+  return cIsTupleType(ac) || cPropertyOf(ac, bnC("0")) != NULL;
+}
+
+/* getContextualTypeForElementExpression of an array context: any gives any, an array the type of its number index, and a
+ * union the element context of its one object member once undefined and null are dropped (several members are not ported) */
+static TsType *cArrayElementContext(TsType *ac) {
+  if (ac->flags & TF_Any) return ac;
+  if (ac->flags & TF_Union) {
+    TsType *one = NULL;
+    for (int i = 0; i < ac->ntypes; i++) {
+      if (ac->types[i]->flags & (TF_Undefined | TF_Null)) continue;
+      if (one) return cUnported("contextual element of a union of several arrays");
+      one = ac->types[i];
+    }
+    return one ? cArrayElementContext(one) : NULL;
+  }
+  if (!(ac->flags & TF_Object)) return cUnported("contextual element of a non-object");
+  cResolveIndexInfos(ac);
+  for (int i = 0; i < ac->nindex; i++) if (ac->index[i].keyType == cNumberType) return ac->index[i].type;
+  return cUnported("contextual element without a number index");
+}
+
 static TsType *cContextualType(TsNode *e) {
   if (cCandFn && e == cCandFn) return cCandType;
   TsNode *c = e, *p = e->parent;
@@ -2116,23 +2160,29 @@ static TsType *cContextualType(TsNode *e) {
       cResolveSignatures(f);
       int ns = p->kind == TSK_NewExpression ? f->nconstruct : f->ncall;
       CSig *sigs = p->kind == TSK_NewExpression ? f->construct : f->call;
-      if (ns > 1) {
-        /* the parameter of the chosen signature is only known after the overload is resolved: an argument whose type does not
-         * depend on its contextual type has none (an identifier, a literal, a property access) */
-        TsNode *ca = cSkipParens(c);
-        switch (ca->kind) {
-          case TSK_Identifier: case TSK_NumericLiteral: case TSK_StringLiteral: case TSK_NoSubstitutionTemplateLiteral:
-          case TSK_NullKeyword: case TSK_TrueKeyword: case TSK_FalseKeyword: case TSK_PropertyAccessExpression:
-            return NULL;
-          default: return cUnported("contextual type of a call with several signatures");
+      CSig *sig;
+      if (p->resolvedSig) {
+        /* getContextualTypeForArgumentAtIndex: the parameter of the resolved signature of the call (links.resolvedSignature) */
+        sig = p->resolvedSig;
+      } else {
+        if (ns > 1) {
+          /* the parameter of the chosen signature is only known after the overload is resolved: an argument whose type does not
+           * depend on its contextual type has none (an identifier, a literal, a property access) */
+          TsNode *ca = cSkipParens(c);
+          switch (ca->kind) {
+            case TSK_Identifier: case TSK_NumericLiteral: case TSK_StringLiteral: case TSK_NoSubstitutionTemplateLiteral:
+            case TSK_NullKeyword: case TSK_TrueKeyword: case TSK_FalseKeyword: case TSK_PropertyAccessExpression:
+              return NULL;
+            default: return cUnported("contextual type of a call with several signatures");
+          }
         }
-      }
-      if (ns != 1) return cUnported("contextual type of a call with several signatures");
-      CSig *sig = &sigs[0];
-      if (sig->decl->typeParameters && sig->decl->typeParameters->n) {
-        TsNode *ca = cSkipParens(c);
-        if (ca->kind != TSK_ArrowFunction) return cUnported("contextual type of a generic call");
-        return cGenericCallFnArgContext(sig, idx);
+        if (ns != 1) return cUnported("contextual type of a call with several signatures");
+        sig = &sigs[0];
+        if (sig->decl->typeParameters && sig->decl->typeParameters->n) {
+          TsNode *ca = cSkipParens(c);
+          if (ca->kind != TSK_ArrowFunction) return cUnported("contextual type of a generic call");
+          return cGenericCallFnArgContext(sig, idx);
+        }
       }
       CParams ps;
       if (!cSplitParams(sig->decl, &ps) || ps.thisParam) return cUnported("contextual type of a call with a this parameter");
@@ -2146,16 +2196,21 @@ static TsType *cContextualType(TsNode *e) {
       if (c->kind != TSK_MethodDeclaration || !c->name || c->name->kind != TSK_Identifier) return cUnported("contextual type of an object literal member");
       TsType *oc = cContextualType(p);
       if (oc == NULL || oc == cErrorType) return oc;
+      if (oc->flags & TF_Any) return NULL;   /* a property of any is not a structured type's property: no contextual type */
       if (!(oc->flags & TF_Object)) return cUnported("contextual type of a property of a non-object");
       TsSymbol *ps = cPropertyOf(oc, bnEscapeText(c->name->text, c->name->textLen));
       return ps ? cTypeOfSymbol(ps) : NULL;
     }
-    case TSK_PropertyAssignment: {
-      /* the property of the contextual type of the object literal */
-      if (p->initializer != c || !p->name || p->name->kind != TSK_Identifier || !p->parent || p->parent->kind != TSK_ObjectLiteralExpression)
+    case TSK_PropertyAccessExpression: case TSK_ElementAccessExpression:
+      return NULL;   /* getContextualType2 has no case for an access: its object and its argument have none */
+    case TSK_ShorthandPropertyAssignment: case TSK_PropertyAssignment: {
+      /* the property of the contextual type of the object literal (getContextualTypeForObjectLiteralElement) */
+      TsNode *value = p->kind == TSK_ShorthandPropertyAssignment ? p->name : p->initializer;
+      if (value != c || !p->name || p->name->kind != TSK_Identifier || !p->parent || p->parent->kind != TSK_ObjectLiteralExpression)
         return cUnported("contextual type of a property name");
       TsType *oc = cContextualType(p->parent);
       if (oc == NULL || oc == cErrorType) return oc;
+      if (oc->flags & TF_Any) return NULL;   /* a property of any is not a structured type's property: no contextual type */
       if (!(oc->flags & TF_Object)) return cUnported("contextual type of a property of a non-object");
       TsSymbol *ps = cPropertyOf(oc, bnEscapeText(p->name->text, p->name->textLen));
       return ps ? cTypeOfSymbol(ps) : NULL;
@@ -2163,10 +2218,14 @@ static TsType *cContextualType(TsNode *e) {
     case TSK_ArrayLiteralExpression: {
       TsType *ac = cContextualType(p);
       if (ac == NULL || ac == cErrorType) return ac;
-      if (!(ac->flags & TF_Object) || cIsTupleType(ac)) return cUnported("contextual element of a tuple or non-object");
-      cResolveIndexInfos(ac);
-      for (int i = 0; i < ac->nindex; i++) if (ac->index[i].keyType == cNumberType) return ac->index[i].type;
-      return cUnported("contextual element without a number index");
+      if (cIsTupleLikeContext(ac)) {
+        if (!cIsTupleType(ac)) return cUnported("contextual element of a tuple-like context");
+        /* getContextualTypeForElementExpression of a tuple: the element type at the index (none beyond the arity) */
+        int idx = 0;
+        while (idx < p->elements->n && p->elements->v[idx] != c) idx++;
+        return idx < ac->nargs ? ac->args[idx] : NULL;
+      }
+      return cArrayElementContext(ac);
     }
     case TSK_ConditionalExpression:
       if (p->condition == c) return NULL;
@@ -2199,7 +2258,9 @@ static CSig *cContextualSignature(TsNode *fn, bool *err) {
   *err = false;
   TsType *ctx = cContextualType(fn);
   if (ctx == NULL) return NULL;
-  if (ctx == cErrorType || !(ctx->flags & TF_Object)) { *err = true; return NULL; }
+  if (ctx == cErrorType) { *err = true; return NULL; }
+  if (ctx->flags & TF_Any) return NULL;   /* getContextualCallSignature of any: no call signatures, so no contextual signature */
+  if (!(ctx->flags & TF_Object)) { *err = true; return NULL; }
   cResolveSignatures(ctx);
   if (ctx->ncall == 0) { *err = true; return NULL; }
   /* isAritySmaller: the target parameters before the first optional, initialized or rest one (a this parameter is not counted) */
@@ -3269,6 +3330,7 @@ static TsType *cCallSignatureType(TsNode *e, TsType *f, bool isNew) {
     }
   }
   if (chosen < 0) return cUnported("no applicable signature");
+  e->resolvedSig = chosenSig;   /* links.resolvedSignature (getContextualTypeForArgumentAtIndex reads it) */
   TsType *rt = cReturnTypeOf(chosenSig);
   /* checkCallExpression: Symbol() and Symbol.for() give the unique symbol of the declaration they initialize */
   if (!isNew && rt != cErrorType && (rt->flags & (TF_ESSymbol | TF_UniqueESSymbol)) && cIsSymbolCall(e)) {
@@ -3299,6 +3361,20 @@ static TsType *cNewType2(TsNode *e) {
   return cCallSignatureType(e, f, true);
 }
 
+/* createArrayLiteralType: the ArrayLiteral clone of a reference (cloneTypeReference), one per reference */
+static TsType *cArrayLiteralOf(TsType *ref) {
+  if (!ref->literalType) {
+    TsType *c = cNewType(ref->flags);
+    c->symbol = ref->symbol;
+    c->objectFlags = ref->objectFlags | OF_ArrayLiteral;
+    c->target = ref->target;
+    c->args = ref->args;
+    c->nargs = ref->nargs;
+    ref->literalType = c;
+  }
+  return ref->literalType;
+}
+
 /* the element type of an array literal: the subtype-reduced union of the widened elements */
 static TsType *cArrayLiteralType(TsNode *e) {
   int n = e->elements ? e->elements->n : 0;
@@ -3321,18 +3397,23 @@ static TsType *cArrayLiteralType(TsNode *e) {
   TsSymbol *arr = bTableGet(cGlobals, bnC("Array"));
   if (!arr) return cUnported("no global Array");
   TsType *target = cDeclaredTypeOfClassOrInterface(arr);
-  TsType *ref = cTypeReference(target, &elem, 1);
-  if (!ref->literalType) {
-    /* cloneTypeReference: the same target and arguments, a type of its own that carries ArrayLiteral */
-    TsType *c = cNewType(ref->flags);
-    c->symbol = ref->symbol;
-    c->objectFlags = ref->objectFlags | OF_ArrayLiteral;
-    c->target = ref->target;
-    c->args = ref->args;
-    c->nargs = ref->nargs;
-    ref->literalType = c;
+  return cArrayLiteralOf(cTypeReference(target, &elem, 1));
+}
+
+/* checkArrayLiteral with a tuple contextual type (createArrayLiteralType over createTupleType of the elements): each element is
+ * widened for a mutable location, as in the array case. Spread and omitted elements are not ported. */
+static TsType *cTupleArrayLiteralType(TsNode *e) {
+  int n = e->elements ? e->elements->n : 0;
+  if (n >= 16) return cUnported("tuple literal of 16 or more elements");   /* cTupleTarget caches the targets below 16 */
+  TsType **ts = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  for (int i = 0; i < n; i++) {
+    TsNode *el = e->elements->v[i];
+    if (el->kind == TSK_SpreadElement || el->kind == TSK_OmittedExpression) return cUnported("spread or omitted element of a tuple literal");
+    TsType *t = cMutableLocationType(el, cExprType(el));
+    if (t == cErrorType) return t;
+    ts[i] = t;
   }
-  return ref->literalType;
+  return cArrayLiteralOf(cTupleReference(ts, n));
 }
 
 /* the type of an object literal without a contextual type (createObjectLiteralType over the literal's symbol) */
@@ -3698,7 +3779,7 @@ static TsType *cExprWorker(TsNode *e) {
     case TSK_ArrayLiteralExpression: {
       TsType *ac = cContextualType(e);
       if (ac == cErrorType) return ac;
-      if (ac != NULL && ((ac->flags & TF_Object) == 0 || cIsTupleType(ac))) return cUnported("array literal of a tuple or non-object context");
+      if (ac != NULL && cIsTupleLikeContext(ac)) return cTupleArrayLiteralType(e);
       return cArrayLiteralType(e);
     }
     case TSK_ObjectLiteralExpression: {

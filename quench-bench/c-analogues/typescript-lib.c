@@ -567,6 +567,8 @@ int main(int argc, char **argv) {
   printf("checker counts: symbols %ld (node %d), types %d (node %d, after init %d), identity cache %d (node %d), unported type requests %d\n",
          sumSymbols + checkerSymbolCount, EXPECTED_SYMBOLS, cTypeCount, EXPECTED_TYPES, EXPECTED_TYPES_AFTER_INIT,
          cIdentityCacheCount, EXPECTED_REL_IDENTITY, cUnportedCount);
+  printf("literal types: string %d (node 3573; regular %d, fresh %d, enum %d), number %d (node 1073; regular %d, fresh %d, enum %d)\n",
+         cStringLitCount, cLitRegular[0], cLitFresh[0], cLitEnum[0], cNumberLitCount, cLitRegular[1], cLitFresh[1], cLitEnum[1]);
   printf("checker instantiations: %d (node %d; node counts the body checks too, which are not ported)\n", cInstTotal,
          EXPECTED_INSTANTIATIONS);
   printf("relation caches: assignable %d (node %d), identity %d (node %d), subtype %d (node %d), strictSubtype %d (node %d)\n",

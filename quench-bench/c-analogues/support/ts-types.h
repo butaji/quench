@@ -138,6 +138,9 @@ static CSigInst *cSigInstTab[1024];
 
 /* createType counts (typeCount) */
 static int cTypeCount;
+/* createType counts of the string and number literal types (stringLiteralTypes and numberLiteralTypes creations, fresh copies included) */
+static int cStringLitCount, cNumberLitCount;   /* all string and number literal types: created by cNewType */
+static int cLitRegular[2], cLitFresh[2], cLitEnum[2];   /* [0] string, [1] number: regular (getStringLiteralType), fresh, enum members */
 static int cNextTypeId = 1;
 static bool cUnportedHit;          /* set when a type or relation outside the ported subset was met */
 static int cUnportedCount;
@@ -145,6 +148,8 @@ static int cIdentityCacheCount;
 
 static TsType *cNewType(uint32_t flags) {
   cTypeCount++;
+  if (flags & TF_StringLiteral) cStringLitCount++;
+  if (flags & TF_NumberLiteral) cNumberLitCount++;
   TsType *t = ts_arena_zalloc(sizeof(TsType));
   t->flags = flags;
   t->id = cNextTypeId++;
@@ -167,6 +172,10 @@ static TsType *cIntrinsic(uint32_t flags) { return cNewType(flags); }
 
 static void cCreateIntrinsicTypes(void) {
   cTypeCount = 0;
+  cStringLitCount = cNumberLitCount = 0;
+  memset(cLitRegular, 0, sizeof cLitRegular);
+  memset(cLitFresh, 0, sizeof cLitFresh);
+  memset(cLitEnum, 0, sizeof cLitEnum);
   cNextTypeId = 1;
   cErrorType = cIntrinsic(TF_Any);
   cAnyType = cIntrinsic(TF_Any);
@@ -275,6 +284,8 @@ static TsType *cLiteralType(uint32_t flags, const char *text, int n) {
     h = (h + 1) & mask;
   }
   TsType *l = cNewType(flags);
+  if (flags & TF_StringLiteral) cLitRegular[0]++;
+  else if (flags & TF_NumberLiteral) cLitRegular[1]++;
   l->text = text;
   l->textLen = n;
   if (cLitN == cLitCap) {
@@ -287,10 +298,23 @@ static TsType *cLiteralType(uint32_t flags, const char *text, int n) {
   return l;
 }
 
+/* getNumberLiteralType of a position index (a non-negative integer, keyed by its decimal text) */
+static TsType *cIndexLiteral(int idx) {
+  char buf[16];
+  int n = snprintf(buf, sizeof buf, "%d", idx);
+  char *text = ts_arena_alloc((size_t)n);
+  memcpy(text, buf, (size_t)n);
+  TsType *l = cLiteralType(TF_NumberLiteral, text, n);
+  l->litNum = idx;
+  return l;
+}
+
 /* getFreshTypeOfLiteralType: the fresh object of a regular literal, created once (a type of the checker) */
 static TsType *cFreshLiteral(TsType *r) {
   if (r->litFresh) return r->litFresh;
   TsType *f = cNewType(r->flags);
+  if (r->flags & TF_StringLiteral) cLitFresh[0]++;
+  else if (r->flags & TF_NumberLiteral) cLitFresh[1]++;
   f->text = r->text;
   f->textLen = r->textLen;
   f->litNum = r->litNum;
@@ -775,6 +799,7 @@ static TsType *cDeclaredTypeOfEnum(TsSymbol *sym) {
           uint32_t fl = TF_EnumLiteral | (v.kind == EV_String ? TF_StringLiteral : TF_NumberLiteral);
           reg = cNewType(fl);
           fresh = cNewType(fl);
+          cLitEnum[v.kind == EV_String ? 0 : 1] += 2;
           reg->symbol = ms;
           fresh->symbol = ms;
           reg->litNum = v.num;
@@ -1784,6 +1809,11 @@ static void cResolveSignatures(TsType *t) {
     t->call = ts_arena_zalloc(sizeof(CSig) * (size_t)(s->ndecls ? s->ndecls : 1));
     t->ncall = 0;
     for (int d = 0; d < s->ndecls; d++) {
+      /* getSignaturesOfSymbol: the implementation of an overloaded function (a body right after a declaration of the same kind
+       * and parent) is not a signature */
+      if (d > 0 && s->decls[d]->body && s->decls[d]->parent == s->decls[d - 1]->parent &&
+          s->decls[d]->kind == s->decls[d - 1]->kind && s->decls[d]->pos == s->decls[d - 1]->end)
+        continue;
       t->call[t->ncall].decl = s->decls[d];
       t->call[t->ncall].isConstruct = false;
       t->call[t->ncall].mapper = t->sigMapper;
@@ -2347,17 +2377,31 @@ static bool cSplitParams(TsNode *decl, CParams *cp) {
   return true;
 }
 
+/* getIndexedAccessType of a rest type at an index, distributed over a union (the union property of the members) */
+static TsType *cIndexedAtPosition(TsType *rt, int index) {
+  if (!(rt->flags & TF_Union)) return cGetIndexedAccessType(rt, cIndexLiteral(index), false);
+  TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(rt->ntypes ? rt->ntypes : 1));
+  for (int i = 0; i < rt->ntypes; i++) {
+    parts[i] = cIndexedAtPosition(rt->types[i], index);
+    if (parts[i] == cErrorType) return parts[i];
+  }
+  return cGetUnionType(parts, rt->ntypes);
+}
+
 /* the type of a parameter at a position (getTypeAtPosition): a rest parameter gives its element type */
 static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
   TsNode *p = pos < cp->n ? cp->params[pos] : cp->rest;
   *ok = true;
   if (!p) { *ok = false; return cErrorType; }
   if (p->dotDotDotToken) {
-    TsNode *tn = p->type;
-    if (tn && tn->kind == TSK_ArrayType) return cTypeFromNodeM(tn->elementType, m);
-    if (tn && tn->kind == TSK_TypeReference && tn->typeArguments && tn->typeArguments->n == 1)
-      return cTypeFromNodeM(tn->typeArguments->v[0], m);
-    return cUnported("rest parameter element type");
+    /* getTypeAtPosition: the rest type indexed by the position past the other parameters (getIndexedAccessType); a tuple
+     * rest has no type beyond its length */
+    if (!p->type) return cUnported("rest parameter element type");
+    TsType *rt = cTypeFromNodeM(p->type, m);
+    if (rt == cErrorType) return rt;
+    int index = pos - (cp->n - 1);   /* the rest parameter is the last of cp->params */
+    if ((rt->objectFlags & OF_Tuple) && index >= rt->nargs) { *ok = false; return NULL; }
+    return cIndexedAtPosition(rt, index);
   }
   bool objMethod = !p->type && p->parent && p->parent->kind == TSK_MethodDeclaration && p->parent->parent &&
                    p->parent->parent->kind == TSK_ObjectLiteralExpression;
