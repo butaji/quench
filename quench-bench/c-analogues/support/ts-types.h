@@ -2057,7 +2057,9 @@ static TsType *cParamTypeAt(CParams *cp, int pos, bool *ok, TsMapper *m) {
       return cTypeFromNodeM(tn->typeArguments->v[0], m);
     return cUnported("rest parameter element type");
   }
-  if (!p->type && p->parent && (p->parent->kind == TSK_FunctionExpression || p->parent->kind == TSK_ArrowFunction)) {
+  bool objMethod = !p->type && p->parent && p->parent->kind == TSK_MethodDeclaration && p->parent->parent &&
+                   p->parent->parent->kind == TSK_ObjectLiteralExpression;
+  if (!p->type && p->parent && (p->parent->kind == TSK_FunctionExpression || p->parent->kind == TSK_ArrowFunction || objMethod)) {
     /* an unannotated parameter of a function expression or arrow: the type of its symbol (the contextual type) */
     if (!p->symbol) return cUnported("parameter without annotation");
     TsType *ct = cTypeOfSymbol(p->symbol);

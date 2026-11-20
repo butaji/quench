@@ -2088,6 +2088,15 @@ static TsType *cContextualType(TsNode *e) {
       return ok ? pt : NULL;
     }
     case TSK_TemplateSpan: return NULL;   /* a template span has no contextual type */
+    case TSK_ObjectLiteralExpression: {
+      /* getContextualTypeForObjectLiteralMethod: the property of the object literal's contextual type named by the method */
+      if (c->kind != TSK_MethodDeclaration || !c->name || c->name->kind != TSK_Identifier) return cUnported("contextual type of an object literal member");
+      TsType *oc = cContextualType(p);
+      if (oc == NULL || oc == cErrorType) return oc;
+      if (!(oc->flags & TF_Object)) return cUnported("contextual type of a property of a non-object");
+      TsSymbol *ps = cPropertyOf(oc, bnEscapeText(c->name->text, c->name->textLen));
+      return ps ? cTypeOfSymbol(ps) : NULL;
+    }
     case TSK_PropertyAssignment: {
       /* the property of the contextual type of the object literal */
       if (p->initializer != c || !p->name || p->name->kind != TSK_Identifier || !p->parent || p->parent->kind != TSK_ObjectLiteralExpression)
@@ -2222,7 +2231,9 @@ static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
     return t;
   }
   TsNode *fn = d->parent;
-  if (!fn || (fn->kind != TSK_FunctionExpression && fn->kind != TSK_ArrowFunction)) return cUnported("parameter without annotation");
+  /* an object literal method is context sensitive too (isContextSensitiveFunctionOrObjectLiteralMethod) */
+  bool objMethod = fn && fn->kind == TSK_MethodDeclaration && fn->parent && fn->parent->kind == TSK_ObjectLiteralExpression;
+  if (!fn || (fn->kind != TSK_FunctionExpression && fn->kind != TSK_ArrowFunction && !objMethod)) return cUnported("parameter without annotation");
   if (d->initializer || d->questionToken || d->dotDotDotToken || !d->name || d->name->kind != TSK_Identifier)
     return cUnported("parameter without annotation");
   if (d->inferState == 1) return cUnported("circular parameter type");
