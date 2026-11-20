@@ -13,25 +13,94 @@ pub(in crate::vm) struct BodyLocals {
     pub(in crate::vm) environment: u64,
 }
 
-/// The locals the body entered on lane context `cx` reads: the window's where its function's activation runs one
-/// (an activation of a function with a window layout whose context holds the environment's parent, as every window
-/// handler decides it), else the VM frame's, with storage that holds no slot (`heap::absent_environment_storage`),
-/// which every environment row misses at. None of either where there is no context (a test's entry).
-///
-/// # Safety
-/// `cx` is null or a live `LaneContext<H>`.
-pub(in crate::vm) unsafe fn body_locals<H: Host>(cx: *mut ()) -> BodyLocals {
-    let cx = cx.cast::<LaneContext<H>>();
-    // SAFETY: the caller's contract.
-    if let Some(window) = unsafe { activation_window(cx) } {
-        return window;
-    }
-    // SAFETY: as above; `frame_locals` takes the context as it is.
-    let (locals, count) = unsafe { frame_locals::<H>(cx.cast()) };
-    BodyLocals { locals, count, environment: crate::heap::absent_environment_storage() }
+/// Which caller's rows `body_locals` resolves the locals for. The two callers answer alike for an activation with
+/// a window and for a frame whose storage covers its function; they differ in the shapes named on each variant. The
+/// difference is kept here, as each caller's rows were compiled against it, rather than merged unchecked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::vm) enum LocalsOf {
+    /// A lane body's rows (`Vm::bind_body_entry`). The top activation's window where its function has a window layout
+    /// and the context's environment is made (`activation_window`); else the VM frame's storage, counted by its length,
+    /// with no environment storage. A pending run (`CALLEE_ACTIVATION_PENDING`, whose activation is not pushed yet) is
+    /// resolved the same way, from the activations pushed so far, as it always was. The OSR answer for such a run is
+    /// nothing, which differs; no OSR caller binds a pending run, so the two never meet.
+    Body,
+    /// An OSR loop region's rows (`osr_lane::bind_frame`). The top activation's window where it is an environment
+    /// activation (`script.environment`), made or not; nothing where the top activation is not one. Without an
+    /// activation, the VM frame's own storage where it covers the function, else, where the function addresses a
+    /// local, the window past the register file the run binds, and nothing where it addresses none. A loop region
+    /// has no environment rows, so it takes no environment storage.
+    Osr,
 }
 
-/// `body_locals` of an environment activation.
+/// The locals the body entered on lane context `cx` reads, as `caller` names: the window where its function's
+/// activation runs one, else the VM frame's, with storage that holds no slot (`heap::absent_environment_storage`),
+/// which every environment row misses at. None of either where there is no context (a test's entry).
+///
+/// `registers` is the register file of the run the caller binds. `LocalsOf::Osr` finds its window past it; `LocalsOf::Body`
+/// finds its window past the context's own registers, as it always has.
+///
+/// # Safety
+/// `cx` is null or a live `LaneContext<H>`; `registers` is the live register file of the run.
+pub(in crate::vm) unsafe fn body_locals<H: Host>(cx: *mut (), registers: *mut Value, caller: LocalsOf) -> BodyLocals {
+    let cx = cx.cast::<LaneContext<H>>();
+    match caller {
+        LocalsOf::Body => {
+            // SAFETY: the caller's contract.
+            if let Some(window) = unsafe { activation_window(cx) } {
+                return window;
+            }
+            // SAFETY: as above; `frame_locals` takes the context as it is.
+            let (locals, count) = unsafe { frame_locals::<H>(cx.cast()) };
+            BodyLocals { locals, count, environment: crate::heap::absent_environment_storage() }
+        }
+        // SAFETY: the caller's contract.
+        LocalsOf::Osr => unsafe { osr_locals(cx, registers) },
+    }
+}
+
+/// `body_locals` of an OSR loop region (`LocalsOf::Osr`).
+///
+/// # Safety
+/// As `body_locals`.
+unsafe fn osr_locals<H: Host>(cx: *mut LaneContext<H>, registers: *mut Value) -> BodyLocals {
+    let absent = crate::heap::absent_environment_storage();
+    let none = BodyLocals { locals: std::ptr::null_mut(), count: 0, environment: absent };
+    if cx.is_null() {
+        return none;
+    }
+    // SAFETY: the caller's contract; the context's program outlives the lane run.
+    let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
+    // The window past the register file of `function`, which holds its locals only where it has any.
+    let window = |function: u32| code.function_get(function as usize)
+        .filter(|body| body.locals != 0)
+        // SAFETY: the activation's window follows its register file.
+        .map_or(none, |body| BodyLocals {
+            locals: unsafe { registers.add(usize::from(body.registers) + usize::from(WINDOW_LOCALS)) },
+            count: usize::from(body.locals),
+            environment: absent,
+        });
+    if let Some(activation) = vm.lane_stack.top_frame() {
+        return match activation.script() {
+            Some(script) if script.environment => window(activation.function()),
+            _ => none,
+        };
+    }
+    // SAFETY: its frame is the running one.
+    let Some(frame) = vm.frames.get_mut(unsafe { (*cx).frame() }) else { return none };
+    let function = frame.function;
+    match code.function_get(function as usize) {
+        Some(body) if frame.locals.len() >= usize::from(body.locals) => BodyLocals {
+            locals: frame.locals.as_mut_ptr(),
+            count: frame.locals.len(),
+            environment: absent,
+        },
+        // No record of the function addresses a local (`context_locals_in_window_in_lane`).
+        Some(body) if !body.call_plan(code).addresses_locals => none,
+        _ => window(function),
+    }
+}
+
+/// The locals of an environment activation (`activation_window`), as a lane body reads them.
 ///
 /// # Safety
 /// As `body_locals`.

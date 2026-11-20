@@ -36,8 +36,11 @@ pub(crate) struct JsStepHead<V> {
     pub(crate) method_cache_atoms: usize,
     pub(crate) method_cache_atom_words: usize,
     pub(crate) stores_specialized: usize,
-    /// Whether the property arena records its slots' value classes (`Heap::tracks_slot_values`), which the store gate reads.
-    pub(crate) slots_tracked: usize,
+    /// What watches a store (`Heap::store_watch_word`): bit `STORE_WATCH_TRACKS` while the property
+    /// arena records its slots' value classes, bit `STORE_WATCH_COUNTS` while old records keep
+    /// reference counts. The store gate requires it zero; an immediate store, which no other test
+    /// stops, requires its counts bit clear (`Stage::immediate_store_open`).
+    pub(crate) store_watch: usize,
     /// A lane body's VM and running residual, which its semantic helpers take.
     pub(crate) vm: usize,
     pub(crate) residual: usize,

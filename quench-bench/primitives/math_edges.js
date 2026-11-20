@@ -1,5 +1,5 @@
 // Differential check: Math functions on edge values must print the same under every tier.
-// Run under quench-node (default, --b-jit, --no-jit) and compare outputs.
+// Run under quench (default, --b-jit, --no-jit) and compare outputs.
 "use strict";
 const V = [0, -0, 0.5, -0.5, 1.5, -1.5, 2.5, 0.49999999999999994, -0.49999999999999994, 4503599627370495.5, 2 ** 52, 2 ** 53, -(2 ** 53),
   2147483647, 2147483648, -2147483648, -2147483649, 4294967296, 1e300, -1e300, Infinity, -Infinity, NaN, 1 / 3, -1 / 3, 7, -7, 3.7, -3.7, 65536 * 65536 + 5];

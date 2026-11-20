@@ -1,6 +1,6 @@
 //! Build configuration derived from the compilation target and profile.
 
-use std::{env, fs, path::Path, process::Command};
+use std::{env, fs, path::{Path, PathBuf}, process::Command};
 
 /// Optimization levels at which LLVM forms sibling calls.
 const SIBLING_CALL_OPT_LEVELS: &[&str] = &["2", "3", "s", "z"];
@@ -27,23 +27,33 @@ fn mix(hash: u64, bytes: &[u8]) -> u64 {
     bytes.iter().fold(hash, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME))
 }
 
-/// Folds every file under `directory` in name order, so the hash names the source tree.
-fn mix_tree(mut hash: u64, directory: &Path) -> u64 {
-    let mut entries: Vec<_> = fs::read_dir(directory).into_iter().flatten().flatten().map(|entry| entry.path()).collect();
-    entries.sort();
-    for path in entries {
-        hash = mix(hash, path.file_name().unwrap_or_default().as_encoded_bytes());
-        hash = if path.is_dir() { mix_tree(hash, &path) } else { mix(hash, &fs::read(&path).unwrap_or_default()) };
-    }
-    hash
+/// Whether a source path is a test: a `tests.rs` or `*_tests.rs` file, or anything under a `tests/`
+/// or `*_tests/` directory. No build of the runtime's behaviour compiles these in.
+fn is_test(path: &Path) -> bool {
+    path.components().any(|part| {
+        let part = part.as_os_str().to_string_lossy();
+        let stem = part.strip_suffix(".rs").unwrap_or(&part);
+        stem == "tests" || stem.ends_with("_tests")
+    })
 }
 
-/// Names this build: the runtime's source tree, the compiler that built it and what it built
+/// The files under `directory` that name the runtime's source, in name order, without the tests.
+fn source_files(directory: &Path) -> Vec<PathBuf> {
+    let mut entries: Vec<_> = fs::read_dir(directory).into_iter().flatten().flatten().map(|entry| entry.path()).filter(|path| !is_test(path)).collect();
+    entries.sort();
+    entries.into_iter().flat_map(|path| if path.is_dir() { source_files(&path) } else { vec![path] }).collect()
+}
+
+/// Names this build: the runtime's source files, the compiler that built it and what it built
 /// for. Ahead images are machine code for one build's layouts and helper addresses, so an image
 /// from another build is rejected (`AheadImages::from_bytes`).
-fn build_id() -> u64 {
+fn build_id(sources: &[PathBuf]) -> u64 {
     let rustc = Command::new(env::var_os("RUSTC").unwrap_or_default()).arg("-vV").output().map(|output| output.stdout).unwrap_or_default();
-    let mut hash = mix_tree(FNV_OFFSET, Path::new("src"));
+    let mut hash = FNV_OFFSET;
+    for path in sources {
+        hash = mix(hash, path.as_os_str().as_encoded_bytes());
+        hash = mix(hash, &fs::read(path).unwrap_or_default());
+    }
     for variable in ["TARGET", "OPT_LEVEL", "PROFILE"] {
         hash = mix(hash, env::var(variable).unwrap_or_default().as_bytes());
     }
@@ -51,8 +61,12 @@ fn build_id() -> u64 {
 }
 
 fn main() {
-    println!("cargo::rerun-if-changed=src");
-    println!("cargo::rustc-env=QUENCH_BUILD_ID={:016x}", build_id());
+    // Per file, not `src`: cargo would watch the test files under a directory too.
+    let sources = source_files(Path::new("src"));
+    for path in &sources {
+        println!("cargo::rerun-if-changed={}", path.display());
+    }
+    println!("cargo::rustc-env=QUENCH_BUILD_ID={:016x}", build_id(&sources));
     println!("cargo::rustc-check-cfg=cfg(quench_lane_tail_calls)");
     println!("cargo::rustc-check-cfg=cfg(quench_profiled)");
     println!("cargo::rustc-check-cfg=cfg(stencil_build)");

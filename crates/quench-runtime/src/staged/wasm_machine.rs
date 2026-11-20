@@ -75,6 +75,13 @@ impl WasmTable for ConcreteTable<'_> {
         self.elements[index as usize].to_bits()
     }
 
+    type Row = TableTarget;
+
+    #[inline(always)]
+    fn element_row(&mut self, index: u64) -> TableTarget {
+        self.targets[index as usize]
+    }
+
     /// Equal ids are equivalent types; the closure knows the expected type, which it closes over.
     #[inline(always)]
     fn signature_accepts(&mut self, reference: u64, signature: u64, expected: u64) -> u64 {

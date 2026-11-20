@@ -1,14 +1,13 @@
 //! Unit repeats, loops and the resume blocks backtracking jumps to.
-use super::{Emit, Resume, FIRST_OPERAND, SECOND_OPERAND};
+use super::{Emit, RegexpMachine, Resume, FIRST_OPERAND, SECOND_OPERAND};
 use quench_regexp::backtrack::machine as m;
 use quench_regexp::backtrack::matcher::MatchStage;
-use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
-use cranelift_codegen::ir::{self, MemFlagsData};
+use crate::staged::machine::{Binary, Lane, Relation};
 use quench_regexp::backtrack::native::{NativeInst, NativeTest};
 
-impl Emit<'_, '_> {
+impl<M: RegexpMachine> Emit<'_, M> {
     /// The first position in `from..to` whose unit fails `test`, or `to`.
-    pub(super) fn scan(&mut self, test: NativeTest, from: ir::Value, to: ir::Value) -> ir::Value {
+    pub(super) fn scan(&mut self, test: NativeTest, from: M::Word, to: M::Word) -> M::Word {
         let (head, body, exit) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
         let index = self.b.block_parameter(head, Lane::I64);
         let end = self.b.block_parameter(exit, Lane::I64);
@@ -27,7 +26,7 @@ impl Emit<'_, '_> {
 
     /// The last unit in `floor..end` that passes `test`, branching to the backtrack block
     /// where none does.
-    pub(super) fn scan_back(&mut self, test: NativeTest, floor: ir::Value, end: ir::Value) -> ir::Value {
+    pub(super) fn scan_back(&mut self, test: NativeTest, floor: M::Word, end: M::Word) -> M::Word {
         let (look, lower, found) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
         let at = self.b.block_parameter(look, Lane::I64);
         let last = self.b.raw_binary_imm(Binary::Add, end, -1);
@@ -50,7 +49,7 @@ impl Emit<'_, '_> {
     /// The code a resume frame continues at: `sp` is the popped frame's address.
     pub(super) fn resume(&mut self, resume: Resume) {
         let frame = self.top();
-        let flags = MemFlagsData::trusted();
+        let flags = self.flags;
         let first = self.b.raw_load(Lane::I64, flags, frame, FIRST_OPERAND);
         let second = self.b.raw_load(Lane::I64, flags, frame, SECOND_OPERAND);
         match resume {

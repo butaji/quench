@@ -1,4 +1,5 @@
 use super::*;
+use crate::staged::string_replace::{self, Piece};
 use crate::staged::strings::{ConcreteString, concrete_char_at, concrete_char_code_at};
 
 enum StringReplacement {
@@ -440,25 +441,18 @@ impl<H: Host> Vm<H> {
                 return Err(JsError("string method receiver is not a string".into()));
             };
             let units = receiver.units();
-            let index = if native == Native::StringAt && raw < 0 {
-                units.len() as i64 + raw
-            } else {
-                raw
-            };
-            let Some((index, first)) = usize::try_from(index)
-                .ok()
-                .and_then(|index| units.get(index).map(|unit| (index, unit)))
-            else {
+            let from_end = native == Native::StringAt;
+            let Some(index) = crate::staged::strings::relative_unit(units, raw, from_end) else {
                 return Ok(Value::UNDEFINED);
             };
-            if native == Native::StringAt {
+            if from_end {
+                let first = units.at(index);
                 return self.string_from_units(&[first]);
             }
-            let code_point = units
-                .get(index + 1)
-                .and_then(|low| crate::unicode::decode_surrogate_pair(first, low))
-                .unwrap_or_else(|| u32::from(first));
-            return Ok(Value::number(code_point as f64));
+            let Some(code_point) = crate::staged::strings::code_point_at(units, index) else {
+                return Ok(Value::UNDEFINED);
+            };
+            return Ok(Value::number(f64::from(code_point)));
         }
         let Some(receiver) = self.heap.string(this).cloned() else {
             return Err(JsError("string method receiver is not a string".into()));
@@ -570,7 +564,7 @@ impl<H: Host> Vm<H> {
 
     /// String.prototype.split: the in-place body (`split_in_place`) first, which takes a flat
     /// string at a flat string separator with no limit; any other call runs the general steps
-    /// (the protocol lookups, ToUint32 of the limit, `split_runs`).
+    /// (the protocol lookups, ToUint32 of the limit, `staged::string_split::runs`).
     pub(super) fn string_split_native(
         &mut self,
         p: &ResidualProgram,
@@ -597,7 +591,7 @@ impl<H: Host> Vm<H> {
             if separator.is_undefined() {
                 if limit != 0 { parts.push(vm.heap.alloc_string(input)); }
             } else {
-                input.split_runs(separator_string.units(), limit, |run| parts.push(vm.heap.alloc_unit_run(run)));
+                crate::staged::string_split::runs(input.units(), separator_string.units(), limit, |run| parts.push(vm.split_piece(run)));
             }
             let values = crate::heap::ArrayElements::from_slice(&parts);
             Ok(vm.heap.alloc_array(crate::heap::ArrayObject::new(
@@ -759,17 +753,16 @@ impl<H: Host> Vm<H> {
             } else {
                 StringReplacement::Template(vm.coerce_js_string(p, replacement_value)?)
             };
-            let Some(first) = input.find_units(search.units(), 0) else {
-                return Ok(vm.heap.alloc_string(input));
-            };
             // A template replacement is the string-pattern core's (`Vm::replace_units`), the one
-            // body every caller shares; it reads the receiver only when nothing matches.
+            // body every caller shares; it answers `None` when nothing matches.
             let method = match replacement {
-                StringReplacement::Template(template) =>
-                    return vm.replace_units(p, Value::UNDEFINED, &input, &search, &template, replace_all),
+                StringReplacement::Template(template) => {
+                    let replaced = vm.replace_units(p, &input, &search, &template, replace_all)?;
+                    return Ok(replaced.unwrap_or_else(|| vm.heap.alloc_string(input)));
+                }
                 StringReplacement::Callable(method) => method,
             };
-            vm.replace_with_callback(p, &input, &search, first, method, replace_all)
+            vm.replace_with_callback(p, &input, &search, method, replace_all)
         })
     }
 
@@ -817,40 +810,45 @@ impl<H: Host> Vm<H> {
     }
 
     /// The replacement of each match of `search` in `input` by `method`'s result (coerced to a
-    /// string), from the first match at `first`: every later match for `replaceAll`. The matches
-    /// are found in the immutable `input` and `search`, which the callbacks cannot change.
+    /// string): every match for `replaceAll`, else the first. The matches are those of
+    /// `string_replace::match_starts`, found in the immutable `input` and `search`, which the
+    /// callbacks cannot change. A pattern with no match answers `input` itself, unchanged.
     fn replace_with_callback(
         &mut self,
         p: &ResidualProgram,
         input: &JsString,
         search: &JsString,
-        first: usize,
         method: Value,
         replace_all: bool,
     ) -> Result<Value, JsError> {
+        let search_length = search.units().len();
+        let mut starts = string_replace::match_starts(input.units(), search.units(), replace_all);
+        let Some(first) = starts.next() else {
+            return Ok(self.heap.alloc_string(input.clone()));
+        };
         let callback_inputs = [self.heap.alloc_string(search.clone()), self.heap.alloc_string(input.clone())];
         self.with_call_roots(callback_inputs, |vm| {
-            let search_length = search.units().len();
-            // Empty matches occur at each code-unit boundary.
-            let advance = search_length.max(1);
-            let mut position = Some(first);
-            let mut cursor = 0;
+            let [matched, whole] = callback_inputs;
             let mut output = super::wtf16::JsStringBuilder::default();
-            while let Some(index) = position {
-                output.append_slice(input, cursor..index);
-                let [matched, whole] = callback_inputs;
-                let value = vm.call_value(p, method, Value::UNDEFINED, &[matched, Value::number(index as f64), whole])?;
-                let text = vm.coerce_js_string(p, value)?;
-                output.append(&text);
-                cursor = index + search_length;
-                let next = index + advance;
-                position = if replace_all && next <= input.units().len() {
-                    input.find_units(search.units(), next)
-                } else {
-                    None
-                };
-            }
-            output.append_slice(input, cursor..input.units().len());
+            string_replace::walk_matches(
+                input.units().len(),
+                std::iter::once(first).chain(starts),
+                |&index| index..index + search_length,
+                |piece| -> Result<(), JsError> {
+                    match piece {
+                        Piece::Gap(gap) => {
+                            output.append_slice(input, gap);
+                            Ok(())
+                        }
+                        Piece::Match(index) => {
+                            let value = vm.call_value(p, method, Value::UNDEFINED, &[matched, Value::number(index as f64), whole])?;
+                            let text = vm.coerce_js_string(p, value)?;
+                            output.append(&text);
+                            Ok(())
+                        }
+                    }
+                },
+            )?;
             let output = vm.string_build_result(p, output.finish())?;
             Ok(vm.heap.alloc_string(output))
         })

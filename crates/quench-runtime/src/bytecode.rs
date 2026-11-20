@@ -4,8 +4,8 @@ mod internal_bindings;
 mod module_records;
 mod declared_types;
 pub(crate) use declared_types::{
-    Declared, DeclaredKind, DeclaredLocal, DeclaredMember, DeclaredParameter, DeclaredParameterClass, DeclaredSignature,
-    DeclaredTypes, EnumConstant,
+    Declared, DeclaredKind, DeclaredLocal, DeclaredLocalMember, DeclaredMember, DeclaredParameter, DeclaredParameterClass, DeclaredSignature,
+    DeclaredTypes, EnumConstant, SavedTypeName,
 };
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
 pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind};
@@ -1143,20 +1143,24 @@ opcodes!($;
     WasmRefEq => Effect::PURE; layout Scalar; meaning Unused; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, Register, Register),
     WasmStructNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmStructNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE STRUCT_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Register, Register, Unused),
+    WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE STRUCT_SET_FAMILY, @ Register, @ fields(Register, Register, Unused),
+    WasmStructGetRaw => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE RAW_FORM STRUCT_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmStructSetRaw => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; traits WASM_OPCODE MAY_ALLOCATE RAW_FORM STRUCT_SET_FAMILY, @ Register, @ fields(Register, Register, Unused),
 
     WasmArrayNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNew; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
     WasmArrayNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewDefault; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmArrayNewFixed => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewFixed; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmArrayLen => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
 
-    WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE ARRAY_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, Register),
     WasmArrayGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
     WasmArrayGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArraySet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
+    WasmArraySet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE ARRAY_SET_FAMILY, @ Register, @ fields(Register, Register, Register),
+    WasmArrayGetRaw => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE RAW_FORM ARRAY_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArraySetRaw => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE MAY_ALLOCATE RAW_FORM ARRAY_SET_FAMILY, @ Register, @ fields(Register, Register, Register),
     WasmExternalConversion => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmExternalConversion; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmArrayFill => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
     WasmArrayCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
@@ -1527,8 +1531,10 @@ pub struct Function {
     pub(crate) dispatch: DispatchClass,
     /// Fixed-width view of `code`, derived once the function proves hot.
     pub(crate) decoded: HotDecoding,
-    /// Lazily derived `plain_local_slots`; never serialized. Read on every interpreter local operand,
-    /// so it stays inline rather than behind `caches`.
+    /// The `plain_local_slots` words of the final code: stored by `compile::lower_settled` from its
+    /// proof, else derived on the first read (`plain_local`). The binary codec writes them for a
+    /// lowered record. Read on every interpreter local operand, so it stays inline rather than
+    /// behind `caches`.
     pub(crate) plain_locals: std::cell::OnceCell<crate::heap::ThinBoxSlice<u64>>,
     /// The lazily derived booleans (`LazyFlag`), each a known bit and a value bit; never serialized.
     pub(crate) lazy_flags: std::cell::Cell<u16>,
@@ -2085,11 +2091,6 @@ impl RegisterRoots {
     pub(crate) fn new(covered: bool) -> Self {
         let entry_live = if covered { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(Self::ALL_LIVE_AT_ENTRY) };
         Self { covered, entry_live, solved: std::cell::RefCell::new(None) }
-    }
-
-    /// Covered, every register live at entry below `entry_live`.
-    pub(crate) fn with_entry_live(covered: bool, entry_live: u16) -> Self {
-        Self { covered, entry_live: std::cell::OnceCell::from(entry_live), solved: std::cell::RefCell::new(None) }
     }
 
     /// Covered, every register live at entry below `entry_live`, with the masks `solved` that

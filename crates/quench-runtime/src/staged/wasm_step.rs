@@ -249,3 +249,38 @@ macro_rules! wasm_lane_list {
 }
 #[allow(unused_imports)]
 pub(crate) use wasm_lane_list;
+
+/// A Wasm tier: what it makes of each family of steps, in its own terms (`Out`: the u-jit's
+/// fall-through flag, the b-jit's rows). `dispatch` is the one match over `Step` the tiers run,
+/// so a family added to `Step` is a method every tier must answer, and no tier keeps its own
+/// match over the families.
+pub(crate) trait WasmTier {
+    type Out;
+    fn numeric(&mut self, pc: usize, instruction: WideInstruction, operation: WasmOperation) -> Self::Out;
+    fn instance(&mut self, pc: usize, instruction: WideInstruction, step: Instance) -> Self::Out;
+    fn memory(&mut self, pc: usize, instruction: WideInstruction, step: Memory) -> Self::Out;
+    fn flow(&mut self, pc: usize, instruction: WideInstruction, flow: Flow) -> Self::Out;
+    fn call(&mut self, pc: usize, instruction: WideInstruction, call: Call) -> Self::Out;
+    fn table(&mut self, pc: usize, instruction: WideInstruction, op: TableOp) -> Self::Out;
+    fn simd(&mut self, pc: usize, instruction: WideInstruction, step: Simd) -> Self::Out;
+    fn gc(&mut self, pc: usize, instruction: WideInstruction, op: GcOp) -> Self::Out;
+    fn exception(&mut self, pc: usize, instruction: WideInstruction, op: Exception) -> Self::Out;
+    fn atomic(&mut self, pc: usize, instruction: WideInstruction, op: Atomic) -> Self::Out;
+}
+
+/// The tier's answer for `step`, the step of `instruction` at `pc`.
+#[inline(always)]
+pub(crate) fn dispatch<T: WasmTier>(tier: &mut T, pc: usize, instruction: WideInstruction, step: Step) -> T::Out {
+    match step {
+        Step::Numeric(operation) => tier.numeric(pc, instruction, operation),
+        Step::Instance(step) => tier.instance(pc, instruction, step),
+        Step::Memory(step) => tier.memory(pc, instruction, step),
+        Step::Flow(flow) => tier.flow(pc, instruction, flow),
+        Step::Call(call) => tier.call(pc, instruction, call),
+        Step::Table(op) => tier.table(pc, instruction, op),
+        Step::Simd(step) => tier.simd(pc, instruction, step),
+        Step::Gc(op) => tier.gc(pc, instruction, op),
+        Step::Exception(op) => tier.exception(pc, instruction, op),
+        Step::Atomic(op) => tier.atomic(pc, instruction, op),
+    }
+}

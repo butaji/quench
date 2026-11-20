@@ -8,9 +8,9 @@
 # With --pgo, every build here is the profile-guided build of tools/pgo-build.sh --static
 # (the same flags, the given merged profile), so the order and the BOLT profile are trained on
 # the PGO binary they lay out; tools/pgo-build.sh --static writes PROFDATA to
-# target/pgo-quench-node.profdata. Without it, the plain static build is laid out.
+# target/pgo-quench.profdata. Without it, the plain static build is laid out.
 #
-# 1. Builds the static quench-node and the layout tools (symbol-order, bolt-profile).
+# 1. Builds the static quench and the layout tools (symbol-order, bolt-profile).
 # 2. Assembles the training corpus from the repository under target/layout-corpus: the
 #    interpreter curriculum (quench-bench/deegen-curriculum), the numbered diagnostic micros
 #    (quench-bench/micros), Node library modules compiled without running
@@ -28,7 +28,7 @@
 # 3. Profiles start-up (cachegrind) and the run phase after the entry's compilation
 #    (callgrind, split at quench_entry_compiled), with --no-jit and by default (JIT), under the
 #    default memory policy the scored binary runs.
-# 4. Writes crates/quench-node/link/x86_64-linux-static.order, converts the profiles for
+# 4. Writes crates/quench/link/x86_64-linux-static.order, converts the profiles for
 #    BOLT, relinks, and writes the bolted binary beside the relinked one (`-bolt`).
 #
 # Requires valgrind, npm with registry access, and llvm-bolt (BOLT 20; LLVM_BOLT names it
@@ -50,8 +50,8 @@ jobs="$(nproc)"
 corpus="$target_dir/layout-corpus"
 startup="$target_dir/layout-startup"
 run="$target_dir/layout-run"
-order="$root_dir/crates/quench-node/link/x86_64-linux-static.order"
-binary="$target_dir/$host/$profile/quench-node"
+order="$root_dir/crates/quench/link/x86_64-linux-static.order"
+binary="$target_dir/$host/$profile/quench"
 tools_dir="$target_dir/$profile"
 
 # Seconds each profiled program may run under valgrind; a killed run writes no profile.
@@ -91,8 +91,8 @@ if [[ -n "$profdata" ]]; then
     fi
 fi
 build() {
-    CARGO_TARGET_DIR="$target_dir" cargo build --locked --profile "$profile" -p quench-node \
-        --bin quench-node --target "$host" --config "build.rustflags=[$build_flags]"
+    CARGO_TARGET_DIR="$target_dir" cargo build --locked --profile "$profile" -p quench \
+        --bin quench --target "$host" --config "build.rustflags=[$build_flags]"
 }
 
 cd "$root_dir"

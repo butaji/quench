@@ -11,7 +11,7 @@
 //! collection can run while only these variables name the arguments.
 
 use super::*;
-use super::super::{ScalarConstructPlan, ScalarField};
+use super::super::{PlanCallee, ScalarConstructPlan, ScalarField};
 
 /// A receiver kept as its field values.
 #[derive(Clone, PartialEq)]
@@ -19,7 +19,7 @@ pub(super) struct VirtualObject {
     /// The register the construction defined.
     pub(super) register: Register,
     /// The plan's callee, which the allocation at a leave constructs again.
-    callee: Value,
+    callee: PlanCallee,
     /// Per field in slot order: its name, and the variable holding its tagged value (an
     /// argument's, or a constant's) with the type the value had.
     fields: smallvec::SmallVec<[(Atom, Option<Variable>, Value, Type); 4]>,
@@ -49,13 +49,22 @@ const MAX_ARGUMENTS: u16 = 8;
 /// region with static facts needs no Stable division.
 #[derive(Clone, Copy)]
 pub(super) struct ConstructReady {
-    callee: Value,
+    callee: PlanCallee,
     variable: Variable,
     header: usize,
     end: usize,
 }
 
 impl Lowering<'_, '_> {
+    /// The word of a plan's callee: the closure's identity, which the code's roots keep, or the
+    /// symbol of the image's closure, which the loader resolves and roots (`aot_image::live`).
+    fn plan_callee_word(&mut self, callee: PlanCallee) -> ir::Value {
+        match callee {
+            PlanCallee::Live(callee) => self.identity_constant(callee),
+            PlanCallee::Image(key) => self.reloc(RelocKind::HeapValue, key, Value::UNDEFINED.to_bits()),
+        }
+    }
+
     /// The plan the construction at `pc` would build its receiver by, where the body may keep
     /// that receiver as its field values: a plain construction of registers whose site named one
     /// callee with such a plan (`OnlineFacts::construct_plans`).
@@ -86,7 +95,7 @@ impl Lowering<'_, '_> {
         let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return false };
         let exit = self.guard_exit(state, pc as u32);
         let callee = self.tagged(state, instruction.register_b());
-        let expected = self.identity_constant(plan.callee);
+        let expected = self.plan_callee_word(plan.callee);
         let same = self.raw_compare(Relation::Equal, callee, expected);
         emit_js_guard(&mut self.builder, same, exit);
         let ready = self.construct_ready.iter()
@@ -215,7 +224,7 @@ impl Lowering<'_, '_> {
                 self.slot_store(slot, Lane::I64, bits, (index * size_of::<Value>()) as i32);
             }
             let arguments = self.slot_address(slot, 0);
-            let callee = self.identity_constant(kept.callee);
+            let callee = self.plan_callee_word(kept.callee);
             let argc = self.raw_const(Lane::I64, count as i64);
             let payload = self.payload;
             let this = self.helper_call(LaneHelper::Construct, &[payload, callee, arguments, argc]);
@@ -246,7 +255,7 @@ impl Lowering<'_, '_> {
     /// each construction then tests at its site and leaves there as before.
     pub(super) fn hoist_constructions(&mut self, header: usize) {
         let Some(end) = self.loop_end(header).filter(|end| self.enters_only_at_header(header, *end)) else { return };
-        let mut callees = smallvec::SmallVec::<[Value; 2]>::new();
+        let mut callees = smallvec::SmallVec::<[PlanCallee; 2]>::new();
         for pc in header..=end {
             let Some(plan) = self.virtual_construct_plan(pc, self.unit.instructions[pc]) else { continue };
             if !callees.contains(&plan.callee) { callees.push(plan.callee); }
@@ -257,7 +266,7 @@ impl Lowering<'_, '_> {
                 Some(ready) => ready.variable,
                 None => self.builder.declare_var(types::I64),
             };
-            let expected = self.identity_constant(callee);
+            let expected = self.plan_callee_word(callee);
             let payload = self.payload;
             let holds = self.helper_call(LaneHelper::ConstructPlanHolds, &[payload, expected]);
             self.builder.def_var(variable, holds);

@@ -24,7 +24,7 @@ use super::{
     ArrayObject, AwaitState, Cell, CellKind, EnvironmentTrace, FunctionRecord, GcTraceKind, Heap,
     CollectionRecord, IteratorRecord, MarkBits, Object, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
     PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
-    mark_word_if_new, weak, PushedProtos, EnvironmentRecord, SmallParts, SymbolData,
+    mark_word_if_new, weak, PushedProtos, EnvironmentRecord, SmallParts, SymbolData, WasmGcRecord,
 };
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
@@ -416,6 +416,19 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 self.note_marked_key(value, batch);
                 CellKind::Symbol
+            }
+            // A Wasm GC object's payload holds the references it keeps: marking it pushes them.
+            HeapReference::WasmGcRecord(id) => {
+                if !self.wasm_gcs.occupied(id) {
+                    return;
+                }
+                // SAFETY: occupied, and no record is written or freed while the view lives.
+                let record = unsafe { self.wasm_gcs.get(id) };
+                if !self.wasm_gcs.mark_if_new(id) {
+                    return;
+                }
+                record.trace_children(work);
+                CellKind::WasmGc
             }
             HeapReference::LegacySlot(index) => {
                 let index = index as usize;

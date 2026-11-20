@@ -8,7 +8,7 @@
 //!
 //! Owner: base tier (relocatable stencils + generic row).
 
-use super::{ImageTarget, symbols::SymbolTable};
+use super::{CallSite, ImageTarget, symbols::SymbolTable};
 use crate::bytecode::ResidualProgram;
 use crate::compile::aot_facts::AotFacts;
 use crate::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
@@ -22,6 +22,8 @@ pub(crate) struct BaseImage {
     pub(crate) pc_offsets: Box<[u32]>,
     /// The records lowered as the generic semantic row, ascending.
     pub(crate) generic: Box<[u32]>,
+    /// The registers past the function's own its rows reach (`ImageBody::scratch`).
+    pub(crate) scratch: u32,
 }
 
 /// `pc_offsets` value of a record nothing outside the body enters.
@@ -31,18 +33,19 @@ impl BaseImage {
     pub(crate) fn generic_rows(&self) -> usize { self.generic.len() }
 }
 
-/// The base body of function `id`: the BaseJIT body over the program alone (no profile, no callee),
-/// its helper addresses as `Reloc::Abs8` relocations to the symbols the loader resolves.
+/// The base body of function `id`: the BaseJIT body over the program alone (no profile), its calls
+/// direct where `facts` prove their callee, its helper and call record addresses as `Reloc::Abs8`
+/// relocations to the symbols the loader resolves; and those calls' sites (`AotImage::calls`).
 pub(crate) fn lower(
     program: &ResidualProgram,
     facts: &AotFacts,
     target: &ImageTarget,
     id: u32,
     symbols: &mut SymbolTable,
-) -> Result<BaseImage, String> {
-    // The facts and the target change no base row: the body folds no fact and names no target's layout.
-    let _ = (facts, target);
-    let built = crate::vm::compiled::image_body(program, id)?;
+) -> Result<(BaseImage, Vec<CallSite>), String> {
+    // The target changes no base row: the body names no target's layout.
+    let _ = target;
+    let built = crate::vm::compiled::image_body(program, id, facts)?;
     let relocations: Box<[Relocation]> = built.symbols.iter().map(|site| {
         let (namespace, key) = symbols.intern(site.symbol);
         Relocation { offset: site.offset, kind: Reloc::Abs8, namespace, key, addend: 0 }
@@ -51,9 +54,6 @@ pub(crate) fn lower(
     for &(pc, offset) in built.entries.iter() {
         pc_offsets[pc as usize] = u32::try_from(offset).map_err(|_| format!("code offset {offset} past the image's reach"))?;
     }
-    Ok(BaseImage {
-        code: RelocatableCode { code: built.code.into(), relocations },
-        pc_offsets: pc_offsets.into(),
-        generic: built.generic,
-    })
+    let calls = built.calls.iter().map(|&(pc, callee, record)| CallSite { function: id, pc, callee, record }).collect();
+    Ok((BaseImage { code: RelocatableCode { code: built.code.into(), relocations }, pc_offsets: pc_offsets.into(), generic: built.generic, scratch: u32::try_from(built.scratch).map_err(|_| "base body scratch past u32")? }, calls))
 }

@@ -16,7 +16,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(1);
 pub const NODE_PARALLEL_DIR: &str = "tests/node/test/parallel";
 const WORKER_OPTION: &str = "--case-worker";
 const CASE_ID_ENV: &str = "QUENCH_NODE_TEST_CASE_ID";
-use quench_node::CASE_RESULT_ENV;
+use quench::CASE_RESULT_ENV;
 static NEXT_CASE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 macro_rules! case_results {
@@ -95,7 +95,7 @@ pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
         // Fixtures can launch process.argv[0], which is this embedding
         // executable. Its children must execute the requested Node entry,
         // rather than interpreting those arguments as a suite invocation.
-        if std::env::var_os(quench_node::shared_run::CHILD_RUNNER_ENV).is_some() {
+        if std::env::var_os(quench::shared_run::CHILD_RUNNER_ENV).is_some() {
             if let Some(executable) = std::env::var_os(NODE_TEST_EXECUTABLE_ENV) {
                 #[cfg(unix)]
                 {
@@ -118,7 +118,7 @@ pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
                     return Some(ExitCode::from(2));
                 }
             }
-            let code = match quench_node::shared_run::run_shared_cli(arguments.iter().cloned()) {
+            let code = match quench::shared_run::run_shared_cli(arguments.iter().cloned()) {
                 Ok(code) => code,
                 Err(error) => {
                     eprintln!("{error}");
@@ -252,7 +252,7 @@ fn observe_case_with_environment(
         .arg(WORKER_OPTION)
         .arg(&fixture)
         .arg(&result)
-        .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        .env(quench::shared_run::CHILD_RUNNER_ENV, "1");
     command.envs(env.iter().cloned());
     if skip_flag_check {
         if let Some(project) = parallel_checkout_root(&fixture) {

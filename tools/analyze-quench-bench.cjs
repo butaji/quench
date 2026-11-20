@@ -18,11 +18,11 @@ const option = (name, fallback) => {
 const fixture = fixtureArg.endsWith(".js") ? fixtureArg : `${fixtureArg}.js`;
 const quench = path.resolve(
   root,
-  option("--quench", "target/release/quench-node"),
+  option("--quench", "target/release/quench"),
 );
 const traceQuench = path.resolve(
   root,
-  option("--trace-quench", "target-exec-trace/release/quench-node"),
+  option("--trace-quench", "target-exec-trace/release/quench"),
 );
 const sampleQuench = path.resolve(root, option("--sample-quench", quench));
 const timeoutMs = Number(option("--timeout-ms", "120000"));
@@ -181,7 +181,7 @@ async function sample(script) {
   const self = text.match(
     /Sort by top of stack, same collapsed[^\n]*\n([\s\S]*?)\nBinary Images:/,
   )?.[1] || "";
-  const rows = [...self.matchAll(/^\s+(.+?)\s+\(in quench-node\)\s+(\d+)$/gm)]
+  const rows = [...self.matchAll(/^\s+(.+?)\s+\(in quench\)\s+(\d+)$/gm)]
     .map((match) => ({ symbol: match[1], samples: Number(match[2]) }))
     .sort((left, right) => right.samples - left.samples);
   const total = rows.reduce((sum, row) => sum + row.samples, 0);

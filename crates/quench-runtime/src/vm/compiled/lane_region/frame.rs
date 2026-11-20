@@ -5,7 +5,7 @@ use crate::vm::compiled::regions;
 #[path = "frame_call_out.rs"] pub(super) mod call_out;
 #[path = "frame_truthiness.rs"] mod truthiness;
 #[path = "frame_operands.rs"] mod operands;
-pub(in crate::vm) use operands::{held_long, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_number_value};
+pub(in crate::vm) use operands::{held_long, known_number, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_number_value};
 use truthiness::register_truthiness;
 
 /// The lane's register file.
@@ -333,8 +333,14 @@ pub(super) fn register_tagged(builder: &mut FunctionBuilder<'_>, registers: &mut
     state: &mut State, register: Register) -> ir::Value {
     let index = usize::from(register);
     let fact = state.values[index];
-    if let TaggedView::Value(value) = fact.tagged { return value; }
-    if !fact.tagged.current() {
+    let mut current = fact.tagged.current();
+    if let TaggedView::Value(value) = fact.tagged {
+        if defined_here(builder, value) { return value; }
+        // A word made in another block may be a sibling path's, which this block does not see: a tagged
+        // register's variable is its view everywhere, an unboxed one boxes its word again here.
+        current = fact.value.representation == Representation::Tagged;
+    }
+    if !current {
         let bits = super::number_domains::box_unboxed(builder, registers, fact.value.representation, index);
         builder.def_var(registers.tagged[index], bits);
         state.values[index].tagged = TaggedView::Value(bits);
@@ -343,6 +349,16 @@ pub(super) fn register_tagged(builder: &mut FunctionBuilder<'_>, registers: &mut
     let bits = builder.use_var(registers.tagged[index]);
     state.values[index].tagged = TaggedView::Value(bits);
     bits
+}
+
+/// Whether `value` is defined in the block the builder is in: there it dominates every later use.
+fn defined_here(builder: &FunctionBuilder<'_>, value: ir::Value) -> bool {
+    let block = match builder.func.dfg.value_def(value) {
+        ir::ValueDef::Result(inst, _) => builder.func.layout.inst_block(inst),
+        ir::ValueDef::Param(block, _) => Some(block),
+        ir::ValueDef::Union(..) => None,
+    };
+    block.is_some() && block == builder.current_block()
 }
 
 /// `register`'s word in its fact's representation.

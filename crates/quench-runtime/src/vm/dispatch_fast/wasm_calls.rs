@@ -285,7 +285,7 @@ impl<H: Host> WasmActivation for LaneCall<'_, H> {
     fn import_native(&mut self) -> NativeCall {
         let vm = unsafe { vm(self.cx) };
         let callee = self.r.get(self.i.b);
-        let Some((target, capture, signature)) = native_import_target(vm, callee) else {
+        let Some((target, capture, signature)) = vm.host_import_js_target(callee) else {
             return NativeCall::Declined;
         };
         // SAFETY: the window is the caller's registers, copied before guest code runs.
@@ -563,35 +563,15 @@ fn js_import_of<H: Host>(vm: &mut Vm<H>, wrapper: Value) -> Option<JsImportPlan>
     }
 }
 
-/// The JavaScript callee of a host-or-JavaScript import, its memcpy capture where it has one, and
-/// its signature. `None` for a host-backed import or a callee that is no import.
-fn native_import_target<H: Host>(
-    vm: &Vm<H>,
-    callee: Value,
-) -> Option<(Value, Option<(Value, usize)>, crate::WasmSignature)> {
-    let env = vm.heap.function(callee)?.env;
-    match vm.heap.get(env) {
-        Some(Cell::WasmHostFunction { target, signature }) => match target {
-            crate::heap::WasmHostTarget::Js(target) => Some((*target, None, signature.signature.clone())),
-            crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => Some((
-                target.function,
-                Some((target.view_environment, target.view_slot)),
-                signature.signature.clone(),
-            )),
-            crate::heap::WasmHostTarget::Host(_) => None,
-        },
-        _ => None,
-    }
-}
-
 /// The call facts of the import `wrapper` (`JsImportPlan`): `None` for any other callee, a
 /// host-backed or memcpy import, or a signature past the scalars the activation converts.
 #[inline(never)]
 fn js_import_plan<H: Host>(vm: &Vm<H>, wrapper: Value) -> Option<JsImportPlan> {
     let record = vm.heap.function(wrapper)?;
-    let Some(Cell::WasmHostFunction { target: crate::heap::WasmHostTarget::Js(callee), signature }) = vm.heap.get(record.env) else {
+    let (callee, capture, signature) = vm.host_import_js_target(wrapper)?;
+    if capture.is_some() {
         return None;
-    };
+    }
     let result = match signature.results.as_slice() {
         [] => None,
         [ty @ (crate::WasmType::I32 | crate::WasmType::F32 | crate::WasmType::F64)] => Some(*ty),
@@ -609,5 +589,5 @@ fn js_import_plan<H: Host>(vm: &Vm<H>, wrapper: Value) -> Option<JsImportPlan> {
             _ => return None,
         };
     }
-    Some(JsImportPlan { wrapper, realm: vm.record_realm(record), callee: *callee, argc: signature.params.len() as u8, kinds, result })
+    Some(JsImportPlan { wrapper, realm: vm.record_realm(record), callee, argc: signature.params.len() as u8, kinds, result })
 }

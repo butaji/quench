@@ -634,6 +634,12 @@ impl ResidualProgram {
             } else {
 function.plain_local_slots(&self.superinstructions)
             };
+            // The compiler records its plain-local proof (`lower_settled`); it must be the final code's.
+            if let Some(recorded) = function.plain_locals.get()
+                && recorded[..] != *plain_local_slots.words()
+            {
+                return Err(format!("function {index} records a plain-local set its code does not prove"));
+            }
             if let Some(initializer) = function.instance_initializer() {
                 let valid = self
                     .functions

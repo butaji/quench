@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lists the lane handlers of a quench-node binary whose dispatch of the next record is a call
+# Lists the lane handlers of a quench binary whose dispatch of the next record is a call
 # instead of a sibling-call jump.
 #
 # usage: tools/check-lane-tail-calls.sh BINARY [HANDLER...]

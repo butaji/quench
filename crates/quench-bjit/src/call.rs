@@ -5,8 +5,7 @@
 use crate::call_record::MAX_DIRECT_ARGC;
 use crate::numeric::Place;
 use crate::Stencil;
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// A call row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -22,8 +21,10 @@ pub enum CallRow {
     /// value hole 0 is the `CallRecord`'s address; successors NEXT (refused: the helper row),
     /// TAKEN (completed), EXIT0 (a leave inside the callee, `LEAVE_STATUS`). `checked` compares the
     /// callee register with the record's callee; the unchecked row (a callee a Stable fact holds, whose
-    /// change retires the body) does not read the register.
-    Direct { argc: u8, this: ThisRow, checked: bool },
+    /// change retires the body) does not read the register. `pinned` says a leading argument is passed
+    /// from a pinned register (the row reads the record's places); else every argument is in the window
+    /// and the `_window` row, which reads no places, is named (argc 0 has only the general row).
+    Direct { argc: u8, this: ThisRow, checked: bool, pinned: bool },
     /// The pinned register `Place::Pin` or `Place::PinF` back from the tagged word a spill wrote
     /// to the frame slot at hole 0; successor NEXT.
     Reload(Place),
@@ -103,9 +104,10 @@ impl CallRow {
             CallRow::HelperPacked => Ok("call_helper_packed".to_string()),
             CallRow::Here => Ok("exit_here".to_string()),
             CallRow::Semantic => Ok("call_semantic".to_string()),
-            CallRow::Direct { argc, this, checked } if usize::from(argc) <= MAX_DIRECT_ARGC => {
+            CallRow::Direct { argc, this, checked, pinned } if usize::from(argc) <= MAX_DIRECT_ARGC => {
                 let mode = match this { ThisRow::Strict => "strict", ThisRow::Sloppy => "sloppy", ThisRow::Lexical => "lexical" };
-                Ok(format!("call_direct_a{argc}_{mode}{}", if checked { "" } else { "_unchecked" }))
+                let window = if pinned || argc == 0 { "" } else { "_window" };
+                Ok(format!("call_direct_a{argc}_{mode}{}{window}", if checked { "" } else { "_unchecked" }))
             }
             CallRow::Reload(place @ (Place::Pin(_) | Place::PinF(_))) => Ok(format!("reload_{}", place.code())),
             CallRow::Builtin(row) => Ok(format!("builtin_{}", row.symbol())),
@@ -116,16 +118,11 @@ impl CallRow {
 
 /// The stencil of `row`, built at compile time by rustc and shared for the life of the process.
 pub fn stencil(row: CallRow) -> Result<&'static Stencil, String> {
-    static TABLE: OnceLock<Mutex<HashMap<CallRow, &'static Stencil>>> = OnceLock::new();
-    let mut table = TABLE.get_or_init(Default::default).lock().map_err(|e| e.to_string())?;
-    if let Some(found) = table.get(&row) {
-        return Ok(found);
-    }
-    let name = row.name()?;
-    let found = crate::rustc::stencil(&name).ok_or_else(|| format!("no stencil row {name}"))?;
-    let stencil: &'static Stencil = Box::leak(Box::new(found));
-    table.insert(row, stencil);
-    Ok(stencil)
+    static TABLE: crate::rustc::Memo<CallRow> = OnceLock::new();
+    crate::rustc::memoized(&TABLE, row, || {
+        let name = row.name()?;
+        crate::rustc::stencil(&name).ok_or_else(|| format!("no stencil row {name}"))
+    })
 }
 
 #[cfg(test)]
@@ -135,7 +132,7 @@ mod tests {
 
     fn rows() -> Vec<CallRow> {
         let direct = (0..=MAX_DIRECT_ARGC as u8).flat_map(|argc| [ThisRow::Strict, ThisRow::Sloppy, ThisRow::Lexical].into_iter()
-            .flat_map(move |this| [true, false].map(|checked| CallRow::Direct { argc, this, checked })));
+            .flat_map(move |this| [true, false].into_iter().flat_map(move |checked| [true, false].map(move |pinned| CallRow::Direct { argc, this, checked, pinned }))));
         let pins = (0..crate::PINNED as u8).map(Place::Pin).chain((0..crate::PINNED_F as u8).map(Place::PinF)).map(CallRow::Reload);
         [CallRow::Helper, CallRow::HelperPacked, CallRow::Semantic, CallRow::Here].into_iter().chain(direct).chain(pins).collect()
     }
@@ -182,7 +179,7 @@ mod tests {
 
     #[test]
     fn rows_beyond_the_contract_do_not_exist() {
-        assert!(CallRow::Direct { argc: MAX_DIRECT_ARGC as u8 + 1, this: ThisRow::Strict, checked: true }.name().is_err());
+        assert!(CallRow::Direct { argc: MAX_DIRECT_ARGC as u8 + 1, this: ThisRow::Strict, checked: true, pinned: true }.name().is_err());
         assert!(CallRow::Reload(Place::Mem).name().is_err());
     }
 }

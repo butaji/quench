@@ -14,7 +14,7 @@ const FILTER_LANES: usize = 16;
 
 /// Whether a search of a haystack of `haystack` bytes for a needle of `needle` bytes scans for
 /// the needle's first byte rather than building a `memchr::memmem` searcher.
-pub(super) fn scans(haystack: usize, needle: usize) -> bool {
+pub(crate) fn scans(haystack: usize, needle: usize) -> bool {
     haystack <= SCANNED_HAYSTACK_MAX_BYTES && needle <= SCANNED_NEEDLE_MAX_BYTES
 }
 

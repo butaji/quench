@@ -2,13 +2,13 @@
 //! writes the live registers back. The stub pushes the PC on the stack, where no row's register
 //! and no spill row can clobber it, and the routine (`leave_pop`) pops it as the region's result.
 
-pub use crate::class::JMP_REL32;
+pub use crate::class::{JMP_REL32, JMP_REL32_LEN};
 use crate::class::BRANCH26;
 use crate::patch::{INSN_BYTES, PatchError, patch_branch, patch_movw};
 
 /// x86-64: `push imm32` then `jmp rel32`.
 const PUSH_IMM32: u8 = 0x68;
-const X86_STUB_LEN: usize = 2 * (1 + size_of::<u32>());
+const X86_STUB_LEN: usize = (1 + size_of::<u32>()) + JMP_REL32_LEN;
 
 /// AArch64: `movz w16, #pc` / `movk w16, #pc>>16, lsl 16` / `str x16, [sp, #-16]!` / `b routine`.
 /// x16 is the linker's scratch register (IP0): `preserve_none` never passes an argument in it, so

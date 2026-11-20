@@ -13,8 +13,11 @@
 //! Every parse of typed text goes through `lazy_bodies::parse`, so a body compiled
 //! later (lazily, streamed, on first call) is admitted exactly as at load.
 
+use super::enum_ast;
+use super::module_ast;
 use super::enum_folding;
-use super::enums::{self, Member, Value};
+use super::enums::{self, Computed, Member, Value};
+use super::namespace_ast;
 use oxc_allocator::{Allocator, Box as ArenaBox, TakeIn, Vec as ArenaVec};
 use oxc_ast::ast::*;
 use oxc_ast_visit::{VisitMut, walk_mut};
@@ -29,9 +32,12 @@ mod decorators;
 pub(in crate::compile) fn admit<'a>(allocator: &'a Allocator, program: &mut Program<'a>, declarations: &mut DeclaredTypes) {
     // Before the class bodies change: signature-only members and parameter modifiers are still in place.
     {
-        let names = super::TypeNames::of(program);
+        // The saved top-level names of the program, or of the program a body belongs to, shadowed by
+        // what this tree declares; saved again for the bodies compiled from it (`TypeNames::resolved`).
+        let names = super::TypeNames::of(program, declarations.type_names.clone());
         super::fields::collect(program, &names, declarations);
         super::signatures::collect(program, &names, declarations);
+        declarations.type_names = Some(names.resolved());
     }
     let bindings = if program.source_text.contains("enum") { binding_counts(program) } else { FxHashMap::default() };
     let folded = enum_folding::foldable(program, &bindings);
@@ -62,7 +68,7 @@ struct Admit<'a, 'd> {
     /// semantics inline their reads, so `E.X` is the constant (no load at run time). A plain
     /// enum in `folded` inlines the same way once its declaration is admitted, so the reads
     /// after it see the constants.
-    const_enums: FxHashMap<String, FxHashMap<String, String>>,
+    const_enums: FxHashMap<String, FxHashMap<String, Value>>,
     /// The plain enums whose member reads may fold (`enum_folding`).
     folded: FxHashSet<String>,
     /// Value import bindings by local name: source, and imported name (`None`: a namespace).
@@ -75,7 +81,7 @@ struct Admit<'a, 'd> {
 
 /// How a declaration is exported: not, from the module, or from namespace `N`.
 #[derive(Clone, Copy)]
-enum Export<'n> {
+pub(super) enum Export<'n> {
     None,
     Module,
     Namespace(&'n str),
@@ -101,17 +107,6 @@ impl<'a> Admit<'a, '_> {
         let mut program = parsed.program;
         SetSpans(span).visit_program(&mut program);
         program.body
-    }
-
-    fn javascript_expression(&self, text: &str, span: Span) -> Expression<'a> {
-        let mut statements = self.javascript(&format!("({text});"), span);
-        match statements.first_mut() {
-            Some(Statement::ExpressionStatement(statement)) => match statement.expression.take_in(&self.allocator) {
-                Expression::ParenthesizedExpression(mut inner) => inner.expression.take_in(&self.allocator),
-                expression => expression,
-            },
-            _ => unreachable!("an expression statement"),
-        }
     }
 
     /// Admit a statement list (of a namespace body when `namespace` names it).
@@ -143,9 +138,9 @@ impl<'a> Admit<'a, '_> {
             }
             Statement::ExportDefaultDeclaration(export) => self.export_default(export),
             Statement::TSExportAssignment(mut assignment) => {
-                let mut statements = self.javascript("module.exports = $$quench_ts_0;", assignment.span);
-                fill(&mut statements, vec![assignment.expression.take_in(&self.allocator)]);
-                statements.into_iter().map(|statement| (statement, false)).collect()
+                let span = assignment.span;
+                let expression = assignment.expression.take_in(&self.allocator);
+                vec![(module_ast::export_assignment(self.allocator, expression, span), false)]
             }
             Statement::TSNamespaceExportDeclaration(declaration) => {
                 self.declare(DeclaredKind::ModuleType, Some(declaration.id.name.as_str()), declaration.span);
@@ -211,8 +206,8 @@ impl<'a> Admit<'a, '_> {
                 match (how, export) {
                     (Export::Namespace(namespace), _) => {
                         let mut produced = vec![(Statement::from(declaration), false)];
-                        let published: String = bindings.iter().map(|name| format!("{namespace}.{name} = {name}; ")).collect();
-                        produced.extend(self.javascript(&published, span).into_iter().map(|statement| (statement, true)));
+                        let published = namespace_ast::publish(self.allocator, span, namespace, &bindings);
+                        produced.extend(published.into_iter().map(|statement| (statement, true)));
                         produced
                     }
                     (_, Some(mut export)) => {
@@ -287,7 +282,7 @@ impl<'a> Admit<'a, '_> {
             let ExportDefaultDeclarationKind::ClassDeclaration(class) = export.declaration.take_in(&self.allocator) else { unreachable!() };
             match self.decorated_class(class, export.span, Export::None) {
                 Ok((name, mut produced)) => {
-                    produced.extend(self.javascript(&format!("export default {name};"), export.span).into_iter().map(|statement| (statement, true)));
+                    produced.push((module_ast::export_default_name(self.allocator, &name, export.span), true));
                     return produced;
                 }
                 Err(class) => export.declaration = ExportDefaultDeclarationKind::ClassDeclaration(class),
@@ -314,19 +309,8 @@ impl<'a> Admit<'a, '_> {
 
     /// `import x = require("m")` / `import x = A.B`: a binding to that value.
     fn import_equals(&mut self, alias: ArenaBox<'a, TSImportEqualsDeclaration<'a>>, span: Span, how: Export<'_>) -> Vec<Produced<'a>> {
-        let name = alias.id.name.as_str();
-        let target = match &alias.module_reference {
-            TSModuleReference::ExternalModuleReference(external) => format!("require({})", enums::quote(external.expression.value.as_str())),
-            TSModuleReference::IdentifierReference(identifier) => identifier.name.to_string(),
-            TSModuleReference::QualifiedName(qualified) => qualified_text(qualified),
-        };
-        let keyword = self.keyword();
-        let text = match how {
-            Export::None => format!("{keyword} {name} = {target};"),
-            Export::Module => format!("export var {name} = {target};"),
-            Export::Namespace(namespace) => format!("{keyword} {name} = {namespace}.{name} = {target};"),
-        };
-        self.javascript(&text, span).into_iter().map(|statement| (statement, true)).collect()
+        let statement = module_ast::import_equals(self.allocator, alias.unbox(), how, self.lexical, span);
+        vec![(statement, true)]
     }
 }
 
@@ -398,15 +382,12 @@ impl<'a> Admit<'a, '_> {
         };
         if inline {
             let literals = members.iter().filter_map(|(member, value)| match value {
-                Member::Constant(value) => enums::literal(value).map(|literal| (member.clone(), literal)),
+                Member::Constant(value) => enums::display(value).map(|_| (member.clone(), value.clone())),
                 Member::Computed(_) => None,
             });
             self.const_enums.entry(name.clone()).or_default().extend(literals);
         }
-        let keyword = self.keyword();
-        let text = object_enum(&name, &members, first, how, keyword).unwrap_or_else(|| incremental_enum(&name, &members, first, how, keyword));
-        let mut statements = self.javascript(&text, enumeration.span);
-        fill(&mut statements, values);
+        let statements = enum_ast::statements(self.allocator, &name, &members, values, first, how, self.lexical, enumeration.span);
         statements.into_iter().map(|statement| (statement, false)).collect()
     }
 
@@ -425,14 +406,14 @@ impl<'a> Admit<'a, '_> {
                     Some(value) => Member::Constant(value),
                     None => {
                         let mut expression = initializer.take_in(&self.allocator);
-                        Qualify { admit: self, enum_name, names: &names }.visit_expression(&mut expression);
+                        Qualify { allocator: self.allocator, enum_name, names: &names }.visit_expression(&mut expression);
                         values.push(expression);
-                        Member::Computed(format!("$$quench_ts_{}", values.len() - 1))
+                        Member::Computed(Computed::Initializer(values.len() - 1))
                     }
                 },
                 (None, None) => Member::Constant(Value::Number(0.0)),
                 (None, Some((_, Some(number)))) => Member::Constant(Value::Number(number + 1.0)),
-                (None, Some((previous_name, None))) => Member::Computed(format!("{enum_name}[{}] + 1", enums::quote(previous_name))),
+                (None, Some((previous_name, None))) => Member::Computed(Computed::Successor(previous_name.clone())),
             };
             let number = match &value { Member::Constant(Value::Number(number)) => Some(*number), _ => None };
             if let Member::Constant(constant) = &value { known.insert(name.clone(), constant.clone()); }
@@ -445,81 +426,21 @@ impl<'a> Admit<'a, '_> {
 }
 
 /// Earlier members named bare inside an initializer read the enum object.
-struct Qualify<'s, 'a, 'd> {
-    admit: &'s Admit<'a, 'd>,
+struct Qualify<'s, 'a> {
+    allocator: &'a Allocator,
     enum_name: &'s str,
     names: &'s [String],
 }
 
-impl<'a> VisitMut<'a> for Qualify<'_, 'a, '_> {
+impl<'a> VisitMut<'a> for Qualify<'_, 'a> {
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         if let Expression::Identifier(identifier) = expression
             && self.names.iter().any(|name| name == identifier.name.as_str())
         {
-            let text = format!("{}[{}]", self.enum_name, enums::quote(identifier.name.as_str()));
-            *expression = self.admit.javascript_expression(&text, identifier.span);
+            *expression = enum_ast::read(self.allocator, identifier.span, self.enum_name, identifier.name.as_str());
             return;
         }
         walk_mut::walk_expression(self, expression);
-    }
-}
-
-/// `var E = {"A": 0, "0": "A", …};`: when every member folds to an exact literal.
-fn object_enum(name: &str, members: &[(String, Member)], first: bool, how: Export<'_>, keyword: &str) -> Option<String> {
-    if !first { return None; }
-    let mut fields = Vec::with_capacity(members.len() * 2);
-    for (member, value) in members {
-        let Member::Constant(value) = value else { return None };
-        let key = enums::quote(member);
-        fields.push(format!("{key}: {}", enums::literal(value)?));
-        if let Value::Number(_) = value {
-            fields.push(format!("{}: {key}", enums::quote(&enums::display(value)?)));
-        }
-    }
-    let object = format!("{{{}}}", fields.join(", "));
-    Some(match how {
-        Export::None => format!("{keyword} {name} = {object};"),
-        Export::Module => format!("export var {name} = {object};"),
-        Export::Namespace(namespace) => format!("{keyword} {name} = {namespace}.{name} = {object};"),
-    })
-}
-
-/// tsc's emit, without its function: `var E; E || (E = {}); E[E["A"] = 0] = "A"; …`.
-fn incremental_enum(name: &str, members: &[(String, Member)], first: bool, how: Export<'_>, keyword: &str) -> String {
-    let mut text = format!("{}{};", declaration_prefix(name, first, how, keyword), namespace_object(name, how));
-    for (member, value) in members {
-        let key = enums::quote(member);
-        match value {
-            Member::Constant(Value::String(string)) => text.push_str(&format!(" {name}[{key}] = {};", enums::quote(string))),
-            Member::Constant(Value::Number(number)) => text.push_str(&format!(" {name}[{name}[{key}] = {}] = {key};", number_text(*number))),
-            Member::Computed(expression) => text.push_str(&format!(" {name}[{name}[{key}] = ({expression})] = {key};")),
-        }
-    }
-    text
-}
-
-fn number_text(number: f64) -> String {
-    if number.is_nan() { "NaN".into() }
-    else if number.is_infinite() { if number > 0.0 { "Infinity".into() } else { "-Infinity".into() } }
-    else if number == 0.0 && number.is_sign_negative() { "-0".into() }
-    else { format!("{number}") }
-}
-
-/// `var N; ` before the first declaration of a merged name (`export var N; ` from a module).
-fn declaration_prefix(name: &str, first: bool, how: Export<'_>, keyword: &str) -> String {
-    match (first, how) {
-        (false, _) => String::new(),
-        (true, Export::Module) => format!("export var {name}; "),
-        (true, _) => format!("{keyword} {name}; "),
-    }
-}
-
-/// The object a merged declaration fills: the existing one or a new one, published on
-/// the parent namespace.
-fn namespace_object(name: &str, how: Export<'_>) -> String {
-    match how {
-        Export::Namespace(parent) => format!("{name} = {parent}.{name} || ({parent}.{name} = {{}})"),
-        _ => format!("{name} || ({name} = {{}})"),
     }
 }
 
@@ -539,28 +460,15 @@ impl<'a> Admit<'a, '_> {
             }
         };
         let first = seen.insert(names[0].clone());
-        let head = format!("{}{};", declaration_prefix(&names[0], first, how, self.keyword()), namespace_object(&names[0], how));
-        let mut produced: Vec<Produced<'a>> = self.javascript(&head, span).into_iter().map(|statement| (statement, true)).collect();
+        let kind = if self.lexical { VariableDeclarationKind::Let } else { VariableDeclarationKind::Var };
+        let mut produced: Vec<Produced<'a>> = namespace_ast::head(self.allocator, span, &names[0], first, how, kind)
+            .into_iter().map(|statement| (statement, true)).collect();
         let innermost = names.last().cloned().unwrap_or_default();
         let lexical = std::mem::replace(&mut self.lexical, true);
         let statements = self.statements(block.unbox().body, Some(&innermost));
         self.lexical = lexical;
-        let mut inner = self.block(statements, span);
-        for pair in names.windows(2).rev() {
-            let object = format!("let {1} = {0}.{1} || ({0}.{1} = {{}});", pair[0], pair[1]);
-            let mut statements = self.javascript(&object, span);
-            statements.push(inner);
-            inner = self.block(statements, span);
-        }
-        produced.push((inner, true));
+        produced.push((namespace_ast::body(self.allocator, span, &names, statements), true));
         produced
-    }
-
-    fn block(&self, statements: ArenaVec<'a, Statement<'a>>, span: Span) -> Statement<'a> {
-        let mut generated = self.javascript("{}", span);
-        let Some(Statement::BlockStatement(mut block)) = generated.pop() else { unreachable!("a block") };
-        block.body = statements;
-        Statement::BlockStatement(block)
     }
 }
 
@@ -614,9 +522,8 @@ impl<'a> Admit<'a, '_> {
             let names = parameter_properties(&mut method.value.params);
             let span = method.value.params.span;
             let Some(body) = method.value.body.as_mut().filter(|_| !names.is_empty()) else { continue };
-            let text: String = names.iter().map(|name| format!("this.{name} = {name}; ")).collect();
             let at = if derived { root_super_call(body).map_or(0, |index| index + 1) } else { 0 };
-            for (offset, statement) in self.javascript(&text, span).into_iter().enumerate() {
+            for (offset, statement) in module_ast::parameter_assignments(self.allocator, &names, span).into_iter().enumerate() {
                 body.statements.insert(at + offset, statement);
             }
         }
@@ -715,10 +622,10 @@ impl<'a> VisitMut<'a> for Admit<'a, '_> {
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         if !self.const_enums.is_empty()
             && let Some((enumeration, member)) = enum_member_read(expression)
-            && let Some(literal) = self.const_enums.get(enumeration).and_then(|members| members.get(member))
+            && let Some(value) = self.const_enums.get(enumeration).and_then(|members| members.get(member))
         {
             let span = expression.span();
-            *expression = self.javascript_expression(&literal.clone(), span);
+            *expression = enum_ast::constant(self.allocator, span, value);
             return;
         }
         walk_mut::walk_expression(self, expression);

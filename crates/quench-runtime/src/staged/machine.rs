@@ -206,6 +206,17 @@ pub(crate) trait MachineFlow: MachineScalar {
     );
 }
 
+/// Mutable locals of an emitting machine: a value a block redefines, read where control joins.
+#[cfg(not(stencil_build))]
+pub(crate) trait MachineVariables: Machine {
+    type Variable: Copy;
+    fn declare_variable(&mut self, lane: Lane) -> Self::Variable;
+    fn define_variable(&mut self, variable: Self::Variable, value: Self::Word);
+    fn read_variable(&mut self, variable: Self::Variable) -> Self::Word;
+    /// The opposite comparison where `flag` is an integer comparison this machine emitted; `None` otherwise.
+    fn compare_complement(&mut self, _flag: Self::Word) -> Option<Self::Word> { None }
+}
+
 /// A machine that continues in the code it calls, so the call is the end of the function: a tail
 /// call of `target`, or of the code at an address under a `signature`, on `arguments`.
 #[cfg(all(feature = "jit", not(stencil_build)))]

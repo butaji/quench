@@ -11,8 +11,8 @@
 //!
 //! 1. one `Spill` row per pinned register live at the call, writing it to its frame slot as a
 //!    canonical tagged word (the callee and the helpers read the frame); a leading argument's spill
-//!    that only the refusal path reads (its pinned value dead after the call, `refusal_only`) waits
-//!    for the direct rows' refusal, the direct row reading the pin itself (`CallRecord::argument_places`);
+//!    runs here too although the direct row reads the pin itself (`CallRecord::argument_places`): the
+//!    rows' refusal passes every pinned register dead, so a spill behind them would write junk;
 //! 2. when the target's entry cell is stable (`Choice::Direct`), the direct row for the call's
 //!    argument count and receiver binding, whose record (`CallRecord`) the chain owns;
 //! 3. the helper row (`body_call_helper`), the direct row's refusal path and the whole call
@@ -42,7 +42,7 @@ pub(super) mod builtin;
 use builtin::BuiltinCall;
 pub(super) use chain::ChainRead;
 use chain::chained_reads;
-use super::{Exit, SLOT};
+use super::{Exit, NO_SYMBOLS, SLOT, Symbolic};
 use super::super::direct_callee::DirectCallee;
 use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
@@ -302,8 +302,9 @@ pub(super) struct CallPart {
     pub(super) holes: [u64; HOLES],
     pub(super) taken: Option<usize>,
     pub(super) exits: Vec<Exit>,
-    /// The hole whose run-time address is a symbol the loader resolves, and the symbol (`HelperPlace::Symbol`).
-    pub(super) symbol: Option<(u8, Symbol)>,
+    /// The holes whose run-time addresses are symbols the loader resolves, each with its symbol
+    /// (`HelperHole::Symbol`, the generic row's entry and operand record).
+    pub(super) symbols: Symbolic,
 }
 
 /// A planned call: its parts, the records its direct rows read (one per callee the site reached), and
@@ -360,7 +361,7 @@ fn slot(register: Register) -> u64 {
 }
 
 fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Exit>) -> CallPart {
-    CallPart { stencil, holes, taken: None, exits, symbol: None }
+    CallPart { stencil, holes, taken: None, exits, symbols: NO_SYMBOLS }
 }
 
 pub(super) fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
@@ -373,10 +374,10 @@ pub(super) fn reload_part(place: Place, register: Register) -> Result<CallPart, 
 }
 
 fn helper_part(call_pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>) -> Result<CallPart, String> {
-    let (address, symbol) = match helper {
+    let (address, symbols) = match helper {
         HelperPlace::Address(0) => return Err("call: no helper address".to_string()),
-        HelperPlace::Address(address) => (address as u64, None),
-        HelperPlace::Symbol(helper) => (0, Some((HelperHole::Helper as u8, Symbol::Helper(helper as u32)))),
+        HelperPlace::Address(address) => (address as u64, NO_SYMBOLS),
+        HelperPlace::Symbol(helper) => (0, [Some((HelperHole::Helper as u8, Symbol::Helper(helper as u32))), None]),
     };
     let exits = vec![Exit::At(call_pc), Exit::Status];
     let mut holes = [0; HOLES];
@@ -390,7 +391,7 @@ fn helper_part(call_pc: u32, helper: HelperPlace, packed: Option<[u64; 2]>) -> R
             part(call::stencil(CallRow::HelperPacked)?, holes, exits)
         }
     };
-    Ok(CallPart { symbol, ..row })
+    Ok(CallPart { symbols, ..row })
 }
 
 /// The pinned register holding argument `k` of the call, where the call passes it by place (the leading
@@ -407,13 +408,6 @@ fn pinned_argument(plan: &CallPlan, k: usize) -> Option<(Place, Register)> {
 /// The place each leading argument is passed from (`CallRecord::argument_places`): its pinned register, else the window slot.
 fn argument_places(plan: &CallPlan) -> [u8; PLACED_ARGUMENTS] {
     std::array::from_fn(|k| pinned_argument(plan, k).map_or(Place::Mem.code(), |(place, _)| place.code()))
-}
-
-/// Whether the spill of `register` serves only the refusal path: a pinned argument a direct row reads from its
-/// pin, not live after the call (its window slot is not reloaded). A live one keeps its home before the call.
-fn refusal_only(plan: &CallPlan, register: Register) -> bool {
-    (0..PLACED_ARGUMENTS).any(|k| pinned_argument(plan, k).is_some_and(|(_, passed)| passed == register))
-        && !plan.reloads.iter().any(|&(_, reloaded)| reloaded == register)
 }
 
 /// The direct row and the record it reads, whose address is its hole 0. `arguments` is the place each leading
@@ -436,10 +430,12 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_AR
         args_register: shape.window,
         result_register: shape.result,
         argument_places: arguments,
+        descriptor: 0,
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
-    let stencil = call::stencil(CallRow::Direct { argc, this, checked: !facts.held })?;
+    let pinned = arguments.iter().any(|&place| place != Place::Mem.code());
+    let stencil = call::stencil(CallRow::Direct { argc, this, checked: !facts.held, pinned })?;
     let mut holes = [0; HOLES];
     holes[DirectHole::Record as usize] = std::ptr::from_ref(&*record).addr() as u64;
     holes[DirectHole::CallPc as usize] = u64::from(shape.call_pc);
@@ -456,7 +452,7 @@ fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Optio
     let record = Box::new(CallRecord {
         proven_args: 0, callee: identity, cell: 0, expected: 0, call: 0, caller_base: 0, packed: 0, captures: 0, global_this: 0,
         callee_register: shape.callee, this_register: shape.this, args_register: shape.window, result_register: shape.result,
-        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS],
+        argument_places: [Place::Mem.code(); PLACED_ARGUMENTS], descriptor: 0,
     });
     let stencil = call::stencil(CallRow::Builtin(row))?;
     Ok(Some((part(stencil, padded_holes([std::ptr::from_ref(&*record).addr() as u64]), Vec::new()), record)))
@@ -493,29 +489,29 @@ pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     if directs.is_empty() && let Some(builtin) = builtin_part(&plan.shape, plan.builtin)? {
         directs.push(builtin);
     }
-    // The spills before the direct rows; the spills of pinned arguments that only the refusal path reads
-    // (`refusal_only`) follow them, where the rows' NEXT falls to the helper row. Without a direct row, all come first.
-    let (mut parts, mut refusal) = (Vec::new(), Vec::new());
-    // A site read's miss leaves before any refusal spill runs, so with a read every spill comes first.
+    // Every spill comes before the direct rows. A spill behind them (a pinned argument only the refusal path
+    // reads) wrote what the refused row passed on: every pinned register is dead past a direct row, whose NEXT
+    // passes junk (`words::dead`), so the helper took a stale register word as the argument (JetStream ML's
+    // "Row index out of range": `check(j)` in a nested loop got a pointer's low bits whenever its callee's cell
+    // held the stub). The direct row still reads the argument from its pin (`argument_places`).
+    let mut parts = Vec::new();
     let read = plan.read.filter(|_| !directs.is_empty());
     for &(place, register) in plan.spills {
-        let spill = spill_part(place, register)?;
-        if directs.is_empty() || read.is_some() || !refusal_only(plan, register) { parts.push(spill) } else { refusal.push(spill) }
+        parts.push(spill_part(place, register)?);
     }
     if let Some((stencil, holes)) = read {
         // A miss takes the helper row behind the direct rows, as a refused direct call does: the spills ran, so the frame is canonical.
-        let helper = 1 + directs.len() + refusal.len();
-        parts.push(CallPart { stencil, holes, taken: None, exits: vec![Exit::Ahead(helper)], symbol: None });
+        let helper = 1 + directs.len();
+        parts.push(CallPart { stencil, holes, taken: None, exits: vec![Exit::Ahead(helper)], symbols: NO_SYMBOLS });
     }
-    // Past every direct row, the refusal spills and the helper row that follows them: the first reload, or the next instruction.
-    let past = parts.len() + directs.len() + refusal.len() + 1;
+    // Past every direct row and the helper row that follows them: the first reload, or the next instruction.
+    let past = parts.len() + directs.len() + 1;
     let mut records = Vec::new();
     for (mut row, owned) in directs {
         row.taken = Some(past);
         parts.push(row);
         records.push(owned);
     }
-    parts.extend(refusal);
     parts.push(helper_part(plan.shape.call_pc, plan.helper, None)?);
     for &(place, register) in plan.reloads {
         parts.push(reload_part(place, register)?);

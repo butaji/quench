@@ -231,7 +231,7 @@ pub(super) fn complete_plain_chain_in_lane<H: Host>(cx: *mut LaneContext<H>, val
 /// or crossing return, or the frame, ends it. Each test reads the frame's completion and its
 /// call record's return bit (`staged::call_complete::returns_callee_completion`).
 #[inline(always)]
-fn returning_chain_outermost(mut frames: impl Iterator<Item = Frame>) -> Option<(usize, Frame, bool)> {
+fn returning_chain_outermost(mut frames: impl Iterator<Item = ActivationView>) -> Option<(usize, ActivationView, bool)> {
     let mut above = 0;
     let mut crossed = false;
     loop {
@@ -243,7 +243,7 @@ fn returning_chain_outermost(mut frames: impl Iterator<Item = Frame>) -> Option<
             return (!crossed).then_some((above, frame, false));
         }
         crossed |= completion == Completion::Cross;
-        if !matches!(completion, Completion::Plain | Completion::Cross) {
+        if completion.needs_completion_flag() {
             return None;
         }
         // SAFETY: the call record belongs to the caller's live view.
@@ -297,7 +297,7 @@ pub(super) fn complete_native_callback_in_lane<H: Host>(cx: *mut LaneContext<H>,
 /// caller's memory and the returning frame's receiver (`staged::call_complete::returning_this`),
 /// which the context held while it ran.
 #[inline(always)]
-pub(super) fn restore_caller_in_lane<H: Host>(cx: *mut LaneContext<H>, frame: &Frame) -> (MemoryView, Value) {
+pub(super) fn restore_caller_in_lane<H: Host>(cx: *mut LaneContext<H>, frame: &ActivationView) -> (MemoryView, Value) {
     let vm = unsafe { vm(cx) };
     // SAFETY: the values hold no drop glue.
     unsafe { vm.lane_stack.values.release_window(frame.window_word()) };
@@ -315,7 +315,7 @@ pub(super) fn restore_caller_in_lane<H: Host>(cx: *mut LaneContext<H>, frame: &F
 /// The caller of the returned `frame`, restored with `memory` (`restore_caller_in_lane`), resumes
 /// after its call with `value` in the call's result register.
 #[inline(always)]
-pub(super) fn resume_after_call_in_lane(frame: &Frame, memory: MemoryView, value: Value) -> Resumed {
+pub(super) fn resume_after_call_in_lane(frame: &ActivationView, memory: MemoryView, value: Value) -> Resumed {
     // SAFETY: the call record belongs to the caller's live view.
     let result = unsafe { (*frame.call()).a };
     resume_at_in_lane(frame, memory, following(frame.call()), Some((result, value)))
@@ -325,7 +325,7 @@ pub(super) fn resume_after_call_in_lane(frame: &Frame, memory: MemoryView, value
 /// its view, its register `written.0` taking `written.1` first where one is named: the call's
 /// result register (`staged::call_complete::write_call_result`), or a delegate's state register.
 #[inline(always)]
-pub(super) fn resume_at_in_lane(frame: &Frame, memory: MemoryView, at: Ip, written: Option<(crate::bytecode::Register, Value)>) -> Resumed {
+pub(super) fn resume_at_in_lane(frame: &ActivationView, memory: MemoryView, at: Ip, written: Option<(crate::bytecode::Register, Value)>) -> Resumed {
     if let Some((register, value)) = written {
         concrete_write_call_result(frame.caller_registers().0.expose_provenance() as u64, register, value);
     }

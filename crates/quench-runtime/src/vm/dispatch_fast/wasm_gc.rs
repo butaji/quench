@@ -78,12 +78,12 @@ fn lane_gc_field<H: Host>(
     let mut stage = HeapStage { vm };
     match operands.value {
         Some(value) => {
-            let bits = stage.vm.wasm_stored_bits(operands.field, value);
+            let bits = if operands.raw { value.to_bits() } else { stage.vm.wasm_stored_bits(operands.field, value) };
             field_write(&mut stage, aggregate, reference, index, operands.field, bits).ok().map(|()| None)
         }
         None => {
             let word = field_read(&mut stage, aggregate, reference, index, operands.field, operands.access).ok()?;
-            Some(Some(stage.vm.wasm_field_value(operands.field, operands.access, word)))
+            Some(Some(if operands.raw { Value::from_bits(word) } else { stage.vm.wasm_field_value(operands.field, operands.access, word) }))
         }
     }
 }
@@ -190,9 +190,11 @@ lane_handler! {
 lane_handler! {
     /// A plain read of a value field (`GcStep::StructGet` or `ArrayGet` with no sign): the interpreter's own access
     /// (`staged::wasm_gc::field_read`) with the record's operands read in place, a struct's field
-    /// or, where `ARRAY`, an array's element. A trap takes the general path, which raises it.
+    /// or, where `ARRAY`, an array's element. Where `RAW` (a `*Raw` form, an i64 or f64 field in a
+    /// raw web), the field's bits go to the register as they are: no box, no tag. A trap takes the
+    /// general path, which raises it.
     #[inline(never)]
-    fn lane_wasm_field_read<ARRAY: bool>(cx, r, ip, i, view) {
+    fn lane_wasm_field_read<ARRAY: bool, RAW: bool>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let field = GcField::from_tag(i.imm()).expect("validated field operand");
         let (aggregate, index) = if ARRAY {
@@ -206,19 +208,26 @@ lane_handler! {
         let Ok(word) = field_read(&mut stage, aggregate, reference, u64::from(index), field, GcFieldAccess::Read) else {
             return exit(ip);
         };
-        r.set(i.a, stage.vm.wasm_field_value(field, GcFieldAccess::Read, word));
+        r.set(i.a, if RAW { Value::from_bits(word) } else { stage.vm.wasm_field_value(field, GcFieldAccess::Read, word) });
         next!(cx, r, following(ip), view)
     }
 }
 
 /// The handler of a `wasm_gc_value_op` (`lane_wasm_gc_step`), for `op` if it is one.
 pub(super) const fn wasm_gc_handler<H: Host>(op: Op) -> Option<Handler> {
-    match crate::staged::wasm_gc::GcStep::of(op) {
-        Some(crate::staged::wasm_gc::GcStep::StructGet { signed: None }) => {
-            return Some(lane_wasm_field_read::<H, false>);
+    let raw = op.traits().has(crate::bytecode::Traits::RAW_FORM);
+    match (crate::staged::wasm_gc::GcStep::of(op), raw) {
+        (Some(crate::staged::wasm_gc::GcStep::StructGet { signed: None }), false) => {
+            return Some(lane_wasm_field_read::<H, false, false>);
         }
-        Some(crate::staged::wasm_gc::GcStep::ArrayGet { signed: None }) => {
-            return Some(lane_wasm_field_read::<H, true>);
+        (Some(crate::staged::wasm_gc::GcStep::StructGet { signed: None }), true) => {
+            return Some(lane_wasm_field_read::<H, false, true>);
+        }
+        (Some(crate::staged::wasm_gc::GcStep::ArrayGet { signed: None }), false) => {
+            return Some(lane_wasm_field_read::<H, true, false>);
+        }
+        (Some(crate::staged::wasm_gc::GcStep::ArrayGet { signed: None }), true) => {
+            return Some(lane_wasm_field_read::<H, true, true>);
         }
         _ => {}
     }

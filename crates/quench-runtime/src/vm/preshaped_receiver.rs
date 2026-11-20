@@ -405,12 +405,13 @@ impl<H: Host> Vm<H> {
             if self.shape_is_dictionary(shape) || self.shapes[shape as usize].storage_len() != slot + 1 {
                 return none;
             }
+            let initial = self.field_constant_value(value);
             if let Some(ty) = seed {
-                self.heap.seed_declared_slot(shape, slot, ty);
+                self.heap.seed_declared_slot(shape, slot, ty, initial);
             }
             entry.atoms[slot] = atom;
             entry.shapes[slot] = shape;
-            entry.values[slot] = self.field_constant_value(value);
+            entry.values[slot] = initial;
             entry.len = slot as u8 + 1;
         }
         entry.shape = shape;

@@ -82,7 +82,7 @@ pub(super) enum Holder {
 pub(super) const MATH: u8 = 1 << 0;
 /// A pure `String.prototype` method (`Native::is_pure_string_method`).
 pub(super) const PURE_STRING: u8 = 1 << 1;
-/// A method a compiled lane runs inline by name (`lane_sites`): `charCodeAt`, `charAt`, `push`, `pop`.
+/// A method a compiled lane runs inline by name (`lane_sites`): `charCodeAt`, `charAt`, `push`, `pop`, and the fixed-width DataView getters and setters.
 pub(super) const LANE_METHOD: u8 = 1 << 2;
 
 /// A row's `length`: stated, or shared with an Array native. The `%TypedArray%.prototype` callbacks

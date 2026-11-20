@@ -9,7 +9,7 @@
 
 use crate::bytecode::{Operand, Register};
 use crate::heap_rows::{payload, stage_site, word_at};
-use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_LOOP_ENTRY, LOOP_ENTRY_ARRAY_COUNT_AT};
+use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_LOOP_ENTRY, JS_STEP_STORE_WATCH, LOOP_ENTRY_ARRAY_COUNT_AT, STORE_WATCH_COUNTS};
 use crate::numeric::{HOLE_A, HOLE_B};
 use crate::typed_ir::Representation;
 use crate::places::{LEFT, RIGHT, Places, index_of};
@@ -42,11 +42,13 @@ impl<const D: u8, const A: u8, const B: u8> ElementFrame<Concrete> for Places<D,
         Some(u64::from(index as u32))
     }
 
-    /// A store's value needs no barrier log where it is a Number: an int word or a double. Any
-    /// other value (a heap value, which the barrier logs) is the VM's store.
+    /// A store's value needs no barrier log where it is a Number: an int word or a double, while
+    /// old records keep no counts (`Stage::immediate_store_open`, read from the payload's gate word).
+    /// Any other value (a heap value, which the barrier logs) is the VM's store.
     #[inline(always)]
     fn array_store_gate(&mut self, _stage: &mut Concrete, _base: u64, value: u64, _miss: ()) -> Option<()> {
-        (is_int(value) || is_double(value)).then_some(())
+        let uncounted = word_at(payload(&self.s), JS_STEP_STORE_WATCH) & STORE_WATCH_COUNTS == 0;
+        (uncounted && (is_int(value) || is_double(value))).then_some(())
     }
 }
 

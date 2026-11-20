@@ -1,6 +1,8 @@
 //! Math functions of Number arguments that a machine runs inline: their value once, for the
 //! interpreter (`Concrete`, `vm::number`) and for native code (`Emit`).
-use super::numeric::NumericStage;
+use super::numeric::{Domain, NumericStage};
+use super::Concrete;
+use crate::vm::operations::{NumberArithmetic, NumberRelation};
 #[cfg(not(stencil_build))]
 use crate::float_layout::{BINARY16, BINARY64, power_of_two};
 // The fdlibm and libm bodies of `atan`, `atan2` and `cbrt`; the stencil build has no libm.
@@ -109,9 +111,21 @@ pub(crate) enum FloatUnary {
     Sign,
 }
 
-/// The value of `operation` on `value`.
+/// The value of `operation` on `value`: the machine rows (`float_primitive`), and `Math.round` and
+/// `Math.sign` as their generic bodies run on `Concrete`.
 #[inline(always)]
 pub(crate) fn float_unary(operation: FloatUnary, value: f64) -> f64 {
+    match operation {
+        FloatUnary::Round => f64::from_bits(round(&mut Concrete::new(core::ptr::null()), value.to_bits())),
+        FloatUnary::Sign => f64::from_bits(sign(&mut Concrete::new(core::ptr::null()), value.to_bits())),
+        primitive => float_primitive(primitive, value),
+    }
+}
+
+/// The value of the machine primitive `operation` on `value`; a composite (`Round`, `Sign`) is not
+/// one, and passes `value` through (`NumericStage::float_primitive` never asks for it).
+#[inline(always)]
+pub(crate) fn float_primitive(operation: FloatUnary, value: f64) -> f64 {
     match operation {
         FloatUnary::Floor => machine::floor(value),
         FloatUnary::Ceil => machine::ceil(value),
@@ -119,39 +133,68 @@ pub(crate) fn float_unary(operation: FloatUnary, value: f64) -> f64 {
         FloatUnary::Abs => machine::abs(value),
         FloatUnary::Sqrt => machine::sqrt(value),
         FloatUnary::Fround => f64::from(value as f32),
-        FloatUnary::Round => round_half_up(value),
-        FloatUnary::Sign => sign(value),
+        FloatUnary::Round | FloatUnary::Sign => value,
     }
 }
 
-/// `Math.sign`: `-1` or `1` by the sign bit, NaN and both zeros as they are.
+/// `Math.sign` of the binary64 word `number`: NaN and either zero as they are, else -1 below zero
+/// and 1 above. The one body every stage runs; `float_unary` and the u-jit's Emit both instantiate it.
 #[inline(always)]
-pub(crate) fn sign(value: f64) -> f64 {
-    if value.is_nan() || value == machine::constant(0.0) {
-        value
-    } else if value.is_sign_negative() {
-        machine::constant(-1.0)
-    } else {
-        machine::constant(1.0)
+pub(crate) fn sign<S: NumericStage>(stage: &mut S, number: S::Word) -> S::Word {
+    let ordered = stage.relation(NumberRelation::Equal, Domain::Float64, number, number);
+    let unordered = stage.not(ordered);
+    let zero = stage.f64_constant(0.0);
+    let is_zero = stage.relation(NumberRelation::Equal, Domain::Float64, number, zero);
+    let kept = stage.any(unordered, is_zero);
+    let negative = stage.relation(NumberRelation::LessThan, Domain::Float64, number, zero);
+    let (minus_one, one) = (stage.f64_constant(-1.0), stage.f64_constant(1.0));
+    let unit = stage.select(negative, minus_one, one);
+    stage.select(kept, number, unit)
+}
+
+/// `2^52`, the binary64 whose unit in the last place is one: adding it to a binary64 in `[0, 2^52)` leaves no
+/// fraction bits, so the addition itself rounds the value to an integer, ties to even.
+const ROUNDING_BIAS: f64 = 4_503_599_627_370_496.0;
+
+/// ToUint8Clamp of the binary64 `number`, the one body the interpreter (`Concrete::clamp_u8`), the b-jit stencil
+/// (`units::clamp_u8`) and `number_to_uint8_clamp` share: NaN and anything at or below zero give 0, `u8::MAX` and
+/// above give `u8::MAX`, and the rest round to the nearest integer, ties to even. Where `number` lies in
+/// `(0, u8::MAX)`, `number + 2^52` is `2^52` plus that integer, so the integer is the low byte of the sum's bits.
+/// The constants are immediates (`machine::constant`), so the stencil build holds no constant pool.
+#[inline(always)]
+pub(crate) fn clamp_u8(number: f64) -> u8 {
+    if !(number > machine::constant(0.0)) {
+        return 0;
     }
+    if number >= machine::constant(f64::from(u8::MAX)) {
+        return u8::MAX;
+    }
+    (number + machine::constant(ROUNDING_BIAS)).to_bits() as u8
 }
 
 /// The fraction of the halfway point between two integers: `Math.round` rounds up at it, and
 /// binary16 rounds to even at it.
 pub(crate) const ROUND_HALF: f64 = 0.5;
 
-/// `Math.round`: the nearest integer, halves toward `+Infinity`, `-0` for a negative that rounds to zero.
+/// `Math.round` of the binary64 word `value`, on `stage`: the floor, one more where the excess over
+/// it reaches `ROUND_HALF`, so halves go toward `+Infinity`. A negative that rounds to zero is `-0`,
+/// and a zero, NaN or infinity is its own value (`-0` stays `-0`).
 #[inline(always)]
-fn round_half_up(value: f64) -> f64 {
-    let (half, zero) = (machine::constant(ROUND_HALF), machine::constant(0.0));
-    if value.is_nan() || value == zero || machine::abs(value) == machine::constant(f64::INFINITY) {
-        value
-    } else if machine::constant(-ROUND_HALF) <= value && value < zero {
-        machine::constant(-0.0)
-    } else {
-        let floor = machine::floor(value);
-        if value - floor < half { floor } else { floor + machine::constant(1.0) }
-    }
+pub(crate) fn round<S: NumericStage>(stage: &mut S, value: S::Word) -> S::Word {
+    let floor = stage.float_primitive(FloatUnary::Floor, value);
+    let excess = stage.float_arithmetic(NumberArithmetic::Subtract, value, floor);
+    let half = stage.f64_constant(ROUND_HALF);
+    let up = stage.relation(NumberRelation::GreaterEqual, Domain::Float64, excess, half);
+    let (one, zero) = (stage.f64_constant(1.0), stage.f64_constant(0.0));
+    let step = stage.select(up, one, zero);
+    let rounded = stage.float_arithmetic(NumberArithmetic::Add, floor, step);
+    let rounds_to_zero = stage.relation(NumberRelation::Equal, Domain::Float64, rounded, zero);
+    let negative = stage.relation(NumberRelation::LessThan, Domain::Float64, value, zero);
+    let negative_zero = stage.both(rounds_to_zero, negative);
+    let minus_zero = stage.f64_constant(-0.0);
+    let signed = stage.select(negative_zero, minus_zero, rounded);
+    let is_zero = stage.relation(NumberRelation::Equal, Domain::Float64, value, zero);
+    stage.select(is_zero, value, signed)
 }
 
 /// `Math.max` (`maximum`) or `Math.min` of two Numbers: NaN if either is, and `-0` below `+0`
@@ -176,25 +219,6 @@ pub(crate) fn float_extreme(maximum: bool, left: f64, right: f64) -> f64 {
 #[inline(always)]
 pub(crate) fn int_multiply(left: i32, right: i32) -> i32 {
     left.wrapping_mul(right)
-}
-
-/// `Math.max` (`maximum`) or `Math.min` of two int32 values: an int32 is never -0.
-#[inline(always)]
-pub(crate) fn int_extreme(maximum: bool, left: i32, right: i32) -> i32 {
-    if maximum { left.max(right) } else { left.min(right) }
-}
-
-/// `Math.abs` of an int32, whose magnitude is an int32 except at -2^31 (`None`, for the double path).
-#[inline(always)]
-pub(crate) fn int_abs(value: i32) -> Option<i32> {
-    (value != i32::MIN).then(|| value.abs())
-}
-
-/// `Math.clz32`: the leading zero bits of the ToUint32 of `value`, as a Number.
-#[inline(always)]
-#[cfg(not(stencil_build))]
-pub(crate) fn clz32(value: f64) -> f64 {
-    f64::from(leading_zeros(crate::value::number_to_u32(value)))
 }
 
 /// `Math.hypot` of Numbers: infinite if any is (even beside a NaN), NaN if any is, else the

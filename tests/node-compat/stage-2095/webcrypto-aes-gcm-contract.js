@@ -7,7 +7,7 @@ const assert = require("assert");
     ["encrypt", "decrypt"],
   );
   const iv = new Uint8Array(12);
-  const data = new TextEncoder().encode("quench-node");
+  const data = new TextEncoder().encode("quench");
   const encrypted = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,

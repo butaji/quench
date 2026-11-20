@@ -30,24 +30,49 @@ pub(crate) fn concrete_admit_identity(callee: u64, expected: u64) -> bool {
     admit_identity(&mut Concrete::new(std::ptr::null()), callee, expected, ()).is_some()
 }
 
-/// A Math function whose call of Number arguments a site makes in place (`math_call`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// A Math function of Number arguments: the one table of them (`vm::number::math_call`), from which
+/// each tier derives its dispatch.
+// No equality: it holds function pointers, whose addresses name no function uniquely.
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum MathCall {
-    /// A machine operation of one Number (`staged::math::float_unary`).
+    /// A machine operation of one Number (`staged::math::float_unary`), `Math.sign` included.
     Unary(FloatUnary),
-    /// `Math.sign`: NaN and either zero as they are, else -1 or 1.
-    Sign,
-    /// `Math.max` (true) or `Math.min` (false).
+    /// `Math.max` (true) or `Math.min` (false) of any count of Numbers.
     Extreme(bool),
     /// `Math.imul`: the wrapping product of the arguments' ToInt32.
     Imul,
+    /// `Math.clz32`: the leading zero bits of the argument's ToUint32, as an int32.
+    LeadingZeros,
+    /// A libm function of one Number, or a body the stages do not run (`Math.atanh`, `Math.cos`, ...).
+    Libm(fn(f64) -> f64),
+    /// `Math.pow` or `Math.atan2`: a function of two Numbers, which no stage runs.
+    Binary(fn(f64, f64) -> f64),
 }
 
 impl MathCall {
     /// The value `Math.max` (`maximum`) or `Math.min` folds its arguments from, and returns for
     /// none: the identity of the extreme, which a NaN argument still overrides.
-    const fn extreme_start(maximum: bool) -> f64 {
+    pub(crate) const fn extreme_start(maximum: bool) -> f64 {
         if maximum { f64::NEG_INFINITY } else { f64::INFINITY }
+    }
+
+    /// Whether a stage runs the function as a row (`math_call`), which native code lowers inline:
+    /// every function but the libm and two-Number bodies.
+    pub(crate) const fn is_row(self) -> bool {
+        !matches!(self, Self::Libm(_) | Self::Binary(_))
+    }
+
+    /// Whether the function takes one Number (`Math.sqrt`, `Math.clz32`, `Math.sin`, ...).
+    pub(crate) const fn reads_one_number(self) -> bool {
+        matches!(self, Self::Unary(_) | Self::LeadingZeros | Self::Libm(_))
+    }
+
+    /// The number of arguments the function's operation reads: two for the binary functions, else one.
+    pub(crate) const fn arity(self) -> u16 {
+        match self {
+            Self::Extreme(_) | Self::Imul | Self::Binary(_) => 2,
+            Self::Unary(_) | Self::LeadingZeros | Self::Libm(_) => 1,
+        }
     }
 }
 
@@ -75,7 +100,7 @@ fn int_value<S: NumericStage>(stage: &mut S, payload: S::Word) -> S::Word {
 /// The value word of `call` of the Number value words `args`, as the native returns it: `None`
 /// (leaving at `miss`) where an argument is no Number, and, decided by the site's argument count,
 /// for a count the function's Number steps do not cover (a one-argument function passed none or
-/// two, any function passed more than two).
+/// two, any function passed more than two), or a function no stage runs (`Libm`, `Binary`).
 ///
 /// An int32 result is the int32 the double path would box to (`Value::number` stores an integral
 /// double in int32 range other than -0 as that int32), so the int32 fast paths of `Math.abs`,
@@ -102,13 +127,12 @@ pub(crate) fn math_call<S: NumericStage>(stage: &mut S, call: MathCall, args: &[
 /// `math_call` of one argument, the value word `only`.
 #[inline(always)]
 fn math_call_of_one<S: NumericStage>(stage: &mut S, call: MathCall, only: S::Word, miss: S::Miss) -> Option<S::Word> {
-    if call == MathCall::Unary(FloatUnary::Abs) {
+    if matches!(call, MathCall::Unary(FloatUnary::Abs)) {
         return absolute(stage, only, miss);
     }
     let number = number_word(stage, only, miss)?;
     let result = match call {
         MathCall::Unary(operation) => stage.float_unary(operation, number),
-        MathCall::Sign => sign(stage, number),
         MathCall::Extreme(maximum) => {
             let start = stage.f64_constant(MathCall::extreme_start(maximum));
             stage.float_extreme(maximum, start, number)
@@ -119,6 +143,13 @@ fn math_call_of_one<S: NumericStage>(stage: &mut S, call: MathCall, only: S::Wor
             let zero = stage.i32_constant(0);
             return Some(int_value(stage, zero));
         }
+        MathCall::LeadingZeros => {
+            // ToUint32 and ToInt32 share their low 32 bits, which the count reads.
+            let word = stage.to_int32(number, miss)?;
+            let count = stage.int_leading_zeros(word);
+            return Some(int_value(stage, count));
+        }
+        MathCall::Libm(_) | MathCall::Binary(_) => return None,
     };
     Some(stage.box_number(result))
 }
@@ -142,21 +173,6 @@ fn absolute<S: NumericStage>(stage: &mut S, only: S::Word, miss: S::Miss) -> Opt
         let result = stage.float_unary(FloatUnary::Abs, number);
         Some(stage.box_number(result))
     })
-}
-
-/// `Math.sign` of the binary64 word `number`: NaN and either zero as they are, else -1 below
-/// zero and 1 above.
-#[inline(always)]
-fn sign<S: NumericStage>(stage: &mut S, number: S::Word) -> S::Word {
-    let ordered = stage.relation(NumberRelation::Equal, Domain::Float64, number, number);
-    let unordered = stage.not(ordered);
-    let zero = stage.f64_constant(0.0);
-    let is_zero = stage.relation(NumberRelation::Equal, Domain::Float64, number, zero);
-    let kept = stage.any(unordered, is_zero);
-    let negative = stage.relation(NumberRelation::LessThan, Domain::Float64, number, zero);
-    let (minus_one, one) = (stage.f64_constant(-1.0), stage.f64_constant(1.0));
-    let unit = stage.select(negative, minus_one, one);
-    stage.select(kept, number, unit)
 }
 
 /// `Math.max` (`maximum`) or `Math.min` of two value words: two int32s by their int32 order, any
@@ -200,10 +216,24 @@ fn imul_pair<S: NumericStage>(stage: &mut S, (left, right): (S::Word, S::Word), 
     })
 }
 
-/// `math_call` of `call` on the interpreter's values: `None` for any argument or count the row
-/// leaves at its miss.
+/// `math_call` of `call` on the interpreter's values, and the bodies no stage runs: a libm function
+/// of one Number, or a two-Number function, whose missing argument is `undefined`, a NaN.
+/// `None` for any argument or count the row leaves at its miss.
 #[inline(always)]
 pub(crate) fn concrete_math_call(call: MathCall, args: &[Value]) -> Option<Value> {
+    match (call, args) {
+        (MathCall::Libm(operation), &[only]) => Some(Value::number(operation(only.as_number()?))),
+        (MathCall::Binary(operation), _) if args.len() <= 2 => {
+            let argument = |index: usize| args.get(index).map_or(Some(f64::NAN), |value| value.as_number());
+            Some(Value::number(operation(argument(0)?, argument(1)?)))
+        }
+        _ => concrete_row(call, args),
+    }
+}
+
+/// `math_call` of `call` on the interpreter's values, for the stage rows.
+#[inline(always)]
+fn concrete_row(call: MathCall, args: &[Value]) -> Option<Value> {
     let stage = &mut Concrete::new(std::ptr::null());
     match *args {
         [] => math_call(stage, call, &[], ()),
@@ -246,11 +276,27 @@ mod tests {
     }
 
     #[test]
+    fn round_takes_halves_up_and_keeps_zeros_as_they_are() {
+        assert_eq!(call(MathCall::Unary(FloatUnary::Round), &[Value::number(2.5)]), Some(Value::integer(3)));
+        assert_eq!(call(MathCall::Unary(FloatUnary::Round), &[Value::number(-2.5)]), Some(Value::integer(-2)));
+        assert_eq!(call(MathCall::Unary(FloatUnary::Round), &[Value::number(-0.2)]).map(Value::to_bits), Some(Value::number(-0.0).to_bits()));
+        assert_eq!(call(MathCall::Unary(FloatUnary::Round), &[Value::number(-0.0)]).map(Value::to_bits), Some(Value::number(-0.0).to_bits()));
+    }
+
+    #[test]
     fn sign_keeps_nan_and_zeros_and_maps_the_rest_to_a_unit() {
-        assert_eq!(call(MathCall::Sign, &[Value::number(-3.5)]), Some(Value::integer(-1)));
-        assert_eq!(call(MathCall::Sign, &[Value::integer(9)]), Some(Value::integer(1)));
-        assert_eq!(call(MathCall::Sign, &[Value::number(-0.0)]).map(Value::to_bits), Some(Value::number(-0.0).to_bits()));
-        assert_eq!(call(MathCall::Sign, &[Value::NAN]), Some(Value::NAN));
+        let sign = MathCall::Unary(FloatUnary::Sign);
+        assert_eq!(call(sign, &[Value::number(-3.5)]), Some(Value::integer(-1)));
+        assert_eq!(call(sign, &[Value::integer(9)]), Some(Value::integer(1)));
+        assert_eq!(call(sign, &[Value::number(-0.0)]).map(Value::to_bits), Some(Value::number(-0.0).to_bits()));
+        assert_eq!(call(sign, &[Value::NAN]), Some(Value::NAN));
+    }
+
+    #[test]
+    fn clz32_counts_the_low_32_bits_of_the_toint32() {
+        assert_eq!(call(MathCall::LeadingZeros, &[Value::integer(1)]), Some(Value::integer(31)));
+        assert_eq!(call(MathCall::LeadingZeros, &[Value::integer(0)]), Some(Value::integer(32)));
+        assert_eq!(call(MathCall::LeadingZeros, &[Value::number(4_294_967_296.0 + 1.0)]), Some(Value::integer(31)));
     }
 
     #[test]
@@ -271,5 +317,13 @@ mod tests {
         assert_eq!(call(MathCall::Imul, &[Value::integer(5)]), Some(Value::integer(0)));
         assert_eq!(call(MathCall::Imul, &[]), Some(Value::integer(0)));
         assert_eq!(call(MathCall::Imul, &[Value::UNDEFINED]), None);
+    }
+
+    #[test]
+    fn binary_functions_read_a_missing_argument_as_nan() {
+        let pow = MathCall::Binary(crate::staged::math::power);
+        assert_eq!(call(pow, &[Value::integer(2), Value::integer(3)]), Some(Value::integer(8)));
+        assert!(call(pow, &[Value::integer(2)]).is_some_and(|value| value.as_number().is_some_and(f64::is_nan)));
+        assert_eq!(call(pow, &[Value::UNDEFINED, Value::integer(1)]), None);
     }
 }

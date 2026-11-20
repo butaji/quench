@@ -3,7 +3,7 @@
 //! storage behind these accessors can move without touching a single call site. Each of
 //! them is a record of its own family (`Heap::collection_records`, `Heap::symbol_records`).
 
-use super::super::{CollectionRecord, CollectionStorage, Entries, Heap, Object, SymbolData};
+use super::super::{CollectionRecord, CollectionStorage, Entries, Heap, Object, SymbolData, WasmGcRecord};
 use crate::value::Value;
 
 impl Heap {
@@ -105,6 +105,24 @@ impl Heap {
         self.symbol_records.is_live(record_id).then(|| unsafe { self.symbol_records.get_live(record_id) })
     }
 
+    /// The Wasm GC object `value` names, read without the write barrier: reads take no barrier.
+    #[inline(always)]
+    pub(crate) fn wasm_gc(&self, value: Value) -> Option<&WasmGcRecord> {
+        let record_id = value.direct_wasm_gc_index()?;
+        self.wasm_gc_records.is_live(record_id).then(|| unsafe { self.wasm_gc_records.get_live(record_id) })
+    }
+
+    /// The Wasm GC object `value` names, mutably, past the write barrier: for a write into its payload.
+    #[inline(always)]
+    pub(crate) fn wasm_gc_mut(&mut self, value: Value) -> Option<&mut WasmGcRecord> {
+        let record_id = value.direct_wasm_gc_index()?;
+        if !self.wasm_gc_records.is_live(record_id) {
+            return None;
+        }
+        // SAFETY: a live direct Wasm GC Value names an initialized record; `&mut self` is exclusive.
+        Some(unsafe { self.wasm_gc_records.get_live_mut(record_id, &self.properties) })
+    }
+
     /// A new Map with `object` as its ordinary object part and `entries`.
     #[inline]
     pub(crate) fn alloc_map(&mut self, object: Object, entries: Entries<(Value, Value)>) -> Value {
@@ -143,6 +161,21 @@ impl Heap {
         }
         #[cfg(not(feature = "profile-aggregate"))]
         self.charge_payload_growth(payload);
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(value);
+        value
+    }
+
+    /// A new Wasm GC object, as a record whose head names its payload. The payload is external
+    /// bytes, charged as a description is (`alloc_symbol`) and uncharged when the record is swept.
+    #[inline]
+    pub(crate) fn alloc_wasm_gc(&mut self, record: WasmGcRecord) -> Value {
+        let payload = record.allocated_bytes();
+        self.charge_allocation(0, payload);
+        let Ok(record_id) = self.wasm_gc_records.try_insert(record) else {
+            panic!("Wasm GC records exhausted: the space holds 2^28 records");
+        };
+        let value = Value::direct_wasm_gc(record_id);
         #[cfg(feature = "profile-memory")]
         self.profile_allocation(value);
         value

@@ -22,6 +22,7 @@ use crate::staged::{Access, GlobalBinding, Operation, Region, Stage};
 use crate::staged::machine::{Lane, MachineAccess, MachineScalar, Relation, Unary};
 use crate::vm::global_facts::GlobalRead;
 use super::super::object_slots::emit;
+use super::super::declared_checks::{self, ARRAY, EntryCheck, LANE_TESTED, OBJECT_PLAIN, STRING};
 
 /// The alias region of the function's entry cell, which a scalar call reads its entry from.
 const CELL: Access = Region::EntryCell.mutable();
@@ -206,27 +207,34 @@ fn is_parameter(function: &crate::bytecode::Function, register: Register) -> boo
         || function.local_registers.iter().any(|entry| entry.local < function.params && entry.register == register)
 }
 
-/// The language bits entry conformance checks exactly (`conform_language`): a Boolean,
-/// `undefined`, `null`, a direct object, a direct function, and a string (a direct string by its
-/// tag, any other string by the VM's `typeof`). A set with any other bit (Number, BigInt, Symbol)
-/// is not checkable here. The members are `declared_checks::DECLARED_CHECKED` the u-jit's entry
-/// conformance tests (`declared_checks::LANE_TESTED`), so the b-jit reads the same set.
-const CHECKABLE: u16 = super::super::declared_checks::DECLARED_CHECKED & super::super::declared_checks::LANE_TESTED;
-
-/// Whether the non-empty language set `bits` is one entry conformance tests exactly.
+/// Whether the non-empty language set `bits` is one entry conformance tests exactly (`conform_language`):
+/// the members of `LANE_TESTED`: a Boolean, `undefined`, `null`, a direct object, array, plain object or
+/// function, and a string. A set with a Number, BigInt or Symbol is not checkable here.
 pub(super) fn checkable(bits: u16) -> bool {
-    bits != 0 && bits & !CHECKABLE == 0
+    bits != 0 && bits & !LANE_TESTED == 0
 }
 
-/// Each parameter's declared TypeScript type (`Function::declared_parameters`) as its entry type
+/// The u-jit's entry test of a declared parameter's check, as the language fact it proves
+/// (`conform_language`); None where this tier emits no test for it.
+fn lane_check(check: EntryCheck) -> Option<Type> {
+    match check {
+        EntryCheck::Number => Some(Type::NUMBER),
+        EntryCheck::String => Some(Type::languages(STRING)),
+        EntryCheck::Array => Some(Type::languages(ARRAY)),
+        EntryCheck::PlainObject => Some(Type::languages(OBJECT_PLAIN)),
+        EntryCheck::Languages(bits) if checkable(bits) => Some(Type::languages(bits)),
+        EntryCheck::Languages(_) => None,
+    }
+}
+
+/// Each parameter's declared TypeScript type (`declared_checks::entry_checks`) as its entry type
 /// where the unit never writes it and nothing narrower is required of it: the entry proves it
 /// once (conformance) and every later use trusts it. A value outside it leaves at the entry, so
-/// an annotation that lies costs an exit, never a wrong result. A Number set, or a set
-/// `checkable` names, is such a type; any other set stays `ANY`.
+/// an annotation that lies costs an exit, never a wrong result. Which parameters and what each
+/// check is comes from the shared check; `lane_check` only maps it to this tier's fact.
 pub(super) fn declared_entry_types(function: &crate::bytecode::Function, written: &CompoundBitSet, initial: &mut [Type]) {
-    for (index, declared) in function.declared_parameters().iter().enumerate() {
-        let ty = Type::languages(*declared);
-        if ty != Type::NUMBER && !checkable(*declared) { continue; }
+    for (index, check) in declared_checks::entry_checks(function) {
+        let Some(ty) = lane_check(check) else { continue };
         let Some(register) = parameter_register(function, index) else { continue };
         let register = usize::from(register);
         if written.contains(register) { continue; }

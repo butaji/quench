@@ -77,6 +77,9 @@ pub(crate) const DIRECT_ENVIRONMENT_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | 
 pub(crate) const DIRECT_SYMBOL_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
 /// The Map and Set record family's code: the vector, promise and object bits.
 pub(crate) const DIRECT_COLLECTION_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
+/// The Wasm GC object record family's code: the vector bit with the array bit (no narrow word sets
+/// the vector bit, so it names no narrow family; `family_is` compares every family bit exactly).
+pub(crate) const DIRECT_WASM_GC_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
 /// The payload bits that code a heap value's reference family.
 pub(crate) const HEAP_REFERENCE_BITS: u64 = HEAP_FAMILY_BITS | DIRECT_V128_HANDLE_BIT;
 /// Where a known closure keeps its function id: the payload bits above the 32-bit slot index and below

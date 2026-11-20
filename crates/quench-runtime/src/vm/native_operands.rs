@@ -24,6 +24,16 @@ impl NativeJsOperands {
         }
     }
 
+    /// The operands of `instruction`, as its semantic entry reads them.
+    pub(crate) const fn of(instruction: WideInstruction) -> Self {
+        Self::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm())
+    }
+
+    /// The record's two words, in layout order: what an image stores and a linker places.
+    pub(crate) const fn words(&self) -> [u64; 2] {
+        [self.registers, self.immediate]
+    }
+
     /// The two-word native-call argument pointer, valid while this value lives.
     pub fn as_ptr(&self) -> *const u64 {
         &self.registers

@@ -8,21 +8,27 @@
 //!
 //! Owner: lane/base join (and the deletion of the per-PC fallback).
 
-use super::{ImageTarget, LaneImage, base::BaseImage, symbols::SymbolTable};
+use super::{CallSite, ImageTarget, LaneImage, base::BaseImage, symbols::SymbolTable};
 use crate::bytecode::ResidualProgram;
 use crate::compile::aot_facts::AotFacts;
+use crate::vm::compiled::ClosedFrozen;
 
-/// The lane body of function `id` with its leaves entering `base`, or `None` where the lane
-/// lowering gives no native record (the base body is then the entry).
+/// The lane body of function `id` with its leaves entering `base`, its proven calls reading the
+/// records of `calls` (the base body's), or `None` where the lane lowering gives no native record
+/// (the base body is then the entry).
 pub(crate) fn lower_lane(
     program: &ResidualProgram,
-    facts: &AotFacts,
+    (facts, frozen): (&AotFacts, &ClosedFrozen),
     target: &ImageTarget,
     id: u32,
-    base: &BaseImage,
+    (base, calls): (&BaseImage, &[CallSite]),
     symbols: &mut SymbolTable,
 ) -> Result<Option<LaneImage>, String> {
     // TODO: lower for `target.isa`; the host's ISA until `IsaBaseline` selects the compile target.
     let _ = target;
-    Ok(super::super::compiled::closed_lane_image(program, id, facts, base, symbols))
+    let lane = super::super::compiled::closed_lane_image(program, id, (facts, frozen), (base, calls), symbols);
+    if crate::trace::Channel::AotLanes.on() && let Err(reason) = lane {
+        eprintln!("aot-lanes: function {id} ({} instructions): base body, {reason}", program.function(id as usize).instructions().count());
+    }
+    Ok(lane.ok())
 }

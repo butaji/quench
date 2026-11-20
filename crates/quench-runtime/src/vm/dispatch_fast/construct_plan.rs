@@ -455,7 +455,7 @@ pub(in crate::vm) fn scalar_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -
         })),
         _ => None,
     }).collect::<Option<_>>()?;
-    Some(ScalarConstructPlan { callee, shape: plan.shape, fields })
+    Some(ScalarConstructPlan { callee: super::super::compiled::PlanCallee::Live(callee), shape: plan.shape, fields })
 }
 
 /// Whether `callee`'s plan holds now (`holding_construct_plan_index`) and an allocation by it

@@ -142,10 +142,15 @@ pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
 }
 
 /// The ISA of an AOT lane body: the JIT's, with the frame pointers its leaves' tail calls to
-/// the base body's entries need, as the stencils that base body is built from have.
+/// the base body's entries need, as the stencils that base body is built from have, and the IR
+/// verifier on: a lane body is an extra tier, so a body whose IR is invalid is dropped (the
+/// compile's error) rather than aborting the ahead compile, which can afford the check.
 pub(super) fn ahead_lane_isa() -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]
-    { target_isa_with(JS_JIT_OPT_LEVEL, CodePublication::Stencil, CompileLevel::run_default()) }
+    {
+        static ISA: OnceLock<Option<Arc<TargetIsa>>> = OnceLock::new();
+        ISA.get_or_init(|| build_isa_verified(JS_JIT_OPT_LEVEL, CodePublication::Stencil, CompileLevel::run_default(), &NativeTarget::host(), true).ok()).clone()
+    }
     #[cfg(not(feature = "jit"))]
     { None }
 }
@@ -208,13 +213,24 @@ fn build_isa(
     level: CompileLevel,
     target: &NativeTarget,
 ) -> Result<Arc<TargetIsa>, String> {
+    build_isa_verified(opt_level, publication, level, target, verify_ir())
+}
+
+/// `build_isa`, with the IR verifier and register-allocation checker on where `verify` says.
+fn build_isa_verified(
+    opt_level: &str,
+    publication: CodePublication,
+    level: CompileLevel,
+    target: &NativeTarget,
+    verify: bool,
+) -> Result<Arc<TargetIsa>, String> {
     let mut flags = settings::builder();
     flags.set("opt_level", opt_level).map_err(|error| error.to_string())?;
     for (name, value) in publication.settings().iter().chain(level.settings()) {
         flags.set(name, value).map_err(|error| error.to_string())?;
     }
     for check in ["enable_verifier", "regalloc_checker"] {
-        let value = if verify_ir() { "true" } else { "false" };
+        let value = if verify { "true" } else { "false" };
         flags.set(check, value).map_err(|error| error.to_string())?;
     }
     target.isa(settings::Flags::new(flags))

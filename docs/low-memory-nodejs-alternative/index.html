@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Node.js alternative with low memory: Quench uses 26% of Node&#x27;s peak RSS</title>
+<meta name="description" content="Quench is a Node-compatible JavaScript and TypeScript runtime in Rust. With JIT off, JetStream 3 peak memory is 28.5 MB vs Node 110.1 MB and Bun 47.7 MB. Measured numbers and limits." />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#EF5102" />
+<link rel="canonical" href="https://quench.run/low-memory-nodejs-alternative/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
+<link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Quench" />
+<meta property="og:url" content="https://quench.run/low-memory-nodejs-alternative/" />
+<meta property="og:title" content="Node.js alternative with low memory: Quench uses 26% of Node&#x27;s peak RSS" />
+<meta property="og:description" content="Quench is a Node-compatible JavaScript and TypeScript runtime in Rust. With JIT off, JetStream 3 peak memory is 28.5 MB vs Node 110.1 MB and Bun 47.7 MB. Measured numbers and limits." />
+<meta property="og:image" content="https://quench.run/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="article:modified_time" content="2026-11-20" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Node.js alternative with low memory: Quench uses 26% of Node&#x27;s peak RSS" />
+<meta name="twitter:description" content="Quench is a Node-compatible JavaScript and TypeScript runtime in Rust. With JIT off, JetStream 3 peak memory is 28.5 MB vs Node 110.1 MB and Bun 47.7 MB. Measured numbers and limits." />
+<meta name="twitter:image" content="https://quench.run/og.png" />
+<link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
+<link rel="stylesheet" href="/blog/blog.css" />
+<style>.prose .answer{background:#FFF3EC;border-left:4px solid #EF5102;border-radius:8px;padding:1rem 1.25rem;margin-top:1.25rem;font-size:1.1rem;color:#1C1C1E}.prose .small{font-size:.9rem;color:#555B66}</style>
+<script type="application/ld+json">[{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Quench", "url": "https://quench.run/", "applicationCategory": "DeveloperApplication", "applicationSubCategory": "JavaScript, TypeScript and WebAssembly runtime", "operatingSystem": "Linux", "programmingLanguage": "Rust", "license": "https://opensource.org/licenses/MIT", "codeRepository": "https://github.com/butaji/quench", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "isAccessibleForFree": true, "description": "JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables."}, {"@context": "https://schema.org", "@type": "TechArticle", "headline": "A Node.js alternative with low memory use", "description": "Quench is a Node-compatible JavaScript and TypeScript runtime in Rust. With JIT off, JetStream 3 peak memory is 28.5 MB vs Node 110.1 MB and Bun 47.7 MB. Measured numbers and limits.", "url": "https://quench.run/low-memory-nodejs-alternative/", "dateModified": "2026-11-20", "datePublished": "2026-11-20", "author": {"@type": "Organization", "name": "Quench", "url": "https://quench.run/"}, "about": {"@type": "SoftwareApplication", "name": "Quench", "url": "https://quench.run/"}}, {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Quench", "item": "https://quench.run/"}, {"@type": "ListItem", "position": 2, "name": "A Node.js alternative with low memory use", "item": "https://quench.run/low-memory-nodejs-alternative/"}]}, {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "What is a Node.js alternative with low memory use?", "acceptedAnswer": {"@type": "Answer", "text": "Quench is a JavaScript, TypeScript and WebAssembly runtime with Node-compatible APIs, written in Rust. With JIT off, its geometric-mean peak memory on JetStream 3 is 28.5 MB, against 110.1 MB for Node --jitless and 47.7 MB for Bun (17 November 2026)."}}, {"@type": "Question", "name": "How much memory does Quench use for a small program?", "acceptedAnswer": {"@type": "Answer", "text": "On V8-v7 with JIT off, richards peaks at 6.4 MB, deltablue at 6.9 MB and raytrace at 7.1 MB, where Node --jitless needs 43.5 to 50.1 MB (14 November 2026)."}}, {"@type": "Question", "name": "Can Quench replace Node.js today?", "acceptedAnswer": {"@type": "Answer", "text": "Not for production yet. Quench has no packaged releases and its Node API compatibility is still being built out, so expect gaps."}}]}]</script>
+</head>
+<body>
+<div class="wrap">
+<header class="topbar">
+<a class="brand" href="/" aria-label="Quench home">Quench<span>.</span></a>
+<nav class="badges" aria-label="Links">
+<a class="badge" href="/benchmarks/">Benchmarks</a>
+<a class="badge" href="/blog/">Blog</a>
+<a class="badge" href="https://github.com/butaji/quench">GitHub</a>
+</nav>
+</header>
+<main>
+<article>
+<header class="frame hero">
+<div class="tile orange side"><div class="stripes"></div><div class="vt"><span>LOW MEMORY</span><span>NOVEMBER 2026</span></div></div>
+<div class="tile title">
+<p class="mono meta"><a href="/">quench.run</a> / updated <time datetime="2026-11-20">20 November 2026</time></p>
+<h1>A Node.js alternative with low memory use</h1>
+<p class="lead">Peak memory measured against Node and Bun, including the tests where Quench uses more.</p>
+</div>
+<div class="tile metal" aria-hidden="true"></div>
+</header>
+<div class="frame"><div class="tile prose">
+<p class="answer"><b>Quench</b> is a JavaScript and TypeScript runtime with Node-compatible APIs, written in Rust. With JIT off, its geometric-mean peak memory on 56 JetStream 3 tests is <b>28.5 MB</b>, against <b>110.1 MB</b> for Node <code>--jitless</code> and <b>47.7 MB</b> for Bun: 26% of Node's and 60% of Bun's. It has the lowest peak memory of the three on 51 of the 56 tests. It is early and has no packaged releases.</p>
+<h2 id="comparison">Quench vs Node.js, Bun and Deno</h2>
+<div class="table-scroll"><table><thead><tr><th></th><th>Quench</th><th>Node.js</th><th>Bun</th><th>Deno</th></tr></thead><tbody><tr><td>Written in</td><td>Rust (engine and runtime)</td><td>C++ (V8) and JavaScript</td><td>Zig, C++ (JavaScriptCore)</td><td>Rust runtime, C++ engine (V8)</td></tr><tr><td>V8-v7 score, JIT off, geomean of 8</td><td><b>4,980</b></td><td>2,349</td><td>1,979</td><td>not measured</td></tr><tr><td>V8-v7 peak memory, JIT off, geomean</td><td><b>11.4 MB</b></td><td>65.4 MB</td><td>26.8 MB</td><td>not measured</td></tr><tr><td>JetStream 3 score, JIT off, 56 tests</td><td>34.3</td><td><b>39.7</b></td><td>32.2</td><td>not measured</td></tr><tr><td>JetStream 3 peak memory, JIT off</td><td><b>28.5 MB</b></td><td>110.1 MB</td><td>47.7 MB</td><td>not measured</td></tr><tr><td>Test262</td><td>53,353 passing, 0 failing, 53 waived</td><td>not measured</td><td>not measured</td><td>not measured</td></tr><tr><td>JIT performance</td><td>JIT tiers not yet competitive</td><td>mature JIT</td><td>mature JIT</td><td>mature JIT (V8)</td></tr><tr><td>Packaged releases</td><td>no, build from source</td><td>yes</td><td>yes</td><td>yes</td></tr></tbody></table></div><p class="small">Benchmark rows: interpreter only in every engine (<code>quench --no-jit</code>, <code>node --jitless</code>, Bun with <code>BUN_JSC_useJIT=0</code>), one 4-core Linux machine. V8-v7 measured 14 November 2026, JetStream 3 on 17 November 2026. Bold marks the best measured value. Deno has not been measured; we do not publish numbers we have not run. <a href="/benchmarks/">Full tables and method</a>.</p>
+<h2 id="per-benchmark">Peak memory per V8-v7 benchmark (JIT off, 14 November 2026)</h2>
+<div class="table-scroll"><table><thead><tr><th>Benchmark</th><th>Quench</th><th>Node --jitless</th><th>Bun JIT off</th></tr></thead><tbody><tr><td>richards</td><td class="n">6.4 MB</td><td class="n">43.5 MB</td><td class="n">15.9 MB</td></tr><tr><td>deltablue</td><td class="n">6.9 MB</td><td class="n">45.4 MB</td><td class="n">24.5 MB</td></tr><tr><td>crypto</td><td class="n">8.2 MB</td><td class="n">43.6 MB</td><td class="n">25.4 MB</td></tr><tr><td>raytrace</td><td class="n">7.1 MB</td><td class="n">50.1 MB</td><td class="n">25.8 MB</td></tr><tr><td>earley-boyer</td><td class="n">15.8 MB</td><td class="n">74.2 MB</td><td class="n">28.7 MB</td></tr><tr><td>regexp</td><td class="n">16.2 MB</td><td class="n">64.5 MB</td><td class="n">32.6 MB</td></tr><tr><td>splay</td><td class="n">58.7 MB</td><td class="n">326.0 MB</td><td class="n">54.9 MB</td></tr><tr><td>navier-stokes</td><td class="n">7.6 MB</td><td class="n">49.9 MB</td><td class="n">20.2 MB</td></tr></tbody></table></div>
+<h2 id="where-more">Where Quench uses more memory</h2>
+<p>On V8-v7 splay Quench peaks at 58.7 MB against Bun's 54.9 MB. On large startup workloads it can use much more: babylonjs-startup-es6 peaks at 562 MB against Bun's 339 MB, because programs from earlier iterations stay reachable and an idle function costs about 2.8 KB. Inside the 56 compared JetStream 3 tests, Quench is above the lowest engine on Sunspider, mandreel, the two doxbee tests and babylonjs-scene. Making function bodies lazy is the current fix.</p>
+<h2 id="why-small">Why it is small</h2>
+<p>One 64-bit word per value, compact object layouts, a register-bytecode interpreter, and compiling a function body only on its first call.</p>
+<h2 id="try">Try it</h2>
+<pre><code>git clone https://github.com/butaji/quench
+cd quench
+cargo build --release -p quench                  # interpreter + JIT tiers
+cargo build --release -p quench --features aot   # adds the AOT compiler
+./target/release/quench app.ts</code></pre><h2 id="questions">Questions</h2><h3>What is a Node.js alternative with low memory use?</h3><p>Quench is a JavaScript, TypeScript and WebAssembly runtime with Node-compatible APIs, written in Rust. With JIT off, its geometric-mean peak memory on JetStream 3 is 28.5 MB, against 110.1 MB for Node --jitless and 47.7 MB for Bun (17 November 2026).</p><h3>How much memory does Quench use for a small program?</h3><p>On V8-v7 with JIT off, richards peaks at 6.4 MB, deltablue at 6.9 MB and raytrace at 7.1 MB, where Node --jitless needs 43.5 to 50.1 MB (14 November 2026).</p><h3>Can Quench replace Node.js today?</h3><p>Not for production yet. Quench has no packaged releases and its Node API compatibility is still being built out, so expect gaps.</p>
+<h2 id="about">About Quench</h2>
+<p>Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: <a href="https://github.com/butaji/quench">github.com/butaji/quench</a>. Machine-readable summary: <a href="/llms.txt">llms.txt</a>.</p>
+<p class="small">Related: <a href="/benchmarks/">benchmarks</a> · <a href="/fastest-javascript-runtime-in-rust/">JavaScript runtime in Rust</a> · <a href="/low-memory-nodejs-alternative/">low-memory Node.js alternative</a> · <a href="/compile-javascript-to-native-executable/">compile JavaScript to a native executable</a> · <a href="/test262-compliant-javascript-engine/">Test262 conformance</a> · <a href="/javascript-engine-for-ai-agents/">JavaScript for AI agents</a></p>
+</div></div>
+</article>
+</main>
+<footer class="foot">Quench · MIT licensed · <a href="/">home</a> · <a href="/benchmarks/">benchmarks</a> · <a href="/blog/">blog</a> · <a href="/llms.txt">llms.txt</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></footer>
+</div>
+</body>
+</html>

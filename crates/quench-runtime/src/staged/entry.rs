@@ -118,10 +118,8 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
         let same = stage.eq_imm(exact, shape);
         stage.guard(same, miss)?;
     }
-    if gated {
-        let open = stage.store_gate(StagedRecordSpace::Object, id, value);
-        stage.guard(open, miss)?;
-    }
+    let open = if gated { stage.store_gate(StagedRecordSpace::Object, id, value) } else { stage.immediate_store_open() };
+    stage.guard(open, miss)?;
     let slot = entry_slot(stage, entry);
     plain_store(stage, record, slot, value, miss)
 }

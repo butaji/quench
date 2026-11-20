@@ -181,24 +181,32 @@ impl Frameless {
 }
 
 /// The dense capture slots (values, length) of `callee`'s admission (`emit_entry`), which a
-/// frameless activation of it reads; `declined` where the payload binds no admissions (a lane
-/// run's) or `callee` has none.
+/// frameless activation of it reads, from the payload's call cache word `cache`. A declined
+/// admission, or a payload that binds none (a lane run's), gives an empty run, so each read
+/// takes its slow case.
 pub(super) fn emit_admitted_captures(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir::Value,
-    declined: ir::Block) -> (ir::Value, ir::Value) {
-    let cache = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, call_cache));
-    let bound = builder.create_block();
+    cache: ir::Value) -> (ir::Value, ir::Value) {
+    let (bound, declined, done) = (builder.create_block(), builder.create_block(), builder.create_block());
+    let values = builder.append_block_param(done, types::I64);
+    let len = builder.append_block_param(done, types::I64);
     emit(builder).branch_if(cache, (super::forced_or(bound, declined), &[]), (declined, &[]));
     builder.switch_to_block(bound);
-    let entry = emit_entry(builder, payload, callee, declined);
+    let entry = emit_entry(builder, payload, callee, cache, declined);
     let word = |field: usize| i32::try_from(field).expect("entry field offset fits i32");
-    (emit(builder).raw_load(Lane::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_values))),
-        emit(builder).raw_load(Lane::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_len))))
+    let admitted = (emit(builder).raw_load(Lane::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_values))),
+        emit(builder).raw_load(Lane::I64, regions::heap_meta(), entry, word(std::mem::offset_of!(CallEntry, capture_len))));
+    emit(builder).goto(done, &[admitted.0, admitted.1]);
+    builder.switch_to_block(declined);
+    let none = emit(builder).raw_const(Lane::I64, 0);
+    emit(builder).goto(done, &[none, none]);
+    builder.switch_to_block(done);
+    (values, len)
 }
 
 /// The cache entry admitting `callee` in this epoch, asking `general_frameless_admit` on a
-/// miss; `framed` where it declines.
-fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir::Value, framed: ir::Block) -> ir::Value {
-    let cache = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, call_cache));
+/// miss, in the call cache word `cache`; `framed` where it declines.
+fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir::Value, cache: ir::Value,
+    framed: ir::Block) -> ir::Value {
     let slot = emit(builder).raw_binary_imm(Binary::And, callee, (CACHE_ENTRIES - 1) as i64);
     let offset = emit(builder).raw_binary_imm(Binary::Mul, slot, size_of::<CallEntry>() as i64);
     let cached = emit(builder).raw_binary(Binary::Add, cache, offset);
@@ -220,10 +228,11 @@ fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir:
     entry
 }
 
-/// The function an admitted frameless callee runs: the callee is an admitted user function
-/// (`general_frameless_admit`), so its heap kind names it.
+/// The function a frameless callee runs, read from its heap object: the callee is an admitted user function
+/// (`general_frameless_admit`), so its heap kind names it. Not `admission::admitted_function`, which finds an
+/// admission by function index, not by callee value.
 #[cfg(feature = "native-execution")]
-pub(super) fn admitted_function<H: Host>(vm: &Vm<H>, callee: Value) -> u32 {
+pub(super) fn callee_function<H: Host>(vm: &Vm<H>, callee: Value) -> u32 {
     let Some(crate::heap::FunctionKind::User(_, function)) = vm.heap.function(callee).map(|callee| callee.kind)
         else { unreachable!("a frameless callee is an admitted user function") };
     function
@@ -241,11 +250,11 @@ pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
     let mut window = vm.frameless.stacks().windows.as_ptr();
     let records: Vec<_> = live.iter().zip(continues).map(|(record, source_pc)| {
         let registers = window;
-        window = window.wrapping_add(usize::from(program.function(admitted_function(vm, record.callee) as usize).registers));
+        window = window.wrapping_add(usize::from(program.function(callee_function(vm, record.callee) as usize).registers));
         ChainFrame { source_pc, registers, link: *record }
     }).collect();
     if let Some(last) = records.last() {
-        let last_function = admitted_function(vm, last.link.callee);
+        let last_function = callee_function(vm, last.link.callee);
         let epoch = vm.cache_epochs.gc;
         let (leaves, counted) = vm.frameless.materializations.entry((dispatch.program_id.raw(), last_function)).or_default();
         if *counted != epoch { (*leaves, *counted) = (0, epoch); }

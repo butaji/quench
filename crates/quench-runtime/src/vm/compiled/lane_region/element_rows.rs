@@ -45,6 +45,10 @@ impl Lowering<'_, '_> {
     fn element_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, crate::bytecode::Operand)) -> bool {
         let exit = self.guard_exit(state, pc as u32);
         let array = self.loop_array(pc, Some(base));
+        if let Some(pending) = self.unit_compare(state, pc, (destination, base, key), exit) {
+            self.pending_unit = Some(pending);
+            return true;
+        }
         if let Some(array) = array.filter(|array| self.int32_read(*array, pc))
             && self.int32_element_read(state, (destination, key), array, exit) { return true; }
         if let Some(array) = array.filter(|array| self.reads_int32(*array))
@@ -83,6 +87,47 @@ impl Lowering<'_, '_> {
             None => {}
         }
         true
+    }
+
+    /// The unit compare of the string element read at `pc` into `destination` (`PendingUnit`): a read of
+    /// a string's unit whose next instruction is a strict `===` or `!==` of the read's register with a
+    /// one-unit string constant, and whose register no path reads after the comparison. The one-character
+    /// string such a read makes is then never made: the comparison decides on the unit
+    /// (`Lowering::unit_compare_jump`). The read leaves at `exit` for a base that is no string, and
+    /// for an index outside it, as the row does.
+    fn unit_compare(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, crate::bytecode::Operand),
+        exit: ir::Block) -> Option<PendingUnit> {
+        let index = key.register_index()?;
+        let next = pc + 1;
+        let instruction = *self.unit.instructions.get(next)?;
+        let Some(crate::staged::Operation::CompareJump { comparison: crate::staged::Comparison::Equality { strict: true, negated }, left, right, .. })
+            = crate::vm::compiled::performed(instruction) else { return None };
+        let constant = match (left.register_index(), right.register_index()) {
+            (Some(register), None) if register == destination => self.one_unit_constant(right)?,
+            (None, Some(register)) if register == destination => self.one_unit_constant(left)?,
+            _ => return None,
+        };
+        let target = instruction.jump_target() as usize;
+        let string_base = self.loop_array(pc, Some(base)).is_none_or(|array| self.string_base(&array));
+        let unread = !self.is_live(pc + 2, destination) && !self.is_live(target, destination);
+        if !string_base || !unread || self.hoisted.contains_key(&next) || self.unit_leaders().contains(next) { return None; }
+        let within = self.ranges.string_in_bounds(pc);
+        let bits = self.tagged(state, base);
+        let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); crate::staged::value::is_direct_string(&mut stage, bits) };
+        emit_js_guard(&mut self.builder, is_string, exit);
+        let key_word = self.tagged(state, index);
+        let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
+        let unit = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let units = crate::staged::strings::flat_string(&mut stage, records, bits, exit).expect("the emit stage continues past its guards");
+            let row = if within {
+                crate::staged::strings::string_unit_at_within(&mut stage, units, key_word, exit)
+            } else {
+                crate::staged::strings::string_unit_at(&mut stage, units, key_word, exit)
+            };
+            row.expect("the emit stage continues past its guards")
+        };
+        Some(PendingUnit { pc: next, register: destination, unit, constant, negated })
     }
 
     /// `base[index]` where `base` holds a string: its one-unit string from the ASCII unit table

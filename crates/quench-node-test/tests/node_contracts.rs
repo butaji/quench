@@ -11,7 +11,7 @@ fn assert_contract_matches_node(contract: &str) {
         let mut command = Command::new(executable);
         command.arg(&path);
         if executable != "node" {
-            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            command.env(quench::shared_run::CHILD_RUNNER_ENV, "1");
         }
         quench_node_test::case_process::observe_command(command, CONTRACT_TIMEOUT).unwrap()
     });

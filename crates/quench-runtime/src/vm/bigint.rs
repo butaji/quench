@@ -162,21 +162,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let width = self.bigint_width(p, args.first().copied())?;
         let value = self.to_bigint(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-        let magnitude_bits = usize::try_from(value.magnitude().bits()).unwrap_or(usize::MAX);
-        let unchanged = if signed {
-            width > magnitude_bits.saturating_add(1)
-        } else {
-            value.sign() != num_bigint::Sign::Minus && width >= magnitude_bits
-        };
-        if unchanged {
-            return Ok(self.heap.alloc(Cell::bigint(value)));
+        let value = crate::bigint::JsBigInt::from(&value);
+        match crate::staged::bigint_small::wrap_bits(&value, width, signed) {
+            Ok(wrapped) => Ok(self.heap.alloc_bigint(wrapped)),
+            Err(_) => Err(self.range_error(p, "Maximum BigInt size exceeded".into())),
         }
-        let modulus = num_bigint::BigInt::from(1_u8) << width;
-        let mut reduced = ((value % &modulus) + &modulus) % &modulus;
-        if signed && width > 0 && reduced >= (num_bigint::BigInt::from(1_u8) << (width - 1)) {
-            reduced -= &modulus;
-        }
-        Ok(self.heap.alloc(Cell::bigint(reduced)))
     }
 
     fn bigint_width(

@@ -49,6 +49,7 @@ pub(crate) use crate::typed_ir::Type;
 #[cfg(not(stencil_family = "js"))] #[path = "../../quench-runtime/src/staged/wasm_call.rs"] #[allow(dead_code)] pub(crate) mod wasm_call;
 #[cfg(not(stencil_family = "js"))] #[path = "../../quench-runtime/src/staged/wasm_roots.rs"] pub(crate) mod wasm_roots;
 #[cfg(not(stencil_family = "js"))] #[path = "../../quench-runtime/src/staged/wasm_instance.rs"] #[allow(dead_code)] pub(crate) mod wasm_instance;
+#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/barrier.rs"] pub(crate) mod barrier;
 
 // The interpreter's whole staged dispatch (call protocol v2 / Futamura: every stencil row is the
 // interpreter's staged row run on `StencilStage`). The runtime's `staged.rs` root names the opcode

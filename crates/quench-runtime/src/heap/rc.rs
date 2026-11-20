@@ -100,8 +100,14 @@ macro_rules! for_each_space_mut {
         { let $space = &mut $heap.string_records; let $handle: fn(RecordId) -> Value = Value::direct_string; $body }
         { let $space = &mut $heap.small_strings; let $handle: fn(RecordId) -> Value = small_strings::small_string_value; $body }
         { let $space = &mut $heap.v128_records; let $handle: fn(RecordId) -> Value = Value::direct_v128; $body }
+        { let $space = &mut $heap.wasm_gc_records; let $handle: fn(RecordId) -> Value = Value::direct_wasm_gc; $body }
     }};
 }
+
+/// Whether any heap of the process has kept reference counts (`Heap::set_rc`): what a stage that
+/// holds no heap reads for an immediate store (`staged::Stage::immediate_store_open`). Sticky, so a
+/// heap that stops counting leaves it conservatively set.
+pub(crate) static COUNTS_SEEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 impl Heap {
     /// Whether old records keep reference counts.
@@ -112,6 +118,9 @@ impl Heap {
     /// Turns counting on, from a recount of the live records, or off.
     pub(crate) fn set_rc(&mut self, on: bool) {
         self.rc_active = on;
+        if on {
+            COUNTS_SEEN.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
         self.refresh_store_watch();
         for_each_space_mut!(self, |space, _handle| space.set_rc(on));
         if on {

@@ -38,16 +38,10 @@ pub use class::{EXIT, LOCAL, NEXT, TAKEN, ABS64, BRANCH14, BRANCH19, BRANCH26, M
 pub use patch::{HOLES, Imm32, padded_holes, PatchError, patch_successor, patch_value};
 pub use stub::{EXIT_STUB_LEN, exit_stub};
 
-/// The frame's header words before the registers: the result pointer, the memory base and its
-/// length (the call row reloads the pins from them). The stitcher reads it; `build.rs` does not.
-pub const FRAME_HEADER_WORDS: u64 = 3;
-
 /// Pinned int registers a stencil takes, and the double registers (xmm0 to xmm7) after them.
 pub const PINNED: usize = 4;
 pub const PINNED_F: usize = 8;
 
-/// `jmp rel32`: the opcode byte, then the displacement a relocation patches.
-const JMP_REL32_LEN: usize = 5;
 /// The pc-relative addend of a rel32 field that ends its instruction.
 const REL32_ADDEND: i64 = -4;
 
@@ -92,7 +86,7 @@ pub struct Stencil {
 /// One row of a program: its stencil, hole values and branch target row.
 pub struct Row<'a> {
     pub stencil: &'a Stencil,
-    pub hole: &'a dyn Fn(u32) -> u64,
+    pub hole: &'a [u64; HOLES],
     pub taken: Option<usize>,
     /// A row only a miss reaches (an inline-cache row's fallback): placed after every other row's
     /// hot part, so the hot rows around it stay back to back.
@@ -140,11 +134,19 @@ fn trailing_jump(stencil: &Stencil) -> Option<(u32, usize)> {
     if stencil.next_jump.is_some() {
         return Some((NEXT, stencil.tail_len));
     }
-    stencil.relocs.iter().filter(|r| r.index == TAKEN).find_map(|r| {
+    trailing_jump_to(&stencil.code, &stencil.relocs, stencil.hot_len, TAKEN).map(|(_, tail)| (TAKEN, tail))
+}
+
+/// The unconditional jump that ends a stencil's hot part and names successor `index` (`NEXT` or
+/// `TAKEN`), as its start and its length: `jmp rel32` (its opcode byte, then the relocated field as
+/// the last four bytes) or AArch64 `b` (the last instruction). Both the layout and the rustc table
+/// reader ask this one detector, so a row's jump is the same jump whichever one is asked.
+fn trailing_jump_to(code: &[u8], relocs: &[Reloc], hot_len: usize, index: u32) -> Option<(usize, usize)> {
+    relocs.iter().filter(|r| r.index == index).find_map(|r| {
         let at = r.offset as usize;
         match r.class {
-            class::REL32 if at + IMM32_WIDTH == stencil.hot_len && at >= 1 && stencil.code[at - 1] == class::JMP_REL32 => Some((TAKEN, JMP_REL32_LEN)),
-            class::BRANCH26 if at + patch::INSN_BYTES == stencil.hot_len && stencil.code[at + 3] & 0xfc == 0x14 => Some((TAKEN, patch::INSN_BYTES)),
+            class::REL32 if at + IMM32_WIDTH == hot_len && at >= 1 && code[at - 1] == class::JMP_REL32 => Some((at - 1, class::JMP_REL32_LEN)),
+            class::BRANCH26 if at + patch::INSN_BYTES == hot_len && code[at + 3] & 0xfc == 0x14 => Some((at, patch::INSN_BYTES)),
             _ => None,
         }
     })
@@ -232,14 +234,14 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
             let (code, base) = part_slice(field.offset as usize);
             let at = field.offset as usize - base;
             patch_ends_inside(at as u32, IMM32_WIDTH, code.len(), "an immediate");
-            code[at..at + IMM32_WIDTH].copy_from_slice(&field.value((row.hole)(field.index) as u32).to_le_bytes());
+            code[at..at + IMM32_WIDTH].copy_from_slice(&field.value(row.hole[field.index as usize] as u32).to_le_bytes());
         }
         for r in stencil.relocs.iter().filter(|r| layout.kept(rows, k, r.offset as usize)) {
             let (code, base) = part_slice(r.offset as usize);
             let at = r.offset as usize - base;
             patch_ends_inside(at as u32, reloc_width(r.class), code.len(), "a relocation");
             if !class::is_successor(r.class) {
-                patch_value(code, at, r.class, (row.hole)(r.index));
+                patch_value(code, at, r.class, row.hole[r.index as usize]);
                 continue;
             }
             let place = out as usize + layout.address(rows, k, r.offset as usize);
@@ -276,8 +278,7 @@ pub fn symbolic_fields(rows: &[Row], symbolic: impl Fn(usize, u32) -> bool) -> V
 
 /// Stencils compiled by rustc from `stencils/rows.rs` (see `build.rs`), as [`Stencil`]s.
 pub mod rustc {
-    use super::{class, Imm32, Reloc, Stencil, JMP_REL32_LEN, NEXT};
-    use crate::patch::INSN_BYTES;
+    use super::{class, trailing_jump_to, Imm32, Reloc, Stencil, NEXT};
 
     /// A stencil as `build.rs` read it from the object: relocations as (offset, class, index, addend).
     pub(crate) struct RawStencil {
@@ -341,21 +342,23 @@ pub mod rustc {
             }
         }
         let len = raw.code.len();
-        let (next_jump, tail_len) = trailing_next_jump(&relocs, raw.hot_len).map_or((None, 0), |(at, tail)| (Some(at), tail));
+        let (next_jump, tail_len) = trailing_jump_to(raw.code, &relocs, raw.hot_len, NEXT).map_or((None, 0), |(at, tail)| (Some(at), tail));
         Some(Stencil { code: raw.code.to_vec(), relocs, imm32, next_jump, tail_len, raw_len: len, hot_len: raw.hot_len })
     }
 
-    /// Where the jump to the next row starts and its length, when it is the hot part's last
-    /// instruction: `jmp rel32` (the relocation is its last four bytes) or AArch64 `b`.
-    fn trailing_next_jump(relocs: &[Reloc], hot_len: usize) -> Option<(usize, usize)> {
-        relocs.iter().filter(|r| r.index == NEXT).find_map(|r| {
-            let at = r.offset as usize;
-            match r.class {
-                class::REL32 if at + size_of::<i32>() == hot_len => Some((at - 1, JMP_REL32_LEN)),
-                class::BRANCH26 if at + INSN_BYTES == hot_len => Some((at, INSN_BYTES)),
-                _ => None,
-            }
-        })
+    /// Stencils memoized by key (`memoized`): each is built once and leaked, so it lives for the life of the process.
+    pub type Memo<K> = std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<K, &'static Stencil>>>;
+
+    /// The stencil memoized under `key` in `memo`, built by `build` on the key's first use; a build that
+    /// fails is an error, and the next use builds again.
+    pub fn memoized<K: std::hash::Hash + Eq + Copy>(memo: &'static Memo<K>, key: K, build: impl FnOnce() -> Result<Stencil, String>) -> Result<&'static Stencil, String> {
+        let mut table = memo.get_or_init(Default::default).lock().map_err(|e| e.to_string())?;
+        if let Some(&found) = table.get(&key) {
+            return Ok(found);
+        }
+        let stencil: &'static Stencil = Box::leak(Box::new(build()?));
+        table.insert(key, stencil);
+        Ok(stencil)
     }
 }
 

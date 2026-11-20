@@ -108,7 +108,7 @@ mod tests {
         for test in ["crates/a/src/tests/x.rs", "crates/a/src/x_tests.rs", "crates/a/src/subset_tests/p.rs", "crates/quench-test262/src/m.rs", "a/tests.rs::f"] {
             assert!(in_test_path(test), "{test}");
         }
-        for production in ["crates/quench-node/src/modules/test_runner/run.rs::drive", "crates/a/src/latest.rs", "crates/a/src/test_host.rs"] {
+        for production in ["crates/quench/src/modules/test_runner/run.rs::drive", "crates/a/src/latest.rs", "crates/a/src/test_host.rs"] {
             assert!(!in_test_path(production), "{production}");
         }
     }

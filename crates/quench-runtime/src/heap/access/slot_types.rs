@@ -25,10 +25,13 @@ impl Heap {
     }
 
     /// Seeds the type of `slot` of `shape` from a declaration (`DeclaredTypes::declared_field`), once
-    /// when the add that creates `shape` is recorded. A seed joins like any observation: the stores
-    /// into the slot still widen it, and a widening recodes its words before the caller returns.
-    pub(crate) fn seed_declared_slot(&mut self, shape: u32, slot: usize, ty: crate::typed_ir::Type) {
+    /// when the add that creates `shape` is recorded. A declared type is a fact only once the slot's
+    /// initial value `initial` satisfies it: a field without an initializer (`undefined`) seeds
+    /// nothing, and its type is learned from the first real store. A seed joins like any observation:
+    /// the stores into the slot still widen it, and a widening recodes its words before the caller returns.
+    pub(crate) fn seed_declared_slot(&mut self, shape: u32, slot: usize, ty: crate::typed_ir::Type, initial: crate::Value) {
         if !self.properties.tracks() || slot >= self.properties.shape_length(shape) { return; }
+        if !crate::typed_ir::Type::immediate(initial).is_subtype(ty) { return; }
         let _widened = self.properties.note_slot_type(shape, slot, ty);
         self.settle_widened();
     }

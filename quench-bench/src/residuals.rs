@@ -25,7 +25,7 @@ const RATCHET_FLAG: &str = "--ratchet";
 const UPDATE_FLAG: &str = "--update-ratchet";
 const TIMEOUT_FLAG: &str = "--timeout-ms";
 
-const DEFAULT_QUENCH: &str = "target/release/quench-node";
+const DEFAULT_QUENCH: &str = "target/release/quench";
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// The engine's report line (`vm/compiled/residuals.rs`) and its fields.

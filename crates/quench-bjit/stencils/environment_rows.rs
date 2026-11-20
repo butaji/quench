@@ -79,7 +79,7 @@ fn global_read_row<const D: u8>(s: S, payload: usize) -> Out {
 
 /// The first operand stored to the global object's slot (hole 0: the record id), through the store
 /// gate where `GATED`: a value that may be a heap reference joins the barrier's log, and a store
-/// the property arena observes (`slots_tracked`) is the VM's. The gate is read-only, so it runs
+/// the property arena observes (`store_watch`) is the VM's. The gate is read-only, so it runs
 /// before the staged `GlobalWrite`, which leaves at the same edge where the layout fails.
 #[inline(always)]
 fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out {
@@ -87,6 +87,10 @@ fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out
     let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
     if GATED {
         let open = stage.store_gate(StagedRecordSpace::Object, hole::<0>() as u64, tagged_place::<A, HOLE_A>(&s));
+        need!(s, stage.guard(open, ()));
+    } else {
+        // An ungated value is immediate: it needs no log unless old records keep counts.
+        let open = stage.immediate_store_open();
         need!(s, stage.guard(open, ()));
     }
     let mut frame = Places::<0, A, 0>::new(s);

@@ -55,6 +55,11 @@ pub fn lower_native_js_module_for(program: &ResidualProgram, namespace: &str, ta
     if program.kind == ProgramKind::Wasm {
         return Err("JavaScript native graph requires a JS or TS program".into());
     }
+    // Every function's lowered record, which the facts and the image read (`function_get`) in
+    // place of a loop-free function's tier-0 copy. No frame runs during an ahead compile.
+    for index in 0..program.function_count() {
+        program.lowered_function(index);
+    }
     let facts = crate::compile::aot_facts::analyze(program);
     let image = crate::vm::aot_image::lower(program, &facts, target)?;
     crate::vm::aot_image::object::emit(&image, namespace)

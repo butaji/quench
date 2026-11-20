@@ -31,10 +31,21 @@ impl Compiler<'_> {
         let wrapper = replay::arrow_wrapper(context.inherited_strict || self.module_goal);
         let (text, offset) = text_alone(snippet, wrapper, false, self.source_type);
         let mut allocator = self.lazy_arenas.pop().unwrap_or_else(|| super::arena(&text));
+        let saved_names = self.body_type_names();
         let nesting = if self.replay_target.is_some() { Nesting::Recorded(&self.lazy_bodies) } else { Nesting::Parse(&mut self.first_call.free_names, self.first_call.direct) };
-        let reparsed = reparse(&allocator, &text, offset, arrow.span.start.wrapping_sub(offset), self.source_type, nesting);
+        let mut reparsed = reparse(&allocator, &text, offset, arrow.span.start.wrapping_sub(offset), self.source_type, nesting, saved_names);
+        // The arrow's declarations join the program's, and it resolves its annotations against the names they were admitted with.
+        let names = match reparsed.as_mut() {
+            Ok(reparsed) => {
+                let declared = std::mem::take(&mut reparsed.declared);
+                let names = declared.type_names.clone();
+                self.declared_types.append(declared);
+                names
+            }
+            Err(_) => None,
+        };
         let id = match reparsed.as_ref().ok().and_then(|reparsed| reparsed.arrow()).filter(|again| again.span == arrow.span) {
-            Some(again) => self.compile_arrow_function(again, context),
+            Some(again) => self.with_type_names(names, |this| this.compile_arrow_function(again, context)),
             None => {
                 self.reject(arrow.span, LAZY_FUNCTION_BODY_NOT_ALONE);
                 self.compile_arrow_function(arrow, context)

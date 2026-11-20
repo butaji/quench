@@ -44,6 +44,10 @@ unsafe extern "C" fn gc_field_slot<H: Host>(context: *mut CallContext, reference
     HeapStage { vm: unsafe { machine::<H>(context) } }.field_slot(reference, index)
 }
 
+unsafe extern "C" fn gc_field_slot_for_write<H: Host>(context: *mut CallContext, reference: u64, index: u64) -> u64 {
+    HeapStage { vm: unsafe { machine::<H>(context) } }.field_slot_for_write(reference, index)
+}
+
 unsafe extern "C" fn gc_field_count<H: Host>(context: *mut CallContext, reference: u64) -> u64 {
     HeapStage { vm: unsafe { machine::<H>(context) } }.field_count(reference)
 }
@@ -126,6 +130,11 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
     fn field_slot(&mut self, reference: ir::Value, index: ir::Value) -> ir::Value {
         let context = self.body.core.context;
         self.call_leaf(gc_field_slot::<H> as *const () as usize, &[context, reference, index])
+    }
+
+    fn field_slot_for_write(&mut self, reference: ir::Value, index: ir::Value) -> ir::Value {
+        let context = self.body.core.context;
+        self.call_leaf(gc_field_slot_for_write::<H> as *const () as usize, &[context, reference, index])
     }
 
     fn field_count(&mut self, reference: ir::Value) -> ir::Value {

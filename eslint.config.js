@@ -3,8 +3,8 @@ export default [
     ignores: [
       "tests/node/**",
       "tests/node/**/*",
-      // The pinned Node source set (quench-node build input), upstream code.
-      "crates/quench-node/node/**",
+      // The pinned Node source set (quench build input), upstream code.
+      "crates/quench/node/**",
       "tests/node-compat/**",
       "tests/test262/**",
       "crates/quench-runtime/testdata/**",

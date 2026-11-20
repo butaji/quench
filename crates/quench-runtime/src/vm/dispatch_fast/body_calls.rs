@@ -16,7 +16,7 @@ use crate::staged::call_complete::{concrete_call_result, concrete_write_call_res
 /// job to deliver, or a body's callee's, whose call's register takes it, a construction's
 /// receiver (`this`) for a non-object. `None` for any other completion.
 #[inline(always)]
-pub(super) fn ends_run<H: Host>(cx: *mut LaneContext<H>, frame: &Frame, completion: Completion, this: Value, value: Value) -> Option<Resumed> {
+pub(super) fn ends_run<H: Host>(cx: *mut LaneContext<H>, frame: &ActivationView, completion: Completion, this: Value, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     match completion {
         Completion::ReturnsToNative | Completion::ResumesJob => {}
@@ -149,6 +149,7 @@ fn body_call<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall) -> u64 {
     let Some(target) = body_call_target_in_lane(cx, vm, callee, call.link()) else {
         return super::native_calls::body_native_call_in_lane(cx, call, callee, receiver);
     };
+    super::proven_callees::rebind_body_call(cx, vm, call.argc(), target);
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
     body_script_call(cx, call, unsafe { &*target }, receiver)
 }

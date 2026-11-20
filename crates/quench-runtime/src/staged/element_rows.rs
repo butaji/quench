@@ -146,7 +146,13 @@ fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (val
     let tagged_key = frame.key_word(stage, key)?;
     frame.stored(stage, Owner::Register(base), miss,
         #[inline(always)] |stage, frame, general| {
-            if !fact.is_subtype(Type::IMMEDIATE) { frame.array_store_gate(stage, object, word, general)?; }
+            if fact.is_subtype(Type::IMMEDIATE) {
+                // An immediate needs no log unless old records keep counts (`Stage::immediate_store_open`).
+                let open = stage.immediate_store_open();
+                stage.guard(open, general)?;
+            } else {
+                frame.array_store_gate(stage, object, word, general)?;
+            }
             let view = match frame.proved_view(stage, base, true) {
                 Some(view) => view,
                 None => dense_view(stage, frame, object, true, general)?,

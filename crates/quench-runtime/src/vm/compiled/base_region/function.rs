@@ -98,8 +98,7 @@ struct Sites<'a> {
     /// The index of `function` in its program.
     id: u32,
     callees: &'a Callees,
-    facts: &'a [Option<DirectFacts>],
-    /// By PC, every callee the call site recorded (`Callees::targets`).
+    /// By PC, every callee the call site recorded, the first the one it may inline (`Callees::targets`).
     targets: &'a [Vec<DirectFacts>],
     context: Context,
     registers: u16,
@@ -165,7 +164,7 @@ pub(in crate::vm::compiled) struct ShapeProto {
 /// pure entry cost.
 ///
 /// # Safety
-/// Each of `callees` names its function's live entry cell (`Callees::facts`).
+/// Each of `callees` names its function's live entry cell (`Callees::targets`).
 pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, spec: &BodySpec, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     unsafe { build(region, spec, (Ending::Body, Views::Frame), callees, helpers) }
@@ -176,7 +175,7 @@ pub(in crate::vm::compiled) unsafe fn build_body(region: &LoopRegion, spec: &Bod
 /// calls inlined or chained as a body's are, the rest of its rows its own.
 ///
 /// # Safety
-/// Each of `callees` names its function's live entry cell (`Callees::facts`).
+/// Each of `callees` names its function's live entry cell (`Callees::targets`).
 pub(in crate::vm::compiled) unsafe fn build_region(region: &LoopRegion, spec: &BodySpec, views: ElementViews, callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     // SAFETY: the caller's contract.
     unsafe { build(region, spec, (Ending::Region, views.into()), callees, helpers) }
@@ -212,12 +211,12 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
 unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, Views), callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
-    let (facts, targets) = unsafe { (callees.facts(), callees.targets()) };
+    let targets = unsafe { callees.targets() };
     let function = spec.known.program.function(spec.function as usize);
     // The prototypes the entry may check and the rows may fold on: none where the function's rows reshape an object.
     let classes = super::declared::class_prototypes(function, spec.known.classes);
     let known = Known { classes: &classes, ..spec.known };
-    let sites = Sites { function, id: spec.function, callees, facts: &facts, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known, ending, views };
+    let sites = Sites { function, id: spec.function, callees, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known, ending, views };
     let built = assemble(region, spec, sites, helpers).map(|body| with_native_holders(body, callees));
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built
@@ -260,7 +259,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
     let reached = reachable(&span, &stitched.rows)?;
-    if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) {
+    // An image body covers every function of its program: one whose first record leaves runs it in the lane's interpreter.
+    if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) && helpers != LaneHelpers::Ahead {
         return Err("first instruction leaves".to_string());
     }
     let mut rows: Vec<Decoded> = stitched.rows.into_iter().enumerate()
@@ -300,7 +300,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     for (row, (int_a, int_b)) in decoded.iter_mut().zip(ints) {
         (row.int_a, row.int_b) = (int_a, int_b);
     }
-    let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities().collect();
+    let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities(region.header as usize..=region.backedge as usize).collect();
     identities.sort_unstable();
     identities.dedup();
     // The entry guards hold the pinned int32 and double webs live at the header (`entry_rows`, which every entry runs), so
@@ -310,17 +310,20 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let proven_args = super::call_args::proven_arguments(function, &spec.known.program.constants, &seeded, &pinned_ints).unwrap_or_default();
     let chain_holders = std::cell::RefCell::new(Vec::new());
     let builtins = sites.callees.builtins();
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
+    let layout = Layout { id: spec.function, span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     let linked = link(&layout, &planned)?;
     residuals::report_rows(&layout, region.header, &decoded, &planned, linked.code.len());
-    let generic: Box<[u32]> = (0..decoded.len()).filter(|&k| reached.contains(k) && decoded[k].step == Some(Step::Leave) && !layout.inlined(k as u32))
-        .map(|k| layout.record(k as u32)).collect();
+    let generic = generic_records(&layout, &decoded, &reached, helpers);
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached.contains(*k) && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.count() - exits;
-    let bare = realm.is_none() && decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls() && !row.step.is_some_and(Step::reads_payload));
+    // A bare run binds no window header (`stencil_run::run_bare`), so a body that reads the captures word
+    // (`CONTEXT_BODY`: a capture read of any row, or an entry identity test of a captured callee) is no bare one.
+    let reads_captures = !layout.identities.is_empty() || !region.captures.is_empty() || !region.stored_captures.is_empty();
+    let bare = realm.is_none() && !reads_captures
+        && decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls() && !row.step.is_some_and(Step::reads_payload));
     let records = planned.iter_mut().flat_map(|row| std::mem::take(&mut row.owned)).collect();
     let atoms = held_atoms(&decoded);
     // A class-typed parameter's prototype shape joins the holders the body subscribes to, so a value change there retires it.

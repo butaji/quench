@@ -60,7 +60,7 @@ macro_rules! host_steps {
 host_steps! {
     WasmArrayCopy, WasmArrayFill, WasmArrayGet, WasmArrayGetS, WasmArrayGetU,
     WasmArrayInitData, WasmArrayInitElem, WasmArrayLen, WasmArrayNew, WasmArrayNewData,
-    WasmArrayNewDefault, WasmArrayNewElem, WasmArrayNewFixed, WasmArraySet,
+    WasmArrayNewDefault, WasmArrayNewElem, WasmArrayNewFixed, WasmArraySet, WasmArrayGetRaw, WasmArraySetRaw,
     WasmAtomicAccess, WasmAtomicFence,
     WasmDescriptorCast, WasmDescriptorTest,
     WasmExceptionMatch, WasmExceptionNew, WasmExceptionPayload,
@@ -68,7 +68,7 @@ host_steps! {
     WasmMemoryInit,
     WasmRefAsNonNull, WasmRefCast, WasmRefEq, WasmRefGetDesc, WasmRefIsNull, WasmRefTest,
     WasmStructGet, WasmStructGetS, WasmStructGetU, WasmStructNew, WasmStructNewDefault,
-    WasmStructNewDefaultDesc, WasmStructNewDesc, WasmStructSet,
+    WasmStructNewDefaultDesc, WasmStructNewDesc, WasmStructSet, WasmStructGetRaw, WasmStructSetRaw,
     WasmTableCopy, WasmTableFill, WasmTableGet, WasmTableGrow, WasmTableInit, WasmTableSet,
     WasmTableSize, WasmThrowRef,
 }
@@ -80,15 +80,15 @@ pub(crate) fn operands(instruction: WideInstruction) -> [Option<Register>; 2] {
     let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
     match instruction.op() {
         Op::WasmArrayCopy | Op::WasmArrayFill | Op::WasmArrayInitData | Op::WasmArrayInitElem
-        | Op::WasmArraySet | Op::WasmStructSet | Op::WasmTableFill | Op::WasmTableCopy
+        | Op::WasmArraySet | Op::WasmStructSet | Op::WasmArraySetRaw | Op::WasmStructSetRaw | Op::WasmTableFill | Op::WasmTableCopy
         | Op::WasmTableInit | Op::WasmMemoryInit => [Some(a), Some(b)],
-        Op::WasmArrayGet | Op::WasmArrayGetS | Op::WasmArrayGetU | Op::WasmArrayNew
+        Op::WasmArrayGet | Op::WasmArrayGetRaw | Op::WasmArrayGetS | Op::WasmArrayGetU | Op::WasmArrayNew
         | Op::WasmDescriptorCast | Op::WasmDescriptorTest | Op::WasmExceptionMatch | Op::WasmRefEq
         | Op::WasmTableGet | Op::WasmTableSet | Op::WasmTableGrow => [Some(b), Some(c)],
         Op::WasmThrowRef => [Some(a), None],
         Op::WasmArrayLen | Op::WasmArrayNewDefault | Op::WasmExceptionPayload | Op::WasmExternalConversion
         | Op::WasmI31 | Op::WasmRefAsNonNull | Op::WasmRefCast | Op::WasmRefGetDesc | Op::WasmRefIsNull
-        | Op::WasmRefTest | Op::WasmStructGet | Op::WasmStructGetS | Op::WasmStructGetU
+        | Op::WasmRefTest | Op::WasmStructGet | Op::WasmStructGetRaw | Op::WasmStructGetS | Op::WasmStructGetU
         | Op::WasmTableSize => [Some(b), None],
         _ => [None, None],
     }
@@ -100,7 +100,7 @@ fn defines_nothing(op: Op) -> bool {
     matches!(
         op,
         Op::WasmArrayCopy | Op::WasmArrayFill | Op::WasmArrayInitData | Op::WasmArrayInitElem
-            | Op::WasmArraySet | Op::WasmStructSet | Op::WasmTableSet | Op::WasmTableFill
+            | Op::WasmArraySet | Op::WasmStructSet | Op::WasmArraySetRaw | Op::WasmStructSetRaw | Op::WasmTableSet | Op::WasmTableFill
             | Op::WasmTableCopy | Op::WasmTableInit | Op::WasmMemoryInit | Op::WasmAtomicFence
             | Op::WasmThrowRef
     )

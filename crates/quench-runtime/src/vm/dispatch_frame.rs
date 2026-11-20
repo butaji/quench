@@ -128,6 +128,40 @@ pub(super) struct ExecutingProgram {
     pub(super) retained: Option<Rc<ResidualProgram>>,
 }
 
+impl ExecutingProgram {
+    /// The residual the executing program runs: its retained residual, else the loop's entry.
+    #[inline(always)]
+    fn residual<'a>(&'a self, entry_program: &'a ResidualProgram) -> &'a ResidualProgram {
+        self.retained.as_deref().unwrap_or(entry_program)
+    }
+}
+
+impl Frame {
+    /// Sets the fields every activation places: its function, program, entry PC, environment,
+    /// receiver and `with` base. The caller sets its context and `fixed_this`.
+    #[inline(always)]
+    fn place(&mut self, id: u32, program: ProgramId, env: Value, this: Value, with_base: usize) {
+        self.function = id;
+        self.program = program;
+        self.pc = 0;
+        self.pc_is_resume = true;
+        self.binding_site_pc = None;
+        self.env = env;
+        self.this = this;
+        self.captured = false;
+        self.with_base = with_base;
+    }
+}
+
+/// Whether an activation's `this` is fixed on its frame (`Frame::fixed_this`): the activation binds its
+/// own receiver (`inherits_this` is false: an arrow or an eval reads a lexical `this` instead), and the
+/// receiver is initialized (a derived constructor's stays deleted until `super()`). Every frame's
+/// `fixed_this` is derived through this one predicate.
+#[inline(always)]
+pub(super) fn this_is_fixed(inherits_this: bool, this: Value) -> bool {
+    !inherits_this && !this.is_deleted()
+}
+
 /// An executing program set aside while an in-loop callee of another program runs.
 pub(super) struct SavedProgram {
     pub(super) id: ProgramId,
@@ -175,8 +209,6 @@ impl<H: Host> Vm<H> {
     ) -> GeneralCodeCursor {
         let function_code = program.function(function as usize);
         let interprets = self.execution_mode.allows_dynamic_execution();
-        #[cfg(feature = "native-execution")]
-        let interprets = interprets && self.programs.native_js_code(program_id).is_none();
         let admitted = interprets && lane && self.admits_in_lane(program);
         let view = if admitted { self.entry_lane_view(program_id, function) } else { std::ptr::null() };
         // Native transitions read only boundary metadata from packed code;
@@ -251,7 +283,7 @@ impl<H: Host> Vm<H> {
         }
         if !observable {
             // Nothing reads the implicit bindings, and the frame's own `this` is authoritative.
-            frame.fixed_this = !arrow && !frame.this.is_deleted();
+            frame.fixed_this = this_is_fixed(arrow, frame.this);
             return;
         }
         if !arrow && frame.function != super::ROOT_FUNCTION_ID {
@@ -269,7 +301,7 @@ impl<H: Host> Vm<H> {
             let atom = self.runtime_atoms.lexical_this;
             frame.dynamic_bindings.push((atom, frame.this));
         }
-        frame.fixed_this = !inherits_this && !frame.this.is_deleted();
+        frame.fixed_this = this_is_fixed(inherits_this, frame.this);
     }
 
     #[inline(never)]
@@ -363,10 +395,7 @@ impl<H: Host> Vm<H> {
             .map_err(|crate::stack::StackExhausted| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
         let program = self.active_program;
         let with_base = self.with_stack.len();
-        let mut frame = self
-            .frame_pool
-            .pop()
-            .unwrap_or_else(|| Box::new(Frame::empty(program, with_base)));
+        let mut frame = self.pooled_frame();
         // Each slot is written once: parameters land where the function
         // keeps them, every other local and register takes its default.
         let local_arguments = &arguments[..arguments
@@ -380,16 +409,8 @@ impl<H: Host> Vm<H> {
                 .resize(usize::from(function.locals), Value::UNDEFINED);
         }
         frame.prepare_wasm_registers(function, arguments);
+        frame.place(id, program, env, Value::UNDEFINED, with_base);
         frame.context = CallContext::Internal;
-        frame.function = id;
-        frame.program = program;
-        frame.pc = 0;
-        frame.pc_is_resume = true;
-        frame.binding_site_pc = None;
-        frame.env = env;
-        frame.this = Value::UNDEFINED;
-        frame.captured = false;
-        frame.with_base = with_base;
         frame.fixed_this = false;
         self.frames.push(frame);
         Ok(call_guard)
@@ -414,24 +435,13 @@ impl<H: Host> Vm<H> {
             .expect("lane Wasm activation storage was admitted before materialization");
         let program = self.active_program;
         let with_base = self.with_stack.len();
-        let mut frame = self
-            .frame_pool
-            .pop()
-            .unwrap_or_else(|| Box::new(Frame::empty(program, with_base)));
+        let mut frame = self.pooled_frame();
         frame.locals.clear();
         frame.registers.clear();
         frame.registers.extend_from_slice(registers);
         frame.initialized_registers = frame.initialized_registers.max(registers.len());
+        frame.place(id, program, env, Value::UNDEFINED, with_base);
         frame.context = CallContext::Internal;
-        frame.function = id;
-        frame.program = program;
-        frame.pc = 0;
-        frame.pc_is_resume = true;
-        frame.binding_site_pc = None;
-        frame.env = env;
-        frame.this = Value::UNDEFINED;
-        frame.captured = false;
-        frame.with_base = with_base;
         frame.fixed_this = false;
         self.frames.push(frame);
         call_guard
@@ -468,6 +478,7 @@ impl<H: Host> Vm<H> {
         let outcome = Err(self.guest_exhaustion_error(p.kind));
         let mut frame = self.frames.pop().unwrap();
         self.deactivate_frame(&mut frame, &outcome);
+        self.pool_frame(frame);
         match outcome {
             Err(error) => error,
             Ok(_) => unreachable!(),
@@ -530,8 +541,6 @@ impl<H: Host> Vm<H> {
         let program = self.active_program;
         let runs_in_lane = Self::FRAME_ENTRY_LANE_RUNS
             && !self.tier_may_run(crate::jit_mode::Tier::ANY);
-        #[cfg(feature = "native-execution")]
-        let runs_in_lane = runs_in_lane && self.programs.native_js_code(program).is_none();
         if !runs_in_lane
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || !self.admits_in_lane(p)
@@ -649,10 +658,27 @@ impl<H: Host> Vm<H> {
         parent: Value,
         this: Value,
     ) -> Result<Value, JsError> {
-        if function.is_arrow {
-            return Ok(self.captured_lexical_this(parent).unwrap_or(this));
+        let captured_this = if function.is_arrow { self.captured_lexical_this(parent) } else { None };
+        self.activation_receiver(function, captured_this, this)
+    }
+
+    /// The receiver an activation of `function` binds: uninitialized for a derived constructor,
+    /// an arrow's captured `this` (uncoerced, the receiver where none is captured), else the
+    /// receiver as a call coerces it.
+    #[inline(always)]
+    fn activation_receiver(
+        &mut self,
+        function: &crate::bytecode::Function,
+        captured_this: Option<Value>,
+        this: Value,
+    ) -> Result<Value, JsError> {
+        if function.derived_constructor {
+            Ok(Value::DELETED)
+        } else if function.is_arrow {
+            Ok(captured_this.unwrap_or(this))
+        } else {
+            self.call_this_value(this, function.strict)
         }
-        self.call_this_value(this, function.strict)
     }
 
     fn activate_plain_frame(
@@ -676,20 +702,8 @@ impl<H: Host> Vm<H> {
         };
         frame.reset_locals_undefined(local_count);
         self.initialize_frame_invocation(p, &mut frame, function, context, args);
-        frame.function = id;
-        frame.program = self.active_program;
-        frame.pc = 0;
-        frame.pc_is_resume = true;
-        frame.binding_site_pc = None;
-        frame.env = parent;
-        frame.this = this;
-        frame.fixed_this = !this.is_deleted();
-        frame.captured = false;
-        frame.with_base = self.with_stack.len();
-        if self.with_scope_entered {
-            self.with_stack
-                .extend(self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind));
-        }
+        self.place_plain_frame(&mut frame, id, (parent, this));
+        self.push_inherited_with_scopes(parent, function, p.kind);
         // A `new.target` set for this activation has no observable binding to land in.
         if self.take_construction_target(context).is_some() {
             frame.context = frame.context.constructed();
@@ -752,7 +766,7 @@ impl<H: Host> Vm<H> {
         let local_count = if function.call_plan(p).addresses_locals { usize::from(function.locals) } else { 0 };
         frame.reset_locals_undefined(local_count);
         self.initialize_frame_invocation(p, &mut frame, function, context, passed);
-        self.place_detached_frame(&mut frame, id, (env, this));
+        self.place_plain_frame(&mut frame, id, (env, this));
         frame.with_objects = self.captured_with_objects_for_function(env, function.inherited_with_scope, p.kind);
         // A `new.target` set for this activation has no observable binding to land in.
         if self.take_construction_target(context).is_some() {
@@ -762,20 +776,12 @@ impl<H: Host> Vm<H> {
         Some(frame)
     }
 
-    /// Places the detached frame of `id` (`detached_plain_frame`) at its function's start in
-    /// the active program, with environment `env` and bound receiver `this`, as
-    /// `activate_plain_frame` places a pushed one.
-    fn place_detached_frame(&self, frame: &mut Frame, id: u32, (env, this): (Value, Value)) {
-        frame.function = id;
-        frame.program = self.active_program;
-        frame.pc = 0;
-        frame.pc_is_resume = true;
-        frame.binding_site_pc = None;
-        frame.env = env;
-        frame.this = this;
-        frame.fixed_this = !this.is_deleted();
-        frame.captured = false;
-        frame.with_base = self.with_stack.len();
+    /// Places a plain activation's frame of `id` at its function's start in the active program,
+    /// with environment `env` and bound receiver `this`: the placement of `activate_plain_frame`
+    /// and of a detached frame (`detached_plain_frame`).
+    fn place_plain_frame(&self, frame: &mut Frame, id: u32, (env, this): (Value, Value)) {
+        frame.place(id, self.active_program, env, this, self.with_stack.len());
+        frame.fixed_this = this_is_fixed(false, this);
     }
 
     /// A frame from the pool, or a fresh one; its fields are set by activation.
@@ -798,26 +804,9 @@ impl<H: Host> Vm<H> {
         let function = &p.function(id as usize);
         let mut frame = self.pooled_frame();
         self.bind_activation_arguments(p, &mut frame, function, context, args)?;
-        frame.function = id;
-        frame.program = self.active_program;
-        frame.pc = 0;
-        frame.pc_is_resume = true;
-        frame.binding_site_pc = None;
-        frame.env = parent;
-        let arrow = function.is_arrow;
-        let derived = function.derived_constructor;
-        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
-        let this = if derived {
-            Value::DELETED
-        } else {
-            captured_this.unwrap_or(this)
-        };
-        frame.this = if derived || arrow {
-            this
-        } else {
-            self.call_this_value(this, function.strict)?
-        };
-        frame.captured = false;
+        let captured_this = if function.is_arrow { self.captured_lexical_this(parent) } else { None };
+        let this = self.activation_receiver(function, captured_this, this)?;
+        frame.place(id, self.active_program, parent, this, self.with_stack.len());
         if id == super::ROOT_FUNCTION_ID
             && self.programs.is_module(frame.program)
             && let Some(environment) = self.programs.module_environment(frame.program)
@@ -825,28 +814,12 @@ impl<H: Host> Vm<H> {
             frame.env = environment;
             frame.captured = true;
         }
-        frame.with_base = self.with_stack.len();
-        if self.with_scope_entered {
-            self.with_stack
-                .extend(self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind));
-        }
+        self.push_inherited_with_scopes(parent, function, p.kind);
         if id == super::ROOT_FUNCTION_ID {
             self.bind_module_imports(&mut frame)?;
         }
-        let new_target = self.take_construction_target(context).unwrap_or(Value::UNDEFINED);
-        self.initialize_activation_bindings(
-            &mut frame,
-            arrow,
-            new_target,
-            id == super::ROOT_FUNCTION_ID
-                || function.activation_bindings_observable(p),
-        );
-        // An arrow whose creator's `this` binding is initialized keeps that receiver: the
-        // binding never changes once initialized (`Vm::lexical_this`).
-        frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
-        frame.prepare_registers_for(function);
-        frame.bind_register_parameters(function, args);
-        frame.initialize_promoted_registers(function, args);
+        let observable = id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(p);
+        self.bind_activation_registers(&mut frame, function, context, args, captured_this, observable);
         self.frames.push(frame);
         let frame_index = self.frames.len() - 1;
         if id == super::ROOT_FUNCTION_ID
@@ -857,6 +830,35 @@ impl<H: Host> Vm<H> {
                 .set_module_environment(self.frames[frame_index].program, environment);
         }
         Ok(frame_index)
+    }
+
+    /// Pushes the `with` objects an activation of `function` inherits from its environment `env`.
+    #[inline(always)]
+    fn push_inherited_with_scopes(&mut self, env: Value, function: &crate::bytecode::Function, kind: crate::bytecode::ProgramKind) {
+        if self.with_scope_entered {
+            self.with_stack
+                .extend(self.captured_with_objects_for_function(env, function.inherited_with_scope, kind));
+        }
+    }
+
+    /// Binds an activation's implicit bindings, then its registers and parameters, once its
+    /// receiver and `with` scopes are placed. `observable` is whether its bindings are observed.
+    fn bind_activation_registers(
+        &mut self,
+        frame: &mut Frame,
+        function: &crate::bytecode::Function,
+        context: CallContext,
+        args: &[Value],
+        captured_this: Option<Value>,
+        observable: bool,
+    ) {
+        let new_target = self.take_construction_target(context).unwrap_or(Value::UNDEFINED);
+        self.initialize_activation_bindings(frame, function.is_arrow, new_target, observable);
+        // An arrow whose creator's `this` binding is initialized keeps that receiver: the
+        // binding never changes once initialized (`Vm::lexical_this`).
+        frame.fixed_this |= captured_this.is_some_and(|this| this_is_fixed(false, this));
+        frame.prepare_registers_for(function);
+        frame.place_parameters(function, args);
     }
 
     /// Replace the active frame for a terminal user call.  This is the
@@ -882,45 +884,12 @@ impl<H: Host> Vm<H> {
         let mut frame = old;
         Self::recycle_frame(&mut frame);
         self.bind_activation_arguments(p, &mut frame, function, context, args)?;
-        frame.program = self.active_program;
-        frame.function = id;
-        frame.pc = 0;
-        frame.pc_is_resume = true;
-        frame.binding_site_pc = None;
-        frame.env = parent;
-        let arrow = function.is_arrow;
-        let derived = function.derived_constructor;
-        let captured_this = if arrow { self.captured_lexical_this(parent) } else { None };
-        let this = if derived {
-            Value::DELETED
-        } else {
-            captured_this.unwrap_or(this)
-        };
-        frame.this = if derived || arrow || function.strict {
-            this
-        } else if this.is_null() || this.is_undefined() {
-            self.realm.globals
-        } else {
-            self.box_object(this)?
-        };
-        frame.captured = false;
-        frame.with_base = self.with_stack.len();
-        self.with_stack
-            .extend(self.captured_with_objects_for_function(parent, function.inherited_with_scope, p.kind));
-        let new_target = self.take_construction_target(context).unwrap_or(Value::UNDEFINED);
-        self.initialize_activation_bindings(
-            &mut frame,
-            arrow,
-            new_target,
-            id == super::ROOT_FUNCTION_ID
-                || function.activation_bindings_observable(p),
-        );
-        // An arrow whose creator's `this` binding is initialized keeps that receiver: the
-        // binding never changes once initialized (`Vm::lexical_this`).
-        frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
-        frame.prepare_registers_for(function);
-        frame.bind_register_parameters(function, args);
-        frame.initialize_promoted_registers(function, args);
+        let captured_this = if function.is_arrow { self.captured_lexical_this(parent) } else { None };
+        let this = self.activation_receiver(function, captured_this, this)?;
+        frame.place(id, self.active_program, parent, this, self.with_stack.len());
+        self.push_inherited_with_scopes(parent, function, p.kind);
+        let observable = id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(p);
+        self.bind_activation_registers(&mut frame, function, context, args, captured_this, observable);
         let placeholder = std::mem::replace(&mut self.frames[frame_index], frame);
         self.frame_pool.push(placeholder);
         Ok(())
@@ -938,7 +907,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<(), JsError> {
         let fixed = usize::from(function.params) - usize::from(function.rest);
-        // Promoted parameters live in registers; `initialize_promoted_registers` clears their
+        // Promoted parameters live in registers; `place_parameters` clears their
         // local slots once the frame is set up, so every fixed parameter is copied here. Every
         // other local starts undefined.
         let passed = fixed.min(args.len());
@@ -993,8 +962,10 @@ impl<H: Host> Vm<H> {
                 .expect("only an `arguments` binding is unmaterialized"),
         );
         let context = frame.context;
-        let args = frame.original_arguments.clone();
-        let arguments = self.activation_arguments_object(function, context, &args)?;
+        let args: *const [Value] = self.frames[f].original_arguments.as_slice();
+        // SAFETY: the frame stays on the stack while its `arguments` object is made, nothing in that
+        // path writes its kept values, and the buffer does not move when `frames` grows.
+        let arguments = self.activation_arguments_object(function, context, unsafe { &*args })?;
         self.frames[f].locals[slot] = arguments;
         Ok(arguments)
     }
@@ -1462,19 +1433,12 @@ impl<H: Host> Vm<H> {
         self.with_stack.truncate(frame.with_base);
     }
 
-    /// Return a Wasm frame the lane pushed to the pool. A Wasm activation
-    /// touches only its locals and registers and runs no global lexical
-    /// declarations, so only its register storage needs bounding.
+    /// Return a Wasm frame the lane pushed to the pool.
     #[inline(always)]
     pub(super) fn retire_wasm_frame(&mut self) {
-        let mut frame = self.frames.pop().expect("pending frame is active");
+        let frame = self.frames.pop().expect("pending frame is active");
         self.with_stack.truncate(frame.with_base);
-        if frame.registers.capacity() > RETAINED_FRAME_VALUES {
-            frame.registers.clear();
-            frame.registers.shrink_to(RETAINED_FRAME_VALUES);
-            frame.initialized_registers = 0;
-        }
-        self.frame_pool.push(frame);
+        self.pool_frame(frame);
     }
 
     pub(super) fn pool_frame(&mut self, frame: impl Into<Box<Frame>>) {
@@ -1877,7 +1841,7 @@ impl<H: Host> Vm<H> {
             let entering_after_lane_exit = std::mem::replace(&mut after_lane_exit, resumes_lane_exit);
             let resumed = std::mem::take(&mut resumes_lane_exit);
             #[cfg(feature = "native-execution")]
-            if let Some(step) = entered.take().or_else(|| self.js_linked_frame_entry(frame, pc, stop_pc, allow_inline_calls)) {
+            if let Some(step) = entered.take() {
                 pc = step.next_pc;
                 native_step = Some(step);
             }
@@ -2123,13 +2087,6 @@ impl<H: Host> Vm<H> {
             // The lane may have left in another program's frame (above).
             // SAFETY: as for `p` at the top of the loop.
             let p = unsafe { &*executing_residual };
-            // A lane of another program can leave in a linked callee's frame.
-            // Enter that frame's native body at the top instead of interpreting
-            // the first instruction at the lane's exit PC.
-            #[cfg(feature = "native-execution")]
-            if native_step.is_none() && self.programs.native_js_code(self.frames[frame].program).is_some() {
-                continue;
-            }
             if STOPS && stop_pc == Some(pc)
                 && native_step.as_ref().is_none_or(|step| step.instruction_pc == pc)
             {
@@ -2731,6 +2688,7 @@ impl<H: Host> Vm<H> {
         fast_lane: bool,
     ) -> Result<(usize, usize), JsError> {
         loop {
+            // The clone keeps the residual alive for the whole iteration, past any switch of `executing`.
             let retained = executing.retained.clone();
             let p = retained.as_deref().unwrap_or(entry_program);
             let function = self.frames[frame].function as usize;
@@ -2746,6 +2704,7 @@ impl<H: Host> Vm<H> {
                     let result = Err(unhandled);
                     let mut failed_frame = self.frames.pop().unwrap();
                     self.deactivate_frame(&mut failed_frame, &result);
+                    self.pool_frame(failed_frame);
                     frame = pending.caller;
                     pc = self.frames[frame].pc;
                     if let Some(saved) = pending.caller_program.take() {
@@ -2753,11 +2712,10 @@ impl<H: Host> Vm<H> {
                         executing.retained = saved.retained;
                         self.set_active_program(saved.id);
                     }
-                    let caller_residual = executing.retained.clone();
                     *cursor = pending.caller_cursor.unwrap_or_else(|| {
                         self.general_cursor(
                             executing.id,
-                            caller_residual.as_deref().unwrap_or(entry_program),
+                            executing.residual(entry_program),
                             self.frames[frame].function,
                             fast_lane,
                         )
@@ -2779,13 +2737,11 @@ impl<H: Host> Vm<H> {
                     // A trap leaving an exported function's frame reaches its JavaScript
                     // caller as a `RuntimeError`, as the native call's (`call_wasm_exported_function`).
                     if matches!(pending.completion, CallCompletion::WasmExport(_)) {
-                        let caller_residual = executing.retained.clone();
-                        error = self.trap_raised_in_javascript(caller_residual.as_deref().unwrap_or(entry_program), error);
+                        error = self.trap_raised_in_javascript(executing.residual(entry_program), error);
                     }
                     // An async callee's or in-place request's abrupt completion settles its
                     // promise, which the call yields; the caller resumes after the call.
-                    let caller_residual = executing.retained.clone();
-                    error = match self.settle_abandoned_call(caller_residual.as_deref().unwrap_or(entry_program), (frame, pending.destination), &mut pending.completion, error) {
+                    error = match self.settle_abandoned_call(executing.residual(entry_program), (frame, pending.destination), &mut pending.completion, error) {
                         Ok(()) => return Ok((frame, pc)),
                         Err(next) => next,
                     };

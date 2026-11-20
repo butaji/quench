@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fastest JavaScript runtime written in Rust? Quench, measured</title>
+<meta name="description" content="Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Measured with JIT off: 1.49x to 2.57x the best of Node and Bun on V8-v7. Honest numbers and weak spots." />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#EF5102" />
+<link rel="canonical" href="https://quench.run/fastest-javascript-runtime-in-rust/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
+<link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Quench" />
+<meta property="og:url" content="https://quench.run/fastest-javascript-runtime-in-rust/" />
+<meta property="og:title" content="Fastest JavaScript runtime written in Rust? Quench, measured" />
+<meta property="og:description" content="Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Measured with JIT off: 1.49x to 2.57x the best of Node and Bun on V8-v7. Honest numbers and weak spots." />
+<meta property="og:image" content="https://quench.run/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="article:modified_time" content="2026-11-20" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Fastest JavaScript runtime written in Rust? Quench, measured" />
+<meta name="twitter:description" content="Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Measured with JIT off: 1.49x to 2.57x the best of Node and Bun on V8-v7. Honest numbers and weak spots." />
+<meta name="twitter:image" content="https://quench.run/og.png" />
+<link rel="preload" href="/assets/fonts/inter.woff2" as="font" type="font/woff2" crossorigin="" />
+<link rel="stylesheet" href="/blog/blog.css" />
+<style>.prose .answer{background:#FFF3EC;border-left:4px solid #EF5102;border-radius:8px;padding:1rem 1.25rem;margin-top:1.25rem;font-size:1.1rem;color:#1C1C1E}.prose .small{font-size:.9rem;color:#555B66}</style>
+<script type="application/ld+json">[{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Quench", "url": "https://quench.run/", "applicationCategory": "DeveloperApplication", "applicationSubCategory": "JavaScript, TypeScript and WebAssembly runtime", "operatingSystem": "Linux", "programmingLanguage": "Rust", "license": "https://opensource.org/licenses/MIT", "codeRepository": "https://github.com/butaji/quench", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "isAccessibleForFree": true, "description": "JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables."}, {"@context": "https://schema.org", "@type": "TechArticle", "headline": "A fast JavaScript runtime written in Rust", "description": "Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Measured with JIT off: 1.49x to 2.57x the best of Node and Bun on V8-v7. Honest numbers and weak spots.", "url": "https://quench.run/fastest-javascript-runtime-in-rust/", "dateModified": "2026-11-20", "datePublished": "2026-11-20", "author": {"@type": "Organization", "name": "Quench", "url": "https://quench.run/"}, "about": {"@type": "SoftwareApplication", "name": "Quench", "url": "https://quench.run/"}}, {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Quench", "item": "https://quench.run/"}, {"@type": "ListItem", "position": 2, "name": "A fast JavaScript runtime written in Rust", "item": "https://quench.run/fastest-javascript-runtime-in-rust/"}]}, {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "What is the fastest JavaScript runtime written in Rust?", "acceptedAnswer": {"@type": "Answer", "text": "Quench is a JavaScript, TypeScript and WebAssembly runtime whose engine is written in Rust. With JIT disabled in all engines, it scores 1.49x to 2.57x the faster of Node --jitless and Bun on all 8 V8-v7 benchmarks (14 November 2026). It has not been benchmarked against other Rust engines such as Boa, so we do not claim it is the fastest of them."}}, {"@type": "Question", "name": "Is Deno written in Rust?", "acceptedAnswer": {"@type": "Answer", "text": "Deno's runtime layer is written in Rust, but it executes JavaScript with V8, which is written in C++. Quench's engine itself (parser via OXC, interpreter, object model, garbage collector, JIT tiers and AOT compiler) is Rust."}}, {"@type": "Question", "name": "Is Quench faster than Node.js?", "acceptedAnswer": {"@type": "Answer", "text": "With JIT off: yes on all 8 V8-v7 benchmarks, and no on the JetStream 3 geometric mean (34.3 vs 39.7). With JIT on, Node is faster; Quench's JIT tiers are not yet competitive."}}]}]</script>
+</head>
+<body>
+<div class="wrap">
+<header class="topbar">
+<a class="brand" href="/" aria-label="Quench home">Quench<span>.</span></a>
+<nav class="badges" aria-label="Links">
+<a class="badge" href="/benchmarks/">Benchmarks</a>
+<a class="badge" href="/blog/">Blog</a>
+<a class="badge" href="https://github.com/butaji/quench">GitHub</a>
+</nav>
+</header>
+<main>
+<article>
+<header class="frame hero">
+<div class="tile orange side"><div class="stripes"></div><div class="vt"><span>RUST RUNTIME</span><span>NOVEMBER 2026</span></div></div>
+<div class="tile title">
+<p class="mono meta"><a href="/">quench.run</a> / updated <time datetime="2026-11-20">20 November 2026</time></p>
+<h1>A fast JavaScript runtime written in Rust</h1>
+<p class="lead">What Quench is, how fast it is today, and where it is still slower.</p>
+</div>
+<div class="tile metal" aria-hidden="true"></div>
+</header>
+<div class="frame"><div class="tile prose">
+<p class="answer"><b>Quench</b> is a JavaScript, TypeScript and WebAssembly runtime whose whole engine is written in Rust. With JIT turned off in every engine, it scores <b>1.49x to 2.57x</b> the faster of Node <code>--jitless</code> and Bun on all 8 V8-v7 benchmarks, at a fraction of their memory. On JetStream 3 with JIT off it sits between them (34.3 vs Node 39.7 and Bun 32.2). Its JIT tiers are not yet competitive with Node or Bun with their JITs on.</p>
+<h2 id="comparison">Quench vs Node.js, Bun and Deno</h2>
+<div class="table-scroll"><table><thead><tr><th></th><th>Quench</th><th>Node.js</th><th>Bun</th><th>Deno</th></tr></thead><tbody><tr><td>Written in</td><td>Rust (engine and runtime)</td><td>C++ (V8) and JavaScript</td><td>Zig, C++ (JavaScriptCore)</td><td>Rust runtime, C++ engine (V8)</td></tr><tr><td>V8-v7 score, JIT off, geomean of 8</td><td><b>4,980</b></td><td>2,349</td><td>1,979</td><td>not measured</td></tr><tr><td>V8-v7 peak memory, JIT off, geomean</td><td><b>11.4 MB</b></td><td>65.4 MB</td><td>26.8 MB</td><td>not measured</td></tr><tr><td>JetStream 3 score, JIT off, 56 tests</td><td>34.3</td><td><b>39.7</b></td><td>32.2</td><td>not measured</td></tr><tr><td>JetStream 3 peak memory, JIT off</td><td><b>28.5 MB</b></td><td>110.1 MB</td><td>47.7 MB</td><td>not measured</td></tr><tr><td>Test262</td><td>53,353 passing, 0 failing, 53 waived</td><td>not measured</td><td>not measured</td><td>not measured</td></tr><tr><td>JIT performance</td><td>JIT tiers not yet competitive</td><td>mature JIT</td><td>mature JIT</td><td>mature JIT (V8)</td></tr><tr><td>Packaged releases</td><td>no, build from source</td><td>yes</td><td>yes</td><td>yes</td></tr></tbody></table></div><p class="small">Benchmark rows: interpreter only in every engine (<code>quench --no-jit</code>, <code>node --jitless</code>, Bun with <code>BUN_JSC_useJIT=0</code>), one 4-core Linux machine. V8-v7 measured 14 November 2026, JetStream 3 on 17 November 2026. Bold marks the best measured value. Deno has not been measured; we do not publish numbers we have not run. <a href="/benchmarks/">Full tables and method</a>.</p>
+<h2 id="what-is-rust">What is written in Rust</h2>
+<p>Everything that executes your program: the OXC-based front end, a register-bytecode interpreter with one 64-bit word per value, the object model and garbage collector, b-jit (copy-and-patch), u-jit (Cranelift) and the AOT compiler. Each tier is derived from one shared definition of each opcode, so the tiers agree on what a program means. Node-compatible <code>node:</code> APIs are also implemented in Rust.</p>
+<h2 id="where-fast">Where it is fast and where it is not</h2>
+<p>Quench is fastest on long-running hot loops: on JetStream 3 with JIT off, gaussian-blur runs at 3.53x the better of Node and Bun, navier-stokes at 2.13x, mandreel at 2.07x. It is slowest where code is loaded and compiled cold, on promise-heavy async code and on proxies: octane-code-load at 0.23x, proxy-mobx at 0.25x, async-fs at 0.36x. See <a href="/benchmarks/">benchmarks</a>.</p>
+<h2 id="try">Try it</h2>
+<pre><code>git clone https://github.com/butaji/quench
+cd quench
+cargo build --release -p quench                  # interpreter + JIT tiers
+cargo build --release -p quench --features aot   # adds the AOT compiler
+./target/release/quench app.ts</code></pre><h2 id="questions">Questions</h2><h3>What is the fastest JavaScript runtime written in Rust?</h3><p>Quench is a JavaScript, TypeScript and WebAssembly runtime whose engine is written in Rust. With JIT disabled in all engines, it scores 1.49x to 2.57x the faster of Node --jitless and Bun on all 8 V8-v7 benchmarks (14 November 2026). It has not been benchmarked against other Rust engines such as Boa, so we do not claim it is the fastest of them.</p><h3>Is Deno written in Rust?</h3><p>Deno's runtime layer is written in Rust, but it executes JavaScript with V8, which is written in C++. Quench's engine itself (parser via OXC, interpreter, object model, garbage collector, JIT tiers and AOT compiler) is Rust.</p><h3>Is Quench faster than Node.js?</h3><p>With JIT off: yes on all 8 V8-v7 benchmarks, and no on the JetStream 3 geometric mean (34.3 vs 39.7). With JIT on, Node is faster; Quench's JIT tiers are not yet competitive.</p>
+<h2 id="about">About Quench</h2>
+<p>Quench is a JavaScript, TypeScript and WebAssembly runtime written in Rust. Test262: 53,353 passing, 0 failing. Interpreter, two JITs, and AOT to native executables. It is MIT licensed, early, and built from source with Cargo. Source: <a href="https://github.com/butaji/quench">github.com/butaji/quench</a>. Machine-readable summary: <a href="/llms.txt">llms.txt</a>.</p>
+<p class="small">Related: <a href="/benchmarks/">benchmarks</a> · <a href="/fastest-javascript-runtime-in-rust/">JavaScript runtime in Rust</a> · <a href="/low-memory-nodejs-alternative/">low-memory Node.js alternative</a> · <a href="/compile-javascript-to-native-executable/">compile JavaScript to a native executable</a> · <a href="/test262-compliant-javascript-engine/">Test262 conformance</a> · <a href="/javascript-engine-for-ai-agents/">JavaScript for AI agents</a></p>
+</div></div>
+</article>
+</main>
+<footer class="foot">Quench · MIT licensed · <a href="/">home</a> · <a href="/benchmarks/">benchmarks</a> · <a href="/blog/">blog</a> · <a href="/llms.txt">llms.txt</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></footer>
+</div>
+</body>
+</html>

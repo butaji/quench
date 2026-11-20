@@ -581,7 +581,7 @@ impl Heap {
             HeapReference::CollectionRecord(record_id) => {
                 &mut unsafe { collection_records.get_live_mut(record_id, properties) }.object
             }
-            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) | HeapReference::SymbolRecord(_) => {
+            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) | HeapReference::SymbolRecord(_) | HeapReference::WasmGcRecord(_) => {
                 return None;
             }
             HeapReference::LegacySlot(index) => {
@@ -812,7 +812,7 @@ impl Heap {
     }
 
     /// Array mark blocks, which a native store of a reference into an array's elements reads
-    /// (`staged::barrier::unlogged_store`, the array records' list in the dispatch head).
+    /// (`staged::barrier::unmarked`, the array records' list in the dispatch head).
     pub(crate) fn native_array_mark_blocks(&self) -> (*const u8, usize) {
         self.array_records.native_mark_blocks()
     }
@@ -861,6 +861,7 @@ impl Heap {
             | HeapReference::V128Record(_)
             | HeapReference::EnvironmentRecord(_)
             | HeapReference::SymbolRecord(_)
+            | HeapReference::WasmGcRecord(_)
             | HeapReference::LegacySlot(_) => None,
         }
     }

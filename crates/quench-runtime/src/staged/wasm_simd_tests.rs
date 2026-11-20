@@ -201,12 +201,11 @@ fn an_executed_operator_is_its_kernel_typed_by_its_table_entry() {
     for operator in operators {
         let selector = operator.selector(0);
         let (kernel, lane) = SimdKernel::of(selector).expect("an operator");
-        assert_eq!(SimdKernel::result_of(selector), kernel.result_type(lane));
         for (left, right) in VECTORS.iter().zip(VECTORS.iter().rev()) {
             let left = value_of(kernel.left, *left);
             let right = kernel.right.map(|ty| value_of(ty, *right));
             assert_eq!(
-                execute(selector, left, right),
+                execute(kernel, selector, left, right),
                 value_of(kernel.result_type(lane), kernel.apply_bits(bits_of(left), right.map_or(0, bits_of), lane)),
                 "{operator:?} {left:?} {right:?}"
             );

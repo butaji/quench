@@ -1,21 +1,23 @@
 //! The file form of an `AotImage`: magic, build id, fingerprint, the recipe tables and atom
-//! texts, then per function its base and lane code with relocations. Every number is
+//! texts, the base PC labels, operand records and proven call sites, then per function its base and lane code with
+//! relocations. Every number is
 //! little-endian; `Words` reads it back and rejects a file that ends early or names an unknown tag.
 //!
 //! Owner: one pipeline.
 
-use super::{AotFunction, AotImage, LaneImage, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
+use super::{AotFunction, AotImage, CallSite, LaneImage, OperandRecord, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::vm::compiled::AHEAD_BUILD_ID;
 use crate::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
 
-const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x01";
+const MAGIC: &[u8; 8] = b"QAOT\0\0\0\x02";
 /// The shape prototype a shape with none names.
 const NO_PROTOTYPE: u32 = u32::MAX;
 const RECIPE_INTRINSIC: u8 = 0;
 const RECIPE_GLOBAL: u8 = 1;
 const RECIPE_CONSTANT: u8 = 2;
 const RECIPE_PROTOTYPE_OF: u8 = 3;
+const RECIPE_CLOSURE_OF: u8 = 4;
 const RELOC_ABS8: u8 = 0;
 const RELOC_X86_PC_REL4: u8 = 1;
 const RELOC_X86_CALL_PC_REL4: u8 = 2;
@@ -30,11 +32,7 @@ pub(crate) fn to_bytes(image: &AotImage) -> Vec<u8> {
     out.extend(image.build_id.to_le_bytes());
     out.extend(image.fingerprint.to_le_bytes());
     put_recipes(&mut out, image);
-    put_count(&mut out, image.labels.len());
-    for (function, pc) in &image.labels {
-        out.extend(function.to_le_bytes());
-        out.extend(pc.to_le_bytes());
-    }
+    put_sites(&mut out, image);
     put_count(&mut out, image.functions.len());
     for function in &image.functions {
         put_function(&mut out, function);
@@ -52,17 +50,11 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
     let fingerprint = words.quad()?;
     let (shapes, heap_values, atoms) = read_recipes(&mut words)?;
     let labels = (0..words.half()?).map(|_| Ok((words.half()?, words.half()?))).collect::<Result<_, String>>()?;
+    let operands = (0..words.half()?).map(|_| read_operands(&mut words)).collect::<Result<_, String>>()?;
+    let calls = (0..words.half()?).map(|_| read_call(&mut words)).collect::<Result<_, String>>()?;
     let count = words.half()?;
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
-    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels })
-}
-
-/// The recipe tables and atom texts of `image` as they are in the file, for an object's data
-/// records (the object linker's loader reads the same encoding).
-pub(crate) fn recipe_bytes(image: &AotImage) -> Vec<u8> {
-    let mut out = Vec::new();
-    put_recipes(&mut out, image);
-    out
+    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, operands, calls })
 }
 
 fn put_count(out: &mut Vec<u8>, count: usize) {
@@ -85,6 +77,53 @@ fn put_recipes(out: &mut Vec<u8>, image: &AotImage) {
     }
 }
 
+/// The base PC labels, then the operand records: each its site and its words.
+fn put_sites(out: &mut Vec<u8>, image: &AotImage) {
+    put_count(out, image.labels.len());
+    for (function, pc) in &image.labels {
+        out.extend(function.to_le_bytes());
+        out.extend(pc.to_le_bytes());
+    }
+    put_count(out, image.operands.len());
+    for record in &image.operands {
+        out.extend(record.function.to_le_bytes());
+        out.extend(record.pc.to_le_bytes());
+        record.words.iter().for_each(|word| out.extend(word.to_le_bytes()));
+    }
+    put_count(out, image.calls.len());
+    for call in &image.calls {
+        put_call(out, call);
+    }
+}
+
+/// A proven call site: its site and callee, and its record's words the plan fixed (the packed header word with
+/// its argc, the proven arguments, the registers it names, its argument places); the run-time words are the
+/// loader's (`read_call`).
+fn put_call(out: &mut Vec<u8>, call: &CallSite) {
+    let record = &call.record;
+    [call.function, call.pc, call.callee].iter().for_each(|half| out.extend(half.to_le_bytes()));
+    out.extend(record.packed.to_le_bytes());
+    out.extend(record.proven_args.to_le_bytes());
+    [record.callee_register, record.this_register, record.args_register, record.result_register].iter().for_each(|register| out.extend(register.to_le_bytes()));
+    out.extend(record.argument_places);
+}
+
+/// The call site `put_call` wrote, its record bound to no closure (`super::unbound_callee`).
+fn read_call(words: &mut Words<'_>) -> Result<CallSite, String> {
+    let (function, pc, callee) = (words.half()?, words.half()?, words.half()?);
+    let packed = words.quad()?;
+    let proven_args = words.quad()?;
+    let [callee_register, this_register, args_register, result_register] = [words.pair()?, words.pair()?, words.pair()?, words.pair()?];
+    let argument_places = words.take()?;
+    let record = quench_bjit::call_record::CallRecord { callee: super::unbound_callee(), packed, proven_args, callee_register, this_register,
+        args_register, result_register, argument_places, ..Default::default() };
+    Ok(CallSite { function, pc, callee, record })
+}
+
+fn read_operands(words: &mut Words<'_>) -> Result<OperandRecord, String> {
+    Ok(OperandRecord { function: words.half()?, pc: words.half()?, words: [words.quad()?, words.quad()?] })
+}
+
 fn put_shape(out: &mut Vec<u8>, shape: &ShapeRecipe) {
     out.extend(shape.prototype.unwrap_or(NO_PROTOTYPE).to_le_bytes());
     put_count(out, shape.fields.len());
@@ -100,6 +139,7 @@ fn put_heap_value(out: &mut Vec<u8>, value: &HeapValueRecipe) {
         HeapValueRecipe::Global(key) => (RECIPE_GLOBAL, key),
         HeapValueRecipe::Constant(key) => (RECIPE_CONSTANT, key),
         HeapValueRecipe::PrototypeOf(key) => (RECIPE_PROTOTYPE_OF, key),
+        HeapValueRecipe::ClosureOf(key) => (RECIPE_CLOSURE_OF, key),
     };
     out.push(tag);
     out.extend(key.to_le_bytes());
@@ -122,6 +162,7 @@ fn put_base(out: &mut Vec<u8>, base: &BaseImage) {
     put_code(out, &base.code);
     put_halves(out, &base.pc_offsets);
     put_halves(out, &base.generic);
+    out.extend(base.scratch.to_le_bytes());
 }
 
 fn put_halves(out: &mut Vec<u8>, values: &[u32]) {
@@ -199,6 +240,7 @@ fn read_heap_value(words: &mut Words<'_>) -> Result<HeapValueRecipe, String> {
         RECIPE_GLOBAL => HeapValueRecipe::Global(key),
         RECIPE_CONSTANT => HeapValueRecipe::Constant(key),
         RECIPE_PROTOTYPE_OF => HeapValueRecipe::PrototypeOf(key),
+        RECIPE_CLOSURE_OF => HeapValueRecipe::ClosureOf(key),
         _ => return Err("an AOT image heap value recipe has an unknown kind".into()),
     })
 }
@@ -226,7 +268,8 @@ fn read_base(words: &mut Words<'_>) -> Result<BaseImage, String> {
     let code = read_code(words)?;
     let pc_offsets = read_halves(words)?;
     let generic = read_halves(words)?;
-    Ok(BaseImage { code, pc_offsets, generic })
+    let scratch = words.half()?;
+    Ok(BaseImage { code, pc_offsets, generic, scratch })
 }
 
 fn read_halves(words: &mut Words<'_>) -> Result<Box<[u32]>, String> {
@@ -267,6 +310,9 @@ impl<'a> Words<'a> {
     }
     pub(crate) fn byte(&mut self) -> Result<u8, String> {
         Ok(u8::from_le_bytes(self.take()?))
+    }
+    pub(crate) fn pair(&mut self) -> Result<u16, String> {
+        Ok(u16::from_le_bytes(self.take()?))
     }
     pub(crate) fn half(&mut self) -> Result<u32, String> {
         Ok(u32::from_le_bytes(self.take()?))

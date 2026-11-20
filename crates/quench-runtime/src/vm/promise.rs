@@ -2990,7 +2990,7 @@ impl<H: Host> Vm<H> {
         let program = self.realm.promise.modules.get(&module_cache_key(name, "javascript"))
             .and_then(|record| record.program)
             .and_then(|id| self.programs.get(id))
-            .filter(|program| program.source_text() == Some(source));
+            .filter(|program| program.source_text().is_some_and(|text| crate::Engine::compiled_module_text_is(text, source)));
         let host = &mut self.host;
         crate::Engine::static_module_analysis_with(source, name, module.typescript, |analyze| {
             // Derive the loader's memoized view from its admitted compiler result.
@@ -3085,31 +3085,44 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| self.type_error(p, "module program store is full".into()))?,
             None => {
                 self.require_source_compilation(p)?;
-                if let Some(message) = self.static_module_early_error(module) {
-                    return self
-                        .syntax_error_result(p, &message)
-                        .map(|_| ());
+                // A typed module is analyzed first: its analysis checks the tree before admission,
+                // which the compilation's checks do not (`Engine::admit_typescript`).
+                if module.typescript
+                    && let Some(message) = self.static_module_early_error(module)
+                {
+                    return self.syntax_error_result(p, &message).map(|_| ());
                 }
-                let residual = crate::Engine::specialize_module_with_atom_prefix(
+                // Compiled first otherwise: a module that compiles has no early error, as its
+                // compilation checks every body alone. Only one that does not is analyzed
+                // (`static_module_early_error`), which reports its early error as a load always has,
+                // and else its compilation failure.
+                let residual = match crate::Engine::specialize_module_with_atom_prefix(
                     &module.source,
                     &module.name,
                     module.typescript,
                     &*self,
                     self.released_records(true),
-                )
-                .map_err(|diagnostics| {
-                    if diagnostics
-                        .iter()
-                        .any(crate::compile::Diagnostic::is_stack_exhausted)
-                    {
-                        self.stack_exhaustion_error()
-                    } else {
-                        self.type_error(
-                            p,
-                            format!("dynamic module compilation failed: {diagnostics:?}"),
-                        )
+                ) {
+                    Ok(residual) => residual,
+                    Err(diagnostics) => {
+                        if let Some(message) = self.static_module_early_error(module) {
+                            return self
+                                .syntax_error_result(p, &message)
+                                .map(|_| ());
+                        }
+                        return Err(if diagnostics
+                            .iter()
+                            .any(crate::compile::Diagnostic::is_stack_exhausted)
+                        {
+                            self.stack_exhaustion_error()
+                        } else {
+                            self.type_error(
+                                p,
+                                format!("dynamic module compilation failed: {diagnostics:?}"),
+                            )
+                        });
                     }
-                })?;
+                };
                 // Encoded with this VM's atoms, which storing it then finds interned.
                 let residual = self.intern_program_atoms(residual);
                 self.keep_static_module_program(module, &residual);

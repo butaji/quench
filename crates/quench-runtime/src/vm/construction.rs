@@ -870,7 +870,7 @@ impl<H: Host> Vm<H> {
         frame: usize,
         callee: Value,
     ) -> Option<(ProgramId, u32, Value, Value)> {
-        let (program_id, id, env) = self.in_loop_constructor(p, frame, callee, Self::inline_constructible)?;
+        let (program_id, id, env) = self.in_loop_constructor(p, frame, callee, super::ConstructKind::Base)?;
         Some((program_id, id, env, self.inline_construct_receiver(callee)?))
     }
 
@@ -879,12 +879,12 @@ impl<H: Host> Vm<H> {
     /// receiver: the body binds `this` through `super(...)` (`InitializeThis`), and its pending
     /// call yields that binding or the object the body returns (`CallCompletion::DerivedConstructor`).
     pub(super) fn inline_derived_construct_target(
-        &self,
+        &mut self,
         p: &ResidualProgram,
         frame: usize,
         callee: Value,
     ) -> Option<(ProgramId, u32, Value)> {
-        self.in_loop_constructor(p, frame, callee, Self::inline_derived_constructible)
+        self.in_loop_constructor(p, frame, callee, super::ConstructKind::Derived)
     }
 
     /// `super(...)` at frame `frame` of `parent`, a user constructor the loop may push in place
@@ -906,10 +906,10 @@ impl<H: Host> Vm<H> {
         let new_target = self
             .dynamic_binding(self.frame_caller(frame), new_target_atom)
             .filter(|value| !value.is_undefined() && self.is_constructable(*value))?;
-        if let Some(target) = self.in_loop_constructor(p, frame, parent, Self::inline_derived_constructible) {
+        if let Some(target) = self.in_loop_constructor(p, frame, parent, super::ConstructKind::Derived) {
             return Some(SuperConstruction { target, new_target, this: Value::UNDEFINED, completion: CallCompletion::DerivedConstructor });
         }
-        let target = self.in_loop_constructor(p, frame, parent, Self::inline_constructible)?;
+        let target = self.in_loop_constructor(p, frame, parent, super::ConstructKind::Base)?;
         let object = self.inline_construct_template_by(new_target, parent)?;
         let this = self.heap.alloc_object(object);
         Some(SuperConstruction { target, new_target, this, completion: CallCompletion::Constructor(this) })
@@ -925,15 +925,16 @@ impl<H: Host> Vm<H> {
         self.dense_apply_arguments(array)
     }
 
-    /// The checks `inline_construct_target` makes of the running frame and of `callee`, a user
-    /// function of the running realm whose body `admits` takes: its program, function and
-    /// environment.
+    /// The checks `inline_construct_target` makes of the running frame, and the program, function
+    /// and environment of `callee` when its cached target (`in_loop_entry`) has the construct
+    /// kind `kind`. The frame checks run per construction; the callee's classification is filled
+    /// once per cache entry, with the same owner, root and wasm rules the call path applies.
     fn in_loop_constructor(
-        &self,
+        &mut self,
         p: &ResidualProgram,
         frame: usize,
         callee: Value,
-        admits: fn(&crate::bytecode::Function) -> bool,
+        kind: super::ConstructKind,
     ) -> Option<(ProgramId, u32, Value)> {
         let caller = &self.frames[frame];
         if frame + 1 != self.frames.len()
@@ -946,28 +947,23 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let Some(record) = self.heap.function(callee) else {
-            return None;
-        };
-        let FunctionKind::User(program_id, id) = record.kind else {
-            return None;
-        };
-        let env = record.env;
-        if self.record_realm(record) != self.realm.globals || id == super::ROOT_FUNCTION_ID {
-            return None;
-        }
         // A constructor of another program is pushed in its own, which the pushing loop
         // makes active until the return restores the caller's (`StepResult::PushFrame`).
-        let body = if program_id == caller.program && program_id == self.active_program {
-            p.function_get(id as usize)?
+        let entry = self.in_loop_entry(p, callee)?;
+        (entry.construct == kind).then_some((entry.program, entry.function, entry.env))
+    }
+
+    /// The `new` classification of `function`, which the call target cache stores with the entry
+    /// it fills for the function: `Base` for `inline_constructible`, `Derived` for
+    /// `inline_derived_constructible`, otherwise `No`.
+    pub(super) fn construct_kind(function: &crate::bytecode::Function) -> super::ConstructKind {
+        if Self::inline_constructible(function) {
+            super::ConstructKind::Base
+        } else if Self::inline_derived_constructible(function) {
+            super::ConstructKind::Derived
         } else {
-            let owner = self.programs.residual(program_id)?;
-            if owner.kind == crate::bytecode::ProgramKind::Wasm {
-                return None;
-            }
-            owner.function_get(id as usize)?
-        };
-        admits(body).then_some((program_id, id, env))
+            super::ConstructKind::No
+        }
     }
 
     /// A body whose [[Construct]] the dispatch loop may push in place: a constructible

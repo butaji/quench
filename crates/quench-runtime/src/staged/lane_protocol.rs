@@ -15,6 +15,24 @@
 pub const GENERAL_DISPATCH_BLOCKS: u32 = 2048;
 pub const GENERAL_RETURN_STATUS_BASE: u32 = u32::MAX - GENERAL_DISPATCH_BLOCKS;
 
+/// The status of a native activation's completion at record `pc`: `GENERAL_RETURN_STATUS_BASE + pc`,
+/// with the result word in the entry's result slot. The AOT trampoline (`vm::compiled::ahead_entry`)
+/// emits this encoding as IR from `GENERAL_RETURN_STATUS_BASE` and `RETURN_PC_MASK`; this is its named
+/// form, which the trampoline's test checks its status against.
+pub const fn return_status(pc: u32) -> u32 {
+    GENERAL_RETURN_STATUS_BASE + pc
+}
+
+/// The record a return status names, or `None` where `status` is not one (a named status, or no
+/// status at all). The one decoder of `return_status`; `LaneExit::read` and the linked entry use it.
+pub const fn return_status_pc(status: u32) -> Option<u32> {
+    if status >= GENERAL_RETURN_STATUS_BASE { Some(status - GENERAL_RETURN_STATUS_BASE) } else { None }
+}
+
+/// The bits of a record's word its completion's PC is read from: the trampoline keeps their low 32
+/// bits, which its IR narrows into the status word after the add of `GENERAL_RETURN_STATUS_BASE`.
+pub const RETURN_PC_MASK: u32 = u32::MAX;
+
 /// What a helper call returned (`vm::compiled::LANE_CALL_*`): completed with its result in the
 /// call's register, missed before any effect, left the lane inside the callee's activation,
 /// terminated the run, a call-out that decides a comparison held, the callee's body ended by an

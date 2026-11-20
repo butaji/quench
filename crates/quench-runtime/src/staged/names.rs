@@ -162,10 +162,13 @@ pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stag
             if const { super::op_kind::admits(KIND, &[super::op_kind::GLOBAL_LEXICAL_STORE]) } { calling(stage, frame, CallOut::GlobalLexicalStore { source, declaration, site, initialize }, None) } else { unreachable!() },
         Operation::LoadName { destination, atom, site, receiver, proof } =>
             if const { super::op_kind::admits(KIND, &[super::op_kind::LOAD_NAME]) } { load_name(stage, frame, (destination, receiver), (atom, site), proof) } else { unreachable!() },
-        // A frame's in-place rest read answers the value; its runner defines the destination, as
-        // for every names row's value (`generated_row`).
-        Operation::Protocol { step: Protocol::RestView { get, fixed, .. }, destination: Some(_), operands }
-            if let Some((value, _)) = frame.rest_view(stage, get, fixed, operands[0]) => if const { super::op_kind::admits(KIND, &[super::op_kind::PROTOCOL]) } { Step::Value(value) } else { unreachable!() },
+        // A frame's in-place rest read answers the value, which the row defines as every other
+        // names row defines its own (`row_writes_result` holds for `RestLength` and `RestGet`).
+        Operation::Protocol { step: Protocol::RestView { get, fixed, .. }, destination: Some(destination), operands }
+            if let Some((value, fact)) = frame.rest_view(stage, get, fixed, operands[0]) => if const { super::op_kind::admits(KIND, &[super::op_kind::PROTOCOL]) } {
+                frame.write(stage, destination, value, fact);
+                Step::Value(value)
+            } else { unreachable!() },
         Operation::Protocol { step, destination, operands } =>
             if const { super::op_kind::admits(KIND, &[super::op_kind::PROTOCOL]) } { calling(stage, frame, CallOut::Protocol { step, operands }, destination) } else { unreachable!() },
         Operation::ForInNext { destination, state } => if const { super::op_kind::admits(KIND, &[super::op_kind::FOR_IN_NEXT]) } { for_in_next(stage, frame, destination, state) } else { unreachable!() },

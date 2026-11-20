@@ -46,7 +46,7 @@ pub fn take_dynamic_source<T: PartialEq<str>>(args: &mut Vec<T>) -> bool {
 
 /// Select native-only (`--aot`), the interpreter (`--no-jit`), one JIT tier alone (`--b-jit`,
 /// `--u-jit`, `--q-jit`) or, by default, every tier, and remove the mode switch. The tier choice is the
-/// process's (`JitMode::set_process_mode`), the one mapping `quench-node` uses.
+/// process's (`JitMode::set_process_mode`), the one mapping `quench` uses.
 pub fn take_execution_mode<T: PartialEq<str>>(args: &mut Vec<T>) -> ExecutionMode {
     let native = args.iter().any(|arg| arg == AOT_FLAG);
     args.retain(|arg| arg != AOT_FLAG);
