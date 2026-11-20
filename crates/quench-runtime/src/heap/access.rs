@@ -812,7 +812,7 @@ impl Heap {
     }
 
     /// Array mark blocks, which a native store of a reference into an array's elements reads
-    /// (`staged::barrier::unlogged_store`, the array records' list in the dispatch head).
+    /// (`staged::barrier::unmarked`, the array records' list in the dispatch head).
     pub(crate) fn native_array_mark_blocks(&self) -> (*const u8, usize) {
         self.array_records.native_mark_blocks()
     }

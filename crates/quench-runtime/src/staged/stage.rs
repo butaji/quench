@@ -107,6 +107,8 @@ pub(crate) trait Stage {
     fn or(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     /// Bitwise and of two words.
     fn and(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
+    /// Logical shift right of `a` by `b`, where `b` is below 64.
+    fn shr(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     fn add_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn mul_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn and_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
@@ -166,6 +168,12 @@ pub(crate) trait Stage {
     /// one the barrier logs for this value. The one place the store barrier's layout is read;
     /// a stage without that layout answers no, and the store leaves at its miss.
     fn store_gate(&mut self, space: StagedRecordSpace, record_id: Self::Word, value: Self::Word) -> Self::Cond;
+    /// Whether a store of a value the frame proved immediate needs no barrier log: such a store
+    /// skips `store_gate`, which is right unless old records keep reference counts, where
+    /// overwriting a reference with any value deletes an edge (`RecordSpace::store_logs`). The
+    /// interpreter reads the heap (`Heap::immediate_store_unlogged`), native code the counts bit
+    /// of the gate word (`STORE_WATCH_COUNTS`).
+    fn immediate_store_open(&mut self) -> Self::Cond;
     /// Whether the dependency named by `watch` (a per-site operand) still holds: the interpreter
     /// tests it, a specializer proves it once at publication and its code pays no check (the
     /// assumption registry retires the code when it breaks); a stage without a registry answers

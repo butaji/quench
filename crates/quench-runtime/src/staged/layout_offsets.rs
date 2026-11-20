@@ -266,11 +266,15 @@ pub(crate) const JS_STEP_LOCAL_COUNT: usize = core::mem::offset_of!(super::js_st
 pub(crate) const JS_STEP_OBJECT_RECORD_BASE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_record_base);
 pub(crate) const JS_STEP_PROPERTY_BUFFER: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, property_buffer);
 /// What a store's barrier reads (`Stage::store_gate`): the object records' mark blocks and their
-/// count, and whether the property arena records its slots' value classes (`slots_tracked`), which
-/// an unobserved store requires clear.
+/// count, and what watches a store (`store_watch`), which an unobserved store requires zero.
 pub(crate) const JS_STEP_OBJECT_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_mark_blocks);
 pub(crate) const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_mark_block_count);
-pub(crate) const JS_STEP_SLOTS_TRACKED: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, slots_tracked);
+pub(crate) const JS_STEP_STORE_WATCH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, store_watch);
+/// The `store_watch` bit set while the property arena records its slots' value classes.
+pub(crate) const STORE_WATCH_TRACKS: u64 = 1;
+/// The `store_watch` bit set while old records keep reference counts (`Heap::rc_active`): every
+/// store into a marked record logs then, an immediate one too (`RecordSpace::store_logs`).
+pub(crate) const STORE_WATCH_COUNTS: u64 = 2;
 /// The heap's collection epoch as of the last refresh (`JsStepDispatch::epoch`), which a for-in step
 /// compares to the epoch its state's snapshot was listed in (`staged::iteration::for_in_next`).
 pub(crate) const JS_STEP_EPOCH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, epoch);

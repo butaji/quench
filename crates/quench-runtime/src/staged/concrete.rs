@@ -78,6 +78,8 @@ impl Stage for Concrete {
     #[inline(always)]
     fn and(&mut self, a: u64, b: u64) -> u64 { a & b }
     #[inline(always)]
+    fn shr(&mut self, a: u64, b: u64) -> u64 { a.wrapping_shr(b as u32) }
+    #[inline(always)]
     fn add_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a.wrapping_add(imm) }
     #[inline(always)]
     fn mul_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a.wrapping_mul(imm) }
@@ -190,6 +192,15 @@ impl Stage for Concrete {
     fn store_gate(&mut self, space: super::StagedRecordSpace, record_id: u64, value: u64) -> bool {
         // SAFETY: a stage that stores holds its live heap.
         !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(space, record_id as u32, crate::Value::from_bits(value)) }
+    }
+    #[inline(always)]
+    fn immediate_store_open(&mut self) -> bool {
+        if self.heap.is_null() {
+            // A stage that holds no heap (the interpreter's rows) reads whether any heap counts.
+            return !crate::heap::rc::COUNTS_SEEN.load(core::sync::atomic::Ordering::Relaxed);
+        }
+        // SAFETY: a stage that stores holds its live heap.
+        unsafe { (*self.heap).immediate_store_unlogged() }
     }
     #[inline(always)]
     fn number_operator(&mut self, operator: u64, passed: u64, constant: u64) -> (u64, bool) {

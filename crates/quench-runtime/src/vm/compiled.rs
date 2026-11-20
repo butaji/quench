@@ -920,17 +920,10 @@ fn emit_lane_helper_call(
     emit_lane_call(builder, helper, &values)
 }
 
-/// The shared RecordSpace::store_logs test: an immediate or unmarked owner
-/// needs no barrier log. Verified Numbers are immediate and discharge the test at
-/// compilation. Otherwise the caller must perform the logged store.
-fn emit_unlogged_property_store_guard(
-    builder: &mut FunctionBuilder<'_>, space: crate::staged::StagedRecordSpace, payload: ir::Value, record_id: ir::Value,
-    value: ir::Value, fallback: ir::Block,
-) {
-    use crate::staged::barrier::{unlogged_store, MarkList};
-    // A marked owner would be logged by RecordSpace::store_logs; otherwise the
-    // barrier is a no-op. Marks and block bases are refreshed after each callout.
-    let list = match space {
+/// The mark list a store into record space `space` reads its owner's mark blocks from.
+fn store_mark_list(space: crate::staged::StagedRecordSpace) -> crate::staged::barrier::MarkList {
+    use crate::staged::barrier::MarkList;
+    match space {
         crate::staged::StagedRecordSpace::Object => MarkList {
             blocks: std::mem::offset_of!(JsStepDispatch, head.object_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, head.object_mark_block_count),
@@ -939,9 +932,28 @@ fn emit_unlogged_property_store_guard(
             blocks: std::mem::offset_of!(JsStepDispatch, head.function_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, head.function_mark_block_count),
         },
-    };
-    unlogged_store(&mut object_slots::emit(builder), (regions::dispatch(), MemFlagsData::trusted()), payload, list,
-        (record_id, value), |stage, condition| emit_js_guard(stage.builder, condition, fallback));
+    }
+}
+
+/// The shared RecordSpace::store_logs test: an immediate or unmarked owner
+/// needs no barrier log. Verified Numbers are immediate and discharge the test at
+/// compilation. Otherwise the caller must perform the logged store, which `fallback` takes.
+fn emit_unlogged_property_store_guard(
+    stage: &mut object_slots::Emit<'_, '_>, list: crate::staged::barrier::MarkList, payload: ir::Value, record_id: ir::Value,
+    value: ir::Value, fallback: ir::Block,
+) {
+    use crate::staged::barrier::unmarked;
+    use crate::value::ValueLayout;
+    // An immediate value names no heap record and joins no log; a heap value's owner is
+    // tested in its mark block. Marks and block bases are refreshed after each callout.
+    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
+    let heap = stage.ne_imm(tag, ValueLayout::HEAP_TAG);
+    let (marked, write) = (stage.new_block(), stage.new_block());
+    stage.branch_if(heap, (marked, &[]), (write, &[]));
+    stage.enter(marked);
+    unmarked(stage, payload, list, record_id, fallback).expect("an Emit guard always continues");
+    stage.goto(write, &[]);
+    stage.enter(write);
 }
 
 /// What a lane body knows of its receiver from entry on: the record, exact shape and
@@ -4762,7 +4774,7 @@ impl JsStepDispatch {
                 array_record_base: 0, string_record_base: 0, object_record_base: 0, function_record_base: 0,
                 object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
                 property_buffer: 0, field_entries: 0, native_locals: std::ptr::null_mut(), local_count: 0,
-                epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
+                epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, store_watch: 0,
                 empty_string: Value::DELETED.to_bits(),
                 environment_storage: crate::heap::absent_environment_storage(),
                 array_mark_blocks: 0, array_mark_block_count: 0,
@@ -4817,7 +4829,7 @@ impl JsStepDispatch {
         if self.vm == (vm as *const Vm<H>).addr() && self.layout_seen == layout
             && self.method_cache_atoms == atoms.as_ptr() as usize && self.method_cache_atom_words == atoms.len()
             && self.typed_view_directory == directory.addr() && self.typed_view_pages == pages
-            && self.slots_tracked == usize::from(vm.heap.tracks_slot_values())
+            && self.store_watch == vm.heap.store_watch_word()
             && self.empty_string != Value::DELETED.to_bits() && self.ascii_unit_strings != 0
             && self.empty_object_proto == vm.realm_object_prototype(vm.realm.globals).to_bits()
             && self.empty_array_proto == vm.array_prototype_for_realm(vm.realm.globals).to_bits()
@@ -4856,7 +4868,7 @@ impl JsStepDispatch {
         let (blocks, count) = vm.heap.native_array_mark_blocks();
         (self.array_mark_blocks, self.array_mark_block_count) = (blocks as usize, count);
         self.empty_string = vm.empty_string_word().to_bits();
-        self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
+        self.store_watch = vm.heap.store_watch_word();
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }
