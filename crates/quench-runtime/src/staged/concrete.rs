@@ -89,6 +89,22 @@ impl Stage for Concrete {
     #[inline(always)]
     fn ugt_imm(&mut self, a: u64, imm: impl Into<u64>) -> bool { let imm = imm.into(); a > imm }
     #[inline(always)]
+    fn eq(&mut self, a: u64, b: u64) -> bool { a == b }
+    /// A plain Rust loop: the body runs on the state until it says the loop ends.
+    #[inline(always)]
+    fn loop_words<const N: usize>(&mut self, init: [u64; N], mut body: impl FnMut(&mut Self, [u64; N]) -> (bool, [u64; N]))
+        -> [u64; N] {
+        let mut state = init;
+        loop {
+            let (go_on, next) = body(self, state);
+            state = next;
+            if !go_on {
+                break;
+            }
+        }
+        state
+    }
+    #[inline(always)]
     fn uextend32(&mut self, a: u64) -> u64 { a }
     #[inline(always)]
     fn store_u32(&mut self, _at: Access, base: u64, offset: i32, value: u64) {

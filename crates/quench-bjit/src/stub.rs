@@ -2,7 +2,7 @@
 //! writes the live registers back. The stub pushes the PC on the stack, where no row's register
 //! and no spill row can clobber it, and the routine (`leave_pop`) pops it as the region's result.
 
-pub use crate::class::{JMP_REL32, JMP_REL32_LEN};
+pub use crate::class::JMP_REL32;
 use crate::class::BRANCH26;
 use crate::patch::{INSN_BYTES, PatchError, patch_branch, patch_movw};
 use crate::JMP_REL32_LEN;

@@ -321,6 +321,21 @@ pub mod rustc {
         };
         Some(Stencil { code: raw.code.to_vec(), relocs, imm32, next_jump, tail_len, raw_len: len, hot_len: raw.hot_len })
     }
+
+    /// Stencils memoized by key (`memoized`): each is built once and leaked, so it lives for the life of the process.
+    pub type Memo<K> = std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<K, &'static Stencil>>>;
+
+    /// The stencil memoized under `key` in `memo`, built by `build` on the key's first use; a build that
+    /// fails is an error, and the next use builds again.
+    pub fn memoized<K: std::hash::Hash + Eq + Copy>(memo: &'static Memo<K>, key: K, build: impl FnOnce() -> Result<Stencil, String>) -> Result<&'static Stencil, String> {
+        let mut table = memo.get_or_init(Default::default).lock().map_err(|e| e.to_string())?;
+        if let Some(&found) = table.get(&key) {
+            return Ok(found);
+        }
+        let stencil: &'static Stencil = Box::leak(Box::new(build()?));
+        table.insert(key, stencil);
+        Ok(stencil)
+    }
 }
 
 #[cfg(test)]
