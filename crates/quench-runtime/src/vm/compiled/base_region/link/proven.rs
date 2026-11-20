@@ -29,11 +29,11 @@ impl Proven {
         self.unboxes.len() + 1
     }
 
-    /// Appends the entry's rows to `rows`, their holes taken from `hole_fns` from index `at` (`holes`).
-    pub(super) fn place<'a>(&self, rows: &mut Vec<Placed<'a>>, hole_fns: &'a [Box<dyn Fn(u32) -> u64 + 'a>], at: usize) -> Result<(), String> {
+    /// Appends the entry's rows to `rows`, their holes taken from `holes` from index `at`.
+    pub(super) fn place<'a>(&self, rows: &mut Vec<Placed<'a>>, holes: &'a [[u64; HOLES]], at: usize) -> Result<(), String> {
         let skip = numeric::stencil(numeric::Row { kind: Kind::Jump, dst: Place::Mem, a: Place::Mem, b: Place::Mem, speculate: true })?;
-        rows.extend(self.unboxes.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil: *stencil, hole: &*hole_fns[at + k], taken: None, cold: true }));
-        rows.push(Placed { stencil: skip, hole: &*hole_fns[at + self.unboxes.len()], taken: Some(self.past), cold: true });
+        rows.extend(self.unboxes.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil: *stencil, hole: &holes[at + k], taken: None, cold: true }));
+        rows.push(Placed { stencil: skip, hole: &holes[at + self.unboxes.len()], taken: Some(self.past), cold: true });
         Ok(())
     }
 }

@@ -49,11 +49,9 @@ fn admitted_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatc
 fn captures<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, owner: crate::vm::ProgramId, env: Value, entry: CallEntry) -> CallEntry {
     let capture = vm.target_capture(program, owner, env);
     // SAFETY: a live environment's dense slots stay in place through this collection epoch.
-    let (values, len) = (!capture.is_null()).then(|| unsafe {
-        crate::heap::EnvironmentSlots::native_storage_view(super::super::dispatch_fast::capture_reads(capture)) }).flatten()
-        .unwrap_or((std::ptr::null(), 0));
-    CallEntry { capture_values: values as u64, capture_len: len as u64,
-        capture_stores: u64::from(super::super::dispatch_fast::capture_stores(capture).is_some()), ..entry }
+    let (view, stores) = unsafe { super::super::dispatch_fast::capture_view(capture) };
+    let (values, len) = view.unwrap_or((std::ptr::null(), 0));
+    CallEntry { capture_values: values as u64, capture_len: len as u64, capture_stores: u64::from(stores), ..entry }
 }
 
 /// Admits `callee`'s function for frameless calls (`general_frameless_admit`) and records it

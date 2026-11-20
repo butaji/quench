@@ -121,14 +121,17 @@ impl Facts {
         types.get(usize::from(register)).copied().unwrap_or(Type::ANY)
     }
 
-    /// Project each reachable definition's post-state through the same transfer
-    /// as the fixed point. Replay each block once, retaining no per-PC cache.
+    /// Project each definition in `body`'s post-state through the same transfer as the fixed
+    /// point. Each block replays from its own entry row, so only the blocks reaching `body` run.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn for_each_definition(&self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
         constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool,
-        mut visit: impl FnMut(usize, Register, Type)) {
+        body: std::ops::RangeInclusive<usize>, mut visit: impl FnMut(usize, Register, Type)) {
+        // The block covering `body.start()` may begin earlier: replay it from its leader.
+        let first = (0..=*body.start()).rev().find(|pc| leaders.contains(*pc)).unwrap_or(0);
+        let end = instructions.len().min((*body.end()).saturating_add(1));
         let mut types = smallvec::SmallVec::<[Type; INLINE_ANALYSIS_ITEMS]>::new();
-        for start in (0..instructions.len()).filter(|pc| leaders.contains(*pc)) {
+        for start in (first..end).filter(|pc| leaders.contains(*pc)) {
             let Some(entry) = self.at(start) else { continue };
             types.clear();
             types.extend_from_slice(entry);
@@ -454,7 +457,7 @@ pub(super) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, re
         for register in candidates.iter() {
             if !facts.backedge().get(register).is_some_and(|ty| ty.is_subtype(required)) { rejected.insert(register); }
         }
-        facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
+        facts.for_each_definition(instructions, leaders, constants, written, native_calls, body.clone(), |pc, register, ty| {
             let index = usize::from(register);
             if body.contains(&pc) && candidates.contains(index) && !ty.is_subtype(required) { rejected.insert(index); }
         });
@@ -480,7 +483,9 @@ pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
         let seeds = Seeds { contracts: &contracts, ..Seeds::observing(observed) };
         let facts = analyze(entry, initial, instructions, leaders, constants, written, own_shape, native_calls, raises, seeds);
         let mut rejected = vec![false; candidates.len()];
-        facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
+        let span = candidates.iter().map(|(_, body)| body);
+        let (first, last) = (span.clone().map(|body| *body.start()).min().unwrap_or(entry), span.map(|body| *body.end()).max().unwrap_or(entry));
+        facts.for_each_definition(instructions, leaders, constants, written, native_calls, first..=last, |pc, register, ty| {
             for (index, ((_, candidate, required), body)) in candidates.iter().enumerate() {
                 if *candidate == register && body.contains(&pc) && !ty.is_subtype(*required) { rejected[index] = true; }
             }

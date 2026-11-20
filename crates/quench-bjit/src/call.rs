@@ -5,8 +5,7 @@
 use crate::call_record::MAX_DIRECT_ARGC;
 use crate::numeric::Place;
 use crate::Stencil;
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// A call row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -111,16 +110,11 @@ impl CallRow {
 
 /// The stencil of `row`, built at compile time by rustc and shared for the life of the process.
 pub fn stencil(row: CallRow) -> Result<&'static Stencil, String> {
-    static TABLE: OnceLock<Mutex<HashMap<CallRow, &'static Stencil>>> = OnceLock::new();
-    let mut table = TABLE.get_or_init(Default::default).lock().map_err(|e| e.to_string())?;
-    if let Some(found) = table.get(&row) {
-        return Ok(found);
-    }
-    let name = row.name()?;
-    let found = crate::rustc::stencil(&name).ok_or_else(|| format!("no stencil row {name}"))?;
-    let stencil: &'static Stencil = Box::leak(Box::new(found));
-    table.insert(row, stencil);
-    Ok(stencil)
+    static TABLE: crate::rustc::Memo<CallRow> = OnceLock::new();
+    crate::rustc::memoized(&TABLE, row, || {
+        let name = row.name()?;
+        crate::rustc::stencil(&name).ok_or_else(|| format!("no stencil row {name}"))
+    })
 }
 
 #[cfg(test)]

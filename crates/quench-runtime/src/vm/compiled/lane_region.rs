@@ -812,12 +812,12 @@ impl ElementViews {
 }
 
 pub(super) fn restartable_numeric_function(program: &ResidualProgram, function: &crate::bytecode::Function,
-    instructions: &[WideInstruction]) -> bool {
+    instructions: impl IntoIterator<Item = WideInstruction>) -> bool {
     super::super::js_compiled::function_candidate(function, program) && numeric_instructions(program, instructions)
 }
 
-fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstruction]) -> bool {
-    instructions.iter().all(|instruction| numeric_instruction(program, *instruction))
+fn numeric_instructions(program: &ResidualProgram, instructions: impl IntoIterator<Item = WideInstruction>) -> bool {
+    instructions.into_iter().all(|instruction| numeric_instruction(program, instruction))
 }
 
 fn numeric_instruction(program: &ResidualProgram, instruction: WideInstruction) -> bool {
@@ -2498,7 +2498,7 @@ impl Lowering<'_, '_> {
         written: &dyn Fn(WideInstruction) -> Vec<Register>) -> Type {
         let native_calls = self.native_calls;
         let mut defined: Vec<Option<Type>> = vec![None; instructions.len()];
-        self.facts.for_each_definition(instructions, leaders, &self.program.constants, written, native_calls, |pc, register, ty| {
+        self.facts.for_each_definition(instructions, leaders, &self.program.constants, written, native_calls, 0..=instructions.len().saturating_sub(1), |pc, register, ty| {
             if register == instructions[pc].result_register() { defined[pc] = Some(ty); }
         });
         let mut returned = Type::NEVER;
@@ -2627,7 +2627,7 @@ impl Lowering<'_, '_> {
                 if let Some(frame) = self.unit.markers.iter().position(|marker| *marker == pc) {
                     let call = self.unit.frames[frame];
                     let body = self.program.function(call.target.function as usize);
-                    let numeric = restartable_numeric_function(self.program, body, &body.instructions().collect::<Vec<_>>());
+                    let numeric = restartable_numeric_function(self.program, body, body.instructions());
                     if !(call.recovery == super::lane_unit::CallRecovery::RestartCall && numeric)
                         && let Some(root) = aliases[usize::from(call.receiver)] {
                         let recovery = ReceiverRecovery::for_body(body);
@@ -3395,12 +3395,11 @@ impl Lowering<'_, '_> {
         self.branch_if(ints, (join, &[unequal_ints]), (decoded, &[]));
         self.builder.switch_to_block(decoded);
         self.builder.set_cold_block(numbers);
-        let is_number = |builder: &mut FunctionBuilder<'_>, bits: ir::Value| {
+        let is_number = |builder: &mut FunctionBuilder<'_>, bits: ir::Value, int: ir::Value| {
             let double = crate::staged::value::is_double(&mut emit(builder), bits);
-            let int = is_int_tagged(builder, bits);
             emit(builder).raw_binary(Binary::Or, double, int)
         };
-        let (left_number, right_number) = (is_number(&mut self.builder, left), is_number(&mut self.builder, right));
+        let (left_number, right_number) = (is_number(&mut self.builder, left, left_int), is_number(&mut self.builder, right, right_int));
         let both = self.raw_binary(Binary::And, left_number, right_number);
         self.branch_if(both, (numbers, &[]), (others, &[]));
         self.builder.switch_to_block(numbers);
@@ -3544,7 +3543,7 @@ impl Lowering<'_, '_> {
                 || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some()));
         let callee = self.program.function(inlined.target.function as usize);
         let numeric = inlined.recovery == super::lane_unit::CallRecovery::RestartCall
-            && restartable_numeric_function(self.program, callee, &callee.instructions().collect::<Vec<_>>());
+            && restartable_numeric_function(self.program, callee, callee.instructions());
         if !admitted && !numeric {
             let admitted = self.receiver_recovery(receiver, ReceiverRecovery::for_body(callee));
             emit_js_guard(&mut self.builder, admitted, exit);
@@ -3865,7 +3864,7 @@ impl Lowering<'_, '_> {
         if self.unit.markers.iter().zip(&self.unit.frames).any(|(pc, frame)|
             (header..=back).contains(pc) && frame.alternative.is_some()) { return; }
         let mut candidates: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
-        self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls,
+        self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls, header..=back,
             |pc, register, ty| {
                 let index = usize::from(register);
                 if (header..=back).contains(&pc) && register < self.unit.caller_registers
@@ -3882,7 +3881,7 @@ impl Lowering<'_, '_> {
         // definition keeps a Number is carried as a double, as C carries its `double` sum: the
         // entering edge proves it once, and the loop neither boxes nor tests it.
         let mut numbers: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
-        self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls,
+        self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls, header..=back,
             |pc, register, _| {
                 let index = usize::from(register);
                 let entered = self.int_entries.iter().any(|(entry, _)| *entry == register) || self.number_entries.contains(&register);

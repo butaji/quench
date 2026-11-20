@@ -699,28 +699,21 @@ impl<H: Host> Vm<H> {
                 PropertyKey::Symbol(_) | PropertyKey::Private(..) => None,
             })
             .collect::<Vec<_>>();
-        // Shape entries are already in insertion order; only integer indices and module
-        // namespaces (code-unit order) reorder.
-        if !data.is_module_namespace()
-            && !entries
-                .iter()
-                .any(|(atom, _)| self.atom_class(*atom).contains(AtomClass::ARRAY_INDEX))
+        if data.is_module_namespace() {
+            entries.sort_by(|(left, _), (right, _)| self.atom_value(*left).order(&self.atom_value(*right)));
+            return entries;
+        }
+        // Shape entries are already in insertion order; only integer indices reorder. Each
+        // key's index is read once: indices ascend ahead of the rest, which keep their order.
+        if !entries
+            .iter()
+            .any(|(atom, _)| self.atom_class(*atom).contains(AtomClass::ARRAY_INDEX))
         {
             return entries;
         }
-        entries.sort_by(|(left, _), (right, _)| {
-            if data.is_module_namespace() {
-                return self.atom_value(*left).order(&self.atom_value(*right));
-            }
-            match (
-                array_index(self.atom_name(*left)),
-                array_index(self.atom_name(*right)),
-            ) {
-                (Some(left), Some(right)) => left.cmp(&right),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            }
+        entries.sort_by_cached_key(|(atom, _)| {
+            let index = array_index(self.atom_name(*atom));
+            (index.is_none(), index)
         });
         entries
     }

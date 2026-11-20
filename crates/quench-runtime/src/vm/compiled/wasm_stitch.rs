@@ -23,7 +23,7 @@ use super::CONTEXT_MEMORY_LENGTH;
 
 /// The frame word a register is, past the header words.
 const fn slot(register: u16) -> u64 {
-    8 * (quench_bjit::FRAME_HEADER_WORDS + register as u64)
+    quench_bjit::call_record::REGISTER_BYTES as u64 * (codes::FRAME_HEADER_WORDS + register as u64)
 }
 
 /// The word an integer constant is at `width`: an i32 zero-extended.
@@ -461,18 +461,10 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
         return None;
     }
     let stencils: Vec<Stencil> = flat.iter().map(|planned| stencil(planned.stencil)).collect::<Option<_>>()?;
-    let holes: Vec<Box<dyn Fn(u32) -> u64>> = flat
-        .iter()
-        .map(|planned| {
-            let holes = planned.holes;
-            Box::new(move |index: u32| holes[index as usize]) as Box<dyn Fn(u32) -> u64>
-        })
-        .collect();
     let placed: Vec<Row> = flat
         .iter()
         .zip(&stencils)
-        .zip(&holes)
-        .map(|((planned, stencil), hole)| Row { stencil, hole: &**hole, taken: planned.taken.map(|target| row_index(target, &first)), cold: false })
+        .map(|(planned, stencil)| Row { stencil, hole: &planned.holes, taken: planned.taken.map(|target| row_index(target, &first)), cold: false })
         .collect();
 
     let trap = stencil("leave_wasm_trap")?;

@@ -197,7 +197,6 @@ impl<H: Host> Vm<H> {
             }
             vm.set_array_like_length(p, removed, delete_count)?;
 
-            let items = args.iter().copied().skip(2).collect::<Vec<_>>();
             let new_length = length
                 .checked_sub(delete_count)
                 .and_then(|length| length.checked_add(items.len()))
@@ -225,7 +224,7 @@ impl<H: Host> Vm<H> {
                     )?;
                 }
             }
-            for (offset, value) in items.into_iter().enumerate() {
+            for (offset, value) in items.iter().copied().enumerate() {
                 vm.set_index_mode(
                     p,
                     object,

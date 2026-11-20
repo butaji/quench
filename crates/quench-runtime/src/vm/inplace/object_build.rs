@@ -11,8 +11,8 @@ impl<H: Host> Vm<H> {
     /// `plain_enumerable_own_properties`.
     #[inline]
     pub(in crate::vm) fn plain_object_keys(&mut self, object: Value) -> Option<Value> {
-        self.enum_cache_shape(object)?;
-        let keys = self.own_enumerable_key_values_cached(object)?;
+        let shape = self.enum_cache_shape(object)?;
+        let keys = self.own_enumerable_key_values_of_shape(object, shape)?;
         Some(self.array_of(&keys[..]))
     }
 
