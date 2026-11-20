@@ -20,10 +20,22 @@ CUSTOM_BODIES = {
 }
 
 def definitions(text):
-    for line in text.splitlines():
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
         if not line.startswith('static ') or '(' not in line:
             continue
-        head = line.split('{', 1)[0].rstrip()
+        # a definition may continue over several lines until its opening brace
+        head = line
+        j = i
+        while '{' not in head and ';' not in head and j < len(lines):
+            head = head + ' ' + lines[j].strip()
+            j += 1
+        if ';' in head.split('{')[0] and '{' not in head:
+            continue
+        head = head.split('{', 1)[0].rstrip()
         if head.endswith(';'):
             continue
         if '=' in head.split('(', 1)[0]:

@@ -13,6 +13,7 @@
 #define TS_PARSER_H
 
 #include <stdio.h>
+#include <string.h>
 #include "ts-ast.h"
 #include "ts-scanner.h"
 
@@ -319,7 +320,6 @@ static TsNode *parseIdentifierNameErrorOnUnicodeEscapeSequence(void) {
   return createIdentifier(tokenIsIdentifierOrKeyword(token()));
 }
 
-#endif
 
 /* ======================= part 2: lists, names, templates, literals, type references ======================= */
 
@@ -409,7 +409,7 @@ static TsNode *parseEntityName(bool allowReservedWords) {
 /* parseRightSideOfDot */
 static TsNode *parseRightSideOfDot(bool allowIdentifierNames, bool allowPrivateIdentifiers, bool allowUnicodeEscapeSequenceInIdentifierName) {
   if ((TS.tflags & TF_PrecedingLineBreak) && tokenIsIdentifierOrKeyword(token())) {
-    bool matchesPattern = lookAhead(nextTokenIsIdentifierOrKeywordOnSameLine) != 0;
+    bool matchesPattern = lookAhead(cb_nextTokenIsIdentifierOrKeywordOnSameLine) != 0;
     if (matchesPattern) return createMissingNode(TSK_Identifier, true);
   }
   if (token() == TSK_PrivateIdentifier) {
@@ -436,7 +436,7 @@ static TsNode *parseLiteralOfTemplateSpan(bool isTaggedTemplate) {
 static TsNode *parseTemplateSpan(bool isTaggedTemplate) {
   int pos = getNodePos();
   TsNode *n = newNode(TSK_TemplateSpan);
-  n->expression = (TsNode *)allowInAnd((TsCb)parseExpression);
+  n->expression = (TsNode *)allowInAnd(cb_parseExpression);
   n->literal = parseLiteralOfTemplateSpan(isTaggedTemplate);
   return finishNode(n, pos, -1);
 }
@@ -695,7 +695,7 @@ static TsNode *parseImportType(void) {
   TsList *typeArguments = parseTypeArgumentsOfTypeReference();
   TsNode *n = newNode(TSK_ImportType);
   n->argument = type;
-  n->attributes_node = attributes;
+  n->attributes_node = NULL; n->attributes = attributes;
   n->qualifier = qualifier;
   n->typeArguments = typeArguments;
   n->extra = isTypeOf;
@@ -1098,7 +1098,6 @@ static TsNode *parseYieldExpression(void);
 static TsNode *tryParseParenthesizedArrowFunctionExpression(bool allowReturnTypeInArrowFunction);
 static TsNode *tryParseAsyncSimpleArrowFunctionExpression(bool allowReturnTypeInArrowFunction);
 static TsNode *parseBinaryExpressionOrHigher(int precedence);
-static bool isLeftHandSideExpression(TsNode *n);
 static bool isAssignmentOperator(int k);
 static TsNode *parseConditionalExpressionRest(TsNode *leftOperand, int pos, bool allowReturnTypeInArrowFunction);
 
@@ -1237,6 +1236,23 @@ static int isParenthesizedArrowFunctionExpressionWorker(void) {
 static intptr_t cb_isUnParenthesizedAsyncArrowFunctionWorker(void);
 
 /* parsePossibleParenthesizedArrowFunctionExpression: positions that failed are remembered */
+/* notParenthesizedArrow: token positions where a parenthesized arrow function failed (a set, reset per file) */
+static int *notParenSetItems;
+static int notParenSetN, notParenSetCap;
+static bool notParenSetHas(int pos) {
+  for (int i = 0; i < notParenSetN; i++) if (notParenSetItems[i] == pos) return true;
+  return false;
+}
+static void notParenSetAdd(int pos) {
+  if (notParenSetHas(pos)) return;
+  if (notParenSetN == notParenSetCap) {
+    notParenSetCap = notParenSetCap ? notParenSetCap * 2 : 256;
+    notParenSetItems = realloc(notParenSetItems, sizeof(int) * notParenSetCap);
+    if (!notParenSetItems) abort();
+  }
+  notParenSetItems[notParenSetN++] = pos;
+}
+
 static TsNode *parsePossibleParenthesizedArrowFunctionExpression(bool allowReturnTypeInArrowFunction) {
   int tokenPos = TS.tokenStart;
   if (notParenSetHas(tokenPos)) return NULL;
@@ -1270,6 +1286,25 @@ static int isUnParenthesizedAsyncArrowFunctionWorker(void) {
 static intptr_t cb_isUnParenthesizedAsyncArrowFunctionWorker(void) { return isUnParenthesizedAsyncArrowFunctionWorker(); }
 
 static bool isAsyncModifierNode(TsNode *n) { return n->kind == TSK_AsyncKeyword; }
+static bool isJSDocFunctionType(const TsNode *n) { return n->kind == TSK_JSDocFunctionType; }
+static bool isAssignmentOperator(int t) { return t >= TSK_FirstAssignment && t <= TSK_LastAssignment; }
+static bool isLeftHandSideExpressionKind(int kind) {
+  switch (kind) {
+    case TSK_PropertyAccessExpression: case TSK_ElementAccessExpression: case TSK_NewExpression: case TSK_CallExpression:
+    case TSK_JsxElement: case TSK_JsxSelfClosingElement: case TSK_JsxFragment: case TSK_TaggedTemplateExpression:
+    case TSK_ArrayLiteralExpression: case TSK_ParenthesizedExpression: case TSK_ObjectLiteralExpression:
+    case TSK_ClassExpression: case TSK_FunctionExpression: case TSK_Identifier: case TSK_PrivateIdentifier:
+    case TSK_RegularExpressionLiteral: case TSK_NumericLiteral: case TSK_BigIntLiteral: case TSK_StringLiteral:
+    case TSK_NoSubstitutionTemplateLiteral: case TSK_TemplateExpression: case TSK_FalseKeyword:
+    case TSK_NullKeyword: case TSK_ThisKeyword: case TSK_TrueKeyword: case TSK_SuperKeyword:
+    case TSK_NonNullExpression: case TSK_ExpressionWithTypeArguments: case TSK_MetaProperty:
+    case TSK_ImportKeyword: case TSK_MissingDeclaration:
+      return true;
+    default:
+      return false;
+  }
+}
+static bool isLeftHandSideExpression(const TsNode *n) { return isLeftHandSideExpressionKind(n->kind); }
 
 static TsNode *parseParenthesizedArrowFunctionExpression(bool allowAmbiguity, bool allowReturnTypeInArrowFunction) {
   int pos = getNodePos();
@@ -1965,7 +2000,7 @@ static TsNode *parseObjectLiteralElement(void) {
   TsNode *questionToken = parseOptionalToken(TSK_QuestionToken);
   TsNode *exclamationToken = parseOptionalToken(TSK_ExclamationToken);
   if (asteriskToken || token() == TSK_OpenParenToken || token() == TSK_LessThanToken) {
-    return parseMethodDeclaration(pos, hasJSDoc, modifiers, asteriskToken, name, questionToken, exclamationToken);
+    return parseMethodDeclaration(pos, hasJSDoc, modifiers, asteriskToken, name, questionToken, exclamationToken, 0);
   }
   TsNode *node;
   bool isShorthandPropertyAssignment2 = tokenIsIdentifier && token() != TSK_ColonToken;
@@ -3762,16 +3797,16 @@ static bool isListElement2(int parsingContext2, bool inErrorRecovery) {
       return isBindingIdentifierOrPrivateIdentifierOrPattern();
     case PC_ArrayBindingElements:
       return token() == TSK_CommaToken || token() == TSK_DotDotDotToken || isBindingIdentifierOrPrivateIdentifierOrPattern();
-    case PC_ArgumentExpressions:
-      return token() == TSK_DotDotDotToken || isStartOfExpression();
     case PC_ArrayLiteralMembers:
       switch (token()) {
         case TSK_CommaToken: case TSK_DotToken:
           return true;
       }
       /* falls through */
-    case PC_JsxChildren:
+    case PC_ArgumentExpressions:
       return token() == TSK_DotDotDotToken || isStartOfExpression();
+    case PC_JsxChildren:
+      return true;
     case PC_Parameters:
       return isStartOfParameter(false);
     case PC_JSDocParameters:
@@ -3807,13 +3842,11 @@ static bool isVariableDeclaratorListTerminator(void) {
 static bool isListTerminator(int kind) {
   if (token() == TSK_EndOfFileToken) return true;
   switch (kind) {
-    case PC_SourceElements: case PC_BlockStatements: case PC_SwitchClauses: case PC_TypeMembers:
-    case PC_ClassMembers: case PC_EnumMembers: case PC_ObjectLiteralMembers: case PC_ObjectBindingElements:
-    case PC_ImportAttributes: case PC_JsxChildren: case PC_ArrayLiteralMembers:
-    case PC_RestProperties:
+    case PC_BlockStatements: case PC_SwitchClauses: case PC_TypeMembers: case PC_ClassMembers:
+    case PC_EnumMembers: case PC_ObjectLiteralMembers: case PC_ObjectBindingElements:
+    case PC_ImportOrExportSpecifiers: case PC_ImportAttributes:
       return token() == TSK_CloseBraceToken;
     case PC_SwitchClauseStatements:
-    case PC_JSDocComment:
       return token() == TSK_CloseBraceToken || token() == TSK_CaseKeyword || token() == TSK_DefaultKeyword;
     case PC_HeritageClauseElement:
       return token() == TSK_OpenBraceToken || token() == TSK_ExtendsKeyword || token() == TSK_ImplementsKeyword;
@@ -3824,18 +3857,757 @@ static bool isListTerminator(int kind) {
              token() == TSK_ExtendsKeyword || token() == TSK_ImplementsKeyword;
     case PC_ArgumentExpressions:
       return token() == TSK_CloseParenToken || token() == TSK_SemicolonToken;
-    case PC_ArrayBindingElements: case PC_Parameters: case PC_JSDocParameters:
+    case PC_ArrayLiteralMembers: case PC_TupleElementTypes: case PC_ArrayBindingElements:
       return token() == TSK_CloseBracketToken;
-    case PC_TypeArguments: case PC_TupleElementTypes:
+    case PC_JSDocParameters: case PC_Parameters: case PC_RestProperties:
       return token() == TSK_CloseParenToken || token() == TSK_CloseBracketToken;
+    case PC_TypeArguments:
+      return token() != TSK_CommaToken;
     case PC_HeritageClauses:
       return token() == TSK_OpenBraceToken || token() == TSK_CloseBraceToken;
-    case PC_ImportOrExportSpecifiers:
-      return token() == TSK_CloseBraceToken;
     case PC_JsxAttributes:
       return token() == TSK_GreaterThanToken || token() == TSK_SlashToken;
-      return false;
+    case PC_JsxChildren:
+      return token() == TSK_LessThanToken && lookAhead(cb_nextTokenIsSlash) != 0;
     default:
       return false;
   }
 }
+
+
+/* ======================= part 15: type references, JSDoc type helpers, type members, mapped and tuple types ======================= */
+
+static void parseErrorAtRange(TsNode *range, int message) { (void)message; parseErrorAtPosition(range->pos); }
+
+/* withJSDoc(node, hasJSDoc): ParseNone never sets hasPrecedingJSDocComment, so only ParseAll reaches addJSDocComment */
+static TsNode *addJSDocComment(TsNode *node);
+static TsNode *withJSDoc(TsNode *node, bool hasJSDoc) {
+  if (!hasJSDoc) return node;
+  return addJSDocComment(node);
+}
+
+static bool isKeyword(int k) { return k >= TSK_FirstKeyword && k <= TSK_LastKeyword; }
+static bool isJSDocNullableType(const TsNode *n) { return n->kind == TSK_JSDocNullableType; }
+static bool isSetAccessorDeclaration(const TsNode *n) { return n->kind == TSK_SetAccessor; }
+static void setTextRange(TsNode *n, const TsNode *range) { n->pos = range->pos; n->end = range->end; }
+
+/* abortParsingListOrMoveToNextToken(kind): the error is counted; then recovery decides */
+static bool isInSomeParsingContext(void) {
+  for (int kind = 0; kind < PC_Count; kind++) {
+    if (P.parsingContext & (1 << kind)) {
+      if (isListElement2(kind, true) || isListTerminator(kind)) return true;
+    }
+  }
+  return false;
+}
+
+static bool abortParsingListOrMoveToNextToken(int kind) {
+  (void)kind;
+  parseErrorAtCurrentToken();
+  if (isInSomeParsingContext()) return true;
+  nextToken();
+  return false;
+}
+
+static TsNode *parseEntityNameOfTypeReference(void) { return parseEntityName(true); }
+
+static TsList *parseTypeArgumentsOfTypeReference(void) {
+  if (!(TS.tflags & TF_PrecedingLineBreak) && reScanLessThanToken() == TSK_LessThanToken) {
+    return parseBracketedList(PC_TypeArguments, parseType, TSK_LessThanToken, TSK_GreaterThanToken);
+  }
+  return NULL;
+}
+
+static TsNode *parseTypeReference(void) {
+  int pos = getNodePos();
+  TsNode *typeName = parseEntityNameOfTypeReference();
+  TsList *typeArguments = parseTypeArgumentsOfTypeReference();
+  TsNode *n = newNode(TSK_TypeReference);
+  n->typeName = typeName;
+  n->typeArguments = typeArguments;
+  return finishNode(n, pos, -1);
+}
+
+static bool typeHasArrowFunctionBlockingParseError(const TsNode *node) {
+  switch (node->kind) {
+    case TSK_TypeReference:
+      return nodeIsMissing(node->typeName);
+    case TSK_FunctionType:
+    case TSK_ConstructorType:
+      return (node->parameters == NULL || node->parameters->isMissingList) || typeHasArrowFunctionBlockingParseError(node->type);
+    case TSK_ParenthesizedType:
+      return typeHasArrowFunctionBlockingParseError(node->type);
+    default:
+      return false;
+  }
+}
+
+static TsNode *parseThisTypePredicate(TsNode *lhs) {
+  nextToken();
+  TsNode *n = newNode(TSK_TypePredicate);
+  n->parameterName = lhs;
+  n->type = parseType();
+  return finishNode(n, lhs->pos, -1);
+}
+
+static TsNode *parseThisTypeNode(void) {
+  int pos = getNodePos();
+  nextToken();
+  return finishNode(newNode(TSK_ThisType), pos, -1);
+}
+
+static TsNode *parseJSDocAllType(void) {
+  int pos = getNodePos();
+  nextToken();
+  return finishNode(newNode(TSK_JSDocAllType), pos, -1);
+}
+
+static TsNode *parseJSDocNonNullableType(void) {
+  int pos = getNodePos();
+  nextToken();
+  TsNode *n = newNode(TSK_JSDocNonNullableType);
+  n->type = parseNonArrayType();
+  return finishNode(n, pos, -1);
+}
+
+static TsNode *parseJSDocUnknownOrNullableType(void) {
+  int pos = getNodePos();
+  nextToken();
+  if (token() == TSK_CommaToken || token() == TSK_CloseBraceToken || token() == TSK_CloseParenToken ||
+      token() == TSK_GreaterThanToken || token() == TSK_EqualsToken || token() == TSK_BarToken) {
+    return finishNode(newNode(TSK_JSDocUnknownType), pos, -1);
+  }
+  TsNode *n = newNode(TSK_JSDocNullableType);
+  n->type = parseType();
+  return finishNode(n, pos, -1);
+}
+
+static TsNode *parseJSDocFunctionType(void) {
+  int pos = getNodePos();
+  bool hasJSDoc = hasPrecedingJSDocComment();
+  if (tryParse(cb_nextTokenIsOpenParen)) {
+    TsList *parameters = parseParameters(4 /* Type */ | 32 /* JSDoc */);
+    TsNode *type = parseReturnType(TSK_ColonToken, false);
+    TsNode *n = newNode(TSK_JSDocFunctionType);
+    n->parameters = parameters;
+    n->type = type;
+    return withJSDoc(finishNode(n, pos, -1), hasJSDoc);
+  }
+  TsNode *n = newNode(TSK_TypeReference);
+  n->typeName = parseIdentifierName();
+  return finishNode(n, pos, -1);
+}
+
+static TsNode *parseJSDocType(void);
+
+static TsNode *parseJSDocParameter(void) {
+  int pos = getNodePos();
+  TsNode *name = NULL;
+  if (token() == TSK_ThisKeyword || token() == TSK_NewKeyword) {
+    name = parseIdentifierName();
+    parseExpected(TSK_ColonToken);
+  }
+  TsNode *n = newNode(TSK_Parameter);
+  n->name = name;
+  n->type = parseJSDocType();
+  return finishNode(n, pos, -1);
+}
+
+static TsNode *parseJSDocType(void) {
+  TS.skipJsDocLeadingAsterisks = true;
+  int pos = getNodePos();
+  if (parseOptional(TSK_ModuleKeyword)) {
+    TsNode *moduleTag = newNode(TSK_JSDocNamepathType);
+    for (;;) {
+      switch (token()) {
+        case TSK_CloseBraceToken:
+        case TSK_EndOfFileToken:
+        case TSK_CommaToken:
+        case TSK_WhitespaceTrivia:
+          goto terminate;
+        default:
+          nextTokenJSDoc();
+      }
+    }
+  terminate:
+    TS.skipJsDocLeadingAsterisks = false;
+    return finishNode(moduleTag, pos, -1);
+  }
+  bool hasDotDotDot = parseOptional(TSK_DotDotDotToken);
+  TsNode *type = parseTypeOrTypePredicate();
+  TS.skipJsDocLeadingAsterisks = false;
+  if (hasDotDotDot) {
+    TsNode *v = newNode(TSK_JSDocVariadicType);
+    v->type = type;
+    type = finishNode(v, pos, -1);
+  }
+  if (token() == TSK_EqualsToken) {
+    nextToken();
+    TsNode *o = newNode(TSK_JSDocOptionalType);
+    o->type = type;
+    return finishNode(o, pos, -1);
+  }
+  return type;
+}
+
+static TsNode *parseTypeQuery(void) {
+  int pos = getNodePos();
+  parseExpected(TSK_TypeOfKeyword);
+  TsNode *entityName = parseEntityName(true);
+  TsList *typeArguments = !(TS.tflags & TF_PrecedingLineBreak) ? tryParseTypeArguments() : NULL;
+  TsNode *n = newNode(TSK_TypeQuery);
+  n->exprName = entityName;
+  n->typeArguments = typeArguments;
+  return finishNode(n, pos, -1);
+}
+
+static TsNode *parseTypeParameter(void) {
+  int pos = getNodePos();
+  TsList *modifiers = parseModifiers(false, true, false);
+  TsNode *name = parseIdentifier();
+  TsNode *constraint = NULL, *expression = NULL;
+  if (parseOptional(TSK_ExtendsKeyword)) {
+    if (isStartOfType(false) || !isStartOfExpression()) {
+      constraint = parseType();
+    } else {
+      expression = parseUnaryExpressionOrHigher();
+    }
+  }
+  TsNode *defaultType = parseOptional(TSK_EqualsToken) ? parseType() : NULL;
+  TsNode *n = newNode(TSK_TypeParameter);
+  n->modifiers = modifiers;
+  n->name = name;
+  n->constraint = constraint;
+  n->defaultType = defaultType;
+  n->expression = expression;
+  return finishNode(n, pos, -1);
+}
+
+static TsList *parseTypeParameters(void) {
+  if (token() == TSK_LessThanToken) {
+    return parseBracketedList(PC_TypeParameters, parseTypeParameter, TSK_LessThanToken, TSK_GreaterThanToken);
+  }
+  return NULL;
+}
+
+static bool isStartOfTypeOfImportType(void) {
+  nextToken();
+  return token() == TSK_ImportKeyword;
+}
+
+static TsNode *parseKeywordAndNoDot(void) {
+  TsNode *n = parseTokenNode();
+  return token() == TSK_DotToken ? NULL : n;
+}
+
+static TsNode *parseLiteralTypeNode(bool negative) {
+  int pos = getNodePos();
+  if (negative) nextToken();
+  TsNode *expression = (token() == TSK_TrueKeyword || token() == TSK_FalseKeyword || token() == TSK_NullKeyword)
+                         ? parseTokenNode() : parseLiteralLikeNode(token());
+  if (negative) {
+    TsNode *p = newNode(TSK_PrefixUnaryExpression);
+    p->operand = expression;
+    p->extra = TSK_MinusToken;
+    expression = finishNode(p, pos, -1);
+  }
+  TsNode *n = newNode(TSK_LiteralType);
+  n->literal = expression;
+  return finishNode(n, pos, -1);
+}
+
+
+/* ---- type members ---- */
+
+
+static TsNode *parseIndexSignatureDeclaration(int pos, bool hasJSDoc, TsList *modifiers) {
+  TsList *parameters = parseBracketedList(PC_Parameters, (TsParseFn)parseParameterCb, TSK_OpenBracketToken, TSK_CloseBracketToken);
+  TsNode *type = parseTypeAnnotation();
+  parseTypeMemberSemicolon();
+  TsNode *n = newNode(TSK_IndexSignature);
+  n->modifiers = modifiers;
+  n->parameters = parameters;
+  n->type = type;
+  return withJSDoc(finishNode(n, pos, -1), hasJSDoc);
+}
+
+static TsNode *parsePropertyOrMethodSignature(int pos, bool hasJSDoc, TsList *modifiers) {
+  TsNode *name = parsePropertyName();
+  TsNode *questionToken = parseOptionalToken(TSK_QuestionToken);
+  TsNode *node;
+  if (token() == TSK_OpenParenToken || token() == TSK_LessThanToken) {
+    TsList *typeParameters = parseTypeParameters();
+    TsList *parameters = parseParameters(4 /* Type */);
+    TsNode *type = parseReturnType(TSK_ColonToken, true);
+    node = newNode(TSK_MethodSignature);
+    node->modifiers = modifiers;
+    node->name = name;
+    node->questionToken = questionToken;
+    node->typeParameters = typeParameters;
+    node->parameters = parameters;
+    node->type = type;
+  } else {
+    TsNode *type = parseTypeAnnotation();
+    node = newNode(TSK_PropertySignature);
+    node->modifiers = modifiers;
+    node->name = name;
+    node->questionToken = questionToken;
+    node->type = type;
+    if (token() == TSK_EqualsToken) node->initializer = parseInitializer();
+  }
+  parseTypeMemberSemicolon();
+  return withJSDoc(finishNode(node, pos, -1), hasJSDoc);
+}
+
+static bool isTypeMemberStart(void) {
+  if (token() == TSK_OpenParenToken || token() == TSK_LessThanToken || token() == TSK_GetKeyword || token() == TSK_SetKeyword) {
+    return true;
+  }
+  bool idToken = false;
+  while (isModifierKind(token())) {
+    idToken = true;
+    nextToken();
+  }
+  if (token() == TSK_OpenBracketToken) return true;
+  if (isLiteralPropertyName()) {
+    idToken = true;
+    nextToken();
+  }
+  if (idToken) {
+    return token() == TSK_OpenParenToken || token() == TSK_LessThanToken || token() == TSK_QuestionToken ||
+           token() == TSK_ColonToken || token() == TSK_CommaToken || canParseSemicolon();
+  }
+  return false;
+}
+
+static TsNode *parseTypeMember(void) {
+  if (token() == TSK_OpenParenToken || token() == TSK_LessThanToken) {
+    return parseSignatureMember(TSK_CallSignature);
+  }
+  if (token() == TSK_NewKeyword && lookAhead(cb_nextTokenIsOpenParenOrLessThan)) {
+    return parseSignatureMember(TSK_ConstructSignature);
+  }
+  int pos = getNodePos();
+  bool hasJSDoc = hasPrecedingJSDocComment();
+  TsList *modifiers = parseModifiers(false, false, false);
+  if (parseContextualModifier(TSK_GetKeyword)) {
+    return parseAccessorDeclaration(pos, hasJSDoc, modifiers, TSK_GetAccessor, 4 /* Type */);
+  }
+  if (parseContextualModifier(TSK_SetKeyword)) {
+    return parseAccessorDeclaration(pos, hasJSDoc, modifiers, TSK_SetAccessor, 4 /* Type */);
+  }
+  if (isIndexSignature()) {
+    return parseIndexSignatureDeclaration(pos, hasJSDoc, modifiers);
+  }
+  return parsePropertyOrMethodSignature(pos, hasJSDoc, modifiers);
+}
+
+static TsList *parseObjectTypeMembers(void) {
+  TsList *members;
+  if (parseExpected(TSK_OpenBraceToken)) {
+    members = parseList(PC_TypeMembers, parseTypeMember);
+    parseExpected(TSK_CloseBraceToken);
+  } else {
+    members = createMissingList();
+  }
+  return members;
+}
+
+static TsNode *parseTypeLiteral(void) {
+  int pos = getNodePos();
+  TsNode *n = newNode(TSK_TypeLiteral);
+  n->members = parseObjectTypeMembers();
+  return finishNode(n, pos, -1);
+}
+
+/* ---- mapped types ---- */
+
+static TsNode *parseMappedTypeParameter(void) {
+  int pos = getNodePos();
+  TsNode *name = parseIdentifierName();
+  parseExpected(TSK_InKeyword);
+  TsNode *type = parseType();
+  TsNode *n = newNode(TSK_TypeParameter);
+  n->name = name;
+  n->constraint = type;
+  return finishNode(n, pos, -1);
+}
+
+static TsNode *parseMappedType(void) {
+  int pos = getNodePos();
+  parseExpected(TSK_OpenBraceToken);
+  TsNode *readonlyToken = NULL;
+  if (token() == TSK_ReadonlyKeyword || token() == TSK_PlusToken || token() == TSK_MinusToken) {
+    readonlyToken = parseTokenNode();
+    if (readonlyToken->kind != TSK_ReadonlyKeyword) {
+      parseExpected(TSK_ReadonlyKeyword);
+    }
+  }
+  parseExpected(TSK_OpenBracketToken);
+  TsNode *typeParameter = parseMappedTypeParameter();
+  TsNode *nameType = parseOptional(TSK_AsKeyword) ? parseType() : NULL;
+  parseExpected(TSK_CloseBracketToken);
+  TsNode *questionToken = NULL;
+  if (token() == TSK_QuestionToken || token() == TSK_PlusToken || token() == TSK_MinusToken) {
+    questionToken = parseTokenNode();
+    if (questionToken->kind != TSK_QuestionToken) {
+      parseExpected(TSK_QuestionToken);
+    }
+  }
+  TsNode *type = parseTypeAnnotation();
+  parseSemicolon();
+  TsList *members = parseList(PC_TypeMembers, parseTypeMember);
+  parseExpected(TSK_CloseBraceToken);
+  TsNode *n = newNode(TSK_MappedType);
+  n->readonlyToken = readonlyToken;
+  n->typeParameter = typeParameter;
+  n->nameType = nameType;
+  n->questionToken = questionToken;
+  n->type = type;
+  n->members = members;
+  return finishNode(n, pos, -1);
+}
+
+/* ---- tuple, parenthesized, function and constructor types ---- */
+
+static TsNode *parseTupleElementType(void) {
+  int pos = getNodePos();
+  if (parseOptional(TSK_DotDotDotToken)) {
+    TsNode *r = newNode(TSK_RestType);
+    r->type = parseType();
+    return finishNode(r, pos, -1);
+  }
+  TsNode *type = parseType();
+  if (isJSDocNullableType(type) && type->pos == type->type->pos) {
+    TsNode *node = newNode(TSK_OptionalType);
+    node->type = type->type;
+    setTextRange(node, type);
+    node->flags = type->flags;
+    return node;
+  }
+  return type;
+}
+
+static bool isNextTokenColonOrQuestionColon(void) {
+  return nextToken() == TSK_ColonToken || (token() == TSK_QuestionToken && nextToken() == TSK_ColonToken);
+}
+
+static bool isTupleElementName(void) {
+  if (token() == TSK_DotDotDotToken) {
+    return tokenIsIdentifierOrKeyword(nextToken()) && isNextTokenColonOrQuestionColon();
+  }
+  return tokenIsIdentifierOrKeyword(token()) && isNextTokenColonOrQuestionColon();
+}
+
+static TsNode *parseTupleElementNameOrTupleElementType(void) {
+  if (lookAhead(cb_isTupleElementName)) {
+    int pos = getNodePos();
+    bool hasJSDoc = hasPrecedingJSDocComment();
+    TsNode *dotDotDotToken = parseOptionalToken(TSK_DotDotDotToken);
+    TsNode *name = parseIdentifierName();
+    TsNode *questionToken = parseOptionalToken(TSK_QuestionToken);
+    parseExpected(TSK_ColonToken);
+    TsNode *type = parseTupleElementType();
+    TsNode *node = newNode(TSK_NamedTupleMember);
+    node->dotDotDotToken = dotDotDotToken;
+    node->name = name;
+    node->questionToken = questionToken;
+    node->type = type;
+    return withJSDoc(finishNode(node, pos, -1), hasJSDoc);
+  }
+  return parseTupleElementType();
+}
+
+static TsNode *parseTupleType(void) {
+  int pos = getNodePos();
+  TsNode *n = newNode(TSK_TupleType);
+  n->elements = parseBracketedList(PC_TupleElementTypes, parseTupleElementNameOrTupleElementType, TSK_OpenBracketToken, TSK_CloseBracketToken);
+  return finishNode(n, pos, -1);
+}
+
+static TsNode *parseParenthesizedType(void) {
+  int pos = getNodePos();
+  parseExpected(TSK_OpenParenToken);
+  TsNode *type = parseType();
+  parseExpected(TSK_CloseParenToken);
+  TsNode *n = newNode(TSK_ParenthesizedType);
+  n->type = type;
+  return finishNode(n, pos, -1);
+}
+
+static TsList *parseModifiersForConstructorType(void) {
+  TsList *modifiers = NULL;
+  if (token() == TSK_AbstractKeyword) {
+    int pos = getNodePos();
+    nextToken();
+    TsNode *modifier = finishNode(newNode(TSK_AbstractKeyword), pos, -1);
+    modifiers = ts_list_single(modifier, pos, TS.fullStart);
+  }
+  return modifiers;
+}
+
+static TsNode *parseFunctionOrConstructorType(void) {
+  int pos = getNodePos();
+  bool hasJSDoc = hasPrecedingJSDocComment();
+  TsList *modifiers = parseModifiersForConstructorType();
+  bool isConstructorType = parseOptional(TSK_NewKeyword);
+  TsList *typeParameters = parseTypeParameters();
+  TsList *parameters = parseParameters(4 /* Type */);
+  TsNode *type = parseReturnType(TSK_EqualsGreaterThanToken, false);
+  TsNode *node = newNode(isConstructorType ? TSK_ConstructorType : TSK_FunctionType);
+  node->modifiers = isConstructorType ? modifiers : NULL;
+  node->typeParameters = typeParameters;
+  node->parameters = parameters;
+  node->type = type;
+  return withJSDoc(finishNode(node, pos, -1), hasJSDoc);
+}
+
+static TsNode *parseParameterCb(void) { return parseParameter(false); }
+
+/* ---- class members: constructors, methods, properties, accessors, static blocks ---- */
+
+static bool parseConstructorName(void);
+
+static intptr_t parseConstructorStringLiteral(void) {
+  TsNode *literalNode = parseLiteralNode();
+  bool isConstructor = literalNode->textLen == 11 && memcmp(literalNode->text, "constructor", 11) == 0;
+  return isConstructor ? (intptr_t)literalNode : 0;
+}
+static intptr_t cb_parseConstructorStringLiteral(void) { return parseConstructorStringLiteral(); }
+
+static bool parseConstructorName(void) {
+  if (token() == TSK_ConstructorKeyword) {
+    return parseExpected(TSK_ConstructorKeyword);
+  }
+  if (token() == TSK_StringLiteral && lookAhead(cb_nextToken) == TSK_OpenParenToken) {
+    return tryParse(cb_parseConstructorStringLiteral) != 0;
+  }
+  return false;
+}
+
+typedef struct { int pos; bool hasJSDoc; TsList *modifiers; } CtorArgs;
+static CtorArgs ctorArgs[64];
+static int ctorArgsN;
+
+static TsNode *tryParseConstructorDeclarationImpl(int pos, bool hasJSDoc, TsList *modifiers) {
+  if (!parseConstructorName()) return NULL;
+  TsList *typeParameters = parseTypeParameters();
+  TsList *parameters = parseParameters(0 /* None */);
+  TsNode *type = parseReturnType(TSK_ColonToken, false);
+  TsNode *body = parseFunctionBlockOrSemicolon(0 /* None */, 0);
+  TsNode *node = newNode(TSK_Constructor);
+  node->modifiers = modifiers;
+  node->parameters = parameters;
+  node->body = body;
+  node->typeParameters = typeParameters;
+  node->type = type;
+  return withJSDoc(finishNode(node, pos, -1), hasJSDoc);
+}
+
+/* tryParseConstructorDeclaration(pos, hasJSDoc, modifiers): the callback reads its arguments on entry */
+static intptr_t tryParseConstructorCb(void) {
+  CtorArgs a = ctorArgs[ctorArgsN - 1];
+  return (intptr_t)tryParseConstructorDeclarationImpl(a.pos, a.hasJSDoc, a.modifiers);
+}
+static TsNode *tryParseConstructorDeclaration(int pos, bool hasJSDoc, TsList *modifiers) {
+  ctorArgs[ctorArgsN++] = (CtorArgs){pos, hasJSDoc, modifiers};
+  TsNode *r = (TsNode *)tryParse(cb_tryParseConstructorCb);
+  ctorArgsN--;
+  return r;
+}
+
+static bool anyModifierIsAsync(TsList *modifiers) {
+  if (!modifiers) return false;
+  for (int i = 0; i < modifiers->n; i++) if (isAsyncModifierNode(modifiers->v[i])) return true;
+  return false;
+}
+
+static TsNode *parseMethodDeclaration(int pos, bool hasJSDoc, TsList *modifiers, TsNode *asteriskToken, TsNode *name,
+                                      TsNode *questionToken, TsNode *exclamationToken, int diagnosticMessage) {
+  int isGenerator = asteriskToken ? 1 /* Yield */ : 0 /* None */;
+  int isAsync = anyModifierIsAsync(modifiers) ? 2 /* Await */ : 0 /* None */;
+  TsList *typeParameters = parseTypeParameters();
+  TsList *parameters = parseParameters(isGenerator | isAsync);
+  TsNode *type = parseReturnType(TSK_ColonToken, false);
+  TsNode *body = parseFunctionBlockOrSemicolon(isGenerator | isAsync, diagnosticMessage);
+  TsNode *node = newNode(TSK_MethodDeclaration);
+  node->modifiers = modifiers;
+  node->asteriskToken = asteriskToken;
+  node->name = name;
+  node->questionToken = questionToken;
+  node->typeParameters = typeParameters;
+  node->parameters = parameters;
+  node->type = type;
+  node->body = body;
+  node->exclamationToken = exclamationToken;
+  return withJSDoc(finishNode(node, pos, -1), hasJSDoc);
+}
+
+static void parseSemicolonAfterPropertyName(TsNode *name, TsNode *type, TsNode *initializer) {
+  (void)name;
+  if (token() == TSK_AtToken && !(TS.tflags & TF_PrecedingLineBreak)) {
+    parseErrorAtCurrentToken();
+    return;
+  }
+  if (token() == TSK_OpenParenToken) {
+    parseErrorAtCurrentToken();
+    nextToken();
+    return;
+  }
+  if (type && !canParseSemicolon()) {
+    parseErrorAtCurrentToken();
+    return;
+  }
+  if (tryParseSemicolon()) return;
+  if (initializer) {
+    parseErrorAtCurrentToken();
+    return;
+  }
+  parseErrorAtCurrentToken();
+}
+
+static TsNode *parsePropertyDeclaration(int pos, bool hasJSDoc, TsList *modifiers, TsNode *name, TsNode *questionToken) {
+  TsNode *exclamationToken = (!questionToken && !(TS.tflags & TF_PrecedingLineBreak)) ? parseOptionalToken(TSK_ExclamationToken) : NULL;
+  TsNode *type = parseTypeAnnotation();
+  TsNode *initializer = (TsNode *)doOutsideOfContext(CF_Yield | CF_Await | CF_DisallowIn, cb_parseInitializer);
+  parseSemicolonAfterPropertyName(name, type, initializer);
+  TsNode *node = newNode(TSK_PropertyDeclaration);
+  node->modifiers = modifiers;
+  node->name = name;
+  node->questionToken = questionToken ? questionToken : exclamationToken;
+  node->type = type;
+  node->initializer = initializer;
+  return withJSDoc(finishNode(node, pos, -1), hasJSDoc);
+}
+
+static TsNode *parsePropertyOrMethodDeclaration(int pos, bool hasJSDoc, TsList *modifiers) {
+  TsNode *asteriskToken = parseOptionalToken(TSK_AsteriskToken);
+  TsNode *name = parsePropertyName();
+  TsNode *questionToken = parseOptionalToken(TSK_QuestionToken);
+  if (asteriskToken || token() == TSK_OpenParenToken || token() == TSK_LessThanToken) {
+    return parseMethodDeclaration(pos, hasJSDoc, modifiers, asteriskToken, name, questionToken, NULL, 0);
+  }
+  return parsePropertyDeclaration(pos, hasJSDoc, modifiers, name, questionToken);
+}
+
+static TsNode *parseAccessorDeclaration(int pos, bool hasJSDoc, TsList *modifiers, int kind, int flags) {
+  TsNode *name = parsePropertyName();
+  TsList *typeParameters = parseTypeParameters();
+  TsList *parameters = parseParameters(0 /* None */);
+  TsNode *type = parseReturnType(TSK_ColonToken, false);
+  TsNode *body = parseFunctionBlockOrSemicolon(flags, 0);
+  TsNode *node = newNode(kind);
+  node->modifiers = modifiers;
+  node->name = name;
+  node->parameters = parameters;
+  node->body = body;
+  node->typeParameters = typeParameters;
+  node->type = type;
+  return withJSDoc(finishNode(node, pos, -1), hasJSDoc);
+}
+
+static bool isClassMemberStart(void) {
+  int idToken = -1;
+  if (token() == TSK_AtToken) return true;
+  while (isModifierKind(token())) {
+    idToken = token();
+    if (isClassMemberModifier(idToken)) return true;
+    nextToken();
+  }
+  if (token() == TSK_AsteriskToken) return true;
+  if (isLiteralPropertyName()) {
+    idToken = token();
+    nextToken();
+  }
+  if (token() == TSK_OpenBracketToken) return true;
+  if (idToken != -1) {
+    if (!isKeyword(idToken) || idToken == TSK_SetKeyword || idToken == TSK_GetKeyword) return true;
+    switch (token()) {
+      case TSK_OpenParenToken:
+      case TSK_LessThanToken:
+      case TSK_ExclamationToken:
+      case TSK_ColonToken:
+      case TSK_EqualsToken:
+      case TSK_QuestionToken:
+        return true;
+      default:
+        return canParseSemicolon();
+    }
+  }
+  return false;
+}
+
+static TsNode *parseClassStaticBlockBody(void) {
+  bool savedYieldContext = inYieldContext();
+  bool savedAwaitContext = inAwaitContext();
+  setYieldContext(false);
+  setAwaitContext(true);
+  TsNode *body = parseBlock(false);
+  setYieldContext(savedYieldContext);
+  setAwaitContext(savedAwaitContext);
+  return body;
+}
+
+static TsNode *parseClassStaticBlockDeclaration(int pos, bool hasJSDoc, TsList *modifiers) {
+  parseExpectedToken(TSK_StaticKeyword);
+  TsNode *body = parseClassStaticBlockBody();
+  TsNode *n = newNode(TSK_ClassStaticBlockDeclaration);
+  n->body = body;
+  n = withJSDoc(finishNode(n, pos, -1), hasJSDoc);
+  n->modifiers = modifiers;
+  return n;
+}
+
+/* JSDoc attachment (ParseAll only): the JSDoc parser is not ported yet, so no comment is attached here */
+static TsNode *addJSDocComment(TsNode *node) { return node; }
+
+/* ======================= part 16: source file ======================= */
+
+/* initializeState + parseSourceFile setup: the parser state is reset for every file */
+static void parserInitState(int scriptKind, int jsDocParsingMode, bool isDeclarationFile) {
+  P.languageVersion = 99; /* ESNext */
+  P.scriptKind = scriptKind;
+  P.languageVariant = (scriptKind == 2 || scriptKind == 4) ? 1 : 0; /* JSX / TSX */
+  P.contextFlags = isDeclarationFile ? CF_Ambient : 0;
+  P.sourceFlags = 0;
+  P.currentToken = 0;
+  P.nodeCount = 0;
+  P.identifierCount = 0;
+  P.nerr = 0;
+  P.errBeforeNextFinishedNode = false;
+  P.parsingContext = 0;
+  P.topLevel = true;
+  P.jsDocParsingMode = jsDocParsingMode;
+  notParenSetN = 0;
+  ctorArgsN = 0;
+  ts_stk_n = 0;
+  TS.skipJsDocLeadingAsterisks = 0;
+}
+
+static bool isDeclarationFileName(const char *name) {
+  size_t n = strlen(name);
+  return (n >= 5 && strcmp(name + n - 5, ".d.ts") == 0) || (n >= 6 && (strcmp(name + n - 6, ".d.mts") == 0 || strcmp(name + n - 6, ".d.cts") == 0));
+}
+
+/* parseSourceFile(fileName, sourceText, ...): returns the SourceFile node; P.nodeCount and
+ * P.identifierCount hold the counts that TypeScript stores on the SourceFile. */
+static TsNode *parseSourceFile(const char *fileName, const char *text, int len, int scriptKind, int jsDocParsingMode) {
+  ts_setText(text, len);
+  bool isDeclarationFile = isDeclarationFileName(fileName);
+  parserInitState(scriptKind, jsDocParsingMode, isDeclarationFile);
+  if (isDeclarationFile) P.contextFlags |= CF_Ambient;
+  P.sourceFlags = P.contextFlags;
+  nextToken();
+  TsList *statements = parseList(PC_SourceElements, parseStatementFn);
+  bool endHasJSDoc = hasPrecedingJSDocComment();
+  TsNode *endOfFileToken = withJSDoc(parseTokenNode(), endHasJSDoc);
+  TsNode *sf = newNode(TSK_SourceFile);
+  sf->statements = statements;
+  sf->endOfFileToken = endOfFileToken;
+  sf->flags = (uint32_t)P.sourceFlags;
+  sf->pos = 0;
+  sf->end = len;
+  return sf;
+}
+
+#endif

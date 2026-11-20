@@ -39,7 +39,7 @@ struct TsNode {
   TsNode *moduleReference, *moduleSpecifier, *importClause, *namedBindings, *propertyName;
   TsNode *checkType, *extendsType, *trueType, *falseType, *objectType, *indexType, *elementType;
   TsNode *nameOrPath, *endOfFileToken, *head, *exportClause, *node1, *node2, *node3, *node4, *node5;
-  TsNode *typeExpression, *comment_unused;
+  TsNode *typeExpression, *readonlyToken, *nameType, *exprName;
   TsNode *attributes_node, *typeParameter, *parameterName, *assertsModifier, *equalsGreaterThanToken;
   TsNode *colonToken, *questionDotToken, *argumentExpression, *operand, *tagName_unused, *objectAssignmentInitializer;
   TsNode *equalsToken, *declarationList, *caseBlock, *awaitModifier, *propertyName_unused;

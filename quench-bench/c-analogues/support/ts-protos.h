@@ -29,6 +29,8 @@ static int ts_reScanInvalidIdentifier(void);
 static TsScanState ts_scanner_save(void);
 static void ts_scanner_restore(const TsScanState *s);
 static bool ts_tryScan_reScanInvalidIdentifier(void);
+static int ts_scanJsDocToken(void);
+static int ts_scanJSDocCommentTextToken(bool inBackticks);
 static TsNode *newNode(int kind);
 static void parseErrorAtPosition(int start);
 static void parseErrorAtCurrentToken(void);
@@ -186,11 +188,17 @@ static TsNode *tryParseParenthesizedArrowFunctionExpression(bool allowReturnType
 static intptr_t cb_isParenthesizedArrowFunctionExpressionWorker(void);
 static int isParenthesizedArrowFunctionExpression(void);
 static int isParenthesizedArrowFunctionExpressionWorker(void);
+static bool notParenSetHas(int pos);
+static void notParenSetAdd(int pos);
 static TsNode *parsePossibleParenthesizedArrowFunctionExpression(bool allowReturnTypeInArrowFunction);
 static TsNode *tryParseAsyncSimpleArrowFunctionExpression(bool allowReturnTypeInArrowFunction);
 static int isUnParenthesizedAsyncArrowFunctionWorker(void);
 static intptr_t cb_isUnParenthesizedAsyncArrowFunctionWorker(void);
 static bool isAsyncModifierNode(TsNode *n);
+static bool isJSDocFunctionType(const TsNode *n);
+static bool isAssignmentOperator(int t);
+static bool isLeftHandSideExpressionKind(int kind);
+static bool isLeftHandSideExpression(const TsNode *n);
 static TsNode *parseParenthesizedArrowFunctionExpression(bool allowAmbiguity, bool allowReturnTypeInArrowFunction);
 static TsNode *parseArrowFunctionExpressionBody(bool isAsync, bool allowReturnTypeInArrowFunction);
 static TsNode *parseConditionalExpressionRest(TsNode *leftOperand, int pos, bool allowReturnTypeInArrowFunction);
@@ -420,7 +428,70 @@ static intptr_t cb_isClassMemberStart(void);
 static intptr_t cb_isValidHeritageClauseObjectLiteral(void);
 static bool isVariableDeclaratorListTerminator(void);
 static bool isListTerminator(int kind);
+static void parseErrorAtRange(TsNode *range, int message);
+static TsNode *withJSDoc(TsNode *node, bool hasJSDoc);
+static bool isKeyword(int k);
+static bool isJSDocNullableType(const TsNode *n);
+static bool isSetAccessorDeclaration(const TsNode *n);
+static void setTextRange(TsNode *n, const TsNode *range);
+static bool isInSomeParsingContext(void);
+static bool abortParsingListOrMoveToNextToken(int kind);
+static TsNode *parseEntityNameOfTypeReference(void);
+static TsList *parseTypeArgumentsOfTypeReference(void);
+static TsNode *parseTypeReference(void);
+static bool typeHasArrowFunctionBlockingParseError(const TsNode *node);
+static TsNode *parseThisTypePredicate(TsNode *lhs);
+static TsNode *parseThisTypeNode(void);
+static TsNode *parseJSDocAllType(void);
+static TsNode *parseJSDocNonNullableType(void);
+static TsNode *parseJSDocUnknownOrNullableType(void);
+static TsNode *parseJSDocFunctionType(void);
+static TsNode *parseJSDocParameter(void);
+static TsNode *parseJSDocType(void);
+static TsNode *parseTypeQuery(void);
+static TsNode *parseTypeParameter(void);
+static TsList *parseTypeParameters(void);
+static bool isStartOfTypeOfImportType(void);
+static TsNode *parseKeywordAndNoDot(void);
+static TsNode *parseLiteralTypeNode(bool negative);
+static TsNode *parseIndexSignatureDeclaration(int pos, bool hasJSDoc, TsList *modifiers);
+static TsNode *parsePropertyOrMethodSignature(int pos, bool hasJSDoc, TsList *modifiers);
+static bool isTypeMemberStart(void);
+static TsNode *parseTypeMember(void);
+static TsList *parseObjectTypeMembers(void);
+static TsNode *parseTypeLiteral(void);
+static TsNode *parseMappedTypeParameter(void);
+static TsNode *parseMappedType(void);
+static TsNode *parseTupleElementType(void);
+static bool isNextTokenColonOrQuestionColon(void);
+static bool isTupleElementName(void);
+static TsNode *parseTupleElementNameOrTupleElementType(void);
+static TsNode *parseTupleType(void);
+static TsNode *parseParenthesizedType(void);
+static TsList *parseModifiersForConstructorType(void);
+static TsNode *parseFunctionOrConstructorType(void);
+static TsNode *parseParameterCb(void);
+static intptr_t parseConstructorStringLiteral(void);
+static intptr_t cb_parseConstructorStringLiteral(void);
+static bool parseConstructorName(void);
+static TsNode *tryParseConstructorDeclarationImpl(int pos, bool hasJSDoc, TsList *modifiers);
+static intptr_t tryParseConstructorCb(void);
+static TsNode *tryParseConstructorDeclaration(int pos, bool hasJSDoc, TsList *modifiers);
+static bool anyModifierIsAsync(TsList *modifiers);
+static TsNode *parseMethodDeclaration(int pos, bool hasJSDoc, TsList *modifiers, TsNode *asteriskToken, TsNode *name, TsNode *questionToken, TsNode *exclamationToken, int diagnosticMessage);
+static void parseSemicolonAfterPropertyName(TsNode *name, TsNode *type, TsNode *initializer);
+static TsNode *parsePropertyDeclaration(int pos, bool hasJSDoc, TsList *modifiers, TsNode *name, TsNode *questionToken);
+static TsNode *parsePropertyOrMethodDeclaration(int pos, bool hasJSDoc, TsList *modifiers);
+static TsNode *parseAccessorDeclaration(int pos, bool hasJSDoc, TsList *modifiers, int kind, int flags);
+static bool isClassMemberStart(void);
+static TsNode *parseClassStaticBlockBody(void);
+static TsNode *parseClassStaticBlockDeclaration(int pos, bool hasJSDoc, TsList *modifiers);
+static TsNode *addJSDocComment(TsNode *node);
+static void parserInitState(int scriptKind, int jsDocParsingMode, bool isDeclarationFile);
+static bool isDeclarationFileName(const char *name);
+static TsNode *parseSourceFile(const char *fileName, const char *text, int len, int scriptKind, int jsDocParsingMode);
 static intptr_t cb_isDeclaration2(void);
+static intptr_t cb_isTupleElementName(void);
 static intptr_t cb_isUnambiguouslyIndexSignature(void);
 static intptr_t cb_nextToken(void);
 static intptr_t cb_nextTokenIsBindingIdentifierOrStartOfDestructuring(void);
@@ -431,6 +502,7 @@ static intptr_t cb_nextTokenIsIdentifier(void);
 static intptr_t cb_nextTokenIsIdentifierOrKeyword(void);
 static intptr_t cb_nextTokenIsOpenParenOrLessThan(void);
 static intptr_t cb_nextTokenIsOpenParenOrLessThanOrDot(void);
+static intptr_t cb_nextTokenIsSlash(void);
 static intptr_t cb_nextTokenIsStartOfExpression(void);
 static intptr_t cb_nextTokenIsStringLiteral(void);
 static intptr_t cb_parseAssignmentExpressionFalse(void);
@@ -439,7 +511,9 @@ static intptr_t cb_parseAssignmentExpressionTrue(void);
 static intptr_t cb_parseEnumMemberList(void);
 static intptr_t cb_parseInitializer(void);
 static intptr_t cb_parsePostfixTypeOrHigher(void);
+static intptr_t cb_tryParseConstructorCb(void);
 static intptr_t cb_isDeclaration2(void) { return (intptr_t)isDeclaration2(); }
+static intptr_t cb_isTupleElementName(void) { return (intptr_t)isTupleElementName(); }
 static intptr_t cb_isUnambiguouslyIndexSignature(void) { return (intptr_t)isUnambiguouslyIndexSignature(); }
 static intptr_t cb_nextToken(void) { return (intptr_t)nextToken(); }
 static intptr_t cb_nextTokenIsBindingIdentifierOrStartOfDestructuring(void) { return (intptr_t)nextTokenIsBindingIdentifierOrStartOfDestructuring(); }
@@ -450,6 +524,7 @@ static intptr_t cb_nextTokenIsIdentifier(void) { return (intptr_t)nextTokenIsIde
 static intptr_t cb_nextTokenIsIdentifierOrKeyword(void) { return (intptr_t)nextTokenIsIdentifierOrKeyword(); }
 static intptr_t cb_nextTokenIsOpenParenOrLessThan(void) { return (intptr_t)nextTokenIsOpenParenOrLessThan(); }
 static intptr_t cb_nextTokenIsOpenParenOrLessThanOrDot(void) { return (intptr_t)nextTokenIsOpenParenOrLessThanOrDot(); }
+static intptr_t cb_nextTokenIsSlash(void) { return (intptr_t)nextTokenIsSlash(); }
 static intptr_t cb_nextTokenIsStartOfExpression(void) { return (intptr_t)nextTokenIsStartOfExpression(); }
 static intptr_t cb_nextTokenIsStringLiteral(void) { return (intptr_t)nextTokenIsStringLiteral(); }
 static intptr_t cb_parseAssignmentExpressionFalse(void) { return (intptr_t)parseAssignmentExpressionOrHigher(false); }
@@ -458,4 +533,5 @@ static intptr_t cb_parseAssignmentExpressionTrue(void) { return (intptr_t)parseA
 static intptr_t cb_parseEnumMemberList(void) { return (intptr_t)parseDelimitedList(PC_EnumMembers, parseEnumMember, false); }
 static intptr_t cb_parseInitializer(void) { return (intptr_t)parseInitializer(); }
 static intptr_t cb_parsePostfixTypeOrHigher(void) { return (intptr_t)parsePostfixTypeOrHigher(); }
+static intptr_t cb_tryParseConstructorCb(void) { return (intptr_t)tryParseConstructorCb(); }
 #endif

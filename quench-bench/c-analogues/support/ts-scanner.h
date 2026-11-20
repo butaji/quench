@@ -807,4 +807,87 @@ static bool ts_tryScan_reScanInvalidIdentifier(void) {
   return false;
 }
 
+
+static inline bool ts_isWhiteSpaceLike(int c) { return ts_isWhiteSpaceSingleLine(c) || ts_isLineBreak(c); }
+
+/* scanJsDocToken(): the JSDoc tokens (typescript.js scanJsDocToken). */
+static int ts_scanJsDocToken(void) {
+  TS.fullStart = TS.tokenStart = TS.pos;
+  TS.tflags = 0;
+  if (TS.pos >= TS.end) return TS.token = TSK_EndOfFileToken;
+  int ch = ts_cu(TS.pos);
+  TS.pos++;
+  switch (ch) {
+    case '\t': case '\v': case '\f': case ' ':
+      while (TS.pos < TS.end && ts_isWhiteSpaceSingleLine(ts_cu(TS.pos))) TS.pos++;
+      return TS.token = TSK_WhitespaceTrivia;
+    case '@': return TS.token = TSK_AtToken;
+    case '\r':
+      if (ts_cu(TS.pos) == '\n') TS.pos++;
+      /* fall through */
+    case '\n':
+      TS.tflags |= TF_PrecedingLineBreak;
+      return TS.token = TSK_NewLineTrivia;
+    case '*': return TS.token = TSK_AsteriskToken;
+    case '{': return TS.token = TSK_OpenBraceToken;
+    case '}': return TS.token = TSK_CloseBraceToken;
+    case '[': return TS.token = TSK_OpenBracketToken;
+    case ']': return TS.token = TSK_CloseBracketToken;
+    case '(': return TS.token = TSK_OpenParenToken;
+    case ')': return TS.token = TSK_CloseParenToken;
+    case '<': return TS.token = TSK_LessThanToken;
+    case '>': return TS.token = TSK_GreaterThanToken;
+    case '=': return TS.token = TSK_EqualsToken;
+    case ',': return TS.token = TSK_CommaToken;
+    case '.': return TS.token = TSK_DotToken;
+    case '`': return TS.token = TSK_BacktickToken;
+    case '#': return TS.token = TSK_HashToken;
+    case '\\': {
+      /* a backslash starts an identifier only with a valid unicode escape (JS: pos--, peek, pos += 6) */
+      TS.pos--;
+      if (ts_cu(TS.pos) == '\\' && ts_scanUnicodeEscapeInIdent()) {
+        ts_scanIdentifierParts();
+        TS.tval = TS.text + TS.tokenStart;
+        TS.tvalLen = TS.pos - TS.tokenStart;
+        return TS.token = ts_getIdentifierToken();
+      }
+      TS.pos++;
+      return TS.token = TSK_Unknown;
+    }
+  }
+  if (ts_isIdStart(ch)) {
+    int c = ch;
+    while (TS.pos < TS.end && (ts_isIdPart(c = ts_cu(TS.pos)) || c == '-')) TS.pos++;
+    TS.tval = TS.text + TS.tokenStart;
+    TS.tvalLen = TS.pos - TS.tokenStart;
+    if (c == '\\') {
+      ts_scanIdentifierParts();
+      TS.tvalLen = TS.pos - TS.tokenStart;
+    }
+    return TS.token = ts_getIdentifierToken();
+  }
+  return TS.token = TSK_Unknown;
+}
+
+/* scanJSDocCommentTextToken(inBackticks) */
+static int ts_scanJSDocCommentTextToken(bool inBackticks) {
+  TS.fullStart = TS.tokenStart = TS.pos;
+  TS.tflags = 0;
+  if (TS.pos >= TS.end) return TS.token = TSK_EndOfFileToken;
+  for (int ch = ts_cu(TS.pos); TS.pos < TS.end && !ts_isLineBreak(ch) && ch != '`'; ch = ts_cu(++TS.pos)) {
+    if (!inBackticks) {
+      if (ch == '{') {
+        break;
+      } else if (ch == '@' && TS.pos - 1 >= 0 && ts_isWhiteSpaceSingleLine(ts_cu(TS.pos - 1)) &&
+                 !(TS.pos + 1 < TS.end && ts_isWhiteSpaceLike(ts_cu(TS.pos + 1)))) {
+        break;
+      }
+    }
+  }
+  if (TS.pos == TS.tokenStart) return ts_scanJsDocToken();
+  TS.tval = TS.text + TS.tokenStart;
+  TS.tvalLen = TS.pos - TS.tokenStart;
+  return TS.token = TSK_JSDocCommentTextToken;
+}
+
 #endif
