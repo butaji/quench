@@ -143,6 +143,7 @@ typedef struct {
 } CFlowRef;
 
 static uint32_t cFlowStamp;
+static int cFlowReentry;   /* the non-loop flow nodes walked again while in progress (cFlowWalkType) */
 typedef struct { TsFlow *target; TsFlow **ants; int n; } CRedOverride;
 static CRedOverride cRedOverrides[32];
 static int cRedOverrideN;
@@ -634,8 +635,16 @@ static TsType *cFlowWalkType(TsFlow *f, CFlowRef *r) {
   if (!f) return cUnported("flow node without antecedent");
   if (f->walkStamp == cFlowStamp) {
     if (f->walkDone) return f->walkType;
-    /* in progress: only a loop label is revisited, and it gives the partial union so far */
-    if (!(f->flags & FF_LoopLabel)) return cUnported("flow cycle");
+    /* in progress: a loop label is revisited and gives the partial union so far. Any other flow node is walked again, as
+     * getTypeAtFlowNode does not memoize a node in progress: the walk comes back to it only through a loop label, which
+     * stops the recursion. The depth is bounded. */
+    if (!(f->flags & FF_LoopLabel)) {
+      if (cFlowReentry >= 64) return cUnported("flow cycle");
+      cFlowReentry++;
+      TsType *again = cFlowWalkNode(f, r);
+      cFlowReentry--;
+      return again;
+    }
     if (!f->walkRevisited) { f->walkRevisited = 1; f->walkSeen = f->walkType ? f->walkType : cNeverType; }
     else if (f->walkSeen != (f->walkType ? f->walkType : cNeverType)) f->walkMismatch = 1;
     return f->walkType ? f->walkType : cNeverType;
