@@ -3,10 +3,8 @@
 #[cfg(not(stencil_family = "wasm"))] pub(crate) type Concrete = crate::stage::StencilStage;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/region.rs"] pub(crate) mod region;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;
-#[cfg(not(stencil_family = "wasm"))] pub(crate) use register_frame::{Constant, Frame, Step, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
-pub(crate) use crate::bytecode::Register;
-// The names the runtime's `staged.rs` root gives its leaves' `use super::*`.
-pub(crate) use crate::bytecode::{FieldBase, FieldLookup, Operand};
+#[cfg(not(stencil_family = "wasm"))] pub(crate) use register_frame::{Constant, Frame, Step, jump_if, read_arguments_binding, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use crate::bytecode::{FieldBase, FieldLookup, Operand, Register};
 pub(crate) use crate::typed_ir::Type;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use object::Form;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/global.rs"] mod global;
@@ -21,9 +19,6 @@ pub(crate) use crate::typed_ir::Type;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/object.rs"] pub(crate) mod object;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/narrow.rs"] mod narrow;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/elements.rs"] pub(crate) mod elements;
-#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/double_view.rs"] pub(crate) mod double_view;
-// The value encoding, mounted once by `layout.rs`.
-pub(crate) use crate::layout::value_encoding;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/environment.rs"] pub(crate) mod environment;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/string_length.rs"] pub(crate) mod string_length;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/code_units.rs"] pub(crate) mod code_units;
@@ -47,8 +42,8 @@ pub(crate) use crate::layout::value_encoding;
 #[path = "../../quench-runtime/src/staged/wasm_float.rs"] pub(crate) mod wasm_float;
 #[path = "../../quench-runtime/src/staged/wasm_concrete.rs"] pub(crate) mod wasm_concrete;
 // The SIMD operators' bit semantics, shared with the interpreter (`wasm_simd_lanes.rs`).
-#[cfg(not(stencil_family = "js"))] #[path = "../../quench-runtime/src/staged/wasm_simd_lanes.rs"] pub(crate) mod wasm_simd_lanes;
-#[cfg(not(stencil_family = "js"))] #[path = "../../quench-runtime/src/staged/wasm_simd_rules.rs"] pub(crate) mod wasm_simd_rules;
+#[path = "../../quench-runtime/src/staged/wasm_simd_lanes.rs"] pub(crate) mod wasm_simd_lanes;
+#[path = "../../quench-runtime/src/staged/wasm_simd_rules.rs"] pub(crate) mod wasm_simd_rules;
 #[cfg(not(stencil_family = "js"))] #[path = "../../quench-runtime/src/staged/wasm_memory.rs"] pub(crate) mod wasm_memory;
 #[cfg(not(stencil_family = "js"))] #[path = "../../quench-runtime/src/staged/wasm_memory_vector.rs"] pub(crate) mod wasm_memory_vector;
 #[cfg(not(stencil_family = "js"))] #[path = "../../quench-runtime/src/staged/wasm_call.rs"] #[allow(dead_code)] pub(crate) mod wasm_call;
@@ -66,14 +61,6 @@ pub(crate) use crate::layout::value_encoding;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use steps::{step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_arith};
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/names.rs"] mod names;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use names::Protocol;
-#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/protocol_literals.rs"] pub(crate) mod protocol_literals;
-#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/protocol_classes.rs"] pub(crate) mod protocol_classes;
-#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/protocol_values.rs"] pub(crate) mod protocol_values;
-#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/protocol_owned.rs"] pub(crate) mod protocol_owned;
-#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/suspend.rs"] mod suspend;
-#[cfg(not(stencil_family = "wasm"))] pub(crate) use suspend::{await_source, suspend as suspension_step, SuspendEffect, Suspending, Suspension, YieldConversion};
-#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/delegation.rs"] mod delegation;
-#[cfg(not(stencil_family = "wasm"))] pub(crate) use delegation::DelegationStep;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/captures.rs"] mod captures;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/control.rs"] mod control;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/generic.rs"] mod generic;
@@ -82,7 +69,7 @@ pub(crate) use crate::layout::value_encoding;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/spread.rs"] mod spread;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use spread::Passing;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/compare.rs"] pub(crate) mod compare;
-#[cfg(not(stencil_family = "wasm"))] pub(crate) use compare::{nullish_of, Comparison};
+#[cfg(not(stencil_family = "wasm"))] pub(crate) use compare::Comparison;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/delete.rs"] mod delete;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/heap.rs"] mod heap;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/element_rows.rs"] pub(crate) mod element_rows;
@@ -103,18 +90,14 @@ pub(crate) use crate::layout as layout_offsets;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/invoke.rs"] pub(crate) mod invoke;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use invoke::{CallFrame, Entered, Room};
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/plan.rs"] pub(crate) mod plan;
-#[cfg(not(stencil_family = "wasm"))] pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, Resolved};
+#[cfg(not(stencil_family = "wasm"))] pub(crate) use plan::{CalleeKind, CallEntry, DirectPlan, Identity};
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/native_call.rs"] mod native_call;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/allocation.rs"] mod allocation;
-#[cfg(not(stencil_family = "wasm"))] pub(crate) use allocation::{Allocation, InlineEmpty};
+#[cfg(not(stencil_family = "wasm"))] pub(crate) use allocation::Allocation;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/effects.rs"] pub(crate) mod effects;
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/flow.rs"] pub(crate) mod flow;
-// The Wasm jumps `step` dispatches to (pure word arithmetic over the stage); the Concrete-only Wasm
-// families are the runtime's alone. The Wasm call rows' staged ABI, roots and instance words.
-#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/wasm_jump.rs"] pub(crate) mod wasm_jump;
-#[cfg(not(stencil_family = "wasm"))] pub(crate) use wasm_jump::{BranchTable, WasmJump};
 // The Wasm families `step` dispatches to (pure word arithmetic over the stage).
-#[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/wasm_simd.rs"] mod wasm_simd;
+#[path = "../../quench-runtime/src/staged/wasm_simd.rs"] mod wasm_simd;
 
 #[cfg(not(stencil_family = "wasm"))] #[path = "../../quench-runtime/src/staged/edge.rs"] mod edge;
 #[cfg(not(stencil_family = "wasm"))] pub(crate) use edge::Edge;

@@ -102,10 +102,7 @@ mod int_type;
 mod representation;
 #[path = "../../quench-runtime/src/typed_ir/binding.rs"]
 mod binding;
-// The runtime's Number-to-integer conversions (`value/number_conversion.rs`) and the binary64
-// fields they read (`float_layout.rs`), included unchanged.
-#[path = "../../quench-runtime/src/value/number_conversion.rs"]
-mod number_conversion;
+// The binary64 fields the runtime's Number conversions read (`float_layout.rs`), included unchanged.
 #[path = "../../quench-runtime/src/float_layout.rs"]
 pub(crate) mod float_layout;
 

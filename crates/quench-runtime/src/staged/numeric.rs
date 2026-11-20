@@ -201,6 +201,39 @@ fn constant_int32(number: f64) -> i32 { crate::value::number_to_u32(number) as i
 #[inline(always)]
 fn constant_int32(_number: f64) -> i32 { 0 }
 
+/// The VM's general operation `call` defining `destination` (`callout::calling`). The stencil build
+/// carries no call-outs, so there the row stays unresolved and `call` is never built.
+macro_rules! general_call {
+    ($stage:expr, $frame:expr, $call:expr, $destination:expr) => {{
+        #[cfg(not(stencil_build))]
+        let step = super::callout::calling($stage, $frame, $call, $destination);
+        #[cfg(stencil_build)]
+        let step = { let _ = (&$stage, &$frame); Step::Unresolved };
+        step
+    }};
+}
+
+/// The VM's unary `operator` of the register `source`, defining `destination`, where the frame takes
+/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
+/// The operator expression is built only where call-outs exist (not in the stencil build).
+macro_rules! general_unary {
+    ($stage:expr, $frame:expr, $operator:expr, ($destination:expr, $source:expr)) => {
+        match $source.register_index() {
+            Some(_value) if $frame.general_operators() =>
+                general_call!($stage, $frame, super::CallOut::Unary { operator: $operator, value: _value }, Some($destination)),
+            _ => Step::Unresolved,
+        }
+    };
+}
+
+/// The VM's general operation `call` (ToNumeric or an update) defining `destination`, where the frame takes
+/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
+macro_rules! general_update {
+    ($stage:expr, $frame:expr, $call:expr, $destination:expr) => {
+        if $frame.general_operators() { general_call!($stage, $frame, $call, Some($destination)) } else { Step::Unresolved }
+    };
+}
+
 /// Run the Number `operation` on `frame`; its word, or `Unresolved` where it left.
 #[inline(always)]
 pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
@@ -281,6 +314,8 @@ fn extreme<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     Step::Value(result)
 }
 
+/// `Math.imul` of two int32s: their wrapping product; any other operand leaves.
+#[inline(always)]
 /// The case slot of `source` in a `switch` over the dense int labels `minimum..=maximum` (`count` slots). A value
 /// is its own label's slot where it is an int32 or an integral double in the run; every other value (a string,
 /// an object, a fraction) takes `count`, the default. The int32 word is ToInt32 of the Number, which is exact
@@ -323,8 +358,6 @@ fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     Step::Value(slot)
 }
 
-/// `Math.imul` of two int32s: their wrapping product; any other operand leaves.
-#[inline(always)]
 fn imul<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand,
 ) -> Step<S::Word, F::Control> {
@@ -382,21 +415,12 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 }
 
 /// The oxc unary operator `operation` names, which the VM's `unary` takes (`CallOut::Unary`).
-#[cfg(not(stencil_build))]
 fn unary_operator(operation: NumberUnary) -> u32 {
     match operation {
         NumberUnary::Plus => crate::vm::operations::unary_operator::UnaryPlus,
         NumberUnary::Negate => crate::vm::operations::unary_operator::UnaryNegation,
     }
 }
-
-/// The stencil build has no parser, and no stencil frame takes the VM's general operators
-/// (`NumericFrame::general_operators`), so no operator code reaches a callout there.
-#[cfg(stencil_build)]
-fn unary_operator(_operation: NumberUnary) -> u32 {
-    u32::MAX
-}
-
 
 /// The VM's unary `operator` of the register `source`, defining `destination`, where the frame takes
 /// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.

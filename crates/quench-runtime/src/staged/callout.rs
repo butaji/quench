@@ -139,7 +139,6 @@ pub(crate) struct Operands {
     pub(crate) list: Option<Arguments>,
 }
 
-#[cfg(not(stencil_build))]
 /// The values of a `CallOut`'s operands, read by the tier from its own registers or constants.
 pub(crate) struct OperandValues<V> {
     pub(crate) fixed: [Option<V>; 2],
@@ -165,7 +164,6 @@ impl Operands {
             .chain(self.list.into_iter().flat_map(move |list| list.registers(records)))
     }
 
-    #[cfg(not(stencil_build))]
     /// The operands' values, each operand read by `read` in the order `registers` names them, the
     /// list's as registers.
     #[cfg(not(stencil_build))]

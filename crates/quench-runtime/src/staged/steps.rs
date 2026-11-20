@@ -8,7 +8,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     match operation {
         Operation::Jump => Step::Control(frame.jump(stage)),
         Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
-        Operation::Throw { source } => raise_step(stage, frame, source),
+        Operation::Throw { source } => suspended(frame.raise(stage, source)),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         property @ (Operation::GetField { .. } | Operation::SetField { .. } | Operation::StoreField { .. } | Operation::FieldGetHost { .. }
             | Operation::FieldAdd { .. } | Operation::IndexGetHost { .. }) => super::property::property_step(stage, frame, property),
@@ -41,6 +41,9 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     }
 }
 
+/// A tier guard, or a taken back edge's poll and count (`step`): `Step::Value` where the proof holds,
+/// `Step::Unresolved` where the row leaves.
+#[inline(always)]
 /// The control a frame answers (`Frame::raise`), or `Unresolved` where it answers none.
 #[inline(always)]
 fn suspended<W, C>(control: Option<C>) -> Step<W, C> {
@@ -50,8 +53,6 @@ fn suspended<W, C>(control: Option<C>) -> Step<W, C> {
     }
 }
 
-/// A tier guard, or a taken back edge's poll and count (`step`): `Step::Value` where the proof holds,
-/// `Step::Unresolved` where the row leaves.
 #[inline(always)]
 fn guard_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
@@ -123,7 +124,6 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::GlobalLexicalLoad { .. }
             | Operation::GlobalLexicalStore { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } => super::names::step(stage, frame, operation),
-        Operation::StringCaseIndex { destination, source, start, count } => string_case_index(stage, frame, destination, source, start, count),
         heap => super::heap::heap_step(stage, frame, heap),
     }
 }
@@ -387,20 +387,9 @@ pub(crate) fn step_flow<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fram
     match operation {
         Operation::Jump => Step::Control(frame.jump(stage)),
         Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
-        Operation::Move { .. } | Operation::LoadConst { .. } | Operation::Nop => register_step(stage, frame, operation),
-        Operation::Throw { source } => raise_step(stage, frame, source),
+        Operation::Move { .. } | Operation::LoadConst { .. } => register_step(stage, frame, operation),
         Operation::Return { source } => return_step(stage, frame, source),
         _ => Step::Unresolved,
-    }
-}
-
-/// `Throw` of register `source`: the frame's raise as its control, where the frame raises it; a frame
-/// that does not leaves it to the general step.
-#[inline(always)]
-fn raise_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, source: Register) -> Step<S::Word, F::Control> {
-    match frame.raise(stage, source) {
-        Some(control) => Step::Control(control),
-        None => Step::Unresolved,
     }
 }
 

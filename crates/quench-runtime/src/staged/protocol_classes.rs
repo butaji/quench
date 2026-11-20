@@ -2,9 +2,7 @@
 //! definition every tier runs, and its step is the interpreter's own helper, which the host makes
 //! (`Vm::call_out` -> `Vm::class_step`).
 use super::Protocol;
-use crate::bytecode::Register;
-#[cfg(not(stencil_build))]
-use crate::bytecode::{Op, WideInstruction};
+use crate::bytecode::{Op, Register, WideInstruction};
 
 /// A class, private-name and function-naming step the host makes by the interpreter's own definition.
 ///
@@ -45,7 +43,6 @@ pub(crate) enum ClassStep {
     LoadImportMeta,
 }
 
-#[cfg(not(stencil_build))]
 /// The step `instruction` denotes among these opcodes, with the register it defines and its (at
 /// most two) operand registers, which `Vm::call_out` reads; `None` for any other opcode.
 #[inline(always)]

@@ -81,8 +81,6 @@ impl Type {
     pub(crate) const IMMEDIATE: Self = Self(TypeKind::Language(
         Languages::of(ValueType::Number).union(Languages::of(ValueType::Boolean))
             .union(Languages::of(ValueType::Null)).union(Languages::of(ValueType::Undefined)).bits()));
-    /// `undefined` alone, the fact of the constant a `void` or an absent receiver writes.
-    pub(crate) const UNDEFINED: Self = Self::language(ValueType::Undefined);
     pub(crate) const NUMBER: Self = Self::language(ValueType::Number);
     /// `undefined`, what `Type::immediate(Value::UNDEFINED)` is, as a constant the stencil build can name.
     pub(crate) const UNDEFINED: Self = Self::language(ValueType::Undefined);

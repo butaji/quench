@@ -11,9 +11,7 @@ use super::region::Region;
 use super::Stage;
 use crate::Value;
 use crate::vm::wtf16::native_string as form;
-use crate::vm::wtf16::JsString;
-#[cfg(not(stencil_build))]
-use crate::vm::wtf16::Units;
+use crate::vm::wtf16::{JsString, Units};
 
 /// A flat string's units as the words a row reads: the address of the first, how many there
 /// are, and whether each is two bytes (one) or one (zero).
@@ -117,7 +115,6 @@ fn character_of_unit<S: Stage>(stage: &mut S, table: S::Word, unit: S::Word, mis
     Some(character)
 }
 
-#[cfg(not(stencil_build))]
 /// A flat string a concrete caller holds, in either form: its record among the string records
 /// at `records`, read in place, or its units already viewed, which covers the forms a record
 /// read leaves.
@@ -129,7 +126,6 @@ pub(crate) enum ConcreteString<'a> {
     Units(Units<'a>),
 }
 
-#[cfg(not(stencil_build))]
 impl ConcreteString<'_> {
     /// This string's units as the words a row reads, or `None` where a record read leaves.
     #[inline(always)]
@@ -142,7 +138,7 @@ impl ConcreteString<'_> {
             Self::Units(units) => {
                 let wide = u64::from(matches!(units, Units::Wide(_)));
                 let (base, length) = match units {
-                    Units::Ascii(bytes) => (bytes.as_ptr() as u64, bytes.len() as u64),
+                    Units::Ascii(bytes) | Units::Latin1(bytes) => (bytes.as_ptr() as u64, bytes.len() as u64),
                     Units::Wide(units) => (units.as_ptr() as u64, units.len() as u64),
                     // Latin-1 is no native row's form: the row leaves at its miss.
                     Units::Latin1(_) => return None,
@@ -153,7 +149,6 @@ impl ConcreteString<'_> {
     }
 }
 
-#[cfg(not(stencil_build))]
 /// The interpreter's `string_char_code_at` of `string` at `index`; `None` where the row leaves,
 /// which the caller answers through the native.
 #[inline(always)]
@@ -163,7 +158,6 @@ pub(crate) fn concrete_char_code_at(string: ConcreteString<'_>, index: Value) ->
     string_char_code_at(&mut stage, string, index.to_bits(), ()).map(Value::from_bits)
 }
 
-#[cfg(not(stencil_build))]
 /// The interpreter's `string_char_at` of `string` at `index`, from the table of one-unit strings
 /// at `table`; `None` where the row leaves.
 #[inline(always)]
