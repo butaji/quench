@@ -129,7 +129,9 @@ impl Comparison {
 #[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     #[cfg(not(stencil_build))]
-    /// The `JumpBinaryFalse` row: it jumps where the comparison fails.
+    /// The `JumpBinaryFalse` row: it jumps where the comparison fails. Inlined into the row,
+    /// which decodes its record on every run.
+    #[inline(always)]
     pub(super) fn decode_compare(instruction: WideInstruction) -> Self {
         let comparison = Comparison::of_operator(instruction.binary_operator_field());
         Self::CompareJump { comparison, left: instruction.operand_b(), right: instruction.operand_c(), negate: true }
