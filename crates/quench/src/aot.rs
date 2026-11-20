@@ -8,15 +8,11 @@ pub const BOOTSTRAP_ABI: u64 = crate::host::shared_vm::BOOTSTRAP_ABI;
 mod assets;
 pub use assets::{EmbeddedModuleFile, EmbeddedModuleResolution, EmbeddedSourceView, EmbeddedModules, EmbeddedImportResolution, EmbeddedModuleSource, ModuleAssets, ModuleFile, PreparedModuleSource};
 pub(crate) use assets::ModuleAssetState;
-#[cfg(feature = "aot")]
 mod graph;
-#[cfg(feature = "aot")]
 pub use graph::{DependencyGraph, GraphRequirement};
-#[cfg(feature = "aot")]
+mod variant;
 mod compiler;
-#[cfg(feature = "aot")]
 pub use compiler::{SourceManifest, CompiledSource, CompiledSources, DeferredSourceSyntaxError};
-#[cfg(feature = "aot")]
 pub use quench_runtime::native_link::NativeImageInputs;
 
 /// One compiler-owned source pool, shared by all embedding hosts.
@@ -136,11 +132,7 @@ fn execute_native_with_teardown(
     Ok(completion)
 }
 
-#[cfg(feature = "aot")]
 mod link;
-#[cfg(feature = "aot")]
 pub use quench_runtime::native_link::{DynamicInterface, ExportPolicy};
-#[cfg(feature = "aot")]
 pub use link::{NativeSupport, NativeLinkAudit};
-#[cfg(feature = "aot")]
 pub mod cli;

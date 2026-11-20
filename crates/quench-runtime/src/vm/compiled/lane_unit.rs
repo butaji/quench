@@ -12,7 +12,7 @@
 
 use crate::bytecode::{FieldLookup, ImmediateLayout, Register, WideInstruction};
 use crate::bytecode::Function;
-use crate::staged::{emit, plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};
+use crate::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};
 use crate::typed_ir::BindingTime;
 use crate::value::Value;
 #[path = "lane_unit/admission.rs"] mod admission;
@@ -20,8 +20,8 @@ pub(super) use admission::{inlinable, InlineScope};
 use admission::{restartable, returns_or_keeps};
 use super::admission::{admit_callee, CalleeUse};
 #[path = "lane_unit/weights.rs"] mod weights;
-#[cfg(all(test, feature = "aot"))] #[path = "lane_unit/static_hints.rs"] mod static_hints;
-#[cfg(all(test, feature = "aot"))] pub(crate) use static_hints::static_call_targets;
+#[cfg(test)] #[path = "lane_unit/static_hints.rs"] mod static_hints;
+#[cfg(test)] pub(crate) use static_hints::static_call_targets;
 
 /// Binding time of a callee: a published closure, whose identity the call compares, or a
 /// static body whose actual closure and environment are admitted at the call. Function
@@ -231,11 +231,9 @@ fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
         matches!(Operation::<u64, ()>::of(code[*pc]), Some(Operation::Return { .. })) && code[*pc].result_flags() == 0)
 }
 
-/// Whether the staged decode makes `instruction` a throw of its first operand (`Throw`, the owned
-/// variable step `ThrowValue`).
+/// Whether the staged decode makes `instruction` a throw of its first operand (`Throw`).
 fn throws(instruction: WideInstruction) -> bool {
-    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Protocol {
-        step: crate::staged::Protocol::Owned(crate::staged::protocol_owned::OwnedVarStep::ThrowValue), .. }))
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Throw { .. }))
 }
 
 /// Whether an inlined callee's `instruction` renames to the unit's registers

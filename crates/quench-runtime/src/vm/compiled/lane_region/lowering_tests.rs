@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::Class;
 
 #[test]
 fn unavailable_fault_page_declines_before_changing_canonical_registers() {

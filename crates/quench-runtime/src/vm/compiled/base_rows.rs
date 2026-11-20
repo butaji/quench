@@ -13,7 +13,6 @@ use crate::staged::Form;
 use quench_bjit::numeric::{library, Place};
 use quench_bjit::Stencil;
 
-use quench_bjit::numeric::library::TYPED_KINDS;
 
 /// The heap catalog's macro (`quench-bjit/stencils/row_catalog.rs`, exported by the lib) and its heap row names
 /// (`row_names.rs`, the lib's copy); `heap_code_of!` reads each row's catalog line.
@@ -169,7 +168,8 @@ pub(super) enum Heap {
     /// tag-decided languages meet the declared mask at hole 1, else the entry leaves with nothing written.
     Declared,
     /// The entry test of a captured declaration a body calls by its identity (`base_region::link::entry_rows`): the
-    /// depth-0 capture at the slot of hole 0 holds the word of hole 1, else the entry leaves with nothing written.
+    /// depth-0 capture at the slot of hole 0 (its byte offset in hole 1) holds the word of hole 2, else the entry leaves
+    /// with nothing written.
     CaptureIdentity,
     /// The entry test of a class-typed parameter (`base_region::link::entry_rows`): the register at hole 0 holds a direct
     /// object whose exact shape and prototype link are the pair in hole 1 (`entry::shape_link_matches`), else the entry

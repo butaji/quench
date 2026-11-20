@@ -101,11 +101,11 @@ unsafe extern "C" fn gc_allocate<H: Host>(
     out: *mut u64,
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let (program, env) = unsafe { ((*context).program, (*context).env) };
+    let (program, env) = unsafe { ((*context).head.program, (*context).head.env) };
     let instruction = unpack(packed, imm);
     let count = count as usize;
     // SAFETY: the emitted code spilled `count` registers, kinds and words, then `out`.
-    let vm = unsafe { &mut *(*context).vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
     let values: Vec<(u16, Value)> = (0..count)
         .map(|index| unsafe {
             let (register, kind, bits) = (*operands.add(index), *operands.add(count + index), *operands.add(2 * count + index));
@@ -164,11 +164,11 @@ pub(super) unsafe extern "C" fn allocate_frame<H: Host>(
     out: *mut u64,
 ) -> i64 {
     // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
-    let (program, env) = unsafe { ((*context).program, (*context).env) };
+    let (program, env) = unsafe { ((*context).head.program, (*context).head.env) };
     let instruction = unpack(packed, meta & u64::from(u32::MAX));
     let count = ((meta >> 32) & 0xff) as usize;
     // SAFETY: as above; the VM outlives the call.
-    let vm = unsafe { &mut *(*context).vm.cast::<Vm<H>>() };
+    let vm = unsafe { &mut *(*context).head.vm.cast::<Vm<H>>() };
     let operands: Vec<(u16, Value)> = (0..count)
         .map(|index| unsafe {
             let entry = *descriptor.add(index);

@@ -1,3 +1,6 @@
+// jetstream-row: stanford-crypto-pbkdf2
+// jetstream-files: SeaMonster/sjlc.js SeaMonster/stanford-crypto-pbkdf2.js
+// iterations: 120
 /* C analogue of JetStream's SeaMonster/stanford-crypto-pbkdf2.js: SJCL's PBKDF2 over
  * HMAC-SHA256 on big-endian 32-bit word arrays. Each iteration converts the password
  * (UTF-8) and the hex salt to words, keys an HMAC whose inner and outer hashes are

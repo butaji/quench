@@ -11,6 +11,7 @@ fn call_effect_retires_nullable_shapes_without_losing_null_alternatives() {
 
 use super::*;
 use crate::value::EXACT_I64_TRUNCATION_LIMIT;
+use cranelift_codegen::ir::condcodes::FloatCC;
 
 #[test]
 fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {
@@ -45,7 +46,6 @@ fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {
 }
 
 #[test]
-#[cfg(feature = "aot")]
 fn inlined_capture_reads_require_an_admitted_invariant_callee() {
     let source = "let held=4,suspended=2;let prototype={};prototype.test=function(){return (this.state&held)!==0||this.state===suspended;};function other(){return this.state===held;}function run(task,count){const owner=task;let n=count|0,result=0;while(n>0){n=(n-1)|0;owner.state=(owner.state+1)|0;if(owner.test())result=(result+1)|0;}return result;}";
     let program = crate::Engine::specialize(source, "capture-entry.js").unwrap();
@@ -194,7 +194,6 @@ fn relation_capture_entry_preserves_noninteger_values_and_effects() {
 }
 
 #[test]
-#[cfg(feature = "aot")]
 fn capture_entry_does_not_follow_a_copy_across_a_diamond() {
     let source = r#"
         let held=4;const prototype={};prototype.test=function(){return held|0;};
@@ -255,7 +254,6 @@ fn capture_entry_preserves_distinct_environments_and_mutations() {
     for typescript in [false, true] {
         let program = if typescript { crate::Engine::specialize_typescript(&source, "capture-entry.cts") }
             else { crate::Engine::specialize(&source, "capture-entry.cjs") }.unwrap();
-        #[cfg(feature = "aot")]
         {
             // Exercise the linked unit/inliner path too: execution through
             // the dynamic VM alone need not select the same region entries.

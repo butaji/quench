@@ -70,6 +70,7 @@ mod admission;
 mod delete;
 mod operation;
 pub(crate) use operation::Operation;
+pub(crate) use operation::kind as op_kind;
 mod binary_class;
 pub(crate) use binary_class::BinaryClass;
 mod edge;
@@ -173,7 +174,7 @@ mod guard;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
+pub(crate) use steps::{step, step_out_of_line, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
 pub(crate) mod effects;
 pub(crate) mod function_plan;
 pub(crate) mod region;
@@ -183,7 +184,7 @@ pub(crate) mod wasm_access;
 pub(crate) mod wasm_int;
 pub(crate) mod wasm_jump;
 pub(crate) mod wasm_state;
-pub(crate) use wasm_jump::{BranchTable, WasmJump};
+pub(crate) use wasm_jump::BranchTable;
 pub(crate) mod wasm_concrete;
 pub(crate) mod wasm_gc;
 pub(crate) mod wasm_exception;
@@ -220,7 +221,7 @@ mod stage;
 pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
 
 /// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
 /// capture access whose scopes the frame does not hold, the walk over the scopes from the
@@ -549,6 +550,7 @@ pub(crate) const MODE_BACKWARD: u64 = 1 << 1;
 /// `CHAIN_RAW_OUT`. A raw result is read by the next link (or the next record) as a Number operand.
 pub(crate) const RAW_SHIFT: u32 = 8;
 /// The raw-mask bit `link` of a record's `mode`.
+#[inline(always)]
 pub(crate) const fn raw_bit(link: u8) -> u64 { 1 << (RAW_SHIFT + link as u32) }
 /// The raw-mask bit of a chain's last link (a pair's `B`): its double result stays raw into the record
 /// after the chain, or past the plain records between that name neither its register (`raw_out_link`),
@@ -925,10 +927,11 @@ pub(crate) const fn checked_local(op: Op) -> bool {
 /// store has no result register, and answers the source word it stored; a store's result is its
 /// `b` register and an InitializeTdz has none.
 pub(crate) const fn row_writes_result(op: Op) -> bool {
-    // A Wasm row writes its result register only where its record has one: a store, a global
-    // store and a fill define none.
+    // A Wasm row writes the result register its record names, if any. A store, a global store and
+    // a fill name none: the lane must not write the answered word into their record's `a`, which
+    // a fill leaves at register 0 (`wasm_emit`'s fill emission).
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
-        return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
+        return true;
     }
     // An opcode whose A field is no result register defines none, so there is nothing for the lane
     // to write: its row's value (a cleanup pop's 0, a store's source) must not land in register A.

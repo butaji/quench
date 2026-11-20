@@ -5,7 +5,7 @@
 
 use super::Stage;
 use super::region::Region;
-use super::object::{Form, Layout, PackedAccess, arena_run, formed_own_layout, object_record_at, recorded_shape, proto_link, proto_object_record_id, read_slot};
+use super::object::{Form, PackedAccess, formed_own_layout, object_record_at, recorded_shape, proto_link, proto_object_record_id, read_slot};
 
 pub(crate) use super::ic_read::*;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;

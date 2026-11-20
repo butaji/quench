@@ -665,7 +665,6 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_loop_calls_return_their_integer_state_with_a_captured_constant() {
         let body = r#"
@@ -702,7 +701,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_bootstrap_preserves_static_namespace_and_retains_code_for_jobs() {
         let program = Engine::specialize(r#"
@@ -728,7 +726,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_bootstrap_rejects_namespace_or_specialization_mismatch_before_entry() {
         let program = Engine::specialize("function original() { print('effect'); } original();", "native-bootstrap.js").unwrap();

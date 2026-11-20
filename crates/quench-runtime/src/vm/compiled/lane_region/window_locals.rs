@@ -6,7 +6,6 @@
 //! another environment shares leaves at the instruction, where the interpreter raises its `ReferenceError` or resolves
 //! the slot, and only then. A store has no barrier of its own: the activation's environment lives within a lane run,
 //! which collects nothing. The slots are those the b-jit makes rows of (`base_region::env_owned`).
-use crate::bytecode::Class;
 use super::*;
 use super::super::lane_unit::Origin;
 use crate::bytecode::InstructionField;

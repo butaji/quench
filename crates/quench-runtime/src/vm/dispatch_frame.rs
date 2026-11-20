@@ -1,15 +1,14 @@
 use super::*;
-use crate::bytecode::index;
 use crate::staged::frame_arm::FrameArm;
 mod loop_stack;
 mod interpreter_frame;
-pub(super) use interpreter_frame::{InterpreterFrame, RowRun, runs_row};
+pub(super) use interpreter_frame::{InterpreterFrame, RowRun};
 mod materialized_stops;
 
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
 
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -210,8 +209,6 @@ impl<H: Host> Vm<H> {
     ) -> GeneralCodeCursor {
         let function_code = program.function(function as usize);
         let interprets = self.execution_mode.allows_dynamic_execution();
-        #[cfg(feature = "native-execution")]
-        let interprets = interprets && self.programs.native_js_code(program_id).is_none();
         let admitted = interprets && lane && self.admits_in_lane(program);
         let view = if admitted { self.entry_lane_view(program_id, function) } else { std::ptr::null() };
         // Native transitions read only boundary metadata from packed code;
@@ -544,8 +541,6 @@ impl<H: Host> Vm<H> {
         let program = self.active_program;
         let runs_in_lane = Self::FRAME_ENTRY_LANE_RUNS
             && !self.tier_may_run(crate::jit_mode::Tier::ANY);
-        #[cfg(feature = "native-execution")]
-        let runs_in_lane = runs_in_lane && self.programs.native_js_code(program).is_none();
         if !runs_in_lane
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || !self.admits_in_lane(p)
@@ -1846,7 +1841,7 @@ impl<H: Host> Vm<H> {
             let entering_after_lane_exit = std::mem::replace(&mut after_lane_exit, resumes_lane_exit);
             let resumed = std::mem::take(&mut resumes_lane_exit);
             #[cfg(feature = "native-execution")]
-            if let Some(step) = entered.take().or_else(|| self.js_linked_frame_entry(frame, pc, stop_pc, allow_inline_calls)) {
+            if let Some(step) = entered.take() {
                 pc = step.next_pc;
                 native_step = Some(step);
             }
@@ -2092,13 +2087,6 @@ impl<H: Host> Vm<H> {
             // The lane may have left in another program's frame (above).
             // SAFETY: as for `p` at the top of the loop.
             let p = unsafe { &*executing_residual };
-            // A lane of another program can leave in a linked callee's frame.
-            // Enter that frame's native body at the top instead of interpreting
-            // the first instruction at the lane's exit PC.
-            #[cfg(feature = "native-execution")]
-            if native_step.is_none() && self.programs.native_js_code(self.frames[frame].program).is_some() {
-                continue;
-            }
             if STOPS && stop_pc == Some(pc)
                 && native_step.as_ref().is_none_or(|step| step.instruction_pc == pc)
             {

@@ -143,7 +143,6 @@ pub(crate) struct NodeVersion {
 /// An exported function's address, kept so the linker retains it.
 pub(crate) struct ExportedSymbol {
     pub address: *const (),
-    #[cfg(feature = "aot")]
     pub name: &'static str,
 }
 // SAFETY: code addresses are immutable and never dereferenced as data.
@@ -158,7 +157,7 @@ macro_rules! node_api {
             pub unsafe extern "C" fn $name($($arg: $ty),*) -> $ret $body
         )*
         pub(super) static EXPORTS: &[$crate::modules::napi::abi::ExportedSymbol] =
-            &[$($crate::modules::napi::abi::ExportedSymbol { address: $name as *const (), #[cfg(feature = "aot")] name: stringify!($name) }),*];
+            &[$($crate::modules::napi::abi::ExportedSymbol { address: $name as *const (), name: stringify!($name) }),*];
     };
 }
 pub(crate) use node_api;

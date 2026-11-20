@@ -131,6 +131,12 @@ fn derive_native_exports(
                 pub extern "C" fn abi_marker() {}
             };
             (@operation $host:ty, #lane_helpers_symbol) => { #lane_helpers_export };
+            // The lane helpers an ahead image's object names one by one (`quench_lane_helper_<Name>`):
+            // instantiating their definitions for the host defines every one.
+            (@operation $host:ty, "quench_lane_helper_symbols") => {
+                #[unsafe(export_name = "quench_lane_helper_symbols")]
+                pub extern "C" fn lane_helper_symbols() { $crate::define_lane_helper_symbols::<$host>() }
+            };
             #(#export_arms)*
         }
     })

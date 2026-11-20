@@ -795,7 +795,6 @@ complexity crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::value 21
 complexity crates/quench-runtime/src/vm/json.rs::JsonSyntax::positioned_message 14
 complexity crates/quench-runtime/src/vm/json.rs::Vm<H>::json_serialize_value 16
 complexity crates/quench-runtime/src/vm/native_object.rs::emit_native_module 27
-complexity crates/quench-runtime/src/vm/native_stencil.rs::StencilExtension<H>::finish 15
 complexity crates/quench-runtime/src/vm/number.rs::Vm<H>::number_exponential 15
 complexity crates/quench-runtime/src/vm/number.rs::Vm<H>::number_format 14
 complexity crates/quench-runtime/src/vm/number.rs::math_unary_operation 32
@@ -1401,9 +1400,7 @@ file-lines crates/quench-runtime/src/vm/iterators.rs 3352
 file-lines crates/quench-runtime/src/vm/jit_backend/select.rs 679
 file-lines crates/quench-runtime/src/vm/json.rs 2090
 file-lines crates/quench-runtime/src/vm/lazy_data_property.rs 549
-file-lines crates/quench-runtime/src/vm/native_graph.rs 524
 file-lines crates/quench-runtime/src/vm/native_object.rs 514
-file-lines crates/quench-runtime/src/vm/native_stencil.rs 714
 file-lines crates/quench-runtime/src/vm/number.rs 888
 file-lines crates/quench-runtime/src/vm/object.rs 4869
 file-lines crates/quench-runtime/src/vm/object_descriptors.rs 812
@@ -3060,7 +3057,6 @@ function-lines crates/quench-runtime/src/vm/native_object.rs::emit_native_module
 function-lines crates/quench-runtime/src/vm/native_object.rs::tests::invalid_data_layout_and_symbol_kind_are_diagnostics 59
 function-lines crates/quench-runtime/src/vm/native_object.rs::tests::invalid_function_address_relocations_are_diagnostics 47
 function-lines crates/quench-runtime/src/vm/native_object.rs::tests::object_links_and_loads_relocated_program_data 44
-function-lines crates/quench-runtime/src/vm/native_stencil.rs::StencilExtension<H>::finish 64
 function-lines crates/quench-runtime/src/vm/number.rs::Vm<H>::install_number 67
 function-lines crates/quench-runtime/src/vm/number.rs::Vm<H>::install_number_for_realm 80
 function-lines crates/quench-runtime/src/vm/number.rs::Vm<H>::math_sum_precise 44
@@ -4812,9 +4808,7 @@ magic crates/quench-runtime/src/vm/json/heap_builder.rs::short_run_ends 1
 magic crates/quench-runtime/src/vm/lane_exits.rs::call_target 1
 magic crates/quench-runtime/src/vm/lane_exits.rs::report 2
 magic crates/quench-runtime/src/vm/lazy_data_property.rs::Vm<H>::materialize_lazy_group 1
-magic crates/quench-runtime/src/vm/native_graph.rs::lower_object_fallback 1
 magic crates/quench-runtime/src/vm/native_object.rs::emit_native_module 1
-magic crates/quench-runtime/src/vm/native_stencil.rs::entry_stencil 1
 magic crates/quench-runtime/src/vm/number.rs::PreciseSumState::add 4
 magic crates/quench-runtime/src/vm/number.rs::Vm<H>::math_hypot 1
 magic crates/quench-runtime/src/vm/number.rs::Vm<H>::number_format 2

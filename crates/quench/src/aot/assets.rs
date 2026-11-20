@@ -1,6 +1,5 @@
 //! Frozen module inputs. These are loader assets, not a replacement filesystem.
 use quench_runtime::SourceKind;
-#[cfg(feature = "aot")]
 use std::cell::RefCell;
 use std::{collections::BTreeMap, path::{Path, PathBuf}, rc::Rc, sync::Arc};
 
@@ -28,7 +27,6 @@ pub struct ModuleAssets {
     pub modules: BTreeMap<String, (Arc<str>, bool)>,
 }
 
-#[cfg(feature = "aot")]
 impl ModuleAssets {
     pub(super) fn extend(&mut self, other: Self) -> Result<(), String> {
         for (path, file) in &other.files {
@@ -137,7 +135,6 @@ impl EmbeddedModules {
 pub(crate) enum ModuleAssetState {
     #[default]
     Filesystem,
-    #[cfg(feature = "aot")]
     Capture(Rc<RefCell<ModuleAssets>>),
     Embedded {
         modules: &'static EmbeddedModules,
@@ -178,7 +175,6 @@ impl crate::NodeHost {
         }
     }
 
-    #[cfg(feature = "aot")]
     pub(crate) fn record_import(&mut self, referrer: &str, specifier: &str, module: &quench_runtime::ModuleSource) -> Result<(), String> {
         if let ModuleAssetState::Capture(assets) = &self.module_assets {
             let mut assets = assets.borrow_mut();
@@ -209,7 +205,6 @@ impl crate::NodeHost {
             });
         }
         let bytes = std::fs::read(path)?;
-        #[cfg(feature = "aot")]
         self.record_module_bytes(path, _kind, &bytes)?;
         Ok(bytes)
     }
@@ -221,7 +216,6 @@ impl crate::NodeHost {
         }
     }
 
-    #[cfg(feature = "aot")]
     pub(crate) fn record_module_bytes(&mut self, path: &Path, kind: SourceKind, bytes: &[u8]) -> std::io::Result<()> {
         if let ModuleAssetState::Capture(assets) = &self.module_assets {
             let mut assets = assets.borrow_mut();
@@ -240,7 +234,6 @@ impl crate::NodeHost {
     }
 
 
-    #[cfg(feature = "aot")]
     pub(crate) fn record_prepared_module(&mut self, path: &Path, text: &str) -> Result<(), String> {
         if let ModuleAssetState::Capture(assets) = &self.module_assets {
             let mut assets = assets.borrow_mut();
@@ -262,7 +255,6 @@ impl crate::NodeHost {
         }
     }
 
-    #[cfg(feature = "aot")]
     pub(crate) fn record_module_resolution(&mut self, parent: &Path, specifier: &str, target: &Path) -> Result<(), String> {
         if let ModuleAssetState::Capture(assets) = &self.module_assets {
             let mut assets = assets.borrow_mut();

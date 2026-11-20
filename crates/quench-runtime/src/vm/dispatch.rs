@@ -695,8 +695,11 @@ impl<H: Host> Vm<H> {
         if matches!(run, RowRun::Done(Edge::Target)) {
             *pc = i.jump_target() as usize;
             if matches!(operation, Operation::Jump) {
+                // The target is the next instruction to run, so a collection scans the roots
+                // live before it: a resume PC would name the instruction before the target,
+                // an unrelated one whose liveness can drop registers the target reads.
                 self.frames[f].pc = *pc;
-                self.frames[f].pc_is_resume = true;
+                self.frames[f].pc_is_resume = false;
                 self.maybe_collect(p);
             }
         }

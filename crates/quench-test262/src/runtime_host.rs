@@ -12,20 +12,16 @@ use crate::Test262Host;
 
 #[derive(Clone, Copy, Debug)]
 pub enum CompilationSite {
-    #[cfg(feature = "aot")]
     Harness,
     Entry,
-    #[cfg(feature = "aot")]
     Dependency,
 }
 
 fn compile_failure(errors: &[quench_runtime::Diagnostic], site: CompilationSite) -> String {
     if !errors.is_empty() && errors.iter().all(quench_runtime::Diagnostic::is_syntax_error) {
         let phase = match site {
-            #[cfg(feature = "aot")]
             CompilationSite::Harness => "harness",
             CompilationSite::Entry => "runtime",
-            #[cfg(feature = "aot")]
             CompilationSite::Dependency => "resolution",
         };
         format!("quench {phase} SyntaxError: {errors:?}")
@@ -34,17 +30,14 @@ fn compile_failure(errors: &[quench_runtime::Diagnostic], site: CompilationSite)
     }
 }
 
-#[cfg(feature = "aot")]
 #[derive(Debug)]
 pub enum NativePreparationError {
     Source { site: CompilationSite, diagnostics: Vec<quench_runtime::Diagnostic> },
     Other(String),
 }
-#[cfg(feature = "aot")]
 impl From<String> for NativePreparationError {
     fn from(message:String)->Self { Self::Other(message) }
 }
-#[cfg(feature = "aot")]
 impl std::fmt::Display for NativePreparationError {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {
         match self {
@@ -54,7 +47,6 @@ impl std::fmt::Display for NativePreparationError {
         }
     }
 }
-#[cfg(feature = "aot")]
 impl NativePreparationError {
     pub fn expected_syntax_negative(&self,metadata:&crate::TestMetadata)->bool {
         match self {
@@ -74,7 +66,6 @@ const HARNESS_SCRIPT_NAME: &str = "<test262-harness>";
 const TIMER_MIN_DELAY_MS: f64 = 1.0;
 const TIMER_MAX_DELAY_MS: f64 = 2_147_483_647.0;
 
-#[cfg(feature = "aot")]
 fn native_output_directory(name: &str, variant: &str) -> Result<Option<std::path::PathBuf>, String> {
     let Some(root) = std::env::var_os("TEST262_AOT_OUTPUT_DIR") else { return Ok(None); };
     let suite = std::env::var_os("TEST262_DIR").map(std::path::PathBuf::from)
@@ -86,7 +77,6 @@ fn native_output_directory(name: &str, variant: &str) -> Result<Option<std::path
     Ok(Some(directory))
 }
 
-#[cfg(feature = "aot")]
 fn compile_native_unit(
     program: quench_runtime::ResidualProgram,
     compilation: &mut crate::NativeCompilation,
@@ -109,7 +99,6 @@ fn compile_native_unit(
 
 /// Traverse only declared requests. Compilation neither executes guest code nor
 /// guesses dynamic imports; every dependency enters the same atom namespace.
-#[cfg(feature = "aot")]
 fn compile_native_dependencies(
     host: &mut Test262RuntimeHost,
     compiler: &mut quench_runtime::NativeJsCompiler,
@@ -180,7 +169,6 @@ pub struct Test262RuntimeHost {
 /// One atom namespace shared by exact harness, declared modules, and discovered
 /// source requests. Both object linking and in-process verification consume
 /// this preparation without executing guest code.
-#[cfg(feature = "aot")]
 pub struct NativeCasePrograms {
     pub harness: Vec<quench_runtime::ResidualProgram>,
     pub modules: Vec<(ModuleSource, quench_runtime::ResidualProgram)>,
@@ -332,7 +320,6 @@ impl Test262RuntimeHost {
     /// Prepare the same static graph for standalone linking and native-only
     /// verification. The caller supplies the runner's exact harness and source
     /// goal; this operation performs no guest execution.
-    #[cfg(feature = "aot")]
     pub fn prepare_native_programs(
         &mut self,
         harness: &[&str],
@@ -343,7 +330,6 @@ impl Test262RuntimeHost {
         self.prepare_native_programs_typed(harness,source,name,kind).map_err(|error|error.to_string())
     }
 
-    #[cfg(feature = "aot")]
     pub fn prepare_native_programs_typed(
         &mut self,harness:&[&str],source:&str,name:&str,kind:SourceKind,
     )->Result<NativeCasePrograms,NativePreparationError> {
@@ -393,15 +379,11 @@ impl Test262RuntimeHost {
         let runtime_mode = runtime.host_mut().runtime_execution_mode();
         runtime.set_execution_mode(runtime_mode);
         let result = (|| {
-            #[cfg(feature = "aot")]
             let prepared = if execution_mode == ExecutionMode::NativeOnly {
                 Some(Self::prepare_for_runtime(&mut runtime, harness, source, name, kind)?)
             } else { None };
             let program = if execution_mode == ExecutionMode::NativeOnly {
-                #[cfg(feature = "aot")]
                 { prepared.as_ref().expect("native preparation").entry.clone() }
-                #[cfg(not(feature = "aot"))]
-                { return Err("quench AOT code generation requires the aot feature".into()); }
             } else { match kind {
                 SourceKind::Script => Engine::specialize(source, name),
                 SourceKind::Module => Engine::specialize_module_unspecialized(source, name),
@@ -413,7 +395,6 @@ impl Test262RuntimeHost {
                 .map(|script| (*script, HARNESS_SCRIPT_NAME))
                 .collect::<Vec<_>>();
             let execution = if execution_mode == ExecutionMode::NativeOnly {
-                #[cfg(feature = "aot")]
                 {
                     let NativeCasePrograms { harness: native_harness, modules: native_dependencies,
                         source_requests: native_sources, .. } = prepared.expect("native preparation");
@@ -445,8 +426,6 @@ impl Test262RuntimeHost {
                     }
                     runtime.execute_native_module_graph(&scripts, &modules, &native)
                 }
-                #[cfg(not(feature = "aot"))]
-                { unreachable!("AOT feature checked before compilation") }
             } else { runtime.execute_after_scripts(&harness, &program) };
             execution
                 .map_err(|error| {
@@ -706,7 +685,6 @@ fn clear_timeout(
 mod tests {
     use super::Test262RuntimeHost;
 
-    #[cfg(feature = "aot")]
     #[test]
     fn linked_graph_shares_dynamic_source_semantics_and_resets_after_rejection() {
         use quench_runtime::{ExecutionMode, NativeJsProgram, NativeSourceError, SourceKind};
@@ -759,7 +737,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn strict_dynamic_scripts_preserve_hashbangs_and_captured_global_bindings() {
         let sources = [r#"
@@ -833,7 +810,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn global_lexicals_outlive_the_script_root() {
         let source = r#"
@@ -855,7 +831,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn async_module_imports_preserve_waiter_order_and_namespace_resolution() {
         let directory = tempfile::tempdir().unwrap();
@@ -911,12 +886,10 @@ mod tests {
             if (effects.join(',') !== 'get,default,abrupt') throw Error(effects.join(','));
         "#;
         let modes = [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled].into_iter();
-        #[cfg(feature = "aot")]
         let modes = modes.chain([super::ExecutionMode::NativeOnly]);
         for mode in modes { Test262RuntimeHost::new(mode).execute(source, "strict-destructuring.js").unwrap(); }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_function_catalog_covers_harness_modules_nested_bodies_and_resets() {
         use std::fs;
@@ -950,7 +923,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_function_catalog_keeps_async_and_generator_kinds() {
         let source = r#"
@@ -971,7 +943,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn function_constructor_validation_uses_the_combined_parameter_context() {
         let source = r#"
@@ -989,7 +960,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn constructor_aliases_keep_scope_assignment_and_loop_identities_guarded() {
         let source = r#"
@@ -1024,7 +994,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_regions_keep_exact_loop_and_exception_continuations() {
         let program = super::Engine::specialize_unspecialized(r#"
@@ -1039,10 +1008,9 @@ mod tests {
             }
             if (calculate() !== 39) throw Error('wrong region continuation');
         "#, "region-continuations.js").unwrap();
-        let options = quench_runtime::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(4).unwrap(), backend: quench_runtime::NativeJsBackend::Cranelift };
-        let module = quench_runtime::lower_native_js_module_with_options(&program, "regions", options).unwrap();
+        let module = quench_runtime::lower_native_js_module(&program, "regions").unwrap();
         quench_runtime::emit_native_module("regions", module.functions, module.data).unwrap();
-        let native = quench_runtime::NativeJsProgram::compile_eager_with_options(program, options).unwrap();
+        let native = quench_runtime::NativeJsProgram::compile_eager(program).unwrap();
         let mut runtime = super::Runtime::new(Test262RuntimeHost::new(super::ExecutionMode::NativeOnly));
         runtime.set_execution_mode(super::ExecutionMode::NativeOnly);
         runtime.execute_native(&native).unwrap();
@@ -1055,7 +1023,6 @@ mod tests {
         assert!(super::compile_failure(&errors, super::CompilationSite::Entry).starts_with("quench runtime SyntaxError:"));
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn compiler_negatives_require_matching_type_phase_and_compilation_site() {
         let mut host=Test262RuntimeHost::new(super::ExecutionMode::NativeOnly);
@@ -1077,7 +1044,6 @@ mod tests {
     #[test]
     fn strict_test_does_not_make_harness_functions_strict() {
         let modes = [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled].into_iter();
-        #[cfg(feature = "aot")]
         let modes = modes.chain([super::ExecutionMode::NativeOnly]);
         for mode in modes {
             let mut host = Test262RuntimeHost::new(mode);
@@ -1089,7 +1055,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_qualification_rejects_caught_missing_source_compilation() {
         let mut host = Test262RuntimeHost::new(super::ExecutionMode::NativeOnly);
@@ -1098,7 +1063,6 @@ mod tests {
         assert_eq!(host.native_compilation.rejections, 1);
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_static_graph_compiles_cycles_once_and_preserves_harness_await_and_live_bindings() {
         use std::fs;
@@ -1125,7 +1089,6 @@ mod tests {
         assert!(host.native_module_sources.is_empty());
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_static_graph_freezes_sources_before_execution_and_rejects_uncompiled_dynamic_source() {
         use std::fs;
@@ -1170,7 +1133,6 @@ mod tests {
         assert!(host.native_compilation.rejections > 0);
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_deferred_graph_links_before_evaluation_and_keeps_nested_bodies_deferred() {
         use std::fs;
@@ -1198,7 +1160,6 @@ mod tests {
     #[test]
     fn unsettled_module_evaluation_is_never_a_conformance_pass() {
         let modes = [super::ExecutionMode::Interpreted, super::ExecutionMode::Compiled].into_iter();
-        #[cfg(feature = "aot")]
         let modes = modes.chain([super::ExecutionMode::NativeOnly]);
         for mode in modes {
             let mut host = Test262RuntimeHost::new(mode);

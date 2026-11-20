@@ -40,6 +40,8 @@ pub const T_F32: u8 = AccessType::F32 as u8;
 /// The Wasm frame's header words are defined once, in `quench-runtime/src/staged/frame.rs` (the one
 /// frame model), mounted here so the stencil crate and the lib share it. The names below stay for
 /// the rows that use them. `FRAME_HEADER_WORDS` is one past the last header word.
+// Only the Wasm header words are read here; the rest of the frame model is the JS rows' and the runtime's.
+#[allow(dead_code)]
 #[path = "../../quench-runtime/src/staged/frame.rs"]
 mod frame;
 pub(crate) use frame::{WASM_BASE_WORD, WASM_HEADER_WORDS, WASM_LENGTH_WORD, WASM_RESULT_WORD};

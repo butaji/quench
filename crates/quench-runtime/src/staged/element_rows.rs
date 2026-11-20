@@ -29,6 +29,7 @@ pub(crate) enum ElementView<W> {
     Typed(TypedView<W>),
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     #[cfg(not(stencil_build))]
     /// The element rows of `decode`: `GetIndex` of a register base and a register or immediate
@@ -167,24 +168,31 @@ fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (val
 /// The element rows of `step`: the word each produces, or `Unresolved` where the frame holds
 /// no array records or no host path for what the dense arm leaves.
 #[inline(always)]
-pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        Operation::ElementRead { base, key, destination } => match read(stage, frame, base, key) {
+        Operation::ElementRead { base, key, destination } => if const { super::op_kind::admits(KIND, &[super::op_kind::ELEMENT_READ]) } { match read(stage, frame, base, key) {
             Some(word) => Step::Value(word),
             // A read the dense arm leaves is the VM's indexed read, where the frame takes it (`CallOut::LoadElement`).
             None => super::callout::loading(stage, frame, super::CallOut::LoadElement { base: Operand::register(base), key }, destination),
-        },
+        } } else { unreachable!() },
         Operation::ElementReadOperand { destination, base, key } =>
-            super::callout::loading(stage, frame, super::CallOut::LoadElement { base, key }, destination),
+            if const { super::op_kind::admits(KIND, &[super::op_kind::ELEMENT_READ_OPERAND]) } { super::callout::loading(stage, frame, super::CallOut::LoadElement { base, key }, destination) } else { unreachable!() },
         // A store the dense arm leaves is the VM's keyed store, where the frame takes it (`CallOut::StoreElement`).
-        Operation::ElementWrite { value, base, key, strict } => match write(stage, frame, (value, base, key)) {
+        Operation::ElementWrite { value, base, key, strict } => if const { super::op_kind::admits(KIND, &[super::op_kind::ELEMENT_WRITE]) } { match write(stage, frame, (value, base, key)) {
             Some(word) => Step::Value(word),
             None => super::callout::storing(stage, frame, super::CallOut::StoreElement { object: base, index: key, value, strict })
                 .map_or(Step::Unresolved, Step::Value),
-        },
-        _ => Step::Unresolved,
+        } } else { unreachable!() },
+        _ => if const { super::op_kind::outside(KIND, &[super::op_kind::ELEMENT_READ, super::op_kind::ELEMENT_READ_OPERAND, super::op_kind::ELEMENT_WRITE]) } { Step::Unresolved } else { unreachable!() },
     }
+}
+
+/// `step_of` for any operation.
+#[inline(always)]
+pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
 /// The interpreter's replacement of the present element `index` of a direct array among the array

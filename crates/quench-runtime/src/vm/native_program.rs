@@ -2,34 +2,15 @@
 
 use super::{ProgramId, Vm};
 use crate::{Host, JsError, ResidualProgram, Value};
-use std::{any::Any, marker::PhantomData, rc::Rc};
-
-/// The shared native function ABI, with an opaque VM-owned call context.
-pub type NativeJsFunctionEntry =
-    unsafe extern "C" fn(*mut std::ffi::c_void, u64, u64, *const u64, *mut u64) -> u32;
+use std::{marker::PhantomData, rc::Rc};
 
 pub type NativeProgramResolver<H> = dyn Fn(&str, &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError>;
 
-pub(crate) enum NativeJsCode {
-    Linked {
-        entries: &'static [NativeJsFunctionEntry],
-    },
-    Owned {
-        entries: Box<[NativeJsFunctionEntry]>,
-        // Code and operand/asset storage survive every closure and queued job.
-        _owner: Rc<dyn Any>,
-    },
-}
-
-impl NativeJsCode {
-    #[inline]
-    pub(super) fn entries(&self) -> &[NativeJsFunctionEntry] {
-        match self {
-            Self::Linked { entries, .. } => entries,
-            Self::Owned { entries, .. } => entries,
-        }
-    }
-
+/// The AOT image the system linker placed in this executable for a program (`aot_image::object`):
+/// a VM that runs the program loads it as its ahead images (`Vm::load_linked_image`), and its
+/// functions run their bodies on the lane runner (`Vm::install_ahead_body`).
+pub(crate) struct NativeJsCode {
+    pub(crate) table: crate::vm::aot_image::live::LinkedTable,
 }
 
 /// What a publication lowered, so admission is measured rather than assumed.
@@ -91,46 +72,24 @@ impl<H: Host> Clone for NativeJsProgram<H> {
 }
 
 impl<H: Host> NativeJsProgram<H> {
-    /// Compile every function before execution using the object backend's graph
-    /// and the JIT's executable-memory publisher. No hotness or fallback tier.
-    #[cfg(feature = "aot")]
+    /// Compile every function before execution as one AOT image. No hotness or fallback tier.
     pub fn compile_eager(program: ResidualProgram) -> Result<Self, String> {
-        Self::compile_eager_with_options(program, crate::NativeJsCodegenOptions::default())
-    }
-
-    #[cfg(feature = "aot")]
-    pub fn compile_eager_with_options(
-        program: ResidualProgram, options: crate::NativeJsCodegenOptions,
-    ) -> Result<Self, String> {
-        super::compiled::compile_eager_native(program, options)
+        super::compiled::compile_eager_native(program)
     }
 
     /// Adopt a statically linked image table emitted by `lower_native_js_module`.
-    /// Its header retains the compiler's ABI marker at link time.
     ///
     /// # Safety
-    /// `image` must be the aligned entry-table symbol for this exact program,
-    /// host H and ABI. Its code and operand data must live for the process's
-    /// lifetime. The table has the ABI header and one entry per function.
+    /// `image` must be the aligned entry-table symbol for this exact program and
+    /// host H, emitted by this build's object linker (`aot_image::object`). Its code,
+    /// image file and records must live for the process's lifetime.
     pub unsafe fn from_linked_image(
         program: ResidualProgram,
         image: *const u8,
     ) -> Result<Self, String> {
-        if image.is_null() || !image.addr().is_multiple_of(std::mem::align_of::<NativeJsFunctionEntry>()) {
-            return Err("native image table is missing or misaligned".into());
-        }
-        let header_bytes =
-            crate::NATIVE_JS_IMAGE_HEADER_WORDS * std::mem::size_of::<NativeJsFunctionEntry>();
-        // SAFETY: the image contract supplies the full table. Skip the marker
-        // before interpreting words as functions of the execution-entry ABI.
-        let entries = unsafe {
-            std::slice::from_raw_parts(
-                image.add(header_bytes).cast::<NativeJsFunctionEntry>(),
-                program.function_count(),
-            )
-        };
-        // SAFETY: the linked image is static and bound to this program and H.
-        Self::bind(program, NativeJsCode::Linked { entries }, NativeJsPublicationCounts::default(), None)
+        // SAFETY: the caller's contract is the table's.
+        let table = unsafe { crate::vm::aot_image::live::LinkedTable::read(image, program.function_count()) }?;
+        Self::bind(program, NativeJsCode { table }, NativeJsPublicationCounts::default(), None)
     }
 
     /// What this publication lowered: the counters that make an AOT claim
@@ -138,37 +97,37 @@ impl<H: Host> NativeJsProgram<H> {
     pub fn publication_counts(&self) -> NativeJsPublicationCounts { self.counts }
 
     /// The whole-program globals the image folded (tests).
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn frozen_global_atoms_for_test(&self) -> &[crate::bytecode::Atom] {
         self.frozen.as_ref().map_or(&[], |frozen| &frozen.globals)
     }
 
     /// Retire the image's stable facts, as a changed assumption would (tests).
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn invalidate_frozen(&self) {
         if let Some(frozen) = &self.frozen { frozen.watch.retire() }
     }
 
     /// How many constants the image materializes (tests).
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn materialized_constants(&self) -> usize {
         self.frozen.as_ref().map_or(0, |frozen| frozen.constants.borrow().len())
     }
 
     /// The whole-program prototype values the image folded (tests).
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn frozen_field_atoms_for_test(&self) -> &[crate::bytecode::Atom] {
         self.frozen.as_ref().map_or(&[], |frozen| &frozen.fields)
     }
 
     /// The method atoms the image holds unnamed, replayed at load.
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn frozen_atoms(&self) -> &[crate::bytecode::Atom] {
         self.frozen.as_ref().map_or(&[], |frozen| &frozen.atoms)
     }
 
     /// Whether a replayed assumption retired the image's stable facts.
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn frozen_invalidated(&self) -> bool {
         self.frozen.as_ref().is_some_and(|frozen| frozen.invalidation.is_set())
     }
@@ -179,40 +138,6 @@ impl<H: Host> NativeJsProgram<H> {
     pub fn residual(&self) -> &ResidualProgram {
         &self.program
     }
-    /// Bind native code to its source program. Entry indices are function IDs.
-    ///
-    /// # Safety
-    /// Every entry must implement this compiler build's native graph ABI for
-    /// the corresponding function in `program` and host `H`. `owner` must keep
-    /// all executable code and native operands/assets alive, without untraced
-    /// VM heap pointers. Linked static code can use an owner of `Rc::new(())`.
-    pub unsafe fn from_entries(
-        program: ResidualProgram,
-        entries: Vec<NativeJsFunctionEntry>,
-        owner: Rc<dyn Any>,
-    ) -> Result<Self, String> {
-        // SAFETY: the caller's contract is this function's contract.
-        unsafe { Self::from_entries_with_counts(program, entries, owner, NativeJsPublicationCounts::default(), None) }
-    }
-
-    pub(crate) unsafe fn from_entries_with_counts(
-        program: ResidualProgram,
-        entries: Vec<NativeJsFunctionEntry>,
-        owner: Rc<dyn Any>,
-        counts: NativeJsPublicationCounts,
-        frozen: Option<FrozenAssumptions>,
-    ) -> Result<Self, String> {
-        Self::bind(
-            program,
-            NativeJsCode::Owned {
-                entries: entries.into_boxed_slice(),
-                _owner: owner,
-            },
-            counts,
-            frozen,
-        )
-    }
-
     fn bind(program: ResidualProgram, code: NativeJsCode, counts: NativeJsPublicationCounts, frozen: Option<FrozenAssumptions>) -> Result<Self, String> {
         if !crate::DYNAMIC_EXECUTION_ENABLED && program.source.as_ref().is_some_and(|source| source.call_sites.get().is_none()) {
             return Err("native program has no frozen call-site descriptions".into());
@@ -221,9 +146,6 @@ impl<H: Host> NativeJsProgram<H> {
             return Err("native JavaScript entries require a JS or TS program".into());
         }
         program.validate_unless_proven()?;
-        if code.entries().len() != program.function_count() {
-            return Err("native entry count does not match program functions".into());
-        }
         Ok(Self {
             program: Rc::new(program),
             code: Rc::new(code),
@@ -235,6 +157,13 @@ impl<H: Host> NativeJsProgram<H> {
 }
 
 impl<H: Host> Vm<H> {
+    /// Loads the image the system linker placed for program `id` (`NativeJsCode`) as its ahead
+    /// images (`Vm::load_linked_image`).
+    pub(super) fn attach_native_js(&mut self, id: ProgramId, code: &NativeJsCode) -> Result<(), String> {
+        let program = self.programs.get(id).ok_or("native JS program is missing")?;
+        self.load_linked_image(&program, &code.table)
+    }
+
     pub(crate) fn set_native_program_resolver(&mut self, resolver: impl Fn(&str, &[&str]) -> Result<Option<NativeJsProgram<H>>, crate::NativeSourceError> + 'static) {
         self.set_native_program_resolver_boxed(Box::new(resolver));
     }
@@ -268,7 +197,7 @@ impl<H: Host> Vm<H> {
         let prepared = self.prepare_native_script(native)?;
         let id = self.store_module_program_shared(prepared.program)
             .ok_or_else(|| JsError::validation("native module program store is full".into()))?;
-        self.programs.attach_native_js(id, prepared.native.expect("native module code admitted"))
+        self.attach_native_js(id, &prepared.native.expect("native module code admitted"))
             .map_err(JsError::validation)?;
         Ok(id)
     }
@@ -312,7 +241,7 @@ impl<H: Host> Vm<H> {
         self.check_execution_interrupt()?;
         self.restore_snapshot_state(bytes, Some(&native.program), read_host).map_err(|error| JsError::validation(error.0))?;
         self.install_restored_main(native.program.clone());
-        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)
+        self.attach_native_js(ProgramId::MAIN, &native.code).map_err(JsError::validation)
     }
 
     pub(crate) fn execute_native_program(
@@ -377,7 +306,7 @@ impl<H: Host> Vm<H> {
         self.replay_frozen_assumptions(native);
         self.initialize_shared(&native.program, super::builtins::RealmScope::Complete)?;
         self.materialize_frozen_constants(native);
-        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)?;
+        self.attach_native_js(ProgramId::MAIN, &native.code).map_err(JsError::validation)?;
         for module in modules {
             if native.program.kind == crate::bytecode::ProgramKind::Module
                 && crate::module_identity::same_name(&module.program.source_name, &native.program.source_name) {

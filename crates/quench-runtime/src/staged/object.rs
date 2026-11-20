@@ -330,7 +330,6 @@ pub(crate) fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {
 /// The arena run a field slot binds: the address of value `slot` of the run of `length` values at
 /// `values`, and how many values remain from it (none where the slot lies outside the run). An
 /// address formed outside the run grants no permission to dereference it.
-#[cfg(feature = "aot")]
 #[inline(always)]
 pub(crate) fn bind_arena_slot<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, slot: S::Word) -> (S::Word, S::Word) {
     let fits = stage.ult(slot, length);
@@ -536,8 +535,6 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond
                 }
             })
         }
-        Slots::Either { packed, inline, flat } => stage.choose(inline,
-            #[inline(always)] |stage| packed_read(stage, packed, slot, rep), #[inline(always)] |stage| flat_read(stage, flat, slot, rep)),
         Slots::Narrow(base) => narrow_read(stage, base, slot, rep),
     }
 }

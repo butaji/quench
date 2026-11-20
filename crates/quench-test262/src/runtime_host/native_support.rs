@@ -2,11 +2,9 @@
 //! programs' source demands select (`quench_runtime::SourceDemands`).
 
 use super::{ExecutionMode, NativeImageSupport, Test262RuntimeHost};
-#[cfg(feature = "aot")]
 use super::{Engine, ModuleSource, NativeCasePrograms, Runtime, SourceKind};
 
 /// Whether the harness, entry or any declared module can reach source first known at execution.
-#[cfg(feature = "aot")]
 pub(super) fn requires_dynamic_source(
     harness: &[&str], source: &str, kind: SourceKind, modules: &[(ModuleSource, quench_runtime::ResidualProgram)],
 ) -> bool {
@@ -31,7 +29,6 @@ impl Test262RuntimeHost {
     }
 
     /// Settle automatic support once the prepared programs' demands are known.
-    #[cfg(feature = "aot")]
     pub(super) fn resolve_native_support(&mut self, requires_dynamic_source: bool) {
         self.native_support = NativeImageSupport::select(self.native_request, requires_dynamic_source);
         self.native_compilation.dynamic_source = self.native_support.allows_dynamic_source();
@@ -42,7 +39,6 @@ impl Test262RuntimeHost {
     }
 
     /// Prepare the static graph, then run it under the support its demands selected.
-    #[cfg(feature = "aot")]
     pub(super) fn prepare_for_runtime(
         runtime: &mut Runtime<Self>, harness: &[&str], source: &str, name: &str, kind: SourceKind,
     ) -> Result<NativeCasePrograms, String> {
@@ -53,7 +49,7 @@ impl Test262RuntimeHost {
     }
 }
 
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

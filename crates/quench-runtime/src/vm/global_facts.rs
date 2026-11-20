@@ -58,7 +58,6 @@ pub(crate) enum GlobalRead {
     Stable { value: Value, ty: Type, fact: GlobalFact, global: Value, realm_offset: i32 },
     /// A whole-program AOT fact: the cell's value at every read, checked once per read
     /// site and folded while it holds (`Division::Frozen`).
-    #[cfg_attr(not(feature = "aot"), allow(dead_code))]
     Frozen { value: Value, ty: Type },
     /// A `StoreName` or `LoadNameTypeof` of a slot of the global object held directly.
     Slot(GlobalSlot),

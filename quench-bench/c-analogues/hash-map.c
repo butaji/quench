@@ -1,3 +1,6 @@
+// jetstream-row: hash-map
+// jetstream-files: simple/hash-map.js
+// iterations: 120
 /* C analogue of JetStream's simple/hash-map.js: the same chained hash map (a port of
  * Java's HashMap), one heap entry per key, power-of-two tables that start at length 1
  * (the JS constructor reads the undefined `this.capacity`) and double on rehash, so a

@@ -2,7 +2,7 @@
 //! definition, any other proves its operands Numbers or leaves.
 
 use super::{ranges, Flow, boolean_binary, constant_number, operand_type, prove_number, set};
-use crate::bytecode::{Constant, Register, WideInstruction};
+use crate::bytecode::{Constant, WideInstruction};
 use crate::typed_ir::Type;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 

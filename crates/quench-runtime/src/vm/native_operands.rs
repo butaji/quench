@@ -15,7 +15,6 @@ pub struct NativeJsOperands {
 impl NativeJsOperands {
         const REGISTER_BITS: u32 = u16::BITS;
 
-    #[cfg(feature = "aot")]
     pub const fn new(a: u16, b: u16, c: u16, immediate: u32) -> Self {
         Self {
             registers: a as u64
@@ -25,14 +24,22 @@ impl NativeJsOperands {
         }
     }
 
+    /// The operands of `instruction`, as its semantic entry reads them.
+    pub(crate) const fn of(instruction: WideInstruction) -> Self {
+        Self::new(instruction.a(), instruction.b(), instruction.c(), instruction.imm())
+    }
+
+    /// The record's two words, in layout order: what an image stores and a linker places.
+    pub(crate) const fn words(&self) -> [u64; 2] {
+        [self.registers, self.immediate]
+    }
+
     /// The two-word native-call argument pointer, valid while this value lives.
-    #[cfg(feature = "aot")]
     pub fn as_ptr(&self) -> *const u64 {
         &self.registers
     }
 
     /// The host-native object representation; object emission targets this host.
-    #[cfg(feature = "aot")]
     pub(super) fn append_native_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.registers.to_ne_bytes());
         bytes.extend_from_slice(&self.immediate.to_ne_bytes());

@@ -55,7 +55,6 @@ const LAZY_GLOBALS: &[(&str, &str, &str, bool)] = &[
     ("__nodeURLSearchParams", "internal/url", "URLSearchParams", false),
 ];
 
-#[cfg(feature = "aot")]
 pub(crate) fn lazy_global_names() -> impl Iterator<Item = &'static str> {
     LAZY_GLOBALS.iter().map(|&(property, _, _, _)| property)
 }

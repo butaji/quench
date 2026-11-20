@@ -11,7 +11,8 @@
 //
 // A stencil names nothing in the runtime except the frame words of `staged/frame.rs` and the entry
 // cell of `staged/call.rs`, which both builds compile.
-#![allow(dead_code)]
+// The re-exports are the stencils' names (`crate::layout::*`), which the runtime does not read.
+#![allow(dead_code, unused_imports)]
 
 pub(crate) use crate::staged::frame::{ACTIVATION_BYTES, ACTIVATION_KIND_OFFSET, CONTEXT_WORDS as FRAME_CONTEXT_WORDS};
 use super::object_encoding::{
@@ -139,6 +140,19 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     object_offset: 0,
     frozen_mask: VALUE_VEC_FROZEN,
     integrity_mask: VALUE_VEC_INTEGRITY_BITS,
+};
+
+/// A hot record space's allocation cursor (`heap::records::RecordCursor`): two `u32` words, `next` then
+/// `limit`, which the empty-allocation rows bump (`heap_rows::empty_row`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeRecordCursorLayout {
+    pub(crate) next_offset: usize,
+    pub(crate) limit_offset: usize,
+}
+
+pub(crate) const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
+    next_offset: 0,
+    limit_offset: size_of::<u32>(),
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -275,6 +289,18 @@ pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = core::mem::offset_of!(super:
 /// (`JsStepDispatch::environment_storage`), which the environment rows read their slots through
 /// (`staged::environment::environment_slot`).
 pub(crate) const JS_STEP_ENV_STORAGE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, environment_storage);
+/// The empty allocations' cursor and template words (`JsStepHead::object_cursor` and after).
+pub(crate) const JS_STEP_OBJECT_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_cursor);
+pub(crate) const JS_STEP_EMPTY_OBJECT_LAYOUT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_layout);
+pub(crate) const JS_STEP_EMPTY_OBJECT_PAYLOAD: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_payload);
+pub(crate) const JS_STEP_EMPTY_OBJECT_PROTO: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_proto);
+pub(crate) const JS_STEP_ARRAY_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_cursor);
+pub(crate) const JS_STEP_EMPTY_ARRAY_LAYOUT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_layout);
+pub(crate) const JS_STEP_EMPTY_ARRAY_PAYLOAD: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_payload);
+pub(crate) const JS_STEP_EMPTY_ARRAY_PROTO: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_proto);
+pub(crate) const JS_STEP_ASCII_UNIT_STRINGS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, ascii_unit_strings);
+pub(crate) const JS_STEP_ARMED_ARRAY_PROOFS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, armed_array_proofs);
+pub(crate) const JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_chain_index_free_address);
 /// The activation's local slots and their count (`native_locals`, `local_count`).
 pub(crate) const JS_STEP_NATIVE_LOCALS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, native_locals);
 pub(crate) const JS_STEP_LOCAL_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, local_count);
@@ -333,7 +359,9 @@ pub(crate) const PLAIN_DEPTH_LIMIT: usize = core::mem::offset_of!(super::js_step
 pub(crate) const JS_STEP_BODY_TABLE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_table);
 pub(crate) const JS_STEP_BODY_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_top);
 pub(crate) const JS_STEP_ACTIVATION_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, activation_count);
-/// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`).
+/// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`). The entry cell's
+/// offsets come from `staged::call`, which the Wasm rows' family does not compile (`stencil_family`).
+#[cfg(not(stencil_family = "wasm"))]
 pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
 pub(crate) const RAISED_RUN: u64 = 1 << u32::BITS;
 
@@ -344,12 +372,19 @@ pub(crate) const CONTEXT_BODY: usize = crate::staged::frame::CONTEXT_BODY;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).
+#[cfg(not(stencil_family = "wasm"))]
 pub(crate) const CELL_ENTRY_AT: usize = crate::staged::call::ENTRY_CELL.entry_offset as usize;
+#[cfg(not(stencil_family = "wasm"))]
 pub(crate) const CELL_RECOVERY_AT: usize = crate::staged::call::ENTRY_CELL.recovery_offset as usize;
+#[cfg(not(stencil_family = "wasm"))]
 pub(crate) const CELL_BODY_AT: usize = crate::staged::call::ENTRY_CELL.body_offset as usize;
+#[cfg(not(stencil_family = "wasm"))]
 pub(crate) const CELL_ROWS_AT: usize = crate::staged::call::ENTRY_CELL.rows_offset as usize;
+#[cfg(not(stencil_family = "wasm"))]
 pub(crate) const CELL_PROVEN_AT: usize = crate::staged::call::ENTRY_CELL.proven_offset as usize;
+#[cfg(not(stencil_family = "wasm"))]
 pub(crate) const CELL_NUMBERS_AT: usize = crate::staged::call::ENTRY_CELL.numbers_offset as usize;
+#[cfg(not(stencil_family = "wasm"))]
 pub(crate) const CELL_USES_THIS_AT: usize = crate::staged::call::ENTRY_CELL.uses_this_offset as usize;
 pub(crate) const RECOVERY_VALUES_AT: usize = 0;
 pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;

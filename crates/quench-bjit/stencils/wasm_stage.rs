@@ -12,7 +12,8 @@ use crate::staged::wasm_float::{
 };
 use crate::staged::wasm_instance::{Storage, WasmInstance};
 use crate::staged::wasm_memory::{Access, WasmMemory, WasmMemoryGrow, WasmMemoryWrite};
-use crate::staged::wasm_simd_rules::{Native, WasmSimd, kernel_bits, native_bits, shuffle_bits};
+use crate::staged::wasm_simd_lanes::SimdOperator;
+use crate::staged::wasm_simd_rules::{Native, SELECTOR_LANE_BITS, WasmSimd, native_bits, shuffle_bits};
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
@@ -23,28 +24,43 @@ use crate::words::{HOLE_B, S, hole64, slot};
 /// scalars `u64`), the native rows, kernels and shuffle the interpreter runs too.
 pub(crate) struct StencilSimd;
 
+/// `kernel_bits` for a row: the operator half of the selector is the row's constant, so the lookup
+/// folds; the lane half may be a hole, which the emitter admits (`SimdKernel::of`) before it picks the
+/// row, so the row does not check it again (a check there would leave a panic call in the row).
+#[inline(always)]
+fn admitted_bits(selector: u32, left: u128, right: Option<u128>) -> u128 {
+    match SimdOperator::KERNELS.get((selector >> SELECTOR_LANE_BITS) as usize) {
+        Some(kernel) => kernel.apply_bits(left, right.unwrap_or(0), selector as u8),
+        None => 0,
+    }
+}
+
 impl WasmSimd for StencilSimd {
     type Value = u128;
     type Scalar = u64;
 
+    #[inline(always)]
     fn constant_vector(&mut self, bits: u128) -> u128 {
         bits
     }
 
+    #[inline(always)]
     fn vector_native(&mut self, native: Native, left: u128, right: Option<u128>) -> u128 {
         native_bits(native, left, right.unwrap_or(0))
     }
 
+    #[inline(always)]
     fn vector_kernel(&mut self, selector: u32, left: u128, right: Option<u128>) -> u128 {
-        kernel_bits(selector, left, right)
+        admitted_bits(selector, left, right)
     }
 
     /// The kernel's bits, the scalar in their low word.
     #[inline(always)]
     fn scalar_kernel(&mut self, selector: u32, left: u128, right: Option<u128>) -> u64 {
-        kernel_bits(selector, left, right) as u64
+        admitted_bits(selector, left, right) as u64
     }
 
+    #[inline(always)]
     fn vector_shuffle(&mut self, lanes: [u8; V128_BYTES], left: u128, right: u128) -> u128 {
         shuffle_bits(left, right, lanes)
     }
@@ -69,7 +85,7 @@ impl StencilMemory {
     }
 
     #[inline(always)]
-    fn at(&self, index: u64, offset: u32) -> *mut u8 {
+    pub(crate) fn at(&self, index: u64, offset: u32) -> *mut u8 {
         self.base.wrapping_add((index + u64::from(offset)) as usize)
     }
 }

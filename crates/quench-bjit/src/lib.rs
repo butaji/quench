@@ -249,6 +249,30 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
     (layout.len, layout.hot)
 }
 
+/// A value field `symbolic_fields` names: the row and hole it takes, the offset of the field in the
+/// code `copy_patch` writes (from its `out`), and the relocation class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SymbolicField {
+    pub row: usize,
+    pub hole: u32,
+    pub offset: usize,
+    pub class: u8,
+}
+
+/// The value fields of `rows` whose hole `symbolic` names, at the offsets `copy_patch` places them: a
+/// relocatable image writes no value there and records the field for its loader instead.
+pub fn symbolic_fields(rows: &[Row], symbolic: impl Fn(usize, u32) -> bool) -> Vec<SymbolicField> {
+    let layout = layout(rows);
+    let mut fields = Vec::new();
+    for (k, row) in rows.iter().enumerate() {
+        let relocs = row.stencil.relocs.iter();
+        for r in relocs.filter(|r| !class::is_successor(r.class) && layout.kept(rows, k, r.offset as usize) && symbolic(k, r.index)) {
+            fields.push(SymbolicField { row: k, hole: r.index, offset: layout.address(rows, k, r.offset as usize), class: r.class });
+        }
+    }
+    fields
+}
+
 /// Stencils compiled by rustc from `stencils/rows.rs` (see `build.rs`), as [`Stencil`]s.
 pub mod rustc {
     use super::{class, trailing_jump, Imm32, Reloc, Stencil, NEXT};

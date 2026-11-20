@@ -106,6 +106,7 @@ fn defines_nothing(op: Op) -> bool {
     )
 }
 
+#[cfg(not(stencil_build))]
 /// The step `instruction` denotes among these opcodes, with the register it defines and its (at
 /// most two) operand registers, which `Vm::call_out` reads; `None` for any other opcode.
 #[inline(always)]

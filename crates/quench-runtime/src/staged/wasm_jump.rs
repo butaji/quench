@@ -8,7 +8,10 @@
 //! general step, which runs the Wasm operator.
 
 use super::{NumericFrame, NumericStage, Stage, Step};
-use crate::bytecode::{Op, Operand, Register, WideInstruction};
+use crate::bytecode::{Operand, Register};
+#[cfg(not(stencil_build))]
+use crate::bytecode::{Op, WideInstruction};
+#[cfg(not(stencil_build))]
 use crate::wasm::integer::I32BinaryOperator;
 
 /// An i32 comparison: its relation, and for an order whether it compares signed.
@@ -24,6 +27,7 @@ pub(crate) enum WasmRelation {
 
 impl WasmRelation {
     /// The relation `operator` names, where it is a comparison.
+    #[cfg(not(stencil_build))]
     fn of(operator: I32BinaryOperator) -> Option<Self> {
         Some(match operator {
             I32BinaryOperator::Equal => Self::Equal,
@@ -66,6 +70,7 @@ impl WasmJump {
     /// The i32 jump `instruction` is, from its record's operands (`a`, `b`, `c`): a comparison's
     /// right operand is `b` (a register, or a signed constant for an immediate form), and an add's
     /// addend is `c`.
+    #[cfg(not(stencil_build))]
     pub(crate) fn decode(instruction: WideInstruction) -> Option<Self> {
         let op = instruction.op();
         if let Some(operator) = I32BinaryOperator::from_jump_op(op) {
@@ -216,6 +221,7 @@ pub(crate) struct BranchTable {
 impl BranchTable {
     /// The table `instruction` is: its selector is `a`, and its immediate counts the cases before
     /// the default (`branch_table_entries`), so the entries are that count plus one.
+    #[cfg(not(stencil_build))]
     pub(crate) fn decode(instruction: WideInstruction) -> Option<Self> {
         if instruction.op() != Op::WasmBranchTable {
             return None;

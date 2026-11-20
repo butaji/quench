@@ -1,3 +1,6 @@
+// jetstream-row: raytrace
+// jetstream-files: Octane/raytrace.js
+// iterations: 120
 // C analogue of JetStream 3's raytrace.js (Adam Burmister's ray tracer, ES6 version):
 // the same scene, options, arithmetic order and per-render check (checkNumber === 2321),
 // with vectors and colors as value structs and shapes/materials as tagged structs.

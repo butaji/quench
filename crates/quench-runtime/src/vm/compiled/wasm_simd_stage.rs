@@ -18,7 +18,7 @@ use crate::staged::wasm::Width;
 use crate::staged::wasm_simd::{Lanes, Native, Simd, WasmSimd, simd, simd_scalar};
 use crate::wasm::V128_BYTES;
 use crate::wasm::simd::SimdKernel;
-use cranelift_codegen::ir::{self, AbiParam, Signature, types};
+use cranelift_codegen::ir::{self, types};
 use cranelift_frontend::Variable;
 
 impl<H: Host> WasmSimd for Emitter<'_, '_, H> {

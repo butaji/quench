@@ -1,3 +1,6 @@
+// jetstream-row: stanford-crypto-sha256
+// jetstream-files: SeaMonster/sjlc.js SeaMonster/stanford-crypto-sha256.js
+// iterations: 120
 /* C analogue of JetStream's SeaMonster/stanford-crypto-sha256.js: SJCL's SHA-256 over
  * big-endian 32-bit words, one fresh hash state per hash, hashing "b4d" and then its
  * 256-bit digest 4500 times per iteration and checking the final hex digest, so a JS

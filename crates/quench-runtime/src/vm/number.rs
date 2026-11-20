@@ -10,7 +10,6 @@ const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
 const MINIMUM_POSITIVE_SUBNORMAL: f64 = f64::from_bits(MINIMUM_SUBNORMAL_BIT_PATTERN);
 const NUMBER_RADIX_PREFIX_LENGTH: usize = 2;
 use crate::float_layout::{BINARY64, power_of_two};
-pub(super) use crate::staged::math::{f64_to_half, half_to_f64};
 use crate::units::{BINARY_RADIX, HEXADECIMAL_RADIX, OCTAL_RADIX};
 use super::number_parse::{
     INFINITY_LITERAL, decimal_value, radix_digit_run, radix_digits_value, scan_decimal, split_sign, trim_ascii_space,

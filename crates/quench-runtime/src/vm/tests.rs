@@ -14871,7 +14871,7 @@ fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once
 }
 
 #[test]
-#[cfg(all(feature = "aot", not(quench_profiled)))]
+#[cfg(not(quench_profiled))]
 fn inlined_nested_field_uses_callee_register_coordinates() {
     // GetField + SetThisField fuses into a site whose register zero belongs to read.
     // The caller's register zero is the numeric count, never an object entry input.
@@ -14899,7 +14899,7 @@ fn inlined_nested_field_uses_callee_register_coordinates() {
 }
 
 #[test]
-#[cfg(all(feature = "aot", not(quench_profiled)))]
+#[cfg(not(quench_profiled))]
 fn shared_nested_captured_store_loop_reaches_native_body() {
     for global in [false, true] {
     for deep in [false, true] {

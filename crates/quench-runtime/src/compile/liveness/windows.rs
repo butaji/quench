@@ -27,7 +27,6 @@ fn over_budget(windows: usize, length: usize) -> bool {
 
 /// Whether `function`'s root map is the conservative all-live one: its windows would exceed
 /// the byte budget.
-#[cfg_attr(not(feature = "aot"), allow(dead_code))]
 pub(crate) fn is_conservative(function: &Function, length: usize) -> bool {
     over_budget(usize::from(function.registers).div_ceil(RegisterSet::BITS as usize), length)
 }

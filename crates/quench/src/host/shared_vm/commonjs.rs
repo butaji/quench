@@ -2279,7 +2279,6 @@ fn resolve_filename_in(
         }
     }
     let resolved = resolve_filename_from_host(context, specifier, parent, lookup, filename.as_deref());
-    #[cfg(feature = "aot")]
     if lookup.is_none() {
         if let (Some(parent), Ok(target)) = (filename.as_deref(), &resolved) {
             context.host_mut().record_module_resolution(Path::new(parent), specifier, target).map_err(RootedError::host)?;
@@ -3061,7 +3060,6 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
         Some(crate::aot::PreparedModuleSource::Projected(text)) => text.to_owned().into(),
         _ => file_text,
     };
-    #[cfg(feature = "aot")]
     if TypeScriptFile::of(filename).is_some_and(TypeScriptFile::loads_as_commonjs) {
         context.host_mut().record_prepared_module(filename, &file_text).map_err(RootedError::host)?;
     }
@@ -3196,7 +3194,6 @@ pub(crate) fn script_body(text: &str) -> &str {
 }
 
 /// Native compilation uses the ordinary loader's wrapper and source admission.
-#[cfg(feature = "aot")]
 pub(crate) fn native_commonjs_source(
     filename: &Path, bytes: &[u8], entry: bool,
 ) -> Result<quench_runtime::NativeSourceKey, String> {

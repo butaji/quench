@@ -1,7 +1,7 @@
 use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_EXPORTS_FILENAME};
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
-use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, ResidualProgram, Runtime, emit_native_module, lower_native_js_module};
+use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ResidualProgram, Runtime, emit_native_module_for, lower_native_js_module_for};
 use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, PathBuf}, rc::Rc};
 
 mod source_pool;
@@ -38,7 +38,7 @@ pub struct CompiledSources {
 /// Link inputs written to a fresh compiler-owned directory. Rust macros derive
 /// the loader from the same source keys that selected the native compilation.
 impl CompiledSources {
-    pub fn emit(self, directory: &Path) -> Result<NativeImageInputs, String> {
+    pub fn emit(self, directory: &Path, target: &NativeTarget) -> Result<NativeImageInputs, String> {
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
         let mut texts = Vec::new();
@@ -64,14 +64,14 @@ impl CompiledSources {
         let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
         let mut write = |program: &ResidualProgram, name: &str, namespace: Option<&quench_runtime::NativeProgramNamespace>| -> Result<(PathBuf, String), String> {
             program.freeze_native_diagnostics();
-            let module = lower_native_js_module(program, &format!("quench_{name}"))?;
+            let module = lower_native_js_module_for(program, &format!("quench_{name}"), target)?;
             let symbol = module.entry_table_symbol().to_owned();
             for function in &module.functions {
                 if let quench_runtime::NativeFunction::Import { name, .. } = function {
                     required_exports.insert(name.clone());
                 }
             }
-            let object = emit_native_module(name, module.functions, module.data)?;
+            let object = emit_native_module_for(name, module.functions, module.data, target)?;
             let object_path = directory.join(format!("{name}.o"));
             fs::write(&object_path, object).map_err(|error| error.to_string())?;
             objects.push(object_path);
@@ -146,7 +146,11 @@ impl CompiledSources {
         writeln!(catalog, "}} }}").map_err(|error| error.to_string())?;
         fs::write(directory.join(REQUIRED_EXPORTS_FILENAME), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
             .map_err(|error| error.to_string())?;
-        let exports = required_exports.iter().map(|name| format!("{name:?}")).collect::<Vec<_>>().join(",");
+        // The image's lane helper imports are defined together, by one token (`define_lane_helper_symbols`).
+        let (helpers, operations): (Vec<&String>, Vec<&String>) = required_exports.iter().partition(|name| name.starts_with("quench_lane_helper_"));
+        let exports = operations.iter().map(|name| format!("{name:?}"))
+            .chain((!helpers.is_empty()).then(|| format!("{:?}", "quench_lane_helper_symbols")))
+            .collect::<Vec<_>>().join(",");
         writeln!(catalog, "quench_runtime::export_native_js_operations!(quench::NodeHost, semantic_exports, [{exports}]);")
             .map_err(|error| error.to_string())?;
         let host_exports = crate::modules::napi::exported_symbol_names().map(str::to_owned)

@@ -1,6 +1,6 @@
 //! Run-time addresses in emitted code, each named by what it addresses. A live lowering embeds
 //! the address as it is now; a linking lowering (`LaneHelpers::Linked`, `Bound`) emits a symbol
-//! the loader patches, as the stencils' holes are (`native_stencil::hole_value`).
+//! the loader patches (`aot_image::live` and `object` bind them).
 use super::*;
 use super::super::object_slots::emit;
 use crate::staged::machine::{Lane, MachineScalar};
@@ -8,7 +8,7 @@ use crate::staged::machine::{Lane, MachineScalar};
 /// What a run-time address in emitted code addresses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
-pub(super) enum RelocKind {
+pub(in crate::vm) enum RelocKind {
     /// The entry cell of function `key`.
     EntryCell,
     /// The `DirectCallee` descriptor of the call to function `key`.
@@ -23,6 +23,10 @@ pub(super) enum RelocKind {
     ConstantPool,
     /// The atom of the program's table numbered `key`, in the VM that loads the code.
     Atom,
+    /// The heap value numbered `key` of the image's recipes, built in the VM that loads the code.
+    HeapValue,
+    /// The shape numbered `key` of the image's recipes, interned in the VM that loads the code.
+    Shape,
 }
 
 /// The address in this process of the symbol `(namespace, key)` a numeric image names, which is

@@ -178,6 +178,7 @@ pub(crate) mod opcodes {
 /// `wasm_lane_list!($m ($pre) ($post) => $key)` applies it to `$pre`, the opcodes, then `$post`,
 /// for a consumer that takes leading or trailing arguments. Each expansion is the token list the
 /// consumer's own spelled list gave, so the fusions generated from them are unchanged.
+#[allow(unused_macros)]
 macro_rules! wasm_lane_list {
     ($m:ident => $key:ident) => {
         $crate::staged::wasm_step::wasm_lane_list!(@emit $m () () $key)
@@ -246,6 +247,7 @@ macro_rules! wasm_lane_list {
         $m!($($pre)* WasmI32AndImmediate $($post)*)
     };
 }
+#[allow(unused_imports)]
 pub(crate) use wasm_lane_list;
 
 /// A Wasm tier: what it makes of each family of steps, in its own terms (`Out`: the u-jit's

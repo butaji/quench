@@ -1,0 +1,2 @@
+# AOT test262 pass count: raised by `quench-gate aot --suites`; never lowered.
+0

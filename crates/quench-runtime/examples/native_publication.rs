@@ -1,5 +1,4 @@
-//! Compare the two publications of the call-threaded native graph on one
-//! script: Cranelift per function, and copy-and-patch stencils.
+//! Compare the interpreter with the eager AOT image publication on one script.
 //!
 //! ```text
 //! cargo run --release -p quench-runtime --features aot --example native_publication -- SCRIPT [ROUNDS]
@@ -10,9 +9,7 @@
 //! Reported per publication: median compile time, executable anonymous
 //! mapping bytes the compile added, and median execution time.
 
-use quench_runtime::{
-    Engine, ExecutionMode, NativeJsBackend, NativeJsCodegenOptions, NativeJsProgram, ResidualProgram, Runtime, SystemHost,
-};
+use quench_runtime::{Engine, ExecutionMode, NativeJsProgram, ResidualProgram, Runtime, SystemHost};
 use std::time::{Duration, Instant};
 
 const DEFAULT_ROUNDS: usize = 11;
@@ -20,8 +17,7 @@ const DEFAULT_ROUNDS: usize = 11;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Subject {
     Interpreter,
-    Cranelift,
-    Stencil,
+    Aot,
 }
 
 #[derive(Default)]
@@ -57,11 +53,9 @@ fn run(subject: Subject, program: &ResidualProgram, samples: &mut Samples) -> Re
         samples.execute.push(started.elapsed());
         return Ok(());
     }
-    let backend = if subject == Subject::Stencil { NativeJsBackend::Stencil } else { NativeJsBackend::Cranelift };
-    let options = NativeJsCodegenOptions { backend, ..Default::default() };
     let mapped_before = executable_anonymous_bytes();
     let started = Instant::now();
-    let native = NativeJsProgram::<SystemHost>::compile_eager_with_options(program.clone(), options)?;
+    let native = NativeJsProgram::<SystemHost>::compile_eager(program.clone())?;
     samples.compile.push(started.elapsed());
     samples.mapped.push(executable_anonymous_bytes().saturating_sub(mapped_before));
     runtime.set_execution_mode(ExecutionMode::NativeOnly);
@@ -86,8 +80,8 @@ fn measure() -> Result<(), String> {
     let rounds = args.next().map(|rounds| rounds.parse::<usize>().map_err(|error| error.to_string())).transpose()?.unwrap_or(DEFAULT_ROUNDS);
     let source = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
     let program = Engine::specialize_unspecialized(&source, &path).map_err(|errors| format!("{errors:?}"))?;
-    let order = [Subject::Interpreter, Subject::Cranelift, Subject::Stencil];
-    let mut samples: [Samples; 3] = Default::default();
+    let order = [Subject::Interpreter, Subject::Aot];
+    let mut samples: [Samples; 2] = Default::default();
     for round in 0..rounds {
         for offset in 0..order.len() {
             let index = (round + offset) % order.len();

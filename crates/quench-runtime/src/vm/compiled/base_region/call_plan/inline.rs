@@ -301,6 +301,13 @@ impl Emitter<'_> {
         };
         let renamed = self.renamed(pc, plain)?;
         let row = numeric_row(self.callee.numbers, renamed).flatten().or_else(|| self.capture_row(renamed)).or_else(|| self.receiver_row(plain, renamed)).ok_or(Refused::Row(pc))?;
+        // A row behind which a step helper runs names its record by the running function's PC
+        // (`Layout::record`), which an inlined callee's instruction has none of: the helper would make
+        // whatever instruction of the caller sits at the row's index (a `p === 0` callee reset the
+        // caller's counter, or spun its loop). Such a callee keeps its call.
+        if row.step.is_some_and(|step| step.runs_helper()) {
+            return Err(Refused::Row(pc));
+        }
         // A leave between the computation and the return resumes at the instruction, which a row
         // reading what it wrote would apply twice.
         if returning && rereads(&row) {

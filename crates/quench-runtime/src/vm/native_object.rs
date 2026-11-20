@@ -1,4 +1,9 @@
-//! Object publication for the same native IR consumed by the JIT.
+//! Object publication: native functions (Cranelift IR, or code an AOT image already relocated)
+//! and data, with the entry table `NativeJsProgram::from_linked_image` reads.
+
+mod module;
+pub use module::{NativeCode, NativeJsModule, NativeReloc, lower_native_js_module, lower_native_js_module_for};
+use module::define_code;
 
 use cranelift_codegen::ir;
 use cranelift_module::{DataDescription, Linkage, Module, ModuleReloc};
@@ -18,6 +23,14 @@ pub struct NativeFunctionAddress {
     pub function: u32,
 }
 
+/// A pointer-sized address of another data record plus `addend`, resolved by the system linker.
+pub struct NativeDataAddress {
+    pub offset: u32,
+    /// Index in the module's data declaration order.
+    pub data: u32,
+    pub addend: i64,
+}
+
 /// Linker-owned program constants, assets, or writable native storage.
 pub struct NativeData {
     pub name: String,
@@ -25,6 +38,7 @@ pub struct NativeData {
     pub alignment: u64,
     pub writable: bool,
     pub function_addresses: Vec<NativeFunctionAddress>,
+    pub data_addresses: Vec<NativeDataAddress>,
 }
 
 /// A symbol's signature has one authority: its definition, or its import.
@@ -36,6 +50,7 @@ pub enum NativeFunction {
         name: String,
         function: ir::Function,
     },
+    Code(NativeCode),
     Import {
         name: String,
         signature: ir::Signature,
@@ -59,11 +74,18 @@ pub fn emit_native_module(
     functions: Vec<NativeFunction>,
     data: Vec<NativeData>,
 ) -> Result<Vec<u8>, String> {
-    let isa = super::jit_backend::target_isa_for(
-        "speed",
-        super::jit_backend::CodePublication::RelocatableObject,
-    )
-    .ok_or_else(|| "native target unavailable".to_owned())?;
+    emit_native_module_for(module_name, functions, data, &super::jit_backend::NativeTarget::default())
+}
+
+/// Publish a module as an object for `target`. The triple picks the object format (ELF,
+/// Mach-O, COFF); the baseline picks the instructions.
+pub fn emit_native_module_for(
+    module_name: &str,
+    functions: Vec<NativeFunction>,
+    data: Vec<NativeData>,
+    target: &super::jit_backend::NativeTarget,
+) -> Result<Vec<u8>, String> {
+    let isa = super::jit_backend::relocatable_isa(target)?;
     let builder = ObjectBuilder::new(
         isa.clone(),
         module_name,
@@ -77,6 +99,7 @@ pub fn emit_native_module(
             NativeFunction::Definition { name, function } => {
                 (name, &function.signature, Linkage::Export)
             }
+            NativeFunction::Code(code) => (&code.name, &code.signature, Linkage::Export),
             NativeFunction::Import { name, signature } => (name, signature, Linkage::Import),
         };
         // Duplicate declarations would make declaration indices cease to name
@@ -108,6 +131,13 @@ pub fn emit_native_module(
         );
     }
     for (index, definition) in functions.into_iter().enumerate() {
+        let definition = match definition {
+            NativeFunction::Code(code) => {
+                define_code(&mut module, symbols[index], code)?;
+                continue;
+            }
+            other => other,
+        };
         let NativeFunction::Definition { name, function } = definition else {
             continue;
         };
@@ -179,12 +209,14 @@ pub fn emit_native_module(
         .map_err(|error| format!("{name}: {}", error.reason()))?
         .map_err(|error| format!("{name}: {error}"))?;
     }
+    let data_ids = data_symbols.clone();
     for (id, item) in data_symbols.into_iter().zip(data) {
         let pointer_bytes = usize::from(isa.pointer_bytes());
         let mut offsets: Vec<_> = item
             .function_addresses
             .iter()
             .map(|address| address.offset)
+            .chain(item.data_addresses.iter().map(|address| address.offset))
             .collect();
         offsets.sort_unstable();
         if offsets
@@ -192,6 +224,14 @@ pub fn emit_native_module(
             .any(|pair| u64::from(pair[0]) + pointer_bytes as u64 > u64::from(pair[1]))
         {
             return Err(format!("{}: native function addresses overlap", item.name));
+        }
+        for address in &item.data_addresses {
+            if address.data as usize >= data_ids.len() {
+                return Err(format!("{}: undeclared native data address", item.name));
+            }
+            if (address.offset as usize).checked_add(pointer_bytes).is_none_or(|end| end > item.bytes.len()) {
+                return Err(format!("{}: native data address exceeds data", item.name));
+            }
         }
         for address in &item.function_addresses {
             if address.function as usize >= symbols.len() {
@@ -214,6 +254,10 @@ pub fn emit_native_module(
             let function =
                 module.declare_func_in_data(symbols[address.function as usize], &mut description);
             description.write_function_addr(address.offset, function);
+        }
+        for address in item.data_addresses {
+            let data = module.declare_data_in_data(data_ids[address.data as usize], &mut description);
+            description.write_data_addr(address.offset, data, address.addend);
         }
         module
             .define_data(id, &description)
@@ -337,6 +381,7 @@ mod tests {
                 alignment: std::mem::align_of::<u32>() as u64,
                 writable: false,
                 function_addresses: Vec::new(),
+                data_addresses: Vec::new(),
             }],
         )
         .unwrap();
@@ -355,6 +400,7 @@ mod tests {
                     alignment,
                     writable: false,
                     function_addresses: Vec::new(),
+                data_addresses: Vec::new(),
                 }],
             )
             .unwrap_err();
@@ -369,6 +415,7 @@ mod tests {
                 alignment: 1,
                 writable: false,
                 function_addresses: Vec::new(),
+                data_addresses: Vec::new(),
             }],
         )
         .unwrap_err();
@@ -397,6 +444,7 @@ mod tests {
                 alignment: 1,
                 writable: false,
                 function_addresses: Vec::new(),
+                data_addresses: Vec::new(),
             }],
         )
         .unwrap_err();
@@ -485,6 +533,7 @@ mod tests {
                     alignment: pointer_bytes as u64,
                     writable: false,
                     function_addresses: addresses,
+                    data_addresses: Vec::new(),
                 }],
             )
             .unwrap_err();

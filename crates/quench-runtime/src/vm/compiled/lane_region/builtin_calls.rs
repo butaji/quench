@@ -9,7 +9,6 @@ use crate::bytecode::ImmediateLayout;
 use crate::staged::array_search::{DenseNeedle, scan_dense};
 use crate::staged::region::Region;
 use crate::staged::{Domain, builtins, elements, strings};
-use crate::staged::Stage as _;
 use crate::heap::Native;
 
 /// A builtin a call runs on its staged row.
@@ -175,7 +174,7 @@ impl Lowering<'_, '_> {
     fn char_at(&mut self, state: &mut State, receiver: Register, index: Register, exit: ir::Block) -> ir::Value {
         let string = self.flat_string(state, receiver, exit);
         let index = self.tagged(state, index);
-        let table = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, ascii_unit_strings));
+        let table = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.ascii_unit_strings));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         continues(strings::string_char_at(&mut stage, string, index, table, exit))
     }

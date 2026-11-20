@@ -94,7 +94,7 @@ pub(in super::super) fn specialize<H: Host>(
     let filters = filters.into_boxed_slice();
     for (pc, filter) in sites.into_iter().zip(filters.iter()) {
         records[pc].operand = LaneOperand { string_case_filter: filter };
-        records[pc].handler = super::super::lane_frame::generated_row::<H, { crate::staged::STRING_CASE_INDEX_ROW }, { super::super::ACC_NONE }, { super::super::lane_frame::FLAG_CASE_FILTER }> as *const ();
+        records[pc].handler = generated_row!(H, crate::staged::STRING_CASE_INDEX_ROW, super::super::ACC_NONE, super::super::lane_frame::FLAG_CASE_FILTER) as *const ();
     }
     filters
 }
