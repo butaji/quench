@@ -1228,8 +1228,12 @@ static int cIndexRelated(TsType *s, TsType *t) {
   if (t->nindex == 0) return RR_True;
   cResolveIndexInfos(s);
   int result = RR_True;
+  /* targetHasStringIndex: an index signature of type any accepts every non-primitive source (not in the strict subtype relation) */
+  bool targetHasStringIndex = false;
+  for (int j = 0; j < t->nindex; j++) if (t->index[j].keyType == cStringType) targetHasStringIndex = true;
   for (int j = 0; j < t->nindex; j++) {
     CIndexInfo *ti = &t->index[j];
+    if (targetHasStringIndex && cCurRel != REL_StrictSubtype && (ti->type->flags & TF_Any)) continue;
     int found = -1;
     for (int i = 0; i < s->nindex && found < 0; i++)
       if (s->index[i].keyType == ti->keyType) found = i;
