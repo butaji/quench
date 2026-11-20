@@ -695,8 +695,11 @@ impl<H: Host> Vm<H> {
         if matches!(run, RowRun::Done(Edge::Target)) {
             *pc = i.jump_target() as usize;
             if matches!(operation, Operation::Jump) {
+                // The frame stands before the target, which it runs next: a collection reads
+                // the liveness there, not at the instruction before the target (`pc_is_resume`
+                // would name that one, whose own result the target may read).
                 self.frames[f].pc = *pc;
-                self.frames[f].pc_is_resume = true;
+                self.frames[f].pc_is_resume = false;
                 self.maybe_collect(p);
             }
         }
