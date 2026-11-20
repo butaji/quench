@@ -1,4 +1,5 @@
 use super::property_key::PropertyKey;
+use super::dispatch_frame::this_is_fixed;
 use super::*;
 pub(super) use super::shape_lookup::derive_shape_lookup_index;
 pub(super) use super::field_cache::FieldCacheProbe;
@@ -13,7 +14,7 @@ use mru_chain::record_mru_entry;
 pub(super) const FIELD_LEAVES_SHIFT: u32 = 24;
 pub(super) const FIELD_BYTE: u32 = 0xff;
 
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_host::TestHost;
@@ -1186,7 +1187,7 @@ impl<H: Host> Vm<H> {
         // An initialized `this` binding never changes (a second `super()` throws), so the
         // frame keeps it as its fixed receiver; only a derived constructor's binding before
         // `super()` stays to be resolved again.
-        let initialized = !value.is_deleted();
+        let initialized = this_is_fixed(false, value);
         let activation = &mut self.frames[frame];
         activation.this = value;
         activation.fixed_this = initialized;
@@ -1471,6 +1472,11 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Result<Value, JsError> {
         self.prepare_named_function_info_lookup(object, atom);
+        // An array's own `length` answers before the cache ladder: no shape or holder entry
+        // can shadow that data property, so the ladder would only find the same value.
+        if let Some(length) = self.array_length_field(object, atom) {
+            return Ok(length);
+        }
         let probe = self.cached_field_hit(p, object, site);
         #[cfg(feature = "profile-lane-exits")]
         self.record_field_probe_path(
@@ -1484,14 +1490,12 @@ impl<H: Host> Vm<H> {
         );
         match probe {
             FieldCacheProbe::Hit(value) => Ok(value),
-            FieldCacheProbe::OrdinaryMiss => match self.array_length_field(object, atom) {
-                Some(length) => Ok(length),
-                None => self.get_field_polymorphic(p, object, atom, site, object.heap_reference()),
-            },
-            FieldCacheProbe::Ineligible => match self.array_length_field(object, atom) {
-                Some(length) => Ok(length),
-                None => self.get_field_uncached(p, object, atom, site, object.heap_reference()),
-            },
+            FieldCacheProbe::OrdinaryMiss => {
+                self.get_field_polymorphic(p, object, atom, site, object.heap_reference())
+            }
+            FieldCacheProbe::Ineligible => {
+                self.get_field_uncached(p, object, atom, site, object.heap_reference())
+            }
         }
     }
 
@@ -1639,10 +1643,10 @@ impl<H: Host> Vm<H> {
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return FieldCacheProbe::Hit(hit.value);
         }
-        // The tiers the lane's own handlers read past these: a receiver a heap cell holds, and
-        // a field inherited from beyond the immediate prototype.
+        // The tiers the lane's own handlers read past these: a receiver a heap cell holds (whose
+        // ordinary holder entry `cached_ordinary_holder_field_value` has already probed), and a
+        // field inherited from beyond the immediate prototype.
         if let Some(value) = self.cell_own_field_hit(p, object, site)
-            .or_else(|| self.cell_holder_field_hit(p, object, site))
             .or_else(|| self.inherited_field_hit(p, object, site)) {
             return FieldCacheProbe::Hit(value);
         }
@@ -2036,11 +2040,21 @@ impl<H: Host> Vm<H> {
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return false;
         }
-        // A plain arena run whose slot already holds the value's class: no join, no settling.
-        if receiver.plain_arena_start().is_some()
-            // SAFETY: the exact shape holds the slot; the record's values are a plain arena run.
-            && unsafe { self.heap.held_arena_store(record_id, cache.receiver, cache.slot, value) } {
-            return true;
+        // The barrier's one test for this store. Without `LOGS` a logged store is left to the
+        // caller; with it, a logged store takes the barriered store below.
+        let logged = self.heap.object_store_logs(record_id, value);
+        if logged && !LOGS {
+            return false;
+        }
+        if !logged {
+            // A plain arena run whose slot already holds the value's class: no join, no settling.
+            if receiver.plain_arena_start().is_some()
+                // SAFETY: the exact shape holds the slot; the record's values are a plain arena run; the barrier admitted the store.
+                && unsafe { self.heap.held_arena_store(record_id, cache.receiver, cache.slot, value) } {
+                return true;
+            }
+            // SAFETY: this exact own-data shape proves the slot outside dictionary storage; the barrier admitted the store.
+            return unsafe { self.heap.record_property_set_unlogged(record_id, usize::from(cache.slot), value, layout) };
         }
         // SAFETY: this exact own-data shape proves the slot outside dictionary storage.
         unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, usize::from(cache.slot), value, layout) }
@@ -3016,7 +3030,8 @@ impl<H: Host> Vm<H> {
                 | HeapReference::AwaitRecord(_)
                 | HeapReference::V128Record(_)
                 | HeapReference::EnvironmentRecord(_)
-                | HeapReference::SymbolRecord(_),
+                | HeapReference::SymbolRecord(_)
+                | HeapReference::WasmGcRecord(_),
             )
             | None => None,
         };
@@ -4979,9 +4994,10 @@ impl<H: Host> Vm<H> {
             && let Ok(slot) = u16::try_from(slot)
         {
             // Once per transition: the add that creates `target_shape` seeds its slot from the
-            // class's declared type; later adds of the shape reuse this entry and its seed.
+            // class's declared type, once the added `value` satisfies it; later adds of the shape
+            // reuse this entry and its seed.
             if let Some(ty) = declared_field_type(p, function, atom) {
-                self.heap.seed_declared_slot(target_shape, usize::from(slot), ty);
+                self.heap.seed_declared_slot(target_shape, usize::from(slot), ty, value);
             }
             self.record_field_add_cache(
                 site,

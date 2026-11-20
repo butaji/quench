@@ -62,6 +62,8 @@ pub(crate) const COLLECTION_RECORD_CAPACITY: usize = 1 << 28;
 /// Await states and Wasm vectors are never prototypes.
 pub(crate) const AWAIT_RECORD_CAPACITY: usize = 1 << 28;
 pub(crate) const V128_RECORD_CAPACITY: usize = 1 << 28;
+/// Wasm GC objects: records whose head holds the payload's address and length (`record_heads::WasmGcHead`).
+pub(crate) const WASM_GC_RECORD_CAPACITY: usize = 1 << 28;
 
 /// Where an object record keeps its `meta` word: the layout's entry holds `auxiliary` low and `meta` high.
 pub(crate) const META_OFFSET: usize = size_of::<u32>();

@@ -69,6 +69,7 @@ mod admission;
 mod delete;
 mod operation;
 pub(crate) use operation::Operation;
+pub(crate) use operation::kind as op_kind;
 mod binary_class;
 pub(crate) use binary_class::BinaryClass;
 mod edge;
@@ -113,6 +114,22 @@ pub(crate) mod strings;
 pub(crate) mod string_length;
 pub(crate) mod code_units;
 pub(crate) mod parse_int;
+/// ASCII text builtins (trim, case, pad, repeat): one body per builtin.
+pub(crate) mod string_text;
+/// String search builtins (indexOf, lastIndexOf, includes, startsWith, endsWith) and cuts (slice, substring, substr).
+pub(crate) mod string_search;
+/// String.prototype.split with a string separator: the cut offsets, once.
+pub(crate) mod string_split;
+/// String.prototype.replace/replaceAll with a string pattern: the plan and the write, once.
+pub(crate) mod string_replace;
+/// Map/Set/WeakMap/WeakSet hash and probe: one lookup body.
+pub(crate) mod collections;
+/// Array indexOf/includes/lastIndexOf over dense elements: one search body.
+pub(crate) mod array_search;
+/// BigInt small-magnitude arithmetic and comparison: one body.
+pub(crate) mod bigint_small;
+/// The calendar fields of a Date's time value, derived once for the getters, setters and `toISOString` (`vm::date`).
+pub(crate) mod date_fields;
 pub(crate) mod holder;
 pub(crate) mod iteration;
 pub(crate) mod array_iteration;
@@ -156,7 +173,7 @@ mod guard;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
+pub(crate) use steps::{step, step_out_of_line, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
 pub(crate) mod effects;
 pub(crate) mod function_plan;
 pub(crate) mod region;
@@ -166,7 +183,7 @@ pub(crate) mod wasm_access;
 pub(crate) mod wasm_int;
 pub(crate) mod wasm_jump;
 pub(crate) mod wasm_state;
-pub(crate) use wasm_jump::{BranchTable, WasmJump};
+pub(crate) use wasm_jump::BranchTable;
 pub(crate) mod wasm_concrete;
 pub(crate) mod wasm_gc;
 pub(crate) mod wasm_exception;
@@ -203,7 +220,7 @@ mod stage;
 pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
 
 /// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
 /// capture access whose scopes the frame does not hold, the walk over the scopes from the

@@ -344,6 +344,20 @@ impl<H: Host> Vm<H> {
             .map(|target| (target.program, target.function, target.env))
     }
 
+    /// The cached target of `callee` for `new` as well as for a call (`InLoopCallTarget`): the
+    /// entry of `callee`'s slot, resolved and cached on a miss. Its `push` may be
+    /// `InLoopPush::Unpushed`, and its `construct` classifies a construction.
+    #[inline(always)]
+    pub(super) fn in_loop_entry(&mut self, p: &ResidualProgram, callee: Value) -> Option<super::InLoopCallTarget> {
+        let heap_index = callee.heap_index()?;
+        let index = heap_index as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
+        let cached = self.call_targets[index];
+        if cached.callee == callee {
+            return Some(cached);
+        }
+        self.resolve_in_loop_call_target(p, callee, index)
+    }
+
     /// The cached in-loop push of `callee`, of either kind (`InLoopPush`).
     #[inline(always)]
     fn in_loop_call_entry(&mut self, p: &ResidualProgram, callee: Value) -> Option<super::InLoopCallTarget> {
@@ -354,12 +368,14 @@ impl<H: Host> Vm<H> {
         };
         let index = heap_index as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
         let cached = self.call_targets[index];
-        if cached.callee == callee {
+        if cached.callee == callee && cached.push != super::InLoopPush::Unpushed {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::PositiveCacheHit);
             return Some(cached);
         }
-        let target = self.resolve_in_loop_call_target(p, callee, index);
+        let target = self
+            .resolve_in_loop_call_target(p, callee, index)
+            .filter(|target| target.push != super::InLoopPush::Unpushed);
         #[cfg(feature = "profile-lane-exits")]
         if target.is_some() {
             super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::PositiveResolution);
@@ -429,7 +445,13 @@ impl<H: Host> Vm<H> {
         } else if plan.settles_in_loop || suspends_in_loop(body) {
             super::InLoopPush::Settles
         } else {
-            return None;
+            super::InLoopPush::Unpushed
+        };
+        // A call-only closure (`Value::known_closure`) has no heap record and is never constructed.
+        let construct = if self.heap.function(callee).is_some() {
+            Self::construct_kind(body)
+        } else {
+            super::ConstructKind::No
         };
         let target = super::InLoopCallTarget {
             callee,
@@ -437,8 +459,13 @@ impl<H: Host> Vm<H> {
             function,
             env,
             push,
+            construct,
         };
-        self.call_targets[index] = target;
+        // A callee that neither a call nor a construction may push is not cached, so plain calls
+        // of it leave the slots they had.
+        if push != super::InLoopPush::Unpushed || construct != super::ConstructKind::No {
+            self.call_targets[index] = target;
+        }
         Some(target)
     }
 
@@ -877,7 +904,7 @@ impl<H: Host> Vm<H> {
                 match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
                     RowRun::Done(_) => Ok(StepResult::Continue),
                     RowRun::Stop(stop) => stop,
-                    RowRun::Declined => unreachable!("the interpreter frame answers every literal row"),
+                    RowRun::Declined => unreachable!("the interpreter frame answers every literal row: {:?}", i.op()),
                 }
             }
             // A call-out row the interpreter's stage answers in place (`staged_value_step`).

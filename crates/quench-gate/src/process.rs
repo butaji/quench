@@ -8,6 +8,8 @@ const EXCERPT_LINES: usize = 40;
 /// What a finished command wrote, and whether it succeeded.
 pub struct Finished {
     pub success: bool,
+    /// The exit code, absent when a signal ended the process.
+    pub code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
 }
@@ -16,6 +18,7 @@ impl From<Output> for Finished {
     fn from(output: Output) -> Self {
         Self {
             success: output.status.success(),
+            code: output.status.code(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         }

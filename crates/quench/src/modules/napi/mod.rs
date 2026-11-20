@@ -421,7 +421,6 @@ pub(crate) use work::{drain, has_work, poll, promise_executor};
 
 /// The linker interface derives from the same declarations as the C functions.
 /// Names are compiler-only; execution support retains just the address table.
-#[cfg(feature = "aot")]
 pub(crate) fn exported_symbol_names() -> impl Iterator<Item = &'static str> {
     EXPORTS.iter().flat_map(|symbols| symbols.iter()).map(|symbol| symbol.name)
 }

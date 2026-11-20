@@ -94,36 +94,55 @@ fn entry_rows(span: &Span, count: usize, ending: Ending, entries: &[(u32, u32)])
     rows
 }
 
+/// A forward problem over the rows of a region, for `dataflow::solve`: each row is a block, its edges are the rows
+/// it reaches (a `Leave` is no edge), and its seed is the state an entry row starts with.
+struct RowFlow<F> {
+    edges: Vec<Vec<usize>>,
+    seeds: Vec<Option<Held>>,
+    step: F,
+}
+
+impl<F: Fn(usize, &Held) -> Held> crate::dataflow::Dataflow for RowFlow<F> {
+    type State = Held;
+
+    fn blocks(&self) -> usize {
+        self.edges.len()
+    }
+
+    fn edges(&self, block: usize) -> &[usize] {
+        &self.edges[block]
+    }
+
+    fn entry_state(&self, block: usize) -> Option<Held> {
+        self.seeds[block].clone()
+    }
+
+    fn join(&self, into: &mut Held, incoming: &Held) -> bool {
+        meet(into, incoming)
+    }
+
+    fn transfer(&mut self, block: usize, state: &Held) -> Held {
+        (self.step)(block, state)
+    }
+}
+
 /// The state on entry to each row of a forward analysis over the rows: `seed` gives an entry row's state and `step`
 /// the state after a row from the state before it. Where paths meet, `meet` keeps the slots all of them hold. `None`
 /// marks a row control does not reach.
 fn solve(span: &Span, decoded: &[Decoded], ending: Ending, entries: &[(u32, u32)], seed: impl Fn(usize) -> Held,
     step: impl Fn(usize, &Held) -> Held) -> Vec<Option<Held>> {
     let count = decoded.len();
-    let mut state: Vec<Option<Held>> = vec![None; count];
-    let mut pending = Vec::new();
+    let mut seeds: Vec<Option<Held>> = vec![None; count];
     for row in entry_rows(span, count, ending, entries) {
-        state[row] = Some(seed(row));
-        pending.push(row);
+        seeds[row] = Some(seed(row));
     }
-    while let Some(k) = pending.pop() {
-        let Some(held) = state[k].clone() else { continue };
-        let out = step(k, &held);
-        for next in decoded[k].successors(k, count, span) {
-            let Next::Row(n) = next else { continue };
-            let changed = match &mut state[n] {
-                None => {
-                    state[n] = Some(out.clone());
-                    true
-                }
-                Some(known) => meet(known, &out),
-            };
-            if changed {
-                pending.push(n);
-            }
-        }
-    }
-    state
+    let edges: Vec<Vec<usize>> = decoded.iter().enumerate().map(|(k, row)| {
+        row.successors(k, count, span).filter_map(|next| match next {
+            Next::Row(n) => Some(n),
+            Next::Leave(_) => None,
+        }).collect()
+    }).collect();
+    crate::dataflow::solve(&mut RowFlow { edges, seeds, step })
 }
 
 /// The int32 state an entry at `row` holds: the slots of its live webs whose home is an int32 (a MemInt slot or an

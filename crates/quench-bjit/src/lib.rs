@@ -5,8 +5,6 @@
 //! or a `b`/`b.cond` (AArch64). Stencils use `rust-preserve-none`; the register map (frame,
 //! context and pins) is `stencils/rows.rs`'s, assigned by LLVM, and `PINNED` and `PINNED_F`
 //! count the pins while their indexes stay abstract (`stencils/codes.rs`).
-// The crate mounts runtime sources (staged rows, operations) of which it uses a part.
-#![allow(dead_code)]
 
 #[macro_use]
 #[path = "../stencils/row_catalog.rs"]
@@ -44,8 +42,6 @@ pub use stub::{EXIT_STUB_LEN, exit_stub};
 pub const PINNED: usize = 4;
 pub const PINNED_F: usize = 8;
 
-/// `jmp rel32`: the opcode byte, then the displacement a relocation patches.
-const JMP_REL32_LEN: usize = 5;
 /// The pc-relative addend of a rel32 field that ends its instruction.
 const REL32_ADDEND: i64 = -4;
 
@@ -138,11 +134,19 @@ fn trailing_jump(stencil: &Stencil) -> Option<(u32, usize)> {
     if stencil.next_jump.is_some() {
         return Some((NEXT, stencil.tail_len));
     }
-    stencil.relocs.iter().filter(|r| r.index == TAKEN).find_map(|r| {
+    trailing_jump_to(&stencil.code, &stencil.relocs, stencil.hot_len, TAKEN).map(|(_, tail)| (TAKEN, tail))
+}
+
+/// The unconditional jump that ends a stencil's hot part and names successor `index` (`NEXT` or
+/// `TAKEN`), as its start and its length: `jmp rel32` (its opcode byte, then the relocated field as
+/// the last four bytes) or AArch64 `b` (the last instruction). Both the layout and the rustc table
+/// reader ask this one detector, so a row's jump is the same jump whichever one is asked.
+fn trailing_jump_to(code: &[u8], relocs: &[Reloc], hot_len: usize, index: u32) -> Option<(usize, usize)> {
+    relocs.iter().filter(|r| r.index == index).find_map(|r| {
         let at = r.offset as usize;
         match r.class {
-            class::REL32 if at + IMM32_WIDTH == stencil.hot_len && at >= 1 && stencil.code[at - 1] == class::JMP_REL32 => Some((TAKEN, JMP_REL32_LEN)),
-            class::BRANCH26 if at + patch::INSN_BYTES == stencil.hot_len && stencil.code[at + 3] & 0xfc == 0x14 => Some((TAKEN, patch::INSN_BYTES)),
+            class::REL32 if at + IMM32_WIDTH == hot_len && at >= 1 && code[at - 1] == class::JMP_REL32 => Some((at - 1, class::JMP_REL32_LEN)),
+            class::BRANCH26 if at + patch::INSN_BYTES == hot_len && code[at + 3] & 0xfc == 0x14 => Some((at, patch::INSN_BYTES)),
             _ => None,
         }
     })
@@ -248,10 +252,33 @@ pub unsafe fn copy_patch(rows: &[Row], out: *mut u8, exit: impl Fn(usize, u32) -
     (layout.len, layout.hot)
 }
 
+/// A value field `symbolic_fields` names: the row and hole it takes, the offset of the field in the
+/// code `copy_patch` writes (from its `out`), and the relocation class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SymbolicField {
+    pub row: usize,
+    pub hole: u32,
+    pub offset: usize,
+    pub class: u8,
+}
+
+/// The value fields of `rows` whose hole `symbolic` names, at the offsets `copy_patch` places them: a
+/// relocatable image writes no value there and records the field for its loader instead.
+pub fn symbolic_fields(rows: &[Row], symbolic: impl Fn(usize, u32) -> bool) -> Vec<SymbolicField> {
+    let layout = layout(rows);
+    let mut fields = Vec::new();
+    for (k, row) in rows.iter().enumerate() {
+        let relocs = row.stencil.relocs.iter();
+        for r in relocs.filter(|r| !class::is_successor(r.class) && layout.kept(rows, k, r.offset as usize) && symbolic(k, r.index)) {
+            fields.push(SymbolicField { row: k, hole: r.index, offset: layout.address(rows, k, r.offset as usize), class: r.class });
+        }
+    }
+    fields
+}
+
 /// Stencils compiled by rustc from `stencils/rows.rs` (see `build.rs`), as [`Stencil`]s.
 pub mod rustc {
-    use super::{class, Imm32, Reloc, Stencil, JMP_REL32_LEN, NEXT};
-    use crate::patch::INSN_BYTES;
+    use super::{class, trailing_jump_to, Imm32, Reloc, Stencil, NEXT};
 
     /// A stencil as `build.rs` read it from the object: relocations as (offset, class, index, addend).
     pub(crate) struct RawStencil {
@@ -315,7 +342,7 @@ pub mod rustc {
             }
         }
         let len = raw.code.len();
-        let (next_jump, tail_len) = trailing_next_jump(&relocs, raw.hot_len).map_or((None, 0), |(at, tail)| (Some(at), tail));
+        let (next_jump, tail_len) = trailing_jump_to(raw.code, &relocs, raw.hot_len, NEXT).map_or((None, 0), |(at, tail)| (Some(at), tail));
         Some(Stencil { code: raw.code.to_vec(), relocs, imm32, next_jump, tail_len, raw_len: len, hot_len: raw.hot_len })
     }
 
@@ -332,19 +359,6 @@ pub mod rustc {
         let stencil: &'static Stencil = Box::leak(Box::new(build()?));
         table.insert(key, stencil);
         Ok(stencil)
-    }
-
-    /// Where the jump to the next row starts and its length, when it is the hot part's last
-    /// instruction: `jmp rel32` (the relocation is its last four bytes) or AArch64 `b`.
-    fn trailing_next_jump(relocs: &[Reloc], hot_len: usize) -> Option<(usize, usize)> {
-        relocs.iter().filter(|r| r.index == NEXT).find_map(|r| {
-            let at = r.offset as usize;
-            match r.class {
-                class::REL32 if at + size_of::<i32>() == hot_len => Some((at - 1, JMP_REL32_LEN)),
-                class::BRANCH26 if at + INSN_BYTES == hot_len => Some((at, INSN_BYTES)),
-                _ => None,
-            }
-        })
     }
 }
 

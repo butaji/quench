@@ -4,7 +4,6 @@
 //! (`entry_pins`: int32s and doubles), which every entry checks before pc 0 runs. A call's argument is proven where its register holds a Number at the call on every path. The analysis is an
 //! invariant of the bytecode, as `exact.rs` relies on: a region or resume stub enters only in states it covers.
 
-use super::*;
 use super::super::facts::{self, Observed, Seeds, Text};
 use super::super::lane_region::{leaders, writes};
 use super::call_plan::{CallForm, CallShape};

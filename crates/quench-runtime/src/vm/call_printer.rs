@@ -459,7 +459,7 @@ fn render_simple_target(target: &SimpleAssignmentTarget<'_>) -> String {
     }
 }
 
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

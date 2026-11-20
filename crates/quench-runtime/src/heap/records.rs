@@ -47,6 +47,8 @@ pub(super) type EnvironmentRecordSpace = RecordSpace<super::EnvironmentRecord, {
 pub(super) type SymbolRecordSpace = RecordSpace<super::SymbolData, { super::MAX_HEAP_CELLS }>;
 /// Wasm vectors: immutable leaves, so a record's bytes are its whole state.
 pub(super) type V128RecordSpace = RecordSpace<[u8; crate::wasm::V128_BYTES], V128_RECORD_CAPACITY>;
+/// Wasm GC objects: a record holds its head (`WasmGcHead`) and its payload, read in place by compiled code.
+pub(super) type WasmGcRecordSpace = RecordSpace<super::WasmGcRecord, WASM_GC_RECORD_CAPACITY>;
 /// Strings have no legacy-slot fallback, so their space holds as many records as the legacy
 /// slots do (`MAX_HEAP_CELLS`).
 /// The ids `[STRING_RECORD_HOLE, 2 * STRING_RECORD_HOLE)` are never this space's: they name the
@@ -166,6 +168,7 @@ const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
 pub(super) use crate::staged::object_encoding::{
     ARRAY_RECORD_CAPACITY, AWAIT_RECORD_CAPACITY, COLLECTION_RECORD_CAPACITY, FUNCTION_RECORD_CAPACITY,
     ITERATOR_RECORD_CAPACITY, OBJECT_RECORD_CAPACITY, PROMISE_RECORD_CAPACITY, V128_RECORD_CAPACITY,
+    WASM_GC_RECORD_CAPACITY,
 };
 
 #[cfg(test)]
@@ -176,6 +179,7 @@ const _: () = assert!(FUNCTION_RECORD_CAPACITY.is_power_of_two() && PROMISE_RECO
 const _: () = assert!(ITERATOR_RECORD_CAPACITY.is_power_of_two() && COLLECTION_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(OBJECT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && ARRAY_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(AWAIT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && V128_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
+const _: () = assert!(WASM_GC_RECORD_CAPACITY.is_power_of_two() && WASM_GC_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 // Ids are `u32`, and the id after a space's last one must still fit.
 const _: () = assert!(OBJECT_RECORD_CAPACITY < u32::MAX as usize && FUNCTION_RECORD_CAPACITY < u32::MAX as usize);
 

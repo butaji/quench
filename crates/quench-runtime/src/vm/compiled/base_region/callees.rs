@@ -71,6 +71,10 @@ pub(in crate::vm::compiled) struct Callees {
     /// By PC, the native function the call site's callee register holds, where a field read defines it
     /// (`Vm::native_callees`), with the holder whose values the code depends on.
     natives: Vec<Option<(crate::value::Value, crate::heap::Native, u32)>>,
+    /// By PC, the callee the closed world proves the call site calls (`AotFacts::call_target`), as an
+    /// image's body calls it: through the site's image record (`Symbol::CallRecord`), whose run-time
+    /// words the loader binds (`aot_image::bound::BoundCalls::bind`). Empty for a body of this process.
+    proven: Vec<Option<DirectFacts>>,
 }
 
 /// What holds a call site's callee register, so that the register need not be checked: a Stable global cell
@@ -90,6 +94,38 @@ impl Held {
             Held::Global(fact) => Some(fact),
             Held::Captured { .. } => None,
         }
+    }
+}
+
+/// How a callee binds its `this`: what selects a direct row's receiver form (`ThisRow`), from its code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::vm::compiled) struct ThisForm {
+    /// A sloppy function binds the global object for an `undefined` or `null` receiver.
+    pub(in crate::vm::compiled) sloppy: bool,
+    /// An arrow binds none (`DirectCallee::lexical`).
+    pub(in crate::vm::compiled) lexical: bool,
+}
+
+impl ThisForm {
+    /// The form of `callee`, which an image's row is planned with and its binding is checked against
+    /// (`Vm::bind_ahead_calls`): the one derivation of both.
+    pub(in crate::vm::compiled) fn of(callee: &Function) -> Self {
+        Self { sloppy: !callee.strict && !callee.is_arrow, lexical: callee.is_arrow }
+    }
+}
+
+/// What an image's body knows of `callee` (function `function`), the function the closed world proves a site calls: its
+/// window and how it binds `this`, from its code alone. Its run-time words (identity, cell, validity, call, caller base,
+/// captures, the global) are the site record's, which name no callee (`aot_image::unbound_callee`) until the loader
+/// binds them, so the row refuses every call to the helper until then. The cell's facts are the ones a plain
+/// activation publishes (`CellFacts::of_function`); the binding admits only a cell that holds them.
+fn proven_facts(function: u32, callee: &Function) -> DirectFacts {
+    let this = ThisForm::of(callee);
+    DirectFacts {
+        callee: crate::vm::aot_image::unbound_callee(), cell: 0, validity: 0,
+        facts: crate::staged::call::CellFacts::of_function(callee.registers, callee.params, u16::from(crate::staged::call::FILL_ALL), true),
+        call: 0, caller_base: 0, function, captures: 0, global_this: this.sloppy.then_some(0), lexical: this.lexical,
+        registers: callee.registers, construction: false, held: false,
     }
 }
 
@@ -136,7 +172,19 @@ impl Callees {
             (!callees.is_empty()).then_some(start..owned.len())
         }).collect();
         let bodies = owned.iter().map(body_of).collect();
-        Self { owned: owned.into_boxed_slice(), at, bodies, stable, natives }
+        Self { owned: owned.into_boxed_slice(), at, bodies, stable, natives, proven: Vec::new() }
+    }
+
+    /// The callees of an image's body (`aot_image::base`): each call site of `code`, the code of
+    /// `function`, whose callee `facts` prove, calls it through its image record (`proven`).
+    pub(in crate::vm::compiled) fn proven(program: &crate::bytecode::ResidualProgram, function: u32, code: &[WideInstruction],
+        facts: &crate::compile::aot_facts::AotFacts) -> Self {
+        let facts = facts.function_facts(function);
+        let proven = code.iter().enumerate().map(|(pc, instruction)| {
+            let callee = facts.call_target(pc as u32).filter(|_| chains(*instruction))?;
+            program.function_get(callee as usize).map(|body| proven_facts(callee, body))
+        }).collect();
+        Self { proven, ..Self::default() }
     }
 
     /// The builtin each call site runs on its row, by PC: a site whose callee is a native the b-jit runs on one.
@@ -163,6 +211,7 @@ impl Callees {
     /// # Safety
     /// Each owned callee's `cell` is the address of its function's live entry cell.
     pub(super) unsafe fn targets(&self) -> Vec<Vec<DirectFacts>> {
+        if !self.proven.is_empty() { return self.proven.iter().map(|facts| facts.iter().copied().collect()).collect(); }
         // SAFETY: the caller's contract.
         self.at.iter().enumerate().map(|(pc, callees)| callees.clone().into_iter().flatten().map(|at| unsafe { DirectFacts::of(&self.owned[at], self.held(pc, at)) }).collect()).collect()
     }
@@ -205,5 +254,19 @@ impl Callees {
         *context = trial;
         note_inlined();
         Some(site)
+    }
+}
+
+/// The hole of a direct row that holds its record's address (`call_plan::direct_part`).
+const RECORD_HOLE: u8 = 0;
+
+/// An image's direct rows (`LaneHelpers::Ahead`) name their record by the site's `symbol`, which the
+/// loader places and binds (`aot_image::live`): the record the plan owns is the template the image
+/// carries (`aot_image::CallSite`), its address no hole of the code.
+pub(super) fn name_records(parts: &mut [super::call_plan::CallPart], records: &[Box<quench_bjit::call_record::CallRecord>], symbol: crate::vm::aot_image::Symbol) {
+    let addresses: Vec<u64> = records.iter().map(|record| std::ptr::from_ref(&**record).addr() as u64).collect();
+    for part in parts.iter_mut().filter(|part| addresses.contains(&part.holes[usize::from(RECORD_HOLE)])) {
+        part.holes[usize::from(RECORD_HOLE)] = 0;
+        part.symbols = [Some((RECORD_HOLE, symbol)), None];
     }
 }

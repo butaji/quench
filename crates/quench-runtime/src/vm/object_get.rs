@@ -835,7 +835,7 @@ impl<H: Host> Vm<H> {
         } else if object.as_number().is_some() {
             let prototype = self.primitive_prototype(object).unwrap_or(self.object_proto);
             match atom {
-                _ if self.lookup_atom("toString") == Some(atom) => Native::NumberString,
+                _ if atom == self.runtime_atoms.to_string => Native::NumberString,
                 _ if atom == self.to_fixed_atom => Native::NumberFixed,
                 _ if atom == self.to_precision_atom => Native::NumberPrecision,
                 _ => return ControlFlow::Continue(prototype),

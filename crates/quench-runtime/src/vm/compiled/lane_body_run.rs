@@ -36,10 +36,10 @@ pub(in crate::vm) struct BodyRun<'a> {
 impl LaneStackWords {
     /// Binds the stack words of a lane run's direct calls into `dispatch` (`Vm::stack_words_in_lane`).
     pub(super) fn bind(&self, dispatch: &mut JsStepDispatch) {
-        dispatch.lane_frames_end = self.frames_end;
-        dispatch.lane_values_top = self.values_top;
-        dispatch.lane_values_end = self.values_end;
-        dispatch.lane_activations_top = self.activations_top;
+        dispatch.head.lane_frames_end = self.frames_end;
+        dispatch.head.lane_values_top = self.values_top;
+        dispatch.head.lane_values_end = self.values_end;
+        dispatch.head.lane_activations_top = self.activations_top;
         dispatch.head.plain_depth = self.plain_depth;
         dispatch.head.plain_depth_limit = self.plain_depth_limit;
         dispatch.head.activation_count = self.activation_count;
@@ -71,7 +71,7 @@ impl<H: Host> Vm<H> {
         // binds its own: the run it returns into gets back the address it entered with.
         unsafe { let dispatch = &mut (*frame).dispatch; (dispatch.native_locals, dispatch.local_count, dispatch.environment_storage) = outer_locals };
         // SAFETY: as above; a completing body wrote the record before it returned.
-        let exit = entry_protocol::exit(&descriptor, returned, || unsafe { (*frame).dispatch.returned_pc });
+        let exit = entry_protocol::exit(&descriptor, returned, || unsafe { (*frame).dispatch.head.returned_pc });
         self.programs.tier_events().record(Event::ended(exit));
         if let LaneExit::Returned { .. } = exit { self.programs.tier_events().record(Event::Returned); }
         exit
@@ -101,10 +101,10 @@ impl<H: Host> Vm<H> {
             if (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0)) {
                 self.programs.tier_events().record(Event::RunBound);
             }
-            debug_assert_eq!((*dispatch).field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
+            debug_assert_eq!((*dispatch).head.field_entries, self.program_field_entries(run.program).unwrap_or(0), "the run's field cache entries stand");
             (*dispatch).native_registers = run.registers;
-            let locals = super::super::dispatch_fast::body_locals::<H>(run.lane_context);
-            ((*dispatch).native_locals, (*dispatch).local_count, (*dispatch).environment_storage) = (locals.locals, locals.count, locals.environment);
+            let locals = super::super::dispatch_fast::body_locals::<H>(run.lane_context, run.registers, super::super::dispatch_fast::LocalsOf::Body);
+            ((*dispatch).head.native_locals, (*dispatch).head.local_count, (*dispatch).head.environment_storage) = (locals.locals, locals.count, locals.environment);
             if !run.bases_stand { (*dispatch).refresh_object_bases_at_entry(self); }
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);

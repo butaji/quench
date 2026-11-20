@@ -2,6 +2,7 @@
 //! (`exit_targets`), and the exit stubs and their routines written behind the rows (`exit_addresses`).
 
 use super::*;
+use quench_bjit::{EXIT_STUB_LEN, exit_stub};
 
 /// A leave row of the cold area, behind the body: what it returns and what it writes back first.
 #[derive(Clone, Copy, PartialEq, Eq)]

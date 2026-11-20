@@ -1,6 +1,6 @@
 use crate::bytecode::{
     FieldLayout, FieldLookup, FieldSite, Function, ImmediateLayout,
-    ImmediateRole, Instr, InstructionField, Op, Operand, Register, Superinstruction, WideInstruction,
+    ImmediateRole, InstructionField, Op, Operand, Register, Superinstruction, WideInstruction,
 };
 
 /// A set of registers, one bit each: the uses, definitions and live registers liveness

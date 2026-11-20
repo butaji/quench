@@ -1,16 +1,14 @@
 //! In-place ASCII fast paths for String builtins: each reads a flat ASCII receiver once, completes
 //! exactly as the spec says with no guest code and no error, or answers `None` so the general
-//! native runs. A result is written once, into its string record.
+//! native runs. A result is written once, into its string record. The text rules are
+//! `staged::string_text`'s, which the general natives share.
 use super::super::*;
-use super::super::wtf16::{JsString, Units, repeat_ascii_into};
+use super::super::wtf16::{JsString, Units};
+use crate::staged::string_text;
 use std::ops::Range;
 
 /// The longest result a fast path builds; past it the general native decides.
 const FAST_TEXT_MAX_BYTES: usize = 1 << 20;
-/// ECMAScript WhiteSpace and LineTerminator restricted to ASCII.
-const ASCII_WHITESPACE: [u8; 6] = [b'\t', b'\n', b'\x0B', b'\x0C', b'\r', b' '];
-/// The filler of `padStart` and `padEnd` when none is given.
-const DEFAULT_PAD: &[u8] = b" ";
 
 /// What a fast path decided, from the receiver's bytes read in place.
 enum AsciiOutcome {
@@ -18,8 +16,8 @@ enum AsciiOutcome {
     Unchanged,
     /// The receiver's bytes in `range`, as a new string.
     Slice(Range<usize>),
-    /// The receiver's bytes, each mapped by `map`, as a new string of `length` bytes.
-    Mapped { length: usize, map: fn(&u8) -> u8 },
+    /// The receiver's bytes case-mapped (upper or lower), as a new string of `length` bytes.
+    Cased { length: usize, upper: bool },
     /// The receiver padded to `length` bytes with repeats of the filler `fill` (a string
     /// value; `None` for a space), at its end or its start.
     Padded { length: usize, fill: Option<Value>, at_end: bool },
@@ -39,17 +37,19 @@ impl<H: Host> Vm<H> {
             AsciiOutcome::Slice(range) => {
                 heap.alloc_ascii_derived([receiver], range.len(), move |out, [text]| out.copy_from_slice(&text[range]))
             }
-            AsciiOutcome::Mapped { length, map } => {
-                heap.alloc_ascii_derived([receiver], length, move |out, [text]| map_into(out, text, map))
+            AsciiOutcome::Cased { length, upper } => {
+                heap.alloc_ascii_derived([receiver], length, move |out, [text]| string_text::ascii_case(text, upper, out))
             }
-            AsciiOutcome::Padded { length, fill: None, at_end } => {
-                heap.alloc_ascii_derived([receiver], length, move |out, [text]| pad_into(out, text, DEFAULT_PAD, at_end))
-            }
+            AsciiOutcome::Padded { length, fill: None, at_end } => heap.alloc_ascii_derived([receiver], length, move |out, [text]| {
+                string_text::pad_into(out, text, string_text::PAD_FILL, at_end)
+            }),
             AsciiOutcome::Padded { length, fill: Some(fill), at_end } => {
-                heap.alloc_ascii_derived([receiver, fill], length, move |out, [text, fill]| pad_into(out, text, fill, at_end))
+                heap.alloc_ascii_derived([receiver, fill], length, move |out, [text, fill]| {
+                    string_text::pad_into(out, text, fill, at_end)
+                })
             }
             AsciiOutcome::Repeated { length } => {
-                heap.alloc_ascii_derived([receiver], length, |out, [text]| repeat_ascii_into(out, text))
+                heap.alloc_ascii_derived([receiver], length, |out, [text]| string_text::repeat_into(out, text))
             }
         }
     }
@@ -61,8 +61,8 @@ impl<H: Host> Vm<H> {
             return None;
         };
         match native {
-            Native::StringToUpperCase => Some(ascii_case(bytes, u8::is_ascii_lowercase, u8::to_ascii_uppercase)),
-            Native::StringToLowerCase => Some(ascii_case(bytes, u8::is_ascii_uppercase, u8::to_ascii_lowercase)),
+            Native::StringToUpperCase => Some(ascii_case(bytes, true)),
+            Native::StringToLowerCase => Some(ascii_case(bytes, false)),
             Native::StringTrim => Some(ascii_trim(bytes, true, true)),
             Native::StringTrimStart => Some(ascii_trim(bytes, true, false)),
             Native::StringTrimEnd => Some(ascii_trim(bytes, false, true)),
@@ -79,25 +79,25 @@ impl<H: Host> Vm<H> {
         let Ok(target) = usize::try_from(max_length) else {
             return Some(AsciiOutcome::Unchanged);
         };
-        if target <= text.len() {
+        let Some(length) = string_text::pad_length(text.len(), target) else {
             return Some(AsciiOutcome::Unchanged);
-        }
+        };
         let fill = match args.get(1).copied() {
             None | Some(Value::UNDEFINED) => None,
             Some(value) => Some(value),
         };
         // An empty filler never pads; a filler that is not flat ASCII is the general path's.
         let fill_len = match fill {
-            None => DEFAULT_PAD.len(),
+            None => string_text::PAD_FILL.len(),
             Some(value) => self.heap.existing_ascii_len(value)?,
         };
         if fill_len == 0 {
             return Some(AsciiOutcome::Unchanged);
         }
-        if target > FAST_TEXT_MAX_BYTES {
+        if length > FAST_TEXT_MAX_BYTES {
             return None;
         }
-        Some(AsciiOutcome::Padded { length: target, fill, at_end: native == Native::StringPadEnd })
+        Some(AsciiOutcome::Padded { length, fill, at_end: native == Native::StringPadEnd })
     }
 }
 
@@ -122,11 +122,10 @@ pub(super) fn ascii_bytes(string: &JsString) -> Option<&[u8]> {
     }
 }
 
-/// The ASCII case map of `bytes`, where `needs_change` names the bytes it changes; the receiver
-/// itself when none does.
-fn ascii_case(bytes: &[u8], needs_change: fn(&u8) -> bool, map: fn(&u8) -> u8) -> AsciiOutcome {
-    if bytes.iter().any(needs_change) {
-        AsciiOutcome::Mapped { length: bytes.len(), map }
+/// The ASCII case map of `bytes`, upper or lower; the receiver itself when no byte changes.
+fn ascii_case(bytes: &[u8], upper: bool) -> AsciiOutcome {
+    if string_text::ascii_case_changes(bytes, upper) {
+        AsciiOutcome::Cased { length: bytes.len(), upper }
     } else {
         AsciiOutcome::Unchanged
     }
@@ -135,21 +134,11 @@ fn ascii_case(bytes: &[u8], needs_change: fn(&u8) -> bool, map: fn(&u8) -> u8) -
 /// `trim`, `trimStart` or `trimEnd` of ASCII `bytes`: the whitespace stripped from the chosen
 /// ends; the receiver itself when nothing is stripped.
 fn ascii_trim(bytes: &[u8], from_start: bool, from_end: bool) -> AsciiOutcome {
-    let is_space = |byte: &u8| ASCII_WHITESPACE.contains(byte);
-    let start = if from_start {
-        bytes.iter().position(|byte| !is_space(byte)).unwrap_or(bytes.len())
-    } else {
-        0
-    };
-    let end = if from_end {
-        bytes.iter().rposition(|byte| !is_space(byte)).map_or(start, |last| last + 1)
-    } else {
-        bytes.len()
-    };
-    if start == 0 && end == bytes.len() {
+    let range = string_text::trim_range(bytes, from_start, from_end);
+    if range.len() == bytes.len() {
         return AsciiOutcome::Unchanged;
     }
-    AsciiOutcome::Slice(start..end)
+    AsciiOutcome::Slice(range)
 }
 
 /// `repeat` of ASCII `bytes` by the non-negative int32 count in `args`; `None` for a negative
@@ -167,28 +156,4 @@ fn ascii_repeat(bytes: &[u8], args: &[Value]) -> Option<AsciiOutcome> {
         return None;
     }
     Some(AsciiOutcome::Repeated { length })
-}
-
-/// Writes `bytes` mapped by `map` into `out`, which is as long as `bytes`.
-fn map_into(out: &mut [u8], bytes: &[u8], map: fn(&u8) -> u8) {
-    for (slot, byte) in out.iter_mut().zip(bytes) {
-        *slot = map(byte);
-    }
-}
-
-/// Writes `text` into `out`, the rest of `out` filled with repeats of `fill` (non-empty): at
-/// its end when `at_end`, else at its start.
-fn pad_into(out: &mut [u8], text: &[u8], fill: &[u8], at_end: bool) {
-    let pad_len = out.len() - text.len();
-    let (text_out, pad_out) = if at_end {
-        let (left, right) = out.split_at_mut(text.len());
-        (left, right)
-    } else {
-        let (left, right) = out.split_at_mut(pad_len);
-        (right, left)
-    };
-    text_out.copy_from_slice(text);
-    for (slot, byte) in pad_out.iter_mut().zip(fill.iter().copied().cycle()) {
-        *slot = byte;
-    }
 }

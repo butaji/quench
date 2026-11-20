@@ -1,7 +1,6 @@
-use super::{ConstructArguments, RegisterWindow};
 use super::{
     Effect, FieldBase, FieldLayout, FieldLookup, ImmediateLayout, ImmediateRole, InstructionField,
-    Op, Operand, REGISTER_MASK, RETURN_REGISTER, Register, ResultLayout, SET_THIS_REGISTER,
+    ConstructArguments, Op, Operand, REGISTER_MASK, RETURN_REGISTER, Register, RegisterWindow, ResultLayout, SET_THIS_REGISTER,
 };
 
 const PACKED_PAIR_LOW_BITS: u32 = 8;

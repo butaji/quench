@@ -257,8 +257,7 @@ impl<H: Host> Vm<H> {
             self.write(f, i.result_register(), value);
             return Ok(StepResult::Continue);
         }
-        let arguments = CallArguments::from_slice(self.register_window(f, window));
-        let args = arguments.as_slice();
+        let register_arguments: *const [Value] = self.register_window(f, window);
         let parent = self.owner_capture_env(VarOwner::Frame(f), 0).unwrap_or(self.frames[f].env);
         self.profile.call_target(1, usize::from(window.count));
         self.frames[f].pc = pc;
@@ -268,10 +267,20 @@ impl<H: Host> Vm<H> {
         } else {
             self.js_tail_call_allowed(p, f, i, pc)
         };
-        if tail_call
+        let proper_tail = tail_call
             && !p.function(function_index as usize).is_async
-            && !p.function(function_index as usize).is_generator
-        {
+            && !p.function(function_index as usize).is_generator;
+        // A proper tail call recycles the caller's register buffer before it binds the
+        // arguments, so only that path copies the window. Every other call borrows it, as the
+        // tier's direct call does: the caller's registers are not written during the call.
+        // SAFETY: the window lies in the caller frame, whose registers are not written while
+        // the callee's setup and call run.
+        let copied = proper_tail.then(|| CallArguments::from_slice(unsafe { &*register_arguments }));
+        let args: &[Value] = match &copied {
+            Some(arguments) => arguments.as_slice(),
+            None => unsafe { &*register_arguments },
+        };
+        if proper_tail {
             self.prepare_user_tail(
                 p,
                 f,

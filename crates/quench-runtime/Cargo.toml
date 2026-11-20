@@ -20,11 +20,11 @@ name = "number_primitives"
 required-features = ["bench-primitives"]
 
 [features]
-default = ["jit"]
-jit = ["dep:cranelift-native", "cranelift-codegen/host-arch"]
+default = ["jit", "native-execution"]
+jit = []
 native-execution = []
-# Build-time native object publication; not needed by the execution-only host.
-aot = ["native-execution", "dep:cranelift-native", "cranelift-codegen/host-arch", "dep:cranelift-object", "dep:cranelift-module", "dep:object", "dep:serde_json"]
+# Compatibility alias: AOT code is always compiled, so this feature is a no-op.
+aot = []
 profile-aggregate = []
 # Successful field helper counts without changing lane admission or array proofs.
 profile-field-primitives = []
@@ -49,8 +49,8 @@ tier-stress = []
 
 [dependencies]
 quench-alloc = { path = "../quench-alloc" }
-object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"], optional = true }
-serde_json = { version = "1", optional = true }
+object = { version = "=0.39.1", default-features = false, features = ["read_core", "elf", "macho", "std"] }
+serde_json = "1"
 quench-macros = { path = "../quench-macros" }
 quench-stack = { path = "../quench-stack" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
@@ -83,11 +83,13 @@ quench-temporal = { path = "../quench-temporal" }
 wasmparser = "0.247"
 # The compiled execution mode: Cranelift is the code generator the generating
 # extension emits into; libc maps the resulting code executable.
-cranelift-codegen = { version = "=0.137.1", default-features = false, features = ["std"] }
+cranelift-codegen = { version = "=0.137.1", default-features = false, features = ["std", "host-arch", "x86", "arm64"] }
 cranelift-frontend = { version = "=0.137.1", default-features = false, features = ["std"] }
-cranelift-native = { version = "=0.137.1", default-features = false, optional = true }
-cranelift-object = { version = "=0.137.1", default-features = false, optional = true }
-cranelift-module = { version = "=0.137.1", default-features = false, features = ["std"], optional = true }
+cranelift-native = { version = "=0.137.1", default-features = false }
+cranelift-object = { version = "=0.137.1", default-features = false }
+cranelift-module = { version = "=0.137.1", default-features = false, features = ["std"] }
+# Target triples of AOT images: the object format (ELF, Mach-O, COFF) follows the triple.
+target-lexicon = "0.13.5"
 libc = "0.2"
 # fdlibm atan is part of the shared binary64 Math rounding policy.
 libm = "=0.2.16"
@@ -120,7 +122,7 @@ libc = "0.2"
 
 [[example]]
 name = "native_publication"
-required-features = ["aot", "jit"]
+required-features = ["jit"]
 
 [lints]
 workspace = true

@@ -1,30 +1,18 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 1840
+# total 1827
 <catalog> unstaged:Await 1
 <catalog> unstaged:CacheTemplateObject 1
 <catalog> unstaged:CreateRegExpLiteral 1
-<catalog> unstaged:IteratorCleanupPop 1
-<catalog> unstaged:IteratorCleanupPush 1
 <catalog> unstaged:LoadCachedTemplateObject 1
-<catalog> unstaged:LoadLocal 1
 <catalog> unstaged:MakeArray 1
 <catalog> unstaged:MakeClosure 1
 <catalog> unstaged:MakeConstArray 1
 <catalog> unstaged:MakeObject 1
 <catalog> unstaged:MakeObject2 1
 <catalog> unstaged:MakeObjectLiteral 1
-<catalog> unstaged:Nop 1
-<catalog> unstaged:NumericAdd 1
-<catalog> unstaged:NumericMultiply 1
-<catalog> unstaged:RequireIteratorResult 1
 <catalog> unstaged:SetFunctionName 1
-<catalog> unstaged:StoreLocal 1
-<catalog> unstaged:StoreVarBinding 1
-<catalog> unstaged:StringCaseIndex 1
-<catalog> unstaged:StringConcat 1
-<catalog> unstaged:Throw 1
 <catalog> unstaged:WasmArrayCopy 1
 <catalog> unstaged:WasmArrayFill 1
 <catalog> unstaged:WasmArrayGet 1
@@ -783,7 +771,6 @@ vm/generator/window_steps.rs fn:lane_* 1
 vm/lane_body_tier.rs is:is_call 1
 vm/loop_tier.rs fn:lane_* 4
 vm/loop_tier.rs is:is_load_capture 2
-vm/native_graph.rs fn:lane_* 1
 vm/object_static/for_in_keys.rs fn:lane_* 1
 vm/operand_feedback.rs is:is_binary_arithmetic 1
 vm/operations.rs is:is_binary 2

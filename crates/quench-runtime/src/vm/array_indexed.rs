@@ -104,12 +104,14 @@ impl<H: Host> Vm<H> {
             return Ok(Value::number(NOT_FOUND));
         }
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
-        self.strict_search(p, object, 0..from as usize + 1, true, search)
+        self.strict_search(p, object, 0..from as usize + 1, true, search, None)
     }
 
     /// The index in `range` of the first element of `object` (the last when `reverse`) that
     /// strictly equals `search`, or -1: the dense view decides what it can, and HasProperty
-    /// and Get the rest (`indexOf` and `lastIndexOf`).
+    /// and Get the rest (`indexOf` and `lastIndexOf`). `resume` is the index a dense walk
+    /// already reached (`dense_search_resume`), where the general steps begin; `None` walks the
+    /// dense view over `range` first.
     fn strict_search(
         &mut self,
         p: &ResidualProgram,
@@ -117,11 +119,15 @@ impl<H: Host> Vm<H> {
         range: std::ops::Range<usize>,
         reverse: bool,
         search: Value,
+        resume: Option<usize>,
     ) -> Result<Value, JsError> {
-        let first = match self.search_dense(object, range.clone(), reverse, search, Match::Strict) {
-            Search::Found(index) => return Ok(Value::number(index as f64)),
-            Search::Missing => return Ok(Value::number(NOT_FOUND)),
-            Search::Resume(index) => index,
+        let first = match resume {
+            Some(index) => index,
+            None => match self.search_dense(object, range.clone(), reverse, search, Match::Strict) {
+                Search::Found(index) => return Ok(Value::number(index as f64)),
+                Search::Missing => return Ok(Value::number(NOT_FOUND)),
+                Search::Resume(index) => index,
+            },
         };
         let remaining = if reverse { first + 1 - range.start } else { range.end - first };
         for step in 0..remaining {
@@ -137,20 +143,26 @@ impl<H: Host> Vm<H> {
         Ok(Value::number(NOT_FOUND))
     }
 
-    /// Array.prototype.indexOf: the dense search (`dense_search_call`) first, which decides a
+    /// Array.prototype.indexOf: the dense search (`dense_search_resume`) first, which decides a
     /// dense array from an integer or absent `fromIndex`; otherwise the general steps
     /// (`strict_search`, which resumes the dense walk at a hole and reads the rest by [[Get]]).
+    /// A dispatcher's declined walk (`fast_search_declined`) supplies its resume index instead.
     pub(super) fn array_index_of_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if self.declined_fast.take() != Some(Native::ArrayIndexOf)
-            && let Some(found) = self.dense_search_call(Native::ArrayIndexOf, this, args)
-        {
-            return Ok(found);
-        }
+        let declined = self.declined_fast.take() == Some(Native::ArrayIndexOf);
+        let recorded = self.declined_resume.take();
+        let resume = if declined {
+            recorded
+        } else {
+            match self.dense_search_resume(Native::ArrayIndexOf, this, args) {
+                Ok(found) => return Ok(found),
+                Err(resume) => resume,
+            }
+        };
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {
@@ -167,7 +179,7 @@ impl<H: Host> Vm<H> {
             }
         };
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
-        self.strict_search(p, object, start..length, false, search)
+        self.strict_search(p, object, start..length, false, search, resume)
     }
 
     pub(super) fn array_copy_within_native(

@@ -455,7 +455,7 @@ pub(in crate::vm) fn scalar_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -
         })),
         _ => None,
     }).collect::<Option<_>>()?;
-    Some(ScalarConstructPlan { callee, shape: plan.shape, fields })
+    Some(ScalarConstructPlan { callee: super::super::compiled::PlanCallee::Live(callee), shape: plan.shape, fields })
 }
 
 /// Whether `callee`'s plan holds now (`holding_construct_plan_index`) and an allocation by it
@@ -554,6 +554,19 @@ pub(super) fn initialize_stores_in_lane<H: Host>(
 /// the frame's own return of it (`frame_return`).
 #[inline(always)]
 pub(super) fn return_constructed_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
+    // A running leaf's construction is its call's completion, as its return is
+    // (`complete_leaf_in_lane`).
+    if !unsafe { (*cx).leaf.call }.is_null() {
+        let form = unsafe { (*cx).leaf.form };
+        if let Some((registers, next)) = complete_leaf_in_lane::<H>(cx, this, form) {
+            let view = Carried {
+                memory: MemoryView::script(cx),
+                integers: crate::value::IntegerEncoding::TAG,
+                acc: Slot::of(Value::UNDEFINED),
+            };
+            return Resumed::At(registers, next, view);
+        }
+    }
     // The common return first, as a `Return` record takes it (`complete_plain_activation_in_lane`),
     // where no leaf call runs.
     if unsafe { (*cx).leaf.call }.is_null()

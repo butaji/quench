@@ -8,12 +8,12 @@
 use super::*;
 use super::base_region::callees::{Callees, InlineBody};
 use super::base_region::function::{build_body, Body, BodySpec, ClassProto};
-use super::base_region::{Known, RealmProof};
+use super::base_region::{Known, RealmProof, SymbolSite};
 use super::lane_facts::bind_callees;
 use super::admission::{refuse, Refusal};
 use crate::code_dependencies::{InstanceofFact, Invalidation};
 use crate::vm::global_facts::GlobalTable;
-use crate::bytecode::{Atom, Class, FieldLookup, Register, WideInstruction};
+use crate::bytecode::{Atom, FieldLookup, Register, WideInstruction};
 use super::lane_region::StableFacts;
 use crate::compile::liveness::RegisterMasks;
 use crate::typed_ir::Type;
@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
             shapes: &[],
         };
         let speculated = widened(generic);
-        let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: &seen, kinds: &[] };
+        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &speculated, seen: &seen, kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers::<H>()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (region.instructions(), invalidation), caller)
@@ -225,6 +225,60 @@ impl<H: Host> Vm<H> {
         let slot = self.shape_slot(data.shape(), atom)?;
         self.heap.property_get(data, slot).map(|value| value.to_bits())
     }
+}
+
+/// A function's base body built for an AOT image (`aot_image::base`): no profile and no folded fact, its
+/// calls direct only where the closed world proves their callee (`Callees::proven`), so the run-time
+/// addresses it names are its helpers' and its call records', as symbols (`LaneHelpers::Ahead`).
+pub(in crate::vm) struct ImageBody {
+    pub(in crate::vm) code: Vec<u8>,
+    pub(in crate::vm) symbols: Box<[SymbolSite]>,
+    /// The code offset of each PC's first row, ascending by PC (`Body::entries`).
+    pub(in crate::vm) entries: Box<[(u32, usize)]>,
+    /// The PCs that take the generic row (`Body::generic`).
+    pub(in crate::vm) generic: Box<[u32]>,
+    /// Each direct call's site PC, proven callee and the record its row reads as planned (`Body::records`).
+    pub(in crate::vm) calls: Box<[(u32, u32, quench_bjit::call_record::CallRecord)]>,
+}
+
+/// The base body of `function` for an AOT image, over the program and its closed-world `facts`.
+pub(in crate::vm) fn image_body(program: &ResidualProgram, function: u32, facts: &crate::compile::aot_facts::AotFacts) -> Result<ImageBody, String> {
+    let body = program.function_get(function as usize).ok_or("no such function")?;
+    let code: Vec<WideInstruction> = body.instructions().collect();
+    // A dense int `switch` lowers to a `WasmBranchTable`, which the base body plans as a compare tree
+    // (`Step::Switch`); every other Wasm opcode is the Wasm tiers'.
+    let planned = |instruction: &WideInstruction| instruction.op() == crate::bytecode::Op::WasmBranchTable
+        || super::base_region::covers(std::slice::from_ref(instruction));
+    if let Some(wasm) = code.iter().find(|instruction| !planned(instruction)) {
+        return Err(format!("function {function}: the wasm instruction {:?} has no base row", wasm.op()));
+    }
+    let callees = Callees::proven(program, function, &code, facts);
+    let (length, live) = (code.len(), program.shared_register_root_masks(function));
+    let reason = if length == 0 { "an empty function" } else { "no liveness masks" };
+    let region = LoopRegion::of_whole_function(code, &[], live).ok_or_else(|| format!("function {function} ({length} instructions) has no base span: {reason}"))?;
+    let known = Known {
+        program, stitch: &super::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None,
+        invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
+    };
+    let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[] };
+    // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).
+    let built = unsafe { build_body(&region, &spec, &callees, LaneHelpers::Ahead) }?;
+    let calls = image_calls(&built, facts.function_facts(function))?;
+    Ok(ImageBody { code: built.code, symbols: built.symbols, entries: built.entries, generic: built.generic, calls })
+}
+
+/// Each direct row's record with its site and callee: the rows' `Symbol::CallRecord`s in code order are
+/// the records in row order (`Body::records`; an image body has no builtin row, whose record names none).
+fn image_calls(built: &Body, facts: crate::compile::aot_facts::FunctionFacts<'_>) -> Result<Box<[(u32, u32, quench_bjit::call_record::CallRecord)]>, String> {
+    let sites: Vec<u32> = built.symbols.iter().filter_map(|site| match site.symbol {
+        crate::vm::aot_image::Symbol::CallRecord { pc, .. } => Some(pc),
+        _ => None,
+    }).collect();
+    if sites.len() != built.records.len() { return Err("a direct row names no call record".into()); }
+    sites.into_iter().zip(&built.records).map(|(pc, record)| {
+        let callee = facts.call_target(pc).ok_or("a direct row of an unproven call")?;
+        Ok((pc, callee, **record))
+    }).collect()
 }
 
 #[cfg(test)]

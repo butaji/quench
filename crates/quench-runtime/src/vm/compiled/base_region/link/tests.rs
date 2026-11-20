@@ -52,7 +52,7 @@ fn exits_land_in_the_cold_area_behind_the_hot_rows() {
     let rows = [Placed { stencil: &hot, hole: &hole, taken: None, cold: false }, Placed { stencil: &hot, hole: &hole, taken: None, cold: false }, Placed { stencil: &leave, hole: &hole, taken: None, cold: false }];
     let exits = [vec![Target::Stub { pc: 7, routine: 0 }], vec![Target::Row(2)], Vec::new()];
     let routines = [ret()];
-    let (code, ..) = place_rows(Ending::Body, &rows, (&exits, &routines), &[], 0).expect("a layout");
+    let (code, ..) = place_rows(Ending::Body, &rows, (&exits, &routines), &[], 0, &[]).expect("a layout");
     let head = thunk(Ending::Body, 0, 0).expect("a thunk").len();
     let (second, leave_at) = (head + hot.code.len(), head + 2 * hot.code.len());
     let stub = leave_at + leave.code.len() + routines[0].len();

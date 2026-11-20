@@ -2,11 +2,14 @@
 //! ratchets, the census, every library test (with and without debug assertions), the C-parity gate and the conformance suites, in
 //! that order, prints a summary table and exits nonzero if any step failed.
 //!
-//! usage: quench-gate [--quick] [--jobs N] [--record] [--passed] [--only STEP]
+//! usage: quench-gate [--quick] [--jobs N] [--record] [--passed] [--only STEP] [--strict] [--suites]
 //! `--quick` runs only the lint, census and C-parity steps; `--record` writes the C-parity
-//! ceilings that have no value yet; `--only STEP` runs one step (e.g. `--only ir-budget`). A full run that passes on a clean tree records the tree
-//! (`passed.rs`); `--passed` only answers whether the checked-out tree has that record.
+//! ceilings that have no value yet; `--only STEP` (or a bare step name, `quench-gate aot`) runs one
+//! step, e.g. `--only ir-budget`. `--strict` and `--suites` are the AOT step's options (`aot.rs`).
+//! A full run that passes on a clean tree records the tree (`passed.rs`); `--passed` only answers
+//! whether the checked-out tree has that record.
 
+mod aot;
 mod build;
 mod census;
 mod config;
@@ -37,7 +40,7 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 12] = [
+const STEPS: [Step; 13] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "known-lists", quick: true, blocking: false, run: known_lists::run },
@@ -49,6 +52,7 @@ const STEPS: [Step; 12] = [
     Step { name: "ir-budget", quick: true, blocking: false, run: ir_budget::run },
     Step { name: "js3-budgets", quick: false, blocking: false, run: js3_budgets::run },
     Step { name: "conformance", quick: false, blocking: false, run: conformance::run },
+    Step { name: "aot", quick: false, blocking: false, run: aot::run },
     Step { name: "startup", quick: false, blocking: false, run: startup::run },
 ];
 

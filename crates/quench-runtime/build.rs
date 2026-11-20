@@ -70,6 +70,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(quench_lane_tail_calls)");
     println!("cargo::rustc-check-cfg=cfg(quench_profiled)");
     println!("cargo::rustc-check-cfg=cfg(stencil_build)");
+    println!("cargo::rustc-check-cfg=cfg(stencil_family, values(\"js\", \"wasm\"))");
     println!("cargo::rerun-if-changed=build.rs");
     if PROFILING_FEATURES
         .iter()

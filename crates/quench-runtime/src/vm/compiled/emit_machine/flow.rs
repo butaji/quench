@@ -1,8 +1,8 @@
 //! The flow family of the machine: `MachineFlow` as Cranelift control transfers.
 
 use super::{Builds, machine_type};
-use crate::staged::machine::{Lane, MachineFlow};
-#[cfg(all(feature = "aot", feature = "jit"))]
+use crate::staged::machine::{Lane, MachineFlow, MachineVariables};
+#[cfg(feature = "jit")]
 use crate::staged::machine::MachineTail;
 use cranelift_codegen::ir::{self, InstBuilder};
 
@@ -103,7 +103,33 @@ impl<'b, B: Builds<'b>> MachineFlow for B {
     }
 }
 
-#[cfg(all(feature = "aot", feature = "jit"))]
+impl<'b, B: Builds<'b>> MachineVariables for B {
+    type Variable = cranelift_frontend::Variable;
+
+    fn declare_variable(&mut self, lane: Lane) -> cranelift_frontend::Variable {
+        self.function_builder().declare_var(machine_type(lane))
+    }
+
+    fn define_variable(&mut self, variable: cranelift_frontend::Variable, value: ir::Value) {
+        self.function_builder().def_var(variable, value);
+    }
+
+    fn read_variable(&mut self, variable: cranelift_frontend::Variable) -> ir::Value {
+        self.function_builder().use_var(variable)
+    }
+
+    /// The opposite comparison where `flag` is an integer comparison.
+    fn compare_complement(&mut self, flag: ir::Value) -> Option<ir::Value> {
+        let builder = self.function_builder();
+        let ir::ValueDef::Result(inst, _) = builder.func.dfg.value_def(flag) else { return None };
+        match builder.func.dfg.insts[inst] {
+            ir::InstructionData::IntCompare { cond, args: [left, right], .. } => Some(builder.ins().icmp(ir::condcodes::CondCode::complement(cond), left, right)),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(feature = "jit")]
 impl<'b, B: Builds<'b>> MachineTail for B {
     fn tail_call(&mut self, target: ir::FuncRef, arguments: &[ir::Value]) {
         self.function_builder().ins().return_call(target, arguments);

@@ -2,7 +2,9 @@
 //! definition every tier runs, and its step is the interpreter's own helper, which the host makes
 //! (`Vm::call_out` -> `Vm::value_step`).
 use super::Protocol;
-use crate::bytecode::{Atom, InstructionField, Op, Register, RegisterWindow, WideInstruction};
+use crate::bytecode::{Atom, Register, RegisterWindow};
+#[cfg(not(stencil_build))]
+use crate::bytecode::{InstructionField, Op, WideInstruction};
 
 /// A by-name, environment, string and iteration-cleanup step the host makes by the interpreter's own definition.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,6 +34,7 @@ pub(crate) enum ValueStep {
     StringCaseIndex { start: usize, count: u16 },
 }
 
+#[cfg(not(stencil_build))]
 /// The step `instruction` denotes among these opcodes, with the register it defines and its (at
 /// most two) operand registers, which `Vm::call_out` reads; `None` for any other opcode.
 #[inline(always)]

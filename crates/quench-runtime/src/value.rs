@@ -21,7 +21,6 @@ static NARROW_UPPER_WORD_TABLE: [u64; NARROW_LOOKUP_CODES] = NARROW_UPPER_WORDS;
 /// constants live in `staged::value_encoding`): the runtime's own table reads.
 impl NarrowLayout {
     /// Only codes selected by the decoder belong in a native image.
-    #[cfg(feature = "aot")]
     pub(crate) fn decode_words() -> &'static [u64] {
         &NARROW_UPPER_WORD_TABLE[..=Self::CODE_MASK as usize]
     }
@@ -108,6 +107,8 @@ pub(crate) enum HeapReference {
     SymbolRecord(u32),
     /// A Map or a Set (`Heap::alloc_map`, `Heap::alloc_set`).
     CollectionRecord(u32),
+    /// A Wasm GC struct or array (`Heap::alloc_wasm_gc`), whose head holds its payload.
+    WasmGcRecord(u32),
 }
 
 #[cfg(feature = "profile-aggregate")]
@@ -424,6 +425,10 @@ impl Value {
         Self(TAG_HEAP | DIRECT_V128_HANDLE_BIT | u64::from(index))
     }
 
+    #[inline(always)] pub(crate) fn direct_wasm_gc(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_WASM_GC_HANDLE_BITS | u64::from(index))
+    }
+
     #[inline(always)] pub(crate) fn direct_promise(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT | u64::from(index))
     }
@@ -513,6 +518,7 @@ impl Value {
                 DIRECT_ENVIRONMENT_HANDLE_BITS => HeapReference::EnvironmentRecord(index),
                 DIRECT_SYMBOL_HANDLE_BITS => HeapReference::SymbolRecord(index),
                 DIRECT_COLLECTION_HANDLE_BITS => HeapReference::CollectionRecord(index),
+                DIRECT_WASM_GC_HANDLE_BITS => HeapReference::WasmGcRecord(index),
                 _ => return None,
             },
         )
@@ -530,7 +536,8 @@ impl Value {
             | HeapReference::StringRecord(_)
             | HeapReference::V128Record(_)
             | HeapReference::EnvironmentRecord(_)
-            | HeapReference::SymbolRecord(_) => None,
+            | HeapReference::SymbolRecord(_)
+            | HeapReference::WasmGcRecord(_)
             | HeapReference::CollectionRecord(_) => None,
         }
     }
@@ -553,6 +560,10 @@ impl Value {
 
     #[inline(always)] pub(crate) fn direct_v128_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_V128_HANDLE_BIT).then_some(self.0 as u32)
+    }
+
+    #[inline(always)] pub(crate) fn direct_wasm_gc_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_WASM_GC_HANDLE_BITS).then_some(self.0 as u32)
     }
 
     #[inline(always)] pub(crate) fn direct_object_index(self) -> Option<u32> {

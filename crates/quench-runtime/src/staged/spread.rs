@@ -26,6 +26,7 @@ pub(crate) enum Passing {
     Rest,
 }
 
+#[cfg(not(stencil_build))]
 /// The call-out row of a spread call or a super construction; `None` for any other instruction,
 /// and for a direct eval, which the host decides.
 #[cfg(not(stencil_build))]
@@ -56,12 +57,19 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
 
 /// Run a spread call or a super construction: the VM's own, defining `destination`.
 #[inline(always)]
-pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation.call_out() {
         Some((call, destination)) => calling(stage, frame, call, destination),
         None => Step::Unresolved,
     }
+}
+
+/// `step_of` for any operation.
+#[inline(always)]
+pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
 #[cfg(test)]

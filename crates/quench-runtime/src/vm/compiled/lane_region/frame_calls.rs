@@ -175,23 +175,23 @@ struct Template {
 
 /// An empty ordinary object (`Allocation::Empty`), from the object space's cursor and template.
 const EMPTY_OBJECT: Template = Template {
-    cursor: std::mem::offset_of!(JsStepDispatch, object_cursor),
+    cursor: std::mem::offset_of!(JsStepDispatch, head.object_cursor),
     records: std::mem::offset_of!(JsStepDispatch, head.object_record_base),
     record_size: crate::heap::NATIVE_OBJECT_LAYOUT.record_size,
     tag: crate::value::ValueLayout::DIRECT_OBJECT_TAG,
-    layout: std::mem::offset_of!(JsStepDispatch, empty_object_layout),
-    words: std::mem::offset_of!(JsStepDispatch, empty_object_payload),
+    layout: std::mem::offset_of!(JsStepDispatch, head.empty_object_layout),
+    words: std::mem::offset_of!(JsStepDispatch, head.empty_object_payload),
 };
 
 /// A zero-length array (`Allocation::Array { length: 0 }`), from the array space's cursor and template: its
 /// elements are the static empty header, so its record is its two words alone (`ArrayObject::fresh`).
 const EMPTY_ARRAY: Template = Template {
-    cursor: std::mem::offset_of!(JsStepDispatch, array_cursor),
+    cursor: std::mem::offset_of!(JsStepDispatch, head.array_cursor),
     records: std::mem::offset_of!(JsStepDispatch, head.array_record_base),
     record_size: crate::heap::NATIVE_ARRAY_LAYOUT.record_size,
     tag: crate::value::ValueLayout::DIRECT_ARRAY_TAG,
-    layout: std::mem::offset_of!(JsStepDispatch, empty_array_layout),
-    words: std::mem::offset_of!(JsStepDispatch, empty_array_payload),
+    layout: std::mem::offset_of!(JsStepDispatch, head.empty_array_layout),
+    words: std::mem::offset_of!(JsStepDispatch, head.empty_array_payload),
 };
 
 /// An empty allocation by the kind's cursor (`Template`). While the cursor's run has an id (`next < limit`) and the

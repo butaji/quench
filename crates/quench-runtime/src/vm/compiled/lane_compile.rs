@@ -585,8 +585,8 @@ impl<H: Host> Vm<H> {
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
         // A recurrent compile (no observed entries to price) still repays only where one entry of
-        // its unit, inlined callees included, saves more than the entry costs.
-        if entry.is_none() && observed.is_none() && looped.is_none() && !recursive && !super::lane_facts::entry_repays(tiers, &unit, function, &direct) { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short); }
+        // its unit amortizes it (`amortizes_entry`, the same test as above, inlined callees included).
+        if entry.is_none() && observed.is_none() && looped.is_none() && !recursive && !amortizes_entry(tiers, &unit, function, &direct) { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short); }
         bind_callees(&direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&unit, &fields, direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
@@ -706,7 +706,7 @@ impl<H: Host> Vm<H> {
         // A construction's plan is asked of the callee it was planned for: its code tests the
         // callee, so another callee at the site only leaves.
         let construct = |function: u32, pc: u32| taken.tables.construct_plans.get(&(function, pc))
-            .and_then(|plan| super::super::dispatch_fast::scalar_construct_plan(self, plan.callee));
+            .and_then(|plan| super::super::dispatch_fast::scalar_construct_plan(self, plan.callee.live()?));
         // A field's formed layout id (the view's own-field hint) is guarded where the code reads
         // it, so a hint that moved since only leaves: the fields compare without it.
         let unformed = |fields: &[Option<Vec<NativeFieldLoad>>]| fields.iter()

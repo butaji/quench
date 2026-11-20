@@ -143,7 +143,7 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(string);
         let key_word = self.tagged(state, index);
         let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
-        let table = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, ascii_unit_strings));
+        let table = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.ascii_unit_strings));
         let character = {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
             let units = crate::staged::strings::flat_string(&mut stage, records, bits, exit).expect("the emit stage continues past its guards");

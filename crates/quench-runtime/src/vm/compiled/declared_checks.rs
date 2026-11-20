@@ -11,6 +11,7 @@
 //! but neither mask's tag test covers it: the u-jit proves a Number set exactly (`Type::NUMBER`), and
 //! the b-jit proves it through the register's representation (`DeclaredFact::Number`).
 
+use crate::bytecode::Function;
 use crate::typed_ir::language_bit;
 use crate::ValueType;
 
@@ -26,15 +27,15 @@ pub(crate) const UNDEFINED: u16 = language_bit(ValueType::Undefined);
 pub(crate) const OBJECT: u16 = language_bit(ValueType::Object);
 /// A direct function word: one tag test in both tiers.
 pub(crate) const FUNCTION: u16 = language_bit(ValueType::Function);
-/// A string. The u-jit accepts a direct string by its tag and any other string by the VM's `typeof`
-/// on a slow path; the b-jit has no tag test for it yet (a direct string is a family word its
-/// `tag_languages` does not set), so a String set gets no b-jit entry check.
+/// A string: one tag test in both tiers. Every string is a direct string word (`Heap::is_string`), so the
+/// family test decides it. The u-jit also takes any other string by the VM's `typeof` on a slow path,
+/// which no string needs today.
 pub(crate) const STRING: u16 = language_bit(ValueType::String);
-/// A direct array word (`DIRECT_ARRAY_TAG`): one tag test in the b-jit. The u-jit has no `Type` for
-/// an array, so an array set gets no u-jit entry check.
+/// A direct array word (`DIRECT_ARRAY_TAG`): one tag test in both tiers. The u-jit names it as the
+/// language bit `Type::languages(ARRAY)`, which no `ValueType` names (the bit sits past them).
 pub(crate) const ARRAY: u16 = crate::staged::value::language::ARRAY;
-/// A plain direct object word (`DIRECT_OBJECT_TAG`): one tag test in the b-jit. The u-jit has no
-/// `Type` for a plain object, so a plain-object set gets no u-jit entry check.
+/// A plain direct object word (`DIRECT_OBJECT_TAG`): one tag test in both tiers. The u-jit names it as
+/// `Type::languages(OBJECT_PLAIN)`, past `ValueType`'s bits like `ARRAY`.
 pub(crate) const OBJECT_PLAIN: u16 = crate::staged::value::language::OBJECT_PLAIN;
 
 /// The one set of declared language types a tier checks at entry: the union of every member some
@@ -42,11 +43,71 @@ pub(crate) const OBJECT_PLAIN: u16 = crate::staged::value::language::OBJECT_PLAI
 pub(crate) const DECLARED_CHECKED: u16 = NUMBER | BOOLEAN | NULL | UNDEFINED | OBJECT | FUNCTION | STRING | ARRAY | OBJECT_PLAIN;
 
 /// The members of `DECLARED_CHECKED` the u-jit's entry conformance (`lane_region.rs`, `conform_language`)
-/// tests exactly: the immediates, the direct object and function families, and a string. A Number is
-/// not in it: the u-jit proves a Number set through its own exact Number path, not a tag test.
-pub(crate) const LANE_TESTED: u16 = BOOLEAN | NULL | UNDEFINED | OBJECT | FUNCTION | STRING;
+/// tests exactly: the immediates, the direct object, array, plain and function families, and a string. A
+/// Number is not in it: the u-jit proves a Number set through its own exact Number path, not a tag test.
+pub(crate) const LANE_TESTED: u16 = BOOLEAN | NULL | UNDEFINED | OBJECT | FUNCTION | STRING | ARRAY | OBJECT_PLAIN;
 
 /// The members of `DECLARED_CHECKED` the b-jit's entry test decides with a tag (`Heap::Declared`,
-/// `staged::value::tag_languages`): a Number, the immediates, the direct object, array, plain and
-/// function families. A String is not in it, for the reason `STRING` gives.
-pub(crate) const BASE_TESTED: u16 = NUMBER | BOOLEAN | NULL | UNDEFINED | OBJECT | FUNCTION | ARRAY | OBJECT_PLAIN;
+/// `staged::value::tag_languages`): a Number, the immediates, the direct object, array, plain, function
+/// and string families.
+pub(crate) const BASE_TESTED: u16 = NUMBER | BOOLEAN | NULL | UNDEFINED | OBJECT | FUNCTION | STRING | ARRAY | OBJECT_PLAIN;
+
+/// The entry check a declared parameter type gives: the one derivation of which parameters a function's
+/// entry checks and what each check is. Both tiers read it and map each kind to their own test, or to no
+/// test with an explicit arm (`scalar::lane_check`, `base_region::declared::DeclaredFact::of`). There is no
+/// Int32 kind: a declared type never names an int32, and the u-jit picks an int32 entry from what the body
+/// requires (`scalar::require_entry_types`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EntryCheck {
+    /// A Number: an int32 or a binary64 word.
+    Number,
+    /// A string: a direct string by its tag (both tiers); the u-jit takes any other by the VM's `typeof`.
+    String,
+    /// A direct array word.
+    Array,
+    /// A plain direct object word.
+    PlainObject,
+    /// Any other set of `DECLARED_CHECKED` members: one test of the set, which each tier admits by its mask.
+    Languages(u16),
+}
+
+impl EntryCheck {
+    /// The check the declared language set `declared` gives, or None where no tier's entry test decides
+    /// any of it (a BigInt, a Symbol, an open set, no set at all).
+    pub(crate) fn of(declared: u16) -> Option<Self> {
+        match declared {
+            0 => None,
+            NUMBER => Some(Self::Number),
+            STRING => Some(Self::String),
+            ARRAY => Some(Self::Array),
+            OBJECT_PLAIN => Some(Self::PlainObject),
+            bits if bits & !DECLARED_CHECKED == 0 => Some(Self::Languages(bits)),
+            _ => None,
+        }
+    }
+}
+
+/// Each declared parameter of `function` with its entry check, by parameter index
+/// (`Function::declared_parameters`). Derived from the declared bits on each use, never stored: a tier
+/// reads it once per lowering, and a parameter the unit writes is listed too (the tier drops it there).
+pub(crate) fn entry_checks(function: &Function) -> impl Iterator<Item = (usize, EntryCheck)> + '_ {
+    function.declared_parameters().iter().enumerate()
+        .filter_map(|(index, declared)| Some((index, EntryCheck::of(*declared)?)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::typed_ir::ANY_LANGUAGES;
+
+    #[test]
+    fn each_declared_set_gets_one_check_kind() {
+        assert_eq!(EntryCheck::of(NUMBER), Some(EntryCheck::Number));
+        assert_eq!(EntryCheck::of(STRING), Some(EntryCheck::String));
+        assert_eq!(EntryCheck::of(ARRAY), Some(EntryCheck::Array));
+        assert_eq!(EntryCheck::of(OBJECT_PLAIN), Some(EntryCheck::PlainObject));
+        assert_eq!(EntryCheck::of(STRING | UNDEFINED), Some(EntryCheck::Languages(STRING | UNDEFINED)));
+        assert_eq!(EntryCheck::of(0), None);
+        assert_eq!(EntryCheck::of(ANY_LANGUAGES), None);
+    }
+}

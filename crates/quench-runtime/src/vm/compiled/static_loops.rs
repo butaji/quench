@@ -4,7 +4,7 @@
 
 use super::{facts, lane_unit::Unit};
 use crate::{Value, bytecode::{ControlFlowLayout, Operand, OperandKind, ResidualProgram, WideInstruction}};
-use crate::staged::{emit, DecodeContext, NumberOperation, Operation};
+use crate::staged::Operation;
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberRelation, PartialOrderStage};
 
 /// Small functions keep transient register facts on the compiler's stack.

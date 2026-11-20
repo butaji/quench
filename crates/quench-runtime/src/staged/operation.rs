@@ -302,6 +302,125 @@ pub(crate) enum Operation<W, P> {
     /// runs on the activation's registers, binding `this` where `binds_this` (`prologue::PrologueFrame::body_entry`).
     BodyEntry { function: u32, binds_this: bool },
 }
+
+/// Each `Operation` variant as a number, for the dispatchers' compile-time choice of arm (`step_of` and the other
+/// `*_of` steps): a caller that knows its variant passes it, and every other arm is dropped before code generation
+/// (an `if const` test); `ANY` runs every arm, as the interpreter does.
+pub(crate) mod kind {
+    pub(crate) const ANY: u16 = 0;
+    pub(crate) const MOVE: u16 = 1;
+    pub(crate) const LOAD_CONST: u16 = 2;
+    pub(crate) const LOAD_LOCAL_PLAIN: u16 = 3;
+    pub(crate) const STORE_LOCAL_PLAIN: u16 = 4;
+    pub(crate) const LOAD_LOCAL_CHECKED: u16 = 5;
+    pub(crate) const STORE_LOCAL_CHECKED: u16 = 6;
+    pub(crate) const INITIALIZE_LOCAL: u16 = 7;
+    pub(crate) const JUMP: u16 = 8;
+    pub(crate) const JUMP_IF: u16 = 9;
+    pub(crate) const LOAD_THIS: u16 = 10;
+    pub(crate) const LOAD_CALLEE: u16 = 11;
+    pub(crate) const NUMBER: u16 = 12;
+    pub(crate) const REQUIRE_OBJECT_COERCIBLE: u16 = 13;
+    pub(crate) const REQUIRE_ITERATOR_RESULT: u16 = 14;
+    pub(crate) const LOGICAL_NOT: u16 = 15;
+    pub(crate) const TYPEOF_INDEX: u16 = 16;
+    pub(crate) const TYPEOF_TEST: u16 = 17;
+    pub(crate) const TYPEOF_STRING: u16 = 18;
+    pub(crate) const INDEX_WRITE: u16 = 19;
+    pub(crate) const ADD_SITE: u16 = 20;
+    pub(crate) const NAMING_SITE: u16 = 21;
+    pub(crate) const INSTANCE_OF: u16 = 22;
+    pub(crate) const DIRECT_ARRAY: u16 = 23;
+    pub(crate) const ARRAY_LENGTH: u16 = 24;
+    pub(crate) const TYPED_LENGTH: u16 = 25;
+    pub(crate) const ARRAY_APPEND: u16 = 26;
+    pub(crate) const ALLOCATE: u16 = 27;
+    pub(crate) const SUPER_CONST_ARRAY_OBJECT2: u16 = 28;
+    pub(crate) const DEFINE_ELEMENT: u16 = 29;
+    pub(crate) const SAFEPOINT: u16 = 30;
+    pub(crate) const GUARD_IDENTITY: u16 = 31;
+    pub(crate) const GUARD_LIVE: u16 = 32;
+    pub(crate) const GUARD_REALM: u16 = 33;
+    pub(crate) const GUARD_DECLARED: u16 = 34;
+    pub(crate) const GUARD_PROTOTYPE: u16 = 35;
+    pub(crate) const GUARD_SHAPE: u16 = 36;
+    pub(crate) const GUARD_STORES: u16 = 37;
+    pub(crate) const BACK_EDGE: u16 = 38;
+    pub(crate) const INDEX_SET_HELPER: u16 = 39;
+    pub(crate) const LOAD_NAME: u16 = 40;
+    pub(crate) const VOID: u16 = 41;
+    pub(crate) const UNARY: u16 = 42;
+    pub(crate) const PROPERTY_KEY: u16 = 43;
+    pub(crate) const EQUALITY: u16 = 44;
+    pub(crate) const BINARY: u16 = 45;
+    pub(crate) const LOAD_ENV_LOCAL: u16 = 46;
+    pub(crate) const STORE_ENV_LOCAL: u16 = 47;
+    pub(crate) const ARGUMENTS_LENGTH: u16 = 48;
+    pub(crate) const ARGUMENT_GET: u16 = 49;
+    pub(crate) const CLONE_ENV: u16 = 50;
+    pub(crate) const GLOBAL_TYPEOF: u16 = 51;
+    pub(crate) const SET_FUNCTION_NAME: u16 = 52;
+    pub(crate) const GLOBAL_WRITE: u16 = 53;
+    pub(crate) const GLOBAL_LEXICAL_LOAD: u16 = 54;
+    pub(crate) const GLOBAL_LEXICAL_STORE: u16 = 55;
+    pub(crate) const PROTOCOL: u16 = 56;
+    pub(crate) const FOR_IN_NEXT: u16 = 57;
+    pub(crate) const ENUMERATED_GET: u16 = 58;
+    pub(crate) const FIELD_STORE_MISS: u16 = 59;
+    pub(crate) const ITERATOR_CLEANUP_PUSH: u16 = 60;
+    pub(crate) const ITERATOR_CLEANUP_POP: u16 = 61;
+    pub(crate) const STRING_CASE_INDEX: u16 = 62;
+    pub(crate) const SUSPEND: u16 = 63;
+    pub(crate) const NOP: u16 = 64;
+    pub(crate) const GET_FIELD: u16 = 65;
+    pub(crate) const SET_FIELD: u16 = 66;
+    pub(crate) const STORE_FIELD: u16 = 67;
+    pub(crate) const FIELD_GET_HOST: u16 = 68;
+    pub(crate) const FIELD_ADD: u16 = 69;
+    pub(crate) const DELETE: u16 = 70;
+    pub(crate) const INDEX_GET_HOST: u16 = 71;
+    pub(crate) const CALL: u16 = 72;
+    pub(crate) const SPREAD_CALL: u16 = 73;
+    pub(crate) const SUPER_CALL: u16 = 74;
+    pub(crate) const RETURN: u16 = 75;
+    pub(crate) const THROW: u16 = 76;
+    pub(crate) const ELEMENT_READ: u16 = 77;
+    pub(crate) const ELEMENT_READ_OPERAND: u16 = 78;
+    pub(crate) const INC_DEC_LOCAL: u16 = 79;
+    pub(crate) const ELEMENT_WRITE: u16 = 80;
+    pub(crate) const LOAD_CAPTURE: u16 = 81;
+    pub(crate) const STORE_CAPTURE: u16 = 82;
+    pub(crate) const COMPARE_JUMP: u16 = 83;
+    pub(crate) const WASM_FLOAT: u16 = 84;
+    pub(crate) const WASM_INT: u16 = 85;
+    pub(crate) const WASM_JUMP: u16 = 86;
+    pub(crate) const BRANCH_TABLE: u16 = 87;
+    pub(crate) const WASM_STATE: u16 = 88;
+    pub(crate) const WASM_ACCESS: u16 = 89;
+    pub(crate) const WASM_VECTOR: u16 = 90;
+    pub(crate) const PROLOGUE: u16 = 91;
+    pub(crate) const BODY_ENTRY: u16 = 92;
+
+    /// Whether a dispatcher instantiated for `kind` runs an arm of `variants`.
+    pub(crate) const fn admits(kind: u16, variants: &[u16]) -> bool {
+        if kind == ANY {
+            return true;
+        }
+        let mut at = 0;
+        while at < variants.len() {
+            if variants[at] == kind {
+                return true;
+            }
+            at += 1;
+        }
+        false
+    }
+
+    /// Whether a dispatcher instantiated for `kind` runs a catch-all arm after arms for `variants`.
+    pub(crate) const fn outside(kind: u16, variants: &[u16]) -> bool {
+        kind == ANY || !admits(kind, variants)
+    }
+}
 /// Decoding reads instructions and the opcode catalog, which the stencil build (`quench-bjit`) does
 /// not have: a stencil row builds its operation from its holes instead.
 #[cfg(not(stencil_build))]

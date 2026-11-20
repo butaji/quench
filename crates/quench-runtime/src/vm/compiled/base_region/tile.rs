@@ -129,7 +129,7 @@ fn fuse(pc: u32, first: &Planned, second: &Planned, fed: Operand, supernode: &Su
     let stencil = numeric::supernode_stencil([head, tail])?;
     let holes = joined(first, second, exchanged, supernodes::roles(&head));
     let leaves = !first.exits.is_empty() || !second.exits.is_empty();
-    Some(Planned { stencil, node: None, holes, branch: second.branch, exits: if leaves { vec![Exit::Spilling(pc)] } else { Vec::new() }, pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false })
+    Some(Planned { stencil, node: None, holes, branch: second.branch, exits: if leaves { vec![Exit::Spilling(pc)] } else { Vec::new() }, pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false, symbolic: NO_SYMBOLS })
 }
 
 /// Whether the `len` rows from `at` are consecutive instructions of the caller: the interpreter

@@ -1,9 +1,9 @@
 use super::*;
+use crate::staged::string_text;
 
 mod in_place;
 mod whitespace;
 pub(super) use whitespace::is_ecma_whitespace_character;
-use whitespace::is_ecma_whitespace;
 
 /// The longest `repeat` result made by one copy of ASCII text (`Native::StringRepeat`).
 const REPEAT_COPY_MAX_UNITS: usize = 4096;
@@ -249,14 +249,14 @@ impl<H: Host> Vm<H> {
                 let length = text.units().len() as i64;
                 let start = self.argument_integer(p, args, 0, 0)?;
                 let end = self.argument_integer(p, args, 1, length)?;
-                self.string_substring(&text, in_place::substring_range(native, length, start, end))
+                self.string_substring(&text, crate::staged::string_search::cut(native, length, start, end))
             }
             Native::StringSubstr => {
                 let text = self.string_receiver_text(this)?;
                 let length = text.units().len() as i64;
                 let start = self.argument_integer(p, args, 0, 0)?;
-                let count = self.argument_integer(p, args, 1, in_place::SUBSTR_REST)?;
-                self.string_substring(&text, in_place::substr_range(length, start, count))
+                let count = self.argument_integer(p, args, 1, crate::staged::string_search::SUBSTR_REST)?;
+                self.string_substring(&text, crate::staged::string_search::cut(Native::StringSubstr, length, start, count))
             }
             Native::StringIndexOf | Native::StringLastIndexOf | Native::StringIncludes | Native::StringStartsWith
             | Native::StringEndsWith => self.string_search_general(p, native, this, args),
@@ -269,24 +269,15 @@ impl<H: Host> Vm<H> {
                 let Some(receiver) = self.heap.string(this).cloned() else {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
-                let units = receiver.units();
-                let start = if native == Native::StringTrimEnd {
-                    0
-                } else {
-                    units
-                        .iter()
-                        .position(|unit| !is_ecma_whitespace(unit))
-                        .unwrap_or(units.len())
+                let from_start = native != Native::StringTrimEnd;
+                let from_end = native != Native::StringTrimStart;
+                let range = match receiver.units() {
+                    super::wtf16::Units::Ascii(units) | super::wtf16::Units::Latin1(units) => {
+                        string_text::trim_range(units, from_start, from_end)
+                    }
+                    super::wtf16::Units::Wide(units) => string_text::trim_range(units, from_start, from_end),
                 };
-                let end = if native == Native::StringTrimStart {
-                    units.len()
-                } else {
-                    units
-                        .iter()
-                        .rposition(|unit| !is_ecma_whitespace(unit))
-                        .map_or(start, |i| i + 1)
-                };
-                self.string_substring(&receiver, start..end)
+                self.string_substring(&receiver, range)
             }
             Native::StringMatch | Native::StringSearch => {
                 self.string_match_or_search_native(p, native, this, args)
@@ -337,7 +328,7 @@ impl<H: Host> Vm<H> {
                     && let Some(super::wtf16::Units::Ascii(bytes)) = receiver.existing_units()
                 {
                     let mut text = smallvec::SmallVec::<[u8; REPEAT_COPY_MAX_UNITS]>::from_elem(0, size);
-                    super::wtf16::repeat_ascii_into(&mut text, bytes);
+                    string_text::repeat_into(&mut text, bytes);
                     return Ok(self.heap.alloc_ascii_run(&text));
                 }
                 Ok(self.heap.alloc_string(receiver.repeat(count)))
@@ -353,45 +344,26 @@ impl<H: Host> Vm<H> {
                     return Ok(this);
                 }
                 let target = target.trunc().min(64.0 * 1024.0 * 1024.0) as usize;
-                if receiver.len() >= target {
+                let Some(length) = string_text::pad_length(receiver.len(), target) else {
                     return Ok(this);
-                }
+                };
                 let fill = match args.get(1).copied() {
-                    None | Some(Value::UNDEFINED) => super::wtf16::JsString::from_str(" "),
+                    None | Some(Value::UNDEFINED) => super::wtf16::JsString::from_ascii_bytes(string_text::PAD_FILL),
                     Some(value) => self.coerce_js_string(p, value)?,
                 };
                 let fill_units = fill.units();
                 if fill_units.is_empty() {
                     return Ok(this);
                 }
+                let at_end = native == Native::StringPadEnd;
                 // ASCII text and fill: the bytes written once, in order, into the result.
-                if let (super::wtf16::Units::Ascii(text), super::wtf16::Units::Ascii(fill)) = (receiver.units(), fill_units) {
-                    let mut bytes = smallvec::SmallVec::<[u8; 32]>::with_capacity(target);
-                    let padding = fill.iter().copied().cycle().take(target - text.len());
-                    if native == Native::StringPadEnd {
-                        bytes.extend_from_slice(text);
-                        bytes.extend(padding);
-                    } else {
-                        bytes.extend(padding);
-                        bytes.extend_from_slice(text);
-                    }
+                if let (super::wtf16::Units::Ascii(text), super::wtf16::Units::Ascii(filler)) = (receiver.units(), fill_units) {
+                    let mut bytes = smallvec::SmallVec::<[u8; 32]>::from_elem(0, length);
+                    string_text::pad_into(&mut bytes, text, filler, at_end);
                     return Ok(self.heap.alloc_ascii_run(&bytes));
                 }
-                let receiver_units = receiver.units().to_vec();
-                let fill_len = target - receiver_units.len();
-                let mut padding = Vec::with_capacity(fill_len);
-                while padding.len() < fill_len {
-                    let remaining = fill_len - padding.len();
-                    padding.extend(fill_units.iter().take(remaining));
-                }
-                let mut units = Vec::with_capacity(target);
-                if native == Native::StringPadEnd {
-                    units.extend(receiver_units);
-                    units.extend(padding);
-                } else {
-                    units.extend(padding);
-                    units.extend(receiver_units);
-                }
+                let mut units = vec![0u16; length];
+                string_text::pad_into(&mut units, &receiver.units().to_vec(), &fill_units.to_vec(), at_end);
                 self.string_from_units(&units)
             }
             Native::EncodeUri | Native::EncodeUriComponent => {
@@ -426,7 +398,7 @@ impl<H: Host> Vm<H> {
                 }
                 let mut units = Vec::with_capacity(args.len());
                 for value in args {
-                    units.push(Self::uint16_from_value(self.to_number(p, *value)?));
+                    units.push(crate::staged::strings::from_char_code_unit(self.to_number(p, *value)?));
                 }
                 self.string_from_units(&units)
             }
@@ -591,7 +563,7 @@ impl<H: Host> Vm<H> {
     /// The general body of `indexOf`, `lastIndexOf`, `includes`, `startsWith` and `endsWith`: the
     /// receiver's text, the RegExp check of `includes`, `startsWith` and `endsWith`, the search's
     /// ToString and the position's ToNumber run in that order, each possibly running guest code.
-    /// The search itself is `in_place::search_result` from the clamped position, as the in-place
+    /// The search itself is `staged::string_search::search` from the clamped position, as the in-place
     /// body makes it.
     fn string_search_general(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
         let Some(receiver) = self.heap.string(this).cloned() else {
@@ -606,10 +578,10 @@ impl<H: Host> Vm<H> {
         let length = receiver.units().len();
         let number = match args.get(1).copied() {
             Some(value) if !value.is_undefined() => self.to_number(p, value)?,
-            _ => in_place::search_default(native, length),
+            _ => crate::staged::string_search::search_default(native, length),
         };
-        let position = in_place::clamped_position(native, number, length);
-        Ok(in_place::search_result(native, receiver.units(), search.units(), position))
+        let position = crate::staged::string_search::clamped_position(native, number, length);
+        Ok(crate::staged::string_search::search(native, receiver.units(), search.units(), position))
     }
 
     /// `String.fromCharCode` of Numbers, whose ToNumber runs no guest code; `None` when any
@@ -618,7 +590,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn from_char_code_numbers(&mut self, args: &[Value]) -> Option<Value> {
         // One code unit, as `fromCharCode(byte)` in a decode loop: its string with no list.
         if let [value] = args {
-            let unit = Self::uint16_from_value(value.as_number()?);
+            let unit = crate::staged::strings::from_char_code_unit(value.as_number()?);
             if let Some(value) = self.heap.latin1_unit_string(unit) {
                 return Some(value);
             }
@@ -626,7 +598,7 @@ impl<H: Host> Vm<H> {
         }
         let units = args
             .iter()
-            .map(|value| value.as_number().map(Self::uint16_from_value))
+            .map(|value| value.as_number().map(crate::staged::strings::from_char_code_unit))
             .collect::<Option<smallvec::SmallVec<[u16; 32]>>>()?;
         self.string_from_units(&units).ok()
     }

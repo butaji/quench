@@ -1,3 +1,6 @@
+// jetstream-row: UniPoker
+// jetstream-files: RexBench/UniPoker/poker.js RexBench/UniPoker/expected.js RexBench/UniPoker/benchmark.js
+// iterations: 120
 /* C analogue of JetStream's RexBench/UniPoker: four players are dealt 2000 five-card hands
  * per iteration from a deck shuffled with JetStream's deterministic Math.random (reset
  * before each iteration). Cards are Unicode playing-card code points; a hand is scored by

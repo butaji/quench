@@ -5,7 +5,6 @@
 #[derive(Clone, Debug)]
 pub(crate) struct DenseMap<V> {
     slots: Vec<Option<V>>,
-    #[cfg(feature = "aot")]
     len: usize,
 }
 
@@ -13,7 +12,6 @@ impl<V> Default for DenseMap<V> {
     fn default() -> Self {
         Self {
             slots: Vec::new(),
-            #[cfg(feature = "aot")]
             len: 0,
         }
     }
@@ -25,7 +23,6 @@ impl<V> DenseMap<V> {
     }
 }
 
-#[cfg(feature = "aot")]
 impl<V> DenseMap<V> {
     pub(crate) fn len(&self) -> usize {
         self.len

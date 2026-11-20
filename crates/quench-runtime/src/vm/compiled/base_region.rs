@@ -13,7 +13,7 @@
 //! requested so the interpreter's safepoint runs, and an entry guard that finds a register that is
 //! no Number returns `LaneExit::Entry`.
 
-use super::lane_unit::{Frame as InlinedCall, Origin};
+use super::lane_unit::{InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
 use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::code_dependencies::InstanceofFact;
@@ -67,7 +67,8 @@ use decode::*;
 use entry_facts::*;
 use globals::*;
 use link::*;
-pub(in crate::vm::compiled) use link::{row_entries, rows_entry_offset};
+pub(in crate::vm::compiled) use link::row_entries;
+pub(in crate::vm) use link::SymbolSite;
 use plan::*;
 use repr::*;
 pub(in crate::vm) use resume::ResumeTable;

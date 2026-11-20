@@ -27,10 +27,10 @@ pub(in crate::vm) struct LaneSites {
 }
 
 /// The source pc of the frame an activation's caller becomes, paused at the call of `above`
-/// (`Frame::caller_pc`): `resume_caller_frame` resumes it at `caller_resume`'s pc, after the call
+/// (`ActivationView::caller_pc`): `resume_caller_frame` resumes it at `caller_resume`'s pc, after the call
 /// record, or at the `yield*` itself for a delegate step, and a resumed frame's source pc is
 /// the one before (`Frame::source_instruction_pc`).
-fn paused_at(above: &Frame) -> Option<usize> {
+fn paused_at(above: &ActivationView) -> Option<usize> {
     let call_pc = above.caller_pc()?;
     Some(above.record().caller_resume(call_pc).1.saturating_sub(1))
 }
@@ -55,8 +55,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         self.link_natives(cx);
-        // Innermost first; each frame a copy (`Frame`), read where it is.
-        let walked: Vec<Frame> = self.lane_stack.frames_innermost().collect();
+        // Innermost first; each frame a copy (`ActivationView`), read where it is.
+        let walked: Vec<ActivationView> = self.lane_stack.frames_innermost().collect();
         if walked.iter().any(|frame| frame.script().is_none()) {
             return None;
         }
@@ -89,7 +89,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         root: LaneRoot,
         program: ProgramId,
-        activation: &Frame,
+        activation: &ActivationView,
         pc: usize,
         sites: &mut Vec<FrameSite>,
     ) -> Option<()> {

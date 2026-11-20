@@ -1,6 +1,7 @@
 #![deny(warnings)]
-// v2-merged carries half-wired code from merges; its lints stay warnings until the merge owners finish it.
-#![allow(unused, dead_code, unreachable_patterns, dangerous_implicit_autorefs, private_interfaces, function_casts_as_integer)]
+// The v2-merged sync left items both sides added in different places, one copy unused, and AOT items
+// named in wider interfaces than their types: allowed until the merge's dead copies are removed.
+#![allow(dead_code, private_interfaces)]
 #![feature(rust_preserve_none_cc)]
 // Lane handlers dispatch their successor with `become`, so every dispatch is a sibling jump
 // whatever the handler body keeps on its stack (`vm::dispatch_fast`).
@@ -156,24 +157,21 @@ pub use vm::{
     NativeJsOperands, NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
     native_program::{NativeJsFunctionEntry, NativeJsProgram, NativeJsPublicationCounts, NativeProgramResolver},
 };
-#[cfg(feature = "aot")]
 pub use vm::{
-    native_graph::{NativeJsModule, NativeJsBackend, NativeJsCodegenOptions, lower_native_js_module, lower_native_js_module_with_options},
+    IsaBaseline, NativeTarget,
     native_object::{
-        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeData, NativeFunction, NativeFunctionAddress,
-        emit_native_module, emit_native_object,
+        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeFunction, NativeFunctionAddress,
+        NativeJsModule, NativeReloc, emit_native_module, emit_native_module_for, emit_native_object, lower_native_js_module,
+        lower_native_js_module_for,
     },
 };
 
-#[cfg(feature = "aot")]
 pub use compile::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL, GLOBAL_SCRIPT_GOAL, GLOBAL_SCRIPT_SOURCE_NAME};
 
 /// Ordinary builds and producers support dynamic compilation and execution.
 /// Execution-only native support requires linked code and archived records.
-pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(any(
-    not(feature = "native-execution"), feature = "jit", feature = "aot"
-));
+pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = true;
 
 /// Whether this build requires linked native code and archived program facts.
 pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;
@@ -185,5 +183,4 @@ mod native_image;
 #[cfg(feature = "native-execution")]
 pub use native_image::NativeImageSupport;
 
-#[cfg(feature = "aot")]
 pub mod native_link;

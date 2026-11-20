@@ -17,7 +17,7 @@ mod tests {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
         let (get, add) = (find("get"), find("add"));
         let (get_body, add_body) = (program.function(get), program.function(add));
-        let file = AheadImages::compile(&program).to_bytes();
+        let file = AheadImages::compile(&program).unwrap().to_bytes();
         vm.load_ahead_images(AheadImages::from_bytes(&file).unwrap());
         let sum = vm.install_ahead_body(&program, add as u32, None, &[]).expect("an ahead body for add");
         let sum = sum.lease().expect("published");
@@ -68,7 +68,7 @@ mod tests {
             for(let i=0;i<3000;i=i+1){total=total+mix(10,0.5)+read(o);}\n\
             print(total);print(mix(7,3));print(read({x:'a',y:1}));print(read({y:4,x:6}));";
         let program = crate::Engine::specialize(source, "ahead-run.js").unwrap();
-        let images = AheadImages::compile(&program);
+        let images = AheadImages::compile(&program).unwrap();
         assert!(!images.is_empty(), "the numeric function has an ahead image");
         let expected = output_with(source, None);
         assert_eq!(expected.len(), 4);
@@ -79,7 +79,7 @@ mod tests {
     fn ahead_images_serve_only_the_program_they_were_compiled_from() {
         let program = crate::Engine::specialize("function add(a,b){return a+b;}", "ahead-a.js").unwrap();
         let other = crate::Engine::specialize("function add(a,b){return a-b;}", "ahead-b.js").unwrap();
-        let file = AheadImages::compile(&program).to_bytes();
+        let file = AheadImages::compile(&program).unwrap().to_bytes();
         for (served, expected) in [(&program, true), (&other, false)] {
             let mut vm = Vm::new(TestHost::default());
             vm.load_ahead_images(AheadImages::from_bytes(&file).unwrap());
@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn images_of_another_build_are_rejected() {
         let program = crate::Engine::specialize("function add(a,b){return a+b;}", "ahead-a.js").unwrap();
-        let mut file = AheadImages::compile(&program).to_bytes();
+        let mut file = AheadImages::compile(&program).unwrap().to_bytes();
         assert!(AheadImages::from_bytes(&file).is_ok());
         file[8] ^= 1;
         assert!(AheadImages::from_bytes(&file).is_err());
@@ -103,7 +103,7 @@ mod tests {
     fn an_ahead_body_resolves_the_atoms_it_names_in_the_loading_vm() {
         let source = "globalThis.o = {}; function put(p){p.value = 6; return p.value;}";
         let program = crate::Engine::specialize(source, "ahead-atoms.js").unwrap();
-        let images = AheadImages::compile(&program);
+        let images = AheadImages::compile(&program).unwrap();
         let file = images.to_bytes();
         let mut vm = Vm::new(TestHost::default());
         vm.execute(&program).unwrap();

@@ -8,6 +8,8 @@
 //! `build.rs` compiles this file once per shard, each appending
 //! its own slice of the generated instances (one row per kind, places and speculation); the
 //! target's fixed rows (`entry*.rs`) belong to the shard built with `--cfg fixed_rows`.
+//! A shard of generated rows also names its family (`--cfg stencil_family = "js"` or `"wasm"`), and only that
+//! family's modules are compiled, so its sources (and its cache key in `build.rs`) are its family's alone.
 #![no_std]
 #![feature(explicit_tail_calls, rust_preserve_none_cc, core_float_math, stmt_expr_attributes)]
 #![allow(incomplete_features, non_upper_case_globals, unused_imports)]
@@ -38,26 +40,44 @@ mod entry;
 #[path = "entry_a64.rs"]
 mod entry;
 mod facade;
+#[cfg(not(stencil_family = "wasm"))]
 mod heap_rows;
+#[cfg(not(stencil_family = "wasm"))]
 mod ic_rows;
+#[cfg(not(stencil_family = "wasm"))]
 mod environment_rows;
+#[cfg(not(stencil_family = "wasm"))]
 mod key_rows;
+#[cfg(not(stencil_family = "wasm"))]
 mod name_rows;
+#[cfg(not(stencil_family = "wasm"))]
 mod site_rows;
 pub mod layout;
+#[cfg(not(stencil_family = "wasm"))]
 mod numeric;
+#[cfg(not(stencil_family = "wasm"))]
 mod places;
+#[cfg(not(stencil_family = "wasm"))]
 mod places_call;
+#[cfg(not(stencil_family = "wasm"))]
 mod places_guard;
+#[cfg(not(stencil_family = "wasm"))]
 mod places_property;
+#[cfg(not(stencil_family = "wasm"))]
 mod places_environment;
+#[cfg(not(stencil_family = "wasm"))]
 mod places_heap;
+#[cfg(not(stencil_family = "wasm"))]
 mod places_view;
+#[cfg(not(stencil_family = "wasm"))]
 mod places_names;
+#[cfg(not(stencil_family = "wasm"))]
 mod stage;
 mod staged;
+#[cfg(not(stencil_family = "wasm"))]
 #[macro_use]
 mod staged_rows;
+#[cfg(not(stencil_family = "wasm"))]
 mod supernode_rows;
 mod wasm;
 mod wasm_kinds;
@@ -67,12 +87,13 @@ mod wasm_entry;
 #[cfg(all(fixed_rows, target_arch = "aarch64", not(target_vendor = "apple")))]
 #[path = "wasm_entry_a64.rs"]
 mod wasm_entry;
+#[cfg(not(stencil_family = "js"))]
 mod wasm_rows;
 mod words;
-pub(crate) use facade::{Value, ValueType, bytecode, heap, operations, typed_ir, units, value, value_vec, vm};
+pub(crate) use facade::{Value, ValueType, bytecode, float_layout, heap, operations, typed_ir, units, value, value_vec, vm};
 pub(crate) use wasm::{WasmTrap, WasmType};
 
-use numeric::{Out, S};
+use words::{Out, S};
 
 /// The row ABI: (frame, context, p0..p3, f0..f7).
 pub(crate) type Row = unsafe extern "rust-preserve-none" fn(usize, usize, usize, usize, usize, usize, f64, f64, f64, f64, f64, f64, f64, f64) -> usize;

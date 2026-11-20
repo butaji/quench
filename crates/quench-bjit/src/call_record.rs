@@ -55,7 +55,7 @@ pub const REGISTER_BYTES: usize = core::mem::size_of::<u64>();
 /// The per-site record of a direct-call row, two cache lines, patched into the row as the one
 /// 64-bit value hole 0 (its address). Everything a site knows that does not fit the three value
 /// holes: the callee's identity and cell, the cell's validity word the call was planned under,
-/// the callee's header words (the caller's call record and base, the packed word), the callee's capture word, the global object a sloppy
+/// the callee's header words (the caller's call record and base, the packed word, the descriptor), the callee's capture word, the global object a sloppy
 /// callee binds an `undefined` or `null` receiver to, the caller
 /// registers the call names, and where each leading argument's word is (`argument_places`: a place
 /// code, `MEM` for the caller's window slot, else the pinned register holding the value). The plan
@@ -83,6 +83,10 @@ pub struct CallRecord {
     /// The arguments the caller proves Numbers (bit `k`: argument `k`). The row enters the callee's proven-arguments
     /// entry where every guard its cell names (`EntryCell::numbers`) is covered by these bits.
     pub proven_args: u64,
+    /// The callee's descriptor word: the address of its `DirectCallee`, which the native header's descriptor
+    /// (`native_table`) names. Written by the binding of an image's proven call (`BoundCalls::bind`) and read by the
+    /// AOT lane body's native call (`call_frames::push_native`); a JIT plan's record leaves it zero.
+    pub descriptor: u64,
 }
 
 /// Two cache lines: the record is aligned to one.

@@ -1,15 +1,14 @@
 use super::*;
-use crate::bytecode::index;
 use crate::staged::frame_arm::FrameArm;
 mod loop_stack;
 mod interpreter_frame;
-pub(super) use interpreter_frame::{InterpreterFrame, RowRun, runs_row};
+pub(super) use interpreter_frame::{InterpreterFrame, RowRun};
 mod materialized_stops;
 
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
 
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -154,6 +153,15 @@ impl Frame {
     }
 }
 
+/// Whether an activation's `this` is fixed on its frame (`Frame::fixed_this`): the activation binds its
+/// own receiver (`inherits_this` is false: an arrow or an eval reads a lexical `this` instead), and the
+/// receiver is initialized (a derived constructor's stays deleted until `super()`). Every frame's
+/// `fixed_this` is derived through this one predicate.
+#[inline(always)]
+pub(super) fn this_is_fixed(inherits_this: bool, this: Value) -> bool {
+    !inherits_this && !this.is_deleted()
+}
+
 /// An executing program set aside while an in-loop callee of another program runs.
 pub(super) struct SavedProgram {
     pub(super) id: ProgramId,
@@ -277,7 +285,7 @@ impl<H: Host> Vm<H> {
         }
         if !observable {
             // Nothing reads the implicit bindings, and the frame's own `this` is authoritative.
-            frame.fixed_this = !arrow && !frame.this.is_deleted();
+            frame.fixed_this = this_is_fixed(arrow, frame.this);
             return;
         }
         if !arrow && frame.function != super::ROOT_FUNCTION_ID {
@@ -295,7 +303,7 @@ impl<H: Host> Vm<H> {
             let atom = self.runtime_atoms.lexical_this;
             frame.dynamic_bindings.push((atom, frame.this));
         }
-        frame.fixed_this = !inherits_this && !frame.this.is_deleted();
+        frame.fixed_this = this_is_fixed(inherits_this, frame.this);
     }
 
     #[inline(never)]
@@ -777,7 +785,7 @@ impl<H: Host> Vm<H> {
     /// and of a detached frame (`detached_plain_frame`).
     fn place_plain_frame(&self, frame: &mut Frame, id: u32, (env, this): (Value, Value)) {
         frame.place(id, self.active_program, env, this, self.with_stack.len());
-        frame.fixed_this = !this.is_deleted();
+        frame.fixed_this = this_is_fixed(false, this);
     }
 
     /// A frame from the pool, or a fresh one; its fields are set by activation.
@@ -852,10 +860,9 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(frame, function.is_arrow, new_target, observable);
         // An arrow whose creator's `this` binding is initialized keeps that receiver: the
         // binding never changes once initialized (`Vm::lexical_this`).
-        frame.fixed_this |= captured_this.is_some_and(|this| !this.is_deleted());
+        frame.fixed_this |= captured_this.is_some_and(|this| this_is_fixed(false, this));
         frame.prepare_registers_for(function);
-        frame.bind_register_parameters(function, args);
-        frame.initialize_promoted_registers(function, args);
+        frame.place_parameters(function, args);
     }
 
     /// Replace the active frame for a terminal user call.  This is the
@@ -904,7 +911,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<(), JsError> {
         let fixed = usize::from(function.params) - usize::from(function.rest);
-        // Promoted parameters live in registers; `initialize_promoted_registers` clears their
+        // Promoted parameters live in registers; `place_parameters` clears their
         // local slots once the frame is set up, so every fixed parameter is copied here. Every
         // other local starts undefined.
         let passed = fixed.min(args.len());

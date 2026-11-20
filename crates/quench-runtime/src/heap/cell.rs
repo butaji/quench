@@ -8,7 +8,7 @@ use crate::value_vec::{
 use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use super::{WeakMapEntries, WeakSetEntries};
-use super::{ArrayElements, BufferBytes, Entries, PromiseCell, array_elements, array_proofs, dependencies, layouts, thin_slice};
+use super::{ArrayElements, BufferBytes, PromiseCell, array_elements, array_proofs, dependencies, layouts, thin_slice};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -36,7 +36,7 @@ mod object_payload_tests;
 mod object_state;
 mod object_storage;
 pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState};
-pub(crate) use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmTableElements};
+pub(crate) use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmGcRecord, WasmTableElements};
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow, for_each_typed_array};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub(crate) use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_layouts, subscribe_prototype_values, watch_prototype_values};

@@ -2,7 +2,9 @@
 //! definition every tier runs, and its step is the interpreter's own helper, which the host makes
 //! (`Vm::call_out` -> `Vm::literal_step`).
 use super::Protocol;
-use crate::bytecode::{Op, PropertyDefinitionMode, Register, WideInstruction};
+use crate::bytecode::{PropertyDefinitionMode, Register};
+#[cfg(not(stencil_build))]
+use crate::bytecode::{Op, WideInstruction};
 
 /// A literal, template, closure and object-construction step the host makes by the interpreter's own definition.
 ///
@@ -38,6 +40,7 @@ pub(crate) enum LiteralStep {
     Closure { function: u32 },
 }
 
+#[cfg(not(stencil_build))]
 /// The step `instruction` denotes among these opcodes, with the register it defines and its (at
 /// most two) operand registers, which `Vm::call_out` reads; `None` for any other opcode.
 #[inline(always)]

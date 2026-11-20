@@ -107,6 +107,8 @@ pub(crate) trait Stage {
     fn or(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     /// Bitwise and of two words.
     fn and(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
+    /// Logical shift right of `a` by `b`, where `b` is below 64.
+    fn shr(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     fn add_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn mul_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn and_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
@@ -120,6 +122,8 @@ pub(crate) trait Stage {
     fn ugt_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
     /// Whether `a` is below `b`, both unsigned and of one width.
     fn ult(&mut self, a: Self::Word, b: Self::Word) -> Self::Cond;
+    /// Whether the words `a` and `b` are equal, bit for bit.
+    fn eq(&mut self, a: Self::Word, b: Self::Word) -> Self::Cond;
     /// A 32-bit word zero-extended to the full word (the full word unchanged).
     fn uextend32(&mut self, a: Self::Word) -> Self::Word;
     fn sub(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
@@ -166,6 +170,12 @@ pub(crate) trait Stage {
     /// one the barrier logs for this value. The one place the store barrier's layout is read;
     /// a stage without that layout answers no, and the store leaves at its miss.
     fn store_gate(&mut self, space: StagedRecordSpace, record_id: Self::Word, value: Self::Word) -> Self::Cond;
+    /// Whether a store of a value the frame proved immediate needs no barrier log: such a store
+    /// skips `store_gate`, which is right unless old records keep reference counts, where
+    /// overwriting a reference with any value deletes an edge (`RecordSpace::store_logs`). The
+    /// interpreter reads the heap (`Heap::immediate_store_unlogged`), native code the counts bit
+    /// of the gate word (`STORE_WATCH_COUNTS`).
+    fn immediate_store_open(&mut self) -> Self::Cond;
     /// Whether the dependency named by `watch` (a per-site operand) still holds: the interpreter
     /// tests it, a specializer proves it once at publication and its code pays no check (the
     /// assumption registry retires the code when it breaks); a stage without a registry answers
@@ -197,6 +207,11 @@ pub(crate) trait Stage {
     /// The word `then` computes where `cond` holds, else `otherwise`'s.
     fn choose(&mut self, cond: Self::Cond, then: impl FnOnce(&mut Self) -> Self::Word,
         otherwise: impl FnOnce(&mut Self) -> Self::Word) -> Self::Word;
+    /// A do-while over `N` loop-carried words, from `init`: `body` runs on the state and returns whether the loop
+    /// goes on and the next state; the loop returns the state it last computed. The body is emitted once: a
+    /// specializer's loop is a block whose parameters are the state, the interpreter's a Rust loop.
+    fn loop_words<const N: usize>(&mut self, init: [Self::Word; N],
+        body: impl FnMut(&mut Self, [Self::Word; N]) -> (Self::Cond, [Self::Word; N])) -> [Self::Word; N];
     /// `choose` whose arms may leave: each runs only on its own path, and a `None` from the taken
     /// arm (a guard inside it that failed) leaves the whole. The interpreter takes one arm as a
     /// plain `if`; a specializer's guard inside an arm is a branch to its miss block, so the arm's

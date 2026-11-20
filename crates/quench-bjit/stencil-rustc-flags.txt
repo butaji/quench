@@ -21,3 +21,7 @@
 # A vectorized comparison loads its constants from a pool, which a row has none of (a hole is the only relocation).
 -C no-vectorize-slp
 -C no-vectorize-loops
+# A loop over a row's static data (an IC's ops) may unroll only in the late unroll pass, which no load
+# forwarding follows: its ops would stay loads from the stack and every arm, with its unsupported
+# operations, would stay in the row. One more scalar cleanup folds them to the row's one path.
+-C passes=sroa,gvn,sccp,instcombine,simplifycfg,adce

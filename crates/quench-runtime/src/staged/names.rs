@@ -95,6 +95,7 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
     })
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     #[cfg(not(stencil_build))]
     /// The name read `instruction` (`LoadName`, or a call's `LoadNameCall`) denotes under the
@@ -143,48 +144,65 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
 /// Run a name, environment or iteration `operation` on `frame`; `Unresolved` where the frame
 /// has neither the row's own reading nor a host for its callout.
 #[inline(always)]
-pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        Operation::LoadEnvLocal { destination, slot } => load_environment(stage, frame, destination, slot),
+        Operation::LoadEnvLocal { destination, slot } => if const { super::op_kind::admits(KIND, &[super::op_kind::LOAD_ENV_LOCAL]) } { load_environment(stage, frame, destination, slot) } else { unreachable!() },
         Operation::StoreEnvLocal { source, slot, result, initialize } =>
-            store_environment(stage, frame, (source, slot, initialize), result),
-        Operation::ArgumentsLength { destination, slot } => arguments_length(stage, frame, destination, slot),
-        Operation::ArgumentGet { destination, index, slot } => argument_get(stage, frame, destination, index, slot),
-        Operation::GlobalTypeof { destination, atom, site } => global_typeof(stage, frame, destination, (atom, site)),
-        Operation::SetFunctionName { function, name, site } => set_function_name(stage, frame, function, (name, site)),
+            if const { super::op_kind::admits(KIND, &[super::op_kind::STORE_ENV_LOCAL]) } { store_environment(stage, frame, (source, slot, initialize), result) } else { unreachable!() },
+        Operation::ArgumentsLength { destination, slot } => if const { super::op_kind::admits(KIND, &[super::op_kind::ARGUMENTS_LENGTH]) } { arguments_length(stage, frame, destination, slot) } else { unreachable!() },
+        Operation::ArgumentGet { destination, index, slot } => if const { super::op_kind::admits(KIND, &[super::op_kind::ARGUMENT_GET]) } { argument_get(stage, frame, destination, index, slot) } else { unreachable!() },
+        Operation::GlobalTypeof { destination, atom, site } => if const { super::op_kind::admits(KIND, &[super::op_kind::GLOBAL_TYPEOF]) } { global_typeof(stage, frame, destination, (atom, site)) } else { unreachable!() },
+        Operation::SetFunctionName { function, name, site } => if const { super::op_kind::admits(KIND, &[super::op_kind::SET_FUNCTION_NAME]) } { set_function_name(stage, frame, function, (name, site)) } else { unreachable!() },
         Operation::GlobalWrite { source, atom, site, initialize } =>
-            global_write(stage, frame, source, (atom, site, initialize)),
+            if const { super::op_kind::admits(KIND, &[super::op_kind::GLOBAL_WRITE]) } { global_write(stage, frame, source, (atom, site, initialize)) } else { unreachable!() },
         Operation::GlobalLexicalLoad { destination, declaration, site } =>
-            calling(stage, frame, CallOut::GlobalLexicalLoad { declaration, site }, Some(destination)),
+            if const { super::op_kind::admits(KIND, &[super::op_kind::GLOBAL_LEXICAL_LOAD]) } { calling(stage, frame, CallOut::GlobalLexicalLoad { declaration, site }, Some(destination)) } else { unreachable!() },
         Operation::GlobalLexicalStore { source, declaration, site, initialize } =>
-            calling(stage, frame, CallOut::GlobalLexicalStore { source, declaration, site, initialize }, None),
+            if const { super::op_kind::admits(KIND, &[super::op_kind::GLOBAL_LEXICAL_STORE]) } { calling(stage, frame, CallOut::GlobalLexicalStore { source, declaration, site, initialize }, None) } else { unreachable!() },
         Operation::LoadName { destination, atom, site, receiver, proof } =>
-            load_name(stage, frame, (destination, receiver), (atom, site), proof),
-        // A frame's in-place rest read answers the value; its runner defines the destination, as
-        // for every names row's value (`generated_row`).
-        Operation::Protocol { step: Protocol::RestView { get, fixed, .. }, destination: Some(_), operands }
-            if let Some((value, _)) = frame.rest_view(stage, get, fixed, operands[0]) => Step::Value(value),
+            if const { super::op_kind::admits(KIND, &[super::op_kind::LOAD_NAME]) } { load_name(stage, frame, (destination, receiver), (atom, site), proof) } else { unreachable!() },
+        // A frame's in-place rest read answers the value, which the row defines as every other
+        // names row defines its own (`row_writes_result` holds for `RestLength` and `RestGet`).
+        Operation::Protocol { step: Protocol::RestView { get, fixed, .. }, destination: Some(destination), operands }
+            if let Some((value, fact)) = frame.rest_view(stage, get, fixed, operands[0]) => if const { super::op_kind::admits(KIND, &[super::op_kind::PROTOCOL]) } {
+                frame.write(stage, destination, value, fact);
+                Step::Value(value)
+            } else { unreachable!() },
         Operation::Protocol { step, destination, operands } =>
-            calling(stage, frame, CallOut::Protocol { step, operands }, destination),
-        Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
-        Operation::EnumeratedGet { destination, state, base, key } => enumerated_get(stage, frame, destination, [state, base, key]),
-        Operation::CloneEnv { plan } => calling(stage, frame, CallOut::CloneEnv { plan }, None),
-        Operation::IteratorCleanupPush { iterator, done } => iterator_cleanup_push(stage, frame, iterator, done),
-        Operation::IteratorCleanupPop => iterator_cleanup_pop(stage, frame),
-        _ => delegated_step(stage, frame, operation),
+            if const { super::op_kind::admits(KIND, &[super::op_kind::PROTOCOL]) } { calling(stage, frame, CallOut::Protocol { step, operands }, destination) } else { unreachable!() },
+        Operation::ForInNext { destination, state } => if const { super::op_kind::admits(KIND, &[super::op_kind::FOR_IN_NEXT]) } { for_in_next(stage, frame, destination, state) } else { unreachable!() },
+        Operation::EnumeratedGet { destination, state, base, key } => if const { super::op_kind::admits(KIND, &[super::op_kind::ENUMERATED_GET]) } { enumerated_get(stage, frame, destination, [state, base, key]) } else { unreachable!() },
+        Operation::CloneEnv { plan } => if const { super::op_kind::admits(KIND, &[super::op_kind::CLONE_ENV]) } { calling(stage, frame, CallOut::CloneEnv { plan }, None) } else { unreachable!() },
+        Operation::IteratorCleanupPush { iterator, done } => if const { super::op_kind::admits(KIND, &[super::op_kind::ITERATOR_CLEANUP_PUSH]) } { iterator_cleanup_push(stage, frame, iterator, done) } else { unreachable!() },
+        Operation::IteratorCleanupPop => if const { super::op_kind::admits(KIND, &[super::op_kind::ITERATOR_CLEANUP_POP]) } { iterator_cleanup_pop(stage, frame) } else { unreachable!() },
+        _ => if const { super::op_kind::outside(KIND, &[super::op_kind::LOAD_ENV_LOCAL, super::op_kind::STORE_ENV_LOCAL, super::op_kind::ARGUMENTS_LENGTH, super::op_kind::ARGUMENT_GET, super::op_kind::GLOBAL_TYPEOF, super::op_kind::SET_FUNCTION_NAME, super::op_kind::GLOBAL_WRITE, super::op_kind::GLOBAL_LEXICAL_LOAD, super::op_kind::GLOBAL_LEXICAL_STORE, super::op_kind::LOAD_NAME, super::op_kind::PROTOCOL, super::op_kind::FOR_IN_NEXT, super::op_kind::ENUMERATED_GET, super::op_kind::CLONE_ENV, super::op_kind::ITERATOR_CLEANUP_PUSH, super::op_kind::ITERATOR_CLEANUP_POP]) } { delegated_step_of::<KIND, _, _>(stage, frame, operation) } else { unreachable!() },
     }
+}
+
+/// `step_of` for any operation.
+#[inline(always)]
+pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
 /// The spread, super and capture operations, which have modules of their own.
 #[inline(always)]
-fn delegated_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+fn delegated_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        Operation::SpreadCall { .. } | Operation::SuperCall { .. } => super::spread::step(stage, frame, operation),
-        Operation::LoadCapture { .. } | Operation::StoreCapture { .. } => super::captures::step(stage, frame, operation),
-        _ => Step::Unresolved,
+        Operation::SpreadCall { .. } | Operation::SuperCall { .. } => if const { super::op_kind::admits(KIND, &[super::op_kind::SPREAD_CALL, super::op_kind::SUPER_CALL]) } { super::spread::step_of::<KIND, _, _>(stage, frame, operation) } else { unreachable!() },
+        Operation::LoadCapture { .. } | Operation::StoreCapture { .. } => if const { super::op_kind::admits(KIND, &[super::op_kind::LOAD_CAPTURE, super::op_kind::STORE_CAPTURE]) } { super::captures::step_of::<KIND, _, _>(stage, frame, operation) } else { unreachable!() },
+        _ => if const { super::op_kind::outside(KIND, &[super::op_kind::SPREAD_CALL, super::op_kind::SUPER_CALL, super::op_kind::LOAD_CAPTURE, super::op_kind::STORE_CAPTURE]) } { Step::Unresolved } else { unreachable!() },
     }
+}
+
+/// `delegated_step_of` for any operation.
+#[inline(always)]
+fn delegated_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    delegated_step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
 
 /// `IteratorCleanupPush`: the frame's own cleanup entry, which defines no register; a frame with no

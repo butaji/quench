@@ -194,7 +194,6 @@ mod tests {
                 runtime.set_execution_mode(mode);
                 runtime.execute(&program).unwrap();
             }
-            #[cfg(feature = "aot")]
             {
                 let dynamic = (0..program.functions.len())
                     .any(|id| program.function(id).has_dynamic_scope_access());

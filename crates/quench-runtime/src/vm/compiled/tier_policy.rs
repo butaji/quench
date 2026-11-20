@@ -123,7 +123,7 @@ pub(in crate::vm) struct Loops {
     /// it runs (its own census replaces the guess in the learned cost per IR instruction).
     pub(in crate::vm) ir_per_bytecode: u64,
     /// The weight of the prior that a site's native entries repay themselves, in entries: the
-    /// site's measured runs outweigh it as they mount (`loop_model::repays`), and it stops
+    /// site's measured runs outweigh it as they mount (`loop_model::repaid_entries`), and it stops
     /// entering where its entries cost more than the iterations they ran save.
     pub(in crate::vm) prior_runs: u64,
     /// Runs that leave at one operation before the site compiles again with that operation's
@@ -690,7 +690,6 @@ pub(in crate::vm) const WASM_MODULE_WEIGHED_FUNCTIONS: usize = 64;
 // Native graph, regexp and JS region compile budgets (native_graph, regexp_native, js_compiled)
 // Bounds the working CFG, not the source function. Large unpartitioned native
 // graphs exhausted 14 GiB on a 50 KiB input; callers may choose any nonzero budget.
-#[cfg(feature = "aot")]
 pub(in crate::vm) const DEFAULT_REGION_INSTRUCTION_BUDGET: std::num::NonZeroUsize = std::num::NonZeroUsize::new(1024).unwrap();
 
 /// The largest native search, in bytes of machine code.
