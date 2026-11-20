@@ -53,7 +53,14 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    let first = args.next().ok_or(USAGE)?;
+    let mut first = args.next().ok_or(USAGE)?;
+    // A leading JIT mode flag (`--no-jit`, `--b-jit`, ...) selects the process's tiers, as quench-node's does.
+    if quench_runtime::JitMode::is_flag(&first) {
+        let mut chosen = None;
+        quench_runtime::JitMode::select(&mut chosen, &first)?;
+        if let Some(mode) = chosen { mode.set_process_mode(); }
+        first = args.next().ok_or(USAGE)?;
+    }
     let generic = first == "--generic";
     let source_arg = if generic { args.next() } else { Some(first) };
     let source = match source_arg.as_deref() {

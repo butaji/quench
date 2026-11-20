@@ -153,61 +153,61 @@ lane_handler! {
         // The head record's settings word, read before the links name their own records.
         let mode = i.mode;
         // Link `$k` at flag `$flag`; its double result is raw where `mode`'s raw mask has bit `$k`.
-        macro_rules! link_flag { ($L:ident, $k:literal, $flag:expr) => {{
-            let fields = LaneFields::<$L, { $flag }>(i);
-            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, ip, view) };
+        macro_rules! link_flag { ($L:ident, $k:literal, $flag:expr, $ip:ident, $i:ident) => {{
+            let fields = LaneFields::<$L, { $flag }>($i);
+            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, $ip, view) };
             let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, ip, i, view);
+            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
             let raw_result = mode & crate::staged::raw_bit($k) != 0;
             frame.raw_result = raw_result;
             match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<$L>::OPCODE) } {
-                        r.set(i.a, raw_word(raw_result, value));
+                        r.set($i.a, raw_word(raw_result, value));
                     }
                 }
-                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, ip, view),
+                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, $ip, view),
             }
         }}; }
-        macro_rules! value_link { ($L:ident, $k:literal) => {
+        macro_rules! value_link { ($L:ident, $k:literal, $ip:ident, $i:ident) => {
             if LaneFields::<$L>::FLAG_ROLE {
-                if i.imm() != 0 { link_flag!($L, $k, FLAG_SET) } else { link_flag!($L, $k, FLAG_CLEAR) }
+                if $i.imm() != 0 { link_flag!($L, $k, FLAG_SET, $ip, $i) } else { link_flag!($L, $k, FLAG_CLEAR, $ip, $i) }
             } else {
-                if const { FAMILY == crate::staged::FUSED_WINDOW } { link_flag!($L, $k, FLAG_WINDOW) } else { link_flag!($L, $k, FLAG_UNREAD) }
+                if const { FAMILY == crate::staged::FUSED_WINDOW } { link_flag!($L, $k, FLAG_WINDOW, $ip, $i) } else { link_flag!($L, $k, FLAG_UNREAD, $ip, $i) }
             }
         }; }
-        macro_rules! last_flag { ($L:ident, $flag:expr) => {{
-            let fields = LaneFields::<$L, { $flag }>(i);
-            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, ip, view) };
+        macro_rules! last_flag { ($L:ident, $flag:expr, $ip:ident, $i:ident) => {{
+            let fields = LaneFields::<$L, { $flag }>($i);
+            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, $ip, view) };
             let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, ip, i, view);
+            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, $ip, $i, view);
             // The last link's double result stays raw where the next record reads it (`CHAIN_RAW_OUT`, `MODE_RAW_OUT`).
             let raw_result = mode & crate::staged::MODE_RAW_OUT != 0;
             frame.raw_result = raw_result;
             match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<$L>::OPCODE) } {
-                        r.set(i.a, raw_word(raw_result, value));
+                        r.set($i.a, raw_word(raw_result, value));
                     }
                     if const { row_produces(LaneFields::<$L>::OPCODE) } {
                         // A raw result's NaN keeps its canonical form, as `LaneFrame::write` gives it (`raw_word`).
                         let acc = raw_word(raw_result, value);
-                        next!(cx, r, following(ip), Carried { acc: Slot::of(acc), ..view })
+                        next!(cx, r, following($ip), Carried { acc: Slot::of(acc), ..view })
                     }
-                    next!(cx, r, following(ip), view)
+                    next!(cx, r, following($ip), view)
                 }
-                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, ip, view),
+                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$L>::OPCODE) }, r, $ip, view),
             }
         }}; }
-        macro_rules! last_link { ($L:ident) => {{
-            let i = unsafe { &*ip };
-        let fields = LaneFields::<$L>(i);
+        macro_rules! last_link { ($L:ident, $ip:ident) => {{
+            let last = unsafe { &*$ip };
+            let fields = LaneFields::<$L>(last);
             if const { jumps_by_row(LaneFields::<$L>::OPCODE) } {
                 let decoded = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                     Operation::decode_names(crate::staged::Fields::wide(fields))
@@ -218,44 +218,44 @@ lane_handler! {
                 } else {
                     Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
                 };
-                let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, ip, view) };
+                let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, $ip, view) };
                 let mut stage = Concrete::new(std::ptr::null());
                 // A chain's last link is never a branch table, so its direction is the record's `MODE_BACKWARD`.
                 let backward = mode & crate::staged::MODE_BACKWARD != 0;
                 let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::script_in(cx, view) } else { view };
-                let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
+                let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, $ip, last, view);
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
-                    Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, super::super::take_jump::<H>(cx, r, ip, backward, carried, None)),
-                    Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, backward, carried, None)),
+                    Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, super::super::take_jump::<H>(cx, r, $ip, backward, carried, None)),
+                    Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump::<H>(cx, r, unsafe { $ip.add(1 + k as usize) }, backward, carried, None)),
                     Step::Control(LaneControl::Edge(Edge::Leave)) => unreachable!("a jump leaves no lane run"),
                     Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_) | LaneControl::Edge(Edge::Transfer)) => unreachable!("a jump transfers no control"),
-                    Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following(ip), carried),
+                    Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following($ip), carried),
                     Step::Unresolved => if backward {
-                        sibling!(const { jump_row_miss::<H, true>(LaneFields::<$L>::OPCODE) }, r, ip, view)
+                        sibling!(const { jump_row_miss::<H, true>(LaneFields::<$L>::OPCODE) }, r, $ip, view)
                     } else {
-                        sibling!(const { jump_row_miss::<H, false>(LaneFields::<$L>::OPCODE) }, r, ip, view)
+                        sibling!(const { jump_row_miss::<H, false>(LaneFields::<$L>::OPCODE) }, r, $ip, view)
                     },
                 }
             }
             if LaneFields::<$L>::FLAG_ROLE {
-                if i.imm() != 0 { last_flag!($L, FLAG_SET) } else { last_flag!($L, FLAG_CLEAR) }
+                if last.imm() != 0 { last_flag!($L, FLAG_SET, $ip, last) } else { last_flag!($L, FLAG_CLEAR, $ip, last) }
             } else {
-                if const { FAMILY == crate::staged::FUSED_WINDOW } { last_flag!($L, FLAG_WINDOW) } else { last_flag!($L, FLAG_UNREAD) }
+                if const { FAMILY == crate::staged::FUSED_WINDOW } { last_flag!($L, FLAG_WINDOW, $ip, last) } else { last_flag!($L, FLAG_UNREAD, $ip, last) }
             }
         }}; }
-        value_link!(L0, 0);
+        value_link!(L0, 0, ip, i);
         let ip = following(ip);
         // SAFETY: the next record of the running view (the chain's install checked its length).
         let i = unsafe { &*ip };
-        value_link!(L1, 1);
+        value_link!(L1, 1, ip, i);
         let ip = following(ip);
         if const { L3 == crate::staged::NO_LINK } {
-            last_link!(L2)
+            last_link!(L2, ip)
         } else {
             let i = unsafe { &*ip };
-            value_link!(L2, 2);
+            value_link!(L2, 2, ip, i);
             let ip = following(ip);
-            last_link!(L3)
+            last_link!(L3, ip)
         }
     }
 }
