@@ -1,0 +1,11 @@
+# AOT-image miscompiles reproduced without a benchmark (Apple M4, arm64). Same source
+# run by the interpreter, --u-jit, --b-jit and the compiled image.
+source	run	result
+sw.js (switch(typeof key) case "number" return 4; sum of t(i) for i<20000)	compiled image	80704 then 80964 (expected 80000: 176/241 extra iterations)
+sw.js	--u-jit	80000
+sw.js	--b-jit	80000
+sw.js	--no-jit	80000
+sw3.js (same call, per-case counts)	compiled image	20000 fours (correct)
+hash-map.js	compiled image	SIGBUS 138
+hash-map.js	--b-jit	SIGSEGV 139
+hash-map.js	--u-jit	JS error: switch(typeof key) fell to default for type=number key=6158
