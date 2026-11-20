@@ -128,7 +128,8 @@ pub(crate) fn linked(image: &AotImage, table: &LinkedTable) -> Result<LiveImage,
     // SAFETY: the table names the image's operand records, one per `image.operands`, alive for the
     // process, and its writable call records (`LinkedTable::read`).
     let (operands, calls) = unsafe { (std::slice::from_raw_parts(table.operands, image.operands.len()), BoundCalls::linked(image, table.calls)) };
-    let lanes = image.functions.iter().zip(table.entries).map(|(function, entry)| function.lane.as_ref().map(|_| *entry)).collect();
+    // The object places no lane body (`object::codes`): each is relinked from the image when a VM installs it.
+    let lanes = vec![None; count].into_boxed_slice();
     Ok(LiveImage { _code: None, invalidation: Invalidation::default(), operands: std::borrow::Cow::Borrowed(operands), calls,
         entries: table.entries.into(), bases: table.bases.into(), lanes })
 }
@@ -198,6 +199,8 @@ fn resolve<H: Host>(image: &AotImage, vm: &mut Vm<H>, places: &Places<'_>, names
         Symbol::CallRecord { .. } => places.calls.get(key as usize).map(|record| record.get().addr() as u64),
         Symbol::Atom(atom) => Some(u64::from(vm.intern_atom(image.atoms.get(atom as usize)?))),
         Symbol::Invalidation => Some(places.invalidation as u64),
+        Symbol::NarrowUpperWords => Some(crate::value::NarrowLayout::upper_words() as u64),
+        Symbol::Attention => Some(crate::execution_interrupt::attention_address()),
         Symbol::BasePc { function, pc } => base_pc(image, places.bases, function, pc),
         Symbol::HeapValue(_) | Symbol::Shape(_) => symbols::resolve_recipe(symbol, image, vm),
         Symbol::EntryCell(_) | Symbol::Descriptor(_) | Symbol::CaptureWords(_) | Symbol::ConstantPool(_) => None,

@@ -199,6 +199,64 @@ pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
 /// the lane in an activation of its own or ended the run.
 #[inline(always)]
 pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl FnOnce() -> u64) -> u64 {
+    let headers = unsafe { vm(cx) }.lane_stack.body_headers();
+    let status = in_innermost_frame_of(cx, helper);
+    if let Some(headers) = headers && status != LANE_CALL_LEFT && status != LANE_CALL_TERMINATED {
+        unsafe { vm(cx) }.lane_stack.restore_body_headers(headers);
+    }
+    status
+}
+
+/// The b-jit direct calls' plain headers on top of the frames (`BODY_FLAG`, `protocol::push_body_header`), which a
+/// helper's nested lane run spills into records when it binds the stack words (`Vm::stack_words_in_lane`).
+#[derive(Clone, Copy)]
+pub(super) struct BodyHeaders {
+    depth: usize,
+    registers: *mut Value,
+    program: ProgramId,
+    records: usize,
+}
+
+impl LaneStack {
+    /// The run of b-jit body headers making up every plain frame, where every plain frame is one and none is sealed.
+    #[inline(always)]
+    fn body_headers(&self) -> Option<BodyHeaders> {
+        let depth = self.plain.depth.get();
+        if depth == 0 || self.sealed.get() != 0 { return None; }
+        let mut window = Registers(self.plain.registers.get());
+        for _ in 0..depth {
+            let packed = header_packed(window);
+            if packed & crate::staged::frame::BODY_FLAG == 0 || packed & crate::staged::frame::NATIVE_FLAG != 0 { return None; }
+            // SAFETY: the header's caller registers word, written at its push.
+            window = window.plain_caller().1;
+        }
+        Some(BodyHeaders { depth, registers: self.plain.registers.get(), program: self.plain.program.get(), records: self.record_count() })
+    }
+
+    /// Makes the body headers `headers` plain frames again where a helper's nested run spilled them into the records
+    /// and left nothing above them: the direct call rows pop a header by restoring the plain depth they found
+    /// (`call_rows::pop`), so a header left a record would outlive its call, and the next helper of its caller would
+    /// run as the stale record's function (earley-boyer's `sc_reverse` under `--b-jit`). The spill leaves each
+    /// header's words in place under its window and gives these headers no side record.
+    #[inline(always)]
+    fn restore_body_headers(&mut self, headers: BodyHeaders) {
+        if self.plain.depth.get() != 0 || self.sealed.get() != 0 || self.record_count() != headers.records + headers.depth {
+            return;
+        }
+        // SAFETY: the reference ends here.
+        let innermost = unsafe { self.records_unspilled() }.last().map(|record| record.window);
+        if innermost != Some(headers.registers.addr()) { return; }
+        self.records_mut().truncate(headers.records);
+        self.plain.depth.set(headers.depth);
+        self.plain.registers.set(headers.registers);
+        self.plain.program.set(headers.program);
+        self.plain.bound.set(0);
+        self.frames_changed();
+    }
+}
+
+#[inline(always)]
+fn in_innermost_frame_of<H: Host>(cx: *mut LaneContext<H>, helper: impl FnOnce() -> u64) -> u64 {
     let vm = unsafe { vm(cx) };
     vm.link_natives(cx);
     materialize_running_leaf_in_lane(cx);

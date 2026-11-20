@@ -140,19 +140,10 @@ fusion_recipes! {
                     if site.sink.is_some() { return None; }
                     site.sink = Some(sink);
                 }
-                crate::bytecode::FieldLookup::Atom { atom, base, cache_site } => {
-                    // Field-site validation and scope projections do not support local bases.
-                    // Keep the checked local read and this write as separate operations.
-                    if base.local_index().is_some() { return None; }
-                    fields.push(FieldSite {
-                        base,
-                        first: (atom, cache_site),
-                        second: None,
-                        sink: Some(sink),
-                        sources: [FieldSite::NO_SOURCE; 3],
-                    });
-                    first.set_field_lookup_site(fields.len() - 1);
-                }
+                // A one-hop read keeps its own row and the store its own: the lane's sinking row plans
+                // only a nested read's two hops (`NESTED_SITE`), so a one-hop sink took the general
+                // read and store every time.
+                crate::bytecode::FieldLookup::Atom { .. } => return None,
             }
             first.set_this_result();
             Some(first)

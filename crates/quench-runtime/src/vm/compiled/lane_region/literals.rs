@@ -17,6 +17,15 @@ impl Lowering<'_, '_> {
     pub(super) fn load_constant(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
         constant: &crate::bytecode::Constant) -> Option<bool> {
         let index = instruction.constant_index();
+        // An image names the string by its recipe; the loader allocates it once (`HeapValueRecipe::String`).
+        if super::super::facts::immediate(constant).is_none()
+            && let Some(key) = self.vm.ahead.and_then(|ahead| ahead.strings.get(&index).copied())
+        {
+            let value = self.reloc(RelocKind::HeapValue, key, Value::UNDEFINED.to_bits());
+            self.define(state, instruction.result_register(), value,
+                RegisterFact::definition(super::super::facts::constant_type(constant), Representation::Tagged));
+            return Some(true);
+        }
         if super::super::facts::immediate(constant).is_none()
             && matches!(constant, crate::bytecode::Constant::String(_))
             && let Some(base) = self.vm.frozen_constants

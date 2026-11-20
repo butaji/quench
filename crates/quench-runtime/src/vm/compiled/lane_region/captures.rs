@@ -58,7 +58,7 @@ pub(super) fn read_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, site
     let value = builder.append_block_param(join, types::I64);
     match dense {
         Some((values, len)) => {
-            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None };
+            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None , payload: None};
             let read = crate::staged::environment::dense_capture(&mut stage, values, len, slot, slow)
                 .expect("the emit stage continues past its guards");
             emit(builder).goto(join, &[read]);

@@ -194,7 +194,20 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
     let by_words = stage.either(identical, ints);
     let (left_nullish, right_nullish) = (nullish(stage, left), nullish(stage, right));
     let nullish_pair = stage.both(left_nullish, right_nullish);
-    (stage.either(by_words, nullish_pair), stage.either(same, nullish_pair))
+    // One nullish side and one that is no nullish value: unequal under `==` unless the other side
+    // is an [[IsHTMLDDA]] object, which is a heap cell that is neither a direct object nor a direct
+    // array (`compare::loosely_nullish`). So a primitive word or a recorded object settles it.
+    let one_nullish = stage.either(left_nullish, right_nullish);
+    let other = stage.select(left_nullish, right, left);
+    let other_heap = is_heap(stage, other);
+    let (other_object, other_array) = (super::value::is_direct_object(stage, other), super::value::is_direct_array(stage, other));
+    let recorded = stage.either(other_object, other_array);
+    let other_primitive = stage.not(other_heap);
+    let settles = stage.either(other_primitive, recorded);
+    let nullish_apart = stage.both(one_nullish, settles);
+    let decided = stage.either(by_words, nullish_pair);
+    // `same` is false for a nullish side against a non-nullish word, so `equal` needs no change.
+    (stage.either(decided, nullish_apart), stage.either(same, nullish_pair))
 }
 
 /// The canonical boolean of the pair's equality, negated for `!=` and `!==`; the VM's where the

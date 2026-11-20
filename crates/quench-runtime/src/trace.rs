@@ -135,6 +135,12 @@ setting! {
         /// Every JavaScript JIT compile at `CompileLevel::Quick` (no mid-end optimization,
         /// one-pass register allocation), to measure the level's cost and code quality.
         QuickCompile = "quick-compile",
+        /// An ahead image installs its base body for every function, or with `aot-lanes=a-b` a lane
+        /// body only for the functions numbered `a` through `b`: a lane body's bisection.
+        AotLanes = "aot-lanes",
+        /// With `aot-bodies=a-b`, an ahead image installs a body (lane or base) only for the
+        /// functions numbered `a` through `b`; the others run in the interpreter.
+        AotBodies = "aot-bodies",
         /// Number loop regions build from BaseJIT stencils (`quench-bjit`) where every
         /// instruction has a row, instead of Cranelift IR.
         Bjit = "bjit",

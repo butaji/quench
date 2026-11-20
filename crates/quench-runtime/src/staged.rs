@@ -549,6 +549,7 @@ pub(crate) const MODE_BACKWARD: u64 = 1 << 1;
 /// `CHAIN_RAW_OUT`. A raw result is read by the next link (or the next record) as a Number operand.
 pub(crate) const RAW_SHIFT: u32 = 8;
 /// The raw-mask bit `link` of a record's `mode`.
+#[inline(always)]
 pub(crate) const fn raw_bit(link: u8) -> u64 { 1 << (RAW_SHIFT + link as u32) }
 /// The raw-mask bit of a chain's last link (a pair's `B`): its double result stays raw into the record
 /// after the chain, or past the plain records between that name neither its register (`raw_out_link`),

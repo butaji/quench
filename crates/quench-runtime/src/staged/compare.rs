@@ -97,6 +97,7 @@ impl Comparison {
     /// The comparison `operator` names (a `JumpBinaryFalse`'s operator field): the widest Number
     /// relation, an equality, a bitwise test, `instanceof`, else the operator itself. A tier with
     /// more facts than the operator narrows it (the observed Numbers, the proved domain).
+    #[inline]
     pub(crate) fn of_operator(operator: u32) -> Self {
         equality_operator(operator)
             .map(|(strict, negated)| Self::Equality { strict, negated })

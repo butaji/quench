@@ -312,8 +312,9 @@ pub(in crate::vm) enum LaneBodyWork<'a> {
         looped: Option<(u64, u64)>,
         /// The activation's array parameters sampled at entry, with their element type (`loop_tier::sample_array`).
         arrays: &'a [(crate::bytecode::Register, crate::typed_ir::Type)] },
-    /// Look for the code of the body compiling.
-    Poll(Box<PendingLaneMethod>),
+    /// Look for the code of the body compiling, from the view `caller` names: a compile whose code needed
+    /// more memory plans again at once, from that view (`body_work_in_lane`).
+    Poll(Box<PendingLaneMethod>, &'a super::super::dispatch_fast::LaneView),
 }
 
 /// Why a body did not start compiling.
@@ -628,12 +629,14 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn body_work_in_lane(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
-        let (mut observed, mut looped, mut called, mut caller, mut arrays) = (None, None, false, None, Vec::new());
+        let (mut observed, mut looped, mut called, mut arrays) = (None, None, false, Vec::new());
+        let caller;
         let mut pending = match work {
             LaneBodyWork::Start { generic, shrinks, observed: seen, looped: iterations, called: by_bodies, caller: view, arrays: sampled } => { (observed, looped, called, caller, arrays) = (seen, iterations, by_bodies, Some(view), sampled.to_vec()); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
-            LaneBodyWork::Poll(pending) => match self.body_poll_in_lane(program, pending) {
+            LaneBodyWork::Poll(pending, view) => match self.body_poll_in_lane(program, pending) {
+                // A replan starts from the polling view, as a first plan does from its own.
+                Err(replan) => { caller = Some(view); replan }
                 Ok(outcome) => return outcome,
-                Err(replan) => replan,
             },
         };
         // A plan again after its code was too large starts at once, from the background

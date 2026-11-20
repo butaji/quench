@@ -396,7 +396,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::Property) => if matches!(op, Op::Delete) { RowStep::Keyed } else { RowStep::Property },
         Some(Decoder::Element) => RowStep::Keyed,
         Some(Decoder::WasmFloat) => RowStep::WasmFloat,
-        Some(Decoder::Generic) => if matches!(op, Op::Unary | Op::Binary) { RowStep::Arith } else { RowStep::Generic },
+        Some(Decoder::Generic) => if matches!(op, Op::Unary | Op::Binary | Op::NumericAdd | Op::NumericMultiply) { RowStep::Arith } else { RowStep::Generic },
         Some(Decoder::WasmJump) => RowStep::WasmJump,
         Some(Decoder::WasmState) => RowStep::WasmState,
         Some(Decoder::WasmMemory) => RowStep::WasmMemory,
