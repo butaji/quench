@@ -2727,14 +2727,55 @@ const FLAG_COMPARE: u8 = 200;
 /// The operators a comparison jump's instance fixes: every binary operator code (`binary_operator`).
 const COMPARE_OPERATORS: u8 = 22;
 
+/// The comparisons whose jumps also have instances that fix their operand kinds (`FLAG_COMPARE_FORMED`):
+/// the relations and the strict equalities a loop or a recursion tests.
+const FORMED_COMPARISONS: [u32; 6] = {
+    use oxc_ast::ast::BinaryOperator as B;
+    [B::LessThan as u32, B::LessEqualThan as u32, B::GreaterThan as u32, B::GreaterEqualThan as u32,
+        B::StrictEquality as u32, B::StrictInequality as u32]
+};
+/// The first `FLAG` of a comparison jump that fixes its operator, a `FORMED_COMPARISONS` entry, and its
+/// operand kinds: `FLAG_COMPARE_FORMED + 2 * entry + form`, where form 0 is two registers and 1 a register
+/// and a constant (`compare_operands`).
+const FLAG_COMPARE_FORMED: u8 = FLAG_COMPARE + COMPARE_OPERATORS;
+const _: () = assert!(FLAG_COMPARE_FORMED as usize + 2 * FORMED_COMPARISONS.len() <= 256);
+
 /// The operator a comparison jump's `flag` fixes, `None` for any other flag.
 const fn compare_flag(flag: u8) -> Option<u32> {
-    if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { Some((flag - FLAG_COMPARE) as u32) } else { None }
+    if flag >= FLAG_COMPARE && flag < FLAG_COMPARE + COMPARE_OPERATORS { return Some((flag - FLAG_COMPARE) as u32) }
+    if flag >= FLAG_COMPARE_FORMED && ((flag - FLAG_COMPARE_FORMED) as usize) < 2 * FORMED_COMPARISONS.len() {
+        return Some(FORMED_COMPARISONS[((flag - FLAG_COMPARE_FORMED) / 2) as usize]);
+    }
+    None
 }
 
-/// The instance of the comparison jump row whose comparison is `operator`'s, `None` past the codes.
-fn compare_jump_row<H: Host, const BACKWARD: bool>(operator: u32) -> Option<Handler> {
-    macro_rules! rows { ($($n:literal)+) => { [$(row_jump::<H, { crate::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { FLAG_COMPARE + $n }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }> as Handler),+] } }
+/// Whether a comparison jump's `flag` fixes its right operand as a register (`Some(false)`) or a constant
+/// (`Some(true)`), its left one being a register; `None` where it fixes no operand kinds.
+const fn compare_operands(flag: u8) -> Option<bool> {
+    if flag >= FLAG_COMPARE_FORMED && ((flag - FLAG_COMPARE_FORMED) as usize) < 2 * FORMED_COMPARISONS.len() {
+        Some((flag - FLAG_COMPARE_FORMED) % 2 == 1)
+    } else {
+        None
+    }
+}
+
+/// The instance of the comparison jump row whose comparison is `operator`'s, and whose operand kinds are
+/// `left` and `right`'s where the operator is a `FORMED_COMPARISONS` one and those are a register and a
+/// register or a constant; `None` past the codes.
+fn compare_jump_row<H: Host, const BACKWARD: bool>(operator: u32, left: Operand, right: Operand) -> Option<Handler> {
+    use crate::bytecode::OperandKind::{Constant, Register};
+    macro_rules! row { ($flag:expr) => { row_jump::<H, { crate::bytecode::Op::JumpBinaryFalse as u16 }, BACKWARD, { $flag }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }> as Handler } }
+    macro_rules! formed { ($($n:literal)+) => { [$(row!(FLAG_COMPARE_FORMED + $n)),+] } }
+    let form = match (left.kind(), right.kind()) {
+        (Some(Register), Some(Register)) => Some(0),
+        (Some(Register), Some(Constant)) => Some(1),
+        _ => None,
+    };
+    if let (Some(entry), Some(form)) = (FORMED_COMPARISONS.iter().position(|&formed| formed == operator), form) {
+        let table: [Handler; 2 * FORMED_COMPARISONS.len()] = formed!(0 1 2 3 4 5 6 7 8 9 10 11);
+        return Some(table[2 * entry + form]);
+    }
+    macro_rules! rows { ($($n:literal)+) => { [$(row!(FLAG_COMPARE + $n)),+] } }
     let table: [Handler; COMPARE_OPERATORS as usize] = rows!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21);
     table.get(operator as usize).copied()
 }
@@ -2770,9 +2811,16 @@ lane_handler! {
             let operator = u32::from(i.a);
             let decodes_so = matches!(Operation::<u64, ()>::decode_generic(crate::staged::Fields::wide(LaneFields::<OP>(i))),
                 Some(Operation::CompareJump { comparison, .. }) if comparison == crate::staged::Comparison::of_operator(operator));
-            if decodes_so && let Some(handler) = compare_jump_row::<H, BACKWARD>(operator) {
+            if decodes_so && let Some(handler) = compare_jump_row::<H, BACKWARD>(operator, Operand(i.b), Operand(i.c)) {
                 requicken::<H>(ip, handler);
                 sibling!(handler, r, ip, view)
+            }
+        }
+        // SAFETY: `compare_jump_row` chose a formed instance from the record's own operand kinds.
+        if let Some(constant) = const { compare_operands(FLAG) } {
+            unsafe {
+                std::hint::assert_unchecked(Operand(i.b).kind() == Some(crate::bytecode::OperandKind::Register));
+                std::hint::assert_unchecked(Operand(i.c).kind() == Some(if constant { crate::bytecode::OperandKind::Constant } else { crate::bytecode::OperandKind::Register }));
             }
         }
         let fields = LaneFields::<OP>(i);
