@@ -243,7 +243,13 @@ pub(in crate::vm) fn image_body(program: &ResidualProgram, function: u32) -> Res
     if !super::base_region::covers(&code) {
         return Err("a wasm instruction has no base row".into());
     }
-    let region = LoopRegion::of_function(code, &[], program.shared_register_root_masks(function)).ok_or("no loop region")?;
+    // The image builds a body whether or not this program's functions precomputed their register
+    // roots (the compiler caches them for the run-time tiers); liveness is derivable from the
+    // program alone, and the body needs it.
+    let derived = program.shared_register_root_masks(function).cloned().or_else(|| {
+        crate::compile::liveness::RegisterMasks::of(body, program, &program.field_sites, &program.superinstructions).map(std::rc::Rc::new)
+    });
+    let region = LoopRegion::of_function(code, &[], derived.as_ref()).ok_or("no loop region")?;
     let known = Known {
         program, stitch: &super::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None,
         invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],

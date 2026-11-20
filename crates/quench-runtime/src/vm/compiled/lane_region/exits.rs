@@ -115,7 +115,13 @@ impl Lowering<'_, '_> {
         let signature = self.builder.func.signature.clone();
         let signature = self.builder.import_signature(signature);
         let (this, captures) = self.entry_words;
-        self.builder.ins().return_call_indirect(signature, target, &[self.context, this, captures, self.registers_base]);
+        // A plain call and return, not a sibling call: the base entry has this function's own
+        // signature (four words in, two out), and a `return_call_indirect` of it asks the register
+        // allocator for a tail call's constraints on a shape it cannot always satisfy (AArch64's
+        // multi-value return fails to allocate). A leave is the cold path either way.
+        let call = self.builder.ins().call_indirect(signature, target, &[self.context, this, captures, self.registers_base]);
+        let results: Vec<_> = self.builder.inst_results(call).to_vec();
+        self.builder.ins().return_(&results);
     }
 
     /// The `(namespace, key)` of the base body's entry the leave at `pc` continues at.
