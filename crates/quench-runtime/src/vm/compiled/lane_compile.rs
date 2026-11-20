@@ -312,8 +312,9 @@ pub(in crate::vm) enum LaneBodyWork<'a> {
         looped: Option<(u64, u64)>,
         /// The activation's array parameters sampled at entry, with their element type (`loop_tier::sample_array`).
         arrays: &'a [(crate::bytecode::Register, crate::typed_ir::Type)] },
-    /// Look for the code of the body compiling.
-    Poll(Box<PendingLaneMethod>),
+    /// Look for the code of the body compiling, for the view that started it (a plan again
+    /// after its code was too large starts from it).
+    Poll(Box<PendingLaneMethod>, &'a super::super::dispatch_fast::LaneView),
 }
 
 /// Why a body did not start compiling.
@@ -631,9 +632,9 @@ impl<H: Host> Vm<H> {
         let (mut observed, mut looped, mut called, mut caller, mut arrays) = (None, None, false, None, Vec::new());
         let mut pending = match work {
             LaneBodyWork::Start { generic, shrinks, observed: seen, looped: iterations, called: by_bodies, caller: view, arrays: sampled } => { (observed, looped, called, caller, arrays) = (seen, iterations, by_bodies, Some(view), sampled.to_vec()); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
-            LaneBodyWork::Poll(pending) => match self.body_poll_in_lane(program, pending) {
+            LaneBodyWork::Poll(pending, view) => match self.body_poll_in_lane(program, pending) {
                 Ok(outcome) => return outcome,
-                Err(replan) => replan,
+                Err(replan) => { caller = Some(view); replan }
             },
         };
         // A plan again after its code was too large starts at once, from the background
