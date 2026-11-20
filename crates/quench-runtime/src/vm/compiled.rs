@@ -4529,11 +4529,19 @@ impl<H: Host> Vm<H> {
     /// lane context holds (`dispatch_fast::region_payload_in_lane`; zero where none runs), as
     /// `refresh_body_bases` does the body frame's, and the lane stack's room the call may have moved
     /// (`region_lend::bind_stacks`, `direct_calls` as the region was entered with).
+    ///
+    /// The stacks are rebound only where no plain frame stands above the region: the region's entry spilled
+    /// every one below it (`region_lend::lend`), so a plain frame here is a direct call's still running (a
+    /// stencil call row's push, whose pop restores the plain depth, window and body top it found). Binding
+    /// spills it into a record that pop never removes: each such call that allocated left one record more,
+    /// until the walk over them outgrew the activation limit (ai-astar under `--b-jit`).
     pub(super) fn refresh_region_bases(&mut self, payload: usize, direct_calls: bool) {
         // SAFETY: a region's payload lives for its run, which the helper that calls this is made from.
         if let Some(payload) = unsafe { (payload as *mut JsStepDispatch).as_mut() } {
             payload.refresh_object_bases(self);
-            region_lend::bind_stacks(self, payload, direct_calls);
+            if !self.lane_stack.has_plain_frames() {
+                region_lend::bind_stacks(self, payload, direct_calls);
+            }
         }
     }
 

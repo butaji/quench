@@ -2910,7 +2910,7 @@ impl LaneStack {
 
     /// Whether any frame is a plain header, innermost or sealed below a record.
     #[inline(always)]
-    fn has_plain_frames(&self) -> bool { self.plain.depth.get() != 0 || self.sealed.get() != 0 }
+    pub(in crate::vm) fn has_plain_frames(&self) -> bool { self.plain.depth.get() != 0 || self.sealed.get() != 0 }
 
     /// The innermost activation's function, read from its header where it is plain, so the
     /// read makes no record.
