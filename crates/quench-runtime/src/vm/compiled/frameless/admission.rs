@@ -1,16 +1,15 @@
 //! Admission of callees for frameless calls: a callee's function is admitted once per
 //! collection epoch, and each closure of it takes the function's admission with its own
 //! captures.
-use super::{CallEntry, CACHE_ENTRIES, MATERIALIZATION_LIMIT, META_PARAMS, META_REGISTERS, THIS_NONE, THIS_RECEIVER};
+use super::{CallEntry, CACHE_ENTRIES, META_PARAMS, META_REGISTERS, THIS_NONE, THIS_RECEIVER};
 use super::super::{Host, JsStepDispatch, ResidualProgram, Vm};
 use super::super::admission::{admit_callee, refuse, CalleeUse, Refusal};
 use crate::Value;
 
 /// Admits `callee` for frameless calls from the payload's program and caches it: its
-/// entry's address, or 0 where its calls keep frames. Admitted are plain user functions of
+/// entry's address, or 0 where it is declined. Admitted are plain user functions of
 /// the running program (`CallPlan::in_loop`) whose whole state is their registers
-/// (`CallPlan::registers_only`), whose body has a linked native entry, and whose
-/// activations have not kept leaving.
+/// (`CallPlan::registers_only`), whose body has a linked native entry.
 ///
 /// # Safety
 /// As `general_user_call`.
@@ -62,11 +61,6 @@ fn admit_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: 
     let body = program.function_get(function as usize)?;
     admit_callee(program, body, CalleeUse::Frameless).ok()?;
     let epoch = vm.cache_epochs.gc;
-    if vm.frameless.materializations.get(&(owner.raw(), function))
-        .is_some_and(|&(leaves, counted)| leaves >= MATERIALIZATION_LIMIT && counted == epoch) {
-        refuse(vm, Refusal::CalleeNotEligible);
-        return None;
-    }
     let Some(code) = native_entry(vm, owner, function) else { refuse(vm, Refusal::CalleeNotEligible); return None; };
     let this = if body.is_arrow { THIS_NONE } else if body.strict { THIS_RECEIVER } else { vm.realm.globals.to_bits() };
     let entry = captures(vm, program, owner, env, CallEntry {

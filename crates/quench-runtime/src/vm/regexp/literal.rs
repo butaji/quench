@@ -149,8 +149,8 @@ impl<H: Host> Vm<H> {
     ///
     /// Every tier answers the site here: `frame` is the evaluating frame's index in the
     /// interpreter, a frame's lane run and the b-jit (whose helper step is `Vm::step`), and in
-    /// the Cranelift tiers the payload's frame or a frameless activation's key
-    /// (`lane_allocations::regexp_argument_key`), which no live frame shares.
+    /// the Cranelift tiers the payload's frame (`lane_allocations::regexp_argument_key`),
+    /// which no live frame shares.
     pub(in crate::vm) fn regexp_literal_argument_of(
         &mut self,
         p: &ResidualProgram,

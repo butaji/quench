@@ -1136,28 +1136,6 @@ const RUNNERS: [Runner; Op::COUNT] = {
 };
 
 impl<H: Host> Vm<H> {
-    /// The frame call-like instruction `i` of frame `caller` pushes, as its step pushes it:
-    /// callee, argument window, receiver and completion. `getter` and `this` are what the step
-    /// found running: a getter read's function, and a construction's or getter's receiver.
-    /// Frame recovery (`compiled::recover_call`) rebuilds a native activation's frame from it.
-    #[cfg(feature = "native-execution")]
-    pub(super) fn pushed_frame(&self, caller: usize, i: WideInstruction, getter: Value, this: Value)
-        -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
-        if crate::staged::Operation::<u64, ()>::is_construction(i) {
-            let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
-                unreachable!("a pushed construction passes registers")
-            };
-            (self.read(caller, i.register_b()), window, this, CallCompletion::Constructor(this))
-        } else if crate::staged::Operation::<u64, ()>::is_field_read(i) {
-            // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
-            (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value)
-        } else {
-            (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value)
-        }
-    }
-}
-
-impl<H: Host> Vm<H> {
     /// The new array of the `count` constants from `start` of `program` (a `MakeConstArray`
     /// record's immediate and element count); `None` for a range outside the program's
     /// constants.

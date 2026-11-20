@@ -268,8 +268,6 @@ mod constructions;
 mod function_binding;
 use function_binding::{admitted_function_binding_in_lane, function_binding_in_lane};
 mod general_store;
-#[cfg(feature = "native-execution")]
-pub(super) use frameless::ChainFrame;
 pub(super) use frameless::Frameless;
 use direct_call::direct_call;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
@@ -1201,56 +1199,6 @@ lane_helper_inventory! { H;
     Decide => super::dispatch_fast::decide_comparison::<H>,
     /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::handler_edge`).
     HandlerEdge => super::dispatch_fast::handler_edge::<H>,
-}
-
-/// Makes the frames of a chain of native activations, outer to inner, above the payload's
-/// frame, and stops the payload with them (`StepResult::ResumeFrames`).
-#[cfg(feature = "native-execution")]
-fn materialize_chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &mut JsStepDispatch,
-    chain: &[ChainFrame]) {
-    let mut recovered = super::dispatch_frame::RecoveredCalls { calls: Vec::with_capacity(chain.len()), failure: None };
-    for (caller, entry) in (dispatch.frame..).zip(chain) {
-        match recover_call(vm, program, caller, *entry) {
-            Ok(call) => recovered.calls.push(call),
-            Err(failure) => { recovered.failure = Some(failure); break; }
-        }
-    }
-    let call_pc = chain[0].link.call_pc as usize;
-    dispatch.outcome = Some(JsNativeStep { instruction_pc: call_pc, next_pc: call_pc + 1,
-        result: Ok(StepResult::ResumeFrames(Box::new(recovered))) });
-}
-
-/// Makes the frame of one chain entry above `caller`, its registers copied from the entry's,
-/// as the call's or construction's exact step pushes it.
-#[cfg(feature = "native-execution")]
-fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usize, entry: ChainFrame)
-    -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
-    let body = program.function(vm.frames[caller].function as usize);
-    let call_pc = entry.link.call_pc as u32;
-    let function = frameless::callee_function(vm, entry.link.callee);
-    let instruction = body.widened(body.code[call_pc as usize]);
-    // The activation the instruction's step pushes (`Vm::pushed_frame`).
-    let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.link.callee, entry.link.this);
-    let env = vm.heap.function(callee).expect("admitted inline closure").env;
-    let passed: *const [Value] = vm.register_window(caller, window);
-    let target = (vm.frames[caller].program, function, env);
-    // SAFETY: the caller's window outlives the callee's setup.
-    let pushed = vm.push_in_loop_activation(program, caller, call_pc as usize + 1, target, callee, receiver,
-        unsafe { &*passed }, instruction.result_register(), completion).expect("a recovered callee shares its caller's program");
-    let super::StepResult::PushFrame { call_guard: guard, completion, .. } = pushed.map_err(|error| (call_pc, error))? else {
-        unreachable!("an in-loop push pushes a frame")
-    };
-    let frame = vm.frames.last_mut().expect("recovered inline frame");
-    let count = frame.registers.len();
-    // SAFETY: the chain's registers hold the frame's register count of live values.
-    frame.registers.copy_from_slice(unsafe { std::slice::from_raw_parts(entry.registers, count) });
-    frame.pc = entry.source_pc as usize;
-    frame.pc_is_resume = true;
-    vm.active_registers = frame.registers.as_mut_ptr();
-    Ok(super::dispatch_frame::PendingGeneralCall {
-        caller, caller_cursor: None, call_pc: call_pc, destination: instruction.result_register(),
-        completion, returns: instruction.returns_from_frame(), call_guard: Some(guard), caller_program: None,
-    })
 }
 
 unsafe extern "C" fn interrupt_owner_in_lane(context: u64) -> u64 {
@@ -3786,12 +3734,6 @@ struct JsStepDispatch {
     /// The lowering line of the guard a lane body last left at, where its code was compiled
     /// for diagnostics (`VmFacts::diagnostics`); zero otherwise.
     exit_line: u64,
-    /// A frameless entry's free windows and shadow records (`frameless`): the next and the end
-    /// of each stack.
-    native_top: usize,
-    native_end: usize,
-    shadow_top: usize,
-    shadow_end: usize,
     /// The element read past a present dense element (`general_elements`).
     element_get: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
@@ -4788,7 +4730,6 @@ impl JsStepDispatch {
             typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
             call_cache: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
             body: std::ptr::null(), inlined: 0, exit_line: 0,
-            native_top: 0, native_end: 0, shadow_top: 0, shadow_end: 0,
             outcome: None,
         }
     }
@@ -4923,7 +4864,7 @@ impl JsStepDispatch {
     /// bound for (`EntryStamp`): its program, frame, register, local and body words, `this` slot
     /// and frame capture view stand (the run binds its captures itself, `osr_lane::bind_captures`).
     /// What the VM may have changed since is bound again: its run storage, the run state, the
-    /// bases (a compare-only pass while nothing moved), the frameless stacks' tops, the program's
+    /// bases (a compare-only pass while nothing moved), the program's
     /// field entries (a moved cache table moves them) and the store specialization.
     #[inline]
     fn rewarm_region<H: Host>(&mut self, vm: &mut Vm<H>, program_specialized: bool) {
@@ -5251,7 +5192,6 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         // SAFETY: the owning activation (`JsStepDispatch::with`) admits both pointers once and retains the shared
         // program until native execution (including reentry) finishes; release needs it unique.
         let program = unsafe { &*(dispatch.residual as *const ResidualProgram) };
-        if let Some(step) = frameless::leave(vm, program, dispatch, pc) { return Ok(JsCalloutStep::Stop(step)); }
         let body = unsafe { &*dispatch.body };
         #[cfg(feature = "native-execution")]
         if SINGLE_OPERATION && dispatch.stop_pc == pc {

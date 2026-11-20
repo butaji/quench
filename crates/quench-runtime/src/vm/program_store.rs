@@ -630,9 +630,10 @@ impl JitTierManager {
 }
 
 /// The one object a callee-argument RegExp literal site shares (`Vm::regexp_literal_argument_of`),
-/// and what keeps it unobservable: it is answered again only in `frame`, the frame (or the
-/// native activation's key, `lane_allocations::regexp_argument_key`) of the evaluation that made it, while the current realm is `realm`, `watch` (on the values of
-/// `RegExp.prototype`) is published and the `@@species` fuse of `constructor` holds.
+/// and what keeps it unobservable: it is answered again only in `frame`, the frame of the
+/// evaluation that made it (`lane_allocations::regexp_argument_key`), while the current realm is
+/// `realm`, `watch` (on the values of `RegExp.prototype`) is published and the `@@species` fuse of
+/// `constructor` holds.
 pub(crate) struct RegExpArgumentShare {
     pub(crate) object: Value,
     pub(crate) frame: usize,
