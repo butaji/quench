@@ -165,6 +165,7 @@ struct Decisions {
 
 impl Decisions {
     /// The decisions of the running lane's `cx`.
+    #[inline(always)]
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { context: cx.cast(), decide: |context, operator, left, right|
             super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right),

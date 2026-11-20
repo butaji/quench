@@ -1064,6 +1064,7 @@ impl Instr {
         }
     }
 
+    #[inline(always)]
     const fn unpack_immediate(op: Op, packed: u16) -> u32 {
         if op.immediate_layout().uses_packed_pair() {
             (((packed >> PACKED_PAIR_LOW_BITS) as u32) << PACKED_PAIR_SOURCE_SHIFT)

@@ -53,14 +53,17 @@ enum Source<W> {
     Register(Register, W),
 }
 
+#[inline(always)]
 fn value_source<W>(word: W) -> Source<W> { Source::Word(word) }
 
 impl<W: Copy> Source<W> {
     /// The word the store answers: the tagged word, or the stored binary64 word.
+    #[inline(always)]
     fn answer(self) -> W {
         match self { Self::Word(word) | Self::Register(_, word) => word }
     }
 
+    #[inline(always)]
     fn tagged<S: Stage<Word = W>, F: PropertyFrame<S>>(self, stage: &mut S, frame: &mut F) -> W {
         match self { Self::Word(word) => word, Self::Register(register, _) => frame.tagged(stage, register) }
     }
