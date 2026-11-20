@@ -401,16 +401,92 @@ fn compile_shards(jobs: &[Shard], (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRo
     (shards::merge(built.into_iter().map(|(rows, _)| rows)), counts)
 }
 
-/// Builds one shard's object unless its key says the object on disk is already this one. The key is written only
-/// after rustc succeeds; the rows' checks run on every read, cached or not.
+/// Builds one shard's object unless its key says the object on disk is already this one, or the shared cache
+/// (`shared_cache`) holds an object built from the same key. The key is written only after rustc succeeds; the rows'
+/// checks run on every read, cached or not.
+///
+/// Every compile holds `MEMORY` for reading. A rustc the kernel killed (out of memory beside the other shards) is
+/// run once more holding it for writing, alone, once the shards in flight are done.
 fn compile(job: &Shard, shard: usize) {
+    let shared = shared_cache().map(|dir| dir.join(format!("{}.o", job.key.trim())));
     if job.cached() {
+        if let Some(shared) = shared.as_ref().filter(|path| !path.is_file()) {
+            publish(&job.object, shared);
+        }
         return;
     }
     let _ = fs::remove_file(&job.key_file);
-    let status = Command::new(rustc()).args(&job.args).envs(job.envs.iter().map(|(name, path)| (*name, path))).status().expect("run rustc");
-    assert!(status.success(), "rustc failed on {SOURCE} (shard {shard})");
+    if let Some(shared) = shared.as_ref().filter(|path| path.is_file())
+        && fs::copy(shared, &job.object).is_ok()
+    {
+        fs::write(&job.key_file, &job.key).unwrap();
+        return;
+    }
+    let run = || Command::new(rustc()).args(&job.args).envs(job.envs.iter().map(|(name, path)| (*name, path))).status().expect("run rustc");
+    let mut status = { let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner); run() };
+    if killed(&status) {
+        println!("cargo::warning=stencil shard {shard} was killed (likely out of memory); compiling it again alone");
+        let _alone = MEMORY.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        status = run();
+    }
+    assert!(status.success(), "rustc failed on {SOURCE} (shard {shard}): {status}");
+    if let Some(shared) = &shared {
+        publish(&job.object, shared);
+    }
     fs::write(&job.key_file, &job.key).unwrap();
+}
+
+/// Copies a built object into the shared cache: beside its final name, then renamed, so a reader in another build
+/// never sees half an object. A failure leaves the cache without it.
+fn publish(object: &Path, shared: &Path) {
+    let partial = shared.with_extension(format!("{}.part", std::process::id()));
+    if fs::copy(object, &partial).is_ok() {
+        let _ = fs::rename(&partial, shared);
+    }
+    let _ = fs::remove_file(&partial);
+}
+
+/// Held for reading by every shard compile, and for writing by the rerun of one the kernel killed.
+static MEMORY: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+/// Whether rustc ended by a signal (the kernel's out-of-memory kill is SIGKILL).
+fn killed(status: &std::process::ExitStatus) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal().is_some()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        false
+    }
+}
+
+/// Environment variable naming a directory of shard objects shared between builds (other target dirs, other
+/// machines on a shared mount), each under its shard key; empty turns the shared cache off.
+const SHARED_CACHE_VAR: &str = "QUENCH_STENCIL_CACHE";
+/// The shared cache where `SHARED_CACHE_VAR` is unset: the project's shared mount, where it exists.
+const SHARED_CACHE_DEFAULT: &str = "/mnt/project-files/research/stencil-cache";
+
+/// The shared object cache, if any. An object there was built from exactly the inputs its key names (the key covers
+/// the toolchain, the target, every argument and the content of every source), so any build with the same key may
+/// take it in place of running rustc.
+fn shared_cache() -> Option<&'static Path> {
+    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(shared_cache_dir).as_deref()
+}
+
+fn shared_cache_dir() -> Option<PathBuf> {
+    println!("cargo::rerun-if-env-changed={SHARED_CACHE_VAR}");
+    let dir = match env::var_os(SHARED_CACHE_VAR) {
+        Some(dir) if dir.is_empty() => return None,
+        Some(dir) => PathBuf::from(dir),
+        None if Path::new(SHARED_CACHE_DEFAULT).parent().is_some_and(Path::is_dir) => PathBuf::from(SHARED_CACHE_DEFAULT),
+        None => return None,
+    };
+    fs::create_dir_all(&dir).ok()?;
+    Some(dir)
 }
 
 /// The rows of one shard's object as (name, table entry), each checked, laid out hot part first where the
