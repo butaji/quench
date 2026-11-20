@@ -720,17 +720,17 @@ macro_rules! opcodes {
             pub const COUNT: usize = [$(stringify!($name)),+].len();
             pub const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
             const CLASSES: [Class; Self::COUNT] = [$(opcodes!(@class $($class)?)),+];
-            pub(crate) const fn class(self) -> Class { Self::CLASSES[self as usize] }
+            #[inline(always)] pub(crate) const fn class(self) -> Class { Self::CLASSES[self as usize] }
             const TRAITS: [Traits; Self::COUNT] = [$(opcodes!(@traits $($($trait)+)?)),+];
-            pub(crate) const fn traits(self) -> Traits { Self::TRAITS[self as usize] }
+            #[inline(always)] pub(crate) const fn traits(self) -> Traits { Self::TRAITS[self as usize] }
             const DECODERS: [Option<Decoder>; Self::COUNT] = [$(opcodes!(@staged $($decoder)?)),+];
-            pub(crate) const fn staged(self) -> Option<Decoder> { Self::DECODERS[self as usize] }
+            #[inline(always)] pub(crate) const fn staged(self) -> Option<Decoder> { Self::DECODERS[self as usize] }
             const GENERIC_STEPS: [Option<GenericStep>; Self::COUNT] = [$(opcodes!(@step $($step)?)),+];
-            pub(crate) const fn generic_step(self) -> Option<GenericStep> { Self::GENERIC_STEPS[self as usize] }
+            #[inline(always)] pub(crate) const fn generic_step(self) -> Option<GenericStep> { Self::GENERIC_STEPS[self as usize] }
             const OWNED_STEPS: [Option<OwnedStep>; Self::COUNT] = [$(opcodes!(@owned $($owned)?)),+];
-            pub(crate) const fn owned_step(self) -> Option<OwnedStep> { Self::OWNED_STEPS[self as usize] }
+            #[inline(always)] pub(crate) const fn owned_step(self) -> Option<OwnedStep> { Self::OWNED_STEPS[self as usize] }
             const VALUE_STEPS: [Option<ValueStep>; Self::COUNT] = [$(opcodes!(@value $($value)?)),+];
-            pub(crate) const fn value_step(self) -> Option<ValueStep> { Self::VALUE_STEPS[self as usize] }
+            #[inline(always)] pub(crate) const fn value_step(self) -> Option<ValueStep> { Self::VALUE_STEPS[self as usize] }
             #[cfg(feature = "native-execution")]
             pub(crate) fn native_semantic_entry<H: crate::Host>(self) -> crate::NativeJsOperationEntry {
                 match self {
@@ -758,11 +758,11 @@ macro_rules! opcodes {
                 opcodes!(@js $($js_denotation)?)),+
             ];
 
-            pub(crate) const fn effect(self) -> Effect {
+            #[inline(always)] pub(crate) const fn effect(self) -> Effect {
                 Self::EFFECTS[self as usize]
             }
 
-            pub(crate) const fn immediate_layout(self) -> ImmediateLayout {
+            #[inline(always)] pub(crate) const fn immediate_layout(self) -> ImmediateLayout {
                 Self::IMMEDIATE_LAYOUTS[self as usize]
             }
 
@@ -771,19 +771,19 @@ macro_rules! opcodes {
                 Self::RESULT_LAYOUTS[self as usize]
             }
 
-            pub(crate) const fn control_flow_layout(self) -> ControlFlowLayout {
+            #[inline(always)] pub(crate) const fn control_flow_layout(self) -> ControlFlowLayout {
                 Self::CONTROL_FLOW_LAYOUTS[self as usize]
             }
 
-            pub(crate) const fn field_layout(self, field: InstructionField) -> FieldLayout {
+            #[inline(always)] pub(crate) const fn field_layout(self, field: InstructionField) -> FieldLayout {
                 Self::OPERAND_LAYOUTS[self as usize].field(field)
             }
 
-            pub(crate) const fn immediate_role(self) -> ImmediateRole {
+            #[inline(always)] pub(crate) const fn immediate_role(self) -> ImmediateRole {
                 Self::IMMEDIATE_ROLES[self as usize]
             }
 
-            pub(crate) const fn js_denotation(self) -> JsDenotation {
+            #[inline(always)] pub(crate) const fn js_denotation(self) -> JsDenotation {
                 Self::JS_DENOTATIONS[self as usize]
             }
 
@@ -955,7 +955,7 @@ opcodes!($;
     SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body; traits INLINABLE THIS_FIELD_SINK SLOPPY_STORE THIS_FIELD_STORE ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag; class SetIndex; staged Element; step Body; traits INLINABLE ELEMENT_ACCESS LIFETIME_SAFE ELEMENT_STORE INDEXED_RECEIVER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
     DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex; class DefineArrayElement; staged Literal; step Lane; traits ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Unused),
-    Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary; class Binary; staged Generic; step Body; value Binary; traits ARITHMETIC_BINARY BINARY_RESULT LEAF_BINARY RETURNING_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE CONST_ARRAY_OBJECT2_OPERAND MAY_ALLOCATE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary; class Binary; staged Generic; step Body; value Binary; traits ARITHMETIC_BINARY BINARY_RESULT LEAF_BINARY RETURNING_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE CONST_ARRAY_OBJECT2_OPERAND DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     IncDec => READ_THROW; layout Scalar; meaning BooleanFlag; class IncDec; staged Value; traits ROW_HANDLER LEAF_VALUE INLINABLE PURE_SETUP SCALAR_REGION LIFETIME_SAFE INCREMENT_UPDATE ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
     Unary => READ_THROW; layout Scalar; meaning UnaryOperator; js NumericUnary; class Unary; staged Value; step Body; value Unary; traits LEAF_VALUE RETURNING_UNARY INLINABLE PURE_SETUP ACTIVATION_FREE FRAME_RETURNABLE LIFETIME_SAFE ROW_ONLY ROW_HANDLER MAY_ALLOCATE, @ Returnable, @ fields(ResultRegister, Register, Unused),
     // `a` = ToString of each register of the window `b` of `c` registers, concatenated in

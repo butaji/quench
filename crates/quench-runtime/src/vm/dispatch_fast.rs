@@ -4577,15 +4577,20 @@ lane_handler! {
         };
         let function = code.function(vm.frames[frame].function as usize);
         let instruction = function.widened(function.code[pc]);
-        // A record that returns its result (`RETURN_REGISTER`) completes the frame, which the general path does.
-        if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
-            return exit(ip);
-        }
+        let returns = instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0;
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
         let mut next = pc + 1;
         match vm.step(code, frame, instruction, &mut next, false) {
-            Ok(StepResult::Continue) => {}
+            Ok(StepResult::Continue) if !returns => {}
+            // A record that returns its result (`RETURN_REGISTER`, a returning `a == b`): its value
+            // completes the activation as a returning row's does, with no exit from the lane.
+            Ok(StepResult::Return(value)) if returns => {
+                if instruction.op().traits().has(Traits::MAY_ALLOCATE) {
+                    note_allocation(vm);
+                }
+                resume!(cx, return_value_general_in_lane(cx, ip, value));
+            }
             Ok(other) => unreachable!("an in-place step only continues: {:?} gave {}", instruction.op(), match other { StepResult::Return(_) => "Return", _ => "another result" }),
             Err(error) => {
                 vm.lane_completion.raise(error);
