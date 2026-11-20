@@ -399,9 +399,97 @@ static bool cCalleeHasPredicate(TsNode *call, bool *known) {
   return false;
 }
 
+/* getNarrowedType (75764) with checkDerived false, as type predicates use it. Assuming the predicate holds, each member of
+ * the candidate narrows the members of the type that are strict subtypes or subtypes of it; a type that is related to no
+ * member is replaced by the candidate, the type or the intersection. When it is false, the members that are subsets of the
+ * narrowed true type are kept. The key property of a large union (10 members or more) and instantiable members are not
+ * ported; a relation that meets an unported path makes the result unported. */
+static TsType *cGetNarrowedType(TsType *type, TsType *cand, bool assumeTrue);
+
+static bool cContainsMember(TsType *u, TsType *x) {
+  if (!(u->flags & TF_Union)) return false;
+  for (int i = 0; i < u->ntypes; i++) if (u->types[i] == x) return true;
+  return false;
+}
+
+static bool cHasInstantiableMember(TsType *t) {
+  for (int i = 0, n = cMemberCount(t); i < n; i++)
+    if (cMemberAt(t, i)->flags & (TF_TypeParameter | TF_Index | TF_IndexedAccess | TF_Conditional | TF_TemplateLiteral | TF_StringMapping))
+      return true;
+  return false;
+}
+
+/* the members of t that are mapped by f (a NULL result is dropped, never is dropped); the result is the union of them */
+static TsType *cNarrowMembers(TsType *t, TsType *c, bool trueBranch, TsType *tr) {
+  int n = cMemberCount(t);
+  TsType **res = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  int k = 0;
+  for (int i = 0; i < n; i++) {
+    TsType *m = cMemberAt(t, i);
+    if (trueBranch) {
+      /* getNarrowedType, true: the directly related member, or the candidate, or the instantiable intersection */
+      TsType *d = cNeverType;
+      if (cIsRelatedWith(m, c, REL_StrictSubtype)) d = m;
+      else if (cIsRelatedWith(c, m, REL_StrictSubtype)) d = c;
+      else if (cIsRelatedWith(m, c, REL_Subtype)) d = m;
+      else if (cIsRelatedWith(c, m, REL_Subtype)) d = c;
+      if (d->flags & TF_Never) {
+        /* node takes the instantiable fallback only when no member is related directly: unported here */
+        if (cHasInstantiableMember(t)) return cUnported("predicate narrowing of an instantiable member");
+        continue;
+      }
+      res[k++] = d;
+    } else {
+      /* getNarrowedType, false: the members that are not subsets of the narrowed true type */
+      if (!cContainsMember(tr, m) && m != tr) res[k++] = m;
+    }
+  }
+  if (k == 0) return cNeverType;
+  return k == 1 ? res[0] : cGetUnionType(res, k);
+}
+
+static TsType *cGetNarrowedType(TsType *type, TsType *cand, bool assumeTrue) {
+  if (type == cErrorType || cand == cErrorType) return type == cErrorType ? type : cUnported("predicate type that is not ported");
+  int before = cUnportedCount;
+  TsType *r;
+  if (!assumeTrue) {
+    if (type == cand) return cNeverType;
+    if (type->flags & TF_Unknown) return cUnported("predicate narrowing of unknown, false branch");
+    TsType *trueT = cGetNarrowedType(type, cand, true);
+    if (trueT == cErrorType) return cUnported("predicate narrowing of the true branch");
+    r = (type->flags & TF_Never) ? type : cNarrowMembers(type, NULL, false, trueT);
+  } else {
+    if (type->flags & (TF_Any | TF_Unknown)) return cand;
+    if (type == cand) return cand;
+    if ((type->flags & TF_Union) && type->ntypes >= 10) return cUnported("predicate narrowing of a large union (key property)");
+    int nc = cMemberCount(cand);
+    TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(nc ? nc : 1));
+    int np = 0;
+    for (int i = 0; i < nc; i++) {
+      TsType *c = cMemberAt(cand, i);
+      TsType *d = cNarrowMembers(type, c, true, NULL);
+      if (d == cErrorType) return d;
+      if (d->flags & TF_Never) {
+        if (cUnportedCount != before) return cUnported("predicate narrowing that meets an unported relation");
+        d = cNeverType;
+      }
+      if (!(d->flags & TF_Never)) parts[np++] = d;
+    }
+    r = np == 0 ? cNeverType : np == 1 ? parts[0] : cGetUnionType(parts, np);
+    if (r->flags & TF_Never) {
+      if (cIsRelatedWith(cand, type, REL_Subtype)) r = cand;
+      else if (cIsRelatedWith(type, cand, REL_Assignable)) r = type;
+      else if (cIsRelatedWith(cand, type, REL_Assignable)) r = cand;
+      else r = cGetIntersectionType((TsType *[]){ type, cand }, 2);
+    }
+  }
+  if (cUnportedCount != before) return cUnported("predicate narrowing that meets an unported relation");
+  return r;
+}
+
 /* narrowTypeByTypePredicate: a call with one signature whose return is a type predicate `x is T` of an identifier parameter,
- * where the reference is that argument. Ported for an any or unknown reference (getNarrowedType: the predicate type when true, the
- * reference type when false); the other references are not ported. */
+ * where the reference is that argument (getNarrowedType: the predicate type when true, the reference type when false, with
+ * the members of the reference narrowed as cGetNarrowedType does). */
 static TsType *cNarrowByPredicate(TsNode *c, bool truthy, TsType *t, CFlowRef *r) {
   TsType *f = cExprType(c->expression);
   if (f == cErrorType || !(f->flags & TF_Object)) return cUnported("narrowing by a call");
@@ -424,8 +512,14 @@ static TsType *cNarrowByPredicate(TsNode *c, bool truthy, TsType *t, CFlowRef *r
   TsType *cand = cTypeFromNode(pred->type);
   if (cand == cErrorType || (cand->flags & (TF_Any | TF_Unknown))) return cUnported("narrowing by a call");
   if (t == cErrorType) return t;
-  if (!(t->flags & (TF_Any | TF_Unknown)) || t == cand) return cUnported("predicate narrowing of a reference that is not any");
-  return truthy ? cand : t;
+  /* narrowTypeByTypePredicate: an any reference is kept for the global Object and Function types */
+  if ((t->flags & TF_Any) && (cand->flags & TF_Object) && cand->symbol) {
+    TsSymbol *sym = cand->symbol;
+    bool globalish = (sym->name.n == 6 && memcmp(sym->name.s, "Object", 6) == 0) ||
+                     (sym->name.n == 8 && memcmp(sym->name.s, "Function", 8) == 0);
+    if (globalish) return cUnported("predicate of the global Object or Function type");
+  }
+  return cGetNarrowedType(t, cand, truthy);
 }
 
 /* isCoercibleUnderDoubleEquals (5.9.2, 72371) */
