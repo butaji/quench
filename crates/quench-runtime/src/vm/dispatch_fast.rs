@@ -18646,7 +18646,7 @@ fn derive_lane_view<'live, H: Host>(
         .collect();
     // Each record's handler before any fusion: a record still holding it
     // runs only its own instruction.
-    let selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
+    let mut selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
     // Whether a record's handler serves `op` with accumulator field `acc`.
     let serves = |handler: *const (), op: u16, acc: u8| {
         tables[0][usize::from(acc)]
@@ -18758,6 +18758,16 @@ fn derive_lane_view<'live, H: Host>(
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
     // A host that runs no lane (`Host::RUNS_LANE` false) never runs these records, so it instantiates no fusion
     // handler: the tables of `fuse_chains`, `fuse_target_backedges` and `fuse_rows` are gated on the host.
+    // A `Binary` record of an operator with rows runs its operator's row rather than fusing (`operator_row`):
+    // its operator and operand tests fold, which a fused pair's run-time operator does not.
+    if !wasm {
+        for (record, selected) in records.iter_mut().zip(selected.iter_mut()) {
+            if let Some(row) = lane_frame::operator_row::<H>(record) {
+                record.handler = row as *const ();
+                *selected = record.handler;
+            }
+        }
+    }
     let mut fused = if const { H::RUNS_LANE } {
         lane_frame::fuse_chains::<H>(&mut records, &decoded, live().map(|masks| &**masks), function.handlers.is_empty())
     } else {
@@ -18800,6 +18810,9 @@ fn derive_lane_view<'live, H: Host>(
                 records[pc].handler = plain.handler as *const ();
             }
         }
+    }
+    if !wasm {
+        specialize_register_operands::<H>(&mut records);
     }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
@@ -19517,6 +19530,23 @@ fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
             continue;
         };
         records[pc].handler = handler as *const ();
+    }
+}
+
+/// Gives each plain two-operand arithmetic record whose operands are both registers its row at
+/// `FLAG_REGISTERS`, which reads them without testing their tags. Runs after the fusion passes, which
+/// find the rows by their plain handlers.
+fn specialize_register_operands<H: Host>(records: &mut [LaneInstruction]) {
+    for record in records.iter_mut() {
+        if !lane_frame::register_operands(record) {
+            continue;
+        }
+        let row = lane_frame::registers_row::<H, { crate::bytecode::Op::Binary as u16 }>(record.handler)
+            .or_else(|| lane_frame::registers_row::<H, { crate::bytecode::Op::NumericAdd as u16 }>(record.handler))
+            .or_else(|| lane_frame::registers_row::<H, { crate::bytecode::Op::NumericMultiply as u16 }>(record.handler));
+        if let Some(row) = row {
+            record.handler = row as *const ();
+        }
     }
 }
 
