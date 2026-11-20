@@ -3,10 +3,12 @@
 
 use super::*;
 
-/// The code of a lane body, and where its scalar entry lies in it.
+/// The code of a lane body, and where its scalar entry and its proven entry lie in it, with the entry types the
+/// proven entry's guards are skipped at (`lane_region::LoweredRegion::entry_types`).
 pub(super) struct LaneImage {
     pub(super) code: Vec<u8>,
     pub(super) scalar: Option<usize>,
+    pub(super) proven: Option<(usize, Box<[crate::typed_ir::Type]>)>,
 }
 
 /// The alignment each function's code starts at.
@@ -31,13 +33,32 @@ fn function_code(function: ir::Function, level: super::super::jit_backend::Compi
     compile_native_function(function, &*isa, LANE_BODY_CODE_CEILING, |code| Some(code.to_vec()))
 }
 
-/// The code of one lane body and of its `scalar` entry, compiled on the calling thread: where the
-/// entry does not compile, neither does the image, as its body calls it.
-pub(super) fn compile(function: ir::Function, scalar: Option<ir::Function>, level: super::super::jit_backend::CompileLevel) -> super::LaneCode {
-    let mut code = function_code(function, level)?;
-    let Some(scalar) = scalar else { return Ok(LaneImage { code, scalar: None }) };
+/// Appends the code of `function` to `code`, aligned as a function's code is, and returns where it starts.
+fn append(code: &mut Vec<u8>, function: ir::Function, level: super::super::jit_backend::CompileLevel)
+    -> Result<usize, super::super::jit_backend::NativeCompileRejection> {
+    let function = function_code(function, level)?;
     let at = code.len().next_multiple_of(FUNCTION_ALIGN);
     code.resize(at, 0);
-    code.extend(function_code(scalar, level)?);
-    Ok(LaneImage { code, scalar: Some(at) })
+    code.extend(function);
+    Ok(at)
+}
+
+/// The code of one lane body and of its `scalar` entry, compiled on the calling thread: where the
+/// entry does not compile, neither does the image, as its body calls it. A proven entry that does not
+/// compile is dropped: the body's own entry runs every guard.
+pub(super) fn compile(function: ir::Function, scalar: Option<ir::Function>, proven: Option<(ir::Function, Box<[crate::typed_ir::Type]>)>,
+    level: super::super::jit_backend::CompileLevel) -> super::LaneCode {
+    let mut code = function_code(function, level)?;
+    let scalar = match scalar {
+        Some(scalar) => Some(append(&mut code, scalar, level)?),
+        None => None,
+    };
+    let proven = proven.and_then(|(function, params)| {
+        let length = code.len();
+        match append(&mut code, function, level) {
+            Ok(at) => Some((at, params)),
+            Err(_) => { code.truncate(length); None }
+        }
+    });
+    Ok(LaneImage { code, scalar, proven })
 }

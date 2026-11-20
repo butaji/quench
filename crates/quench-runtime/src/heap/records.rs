@@ -200,6 +200,10 @@ pub(super) struct RecordCursor {
 pub(super) struct RecordSpace<T, const CAPACITY: usize, const HOLE: usize = 0> {
     pub(super) base: NonNull<MaybeUninit<T>>,
     reservation: Reservation,
+    /// The records its address range holds: `CAPACITY` where the whole range could be mapped,
+    /// else the largest power of two down to `MIN_RESERVED_RECORDS` that could
+    /// (`ensure_reserved`). An id at or past it is never handed out.
+    reserved: usize,
     blocks: Vec<RecordBlock>,
     /// Per block, whether a record was written in it since its pages were last returned to the
     /// kernel (`return_free_pages`); a block not dirty holds no touched record page. Kept in step
@@ -267,6 +271,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Default for RecordSpace<T, CAP
         Self {
             base: NonNull::dangling(),
             reservation: Reservation::Unreserved,
+            reserved: 0,
             blocks: Vec::new(),
             dirty: Vec::new(),
             next_id: 0,
@@ -551,7 +556,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             self.take_free_word_id()
         } else if self.free_cursor == 0
             && self.is_reserved()
-            && (self.next_id as usize) < CAPACITY
+            && (self.next_id as usize) < self.reserved
             && Self::split_id(self.next_id).0 < self.blocks.len()
         {
             let id = self.next_id;
@@ -575,7 +580,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             self.take_free_word_id()
         } else if self.free_cursor == 0
             && self.is_reserved()
-            && (self.next_id as usize) < CAPACITY
+            && (self.next_id as usize) < self.reserved
             && Self::split_id(self.next_id).0 < self.blocks.len()
         {
             let id = self.next_id;
@@ -635,11 +640,11 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             return None;
         }
         let start = self.next_id as usize;
-        if start >= CAPACITY {
+        if start >= self.reserved {
             return None;
         }
         let (block_index, first) = Self::split_id(self.next_id);
-        let end = ((block_index + 1) * RECORDS_PER_BLOCK).min(CAPACITY);
+        let end = ((block_index + 1) * RECORDS_PER_BLOCK).min(self.reserved);
         self.add_blocks_through(block_index);
         let run = end - start;
         self.blocks[block_index].set_occupancy_range(first, first + run, true);
@@ -740,7 +745,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             self.next_id = 2 * HOLE as RecordId;
         }
         let id = self.next_id;
-        if id as usize >= CAPACITY {
+        if id as usize >= self.reserved {
             return None;
         }
         // The id after the last one a space may hold; `CAPACITY` is below `u32::MAX`, so it fits.
@@ -790,7 +795,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// increasing order, each marked (old), as after a full collection; the ids skipped are
     /// reusable once `finish_snapshot_inserts` runs. `false` when the id cannot be placed.
     pub(super) fn insert_snapshot(&mut self, id: RecordId, value: T) -> bool {
-        if !self.ensure_reserved() || id as usize >= CAPACITY || id < self.next_id || Self::in_hole(id) {
+        if !self.ensure_reserved() || id as usize >= self.reserved || id < self.next_id || Self::in_hole(id) {
             return false;
         }
         let (block_index, record_index) = Self::split_id(id);
@@ -1578,7 +1583,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         }
         released.sort_unstable();
         let block_bytes = RECORDS_PER_BLOCK * size_of::<MaybeUninit<T>>();
-        let mapped_bytes = CAPACITY * size_of::<MaybeUninit<T>>();
+        let mapped_bytes = self.reserved * size_of::<MaybeUninit<T>>();
         let page = page_bytes();
         let mut returned = 0;
         // Adjacent blocks form one run, returned by one call: whole pages inside the run, so a
