@@ -10940,6 +10940,16 @@ script_handler! {
     }
 }
 
+/// Whether `target`, a settling target of the running program (`CallEntry::Settles`), may
+/// suspend: its first `await` leaves its caller the promise, which only a caller that keeps
+/// the call's result can take (`Vm::try_settling_call`).
+#[inline(never)]
+fn settling_body_suspends<H: Host>(cx: *mut LaneContext<H>, target: &ScriptCallTarget) -> bool {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    code.function_get(target.function as usize).is_none_or(|body| body.suspends())
+}
+
 script_handler! {
     /// `script_call_full_miss` of a non-suspending async target (`CallEntry::Settles`), out of
     /// line so the other calls keep their registers: the call makes its promise first, as
@@ -10963,8 +10973,12 @@ script_handler! {
             sibling!(script_call_full_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+        // A returning call of a body that may suspend takes the general path, as
+        // `Vm::try_settling_call` declines it: the general loop's `Await` makes the
+        // continuation only for a call whose caller keeps its result, and a caller that returns
+        // the promise would otherwise suspend with it ("await requires async continuation").
         if ImmediateLayout::argument_count(i.imm()) > target.params
-            || (returns && !returning_call_admitted(cx))
+            || (returns && (!returning_call_admitted(cx) || settling_body_suspends(cx, &target)))
             || vm.with_scope_entered
             || vm.host.observes_promise_lifecycle()
         {

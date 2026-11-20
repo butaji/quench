@@ -119,6 +119,7 @@ struct LoopInput {
 struct LoopFacts {
     int_entries: Vec<(Register, crate::typed_ir::IntRange)>,
     double_registers: Vec<Register>,
+    string_registers: Vec<Register>,
     typed_captures: Vec<u16>,
     int_captures: Vec<u16>,
     frame_captures: Vec<(usize, usize)>,
@@ -153,7 +154,7 @@ impl LoopJob {
         let construct_plans = |function: u32, pc: u32| self.facts.construct_plans.get(&(function, pc)).cloned();
         let (index, lowered) = self.plans.iter().enumerate().find_map(|(index, plan)| {
             super::lane_region::RegionSpecializer {
-                number_reads: &plan.number_reads, int_entries: &self.facts.int_entries, number_entries: &self.facts.double_registers,
+                number_reads: &plan.number_reads, int_entries: &self.facts.int_entries, number_entries: &self.facts.double_registers, string_entries: &self.facts.string_registers,
                 typed_captures: &self.facts.typed_captures, int_captures: &self.facts.int_captures,
                 function_id: self.function_id, unit: &plan.unit, helpers: self.helpers, fields: &self.fields,
                 global_reads: &plan.global_reads, facts: VmFacts { tiers: self.tiers, held_atoms: held, construct_plans: Some(&construct_plans), ..VmFacts::STATIC }, generic: &plan.generic,
@@ -435,7 +436,7 @@ pub(in crate::vm) fn start_osr_region(
     let number_entries: Vec<crate::bytecode::Register> = observation.entry_types.iter().enumerate()
         .filter(|(_, ty)| **ty == crate::typed_ir::Type::NUMBER)
         .filter_map(|(register, _)| crate::bytecode::Register::try_from(register).ok()).collect();
-    let facts = LoopFacts { int_entries: observation.int_entries.to_vec(), double_registers: number_entries,
+    let facts = LoopFacts { int_entries: observation.int_entries.to_vec(), double_registers: number_entries, string_registers: observation.string_entries.to_vec(),
         typed_captures: observation.typed_captures.to_vec(), int_captures: observation.int_captures.to_vec(),
         frame_captures: observation.frame_captures.to_vec(), entry_bounds: observation.entry_bounds, construct_plans };
     let job = LoopJob { program: program.detached(&functions), plans, fields, facts, isa, function_id, helpers, views, tiers,

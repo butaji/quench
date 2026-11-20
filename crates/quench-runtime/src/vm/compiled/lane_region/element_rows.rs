@@ -138,10 +138,12 @@ impl Lowering<'_, '_> {
         within: bool, exit: ir::Block) -> ir::Value {
         let bits = self.tagged(state, base);
         let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); crate::staged::value::is_direct_string(&mut stage, bits) };
+        // The key's tagged word is made before the paths split: the row's host read takes it too,
+        // so a word the string path made would not dominate its use.
+        let key_word = self.tagged(state, index);
         let (string, row, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         self.branch_if(is_string, (string, &[]), (row, &[]));
         self.builder.switch_to_block(string);
-        let key_word = self.tagged(state, index);
         let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
         let table = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.ascii_unit_strings));
         let character = {

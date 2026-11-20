@@ -1585,7 +1585,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
         fields: &[], global_reads, facts, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[],
         plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
             completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok().filter(|region| region.native != 0)
