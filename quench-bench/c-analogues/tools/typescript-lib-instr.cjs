@@ -132,14 +132,21 @@ const tsConfig = JSON.parse(fs.readFileSync(path.join(dir, "actually-a-type-scri
 const srcFileData = JSON.parse(fs.readFileSync(path.join(dir, "files.json"), "utf8"));
 const REPO_ROOT = "/User/test/JetStream/";
 const options = ts.convertCompilerOptionsFromJson(tsConfig.compilerOptions, REPO_ROOT).options;
-options.lib = [...(options.lib || []), "dom"];
+options.lib = [...(options.lib || []), "lib.dom.d.ts"];
 const host = {
   getSourceFile: (f, lv) => ts.createSourceFile(f, host.readFile(f), lv),
   resolveModuleNames: (mn, cf) => mn.map((m) => ts.resolveModuleName(m, cf, options, host).resolvedModule || undefined),
   getDefaultLibFileName: () => "lib.d.ts", getCurrentDirectory: () => "", getCanonicalFileName: (f) => f.toLowerCase(),
   useCaseSensitiveFileNames: () => true, getNewLine: () => "\n",
-  fileExists: (p) => p in srcFileData,
-  readFile: (p) => { const c = srcFileData[p.toLowerCase()]; if (c === undefined) throw new Error(p); return c; },
+  // lib files that files.json does not carry come from the package's lib directory
+  fileExists: (p) => p in srcFileData || fs.existsSync(path.join(pkg, "lib", path.basename(p))),
+  readFile: (p) => {
+    const c = srcFileData[p.toLowerCase()];
+    if (c !== undefined) return c;
+    const libPath = path.join(pkg, "lib", path.basename(p));
+    if (fs.existsSync(libPath)) return fs.readFileSync(libPath, "utf8");
+    throw new Error(p);
+  },
   writeFile: () => {},
 };
 const program = ts.createProgram(Object.keys(srcFileData), options, host);

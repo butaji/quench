@@ -1022,6 +1022,7 @@ static TsType *cGetIndexedAccessType(TsType *o, TsType *ix, bool accessNode) {
 
 /* getLiteralTypeFromProperties (for the object types of the port): the names of the public properties as
  * literal types, then the key types of the index signatures (a string index gives string | number) */
+static TsType *cLateNameType(TsNode *member);   /* below: the unique symbol type of a late-bound member name */
 static TsType *cLiteralKeysOf(TsType *t) {
   TsSymbol **props;
   int np = cPropertiesOf(t, &props);
@@ -1031,7 +1032,13 @@ static TsType *cLiteralKeysOf(TsType *t) {
     TsSymbol *p = props[i];
     TsNode *d = p->valueDeclaration ? p->valueDeclaration : (p->ndecls ? p->decls[0] : NULL);
     if (d && (bModifierFlags(d) & (TMF_Private | TMF_Protected))) continue;   /* NonPublicAccessibilityModifier */
-    if (p->name.n >= 3 && memcmp(p->name.s, "__@", 3) == 0) { cUnported("keyof of a late-bound name"); continue; }
+    if (p->name.n >= 3 && memcmp(p->name.s, "__@", 3) == 0) {
+      /* getLiteralTypeFromProperty: the name type set by late binding, a unique symbol (a literal name is early) */
+      TsType *lt = (d && d->name && d->name->kind == TSK_ComputedPropertyName) ? cLateNameType(d) : NULL;
+      if (!lt) { cUnported("keyof of a late-bound name"); continue; }
+      if (lt != cErrorType) parts[n++] = lt;
+      continue;
+    }
     if (!d || !d->name) { parts[n++] = cStringLiteralType(p->name.s, p->name.n); continue; }
     TsNode *nm = d->name;
     if (nm->kind == TSK_NumericLiteral) parts[n++] = cLiteralType(TF_NumberLiteral, nm->text, nm->textLen);
