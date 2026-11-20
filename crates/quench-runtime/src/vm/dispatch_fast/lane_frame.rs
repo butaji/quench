@@ -2626,19 +2626,50 @@ macro_rules! target_run {
         }
         // SAFETY: `at` is the target or the record the prefix rows fall through to, a validated record of the view.
         let test_i = unsafe { &*at };
-        let fields = LaneFields::<$test, { FLAG_UNREAD }>(test_i);
-        let Some(operation) = row_decode!($test, { FLAG_UNREAD }, fields) else { sibling!(general_step_in_lane::<H>, $r, at, carried) };
-        let mut stage = Concrete::new(std::ptr::null());
-        let mut frame = row_frame::<H, $test, ACC_NONE, FLAG_UNREAD>($cx, $r, at, test_i, carried);
-        match row_step!(LaneFields::<$test>::OPCODE, &mut stage, &mut frame, operation) {
-            Step::Control(LaneControl::Edge(Edge::Target)) => {
-                // SAFETY: as the read of `test_i` above.
-                let backward_test = unsafe { (*at).jump() } <= 0;
-                resume!($cx, crate::vm::dispatch_fast::take_jump::<H>($cx, $r, at, backward_test, carried, None))
+        // The test at comparison `$comparison` (`Some`, a constant of the arm), as `compare_jump_row`'s
+        // instance runs it: its row folds to that comparison's test, and only that one's paths, which
+        // keep the frame out of memory. `None` is the record's own comparison.
+        macro_rules! test_run { ($comparison:expr) => {{
+            let fields = LaneFields::<$test, { FLAG_UNREAD }>(test_i);
+            let decoded = match ($comparison, row_decode!($test, { FLAG_UNREAD }, fields)) {
+                (Some(comparison), Some(Operation::CompareJump { left, right, negate, .. })) =>
+                    Some(Operation::CompareJump { comparison, left, right, negate }),
+                (_, decoded) => decoded,
+            };
+            let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, $r, at, carried) };
+            let mut stage = Concrete::new(std::ptr::null());
+            let mut frame = row_frame::<H, $test, ACC_NONE, FLAG_UNREAD>($cx, $r, at, test_i, carried);
+            match row_step!(LaneFields::<$test>::OPCODE, &mut stage, &mut frame, operation) {
+                Step::Control(LaneControl::Edge(Edge::Target)) => {
+                    // SAFETY: as the read of `test_i` above.
+                    let backward_test = unsafe { (*at).jump() } <= 0;
+                    resume!($cx, crate::vm::dispatch_fast::take_jump::<H>($cx, $r, at, backward_test, carried, None))
+                }
+                Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!($cx, $r, following(at), carried),
+                Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<$test>::OPCODE) }, $r, at, carried),
             }
-            Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!($cx, $r, following(at), carried),
-            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<$test>::OPCODE) }, $r, at, carried),
+        }}; }
+        if const { $test == crate::bytecode::Op::JumpBinaryFalse as u16 } {
+            // A loop's test is almost always a relation or a strict equality: each of those runs its own
+            // arm, any other comparison the record's decode.
+            use oxc_ast::ast::BinaryOperator as B;
+            const LT: u32 = B::LessThan as u32;
+            const LE: u32 = B::LessEqualThan as u32;
+            const GT: u32 = B::GreaterThan as u32;
+            const GE: u32 = B::GreaterEqualThan as u32;
+            const SEQ: u32 = B::StrictEquality as u32;
+            const SNE: u32 = B::StrictInequality as u32;
+            match u32::from(test_i.a) {
+                LT => test_run!(Some(Comparison::of_operator(LT))),
+                LE => test_run!(Some(Comparison::of_operator(LE))),
+                GT => test_run!(Some(Comparison::of_operator(GT))),
+                GE => test_run!(Some(Comparison::of_operator(GE))),
+                SEQ => test_run!(Some(Comparison::of_operator(SEQ))),
+                SNE => test_run!(Some(Comparison::of_operator(SNE))),
+                _ => {}
+            }
         }
+        test_run!(None::<Comparison>)
     }};
 }
 
