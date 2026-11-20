@@ -660,6 +660,8 @@ static int cRecursiveRelated(TsType *s, TsType *t, int st) {
 static int cIsRelatedTo(TsType *s, TsType *t, int st) {
   if (s == t) return RR_True;
   if (s == cErrorType || t == cErrorType) { cUnportedHit = true; return RR_True; }
+  /* indexed access and index types: their relation rules (constraints of T[K], keyof) are not ported */
+  if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index)) { cUnported("relation of an indexed access or index type"); return RR_True; }
   if (cIsSimpleRelated(s, t, cCurRel)) return RR_True;
   if (!cIsStructured(s) && !cIsStructured(t)) return RR_False;
   /* isPerformingCommonPropertyChecks: a weak target needs a common property */
@@ -687,6 +689,7 @@ static bool cIsRelatedWith(TsType *s, TsType *t, int rel) {
   if (rel == REL_Identity) r = cIdentical(s, t);
   else if (s == t) r = true;
   else if (cIsSimpleRelated(s, t, rel)) r = true;
+  else if ((s->flags | t->flags) & (TF_IndexedAccess | TF_Index)) { cUnported("relation of an indexed access or index type"); r = true; }
   else if (!cIsStructured(s) && !cIsStructured(t)) r = false;
   else {
     int ci = cRelFind(&cRelTab[rel], s, t, IS_None);

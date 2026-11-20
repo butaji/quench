@@ -23,6 +23,8 @@ struct TsMapper { int kind; TsType **src, **tgt; int n; TsMapper *m1, *m2; };
 
 static bool cIsThisless(TsSymbol *s);
 static TsType *cDeclaredTypeOfClassOrInterface(TsSymbol *sym);
+static TsType *cGetIndexedAccessType(TsType *o, TsType *ix);
+static TsType *cGetIndexType(TsType *t);
 static int cInstTotal;              /* totalInstantiationCount (getInstantiationCount) */
 static int cInstDepth;              /* instantiationDepth */
 
@@ -96,6 +98,8 @@ static bool cCouldContain(TsType *t) {
     }
   } else if (t->flags & (TF_Union | TF_Intersection)) {
     for (int i = 0; i < t->ntypes && !r; i++) r = cCouldContain(t->types[i]);
+  } else if (t->flags & (TF_IndexedAccess | TF_Index)) {
+    r = true;   /* instantiable types */
   }
   t->couldContain = r ? 1 : 2;
   return r;
@@ -532,6 +536,12 @@ static TsType *cInstantiateWorker(TsType *t, TsMapper *m) {
     if (!changed) return t;
     return (t->flags & TF_Intersection) ? cGetIntersectionType(nt, t->ntypes) : cGetUnionType(nt, t->ntypes);
   }
+  if (t->flags & TF_IndexedAccess) {
+    /* instantiateTypeWorker: getIndexedAccessType of the instantiated object and index types */
+    TsType *o = cInstantiate(t->iaObj, m), *ix = cInstantiate(t->iaIdx, m);
+    return cGetIndexedAccessType(o, ix);
+  }
+  if (t->flags & TF_Index) return cGetIndexType(cInstantiate(t->ixOf, m));
   return cUnported("instantiation of a type kind outside the subset");
 }
 

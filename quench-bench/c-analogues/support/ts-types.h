@@ -35,7 +35,7 @@ enum {
   TF_StringLiteral = 128, TF_NumberLiteral = 256, TF_BooleanLiteral = 512, TF_EnumLiteral = 1024,
   TF_BigIntLiteral = 2048, TF_ESSymbol = 4096, TF_UniqueESSymbol = 8192, TF_Void = 16384, TF_Undefined = 32768,
   TF_Null = 65536, TF_Never = 131072, TF_TypeParameter = 262144, TF_Object = 524288, TF_Union = 1048576,
-  TF_Intersection = 2097152, TF_NonPrimitive = 67108864
+  TF_Intersection = 2097152, TF_Index = 4194304, TF_IndexedAccess = 8388608, TF_NonPrimitive = 67108864
 };
 
 /* ObjectFlags (TypeScript 5.9.2) */
@@ -91,6 +91,9 @@ typedef struct TsType {
   /* classes and interfaces (Reference targets): the this type parameter (getDeclaredTypeOfClassOrInterface) */
   struct TsType *thisType;
   bool isThisType;
+  /* indexed access types (T[K]): object and index type; index types (keyof T): the type */
+  struct TsType *iaObj, *iaIdx, *ixOf;
+  struct TsType *resolvedIndex;   /* getIndexTypeForGenericType cache */
 } TsType;
 
 struct CSig { TsNode *decl; bool isConstruct; TsType *thisType; struct TsMapper *mapper; };
@@ -500,10 +503,174 @@ static TsType *cThisTypeOfNode(TsNode *n) {
   return cUnported("this type outside a class or interface member");
 }
 
+/* ---- indexed access and index types (getIndexedAccessType 67063, getIndexType 64940) ---- */
+static void cResolveIndexInfos(TsType *t);
+static int cPropertiesOf(TsType *t, TsSymbol ***out);
+static BName cLiteralKey(TsType *l);
+static TsSymbol *cPropertyOf(TsType *t, BName name);
+static CHEnt *cIndexedTab[1024];
+
+/* a string literal type of a value (the token value of a literal node, without quotes; literal types are keyed by it) */
+static TsType *cStringLiteralType(const char *value, int n) { return cLiteralType(TF_StringLiteral, value, n); }
+
+/* isGenericObjectType (type variables, indexed access types; a generic mapped type is not ported) */
+static bool cIsGenericObject(TsType *t) {
+  if (t->flags & (TF_Union | TF_Intersection)) {
+    for (int i = 0; i < t->ntypes; i++) if (cIsGenericObject(t->types[i])) return true;
+    return false;
+  }
+  if (t->flags & TF_Object) {
+    if (t->objectFlags & OF_Mapped) cUnported("generic check of a mapped type");
+    return false;
+  }
+  return (t->flags & (TF_TypeParameter | TF_IndexedAccess)) != 0;
+}
+
+/* isGenericIndexType: type variables, index types (and unions and intersections of them) */
+static bool cIsGenericIndex(TsType *t) {
+  if (t->flags & (TF_Union | TF_Intersection)) {
+    for (int i = 0; i < t->ntypes; i++) if (cIsGenericIndex(t->types[i])) return true;
+    return false;
+  }
+  return (t->flags & (TF_TypeParameter | TF_IndexedAccess | TF_Index)) != 0;
+}
+
+/* getIndexTypeForGenericType: the deferred keyof of a type variable, one per type */
+static TsType *cIndexTypeForGeneric(TsType *t) {
+  if (!t->resolvedIndex) {
+    TsType *r = cNewType(TF_Index);
+    r->ixOf = t;
+    t->resolvedIndex = r;
+  }
+  return t->resolvedIndex;
+}
+
+/* the applicable index info of a key (getApplicableIndexInfo, a single one; several are not ported) */
+static CIndexInfo *cApplicableIndexInfo(TsType *o, TsType *key, bool *unported) {
+  cResolveIndexInfos(o);
+  CIndexInfo *hit = NULL;
+  int n = 0;
+  for (int i = 0; i < o->nindex; i++) {
+    CIndexInfo *info = &o->index[i];
+    /* isApplicableIndexType: a string index takes any string or number key, a number index a number key */
+    bool applies = info->keyType == cStringType ? (key->flags & (TF_StringLiteral | TF_String | TF_NumberLiteral | TF_Number)) != 0
+                                                : (info->keyType == cNumberType && (key->flags & (TF_NumberLiteral | TF_Number)) != 0);
+    if (applies) { hit = info; n++; }
+  }
+  if (n > 1) *unported = true;
+  return hit;
+}
+
+/* getPropertyTypeForIndexType (for the keys of the ported subset): the property named by a literal key, or
+ * the applicable index signature; NULL when the access is an error in TypeScript (not ported) */
+static TsType *cPropertyTypeForIndex(TsType *o, TsType *key) {
+  if (o->flags & (TF_Any | TF_Never)) return (key->flags & (TF_StringLiteral | TF_NumberLiteral | TF_String | TF_Number)) ? o : NULL;
+  if (!(o->flags & TF_Object)) return NULL;
+  if (key->flags & (TF_StringLiteral | TF_NumberLiteral)) {
+    BName name = (key->flags & TF_StringLiteral) ? cLiteralKey(key) : bnEscapeText(key->text, key->textLen);
+    TsSymbol *p = cPropertyOf(o, name);
+    if (p) return cTypeOfSymbol(p);
+  }
+  if (!(key->flags & (TF_StringLiteral | TF_NumberLiteral | TF_String | TF_Number))) return NULL;
+  bool unported = false;
+  CIndexInfo *info = cApplicableIndexInfo(o, key, &unported);
+  if (unported) { cUnported("several applicable index signatures"); return NULL; }
+  return info ? info->type : NULL;
+}
+
+/* getIndexedAccessTypeOrUndefined (67063) for the resolved forms; a missing property is an error (not ported) */
+static TsType *cGetIndexedAccessType(TsType *o, TsType *ix) {
+  if (o == cErrorType || ix == cErrorType) return cErrorType;
+  if (cIsGenericIndex(ix) || cIsGenericObject(o)) {
+    if (o->flags & (TF_Any | TF_Unknown)) return o;
+    TsType *key[2] = {o, ix};
+    TsType *hit = cHashGet(cIndexedTab, key, 2);
+    if (hit) return hit;
+    TsType *r = cNewType(TF_IndexedAccess);
+    r->iaObj = o;
+    r->iaIdx = ix;
+    TsType **k = ts_arena_alloc(sizeof(TsType *) * 2);
+    k[0] = o; k[1] = ix;
+    cHashPut(cIndexedTab, k, 2, r);
+    return r;
+  }
+  if (ix->flags & TF_Union && !(ix->flags & TF_Boolean)) {
+    TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(ix->ntypes ? ix->ntypes : 1));
+    for (int i = 0; i < ix->ntypes; i++) {
+      parts[i] = cPropertyTypeForIndex(o, ix->types[i]);
+      if (!parts[i]) return cUnported("indexed access: missing property of a union key");
+    }
+    return cGetUnionType(parts, ix->ntypes);
+  }
+  TsType *r = cPropertyTypeForIndex(o, ix);
+  return r ? r : cUnported("indexed access: no such property or index signature");
+}
+
+/* getLiteralTypeFromProperties (for the object types of the port): the names of the public properties as
+ * literal types, then the key types of the index signatures (a string index gives string | number) */
+static TsType *cLiteralKeysOf(TsType *t) {
+  TsSymbol **props;
+  int np = cPropertiesOf(t, &props);
+  TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(np + 4));
+  int n = 0;
+  for (int i = 0; i < np; i++) {
+    TsSymbol *p = props[i];
+    TsNode *d = p->valueDeclaration ? p->valueDeclaration : (p->ndecls ? p->decls[0] : NULL);
+    if (d && (bModifierFlags(d) & (TMF_Private | TMF_Protected))) continue;   /* NonPublicAccessibilityModifier */
+    if (p->name.n >= 3 && memcmp(p->name.s, "__@", 3) == 0) { cUnported("keyof of a late-bound name"); continue; }
+    if (!d || !d->name) { parts[n++] = cStringLiteralType(p->name.s, p->name.n); continue; }
+    TsNode *nm = d->name;
+    if (nm->kind == TSK_NumericLiteral) parts[n++] = cLiteralType(TF_NumberLiteral, nm->text, nm->textLen);
+    else if (nm->kind == TSK_Identifier || nm->kind == TSK_StringLiteral) parts[n++] = cStringLiteralType(nm->text, nm->textLen);
+    else cUnported("keyof of a computed property name");
+  }
+  cResolveIndexInfos(t);
+  for (int i = 0; i < t->nindex; i++) {
+    TsType *k = t->index[i].keyType;
+    if (k == cStringType) parts[n++] = cGetUnionType((TsType*[]){cStringType, cNumberType}, 2);
+    else if (k == cNumberType) parts[n++] = cNumberType;
+    else cUnported("keyof of a symbol index signature");
+  }
+  return cGetUnionType(parts, n);
+}
+
+/* getIndexType (64940) for the object types and type variables of the port */
+static TsType *cGetIndexType(TsType *t) {
+  if (t == cErrorType) return cErrorType;
+  if (t->flags & (TF_TypeParameter | TF_IndexedAccess)) return cIndexTypeForGeneric(t);
+  if (t->flags & TF_Union) {
+    TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(t->ntypes ? t->ntypes : 1));
+    for (int i = 0; i < t->ntypes; i++) parts[i] = cGetIndexType(t->types[i]);
+    return cGetIntersectionType(parts, t->ntypes);
+  }
+  if (t->flags & TF_Intersection) {
+    TsType **parts = ts_arena_alloc(sizeof(TsType *) * (size_t)(t->ntypes ? t->ntypes : 1));
+    for (int i = 0; i < t->ntypes; i++) parts[i] = cGetIndexType(t->types[i]);
+    return cGetUnionType(parts, t->ntypes);
+  }
+  if (t->flags & TF_Object) {
+    if (t->objectFlags & OF_Mapped) return cUnported("keyof of a mapped type");
+    return cLiteralKeysOf(t);
+  }
+  if (t->flags & (TF_Any | TF_Never)) {
+    TsType *parts[3] = {cStringType, cNumberType, cESSymbolType};
+    return cGetUnionType(parts, 3);
+  }
+  if (t->flags & TF_Unknown) return cNeverType;
+  return cUnported("keyof of a primitive or index type");
+}
+
 static TsType *cTypeFromNodeWorker(TsNode *n) {
   if (!n) return cErrorType;
   switch (n->kind) {
     case TSK_ThisType: return cThisTypeOfNode(n);
+    case TSK_IndexedAccessType: {
+      /* getTypeFromIndexedAccessTypeNode: the object and index types, then getIndexedAccessType */
+      TsType *o = cTypeFromNode(n->objectType);
+      TsType *ix = cTypeFromNode(n->indexType);
+      if (o == cErrorType || ix == cErrorType) return cErrorType;
+      return cGetIndexedAccessType(o, ix);
+    }
     case TSK_AnyKeyword: return cAnyType;
     case TSK_UnknownKeyword: return cUnknownType;
     case TSK_NumberKeyword: return cNumberType;
@@ -519,6 +686,11 @@ static TsType *cTypeFromNodeWorker(TsNode *n) {
     case TSK_ParenthesizedType: return cTypeFromNode(n->type);
     case TSK_TypePredicate: return n->assertsModifier ? cVoidType : cBooleanType; /* getTypeFromTypeNodeWorker */
     case TSK_TypeOperator:
+      if (n->extra == TSK_KeyOfKeyword) {
+        /* getTypeFromTypeOperatorNode: keyof T is getIndexType of the operand */
+        TsType *o = cTypeFromNode(n->type);
+        return o == cErrorType ? cErrorType : cGetIndexType(o);
+      }
       if (n->extra != TSK_UniqueKeyword) return cUnported("type operator");
       if (!n->type || n->type->kind != TSK_SymbolKeyword) return cUnported("unique operand");
       return cUniqueSymbolType(n->parent);
@@ -1397,6 +1569,8 @@ static bool cIdentical(TsType *s, TsType *t) {
     }
     return true;
   }
+  if (s->flags & TF_IndexedAccess) return cIdentical(s->iaObj, t->iaObj) && cIdentical(s->iaIdx, t->iaIdx);
+  if (s->flags & TF_Index) return cIdentical(s->ixOf, t->ixOf);
   if (!(s->flags & TF_Object)) return false;
   /* the identity cache and the stack of pairs being compared (a pair on the stack is assumed related) */
   int ci = cIdFind(s, t);
@@ -1443,6 +1617,7 @@ static void cResetTypeCaches(void) {
   memset(cUnionTab, 0, sizeof cUnionTab);
   memset(cTupleTargets, 0, sizeof cTupleTargets);
   memset(cInterTab, 0, sizeof cInterTab);
+  memset(cIndexedTab, 0, sizeof cIndexedTab);
 }
 
 /* isTypeIdenticalTo: the entry point used by the checks */
