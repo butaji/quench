@@ -1909,7 +1909,7 @@ static bool cIsInitializedDeclParam(TsNode *p);                   /* ts-checker-
 static TsType *cBindingElementType(TsSymbol *sym, TsNode *d);     /* ts-checker-body.h: destructured variables */
 static TsType *cParameterSymbolType(TsSymbol *sym, TsNode *d) {
   if (!d->type) return cUnannotatedParamType(sym, d);
-  if (d->name && d->name->kind != TSK_Identifier) return cUnported("parameter with a binding pattern");
+  /* an annotation is the declared type whatever the name (tryGetTypeFromEffectiveTypeNode), a binding pattern included */
   TsType *t = cTypeFromNode(d->type);
   if (d->questionToken || (d->initializer && t != cErrorType)) t = cAddUndefined(t);
   return t;

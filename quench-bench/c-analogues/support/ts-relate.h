@@ -626,7 +626,14 @@ typedef struct { TsNode *decl; TsMapper *mapper; CSig res; } CEraseEnt;
 static CEraseEnt *cEraseList;
 static int cEraseN, cEraseCap;
 /* the erased signatures live in the checker arena: every checker run starts with none */
-static void cResetEraseList(void) { cEraseN = 0; }
+/* the base signatures of the generic instances (cBaseSignatureOf) live in the checker arena too */
+typedef struct { TsNode *decl; TsMapper *mapper; TsType **vals; int n; bool fail; } CBaseEnt;
+static CBaseEnt *cBaseList;
+static int cBaseN, cBaseCap;
+typedef struct { TsNode *decl; TsMapper *mapper; TsType *val; } CPredEnt;
+static CPredEnt *cPredList;
+static int cPredN, cPredCap;
+static void cResetEraseList(void) { cEraseN = 0; cBaseN = 0; cPredN = 0; }
 static CSig cErasedSignature(CSig *sig) {
   if (!cSigIsGeneric(sig)) return *sig;
   for (int i = 0; i < cEraseN; i++)
@@ -878,19 +885,61 @@ static bool cInferApplyToParams(CInfer *c, CSig *src, CParams *ps, CSig *tgt, CP
   return true;
 }
 
+/* getTypePredicateOfSignature (cached per signature and mapper): the type of the predicate of a signature's declaration */
+static TsType *cPredicateTypeOf(CSig *sig) {
+  for (int i = 0; i < cPredN; i++)
+    if (cPredList[i].decl == sig->decl && cPredList[i].mapper == sig->mapper) return cPredList[i].val;
+  TsType *v = cTypeFromNodeM(sig->decl->type->type, sig->mapper);
+  if (cPredN == cPredCap) {
+    cPredCap = cPredCap ? cPredCap * 2 : 16;
+    cPredList = realloc(cPredList, sizeof(CPredEnt) * (size_t)cPredCap);
+    if (!cPredList) abort();
+  }
+  cPredList[cPredN].decl = sig->decl; cPredList[cPredN].mapper = sig->mapper; cPredList[cPredN].val = v; cPredN++;
+  return v;
+}
+/* the parameter index of a type predicate's identifier in its signature (-1 for this, -2 when it names no parameter) */
+static int cPredicateParamIndex(TsNode *decl, TsNode *pred) {
+  TsNode *pn = pred->parameterName;
+  if (!pn || pn->kind != TSK_Identifier) return -1;
+  if (!decl->parameters) return -2;
+  for (int i = 0; i < decl->parameters->n; i++) {
+    TsNode *p = decl->parameters->v[i];
+    if (p->name && p->name->kind == TSK_Identifier && p->name->textLen == pn->textLen && memcmp(p->name->text, pn->text, (size_t)pn->textLen) == 0)
+      return i;
+  }
+  return -2;
+}
+/* getBaseSignature (cached per signature and mapper): each type parameter is the instance of its constraint, instantiated
+ * by the signature's mapper (unknown without one); a constraint that still refers to a type parameter is not ported */
+static CBaseEnt *cBaseSignatureOf(CSig *sig) {
+  for (int i = 0; i < cBaseN; i++)
+    if (cBaseList[i].decl == sig->decl && cBaseList[i].mapper == sig->mapper) return &cBaseList[i];
+  int n;
+  TsType **tps = cSigTypeParams(sig->decl, &n);
+  TsType **vals = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
+  bool fail = false;
+  for (int k = 0; k < n && !fail; k++) {
+    TsType *cn = cConstraintOf(tps[k]);
+    if (cn && sig->mapper) cn = cInstantiate(cn, sig->mapper);
+    if (cn && cCouldContain(cn)) fail = true;
+    vals[k] = cn ? cn : cUnknownType;
+  }
+  if (cBaseN == cBaseCap) {
+    cBaseCap = cBaseCap ? cBaseCap * 2 : 16;
+    cBaseList = realloc(cBaseList, sizeof(CBaseEnt) * (size_t)cBaseCap);
+    if (!cBaseList) abort();
+  }
+  CBaseEnt *e = &cBaseList[cBaseN++];
+  e->decl = sig->decl; e->mapper = sig->mapper; e->vals = vals; e->n = n; e->fail = fail;
+  return e;
+}
 static bool cInferSignature(CInfer *c, CSig *src0, CSig *tgt) {
   CSig *src = src0;
   if (cSigIsGeneric(src0)) {
-    /* getBaseSignature: each type parameter is the instance of its constraint (unknown without one) */
-    int n;
-    TsType **tps = cSigTypeParams(src0->decl, &n);
-    TsType **vals = ts_arena_alloc(sizeof(TsType *) * (size_t)(n ? n : 1));
-    for (int k = 0; k < n; k++) {
-      TsType *cn = cConstraintOf(tps[k]);
-      if (cn && cCouldContain(cn)) return false;
-      vals[k] = cn ? cn : cUnknownType;
-    }
-    src = cGetSignatureInstance(src0, vals, n);
+    CBaseEnt *be = cBaseSignatureOf(src0);
+    if (be->fail) return false;
+    src = cGetSignatureInstance(src0, be->vals, be->n);
   }
   CSig tg = cErasedSignature(tgt);
   CParams ps, pt;
@@ -903,8 +952,15 @@ static bool cInferSignature(CInfer *c, CSig *src0, CSig *tgt) {
   bool ok = cInferApplyToParams(c, src, &ps, &tg, &pt);
   c->bivariant = saveBiv;
   if (!ok) return false;
-  /* applyToReturnTypes: a type predicate of the target is not ported */
-  if (tg.decl->type && tg.decl->type->kind == TSK_TypePredicate) return false;
+  /* applyToReturnTypes: a type predicate of the target infers from the type predicate of the source when both are
+   * of the same kind (typePredicateKindsMatch: the same assertion and parameter); the return types otherwise */
+  if (tg.decl->type && tg.decl->type->kind == TSK_TypePredicate) {
+    TsNode *sp = src->decl->type, *tp = tg.decl->type;
+    if (sp && sp->kind == TSK_TypePredicate && sp->type && tp->type && (sp->assertsModifier != NULL) == (tp->assertsModifier != NULL) &&
+        cPredicateParamIndex(src->decl, sp) == cPredicateParamIndex(tg.decl, tp))
+      cInferFrom(c, cPredicateTypeOf(src), cPredicateTypeOf(&tg));
+    return true;
+  }
   cInferFrom(c, cReturnTypeOf(src), cReturnTypeOf(&tg));
   return true;
 }
@@ -957,7 +1013,24 @@ static void cInferObjectsBody(CInfer *c, TsType *source, TsType *target) {
       if (!cInferSignature(c, &ss[ns - len + i], &ts[nn - len + i])) cUnported("inference from a generic or rest signature");
   }
   cResolveIndexInfos(target);
-  if (target->nindex) cUnported("inference into an index signature");
+  if (!target->nindex) return;
+  /* inferFromIndexTypes: the properties of an object literal or type literal source infer into the index signatures
+   * of the target (not ported); otherwise each index signature of the target infers from the applicable index
+   * signature of the source (getApplicableIndexInfo) */
+  cResolveSignatures(source);
+  if (source->symbol && !(source->objectFlags & OF_Tuple) && !(source->symbol->flags & SF_Class) && (source->symbol->flags & (SF_ObjectLiteral | SF_TypeLiteral | SF_RegularEnum | SF_ValueModule)) &&
+      source->ncall == 0 && source->nconstruct == 0) {
+    cUnported("inference into an index signature");
+    return;
+  }
+  cResolveIndexInfos(source);
+  for (int i = 0; i < target->nindex; i++) {
+    CIndexInfo *ti = &target->index[i];
+    bool unp = false;
+    CIndexInfo *si = cApplicableIndexInfo(source, ti->keyType, &unp);
+    if (unp) { cUnported("inference into an index signature"); return; }
+    if (si) cInferFrom(c, si->type, ti->type);
+  }
 }
 
 static void cInferFrom(CInfer *c, TsType *source, TsType *target) {
