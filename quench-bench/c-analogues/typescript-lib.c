@@ -23,7 +23,11 @@
  *     bases included), the identity relation, and the assignable and subtype relations (maybe stack,
  *     depth limits, variances by marker types, signatures, index signatures, weak types), the base type
  *     check of classes with issueMemberSpecificError (2416 at member names, 2415).
- *   Expression checks of assignments (support/ts-checker-expr.h): `this[K] = { ... }` in a constructor is
+ *   Declaration checks of interfaces and type references (support/ts-checker-iface.h): checkInterfaceDeclaration (base
+   types with the this argument, 2430; inherited property identity, 2320; checkIndexConstraints, 2411 and 2413),
+   checkTypeReferenceNode with checkTypeArgumentConstraints (2344), checkTypeParameter defaults (2344), and the
+   index constraints of type literals.
+   Expression checks of assignments (support/ts-checker-expr.h): `this[K] = { ... }` in a constructor is
  *   checked by elaborating the object literal per property, which gives the last diagnostic (mapset.ts
  *   185:5, 2322, at the property name). All 54 node diagnostics match.
  *   Declaration type annotations of every file are resolved (checkSourceElement over declarations, the
