@@ -252,7 +252,7 @@ pub(super) use code_heap::{flush_retired_writers, CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
 mod direct_callee;
-pub(super) use direct_callee::{names_dead_callee, window_width, DirectCallee, DirectCandidates};
+pub(super) use direct_callee::{frames_window, names_dead_callee, window_width, DirectCallee, DirectCandidates};
 #[path = "compiled/lane_storage.rs"]
 mod lane_storage;
 mod lane_body_run;
@@ -955,7 +955,7 @@ struct LaneReceiver {
 /// Encode a proved tagged int32; widening remains the shared store's responsibility.
 fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     fallback: ir::Block, range: Option<typed_ir::IntRange>) -> ir::Value {
-    use crate::staged::store::{integer_code, integer_fits};
+    use crate::staged::narrow::{integer_code, integer_fits};
     let mut stage = object_slots::emit(builder);
     if range.is_some_and(|range| typed_ir::IntRange::packed().contains(range)) {
         #[cfg(test)] PACKED_RANGE_PROOFS.with(|count| count.set(count.get() + 1));
@@ -3488,7 +3488,7 @@ impl CompiledOsrRegion {
                     osr_lane::bind_loop::<H>(&mut dispatch, region, entry, lane_context, registers);
                     osr_lane::bind_captures::<H>(region, entry, lane_context, registers, calls, &mut captures);
                     self.stamp.set(Some(stamp));
-                    let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend), region.header);
+                    let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
                     self.parked.set(Some(dispatch));
                     run
                 }
@@ -3502,7 +3502,7 @@ impl CompiledOsrRegion {
                     // `with_function` admitted the program; it holds it for the run.
                     let Some(residual) = vm.programs.get(program) else { return RegionRun::own(LaneExit::Terminated) };
                     osr_lane::bind_frame(dispatch, &residual, vm, (program, function, lane_context), registers, false);
-                    let run = osr_lane::enter(dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend), region.header);
+                    let run = osr_lane::enter(dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
                     if self.crossing == Crossing::General && !self.made.replace(true) {
                         self.parked.set(Some(Box::new(JsStepDispatch::idle())));
                     }
@@ -9815,7 +9815,7 @@ mod tests {
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
         let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None };
-        let encoded = crate::staged::store::narrow_form(&mut stage, value, typed_ir::Type::ANY);
+        let encoded = crate::staged::narrow::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
         builder.seal_all_blocks();
         builder.finalize(isa.frontend_config());

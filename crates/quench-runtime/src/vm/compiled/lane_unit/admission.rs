@@ -67,7 +67,7 @@ fn inlinable_pure(instruction: WideInstruction, plain: bool) -> Option<bool> {
 /// The shared lowering performs only guarded, non-guest operations for an inlinable pure
 /// leaf. A miss may restart that call without replaying effects.
 pub(super) fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
-    if super::super::lane_region::restartable_numeric_function(program, function, code) { return true; }
+    if super::super::lane_region::restartable_numeric_function(program, function, code.iter().copied()) { return true; }
     code.iter().enumerate().all(|(pc, instruction)| match () {
         _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::ElementWrite { .. })) => false,
         _ if super::super::meaning_compiled::is_call(*instruction) => false,

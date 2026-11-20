@@ -29,7 +29,7 @@ pub(super) enum Search {
 /// How the elements equal to a searched value are recognised, decided once per search. Every
 /// kind but `Content` and `Nan` compares the raw words of the elements.
 #[derive(Clone, Copy)]
-enum Kind {
+enum Kind<'a> {
     /// Equal values carry exactly this word.
     One(u64),
     /// An integral Number: equal values carry its int32 word or its double word.
@@ -40,15 +40,15 @@ enum Kind {
     Nan,
     /// NaN under strict equality: no element is equal.
     Never,
-    /// A string or BigInt: equal by content, compared per element.
-    Content,
+    /// A string (its text, read once) or BigInt (`None`): equal by content, compared per element.
+    Content(Option<&'a JsString>),
 }
 
 /// The searched value with the facts `Vm::search_dense` needs, computed once per search.
 #[derive(Clone, Copy)]
-struct Needle {
+struct Needle<'a> {
     value: Value,
-    kind: Kind,
+    kind: Kind<'a>,
     /// The narrow word a narrow element equal to the value carries, or `None` when no narrow
     /// element can be equal (only a hole stops the walk then).
     narrow: Option<u32>,
@@ -72,7 +72,7 @@ fn narrow_key(search: Value) -> Option<u32> {
 }
 
 /// The kind of a Number needle, under `mode`.
-fn number_kind(number: f64, mode: Match) -> Kind {
+fn number_kind(number: f64, mode: Match) -> Kind<'static> {
     if number.is_nan() {
         return if mode == Match::SameValueZero { Kind::Nan } else { Kind::Never };
     }
@@ -178,13 +178,14 @@ impl<H: Host> Vm<H> {
     }
 
     /// Classifies `search` once for a search over the elements.
-    fn classify(&self, search: Value, mode: Match) -> Needle {
+    fn classify(&self, search: Value, mode: Match) -> Needle<'_> {
         let kind = match search.as_number() {
             Some(number) => number_kind(number, mode),
-            None if self.heap.string(search).is_some() || matches!(self.heap.get(search), Some(Cell::BigInt(_))) => {
-                Kind::Content
-            }
-            None => Kind::One(search.to_bits()),
+            None => match self.heap.string(search) {
+                Some(text) => Kind::Content(Some(text)),
+                None if matches!(self.heap.get(search), Some(Cell::BigInt(_))) => Kind::Content(None),
+                None => Kind::One(search.to_bits()),
+            },
         };
         Needle { value: search, kind, narrow: narrow_key(search) }
     }
@@ -196,9 +197,9 @@ impl<H: Host> Vm<H> {
         elements: &crate::heap::ArrayElements,
         range: std::ops::Range<usize>,
         reverse: bool,
-        needle: &Needle,
+        needle: &Needle<'_>,
     ) -> Option<usize> {
-        if let Some(words) = elements.narrow_words().filter(|_| !matches!(needle.kind, Kind::Content)) {
+        if let Some(words) = elements.narrow_words().filter(|_| !matches!(needle.kind, Kind::Content(_))) {
             return find_narrow(&words[range], reverse, needle.narrow);
         }
         match elements.wide_values() {
@@ -208,7 +209,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `position_in` over values, comparing by the needle's kind.
-    fn position_of<I>(&self, values: I, reverse: bool, needle: &Needle) -> Option<usize>
+    fn position_of<I>(&self, values: I, reverse: bool, needle: &Needle<'_>) -> Option<usize>
     where
         I: DoubleEndedIterator<Item = Value> + ExactSizeIterator,
     {
@@ -220,17 +221,16 @@ impl<H: Host> Vm<H> {
             Kind::Nan => first_stop(values, reverse, |value| {
                 value.is_double() && f64::from_bits(value.to_bits()).is_nan()
             }),
-            Kind::Content => self.position_content(values, reverse, needle.value),
+            Kind::Content(text) => self.position_content(values, reverse, needle.value, text),
         }
     }
 
     /// The first (last when `reverse`) value that is `search` itself, or a string with the same
     /// units (compared by identity first, then length and units) or a BigInt of the same value.
-    fn position_content<I>(&self, values: I, reverse: bool, search: Value) -> Option<usize>
+    fn position_content<I>(&self, values: I, reverse: bool, search: Value, text: Option<&JsString>) -> Option<usize>
     where
         I: DoubleEndedIterator<Item = Value> + ExactSizeIterator,
     {
-        let text = self.heap.string(search);
         first_stop(values, reverse, |value| match text {
             Some(text) => value == search || self.heap.string(value).is_some_and(|other| other == text),
             None => self.strict_equal(value, search),

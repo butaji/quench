@@ -884,11 +884,9 @@ impl<H: Host> Vm<H> {
     pub(super) fn wasm_memory_mut(
         &self,
         memory: Value,
-    ) -> Result<(crate::wasm::memory::MemoryGuard<'_>, usize), JsError> {
+    ) -> Result<crate::wasm::memory::MemoryGuard<'_>, JsError> {
         match self.heap.get(memory) {
-            Some(Cell::WasmMemory { bytes, header, .. }) => {
-                Ok((bytes.lock(), crate::wasm::memory::maximum_bytes(&header.ty)))
-            }
+            Some(Cell::WasmMemory { bytes, .. }) => Ok(bytes.lock()),
             _ => Err(JsError::validation(
                 "invalid mutable Wasm memory binding".into(),
             )),
@@ -962,7 +960,7 @@ impl<H: Host> Vm<H> {
         let memory = self.read(f, i.register_b());
         let value = self.decode_wasm_value(self.read(f, i.register_a()), access.ty)?;
         access
-            .write(&mut self.wasm_memory_mut(memory)?.0, address, value)
+            .write(&mut self.wasm_memory_mut(memory)?, address, value)
             .map_err(JsError::wasm_trap_error)
     }
 
@@ -971,27 +969,6 @@ impl<H: Host> Vm<H> {
             .as_int()
             .map(|value| value as u32)
             .ok_or_else(|| JsError::validation("invalid Wasm i32 operand".into()))
-    }
-
-    pub(super) fn wasm_memory_fill(
-        &mut self,
-        memory: Value,
-        address: u64,
-        byte: u32,
-        length: u64,
-    ) -> Result<(), JsError> {
-        let range = crate::wasm::memory::checked_range(
-            address,
-            usize::try_from(length)
-                .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsMemory))?,
-            self.wasm_memory_bytes(memory)?.len(),
-        )
-        .map_err(JsError::wasm_trap_error)?;
-        if range.is_empty() {
-            return Ok(());
-        }
-        self.wasm_memory_mut(memory)?.0[range].fill(byte as u8);
-        Ok(())
     }
 
     /// Copy memory or immutable data bytes; None is the dropped segment state.
@@ -1060,8 +1037,9 @@ impl<H: Host> Vm<H> {
         delta: u64,
     ) -> Result<Option<u64>, JsError> {
         let _order = crate::shared_backing::memory_order();
-        let page_size = self.wasm_memory_type(memory)?.page_size() as usize;
-        let (mut bytes, max_byte_length) = self.wasm_memory_mut(memory)?;
+        let ty = self.wasm_memory_type(memory)?;
+        let (page_size, max_byte_length) = (ty.page_size() as usize, crate::wasm::memory::maximum_bytes(&ty));
+        let mut bytes = self.wasm_memory_mut(memory)?;
         let before = bytes.capacity();
         let Some(old_pages) = bytes.grow_pages(delta, page_size, max_byte_length) else {
             return Ok(None);
@@ -1260,7 +1238,7 @@ impl<H: Host> Vm<H> {
 
     #[inline] pub(super) fn wasm_i64_operand(&self, value: Value) -> Result<i64, JsError> {
         if let Some(bits) = value.bits64() { return Ok(bits as i64); }
-        let crate::WasmValue::I64(value) = self.decode_wasm_value(value, crate::WasmType::I64)? else { unreachable!("decoded i64 operand") };
+        let crate::WasmValue::I64(value) = self.decode_wasm_value_slow(value, crate::WasmType::I64, None)? else { unreachable!("decoded i64 operand") };
         Ok(value)
     }
 
@@ -1417,6 +1395,16 @@ impl<H: Host> Vm<H> {
             }
             _ => {}
         }
+        self.decode_wasm_value_slow(value, ty, declarations)
+    }
+
+    /// `decode_wasm_value_in` without its fast paths, for a caller that has tested them.
+    pub(super) fn decode_wasm_value_slow(
+        &self,
+        value: Value,
+        ty: crate::WasmType,
+        declarations: Option<&crate::WasmTypes>,
+    ) -> Result<crate::WasmValue, JsError> {
         if let crate::WasmType::Reference { kind, .. } = ty {
             if ty.requires_declarations() && declarations.is_none() {
                 return Err(JsError::validation(
@@ -3026,8 +3014,10 @@ mod tests {
         assert_ne!(first_env, second_env);
         let first_memory = vm.wasm_memory(&first, 0).unwrap();
         let second_memory = vm.wasm_memory(&second, 0).unwrap();
-        vm.wasm_memory_fill(first_memory, 0, 0x11, 4).unwrap();
-        vm.wasm_memory_fill(second_memory, 0, 0x22, 4).unwrap();
+        vm.wasm_memory_bulk(first_memory, |stage| crate::staged::wasm_memory::fill(stage, 0, 0x11, 4))
+            .unwrap();
+        vm.wasm_memory_bulk(second_memory, |stage| crate::staged::wasm_memory::fill(stage, 0, 0x22, 4))
+            .unwrap();
 
         // Point the second instance's table at the first instance's function.
         // It has the same ProgramId and signature, but must retain its own env.
@@ -4178,7 +4168,7 @@ mod tests {
             ));
             let stored = vm.decode_wasm_value(Value::integer(23), crate::WasmType::I32).unwrap();
             crate::staged::wasm_memory_bytes::write_memory(
-                &mut vm.wasm_memory_mut(memory).unwrap().0,
+                &mut vm.wasm_memory_mut(memory).unwrap(),
                 crate::wasm::memory::MemoryStore::I32Store,
                 7,
                 stored,

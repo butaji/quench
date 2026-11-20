@@ -929,10 +929,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     where
         T: TraceRecord,
     {
-        let (block_index, record_index) = Self::split_id(id);
-        // SAFETY: a live id belongs to an initialized block.
-        let block = unsafe { self.blocks.get_unchecked(block_index) };
-        if block.marked[record_index / OCCUPANCY_WORD_BITS] & (1_u64 << (record_index % OCCUPANCY_WORD_BITS)) != 0 {
+        if self.barrier_marked(id) {
             self.rc_note(id, properties);
         }
     }
@@ -943,7 +940,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     where
         T: TraceRecord,
     {
-        self.remember(id);
+        // The mark is set: `rc_barrier` tested it.
+        self.unmark_and_log(id);
         self.rc_logged.push(id);
         // SAFETY: a barrier runs only for a live record of this family.
         let record = unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_ref() };
@@ -976,6 +974,12 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         if stored.heap_index().is_none() && !self.rc {
             return false;
         }
+        self.barrier_marked(id)
+    }
+
+    /// Whether record `id` is marked (left marked by the last collection and not yet logged).
+    #[inline(always)]
+    fn barrier_marked(&self, id: RecordId) -> bool {
         let (block_index, record_index) = Self::split_id(id);
         // SAFETY: a live id belongs to an initialized block.
         let block = unsafe { self.blocks.get_unchecked(block_index) };
@@ -984,15 +988,19 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
 
     #[inline(always)]
     pub(super) fn remember(&mut self, id: RecordId) {
+        if self.barrier_marked(id) {
+            self.unmark_and_log(id);
+        }
+    }
+
+    /// Clears the mark of record `id` (set by the caller's `barrier_marked` test) and logs it.
+    #[inline(always)]
+    fn unmark_and_log(&mut self, id: RecordId) {
         let (block_index, record_index) = Self::split_id(id);
         // SAFETY: a live id belongs to an initialized block.
         let block = unsafe { self.blocks.get_unchecked_mut(block_index) };
-        let word = &mut block.marked[record_index / OCCUPANCY_WORD_BITS];
-        let mask = 1_u64 << (record_index % OCCUPANCY_WORD_BITS);
-        if *word & mask != 0 {
-            *word &= !mask;
-            self.log_remembered(id);
-        }
+        block.marked[record_index / OCCUPANCY_WORD_BITS] &= !(1_u64 << (record_index % OCCUPANCY_WORD_BITS));
+        self.log_remembered(id);
     }
 
     /// Logs a record the barrier just unmarked, out of line: the log grows only once per

@@ -13,17 +13,7 @@ use super::*;
 /// activations (`direct_calls`), the end of the frames they may nest; none is pushed. A call the
 /// region made that ran lane code (`region_call_in_lane`) may have moved the stacks' storage.
 pub(super) fn bind_stacks<H: Host>(vm: &mut Vm<H>, payload: &mut JsStepDispatch, direct_calls: bool) {
-    let words = vm.stack_words_in_lane(if direct_calls { SHADOW_FRAMES } else { 0 });
-    payload.lane_values_top = words.values_top;
-    payload.lane_values_end = words.values_end;
-    payload.lane_activations_top = words.activations_top;
-    payload.lane_frames_end = words.frames_end;
-    payload.plain_depth = words.plain_depth;
-    payload.plain_depth_limit = words.plain_depth_limit;
-    payload.activation_count = words.activation_count;
-    payload.body_table = words.body_table;
-    payload.body_top = words.body_top;
-    payload.native_table = words.native_table;
+    vm.stack_words_in_lane(if direct_calls { SHADOW_FRAMES } else { 0 }).bind(payload);
 }
 
 /// Gives the lane frame's place to `payload`, a region's, with the room a lane body's direct calls
