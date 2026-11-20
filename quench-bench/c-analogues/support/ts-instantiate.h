@@ -428,7 +428,7 @@ static TsType *cGetUnionType(TsType **in, int n) {
   TsType **v = ts_arena_alloc(sizeof(TsType *) * (size_t)cap);
   int nm = 0;
   bool hasTrue = false, hasFalse = false, hasString = false, hasNumber = false, hasBigInt = false;
-  bool hasStringLit = false, hasNumberLit = false, hasBigIntLit = false;
+  bool hasStringLit = false, hasNumberLit = false, hasBigIntLit = false, hasESS = false, hasUniqueSym = false;
   for (int i = 0; i < n; i++) {
     TsType *t = in[i];
     if (t == cErrorType) return cErrorType;
@@ -452,10 +452,22 @@ static TsType *cGetUnionType(TsType **in, int n) {
       if (p->flags & TF_StringLiteral) hasStringLit = true;
       if (p->flags & TF_NumberLiteral) hasNumberLit = true;
       if (p->flags & TF_BigIntLiteral) hasBigIntLit = true;
+      if (p->flags & TF_ESSymbol) hasESS = true;
+      if (p->flags & TF_UniqueESSymbol) hasUniqueSym = true;
     }
   }
-  if ((hasStringLit && hasString) || (hasNumberLit && hasNumber) || (hasBigIntLit && hasBigInt))
-    return cUnported("union literal reduction");
+  /* removeRedundantLiteralTypes (Literal reduction): a string, number, bigint or unique symbol literal is dropped
+   * when its primitive is also a member (the enum literals of a number are number literals too) */
+  if ((hasStringLit && hasString) || (hasNumberLit && hasNumber) || (hasBigIntLit && hasBigInt) || (hasUniqueSym && hasESS)) {
+    int k = 0;
+    for (int i = 0; i < nm; i++) {
+      uint32_t f = v[i]->flags;
+      bool redundant = ((f & TF_StringLiteral) && hasString) || ((f & TF_NumberLiteral) && hasNumber) ||
+                       ((f & TF_BigIntLiteral) && hasBigInt) || ((f & TF_UniqueESSymbol) && hasESS);
+      if (!redundant) v[k++] = v[i];
+    }
+    nm = k;
+  }
   if (nm == 0) return cNeverType;
   if (nm == 1) return v[0];
   if (nm == 2 && hasTrue && hasFalse) return cBooleanType;

@@ -310,7 +310,22 @@ static TsType *cUnionWithSubtypesRemoved(TsType **ts, int n) {
   bool *alive = calloc((size_t)n, sizeof(bool));
   if (!alive) abort();
   for (int i = 0; i < n; i++) alive[i] = true;
+  /* removeRedundantLiteralTypes (reduceVoidUndefined, the subtype reduction): a literal of a primitive that is a member,
+   * a unique symbol with es symbol, and undefined with void are dropped first */
+  bool hasStr = false, hasNum = false, hasBig = false, hasESS = false, hasVoid = false;
+  for (int i = 0; i < n; i++) {
+    uint32_t f = ts[i]->flags;
+    hasStr |= (f & TF_String) != 0; hasNum |= (f & TF_Number) != 0; hasBig |= (f & TF_BigInt) != 0;
+    hasESS |= (f & TF_ESSymbol) != 0; hasVoid |= (f & TF_Void) != 0;
+  }
+  for (int i = 0; i < n; i++) {
+    uint32_t f = ts[i]->flags;
+    if (((f & TF_StringLiteral) && hasStr) || ((f & TF_NumberLiteral) && hasNum) || ((f & TF_BigIntLiteral) && hasBig) ||
+        ((f & TF_UniqueESSymbol) && hasESS) || ((f & TF_Undefined) && hasVoid))
+      alive[i] = false;
+  }
   for (int i = n - 1; i >= 0; i--) {
+    if (!alive[i]) continue;
     TsType *source = ts[i];
     if (!(hasEmptyObject || (source->flags & (TF_Object | TF_Union | TF_Intersection | TF_TypeParameter | TF_Index |
                                               TF_IndexedAccess | TF_Conditional | TF_TemplateLiteral | TF_StringMapping))))
