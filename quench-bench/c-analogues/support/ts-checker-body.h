@@ -2114,6 +2114,13 @@ static TsType *cArrayElementContext(TsType *ac) {
     }
     return one ? cArrayElementContext(one) : NULL;
   }
+  /* an unconstrained type parameter or unknown has no element: getIteratedTypeOrElementType and the properties of a
+   * non-structured type give nothing (a constrained parameter takes its apparent type, not ported) */
+  if (ac->flags & TF_Unknown) return NULL;
+  if (ac->flags & TF_TypeParameter) {
+    if (!cConstraintOf(ac)) return NULL;
+    return cUnported("contextual element of a constrained type parameter");
+  }
   if (!(ac->flags & TF_Object)) return cUnported("contextual element of a non-object");
   cResolveIndexInfos(ac);
   for (int i = 0; i < ac->nindex; i++) if (ac->index[i].keyType == cNumberType) return ac->index[i].type;
@@ -2637,10 +2644,38 @@ static TsType *cUnannotatedParamType(TsSymbol *sym, TsNode *d) {
   return t;
 }
 
+/* the contextual type of a parameter with a binding pattern (getContextuallyTypedParameterType): the parameter at its position
+ * in the contextual signature of its function expression or arrow. Other functions, initializers and rest parameters are not
+ * ported */
+static TsType *cContextualParamOfPattern(TsNode *d) {
+  TsNode *fn = d->parent;
+  if (!fn || (fn->kind != TSK_FunctionExpression && fn->kind != TSK_ArrowFunction)) return cUnported("binding element of a parameter");
+  if (d->initializer || d->questionToken || d->dotDotDotToken) return cUnported("binding element of a parameter");
+  if (d->inferState == 1) return cUnported("circular parameter type");
+  d->inferState = 1;
+  bool err = false;
+  CCombinedSig *cn = cContextualSigNode(fn, &err);
+  TsType *t = NULL;
+  if (!err && cn) {
+    int idx = 0;
+    while (idx < fn->parameters->n && fn->parameters->v[idx] != d) idx++;
+    if (fn->parameters->n && cIsThisParam(fn->parameters->v[0])) idx--;
+    bool ok = false;
+    if (idx >= 0) {
+      TsType *pt = cCombinedParamType(cn, idx, &ok);
+      if (ok) t = pt;
+    }
+  }
+  d->inferState = 0;
+  if (!t || t == cErrorType) return t ? t : cUnported("binding element of a parameter");
+  return t;
+}
+
 /* getTypeForBindingElement: a destructured variable has the property of an object pattern, or the element of an array pattern,
  * of the type of the declaration the pattern belongs to (getTypeForBindingElementParent). Ported: a declaration with a type
  * annotation or an initializer (widened as a mutable location), nested patterns, identifier property names, array elements of
- * an array type. Defaults, rest elements, tuples, parameters and missing properties are not ported. */
+ * an array type, the element of a tuple at its position. Defaults, rest elements, parameters other than a contextually typed
+ * one, and missing properties are not ported. */
 static TsType *cBindingElementType(TsSymbol *sym, TsNode *d) {
   TsNode *pat = d->parent;
   TsNode *decl = pat ? pat->parent : NULL;
@@ -2655,6 +2690,10 @@ static TsType *cBindingElementType(TsSymbol *sym, TsNode *d) {
     } else return cUnported("binding element of a declaration without a type");
   } else if (decl->kind == TSK_BindingElement && decl->symbol) {
     pt = cTypeOfSymbol(decl->symbol);
+  } else if (decl->kind == TSK_Parameter) {
+    /* getTypeForVariableLikeDeclaration of a parameter with a binding pattern: its annotation, else its contextual parameter type */
+    if (decl->type) pt = cTypeFromNode(decl->type);
+    else pt = cContextualParamOfPattern(decl);
   } else {
     return cUnported("binding element of a parameter");
   }
@@ -2669,7 +2708,14 @@ static TsType *cBindingElementType(TsSymbol *sym, TsNode *d) {
   }
   /* an array pattern: the element at the position of the binding element (an omitted element counts) */
   if (pat->kind != TSK_ArrayBindingPattern) return cUnported("binding element pattern");
-  if (!(pt->flags & TF_Object) || cIsTupleType(pt)) return cUnported("array binding of a non-array");
+  if (cIsTupleType(pt)) {
+    /* getIndexedAccessType of the tuple at the index of the element (no rest element or element past the arity) */
+    int idx = 0;
+    while (idx < pat->elements->n && pat->elements->v[idx] != d) idx++;
+    if (idx < pt->nargs) return pt->args[idx];
+    return cUnported("array binding past the arity of a tuple");
+  }
+  if (!(pt->flags & TF_Object)) return cUnported("array binding of a non-array");
   cResolveIndexInfos(pt);
   for (int i = 0; i < pt->nindex; i++) if (pt->index[i].keyType == cNumberType) {
     (void)sym;
