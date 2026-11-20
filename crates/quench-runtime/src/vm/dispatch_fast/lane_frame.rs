@@ -3118,7 +3118,14 @@ lane_handler! {
             };
             let mut stage = Concrete::new(std::ptr::null());
             let mut frame = call_frame::<H, OP, ACC, MISS>(cx, r, ip, i, view);
-            match crate::staged::step(&mut stage, &mut frame, operation) {
+            // The call decoder makes a call site, or for a `super(...)` construction a spread call: only a
+            // construction's row keeps more than the call arm of the step (every arm was ~10 KB per instance).
+            let step = if const { matches!(LaneFields::<OP>::OPCODE, crate::bytecode::Op::Construct) } {
+                crate::staged::step(&mut stage, &mut frame, operation)
+            } else {
+                crate::staged::step_of::<{ crate::staged::op_kind::CALL }, _, _>(&mut stage, &mut frame, operation)
+            };
+            match step {
                 Step::Value(value) => {
                     r.set(i.a, Value::from_bits(value));
                     next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -3339,7 +3346,7 @@ script_handler! {
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = LaneFrame::<ACC_NONE> { reads: Reads::of_jump::<H>(cx, Some(i.constant())),
             ..row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view) };
-        match crate::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
+        match step_binary_number::<OPERATOR, _, _>(&mut stage, &mut frame, number) {
             Step::Value(value) => {
                 // An int32 row's result is an integer already; a Float64 one is made as its canonical Value
                 // (`Value::number`), so an integral result is the integer it is.
@@ -3352,6 +3359,36 @@ script_handler! {
             }
             Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
         }
+    }
+}
+
+/// The `numeric::kind` of the operation `numeric::binary_operation` (and `int32_binary_operation`) builds for
+/// `operator`, read off the shared operator tables, so a row whose operator is static instantiates only that arm
+/// of the Number step (`numeric::step_of`) rather than every arm: `returning_operator_row` had 110 instances of
+/// about 14 KB each that a line shift in a widely inlined helper re-codegened. `ANY` for an operator no Number
+/// operation denotes.
+pub(in crate::vm::dispatch_fast) const fn binary_number_kind(operator: u32) -> u8 {
+    use crate::staged::numeric::kind;
+    use crate::vm::operations::binary_operator as code;
+    macro_rules! arithmetic {
+        ($($operation:ident => $operator:ident, $a:ident, $b:ident, $c:tt, $d:ident, $e:ident, $f:ident;)+) => { false $(|| operator == code::$operator)+ };
+    }
+    macro_rules! bitwise {
+        ($($operation:ident => $operator:ident, $a:ident, $b:literal;)+) => { false $(|| operator == code::$operator)+ };
+    }
+    macro_rules! relation {
+        ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $a:ident;)+) => { false $($(|| operator == code::$operator)+)+ };
+    }
+    if crate::vm::operations::number_arithmetic_rows!(arithmetic) {
+        kind::ARITHMETIC
+    } else if operator == code::Remainder {
+        kind::REMAINDER
+    } else if crate::vm::operations::number_bitwise_rows!(bitwise) {
+        kind::BITWISE
+    } else if crate::vm::operations::number_relation_rows!(relation) {
+        kind::RELATION_VALUE
+    } else {
+        kind::ANY
     }
 }
 
@@ -3819,4 +3856,45 @@ mod generated_rows_14 {
 mod generated_rows_15 {
     use super::*;
     include!("generated_row.rs");
+}
+
+/// The Number step of a row whose binary operator `OPERATOR` is static: only the arm `binary_number_kind` names.
+#[inline(always)]
+fn step_binary_number<const OPERATOR: u8, S: crate::staged::NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    number: NumberOperation) -> Step<S::Word, F::Control> {
+    use crate::staged::numeric::{kind, step_of};
+    if const { binary_number_kind(OPERATOR as u32) == kind::ARITHMETIC } {
+        step_of::<{ kind::ARITHMETIC }, S, F>(stage, frame, number)
+    } else if const { binary_number_kind(OPERATOR as u32) == kind::REMAINDER } {
+        step_of::<{ kind::REMAINDER }, S, F>(stage, frame, number)
+    } else if const { binary_number_kind(OPERATOR as u32) == kind::BITWISE } {
+        step_of::<{ kind::BITWISE }, S, F>(stage, frame, number)
+    } else if const { binary_number_kind(OPERATOR as u32) == kind::RELATION_VALUE } {
+        step_of::<{ kind::RELATION_VALUE }, S, F>(stage, frame, number)
+    } else {
+        step_of::<{ kind::ANY }, S, F>(stage, frame, number)
+    }
+}
+
+#[cfg(test)]
+mod binary_number_kind_tests {
+    use crate::staged::{numeric, NumberOperation};
+    use crate::staged::Operand;
+
+    /// `binary_number_kind` names the variant `binary_operation` builds, for every operator code.
+    #[test]
+    fn names_the_variant_binary_operation_builds() {
+        for operator in 0..32u32 {
+            let built = numeric::binary_operation(operator, 0, Operand::register(1), Operand::register(2));
+            let expected = match built {
+                Some(NumberOperation::Arithmetic { .. }) => numeric::kind::ARITHMETIC,
+                Some(NumberOperation::Remainder { .. }) => numeric::kind::REMAINDER,
+                Some(NumberOperation::Bitwise { .. }) => numeric::kind::BITWISE,
+                Some(NumberOperation::RelationValue { .. }) => numeric::kind::RELATION_VALUE,
+                Some(_) => panic!("operator {operator}: unexpected variant"),
+                None => numeric::kind::ANY,
+            };
+            assert_eq!(super::binary_number_kind(operator), expected, "operator {operator}");
+        }
+    }
 }
