@@ -4602,7 +4602,9 @@ fn step_beside_activations_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Register
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = body.widened(body.code[pc]);
-    if !instruction.op().steps_with_result() {
+    // A record that returns its result completes its activation, which the general path does
+    // (`general_step_in_lane`); no record follows it in the function.
+    if !instruction.op().steps_with_result() || instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
         return Resumed::Exit(exit(ip));
     }
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
