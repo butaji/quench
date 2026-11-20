@@ -486,7 +486,6 @@ static TsNode *parseAccessorDeclaration(int pos, bool hasJSDoc, TsList *modifier
 static bool isClassMemberStart(void);
 static TsNode *parseClassStaticBlockBody(void);
 static TsNode *parseClassStaticBlockDeclaration(int pos, bool hasJSDoc, TsList *modifiers);
-static TsNode *addJSDocComment(TsNode *node);
 static void parserInitState(int scriptKind, int jsDocParsingMode, bool isDeclarationFile);
 static bool isDeclarationFileName(const char *name);
 static TsNode *parseSourceFile(const char *fileName, const char *text, int len, int scriptKind, int jsDocParsingMode);

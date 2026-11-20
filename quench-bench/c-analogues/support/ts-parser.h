@@ -4557,8 +4557,6 @@ static TsNode *parseClassStaticBlockDeclaration(int pos, bool hasJSDoc, TsList *
   return n;
 }
 
-/* JSDoc attachment (ParseAll only): the JSDoc parser is not ported yet, so no comment is attached here */
-static TsNode *addJSDocComment(TsNode *node) { return node; }
 
 /* ======================= part 16: source file ======================= */
 
@@ -4577,6 +4575,7 @@ static void parserInitState(int scriptKind, int jsDocParsingMode, bool isDeclara
   P.parsingContext = 0;
   P.topLevel = true;
   P.jsDocParsingMode = jsDocParsingMode;
+  TS.jsDocParsingMode = jsDocParsingMode;
   notParenSetN = 0;
   ctorArgsN = 0;
   ts_stk_n = 0;
@@ -4608,5 +4607,7 @@ static TsNode *parseSourceFile(const char *fileName, const char *text, int len, 
   sf->end = len;
   return sf;
 }
+
+#include "ts-jsdoc.h"
 
 #endif
