@@ -907,10 +907,16 @@ impl<H: Host> Vm<H> {
                     RowRun::Declined => unreachable!("the interpreter frame answers every literal row: {:?}", i.op()),
                 }
             }
-            // A call-out row the interpreter's stage answers in place (`staged_value_step`).
+            // A call-out row the interpreter's stage answers in place (`staged_value_step`). A record
+            // that returns its result (`CallRest` ending an arrow's expression body) completes the
+            // frame with it: the compiler emits no `Return` after it.
             Runner::Value => {
                 let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
-                self.staged_value_step(p, site, i)?;
+                let (plain, returning) = i.split_return();
+                self.staged_value_step(p, site, plain)?;
+                if returning {
+                    return Ok(StepResult::Return(self.read(f, plain.result_register())));
+                }
                 Ok(StepResult::Continue)
             }
             // A flow row that reads the program's constants (`LoadConst`) decodes over the active program's constants
