@@ -20,7 +20,6 @@ use quench_bjit::call_record::CallRecord;
 use std::collections::BTreeMap;
 
 /// The system linker's name of lane helper number `helper`, which the runtime binds.
-const HELPER_SYMBOL_PREFIX: &str = "quench_lane_helper_";
 /// Every body starts at this alignment in the object.
 const CODE_ALIGNMENT: u64 = 16;
 /// The declaration index of the ABI header import, the object's first symbol.
@@ -83,7 +82,7 @@ fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<Nat
             continue;
         }
         let import = match SymbolTable::decode(image, key.0, key.1) {
-            Some(Symbol::Helper(helper)) => helper_import(isa, helper),
+            Some(Symbol::Helper(helper)) => helper_import(isa, helper)?,
             Some(Symbol::SemanticEntry(op)) => operation_import(isa, op),
             Some(Symbol::BasePc { .. } | Symbol::Operands { .. } | Symbol::CallRecord { .. }) => continue,
             Some(symbol) => return Err(format!("{symbol:?} has no object form yet")),
@@ -95,8 +94,11 @@ fn import_symbols(image: &AotImage, isa: &dyn TargetIsa, functions: &mut Vec<Nat
     Ok(imports)
 }
 
-fn helper_import(isa: &dyn TargetIsa, helper: u32) -> NativeFunction {
-    NativeFunction::Import { name: format!("{HELPER_SYMBOL_PREFIX}{helper}"), signature: ir::Signature::new(isa.default_call_conv()) }
+/// The import of lane helper `helper`, by its name (`compiled::lane_helper_symbol`), which the
+/// executable defines (`define_lane_helper_symbols`).
+fn helper_import(isa: &dyn TargetIsa, helper: u32) -> Result<NativeFunction, String> {
+    let name = crate::vm::compiled::lane_helper_symbol(helper as usize).ok_or("an AOT image names an unknown lane helper")?;
+    Ok(NativeFunction::Import { name, signature: ir::Signature::new(isa.default_call_conv()) })
 }
 
 fn operation_import(isa: &dyn TargetIsa, op: u16) -> NativeFunction {

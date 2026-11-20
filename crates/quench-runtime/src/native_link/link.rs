@@ -57,10 +57,10 @@ impl NativeSupport {
                     let features = artifact["features"]
                         .as_array()
                         .ok_or("Cargo artifact has no feature list")?;
-                    if matches!(
-                        name,
-                        "cranelift_object" | "cranelift_module"
-                    ) || (name == "cranelift_native" && !support.allows_dynamic_source()) {
+                    // The object writer (`cranelift_object`, `cranelift_module`) is in every runtime build
+                    // since AOT code is unconditional; a static image's link drops it, which the symbol
+                    // audit checks (`audit`, `BACKEND_COMPILER_SYMBOLS`).
+                    if name == "cranelift_native" && !support.allows_dynamic_source() {
                         return Err(format!(
                             "native support includes compiler dependency {name}"
                         ));
@@ -549,14 +549,12 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_source_support_requires_jit_and_excludes_build_time_compilers() {
+    fn dynamic_source_support_requires_jit_and_excludes_build_features() {
         for (name, features, reason) in [
             ("quench", vec!["native-execution"], "no JIT"),
             ("quench_runtime", vec!["native-execution"], "no JIT"),
             ("quench", vec!["native-execution", "jit", "bundled-sources"], "native support"),
             ("quench_runtime", vec!["native-execution", "jit", "aot"], "native support"),
-            ("cranelift_object", vec![], "compiler dependency"),
-            ("cranelift_module", vec![], "compiler dependency"),
         ] {
             let report = serde_json::json!({"reason":"compiler-artifact","target":{"name":name},"features":features}).to_string();
             let error = NativeSupport::from_cargo_report(&report, "quench", NativeImageSupport::DynamicSource)

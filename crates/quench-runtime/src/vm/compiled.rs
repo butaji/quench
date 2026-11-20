@@ -1056,11 +1056,54 @@ macro_rules! lane_helper_inventory {
         pub(super) enum LaneHelper { $($(#[$attr])* $name),+ }
         impl LaneHelper {
             const COUNT: usize = [$(stringify!($name)),+].len();
+            /// Each helper's name, by its index (`addresses`).
+            const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
             pub(in crate::vm) fn addresses<$host: Host>() -> &'static [*const (); Self::COUNT] {
                 &[$($address as *const ()),+]
             }
         }
+
+        /// Defines the symbol `quench_lane_helper_<Name>` of every lane helper for `$host`: a tail
+        /// jump to the helper, so a call through it is the helper's own (every register and the
+        /// stack as the caller left them). These are the symbols an ahead image's object imports
+        /// (`aot_image::object`, `lane_helper_symbol`). An executable's export macro instantiates
+        /// this once (`export_native_js_operations!`); the trampolines lie in their own section,
+        /// so the function itself runs nothing.
+        #[doc(hidden)]
+        #[inline(never)]
+        // The labels are the exported symbols themselves, defined once: the one instantiation is
+        // the executable's, never inlined.
+        #[allow(named_asm_labels)]
+        pub fn define_lane_helper_symbols<$host: Host>() {
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            // SAFETY: the template only lays out code in another section; it runs no instruction here.
+            unsafe {
+                core::arch::asm!(
+                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
+                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
+                    ".popsection",
+                    $($name = sym $address),+,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+            // SAFETY: as above.
+            unsafe {
+                core::arch::asm!(
+                    ".pushsection .text.quench_lane_helpers,\"ax\",@progbits",
+                    $(concat!(".globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
+                    ".popsection",
+                    $($name = sym $address),+,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+        }
     };
+}
+
+/// The symbol an ahead image's object names lane helper `index` by (`define_lane_helper_symbols`).
+pub(in crate::vm) fn lane_helper_symbol(index: usize) -> Option<String> {
+    LaneHelper::NAMES.get(index).map(|name| format!("quench_lane_helper_{name}"))
 }
 lane_helper_inventory! { H;
     FunctionCapture => function_capture_read_in_lane::<H>,
