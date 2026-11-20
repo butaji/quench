@@ -1923,7 +1923,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     /// The program constant a constant operand names (`Reads::word`), which the numeric stage folds.
     #[inline(always)]
     fn constant_operand(&mut self, operand: Operand) -> Option<Value> {
-        (operand.kind() == Some(crate::bytecode::OperandKind::Constant)).then(|| self.reads.word(operand)).flatten()
+        if operand.kind() == Some(crate::bytecode::OperandKind::Constant) { self.reads.word(operand) } else { None }
     }
 
     #[inline(always)]

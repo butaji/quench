@@ -475,6 +475,7 @@ number_arithmetic_rows!(number_arithmetic_codes);
 
 impl NumberArithmetic {
     /// Whether the result of two integers is an integer: all but a division.
+    #[inline(always)]
     pub(crate) const fn integral(self) -> bool {
         !matches!(self, Self::Divide)
     }
