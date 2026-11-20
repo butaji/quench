@@ -1384,7 +1384,8 @@ impl LoopEntry {
     /// reads as a value even if the callee's and the unit's liveness ever disagreed; only inlining
     /// regions ask for the window, and `scratch_value` reads no word past `Inlining::window`.
     pub(super) fn scratch_address(&mut self, width: usize) -> usize {
-        self.scratch[..width.min(self.scratch.len())].fill(std::mem::MaybeUninit::new(Value::UNDEFINED.to_bits()));
+        let width = width.min(self.scratch.len());
+        self.scratch[..width].fill(std::mem::MaybeUninit::new(Value::UNDEFINED.to_bits()));
         self.scratch.as_mut_ptr().addr()
     }
 
